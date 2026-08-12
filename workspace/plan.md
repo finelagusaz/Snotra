@@ -43,7 +43,7 @@
   - `SearchEngine.kana_lower_names: NameArena`
   - `compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64>`
 
-- [ ] **Step 1: 併合の失敗するテストを書く**
+- [x] **Step 1: 併合の失敗するテストを書く**
 
 `snotra-core/src/index_tree.rs` の `mod tests` へ追加する。**`from_chunks` はオフセットを塊の先頭ぶん底上げする**ので、境界の底上げを忘れる／二重に足す誤りがここで落ちる。
 
@@ -83,12 +83,12 @@ fn from_chunks_concatenates_without_shifting_offsets() {
 }
 ```
 
-- [ ] **Step 2: 落ちることを確認する**
+- [x] **Step 2: 落ちることを確認する**
 
 Run: `cargo test -p snotra-core from_chunks_concatenates_without_shifting_offsets`
 Expected: FAIL（`no function or associated item named 'from_chunks' found`）
 
-- [ ] **Step 3: `NameArena` の口を開ける**
+- [x] **Step 3: `NameArena` の口を開ける**
 
 `snotra-core/src/index_tree.rs`。既存の `fn push` / `fn with_capacity` の `fn` を `pub(crate) fn` にし、以下を `impl NameArena` へ追加する。
 
@@ -122,12 +122,12 @@ Expected: FAIL（`no function or associated item named 'from_chunks' found`）
     }
 ```
 
-- [ ] **Step 4: 通ることを確認する**
+- [x] **Step 4: 通ることを確認する**
 
 Run: `cargo test -p snotra-core from_chunks_concatenates_without_shifting_offsets`
 Expected: PASS
 
-- [ ] **Step 5: `//!` に消費者を一行足す**
+- [x] **Step 5: `//!` に消費者を一行足す**
 
 `snotra-core/src/index_tree.rs` の `//!` は「オンディスクと索引が共有する表現」と述べている。`NameArena` にメモリ専用の消費者が付いたので、その節へ次を足す。
 
@@ -137,7 +137,7 @@ Expected: PASS
 //! 線上表現の制約もかからない。**表現の核が同じであることだけを共有している。**
 ```
 
-- [ ] **Step 6: 構築側を移す（`build.rs`）**
+- [x] **Step 6: 構築側を移す（`build.rs`）**
 
 `Wave1Strings` の 3 要素目、`compute_wave1` の kana 枝、`compute_kana_char_masks`、`assemble` の引数と `shrink_to_fit` / `debug_assert`、`kana_for_cached` を替える。
 
@@ -214,7 +214,7 @@ fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
 
 **`use` を足す**: `build.rs` 冒頭の `crate::index_tree::...` の import へ `NameArena` を加える。`rayon::iter::IndexedParallelIterator`（`chunks` のため）も必要なら足す。
 
-- [ ] **Step 7: 読み側を移す（`search.rs` / `scoring.rs`）**
+- [x] **Step 7: 読み側を移す（`search.rs` / `scoring.rs`）**
 
 `search.rs` のフィールド宣言:
 
@@ -237,7 +237,7 @@ fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
                 .and_then(|kq| kana_substring_score(self.kana_lower_names.get(i), kq))
 ```
 
-- [ ] **Step 8: `footprint.rs` を 2 行にする**
+- [x] **Step 8: `footprint.rs` を 2 行にする**
 
 現行の `boxed_strs` + `vec_body::<Box<str>>` の 2 行を、blob と offsets の 2 行へ置き換える。**束ねて 1 行にしない**（1 行 = 1 確保）。
 
@@ -266,11 +266,11 @@ fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
 
 **`boxed_strs` の呼び出しが 0 件になったら、その関数ごと消す**（`-D warnings` の `dead_code` が教える）。他に呼び出しが残っているなら残す——`grep -n "boxed_strs" snotra-core/src/` で数える。
 
-- [ ] **Step 9: 既存テストの添字を直す（`tests/build.rs`）**
+- [x] **Step 9: 既存テストの添字を直す（`tests/build.rs`）**
 
 `a.kana_lower_names[i]` → `a.kana_lower_names.get(i)`、`.len()` / `.is_empty()` はそのまま通る。**A/B 突き合わせの構造は変えない**——A 側（`compute_wave1`・逐次）と B 側（`kana_for_cached`・塊併合）が 2 実装のままであることが、Step 6 の併合のずれを捕まえる唯一の経路である。
 
-- [ ] **Step 10: 全テストと clippy を通す**
+- [x] **Step 10: 全テストと clippy を通す**
 
 Run: `cargo test -p snotra-core`
 Expected: PASS（585 本）
@@ -281,7 +281,7 @@ Expected: 警告なし
 Run: `cargo doc --workspace --no-deps --document-private-items`
 Expected: intra-doc link エラーなし（**PostToolUse hook は `cargo doc` を走らせない**。手で打つ）
 
-- [ ] **Step 11: コミット**
+- [x] **Step 11: コミット**
 
 ```
 perf(core): kana_lower_names を密な文字列アリーナで持つ（残る唯一の per-entry 確保）
@@ -303,7 +303,7 @@ perf(core): kana_lower_names を密な文字列アリーナで持つ（残る唯
 - Consumes: `NameArena`（Task 1 の形）
 - Produces: `NameArena::excess_capacity_bytes(&self) -> usize`（`#[cfg(test)]`）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `snotra-core/src/search/tests/build.rs` へ追加する。既存の余剰容量テストの隣に置く（`grep -n "excess_capacity" snotra-core/src/search/tests/build.rs` で位置を見る）。
 
@@ -327,12 +327,12 @@ fn kana_arena_has_no_excess_capacity_after_assemble() {
 }
 ```
 
-- [ ] **Step 2: 落ちることを確認する**
+- [x] **Step 2: 落ちることを確認する**
 
 Run: `cargo test -p snotra-core kana_arena_has_no_excess_capacity_after_assemble`
 Expected: FAIL（`no method named 'excess_capacity_bytes'`）
 
-- [ ] **Step 3: `excess_capacity_bytes` を足す**
+- [x] **Step 3: `excess_capacity_bytes` を足す**
 
 `snotra-core/src/index_tree.rs` の `impl NameArena` へ。**`str_arena::OptionalStrArena` の同名メソッドと同じ理由で `footprint_bytes` では代用できない**（あちらは容量しか返さないので、`shrink_to_fit` を外しても「その容量が正しい」としか読めない）。
 
@@ -349,19 +349,19 @@ Expected: FAIL（`no method named 'excess_capacity_bytes'`）
     }
 ```
 
-- [ ] **Step 4: 通ることを確認する**
+- [x] **Step 4: 通ることを確認する**
 
 Run: `cargo test -p snotra-core kana_arena_has_no_excess_capacity_after_assemble`
 Expected: PASS
 
-- [ ] **Step 5: 検知器が発火することを変異注入で確かめる**
+- [x] **Step 5: 検知器が発火することを変異注入で確かめる**
 
 `assemble` の `kana_lower_names.shrink_to_fit();` を一時的にコメントアウトし、上のテストが落ちることを実測する。**落ちなければ検知器が効いていない**（`with_capacity` が偶然ぴったりだと余剰が 0 になりうる）。
 
 Run: `cargo test -p snotra-core kana_arena_has_no_excess_capacity_after_assemble`
 Expected: FAIL（確認したら `shrink_to_fit` を戻す）
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```
 test(core): kana アリーナの余剰容量に検知器を置く
@@ -376,30 +376,30 @@ test(core): kana アリーナの余剰容量に検知器を置く
 **Files:**
 - 変更なし（計測のみ。結果は Task 4 で文書へ）
 
-- [ ] **Step 1: 合成ラダーを migemo ON/OFF で 3 回取る**
+- [x] **Step 1: 合成ラダーを migemo ON/OFF で 3 回取る**
 
 Run: `cargo test -p snotra-core --release --test memory_footprint -- --ignored --nocapture`
 記録: `migemo=on` 行と `off` 行の **blocks の差**と live の差。**3 回でバイト数・ブロック数が完全に一致すること**を確かめる。
 
 判定: 差が N（10 万件で 100,002）から **3 前後**へ落ちていること。3 は blob・offsets・masks の 3 確保であり、**リテラルの 0 ではない**。
 
-- [ ] **Step 2: 構築コストを取る（両経路）**
+- [x] **Step 2: 構築コストを取る（両経路）**
 
 Run: `cargo test -p snotra-core --release bench_new_migemo_on_off -- --ignored --nocapture`
 
 これは `compute_wave1` 側（逐次のまま）を見る。**毎起動の経路はこちらではない**ので、`kana_for_cached` 側をキャッシュヒット起動の実測で見る（`docs/build-commands.md` の起動段計測、`cache_load_ms` を含む段）。**逐次化していれば 31 万件で約 1 秒の差として出る。**
 
-- [ ] **Step 3: 検索レイテンシを対で取る**
+- [x] **Step 3: 検索レイテンシを対で取る**
 
 Run: `cargo test -p snotra-core --release bench_fuzzy_search_scaling -- --ignored --nocapture`
 
 **migemo ON で・同日・同セッション・各 3 標本以上。** `kana_lower_names.get(i)` は添字 2 回のスライスになるので、kana 経路を通るクエリ（ローマ字）を必ず含める。
 
-- [ ] **Step 4: A 側（変更前）と突き合わせる**
+- [x] **Step 4: A 側（変更前）と突き合わせる**
 
 `git stash` ではなく **`git switch main` で成果物ごと A 側へ戻して**同じセッションで測る（`ab-baseline-needs-drift-control`）。A 側の標本を取ってからブランチへ戻る。
 
-- [ ] **Step 5: 数値を作業メモへ書き出す**
+- [x] **Step 5: 数値を作業メモへ書き出す**
 
 このファイルの下の「計測結果」節へ実測値を貼る（Task 4 で `PERFORMANCE.md` へ移す）。**測った機体名（`Get-CimInstance Win32_ComputerSystem`）を必ず併記する**——開発機は 2 台あり、「開発機」とだけ書くと過去の表を現在値の基準に使えなくなる。
 
@@ -411,7 +411,7 @@ Run: `cargo test -p snotra-core --release bench_fuzzy_search_scaling -- --ignore
 - Modify: `snotra-core/CLAUDE.md`（並列レイアウト節）
 - Modify: `PERFORMANCE.md`（採用の項目）
 
-- [ ] **Step 1: `snotra-core/CLAUDE.md` の並列レイアウト節を直す**
+- [x] **Step 1: `snotra-core/CLAUDE.md` の並列レイアウト節を直す**
 
 現行（`grep -n "並列レイアウト" snotra-core/CLAUDE.md` で位置を出す）:
 
@@ -427,7 +427,7 @@ Run: `cargo test -p snotra-core --release bench_fuzzy_search_scaling -- --ignore
 
 **`kana_char_masks` は `Vec<u64>` のまま**なので「`Vec` ではない」の列挙に混ぜない。同じ節の下方にある「`kana_lower_names` / `kana_char_masks` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec」の一文は、kana 側が `Vec` でなくなったので「無効時は空」へ言い換える（**条件付き構築という不変条件そのものは変えない**）。
 
-- [ ] **Step 2: `PERFORMANCE.md` へ採用の項目を足す**
+- [x] **Step 2: `PERFORMANCE.md` へ採用の項目を足す**
 
 見出しは既存の採用項目に倣う（`grep -n "^## 採用" PERFORMANCE.md`）。載せるのは Task 3 の実測値のみ:
 
@@ -438,12 +438,12 @@ Run: `cargo test -p snotra-core --release bench_fuzzy_search_scaling -- --ignore
 
 **見積もりを実測として書かない。** 掛け算で出した値は「見積もり」と明示する。
 
-- [ ] **Step 3: `governance:check` を通す**
+- [x] **Step 3: `governance:check` を通す**
 
 Run: `npm run governance:check`
 Expected: 全検査 passed
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
 ```
 docs: kana 列のアリーナ化を実測値で記録する
@@ -453,7 +453,7 @@ docs: kana 列のアリーナ化を実測値で記録する
 
 ### Task 5: レビューと PR
 
-- [ ] **Step 1: `code-reviewer` エージェントを起動する**
+- [x] **Step 1: `code-reviewer` エージェントを起動する**
 
 **渡すもの**（ルート `CLAUDE.md`「レビューの委譲」）:
 - 設計書のパス（`docs/superpowers/specs/2026-08-12-kana-lower-names-arena-design.md`）
@@ -464,11 +464,11 @@ docs: kana 列のアリーナ化を実測値で記録する
 - **逆向きの監査を 1 枠**: 「この差分が消した行の不変条件を名指しし、再確立地点を探す」。`git log -S` / `git blame` をこの枠にだけ渡す
 - 成果物は呼び出し側が指定したパスへ書かせる（`report*.md` にしない。`.txt` か別 basename）
 
-- [ ] **Step 2: 指摘へ fix-forward したら、指摘を出した枠組みを修正差分へ再実行する**
+- [x] **Step 2: 指摘へ fix-forward したら、指摘を出した枠組みを修正差分へ再実行する**
 
 修正は指摘箇所へ注意が集中し、周辺に新しい誤りを生む（`AGENTS.md` 条件別チェック表）。**「解消した」の判定は再実行の結論を受け取るのではなく、指摘を見つけた道具で自分で測る。**
 
-- [ ] **Step 3: push して PR を作る**
+- [x] **Step 3: push して PR を作る**
 
 Run: `git push -u origin HEAD && gh pr create ...`
 **鎖に `cd` を含めない**（対象リポジトリを判定できず hook に拒否される）。**この plan.md の未チェック項目が 0 でないと hook が `gh pr create` を拒む。**
@@ -477,6 +477,19 @@ PR 本文には issue #1056 を closing keyword で結ぶ（`Closes #1056`）。
 
 ---
 
-## 計測結果（Task 3 で埋める）
+## 計測結果
 
-（未実施）
+**正本は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」である。** ここに残すのは実行の記録（何を何回、どの経路で測ったか）だけで、数値表を二重に持たない。
+
+計測機: GPD WIN MINI / G1617-01 / 23.8 GB。すべて 2026-08-12・同日・同セッション・release。
+
+- 合成ラダー（`memory_footprint`・`--test-threads=1`）: B 側 3 回で live・blocks が完全一致。A 側は `git switch main` で成果物ごと戻して同セッションで取得
+- kana 読み口のレイテンシ: 既存 bench が kana 経路を通らないため一時計測を両ブランチへ同文で当て、各 3 標本。**判断後に撤去済み**（`git status` が空であることを確認）
+- 構築コスト: `new_with_cached_masks`（キャッシュヒット起動の経路）を各 3 標本。既存の `bench_new_migemo_on_off` は `compute_wave1` 側しか見ないため別立て
+- 導出案（B 案）却下のための pre-filter 選択率: 実 `index.bin` 312,108 件・migemo ON・ローマ字 10 クエリ
+
+### 計画からのずれ（実施時に判明したもの）
+
+- **Task 2 は Task 1 へ吸収した。** 既存の `assemble_shrinks_parallel_vecs_to_fit` が `kana_lower_names.capacity()` を見ており、アリーナ化と同時に直さないとコンパイルが通らなかった。新規テストを別に書くと同じ性質の検査が 2 本になるため、既存テストの余剰容量側へ移した
+- **その検知器は `new_with_cached_masks` 経路では発火しない。** `from_chunks` が合計バイト数ちょうどで確保するため余剰が最初から 0 になる。変異注入で実測し、伸長に任せる `new_with_migemo` 側の索引を同テストへ足して発火を確かめた
+- **受け入れ 1 の「3 前後」は実測 2 だった。** 空のアリーナが持つ番兵オフセット 1 ブロックを数えていなかった（設計書 §5 を訂正済み）

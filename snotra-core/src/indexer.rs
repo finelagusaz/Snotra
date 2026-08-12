@@ -443,12 +443,14 @@ pub struct LoadOrScanStats {
     /// （`cache_read_ms` と同じ扱い——足すと二重計上になり、`total_ms` から差し引く残余計算が
     /// 負に振れて `saturating_sub` に黙って潰される）。save は `load_cache_in` 呼び出しの
     /// 内側（`LegacyUpgrade::Write` で旧版を読んだとき）で起きるため、cache_load_ms の外に
-    /// 出しようがない。cache-hit かつ現行版を読んだときは 0。
+    /// 出しようがない。cache-hit かつ現行版を読んだときは 0。**この 0 は「昇格が走らなかった」
+    /// と「走ったが 1 ms を切った」を区別しない**——区別が要る読み手は
+    /// `LoadCacheResult::upgrade_save_ms` の variant を見る（#1054 / #1063）。
     ///
     /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
     /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）専用で、
     /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
-    /// （`LoadCacheResult::upgrade_save_ms` の doc は `Skip` 経由の 0 も併記しているが、
+    /// （`LoadCacheResult::upgrade_save_ms` の doc は `Skip` 経由の `None` も併記しているが、
     /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
     pub cache_save_ms: u128,
     pub total_ms: u128,
@@ -767,10 +769,14 @@ fn load_or_scan_with_stats_in(
             cache_read_ms: result.read_ms,
             scan_ms: 0,
             sort_ms: 0,
-            // 旧版昇格が走ったときだけ非 0（`LoadCacheResult::upgrade_save_ms` の doc）。
+            // 昇格が走らなかった枝は `None` ゆえ 0（`LoadCacheResult::upgrade_save_ms` の doc）。
+            // **ミリ秒へ戻したこの値は計器であって、昇格の有無の判定には使えない**——0 は
+            // 「昇格が走らなかった」と「走ったが 1 ms を切った」の両方を意味しうる。この値で
+            // 配線を見る `load_or_scan_with_stats_reports_upgrade_save_ms_in_cache_save_ms` は、
+            // 20,000 件の治具で仕事量を跨がせることでその曖昧さを外している（#1054 / #1063）。
             // `cache_load_ms` の内数——フェーズの和には足さない
             // （`LoadOrScanStats::cache_save_ms` の doc）。
-            cache_save_ms: result.upgrade_save_ms,
+            cache_save_ms: result.upgrade_save_ms.unwrap_or(0),
             total_ms: total_started.elapsed().as_millis(),
         };
         return LoadOrScanResult {
@@ -1094,7 +1100,14 @@ struct LoadCacheResult {
     read_ms: u128,
     /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
     /// （`LoadOrScanStats::cache_save_ms` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
-    /// `LegacyUpgrade::Skip`）では 0。
+    /// `LegacyUpgrade::Skip`）では `None`。
+    ///
+    /// **`Some` を作れるのは [`upgrade_legacy_cache_in`] の内側だけである。** ゆえに
+    /// variant が「昇格 save を通ったか」そのものであり、**時間の値は判定に使わない**
+    /// ——`Some(0)` は「通ったが 1 ms を切った」を表す正当な値である。壁時計のミリ秒を
+    /// 「通った」の代理に使っていた頃は、1 件の治具で区間が時計の量子化に載り、
+    /// 検知器が確率的に落ちた（#1054 / #1063 実測）。判定を variant へ移したので、
+    /// 代理は残っていない。
     ///
     /// **`INDEX_WRITE_LOCK` の取得待ちを含む。** 昇格は読み終えてからロックを取りに行くので、
     /// 計測の始点がロックの外にある——**cache-miss 枝の `cache_save_ms` とは非対称で**、
@@ -1102,7 +1115,7 @@ struct LoadCacheResult {
     /// 立たない**: 製品の呼び出し元は `main` の起動段の 1 つだけで、もう一方の書き手
     /// （索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。
     /// 待ちが立ちうる書き手を足す日には、この値が「save が遅い」と読める形で嘘をつく。
-    upgrade_save_ms: u128,
+    upgrade_save_ms: Option<u128>,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
     /// ときは旧版であり、`Write` のときは旧版枝（`upgrade_legacy_cache_in`）がその場で
     /// 現行版へ書き戻す（[`LegacyUpgrade`] の doc）。
@@ -1180,7 +1193,9 @@ fn upgrade_legacy_cache_in(
     let (tree, masks) = with_index_write_lock(|| {
         save_cache_sorted_in(dir, entries, config_hash, BuiltAt::Carried(built_at))
     });
-    let upgrade_save_ms = save_started.elapsed().as_millis();
+    // **`Some` を作るのはこの 1 行だけである**（`LoadCacheResult::upgrade_save_ms` の doc）。
+    // 昇格 save を通ったことは、時間の値ではなくこの variant が表す。
+    let upgrade_save_ms = Some(save_started.elapsed().as_millis());
     LoadCacheResult {
         material: IndexMaterial::derived(tree, masks),
         read_ms,
@@ -1233,7 +1248,7 @@ fn finish_legacy_read(
                 material,
                 read_ms,
                 // **`Skip` は書き戻さないので save は起きない。**
-                upgrade_save_ms: 0,
+                upgrade_save_ms: None,
                 version: read.version,
             })
         }
@@ -1291,7 +1306,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
             material: IndexMaterial::from_untrusted(tree, masks)?,
             read_ms,
             // **現行版は昇格しないので save は起きない。**
-            upgrade_save_ms: 0,
+            upgrade_save_ms: None,
             version: INDEX_CACHE_VERSION,
         });
     }
@@ -3573,12 +3588,22 @@ mod tests {
     ///
     /// 昇格 save（`upgrade_legacy_cache_in` → `save_cache_sorted_in`。旧版起動 1 回だけ発生する
     /// `derive_columns` の再導出 + postcard シリアライズ + 数百 ms 級の書き込み）は、呼び出し元の
-    /// `cache_load_ms` 計測区間の内側で起きる。運ばずに 0 を返すと、実際に save が起きた起動で
-    /// 「保存していない」という**偽の測定値**を `LoadOrScanStats::cache_save_ms` が報告することに
-    /// なる（`LoadOrScanStats` の doc「`cache_load_ms` と `total_ms` の間に処理を足すときは
+    /// `cache_load_ms` 計測区間の内側で起きる。運ばずに `None` を返すと、実際に save が起きた
+    /// 起動で「保存していない」という**偽の測定値**を `LoadOrScanStats::cache_save_ms` が報告する
+    /// ことになる（`LoadOrScanStats` の doc「`cache_load_ms` と `total_ms` の間に処理を足すときは
     /// 項目を作ること」が守るべき対象そのもの）。
-    /// 両方向を固定する: 旧版を `Write` で読んだときは非 0、現行版を読んだとき
-    /// （昇格が走らない）は 0。
+    ///
+    /// **両方向とも variant で見る**（旧版を `Write` で読んだら `Some(_)`、現行版は `None`）。
+    /// **時間の値は判定に使わない**——1 件の治具では `derive_columns` の再導出 + postcard +
+    /// tmp→rename がサブミリ秒で終わり、壁時計の `> 0` は時計の量子化に載って確率的に落ちた
+    /// （#1054 で main の全体実行 6 回中 1 回・#1063 で別実行の 1 回）。**`Some(0)` はここでは
+    /// 合格である**——通ったこと自体は variant が持ち、速さは判定に関わらない。
+    ///
+    /// **`Some` は「実際に書けた」ではなく「昇格の枝を通った」である**（`upgrade_legacy_cache_in`
+    /// は save の失敗を飲む——理由はその doc）。書き戻しの成否を固定するのは
+    /// `load_cache_upgrades_a_legacy_format_in_place` /
+    /// `load_cache_does_not_rewrite_when_the_format_is_current` の対であり、ここの射程は
+    /// 「計器がその枝を通ったことを報告するか」だけである。
     #[test]
     fn load_cache_reports_upgrade_save_ms_only_when_it_upgrades_a_legacy_format() {
         // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
@@ -3613,14 +3638,11 @@ mod tests {
         let legacy_result =
             load_cache_in(&legacy_dir, 42, LegacyUpgrade::Write).expect("v4 が読めること");
         assert_eq!(legacy_result.material.tree().len(), 1, "材料が正しいこと");
-        // `upgrade_save_ms` は壁時計なので理論上 0ms もありうるが、実際には
-        // `derive_columns` の再導出 + postcard シリアライズ + tmp→rename を含む区間であり、
-        // 手元環境で 0 に丸まったことは無い。0 に丸まる環境が出た場合は壁時計ではなく
-        // 「save のクロージャを実際に通ったか」で判定し直すこと。
+        // **速さではなく通ったかを見る**（`Some(0)` も合格。理由はこのテストの doc）。
         assert!(
-            legacy_result.upgrade_save_ms > 0,
-            "旧版を Write で読んだら昇格 save が走り、時間が計測されること（実測 0ms は\
-             save を通っていない可能性が高い）"
+            legacy_result.upgrade_save_ms.is_some(),
+            "旧版を Write で読んだら昇格 save の枝を通ること（`None` は\
+             `upgrade_legacy_cache_in` のクロージャを一度も通っていないことを意味する）"
         );
 
         // 現行版（v7）: 昇格しないので save 時間は乗らない。
@@ -3649,8 +3671,9 @@ mod tests {
         let current_result = load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write)
             .expect("v7 が読めること");
         assert_eq!(
-            current_result.upgrade_save_ms, 0,
-            "現行版は昇格しないので save 時間は 0 であること"
+            current_result.upgrade_save_ms, None,
+            "現行版は昇格しないので枝を通らないこと（`Some` は速さに関わらず\
+             `upgrade_legacy_cache_in` を通ったことを意味する）"
         );
 
         let _ = fs::remove_dir_all(&legacy_dir);
@@ -3684,6 +3707,12 @@ mod tests {
         // 1 ms を切ると「配線は生きているのに 0」で落ちる——実際に 1 件の治具では 8 回中 3 回
         // 落ちた（近傍のテストが先に同じ経路を通って温めた実行だけが 0 になる）。**時計を
         // 跨がせるのは閾値ではなく仕事量である。**
+        //
+        // **ここを `LoadCacheResult` 側と同じ variant 判定へ替えることはできない**（#1054 /
+        // #1063 で替えたのは向こうだけである）——`LoadOrScanStats::cache_save_ms` は `u128` の
+        // 外向き計器で覗く variant を持たず、しかもこの assert が「配線が `result.upgrade_save_ms`
+        // を捨てて 0 を焼き込む」退行を捕まえる唯一の検知器である。時間を見るのをやめると
+        // 検知器が 1 つ減る。
         let legacy_dir = temp_dir("stats_upgrade_save_ms_legacy");
         let entries: Vec<AppEntry> = (0..20_000)
             .map(|i| AppEntry {

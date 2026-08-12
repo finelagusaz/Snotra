@@ -131,12 +131,18 @@ fn assert_engines_agree(
         );
         // **kana 系 2 本も突き合わせる。** ここも同じ導出の 2 実装である——A 側は
         // `compute_wave1` が実体化した `AppEntry.name` から、B 側は `kana_for_cached` が
-        // `tree.names` から導く。比べないと、`migemo_enabled == true` の腕で**追加検証される
+        // `tree.names` から導く。**ただし両者のバイト列は同一である**（`materialize` の
+        // `name` も `name_at` も `self.names.get(i)` を読む）ので、ここが守るのは
+        // **アルゴリズムの食い違い**であって入力の食い違いではない。**塊併合の結線は
+        // ここでは守れない**——fixture が `KANA_CHUNK` に届かず塊が 1 つしか出ないので、
+        // それは `kana_column_survives_chunked_parallel_merge` の役目である。
+        // 比べないと、`migemo_enabled == true` の腕で**追加検証される
         // assertion が 1 件も無い**（migemo 利用者だけがローマ字検索で候補を取り逃す退行は、
-        // migemo 無効で回る計測環境からは見えない）。空 Vec は上で長さを検証済み。
+        // migemo 無効で回る計測環境からは見えない）。空のときは上で長さを検証済み。
         if !a.kana_lower_names.is_empty() {
             assert_eq!(
-                a.kana_lower_names[i], b.kana_lower_names[i],
+                a.kana_lower_names.get(i),
+                b.kana_lower_names.get(i),
                 "{label}/migemo={migemo_enabled}: index {i} の kana_lower_name がずれている"
             );
             assert_eq!(
@@ -452,16 +458,19 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
             "file_name_char_masks",
             engine.file_name_char_masks.capacity(),
         ),
-        ("kana_lower_names", engine.kana_lower_names.capacity()),
         ("kana_char_masks", engine.kana_char_masks.capacity()),
     ];
     for (label, capacity) in actual {
         assert_eq!(capacity, n, "{label} に余剰容量が残っている（len = {n}）");
     }
 
-    // **派生文字列 2 本は容量では測れない**（`crate::str_arena`）——アリーナは要素数と確保
-    // バイトが 1 対 1 に対応しないので、`capacity == n` という形の断言が書けない。余剰は
-    // `len` との差にしか現れないので、そこを直接 0 と突き合わせる。
+    // **アリーナ 3 本は容量では測れない**（`crate::str_arena` / `crate::index_tree`）——
+    // アリーナは要素数と確保バイトが 1 対 1 に対応しないので、`capacity == n` という形の
+    // 断言が書けない。余剰は `len` との差にしか現れないので、そこを直接 0 と突き合わせる。
+    //
+    // **`kana_lower_names` はここに居る**（上の `capacity == n` の組ではない）。#1056 で
+    // `Vec<Box<str>>` からアリーナへ移したときに移動しており、**移し忘れるとこの列だけ
+    // `shrink_to_fit` を外しても誰も気づかない**。
     for (label, excess) in [
         ("lower_names", engine.lower_names.excess_capacity_bytes()),
         (
@@ -471,6 +480,24 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
     ] {
         assert_eq!(excess, 0, "{label} に余剰容量が {excess} B 残っている");
     }
+
+    // **kana はこの経路では測れない。** `new_with_cached_masks` の kana は塊を併合して組む
+    // （`NameArena::from_chunks`）ので、合計バイト数ちょうどで確保され余剰が最初から 0 に
+    // なる——`shrink_to_fit` を外しても落ちないことを**変異注入で実測した**（2026-08-12）。
+    // 余剰が乗るのは伸長に任せる `compute_wave1` 側なので、そちらで測る。
+    //
+    // **「測れないから省く」ではなく経路を足すのが正しい**——省くと、kana だけ
+    // `shrink_to_fit` を外しても誰も気づかない状態が残る。
+    let grown = SearchEngine::new_with_migemo(make_entries(&names), true);
+    assert!(
+        !grown.kana_lower_names.is_empty(),
+        "migemo 有効で kana が空では検査が空虚である"
+    );
+    assert_eq!(
+        grown.kana_lower_names.excess_capacity_bytes(),
+        0,
+        "kana_lower_names に余剰容量が残っている（assemble の shrink_to_fit を確認する）"
+    );
 }
 
 /// **`Collapsed`（v6 キャッシュ）経路を通す唯一の検知器。**
@@ -735,4 +762,75 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
         pct(shared_name),
         pct(shared_file_name),
     );
+}
+
+/// **`KANA_CHUNK` を跨ぐ規模でなければ、塊併合の結線は一度も走らない。**
+///
+/// `kana_for_cached` は添字を [`crate::search::build::KANA_CHUNK`] 件ずつの塊へ割って並列に
+/// 組み、`NameArena::from_chunks` が順に繋ぐ。この形が依存するのは 2 つ——
+/// **`chunks` + `collect` が順序を保つこと**と、**塊ローカルのオフセットが塊の先頭を基準に
+/// していること**である。塊が 1 つしか出ない fixture ではどちらも検証されない。
+///
+/// **既存の A/B 突き合わせ（`assert_engines_agree`）では足りない。** あちらが migemo=true で
+/// 通す fixture は数件ゆえ塊が常に 1 つで、**塊の順序を反転する変異を当てても全テストが
+/// 緑のまま通った**（2026-08-12 実測。対照として `from_chunks` が空を返す変異は赤くなったので、
+/// 経路に到達していないのではなく 2 つ目の塊を一度も見ていなかった）。
+///
+/// **名前の長さを揃えない。** 全要素が同じ長さだと、塊の順序が入れ替わってもオフセットが
+/// ずれず、切り出しが偶然一致してしまう。
+///
+/// **A/B ではなく、名前から独立に再導出した値との絶対比較にしてある。** A/B
+/// （`assert_engines_agree`）は 2 つの実装を突き合わせる形なので、**将来どちらかへ寄せた
+/// 日には「同じ実装どうしの一致」に化ける**。絶対比較はその日も成立する。
+///
+/// **実測**（2026-08-12）: `from_chunks` の底上げを落とす変異では、この検知器と
+/// `from_chunks_concatenates_without_shifting_offsets` の 2 本だけが落ち、**A/B 突き合わせは
+/// 1 本も落ちない**。そちらが黙るのは「両側が同じ誤りを持つ」からではなく——変異は B 側の
+/// 経路にしか無い——**塊が 1 つしか出ず底上げが常に 0 だから**である。
+#[test]
+fn kana_column_survives_chunked_parallel_merge() {
+    use crate::query::{to_kana, to_lower_folded};
+
+    let n = crate::search::build::KANA_CHUNK * 2 + 1;
+    // 長さが 1〜4 文字で散る名前（`i` の 10 進表記をカタカナの数字へ写す）。
+    // カタカナを混ぜるのは kana 変換が実際に働く形にするためである。
+    let digits = ['ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク', 'ケ', 'コ'];
+    let entries: Vec<AppEntry> = (0..n)
+        .map(|i| {
+            let name: String = i
+                .to_string()
+                .chars()
+                .map(|c| digits[c as usize - '0' as usize])
+                .collect();
+            AppEntry {
+                target_path: format!("C:\\fake\\{name}{i}.lnk"),
+                name,
+                is_folder: false,
+            }
+        })
+        .collect();
+
+    // 製品の cache-hit 経路（`kana_for_cached` が塊併合で組む側）を通す。
+    // **製品と同じ並びで木を建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す契約で、
+    // このファイルの他の `derive_columns` 呼び出しも揃えている）。
+    let mut entries = entries;
+    crate::indexer::sort_entries_canonical(&mut entries);
+    let (tree, masks) = crate::indexer::derive_columns(entries).into_cached_masks();
+    let engine = SearchEngine::new_with_cached_masks(tree, masks, true);
+
+    assert_eq!(
+        engine.kana_lower_names.len(),
+        n,
+        "kana 列の件数が entries と違う"
+    );
+    // **索引が持つ名前と突き合わせる。** 入力の並びではなく索引の並びを基準にするので、
+    // `derive_columns` が並べ替えても成立し、塊の入れ替わりだけが検出される。
+    for i in 0..n {
+        let want = to_kana(&to_lower_folded(engine.entries.name_at(i)));
+        assert_eq!(
+            engine.kana_lower_names.get(i),
+            want,
+            "index {i} の kana が名前と対応していない（塊の順序保存か底上げを疑う）"
+        );
+    }
 }

@@ -7,7 +7,7 @@
 
 use rayon::prelude::*;
 
-use crate::index_tree::IndexTree;
+use crate::index_tree::{IndexTree, NameArena};
 use crate::indexer::{AppEntry, CachedLower, CachedMasks, IndexMaterial};
 use crate::query::{
     contains_path_sep, file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask,
@@ -67,18 +67,22 @@ impl DerivedStrings {
 }
 
 /// Wave 1 の出力: `(lower_names, lower_file_names, kana_lower_names)`。
-/// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
+/// 前 2 者は構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
+///
+/// **kana だけ表現が違う。** `assemble` が潰し判定を通す前 2 者と違い、kana は測る相手を
+/// 持たないので（`to_kana` はローマ字も変換するため `lower_name` と一致しない）、
+/// ここで既に最終形——[`NameArena`]——になっている。
 ///
 /// **`normalized_keys` はここに無い**——`target_path` からの導出に置き換えて索引から外した
 /// （実測 35.56 MiB。経緯は `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
 /// 保持するか導出するか」）。
-type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>);
+type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, NameArena);
 
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / kana_lower_names は entries への純粋な map であり
 /// 相互依存がないため rayon::join で並列構築する。
-/// `migemo_enabled` が false の場合、kana_lower_names は空 Vec（migemo 無効ユーザーの
-/// 死蔵メモリを削るため、issue #337）。空 Vec の検索ループ側ガードは search_with_options 参照。
+/// `migemo_enabled` が false の場合、kana_lower_names は空のアリーナ（migemo 無効ユーザーの
+/// 死蔵メモリを削るため、issue #337）。空のときの検索ループ側ガードは search_with_options 参照。
 /// 木から Wave 1 を導出する（実体へ戻してから [`compute_wave1`] を通す）。
 ///
 /// **木専用の導出を書き起こさない**——`lower_file_name` は `target_path` を取るので材料は
@@ -109,14 +113,21 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
             )
         },
         || {
-            // migemo 無効時は kana を構築しない（空 Vec）。
+            // migemo 無効時は kana を構築しない（空のアリーナ）。
             if migemo_enabled {
-                entries
-                    .iter()
-                    .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
-                    .collect::<Vec<_>>()
+                // **ここは逐次のままでよい。** この枝が通るのは cache-miss（走査 22〜30 秒）の
+                // 内側だけで、キャッシュヒット起動が通るのは `new_with_cached_masks` の
+                // `kana_for_cached` である——**あちらは並列を保つ**（そちらの doc が理由を持つ）。
+                //
+                // 合計バイト数は見込まない（`with_capacity` の第 2 引数が 0）——先に知るには
+                // 全件を `to_kana` して数えるしかなく、この枝ではその 1 パスのほうが高くつく。
+                let mut arena = NameArena::with_capacity(entries.len(), 0);
+                for e in entries {
+                    arena.push(&to_kana(&to_lower_folded(&e.name)));
+                }
+                arena
             } else {
-                Vec::new()
+                NameArena::new()
             }
         },
     );
@@ -150,11 +161,18 @@ fn compute_wave2(
     )
 }
 
-/// migemo 有効時の kana pre-filter 用並列 Vec を構築する。kana 未構築時は空 Vec を保つ。
-fn compute_kana_char_masks(kana_lower_names: &[Box<str>]) -> Vec<u64> {
-    kana_lower_names
-        .iter()
-        .map(|name| kana_char_mask(name))
+/// `kana_for_cached` が添字を割る塊の大きさ。
+///
+/// **テストから参照できる位置に置いてある。** 塊併合の結線を守る
+/// `kana_column_survives_chunked_parallel_merge` は「これを跨ぐ件数」で fixture を組む必要が
+/// あり、値を写すとこの定数を増やしたときに**テストが黙って射程を失う**（塊が 1 つに戻り、
+/// 順序保存も底上げも検証されなくなる）。
+pub(super) const KANA_CHUNK: usize = 4096;
+
+/// migemo 有効時の kana pre-filter 用マスクを構築する。kana 未構築時は空を保つ。
+fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
+    (0..kana_lower_names.len())
+        .map(|i| kana_char_mask(kana_lower_names.get(i)))
         .collect()
 }
 
@@ -178,7 +196,7 @@ impl SearchEngine {
         derived: DerivedStrings,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
-        kana: (Vec<Box<str>>, Vec<u64>),
+        kana: (NameArena, Vec<u64>),
     ) -> Self {
         let (mut kana_lower_names, mut kana_char_masks) = kana;
         let mut char_masks = char_masks;
@@ -294,7 +312,7 @@ impl SearchEngine {
                 && file_name_char_masks.len() == entries.len(),
             "SearchEngine: all parallel Vecs must have the same length as entries"
         );
-        // kana 系 Vec は {0, entries.len()} を許す（migemo 無効時は空 Vec、issue #337）。
+        // kana 系の 2 列は {0, entries.len()} を許す（migemo 無効時は空、issue #337）。
         debug_assert!(
             (kana_lower_names.is_empty() && kana_char_masks.is_empty())
                 || (kana_lower_names.len() == entries.len()
@@ -350,7 +368,7 @@ impl SearchEngine {
     }
 
     /// `migemo_enabled` に応じて kana_lower_names の構築要否を決めて構築する。
-    /// false のとき kana は空 Vec（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る）。
+    /// false のとき kana は空（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る）。
     pub fn new_with_migemo(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         let (lower_names, lower_file_names, kana_lower_names) =
             compute_wave1(&entries, migemo_enabled);
@@ -410,7 +428,7 @@ impl SearchEngine {
     /// - `cached_lower`: `Some` なら Wave 1 の再計算もスキップ。**variant が意味を分ける**
     ///   ——`Collapsed`（v6）は共有判定もスキップし、`Raw`（v5/v4）は `assemble` が測って潰す。
     ///   `None`（v3 フォールバック）は Wave 1 を通常通り並列実行する
-    /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空 Vec、issue #337）。
+    /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空、issue #337）。
     ///   **全経路で**このフラグを反映する
     ///
     /// **`normalized_keys` は受け取らない。** v5 でオンディスク形式から落とし、検索時に
@@ -432,18 +450,39 @@ impl SearchEngine {
             file_name_char_masks,
             lower: cached_lower,
         } = masks;
-        // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空 Vec のまま。
+        // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空のアリーナのまま。
         let kana_for_cached = |tree: &IndexTree| {
             if migemo_enabled {
                 // **添字で並列化する。** 名前はアリーナの切り出しゆえ `par_iter` を持たない
                 // （持たせるには `IndexedParallelIterator` を自前で書くことになり、
                 // 得るものは同じ分割である）。
-                (0..tree.len())
+                //
+                // **塊ごとに組んでから併合する。** アリーナへの push は逐次だが、
+                // **ここを逐次化してはならない**——この経路はキャッシュヒット起動が毎回通り、
+                // `to_kana` の全件適用が秒オーダーで**毎起動に**乗る（額は `PERFORMANCE.md`
+                // 「採用: `kana_lower_names` も文字列アリーナで持つ」が正本）。
+                // `chunks` + `collect` は順序を保つので、併合は受け取った順に繋ぐだけでよい。
+                //
+                // **この結線を守るのは `kana_column_survives_chunked_parallel_merge` である**
+                // （`search/tests/build.rs`）。既存の A/B 突き合わせでは足りない——あちらの
+                // fixture は数件しか無く、[`KANA_CHUNK`] に対して塊が 1 つしか出ないので、
+                // **塊の順序を反転する変異を当てても緑のまま通る**（2026-08-12 実測）。
+                let chunks: Vec<(String, Vec<u32>)> = (0..tree.len())
                     .into_par_iter()
-                    .map(|i| to_kana(&to_lower_folded(tree.name_at(i))).into_boxed_str())
-                    .collect::<Vec<_>>()
+                    .chunks(KANA_CHUNK)
+                    .map(|idxs| {
+                        let mut blob = String::new();
+                        let mut offsets = Vec::with_capacity(idxs.len());
+                        for i in idxs {
+                            blob.push_str(&to_kana(&to_lower_folded(tree.name_at(i))));
+                            offsets.push(blob.len() as u32);
+                        }
+                        (blob, offsets)
+                    })
+                    .collect();
+                NameArena::from_chunks(chunks)
             } else {
-                Vec::new()
+                NameArena::new()
             }
         };
 
@@ -543,7 +582,7 @@ mod tests {
             },
             Vec::new(),
             Vec::new(),
-            (Vec::new(), Vec::new()),
+            (NameArena::new(), Vec::new()),
         );
     }
 
@@ -566,7 +605,7 @@ mod tests {
             },
             Vec::new(),
             Vec::new(),
-            (Vec::new(), Vec::new()),
+            (NameArena::new(), Vec::new()),
         );
     }
 }

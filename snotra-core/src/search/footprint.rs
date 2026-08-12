@@ -199,15 +199,26 @@ impl SearchEngine {
             file_name_char_masks.capacity(),
         ));
 
-        // migemo 無効なら 2 本とも空で、行は 0 のまま残る（**消さない**——「測って 0 だった」と
-        // 「測っていない」は別物であり、消すと後者に見える）。
-        rows.push(boxed_strs(
-            "kana_lower_names",
-            kana_lower_names.iter().map(|s| &**s),
+        // migemo 無効でも行は残る（**消さない**——「測って 0 だった」と「測っていない」は
+        // 別物であり、消すと後者に見える）。**そのとき 0 になるのは連結バイト列と
+        // `kana_char_masks` の 2 本だけである**——空のアリーナは番兵 `vec![0]` を持つので、
+        // オフセット行は 4 B / 1 block を計上する（`Vec<Box<str>>` だった頃は 0 blocks
+        // だった。実運用点 112 → 113 の出所であり、額は `PERFORMANCE.md`「採用:
+        // `kana_lower_names` も文字列アリーナで持つ」が正本）。
+        //
+        // **アリーナは 2 行に分ける。** `arena_part` は「1 行 = 1 確保」でブロックを数えるので、
+        // 連結バイト列とオフセットを束ねると 1 つ数え落とす（`lower_file_names` の旗 2 本で
+        // 未帰属 +1 blocks として実測済み）。
+        let (blob, offsets) = kana_lower_names.footprint_bytes();
+        rows.push(arena_part(
+            "kana_lower_names（アリーナの連結バイト列）",
+            blob,
+            kana_lower_names.len(),
         ));
-        rows.push(vec_body::<Box<str>>(
-            "kana_lower_names（Vec 本体）",
-            kana_lower_names.capacity(),
+        rows.push(arena_part(
+            "kana_lower_names（アリーナのオフセット）",
+            offsets,
+            kana_lower_names.len() + 1,
         ));
         rows.push(vec_body::<u64>(
             "kana_char_masks",

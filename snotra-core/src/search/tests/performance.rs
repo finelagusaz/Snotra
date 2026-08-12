@@ -4,7 +4,6 @@
 
 use super::common::empty_history;
 use crate::indexer::AppEntry;
-use crate::query::{to_kana, to_lower_folded};
 use crate::search::*;
 
 fn make_bench_entries(n: usize) -> Vec<AppEntry> {
@@ -97,53 +96,14 @@ fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
         .collect()
 }
 
-/// kana_lower_names（`Vec<Box<str>>`）のメモリ実体を分解計測する。
-/// migemo 無効時はこの構造体ごと空になるため、ここで測る合計が削減量に相当する。
-/// - ポインタ配列: `capacity * size_of::<Box<str>>()`（ファットポインタ 16B/要素）
-/// - 文字列実体: 各 Box<str> のバイト長総和（要求バイト）
-/// - 16B 粒度丸め: 各実体を個別ヒープ確保とみなし 16B 境界へ切り上げた実 RSS 寄りの上界
-fn measure_kana_footprint(label: &str, entries: &[AppEntry]) {
-    let kana: Vec<Box<str>> = entries
-        .iter()
-        .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
-        .collect();
-    let n = kana.len().max(1);
-    let ptr_bytes = kana.capacity() * std::mem::size_of::<Box<str>>();
-    let content_bytes: usize = kana.iter().map(|s| s.len()).sum();
-    let rounded_content: usize = kana.iter().map(|s| s.len().max(1).div_ceil(16) * 16).sum();
-    let transformed = entries
-        .iter()
-        .filter(|e| {
-            let lf = to_lower_folded(&e.name);
-            to_kana(&lf) != lf
-        })
-        .count();
-    let requested = ptr_bytes + content_bytes;
-    let rss_ish = ptr_bytes + rounded_content;
-    let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
-    println!(
-        "[{label}] n={n} かな変換割合={pct:.0}%\n  \
-             ポインタ {ptr_bytes}B ({:.2}MB) + 実体 {content_bytes}B ({:.2}MB) \
-             = 要求 {requested}B ({:.2}MB) | 16B丸め {rss_ish}B ({:.2}MB)\n  \
-             1件あたり 要求 {}B / 丸め {}B",
-        mb(ptr_bytes),
-        mb(content_bytes),
-        mb(requested),
-        mb(rss_ish),
-        requested / n,
-        rss_ish / n,
-        pct = transformed as f64 * 100.0 / n as f64,
-    );
-}
-
-#[test]
-#[ignore]
-fn measure_kana_memory_footprint() {
-    for &n in &[1_000usize, 10_000, 50_000, 100_000] {
-        measure_kana_footprint(&format!("ascii    n={n}"), &make_bench_entries(n));
-        measure_kana_footprint(&format!("katakana n={n}"), &make_bench_entries_katakana(n));
-    }
-}
+// `measure_kana_footprint` / `measure_kana_memory_footprint`（issue #337 の ROI ゲート）は
+// 撤去した（#1056）。**製品が捨てた表現を測る計器になっていたためである**——あれは
+// `entries` から自前で `Vec<Box<str>>` を組んで「kana_lower_names のメモリ実体」と名乗って
+// いたが、`kana_lower_names` は `NameArena` になり、あの物体は索引のどこにも存在しない。
+// `snotra-core/CLAUDE.md` の footprint 節が明文で禁じている型（「構築前の `Vec<AppEntry>` を
+// 走査して代用しない——その走査は存在しない物体を測る」）の再発であり、`#[ignore]` ゆえ
+// CI は黙る。答えていた問い（migemo の限界費用）は `tests/memory_footprint.rs` の Phase B
+// ラダー（on − off）が現に答えており、`PERFORMANCE.md` の表もその数字で書かれている。
 
 // `measure_lower_name_footprint` / `..._report`（issue #336 の ROI ゲート）は撤去した。
 // 役目は果たし終えている——`lower_names` の `name` との共有は実装済みで、率も削減量も

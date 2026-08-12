@@ -11,6 +11,7 @@ use rayon::prelude::*;
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
+use crate::index_tree::NameArena;
 use crate::str_arena::{LowerFileColumn, LowerNameColumn};
 use crate::ui_types::SearchResult;
 
@@ -141,9 +142,11 @@ pub struct SearchEngine {
     char_masks: Vec<u64>,
     /// Character-presence bitmask for lower_file_name (same layout as char_masks).
     file_name_char_masks: Vec<u64>,
-    /// エントリ名をひらがな正規化した Vec（katakana→hiragana、ASCII はそのまま）。
-    /// migemo 検索（ローマ字→かな変換マッチ）で使用。インデックスキャッシュには保存しない。
-    kana_lower_names: Vec<Box<str>>,
+    /// エントリ名をひらがな正規化したアリーナ（katakana→hiragana、ASCII はそのまま）。
+    /// migemo 検索（ローマ字→かな変換マッチ）で使用。**インデックスキャッシュには保存しない**
+    /// ——ゆえに `crate::index_tree::NameArena` と同じ物体でありながら、線上表現の制約は
+    /// この列にかからない（`index_tree` の `//!`）。
+    kana_lower_names: NameArena,
     /// kana_lower_names 用の損失あり文字存在マスク。migemo 有効時のみ構築し、kana
     /// pre-filter の false positive は許すが false negative は起こさない。
     kana_char_masks: Vec<u64>,
@@ -288,9 +291,9 @@ impl SearchEngine {
             (0..self.entries.len()).collect()
         };
 
-        // kana_lower_names は migemo 無効で構築されたとき空 Vec（issue #337）。
+        // kana_lower_names は migemo 無効で構築されたとき空（issue #337）。
         // 構築時 migemo OFF → 検索時 migemo ON（kana_query=Some）の窓で
-        // self.kana_lower_names[i] が index out of bounds で panic するのを防ぐ。
+        // self.kana_lower_names.get(i) が範囲外の添字で panic するのを防ぐ。
         // Copy な bool としてクロージャに move する（self への可変借用は不要）。
         let kana_available = !self.kana_lower_names.is_empty();
 

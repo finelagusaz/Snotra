@@ -143,6 +143,11 @@ impl PathStore {
         self.names.get(i)
     }
 
+    /// 表示名の連結バイト列（存在判定専用・[`crate::index_tree::NameArena::blob`] の doc が正本）。
+    pub(super) fn names_blob(&self) -> &str {
+        self.names.blob()
+    }
+
     pub(super) fn shrink_to_fit(&mut self) {
         self.entries.shrink_to_fit();
         self.names.shrink_to_fit();

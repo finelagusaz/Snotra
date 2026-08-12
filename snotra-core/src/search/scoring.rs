@@ -354,31 +354,61 @@ impl SearchEngine {
         // Fuzzy モードのみ UTF-32 へのオンデマンド変換を行う。
         // ビットマスクで除外された候補には到達しないため、変換コストは
         // ビットマスク通過分（全体の 1-5%）にのみ発生する。
-        let name_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy {
+        // **区切りを含む needle は、区切りを含まない名前に部分列として存在しえない。**
+        // ゆえに Fuzzy の name/file_name スコアリングは**証明として**飛ばせる（#1057）。
+        // 額は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを行わない」が
+        // 正本である（**ここへ写さない**——計器を回すたびに腐る）。
+        //
+        // **3 つの条件はどれも落とせない**:
+        // - `Fuzzy` — Prefix/Substring は `starts_with` / `find` であって部分列ではない。
+        //   `find` は連続一致を要求するので同じ論証が使えるが、そもそも安いので飛ばす価値が無い
+        // - `norm_query_has_path_sep` — **`has_path_sep`（生クエリ）ではない**。needle は
+        //   `norm_query` であり、**畳み込みが区切りに触る版では両者がずれる**
+        //   （条件の正本は `QueryPlan` の当該フィールドの doc。今の nucleo では `¥` は畳まれず
+        //   2 述語は外延的に一致するので、**この条件だけは変異を当てても落ちる検知器を置けない**）
+        // - `!any_name_has_path_sep` — 前提そのもの。**契約ではなく構築時の実測**で、
+        //   外れた入力（区切りを含む表示名）はここを通ってスコアリングを受ける
+        //
+        // 検知器は `search/tests/path.rs` の
+        // `fuzzy_name_match_survives_when_display_name_contains_path_separator` **だけ**である
+        // ——`has_path_sep` だけで飛ばす変異を当てると既存テストと clippy は全て通り、
+        // これ 1 本だけが落ちる（実測）。
+        let skip_name = mode == SearchMode::Fuzzy
+            && plan.norm_query_has_path_sep
+            && !self.any_name_has_path_sep;
+
+        let name_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy && !skip_name {
             Some(Utf32String::from(v.lower_name))
         } else {
             None
         };
 
         // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
-        let name_score = MATCHER.with(|m| {
-            let mut matcher = m.borrow_mut();
-            match_score_single_cached(
-                mode,
-                &mut matcher,
-                v.lower_name,
-                norm_query_str,
-                name_u32_owned.as_ref(),
-                &plan.needle_u32,
-            )
-        });
+        let name_score = if skip_name {
+            None
+        } else {
+            MATCHER.with(|m| {
+                let mut matcher = m.borrow_mut();
+                match_score_single_cached(
+                    mode,
+                    &mut matcher,
+                    v.lower_name,
+                    norm_query_str,
+                    name_u32_owned.as_ref(),
+                    &plan.needle_u32,
+                )
+            })
+        };
 
         let primary_score = if plan.has_dot {
             // name マッチが高確度のときだけ file_name スコアリングを短絡する
             // （重い fuzzy 処理の回避）。
             // 注: 9000 は「file_name スコアリングを短絡する閾値」であり
             // score_tier の基準スコアではない（PREFIX_BASE=10000 と混同しないこと）。
-            let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
+            // `skip_name` のとき file_name も飛ばす——同じ論証が効く（file name 成分は
+            // 区切りを含まず、`any_name_has_path_sep` は両方を測っている）。**ここを閉じないと
+            // `name_score = None` が `needs_fn_score = true` を招き、削減が半分になる。**
+            let needs_fn_score = !skip_name && name_score.is_none_or(|s| s <= 9000);
             let fn_score = if needs_fn_score {
                 v.lower_file_name.and_then(|fn_name| {
                     let fn_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy {

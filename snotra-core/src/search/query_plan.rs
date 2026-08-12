@@ -10,7 +10,9 @@ use std::borrow::Cow;
 
 use nucleo_matcher::Utf32String;
 
-use crate::query::{char_bitmask, normalize_history_query_key, normalize_query, to_kana};
+use crate::query::{
+    char_bitmask, contains_path_sep, normalize_history_query_key, normalize_query, to_kana,
+};
 
 use super::{SearchMode, SearchOptions, kana_char_mask};
 
@@ -26,6 +28,14 @@ pub(super) struct QueryPlan<'a> {
     pub(super) has_dot: bool,
     /// 生クエリがパス区切り（`\` `/` `¥`）を含むか。
     pub(super) has_path_sep: bool,
+    /// **`norm_query` が**パス区切りを含むか（[`Self::has_path_sep`] は**生クエリ**を見る）。
+    ///
+    /// **2 つを取り違えてはならない。** name の Fuzzy マッチが使う needle は `norm_query` で
+    /// あり、`normalize_query` はアクセントを畳む。`¥`(U+00A5) が畳まれる版では生クエリに
+    /// 区切りが在っても needle には無く、`has_path_sep` を条件に name スコアリングを飛ばすと
+    /// **`¥` 入りクエリで name マッチだけが静かに消える**（#1057）。
+    /// パスマッチの発火（`path_query`）は従来どおり `has_path_sep` が決める。
+    pub(super) norm_query_has_path_sep: bool,
     /// Fuzzy モードのビットマスク pre-filter 用クエリマスク（非 Fuzzy では 0）。
     pub(super) query_mask: u64,
     /// migemo 用ひらがな変換クエリ（ASCII 残留や条件未達のとき `None`）。
@@ -87,10 +97,10 @@ pub(super) fn prepare_query_plan<'a>(
     // パスマッチ用クエリは生クエリから normalize_entry_key() 相当で正規化する。
     // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
     // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
-    let has_path_sep = {
-        let q = query.trim();
-        q.contains('\\') || q.contains('/') || q.contains('\u{00a5}')
-    };
+    let has_path_sep = contains_path_sep(query.trim());
+    // **needle は `norm_query` である。** 生クエリで判定すると `¥` の畳み込みでずれる
+    // （フィールドの doc が正本）。
+    let norm_query_has_path_sep = contains_path_sep(norm_query.as_ref());
     let path_query: Option<String> = if has_path_sep {
         // normalize_entry_key と同じ正規化: 小文字化 + / と ¥ を \ に統一
         let trimmed = query.trim();
@@ -118,6 +128,7 @@ pub(super) fn prepare_query_plan<'a>(
         norm_query,
         has_dot,
         has_path_sep,
+        norm_query_has_path_sep,
         query_mask,
         kana_query,
         kana_query_mask,

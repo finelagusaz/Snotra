@@ -420,3 +420,121 @@ fn path_store_cursor_matches_normalize_entry_key_over_real_index() {
         expected.len()
     );
 }
+
+/// **パスクエリでも、表示名への Fuzzy マッチは失われない。**
+///
+/// `score_one_entry` はパスクエリのとき name の Fuzzy スコアリングを飛ばすが、それが許される
+/// のは「区切りを含む needle は名前に部分列として存在しえない」ときだけである（#1057）。
+/// **表示名が区切りを含むエントリではその前提が崩れる**ので、飛ばす条件は
+/// `SearchEngine::any_name_has_path_sep` が測った実測値で閉じている。
+///
+/// このテストは**その閉じ方が効いていることの唯一の検知器**である——実装当時、素朴に
+/// `has_path_sep` だけで飛ばす変異を当てると既存テストと clippy は全て通り、これだけが落ちた
+/// （実測）。パスにはわざと当たらないクエリを使うので、**name の Fuzzy が唯一のマッチ経路**である。
+#[test]
+fn fuzzy_name_match_survives_when_display_name_contains_path_separator() {
+    // 表示名が `\` を含む。target_path は別ドライブにしてパスマッチを成立させない。
+    let entries = vec![make_entry("c:\\tool", "D:\\other\\app.exe")];
+    let mut engine = SearchEngine::new(entries);
+
+    let results = engine.search("c:\\tool", 8, &empty_history(), SearchMode::Fuzzy);
+
+    assert_eq!(
+        results.len(),
+        1,
+        "表示名への Fuzzy マッチが失われた（パスは当たらないので唯一の経路である）"
+    );
+    assert_eq!(results[0].name, "c:\\tool");
+}
+
+/// **PATH 併合が積むような形のエントリで、旗が静かに立たない。**
+///
+/// 上のテストは旗が**落ちる**向き（結果が壊れる）を守る。こちらは**立つ**向きを守る——旗が
+/// 立つと `score_one_entry` は全件で name の Fuzzy スコアリングを通し、**削減だけが全損する**。
+/// 結果は正しいままなので、既存の挙動テストは 1 本も落ちない（#1057 のレビュー M-3）。
+///
+/// **併合の経路そのものを通す。** PATH 併合は `IndexTree::extend_with_roots` が表示名をファイル名、
+/// `target_path` をフルパスにして根として積む形で、**`IndexTree::build` は通らない**（別実装）。
+/// ゆえに `build` だけのテストでは併合側の変異を 1 つも捕まえられない。先例は
+/// `search/tests/build.rs` の PATH マージ検証（同じ `build` → `extend_with_roots` →
+/// `new_from_tree` の並び）。
+///
+/// **実 index のテスト（[`skipping_name_scoring_changes_nothing_over_real_index`]）では代用できない**
+/// ——`index.bin` は PATH 併合の**前**に書かれるので、あちらの入力に PATH エントリは 1 件も
+/// 含まれない。
+#[test]
+fn path_env_merge_does_not_raise_any_name_has_path_sep() {
+    use crate::index_tree::IndexTree;
+
+    let base = vec![make_entry("app", "C:\\tool\\editor\\app.exe")];
+    // PATH 由来の形: 表示名はファイル名、`target_path` はフルパス。根として積まれる。
+    let path_entries = vec![
+        make_entry("node.exe", "C:\\Program Files\\nodejs\\node.exe"),
+        make_entry("git.exe", "C:\\Program Files\\Git\\cmd\\git.exe"),
+    ];
+    let mut tree = IndexTree::build(base);
+    tree.extend_with_roots(path_entries);
+    let engine = SearchEngine::new_from_tree(tree, false);
+
+    assert!(
+        !engine.any_name_has_path_sep,
+        "PATH 併合で旗が立った。name の Fuzzy スコアリングが全件で走り #1057 の削減が\
+         全損する（**結果は正しいままなので他のテストは 1 本も落ちない**）"
+    );
+}
+
+/// **実 index 全件で、name スコアリングを飛ばしても結果が集合・順序とも変わらない。**
+///
+/// 比較相手は「旗を強制的に立てて最適化を殺した同じエンジン」である（#1057）。合成 fixture では
+/// なく実運用点の 31 万件で突き合わせるのが要点で、**件数の一致では足りない**——パスマッチは
+/// 同点が出やすく、tie-break の経路が変われば順序だけが動く。ゆえに `(name, path)` の列を
+/// 順序ごと比べる。
+#[test]
+#[ignore = "実インデックス依存。手元で release 実行する"]
+fn skipping_name_scoring_changes_nothing_over_real_index() {
+    let Some(entries) = real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let n = entries.len();
+    let mut optimized = SearchEngine::new_with_migemo(entries.clone(), false);
+    let mut baseline = SearchEngine::new_with_migemo(entries, false);
+    // 旗を立てる = 「区切りを含む表示名が在る」＝ 飛ばさない＝ 改修前と同じ経路。
+    baseline.any_name_has_path_sep = true;
+    assert!(
+        !optimized.any_name_has_path_sep,
+        "実運用点では区切りを含む表示名は 0 件のはずで、立っていたら前提が崩れている"
+    );
+
+    let history = empty_history();
+    let queries = [
+        "users",
+        "c:\\",
+        "c:\\users",
+        "c:\\users\\",
+        "\\program files\\",
+        "\\zzz-no-such-path\\",
+        "c:\\windows\\system32\\",
+        "\\appdata\\local\\",
+        "notepad.exe",
+        "c:\\notepad.exe",
+    ];
+    for q in queries {
+        let want: Vec<(String, String)> = baseline
+            .search(q, 200, &history, SearchMode::Fuzzy)
+            .into_iter()
+            .map(|r| (r.name, r.path))
+            .collect();
+        let got: Vec<(String, String)> = optimized
+            .search(q, 200, &history, SearchMode::Fuzzy)
+            .into_iter()
+            .map(|r| (r.name, r.path))
+            .collect();
+        assert_eq!(want, got, "クエリ {q:?} で結果または順序が変わった");
+        println!("  {q:?}: {} 件が集合・順序とも一致", want.len());
+    }
+    println!(
+        "{n} 件の実インデックスで、全 {} クエリが一致しました。",
+        queries.len()
+    );
+}

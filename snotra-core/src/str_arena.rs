@@ -189,6 +189,18 @@ impl OptionalStrArena {
         self.finish_element(s.is_some());
     }
 
+    /// 連結バイト列そのもの（**要素の境界を持たない**）。
+    ///
+    /// 用途は「この列のどこかに文字 X が在るか」を **1 パスで**問うことだけである
+    /// （`SearchEngine::any_name_has_path_sep`・#1057）。要素ごとに [`Self::get`] を引く形との
+    /// 差と、そちらを採らない理由は `search/build.rs` の `assemble` が持つ。
+    ///
+    /// **要素を取り出す用途に使わないこと**——境界が無いので、隣接要素をまたいだ部分文字列が
+    /// 偽の一致を作りうる。存在判定は「在れば必ずどれかの要素に在る」向きにしか使えない。
+    pub(crate) fn blob(&self) -> &str {
+        &self.blob
+    }
+
     /// **`PathStore` の `shrink_to_fit` と対で呼ぶ**——余剰容量は索引が伸長しないぶん
     /// 最後まで常駐する（理由は `search/build.rs` の `assemble` の doc）。
     pub(crate) fn shrink_to_fit(&mut self) {
@@ -313,6 +325,11 @@ impl LowerNameColumn {
     #[inline]
     pub(crate) fn get(&self, i: usize) -> Option<&str> {
         self.0.get(i)
+    }
+
+    /// 連結バイト列（存在判定専用・[`OptionalStrArena::blob`] の doc が正本）。
+    pub(crate) fn blob(&self) -> &str {
+        self.0.blob()
     }
 
     pub(crate) fn push(&mut self, s: Option<&str>) {
@@ -464,6 +481,14 @@ impl LowerFileColumn {
             strings: OptionalStrArena::with_capacity(n, 0),
             same_as_lower: Bits::with_capacity(n),
         }
+    }
+
+    /// 連結バイト列（存在判定専用・[`OptionalStrArena::blob`] の doc が正本）。
+    ///
+    /// **`SameAsLowerName` の実体はここに無い**（`lower_names` 側に在る）。存在判定の
+    /// 呼び出し側は両方の列を舐めること。
+    pub(crate) fn blob(&self) -> &str {
+        self.strings.blob()
     }
 
     pub(crate) fn len(&self) -> usize {

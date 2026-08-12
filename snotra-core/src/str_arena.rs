@@ -242,11 +242,15 @@ impl fmt::Debug for OptionalStrArena {
 // 復号の共通部品
 // ---------------------------------------------------------------------------
 
-/// 1 要素ぶんを、`String` を作らずに `blob` へ直接流し込む種。
+/// 1 要素ぶんを、`String` を作らずに連結バイト列へ直接流し込む種。
 ///
-/// **`next_element::<String>()` にしてはならない**——それでは要素ごとの確保が戻り、この
-/// モジュールが存在する理由がなくなる（[`crate::index_tree::NameArena`] の `StrSink` と同型）。
-struct StrSink<'a>(&'a mut String);
+/// **`next_element::<String>()` にしてはならない**——それでは要素ごとの確保が戻り、
+/// アリーナという表現が存在する理由がなくなる。postcard は借用した `&str` を渡すので
+/// 写しは 1 回の `push_str` で済む。
+///
+/// **表示名（[`crate::index_tree::NameArena`]）とここが同じものを使う。** 責務は
+/// 「`String` を作らずに `&str` を押し込む」ただ 1 つで、列ごとに分岐する理由が無い。
+pub(crate) struct StrSink<'a>(pub(crate) &'a mut String);
 
 impl<'de> DeserializeSeed<'de> for StrSink<'_> {
     type Value = ();
@@ -278,7 +282,12 @@ impl<'de> Visitor<'de> for StrSink<'_> {
 /// 確保失敗 ＝ release では `panic="abort"` に化ける。
 const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
 
-fn capped_capacity<'de, A: SeqAccess<'de>>(seq: &A) -> usize {
+/// 列の長さプレフィックスから、事前確保してよい要素数を出す。
+///
+/// **オフセット列の要素幅（`u32`）で割るのは、どのアリーナでも同じ導出である**——表示名も
+/// 派生文字列も、事前に確保するのは番兵付きのオフセット列だけで、連結バイト列は伸長に任せる
+/// （合計バイト数は読み終わるまで分からない）。
+pub(crate) fn capped_capacity<'de, A: SeqAccess<'de>>(seq: &A) -> usize {
     seq.size_hint()
         .unwrap_or(0)
         .min(MAX_PREALLOC_BYTES / std::mem::size_of::<u32>())

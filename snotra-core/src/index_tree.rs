@@ -33,11 +33,12 @@
 use std::fmt;
 
 use rayon::prelude::*;
-use serde::de::{DeserializeSeed, SeqAccess, Visitor};
+use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::indexer::AppEntry;
+use crate::str_arena::{StrSink, capped_capacity};
 
 /// 親を持たないことを表す番兵。このとき `aux` は [`IndexTree::table`] のフルパスを指す。
 pub(crate) const NO_PARENT: u32 = u32::MAX;
@@ -190,34 +191,6 @@ impl Serialize for NameArena {
     }
 }
 
-/// 1 要素ぶんを、`String` を作らずに `blob` へ直接流し込む種。
-///
-/// **`next_element::<String>()` にしてはならない**——それでは要素ごとの確保が戻り、この型が
-/// 存在する理由がなくなる。postcard は借用した `&str` を渡すので写しは 1 回の `push_str` で済む。
-struct StrSink<'a>(&'a mut String);
-
-impl<'de> DeserializeSeed<'de> for StrSink<'_> {
-    type Value = ();
-    fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<(), D::Error> {
-        de.deserialize_str(self)
-    }
-}
-
-impl<'de> Visitor<'de> for StrSink<'_> {
-    type Value = ();
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("a string")
-    }
-    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<(), E> {
-        self.0.push_str(v);
-        Ok(())
-    }
-    fn visit_borrowed_str<E: serde::de::Error>(self, v: &'de str) -> Result<(), E> {
-        self.0.push_str(v);
-        Ok(())
-    }
-}
-
 struct NameArenaVisitor;
 
 impl<'de> Visitor<'de> for NameArenaVisitor {
@@ -227,21 +200,13 @@ impl<'de> Visitor<'de> for NameArenaVisitor {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<NameArena, A::Error> {
         // **`size_hint` を素で信じてはならない。** これは壊れた `index.bin` が名乗る長さで
-        // あり、4 バイトの化けた varint が 40 億件を名乗りうる。serde の `Vec` 訪問子は
-        // まさにこの理由で事前確保を 1 MiB 相当で頭打ちにしており（`search/build.rs` の
-        // `assemble` の doc がその性質を別の角度から記録している）、**自前の訪問子はその
-        // 保護を自分で持たない限り迂回する**。迂回すると、これまで `Err` → cache-miss →
-        // 再走査へ穏やかに落ちていた壊れ方が、確保失敗＝ release では `panic="abort"` に化ける。
+        // あり、4 バイトの化けた varint が 40 億件を名乗りうる。頭打ちの理屈と額は
+        // [`capped_capacity`] が持つ（派生文字列の列と同じ導出であり、写しを置かない）。
         //
         // 実データは 312,108 件で上限を超えるが、超過分は `Vec` の伸長が拾う（1 回の再確保）。
-        const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
-        let cap = seq
-            .size_hint()
-            .unwrap_or(0)
-            .min(MAX_PREALLOC_BYTES / std::mem::size_of::<u32>());
         // 合計バイト数は事前に分からないので `blob` は伸長に任せる（列そのものは
         // 一度きりのロードであり、`build` のように毎回払う区間ではない）。
-        let mut arena = NameArena::with_capacity(cap, 0);
+        let mut arena = NameArena::with_capacity(capped_capacity(&seq), 0);
         while seq.next_element_seed(StrSink(&mut arena.blob))?.is_some() {
             arena.offsets.push(arena.blob.len() as u32);
         }

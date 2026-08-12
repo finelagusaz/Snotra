@@ -59,22 +59,14 @@ impl FootprintRow {
     }
 }
 
-/// `Vec` 本体（ヒープ上の連続領域）の行。中身とは別勘定である。
-pub(super) fn vec_body<T>(label: &'static str, capacity: usize) -> FootprintRow {
-    let bytes = capacity * std::mem::size_of::<T>();
-    FootprintRow {
-        label,
-        bytes,
-        blocks: usize::from(bytes > 0),
-        count: capacity,
-    }
-}
-
-/// アリーナの部品 1 本（連結バイト列 / オフセット / 旗）の行。
+/// **1 つの確保**から成る行。ブロック数の導出（`bytes > 0`）はここ 1 か所に閉じる。
 ///
-/// **`vec_body` と分けてある。** あちらは「要素数 × 要素の大きさ」を自分で掛けるが、
-/// アリーナの部品は確保バイトを型の側（`footprint_bytes`）が知っており、ここが掛け算を
-/// 持つと**同じ勘定が 2 か所に住む**。
+/// バイト数を呼び出し側が渡すのは、アリーナの部品（連結バイト列 / オフセット / 旗）が
+/// 確保バイトを型の側（`footprint_bytes`）で知っているからである。
+///
+/// **旗 2 本のように 2 つの確保を 1 行へ束ねてはならない**——ブロックを 1 つ数え落とす
+/// （**未帰属 +1 blocks として実測に出た**。バイトは合っていたので、バイトだけの検算では
+/// 捕まらない）。
 pub(super) fn arena_part(label: &'static str, bytes: usize, count: usize) -> FootprintRow {
     FootprintRow {
         label,
@@ -82,6 +74,13 @@ pub(super) fn arena_part(label: &'static str, bytes: usize, count: usize) -> Foo
         blocks: usize::from(bytes > 0),
         count,
     }
+}
+
+/// `Vec` 本体（ヒープ上の連続領域）の行。中身とは別勘定である。
+///
+/// 掛け算だけがここの仕事で、行の組み立ては [`arena_part`] に委ねる。
+pub(super) fn vec_body<T>(label: &'static str, capacity: usize) -> FootprintRow {
+    arena_part(label, capacity * std::mem::size_of::<T>(), capacity)
 }
 
 /// `Box<str>` の並びの行（中身のバイトと本数）。

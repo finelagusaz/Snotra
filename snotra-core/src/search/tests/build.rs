@@ -133,7 +133,7 @@ fn assert_engines_agree(
         // `compute_wave1` が実体化した `AppEntry.name` から、B 側は `kana_for_cached` が
         // `tree.names` から導く。比べないと、`migemo_enabled == true` の腕で**追加検証される
         // assertion が 1 件も無い**（migemo 利用者だけがローマ字検索で候補を取り逃す退行は、
-        // migemo 無効で回る計測環境からは見えない）。空 Vec は上で長さを検証済み。
+        // migemo 無効で回る計測環境からは見えない）。空のときは上で長さを検証済み。
         if !a.kana_lower_names.is_empty() {
             assert_eq!(
                 a.kana_lower_names.get(i),
@@ -757,4 +757,62 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
         pct(shared_name),
         pct(shared_file_name),
     );
+}
+
+/// **`KANA_CHUNK` を跨ぐ規模でなければ、塊併合の結線は一度も走らない。**
+///
+/// `kana_for_cached` は添字を [`crate::search::build::KANA_CHUNK`] 件ずつの塊へ割って並列に
+/// 組み、`NameArena::from_chunks` が順に繋ぐ。この形が依存するのは 2 つ——
+/// **`chunks` + `collect` が順序を保つこと**と、**塊ローカルのオフセットが塊の先頭を基準に
+/// していること**である。塊が 1 つしか出ない fixture ではどちらも検証されない。
+///
+/// **既存の A/B 突き合わせ（`assert_engines_agree`）では足りない。** あちらが migemo=true で
+/// 通す fixture は数件ゆえ塊が常に 1 つで、**塊の順序を反転する変異を当てても全テストが
+/// 緑のまま通った**（2026-08-12 実測。対照として `from_chunks` が空を返す変異は赤くなったので、
+/// 経路に到達していないのではなく 2 つ目の塊を一度も見ていなかった）。
+///
+/// **名前の長さを揃えない。** 全要素が同じ長さだと、塊の順序が入れ替わってもオフセットが
+/// ずれず、切り出しが偶然一致してしまう。
+#[test]
+fn kana_column_survives_chunked_parallel_merge() {
+    use crate::query::{to_kana, to_lower_folded};
+
+    let n = crate::search::build::KANA_CHUNK * 2 + 1;
+    // 長さが 1〜4 文字で散る名前（`i` の 10 進表記をカタカナの数字へ写す）。
+    // カタカナを混ぜるのは kana 変換が実際に働く形にするためである。
+    let digits = ['ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク', 'ケ', 'コ'];
+    let entries: Vec<AppEntry> = (0..n)
+        .map(|i| {
+            let name: String = i
+                .to_string()
+                .chars()
+                .map(|c| digits[c as usize - '0' as usize])
+                .collect();
+            AppEntry {
+                target_path: format!("C:\\fake\\{name}{i}.lnk"),
+                name,
+                is_folder: false,
+            }
+        })
+        .collect();
+
+    // 製品の cache-hit 経路（`kana_for_cached` が塊併合で組む側）を通す。
+    let (tree, masks) = crate::indexer::derive_columns(entries).into_cached_masks();
+    let engine = SearchEngine::new_with_cached_masks(tree, masks, true);
+
+    assert_eq!(
+        engine.kana_lower_names.len(),
+        n,
+        "kana 列の件数が entries と違う"
+    );
+    // **索引が持つ名前と突き合わせる。** 入力の並びではなく索引の並びを基準にするので、
+    // `derive_columns` が並べ替えても成立し、塊の入れ替わりだけが検出される。
+    for i in 0..n {
+        let want = to_kana(&to_lower_folded(engine.entries.name_at(i)));
+        assert_eq!(
+            engine.kana_lower_names.get(i),
+            want,
+            "index {i} の kana が名前と対応していない（塊の順序保存か底上げを疑う）"
+        );
+    }
 }

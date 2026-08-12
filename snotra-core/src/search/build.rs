@@ -81,8 +81,8 @@ type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, NameArena);
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / kana_lower_names は entries への純粋な map であり
 /// 相互依存がないため rayon::join で並列構築する。
-/// `migemo_enabled` が false の場合、kana_lower_names は空 Vec（migemo 無効ユーザーの
-/// 死蔵メモリを削るため、issue #337）。空 Vec の検索ループ側ガードは search_with_options 参照。
+/// `migemo_enabled` が false の場合、kana_lower_names は空のアリーナ（migemo 無効ユーザーの
+/// 死蔵メモリを削るため、issue #337）。空のときの検索ループ側ガードは search_with_options 参照。
 /// 木から Wave 1 を導出する（実体へ戻してから [`compute_wave1`] を通す）。
 ///
 /// **木専用の導出を書き起こさない**——`lower_file_name` は `target_path` を取るので材料は
@@ -161,7 +161,15 @@ fn compute_wave2(
     )
 }
 
-/// migemo 有効時の kana pre-filter 用並列 Vec を構築する。kana 未構築時は空 Vec を保つ。
+/// `kana_for_cached` が添字を割る塊の大きさ。
+///
+/// **テストから参照できる位置に置いてある。** 塊併合の結線を守る
+/// `kana_column_survives_chunked_parallel_merge` は「これを跨ぐ件数」で fixture を組む必要が
+/// あり、値を写すとこの定数を増やしたときに**テストが黙って射程を失う**（塊が 1 つに戻り、
+/// 順序保存も底上げも検証されなくなる）。
+pub(super) const KANA_CHUNK: usize = 4096;
+
+/// migemo 有効時の kana pre-filter 用マスクを構築する。kana 未構築時は空を保つ。
 fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
     (0..kana_lower_names.len())
         .map(|i| kana_char_mask(kana_lower_names.get(i)))
@@ -304,7 +312,7 @@ impl SearchEngine {
                 && file_name_char_masks.len() == entries.len(),
             "SearchEngine: all parallel Vecs must have the same length as entries"
         );
-        // kana 系 Vec は {0, entries.len()} を許す（migemo 無効時は空 Vec、issue #337）。
+        // kana 系の 2 列は {0, entries.len()} を許す（migemo 無効時は空、issue #337）。
         debug_assert!(
             (kana_lower_names.is_empty() && kana_char_masks.is_empty())
                 || (kana_lower_names.len() == entries.len()
@@ -360,7 +368,7 @@ impl SearchEngine {
     }
 
     /// `migemo_enabled` に応じて kana_lower_names の構築要否を決めて構築する。
-    /// false のとき kana は空 Vec（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る）。
+    /// false のとき kana は空（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る）。
     pub fn new_with_migemo(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         let (lower_names, lower_file_names, kana_lower_names) =
             compute_wave1(&entries, migemo_enabled);
@@ -420,7 +428,7 @@ impl SearchEngine {
     /// - `cached_lower`: `Some` なら Wave 1 の再計算もスキップ。**variant が意味を分ける**
     ///   ——`Collapsed`（v6）は共有判定もスキップし、`Raw`（v5/v4）は `assemble` が測って潰す。
     ///   `None`（v3 フォールバック）は Wave 1 を通常通り並列実行する
-    /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空 Vec、issue #337）。
+    /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空、issue #337）。
     ///   **全経路で**このフラグを反映する
     ///
     /// **`normalized_keys` は受け取らない。** v5 でオンディスク形式から落とし、検索時に
@@ -455,13 +463,13 @@ impl SearchEngine {
                 // 「採用: `kana_lower_names` も文字列アリーナで持つ」が正本）。
                 // `chunks` + `collect` は順序を保つので、併合は受け取った順に繋ぐだけでよい。
                 //
-                // **`compute_wave1` の kana 枝と 2 実装のままにしてある。** 突き合わせるのは
-                // `search/tests/build.rs` で、片方へ寄せるとその検知器が
-                // 「同じ実装どうしの一致」に化けて併合のずれを捕まえられなくなる。
-                const CHUNK: usize = 4096;
+                // **この結線を守るのは `kana_column_survives_chunked_parallel_merge` である**
+                // （`search/tests/build.rs`）。既存の A/B 突き合わせでは足りない——あちらの
+                // fixture は数件しか無く、[`KANA_CHUNK`] に対して塊が 1 つしか出ないので、
+                // **塊の順序を反転する変異を当てても緑のまま通る**（2026-08-12 実測）。
                 let chunks: Vec<(String, Vec<u32>)> = (0..tree.len())
                     .into_par_iter()
-                    .chunks(CHUNK)
+                    .chunks(KANA_CHUNK)
                     .map(|idxs| {
                         let mut blob = String::new();
                         let mut offsets = Vec::with_capacity(idxs.len());

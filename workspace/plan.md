@@ -242,7 +242,7 @@ fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
 現行の `boxed_strs` + `vec_body::<Box<str>>` の 2 行を、blob と offsets の 2 行へ置き換える。**束ねて 1 行にしない**（1 行 = 1 確保）。
 
 ```rust
-        // migemo 無効なら 3 本とも 0 で、行は残る（**消さない**——「測って 0 だった」と
+        // migemo 無効でも行は残る（**消さない**——「測って 0 だった」と
         // 「測っていない」は別物であり、消すと後者に見える）。
         //
         // **アリーナは 2 行に分ける。** `arena_part` は「1 行 = 1 確保」でブロックを数えるので、

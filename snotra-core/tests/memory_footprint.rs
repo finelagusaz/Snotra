@@ -573,7 +573,7 @@ fn measure_synthetic_scaling() {
         let t1 = snap();
         report("Vec<AppEntry> のみ", t0, t1, n);
 
-        // migemo 無効（kana 2 本が空 Vec）。
+        // migemo 無効（kana 2 本が空）。
         let cloned = entries.clone();
         reset_peak();
         let t2 = snap();

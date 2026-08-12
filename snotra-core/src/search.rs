@@ -291,9 +291,9 @@ impl SearchEngine {
             (0..self.entries.len()).collect()
         };
 
-        // kana_lower_names は migemo 無効で構築されたとき空 Vec（issue #337）。
+        // kana_lower_names は migemo 無効で構築されたとき空（issue #337）。
         // 構築時 migemo OFF → 検索時 migemo ON（kana_query=Some）の窓で
-        // self.kana_lower_names[i] が index out of bounds で panic するのを防ぐ。
+        // self.kana_lower_names.get(i) が範囲外の添字で panic するのを防ぐ。
         // Copy な bool としてクロージャに move する（self への可変借用は不要）。
         let kana_available = !self.kana_lower_names.is_empty();
 

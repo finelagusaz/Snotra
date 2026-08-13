@@ -1403,6 +1403,42 @@ drift の帯の内側で、0 と区別できない**（「514 µs である」�
 
 **内部対照**: `\zzz-no-such-path\`（0 件）はどの変異でも 10,007〜10,711 で drift の帯を出ない。
 
+#### 設定の組み合わせで掃くと、**支配的な軸は `result_limit` だった**
+
+2026-08-13 / 同機・同セッション / `measure_path_query_cost_across_settings` / `c:\` の p50（µs）。
+`include_path_env` × `migemo_enabled` × `normal_mode` × `result_limit` の 36 構成。
+
+| `include_path_env` | `result_limit` = 8 | = 200 | = 1000 |
+|---|---:|---:|---:|
+| **on**（旗 = false） | 11,059 | **22,295** | 48,284 |
+| **off**（旗 = true） | 11,843 | 15,077 | 23,722 |
+
+（`normal_mode = substring` / `migemo = off` の行。他の mode でも形は同じ。）
+
+**3 つ読める。**
+
+- **`result_limit` が最大の梃子である。** 200 → 8 で **−11,236 µs**、200 → 1000 で **+25,989 µs**。
+  `sorted_by_path` の反転（+7,218）より大きい。top-k の置換回数が `k·ln(n/k)`、1 回あたりの
+  sift が `log k` なので**総量は k に対して超線形**に効く
+- **2 つの軸は独立ではない。** `sorted_by_path` の罰は `result_limit` に比例して現れる
+  ——limit 8 では **−784（符号すら逆・drift の内側）**、200 で +7,218、1000 で +24,562。
+  **limit が小さければ、旗を直しても得るものは無い**
+- **`migemo_enabled` は効かない**（差はすべて drift の帯の内側）。`kana_query` は `to_kana` 後に
+  ASCII 英字が残ると `None` になり、パスクエリは必ず英字を含むので常に `None` になる
+  （`search/query_plan.rs` の `prepare_query_plan`）——**コードから予測したとおりに測れた**
+
+**0 件クエリ（`\zzz-no-such-path\`）は `result_limit` でも `include_path_env` でも動かない**
+（7,793〜12,986 の帯は `normal_mode` だけで説明できる）。マッチ後の軸である証拠になっている。
+
+**既定構成（`fuzzy` / `include_path_env = false` / `migemo = off` / `result_limit = 200`）は
+p50 13,390・max 16,444 で 1 フレームの内側にある。** 落ちているのは
+`include_path_env = true` を選んだ構成だけである。
+
+**`result_limit` の既定は 200 である**（`config.rs` の `default_result_limit`）。**表示に使うのは
+`visible_rows`（既定 8）だけで、残りは履歴の剪定容量として使われる**（`Engine` が
+`effective_result_limit()` を `history` の `top_n` へ live-read で渡す）。ゆえに「200 件取る」は
+表示のためではない——**この設定の 2 つの役割を分けないと、片方の都合でもう片方が高くつく。**
+
 #### `#1059` の「11.4 ms」は 40% 過大だった（行をまたぐ引き算の代償）
 
 `#1067` の issue 本文は、`zzz` の行で測った成分（ループ素 888 + 組み立て 3,204）を `c:\` の行へ

@@ -373,6 +373,112 @@ fn measure_path_query_frame_cost_at_operating_point() {
     println!("\n  （µs。60fps の 1 フレームは 16,700 µs。暖機 {WARMUP} 回のあと {SAMPLES} 標本）");
 }
 
+/// **どの設定の組み合わせが `c:\` のコストを動かすか**を 1 枚の表で見る（#1067）。
+///
+/// [`measure_path_query_frame_cost_at_operating_point`] が「開発機の実 config が実際にどこに
+/// 居るか」を測るのに対し、こちらは**設定空間のどこに崖があるか**を測る。改修の射程
+/// （誰に効くのか）を決めるのに要る——支配項の `cmp_paths` は `include_path_env` が真の
+/// ときにしか発火しないので、**既定構成のユーザーには 1 µs も効かない**（`PERFORMANCE.md`）。
+///
+/// # 掃く軸と、掃かない軸の理由
+///
+/// - **`include_path_env`** {on, off} — `sorted_by_path` を決める唯一の設定。索引の材料が
+///   変わるので `Engine` を建て直す
+/// - **`migemo_enabled`** {on, off} — kana 2 列の有無で索引の構築が変わる（`IndexInputs`）。
+///   **per-entry のコストは原理的にゼロのはずである**——`kana_query` は `to_kana` 後に ASCII
+///   英字が残ると `None` になり（`search/query_plan.rs` の `prepare_query_plan`）、パスクエリは
+///   必ず英字を含むので常に `None` になる。ゆえにここで測るのは**常駐が増えたことの間接効果**だけ
+/// - **`normal_mode`** {prefix, substring, fuzzy} — `Engine::search` の live-read
+/// - **`result_limit`** {8, 200, 1000} — 同じく live-read。top-k の大きさはヒープの深さと
+///   `cmp_paths` の呼び出し回数に直結する
+///
+/// **`show_hidden_system` は掃かない。** `compute_config_hash` の入力なので、振ると cache-miss で
+/// 全走査（22〜30 秒）が走り**実 `index.bin` を上書きする**。計器が測定対象の環境を壊す。
+///
+/// **`migemo_min_chars` / `fuzzy_history_cap_ratio` / `history_normalization` も掃かない。**
+/// 前 2 つは上のとおり `kana_query` が常に `None` ゆえ効かず、最後は `adjusted_history_boost` の
+/// cap が Fuzzy のときだけ効くもので、上限は履歴照合全体（実測 ≤1 ms）より小さい。
+///
+/// # 読むクエリを 2 本に絞る
+///
+/// `c:\`（支配項が出る唯一の行）と `\zzz-no-such-path\`（0 件・**どの軸でも動かないことが正しい**
+/// 対照）。36 構成 × 6 クエリでは表が読めない。
+#[test]
+#[ignore = "計測専用。release + --nocapture で手動実行する"]
+fn measure_path_query_cost_across_settings() {
+    let config = Config::load();
+    if config.paths.scan.is_empty() {
+        println!("実 config に scan パスが無いため計測をスキップします。");
+        return;
+    }
+
+    println!("\n=== 設定の組み合わせごとの `c:\\` のフレームコスト（#1067）===");
+    println!(
+        "  実 config: normal_mode = {:?} / include_path_env = {} / migemo = {} / result_limit = {}",
+        config.search.normal_mode,
+        config.search.include_path_env,
+        config.search.migemo_enabled,
+        config.search.effective_result_limit(),
+    );
+    println!("  PATH  migemo  mode       limit |  c:\\ p50   c:\\ max | zzz p50  zzz max | sorted");
+
+    for merge_path_env in [true, false] {
+        for migemo_enabled in [false, true] {
+            let result = indexer::load_or_scan_with_stats(
+                &config.paths.scan,
+                config.search.show_hidden_system,
+            );
+            let mut material = result.material;
+            let merged = if merge_path_env && config.search.include_path_env {
+                let path_entries =
+                    indexer::scan_path_env(material.tree(), config.search.show_hidden_system);
+                let n = path_entries.len();
+                material.extend_with_path_entries(path_entries);
+                n
+            } else {
+                0
+            };
+
+            // **`migemo_enabled` は索引の構築入力である**（`IndexInputs`）。`update_config` では
+            // 反映されないので、ここで材料から建て直す。
+            let mut build_config = config.clone();
+            build_config.search.migemo_enabled = migemo_enabled;
+            let mut engine =
+                Engine::from_material(material, HistoryStore::load(), build_config.clone());
+
+            for mode in [
+                SearchModeConfig::Prefix,
+                SearchModeConfig::Substring,
+                SearchModeConfig::Fuzzy,
+            ] {
+                for limit in [8usize, 200, 1000] {
+                    let mut cfg = build_config.clone();
+                    cfg.search.normal_mode = mode;
+                    cfg.search.result_limit = Some(limit);
+                    engine.update_config(cfg);
+
+                    let (_, hit) = sample_frame_cost(&mut engine, "c:\\");
+                    let (_, miss) = sample_frame_cost(&mut engine, "\\zzz-no-such-path\\");
+                    println!(
+                        "  {:<5} {:<7} {:<10} {limit:>5} | {:>8} {:>9} | {:>7} {:>8} | {}",
+                        // **ループ変数ではなく実際に足した件数で刷る**（実 config が
+                        // `include_path_env = false` なら 2 腕は同一の測定である）。
+                        if merged > 0 { "あり" } else { "なし" },
+                        if migemo_enabled { "on" } else { "off" },
+                        format!("{mode:?}"),
+                        hit.p50,
+                        hit.max,
+                        miss.p50,
+                        miss.max,
+                        engine.sorted_by_path(),
+                    );
+                }
+            }
+        }
+    }
+    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。暖機 {WARMUP} 回のあと {SAMPLES} 標本）");
+}
+
 /// 計測するクエリ。**既存ハーネスと同じ 6 本を同じ順で並べる**（比較可能性）。
 const PATH_QUERY_ROWS: [&str; 6] = [
     "users",

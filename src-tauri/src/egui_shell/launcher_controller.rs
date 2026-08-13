@@ -660,7 +660,7 @@ impl LauncherController {
     /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     /// フィールドは `SearchConfig::instant_command_prefix`（既定は同 struct の `Default` 実装）。
     ///
-    /// **この読みは `engine.lock()` 越しである。** #1032 が「config の live-read は [`crate::egui_shell::read_config`] を通す」と定めた規範と同型だが、毎フレームではなく打鍵・Enter のエッジ駆動ゆえ当時の射程（毎フレームの live-read）の外にあり、残っている。**ここへ新しい読みを足すなら [`crate::egui_shell::read_config`] へ寄せること**——worker が `engine.search` の間じゅう同じ錠を握るため、待ちが走査時間ぶん乗る（#1038 で `on_enter` の費用を数えたとき、この関数が判定より前に払っている待ちが答えの一部だった）。
+    /// **この読みは `engine.lock()` 越しである。** #1032 が「config の live-read は [`crate::egui_shell::read_config`] を通す」と定めた**規範の対象であり、未移行のまま残っている**——#1032 が実際に移したのは毎フレームの読みで、こちらは打鍵・Enter のエッジ駆動ゆえ優先されなかった。**「エッジ駆動だから射程の外」ではない**——`src-tauri/CLAUDE.md` の当該条項が言う「射程は読みだけである」は読みと書き込みの別であって頻度の別ではなく、認められた例外は `commands/` の操作時の読みだけである（ここは `egui_shell`＝UI 層にあたる）。**ここへ新しい読みを足すなら [`crate::egui_shell::read_config`] へ寄せること**——worker が `engine.search` の間じゅう同じ錠を握るため、待ちが走査時間ぶん乗る（#1038 で `on_enter` の費用を数えたとき、この関数が判定より前に払っている待ちが答えの一部だった）。
     fn instant_prefix(&self) -> String {
         self.app_handle
             .try_state::<crate::AppState>()

@@ -56,7 +56,7 @@
 | UI モード・ガード条件を追加/変更（初回フローとガードの相互作用の確認を含む——初回起動・初期化パスを意図せず阻害しないか） | `/state-check` |
 | 重複した読み・冗長に見える状態を束ねる/消す | 各箇所について「**後で**読まれる/立つことに依存していないか」を 1 行ずつ書き出してから着手（#671 PR A′: 到達しないはずの stale フラグが再表示を防いでいた・#673 PR B: 読みは前へ出せるが適用は動かせない箇所が 2 件） |
 | 永続形式・識別子/キー形式を変更 | `/persistence-check`。history キーは `snotra-core/CLAUDE.md`、config キーは `/plan-review` の 4点セット（新規記録・既存移行・外部参照 API を同時に揃える） |
-| 関数・型を新規定義／改名／導入 | 呼び出し元を grep（作ることと使うことは別判断）＋ `/dry-check`。改名・**旧 API の削除**は下流の **compile-fail を「移行漏れ検出器」**に（`cargo build -p <下流 crate>`）。新 API の導入と呼び出し点の移行は **1 タスクに束ねる**——`-D warnings` 下で未使用の新 API は `dead_code` で落ち、旧 API を残せば導出が 2 箇所になる |
+| 関数・型を新規定義／改名／導入 | 呼び出し元は LSP ツールの findReferences で列挙する（作ることと使うことは別判断。**grep は文字列一致ゆえ同名の別物を拾い、re-export 経由を落としうる**——LSP の無い環境でのみ grep へ落とす）＋ `/dry-check`。改名・**旧 API の削除**は下流の **compile-fail を「移行漏れ検出器」**に（`cargo build -p <下流 crate>`）。新 API の導入と呼び出し点の移行は **1 タスクに束ねる**——`-D warnings` 下で未使用の新 API は `dead_code` で落ち、旧 API を残せば導出が 2 箇所になる |
 | worker spawn・channel・フレーム drain・Tauri listener・スレッド/窓をまたぐ共有状態・フレーム内 live-read・paint 後の遅延処理を追加/変更、または async 関数を追加/変更 | `/race-check` |
 | 網羅性が要件（全文監査・全箇所改名・コンパイラを持たない機構の廃止） | **その一覧の母集団を誰が知っているか**から始める（`docs/development-principles.md`「列挙の完全性」）＋ `/plan-review`「Step 2b」（独立再導出） |
 | 検査・検証手段を新設する、またはどの手段で保証するか決める | `docs/development-principles.md`「検証の層と、層と層の隙間」——手段ごとの死角の表。**穴は層の内側ではなく境界に空く**（層 A の出力が層 B へ届いているかは、どの層も見ない） |

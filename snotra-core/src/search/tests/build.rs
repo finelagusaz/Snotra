@@ -233,6 +233,71 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
     }
 }
 
+/// **PATH マージが整列の旗を下ろすのは、足すエントリが非空のときに限る。**
+///
+/// `SearchEngine::sorted_by_path` は計測ハーネスのための観測口であり、`PathStore::cmp_paths` が
+/// index 比較（速い）とフルパス組み立て（遅い）のどちらを通るかを決める。**計器がこの値を
+/// 出力に添えられなければ、パスクエリのフレームコストは読めない**（tie-break の経路が
+/// 分からないため）。
+///
+/// **守るのは 3 つ目の腕である。** `IndexTree::extend_with_roots` は冒頭で
+/// `if entries.is_empty() { return; }` と抜けるので、`include_path_env` が真でも
+/// `scan_path_env` が空 vec を返す構成（ユーザー PATH が空・全件が既存と重複）では旗が
+/// 立ったまま残る。**「`include_path_env` が真なら旗は下りている」は成り立たない**——
+/// 代理指標で計器を書くと、そこで測った値の帰属が静かに誤る。
+#[test]
+fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
+    let mut base = vec![
+        AppEntry {
+            name: "apps".to_string(),
+            target_path: "C:\\apps".to_string(),
+            is_folder: true,
+        },
+        AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\Firefox.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    crate::indexer::sort_entries_canonical(&mut base);
+
+    let build = |path_entries: Vec<AppEntry>| {
+        let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
+        let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
+        material.extend_with_path_entries(path_entries);
+        SearchEngine::from_material(material, false)
+    };
+
+    // 1. マージ無し = 整列済みの索引ゆえ旗は立つ（速い経路）。
+    assert!(
+        build(Vec::new()).sorted_by_path(),
+        "整列済みの入力で旗が立っていない（`sort_entries_canonical` を通してある）"
+    );
+
+    // 2. 非空のマージ = 根として末尾へ足すのでバイト順が崩れ、旗は下りる（遅い経路）。
+    assert!(
+        !build(vec![AppEntry {
+            name: "Node".to_string(),
+            target_path: "C:\\tools\\node.exe".to_string(),
+            is_folder: false,
+        }])
+        .sorted_by_path(),
+        "PATH エントリを足したのに旗が立ったまま（`cmp_paths` が index 比較を続け順序が変わる）"
+    );
+
+    // 3. **空のマージは旗を下ろさない。** ここが代理指標との分かれ目である。
+    let material_empty = {
+        let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
+        let mut m = crate::indexer::IndexMaterial::derived(tree, masks);
+        m.extend_with_path_entries(Vec::new());
+        m
+    };
+    assert!(
+        SearchEngine::from_material(material_empty, false).sorted_by_path(),
+        "空の PATH マージが旗を下ろした（`extend_with_roots` の早期 return が壊れている）"
+    );
+}
+
 /// **保存が返した派生データの直後に PATH エントリをマージする経路**（`IndexMaterial::extend_with_path_entries`）。
 ///
 /// **この組み合わせは反復 11 で初めて生きた。** それ以前は保存側が派生データを返さず `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は返るので「マスクへ追記 → 木へ根として追加 → `from_material`」の順に変わる。**上の 2 本の検知器はどちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH マージを通らない）。

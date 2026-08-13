@@ -415,6 +415,21 @@ impl SearchEngine {
         self.entries.len()
     }
 
+    /// 索引が `target_path` のバイト順に並んでいるか（**計測ハーネス専用の観測口**）。
+    ///
+    /// **製品はこれを読んで分岐してはならない**——分岐は `PathStore::cmp_paths` の内側に
+    /// 閉じており、そこへ戻すためにこの値を外へ出していない。要るのは 1 つの理由による:
+    /// **パスクエリのフレームコストは、この旗で tie-break の経路が変わる**（真なら index の
+    /// 比較、偽なら両辺のフルパスを組み立てる）。旗は構築時の実測であって契約ではないので、
+    /// **計器が「どちらの経路を測ったか」を出力に添えられなければ、その計測値は読めない。**
+    ///
+    /// PATH エントリのマージ（`IndexTree::extend_with_roots`）は**非空のときに限り**旗を
+    /// 下ろす。ゆえに「`include_path_env` が真か」は代理指標にならない。
+    #[doc(hidden)]
+    pub fn sorted_by_path(&self) -> bool {
+        self.entries.sorted_by_path()
+    }
+
     /// 索引 `i` の表示名。
     pub fn entry_name(&self, i: usize) -> &str {
         self.entries.name_at(i)

@@ -271,6 +271,15 @@ impl PathStore {
         })
     }
 
+    /// [`Self::sorted_by_path`] の実効値（**計測ハーネス専用の観測口**）。
+    ///
+    /// 製品はこれを読んで分岐しない——分岐は [`Self::cmp_paths`] の内側に閉じている。
+    /// 在るのは、**計器が「速い経路と遅い経路のどちらを測ったか」を出力に添えられるようにする
+    /// ため**である。旗は構築時の実測であって契約ではないので、添えなければその計測値は読めない。
+    pub(super) fn sorted_by_path(&self) -> bool {
+        self.sorted_by_path
+    }
+
     /// `i` のフルパスを新しい `String` として返す（`SearchResult` 組み立て用・top-k 確定後の
     /// K 件だけに使う）。ホットループから呼ばない。
     pub(super) fn to_path(&self, i: usize) -> String {

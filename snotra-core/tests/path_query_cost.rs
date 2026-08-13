@@ -17,11 +17,13 @@
 //! 読んだらその場で現行版へ昇格するので、**旧版のロードを測りたければ先に退避すること**
 //! （契約は同関数の doc）。走らせてから気づいても、その版はもう手元に無い。
 //!
-//! # 2 つの層を混ぜない
+//! # 層を混ぜない
 //!
-//! - **製品レベル**: [`measure_path_query_frame_cost`] / [`measure_recent_history_cost`] は
+//! - **製品レベル**: [`measure_path_query_frame_cost`] /
+//!   [`measure_path_query_frame_cost_at_operating_point`] / [`measure_recent_history_cost`] は
 //!   実 `index.bin` を実起動と同じ経路で読み、`Engine::search` / `SearchEngine::recent_history`
 //!   をそのまま叩く。**判定に使うのはこちらである。**
+//!   （**数を見出しに書かない**——製品レベルの関数を 1 本足すたびに腐る）
 //! - **走査だけを切り出した写し**: [`measure_path_query_sweep_cost`] は `normalized_key` を
 //!   保持するか導出するかを比べた反復 2 の記録であり、スコアリング・履歴照合・top-k 組立が
 //!   乗っていない。**見積もりが甘くなる**（実測で写し +3 ms に対し製品は +8〜16 ms）。
@@ -38,7 +40,7 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 
-use snotra_core::config::Config;
+use snotra_core::config::{Config, SearchModeConfig};
 use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer::{self, AppEntry};
@@ -226,6 +228,183 @@ fn measure_path_query_frame_cost() {
         );
     }
     println!("  （µs。60fps の 1 フレームは 16,700 µs）");
+}
+
+/// パスクエリのフレームコストを**実運用点で**測る（#1067）。
+///
+/// # なぜ [`measure_path_query_frame_cost`] では足りないのか
+///
+/// あちらは実 config を読むが、**実起動が通る経路を 2 つ落としている**。どちらも
+/// パスクエリのコストに効き、しかも**逆向きに効く**ので、差の符号すら予測できない。
+///
+/// - **PATH エントリのマージを通らない。** `load_or_scan_with_stats` を呼ぶだけで
+///   `IndexMaterial::extend_with_path_entries` を通さないため、索引は
+///   `sorted_by_path = true`（速い経路）のまま測られる。実起動は `include_path_env` が真なら
+///   マージするので、`IndexTree::extend_with_roots` が旗を下ろし、tie-break が
+///   `PathStore::cmp_paths` の**両辺フルパス組み立て**へ落ちる
+/// - **`normal_mode` が実 config の値とは限らない。** #1057 / #1059 の表は
+///   `SNOTRA_CONFIG_DIR` を temp へ向けて `fuzzy` に差し替えて測っている。`substring` では
+///   `score_one_entry` の `skip_name` が発火しない（あれは Fuzzy を要求する）
+///
+/// **旗の実効値は出力に添える。** 添えなければ「どちらの経路を測ったか」が分からず、
+/// 数字の帰属ができない（`Engine::sorted_by_path` の doc）。**`include_path_env` が真か**を
+/// 代理指標にしてはならない——`extend_with_roots` は空 vec で早期 return するので、
+/// PATH が空・全件重複の構成では真のまま旗が立つ（検知器は `search/tests/build.rs` の
+/// `path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries`）。
+///
+/// # この計器が単独で捕まえる経路
+///
+/// 2 つあり、**既存のどの計器も見ていない**: (1) PATH マージ後の `sorted_by_path = false` での
+/// tie-break、(2) `normal_mode = "substring"` での name スコアリング。
+///
+/// # この計器が見ないもの
+///
+/// 検索結果の正しさ（挙動テストの担当）と、実 UI スレッドが本当にこの額を払うか
+/// （`smoke:egui` の担当）。**合否も言わない**——出力に添えた諸元を人間が読んで初めて
+/// 「実運用点を再現できたか」が確かめられる（`docs/development-principles.md`
+/// 「判定を持たない道具を層に数えてよい」）。
+///
+/// # 足場ではない
+///
+/// **撤去条件を持たない恒久の計器である。** 実運用点との乖離は #1057 が発見し #1059 が
+/// 比較可能性を優先して据え置き、#1067 が 3 サイクル目として別計器を足す側へ倒した
+/// （`RETROSPECTIVE.md`「計器の実運用点との乖離を、2 サイクル続けて『引き継ぐ』で送った」）。
+///
+/// # 2 軸は対称ではない
+///
+/// `normal_mode` は `Engine::search` が毎回 config から読む live-read ゆえ同じ `Engine` のまま
+/// `update_config` で振れる（`IndexInputs` に含まれないので索引は stale にならない）。
+/// `include_path_env` は材料の作り方が変わるので **`Engine` を建て直す**。
+#[test]
+#[ignore = "計測専用。release + --nocapture で手動実行する"]
+fn measure_path_query_frame_cost_at_operating_point() {
+    let config = Config::load();
+    if config.paths.scan.is_empty() {
+        println!("実 config に scan パスが無いため計測をスキップします。");
+        return;
+    }
+    // 履歴の規模は**必ず添える**。過去の表は `SNOTRA_CONFIG_DIR` を temp へ向けており
+    // `history.bin` もそちらを向くため、履歴が空で測られた疑いがある——空のマップは
+    // hashbrown が `get` の冒頭でハッシュ計算前に短絡するので、履歴照合のコストが丸ごと
+    // 消える。**併記しなければこの要因は次の反復でも未統制のまま残る。**
+    // 件数は既存の pub API から取る（`recent_launches` は高々 `max` 件を返す契約ゆえ、
+    // `usize::MAX` を渡せば global の全件になる）。
+    let history_entries = HistoryStore::load().recent_launches(usize::MAX).len();
+
+    println!("\n=== パスクエリのフレームコスト（実運用点・2×2）===");
+    println!(
+        "  実 config: normal_mode = {:?} / include_path_env = {} / result_limit = {} / \
+         migemo = {} / history_normalization = {:?} / history {history_entries} 件",
+        config.search.normal_mode,
+        config.search.include_path_env,
+        config.search.effective_result_limit(),
+        config.search.migemo_enabled,
+        config.search.history_normalization,
+    );
+
+    for merge_path_env in [true, false] {
+        // **材料は構成ごとに読み直す**——`extend_with_path_entries` は `IndexMaterial` を
+        // 消費する形で木を伸ばすので、使い回すと 2 周目が汚れる。
+        let result =
+            indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
+        let mut material = result.material;
+        let n_before = material.tree().len();
+
+        // **製品の手順をそのまま写す**（出典: `src-tauri/src/main.rs` の索引ロード直後）。
+        // 製品側に共有関数が無い（`indexing.rs::build_index_from_material` は `pub(crate)` かつ
+        // `PrebuiltIndex` を返す）ため写しになる。製品自身も同じ 3 手を 2 か所へ書いている。
+        let merged = if merge_path_env && config.search.include_path_env {
+            let path_entries =
+                indexer::scan_path_env(material.tree(), config.search.show_hidden_system);
+            let n = path_entries.len();
+            material.extend_with_path_entries(path_entries);
+            n
+        } else {
+            0
+        };
+        let n_after = material.tree().len();
+
+        let mut engine = Engine::from_material(material, HistoryStore::load(), config.clone());
+
+        for mode in [SearchModeConfig::Substring, SearchModeConfig::Fuzzy] {
+            let mut cfg = config.clone();
+            cfg.search.normal_mode = mode;
+            engine.update_config(cfg);
+
+            println!(
+                "\n  --- PATH マージ {} （+{merged} 件・木 {n_before} → {n_after}） / \
+                 normal_mode = {mode:?} / sorted_by_path = {} ---",
+                if merge_path_env { "あり" } else { "なし" },
+                engine.sorted_by_path(),
+            );
+            println!(
+                "  query                  results     min      p50      p90      p99      max"
+            );
+            for query in PATH_QUERY_ROWS {
+                let (results, s) = sample_frame_cost(&mut engine, query);
+                println!(
+                    "  {query:<22}{results:>7}{:>8}{:>9}{:>9}{:>9}{:>9}",
+                    s.min, s.p50, s.p90, s.p99, s.max,
+                );
+            }
+        }
+    }
+    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。暖機 {WARMUP} 回のあと {SAMPLES} 標本）");
+}
+
+/// 計測するクエリ。**既存ハーネスと同じ 6 本を同じ順で並べる**（比較可能性）。
+const PATH_QUERY_ROWS: [&str; 6] = [
+    "users",
+    "c:\\",
+    "c:\\users",
+    "c:\\users\\",
+    "\\program files\\",
+    "\\zzz-no-such-path\\",
+];
+
+/// 暖機の回数。
+const WARMUP: usize = 2;
+/// 標本数。**既存ハーネスの 20 では max の帰属に足りない**——#1067 の実測で max が
+/// 18,642〜22,420 µs と 3 回の実行間で 20% 揺れた。max は受け入れ条件に入っている
+/// （2026-08-13 のユーザー決定）ので、p90 / p99 と併せて読めるだけの標本を採る。
+const SAMPLES: usize = 100;
+
+/// 1 クエリぶんの分位点（µs）。**平均は出さない**——1 フレームを落とすかを決めるのは
+/// 中央値と裾であって平均ではない。
+struct FrameSamples {
+    min: u64,
+    p50: u64,
+    p90: u64,
+    p99: u64,
+    max: u64,
+}
+
+/// `engine.search(query)` を暖機のあと [`SAMPLES`] 回叩き、返した件数と分位点を返す。
+fn sample_frame_cost(engine: &mut Engine, query: &str) -> (usize, FrameSamples) {
+    for _ in 0..WARMUP {
+        let _ = engine.search(query);
+    }
+    let mut samples_us = Vec::with_capacity(SAMPLES);
+    let mut results = 0usize;
+    for _ in 0..SAMPLES {
+        let started = Instant::now();
+        let out = engine.search(query);
+        samples_us.push(started.elapsed().as_micros() as u64);
+        results = out.len();
+    }
+    samples_us.sort_unstable();
+    // 分位点は「下から q 割の位置」を最近傍で取る（標本数を変えても意味が動かない形）。
+    let at = |q: f64| samples_us[((samples_us.len() - 1) as f64 * q).round() as usize];
+    (
+        results,
+        FrameSamples {
+            min: samples_us[0],
+            p50: at(0.50),
+            p90: at(0.90),
+            p99: at(0.99),
+            max: samples_us[samples_us.len() - 1],
+        },
+    )
 }
 
 /// `recent_history` の実コスト。**窓を開いた瞬間・クエリ消去時には走らない**（頻度と呼び出し元の正本は `SearchEngine::recent_history` の doc）。**この計測が測るのは「呼ばれたときの 1 回」である。**

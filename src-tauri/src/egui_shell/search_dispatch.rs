@@ -66,15 +66,14 @@ impl SearchDispatch {
 ///
 /// **`armed` だけでは足りない。** 同期実装の頃は `armed == false` が「反映済み」を含意していたが、worker 化（#1004）で trailing 発火の直後は必ず「`armed == false` かつ in-flight あり」になり、含意が壊れた。
 ///
-/// **`armed` を残すのは、最新クエリの要求がまだ出ていない間を覆うためである。** `pending_seq == 0` だが未反映、という状態はバースト継続中に直前の seq が `accept` 済みのフレーム（[`crate::egui_shell::layout::Debouncer::on_input`] は armed を立てるだけで発行せず、要求を出すのは leading だけである）と、空クエリ・`indexing`・送信失敗が [`SearchDispatch::invalidate`] を撃った後に打鍵が armed だけ残した状態で生じる。**この 2 つを名指すのは、「打鍵したフレームの一瞬」と誤読されるのを防ぐためである**——実際にはどちらも最大で debounce の interval ぶん、複数フレームにわたって続く。
+/// **`armed` を残すのは、最新クエリの要求がまだ出ていない間を覆うためである。** `pending_seq == 0` だが未反映、という状態はバースト継続中に直前の seq が `accept` 済みのフレーム（[`crate::egui_shell::layout::Debouncer::on_input`] は armed を立てるだけで発行せず、**打鍵のフレームで**要求を出すのは leading だけである——trailing は [`crate::egui_shell::layout::Debouncer::poll`] 経由で別に出す）と、空クエリ・`indexing`・送信失敗が [`SearchDispatch::invalidate`] を撃った後に打鍵が armed だけ残した状態で生じる。**この 2 つを名指すのは、「打鍵したフレームの一瞬」と誤読されるのを防ぐためである**——どちらも複数フレームにわたって続き、解けるのは trailing が発火するか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval）、`cancel` / [`SearchDispatch::invalidate`] が撃たれたときである。**打鍵が続く限り armed は立ったままなので、持続はバーストの長さで決まる。**
 ///
 /// `pending_seq` を `bool` でなく生値で受けるのは、**sentinel（0 = in-flight なし）の解釈をテストの届く場所へ入れる**ためである（[`SearchDispatch::issue`] が `next_seq += 1` を先に行うので seq は 1 始まり）。
 ///
 /// **#1039 への申し送り**（この述語を型の内側へ移すとき）:
 ///
 /// - **否定形で置いたのは呼び出し点に `!` を出さないためであり、#1039 の issue 本文が想定する肯定形 `is_settled()` とは極性が逆である**（引っ越し時は `!is_unsettled(..)` として吸収する）。
-/// - **`RowsSnapshot::settled`（icon worker のゲート・`!armed`）とは別概念である**——両者は否定の関係に無く、あちらは正しさの述語ではなく「連打中はアイコンを積まない」perf ヒューリスティックである。同じ語なので同一視しないこと。
-/// - `on_enter` を触るなら、flush 判定より前で走る `LauncherController::instant_prefix` の config 読みを [`crate::egui_shell::read_config`] へ寄せる機会である（`engine.lock()` 越しに読んでおり #1032 の規範と同型。毎フレームではなく打鍵・Enter のエッジ駆動ゆえ #1032 の射程外で、本 issue でも触っていない）。
+/// - **[`crate::egui_shell::results_view::RowsSnapshot::settled`]（icon worker のゲート・`!armed`）とは別概念である**——両者は否定の関係に無く、あちらは正しさの述語ではなく「連打中はアイコンを積まない」perf ヒューリスティックである。同じ語なので同一視しないこと。
 pub fn is_unsettled(armed: bool, pending_seq: u64) -> bool {
     armed || pending_seq != 0
 }

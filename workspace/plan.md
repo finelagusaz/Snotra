@@ -144,6 +144,21 @@ if crate::egui_shell::should_flush_on_enter(
   - **Low G**（動機の履歴文 3 か所・⚠️）→ **減らす側で裁定**。`search_state.rs` の履歴文を
     「正本を指す」形へ縮め、正本（`is_unsettled` の doc）と流れの文書（`architecture.md`）の 2 枚に留めた
 - [x] 修正差分に同じ枠組みを再実行する（カテゴリ A + F・`/dry-check` の写し判定・code-reviewer 2 巡目）
+- [x] **2 巡目の指摘（Medium 1 / ⚠️ Low 3）を反映する**——**コードは byte 単位で不変**（レビュア側が
+      `///` / `//!` / `//` 行を除いた差分を機械的に確認し、変わったのは assert メッセージ 1 本のみ）
+  - **Medium 1（訂正文が新しい不正確さを 2 つ持つ）** → 反映。**訂正した当の誤りと同じ向きの誤り**だった:
+    (a) 「最大で debounce の interval ぶん」は**偽の上界**——`last_input_at` が打鍵ごとに更新される
+    （`:1265`）ので `poll` は**最後の**打鍵から測り、打鍵が続く限り上界が無い。数を書き直さず
+    「解ける事象」（trailing 発火 / `cancel` / `invalidate`）を指す形へ替えた。
+    (b) 「要求を出すのは leading だけ」は前提条件なしの全称で 2 段落上と矛盾（trailing も `issue` する）
+    → 「**打鍵のフレームで**」と射程を明示
+  - **⚠️ Low 2（窓の終端）** → 反映。終端は走査完了ではなく `drain_search` の `accept` である旨を追記
+  - **⚠️ Low 3（C の申し送りが消える予定のブロックにある）** → 反映。`instant_prefix` **自身の doc** へ移した
+    （`scaffold-removal-condition-self-reference` と同型——撤去される予定のものに撤去後も要る情報を預けていた）
+  - **Low 4（素のままの名前 2 件）** → 反映。`RowsSnapshot::settled` をリンク化し、`instant_prefix` は
+    移設先で `read_config` をリンク化。`cargo doc` を**キャッシュを潰してから**走らせて着地を実測
+  - **自主的に 1 件削った**——「キーリピートの間隔は interval より短くなりうる」は自分で測っていない
+    環境依存の主張だったので、コードで接地する文だけを残した（1・2 巡目とも同じ型の指摘を受けたため）
 
 ## 不変条件と異常系
 

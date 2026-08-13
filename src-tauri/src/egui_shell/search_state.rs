@@ -1,8 +1,12 @@
 //! egui 検索ウィンドウの純粋状態核（#532 SU3）。query/選択/結果と 2 軸モード導出・遷移を
 //! egui/Win32 非依存で持ち、driver（launcher_controller.rs）から駆動される。ユニットテスト対象。
 
+use std::time::Instant;
+
 use snotra_core::config::OpenerTool;
 use snotra_core::ui_types::SearchResult;
+
+use crate::egui_shell::search_dispatch::{SearchDispatch, Settled};
 
 /// 軸1: モーダルビュースタック頂点の種類。Results/Folder/Tool の 3 段ラダー（Folder は M2 で
 /// 到達可能化・#532 SU3 M2、Tool は SU3.5 で到達可能化・#532 SU3.5）。
@@ -153,15 +157,19 @@ pub struct SearchState {
     /// `results` が総入れ替えされるたびに進む世代（#699。旧 `view.rs` の
     /// `snapshot_generation` をここへ移した）。
     ///
-    /// **この型の中で `self.results` へ代入・`clear` するメソッドは、必ずここを進める。**
-    /// 全称の射程はこの型の内側に限る——外から `results` を差し替える経路は無い
-    /// （フィールドは private で、`set_results` / `enter_tool` / `on_escape` / `reset` だけが触る）。
+    /// **ここを進めるのは [`SearchState::put_rows`] だけであり、そこが in-flight の失効も同時に行う**
+    /// （#1039）。収束の射程と、`enter_tool` の `std::mem::take` がなぜその外にあってよいかは
+    /// [`SearchState::put_rows`] の doc が正本である（ここには写しを置かない）。
     ///
     /// 進めるのは**行の差し替え**だけであって選択の移動ではない。`move_selection` /
     /// `reset_selection` で進めると、消費側（#699 のクリック照合）が全クリックを捨てる。
     /// さらに #714 以降、世代交代フレームは results 窓のスクロールがアニメーションなし
     /// （瞬時）になる——選択移動で進めると ↑↓ のアニメーション維持という要件も壊れる。
     rows_generation: u64,
+    /// 検索要求の同一性（#1004）。**行の差し替えと同じ型に住まわせる**（#1039）——
+    /// 同じ出来事に対する 2 つの義務（世代の前進と in-flight の失効）が
+    /// [`SearchState::put_rows`] の内側で合流する。
+    dispatch: SearchDispatch,
 }
 
 impl SearchState {
@@ -175,6 +183,7 @@ impl SearchState {
             folder_gen: 0,
             tool: None,
             rows_generation: 0,
+            dispatch: SearchDispatch::default(),
         }
     }
 
@@ -197,11 +206,35 @@ impl SearchState {
         &self.results
     }
 
-    /// 結果を差し替える。選択は範囲内へクランプ（空なら 0）。世代を進める（#699）。
-    pub fn set_results(&mut self, results: Vec<SearchResult>) {
-        self.results = results;
-        self.selected = clamp_selected(self.results.len(), self.selected);
+    /// **行の差し替えの単一チョークポイント**（#1039）。`results` の代入・`selected` のクランプ・
+    /// 世代の前進（#699）・in-flight の失効を必ず同時に行う。
+    ///
+    /// **同じ出来事に対する 2 つの義務をここへ合流させたのが #1039 である**——同期で行を差し替えた
+    /// 以上、飛んでいる worker の結果は必ず古い。呼び出し側が [`SearchDispatch::invalidate`] を
+    /// 書く規約だった頃は 11 箇所の手書きと 3 箇所の漏れがあった。
+    ///
+    /// **ここで `view_kind()` を読んではならない**——読ませると経路ごとに意味が変わる。呼ぶ側は
+    /// 既に自分がどの遷移の途中かを知っている（`enter_tool` は `self.tool` を `Some` にした後で
+    /// 呼ぶ）。
+    ///
+    /// **`results` を差し替える経路はこのメソッドに収束する。** `enter_tool` の
+    /// `std::mem::take(&mut self.results)` だけは外にあるが、それは frame への**退避**であって
+    /// 差し替えではなく、直後に必ずここを通る（take が空 Vec を残すので代入と衝突しない）。
+    ///
+    /// 却下した代替案（公開 `apply_rows(RowOrigin, ..)` など）は
+    /// `docs/adr/ADR-row-replacement-choke-point.md` が正本。
+    fn put_rows(&mut self, rows: Vec<SearchResult>, next_selected: usize) {
+        self.results = rows;
+        self.selected = clamp_selected(self.results.len(), next_selected);
         self.rows_generation += 1;
+        self.dispatch.invalidate();
+    }
+
+    /// 結果を差し替える。選択は範囲内へクランプ（空なら 0）。世代を進め、in-flight を失効させる
+    /// （どちらも [`SearchState::put_rows`] が行う）。
+    pub fn set_results(&mut self, results: Vec<SearchResult>) {
+        let keep = self.selected;
+        self.put_rows(results, keep);
     }
 
     pub fn selected(&self) -> usize {
@@ -242,6 +275,16 @@ impl SearchState {
     }
 
     /// 通常検索 → folder 突入。展開前状態を frame に退避し gen を進める。token を返す。
+    ///
+    /// **返るのは folder token であって dispatch seq ではない**——照合先は
+    /// [`SearchState::accept_folder_result`] であり、[`SearchState::issue_search`] が返す seq
+    /// （照合先は [`SearchState::accept_worker_rows`]）とは別の量である。**取り違えても型・テスト・
+    /// smoke は通る**（どちらも `u64`）。newtype を採らないのは、取り違えが「folder の行が永久に
+    /// 出ない」という目に見える形で現れるためである（受容する残余・#1039）。
+    ///
+    /// **行は差し替えない**（frame へ退避するだけ）ので [`SearchState::put_rows`] を通らず、
+    /// 世代も in-flight も動かさない。**Folder ビュー中の遅着 worker 結果を落とすのは
+    /// [`SearchState::accept_worker_rows`] の view ガードである。**
     pub fn enter_folder(&mut self, dir: String) -> u64 {
         self.folder = Some(FolderFrame {
             restore_query: self.query.clone(),
@@ -256,6 +299,9 @@ impl SearchState {
     }
 
     /// folder 内で親/子へ遷移（frame の current_dir を書き換え・push しない）。token を返す。
+    ///
+    /// **これも folder token であって dispatch seq ではない**（区別の理由は
+    /// [`SearchState::enter_folder`] の doc が正本）。
     pub fn navigate_folder(&mut self, dir: String) -> u64 {
         if let Some(f) = self.folder.as_mut() {
             f.current_dir = dir;
@@ -301,7 +347,9 @@ impl SearchState {
         self.folder_gen
     }
 
-    /// 遅延到着したナビ結果を受理してよいか（tool 非表示 ∧ token 一致 ∧ folder 中）。
+    /// 遅延到着した**フォルダ列挙**の結果を受理してよいか（tool 非表示 ∧ token 一致 ∧ folder 中）。
+    /// **worker の検索結果は [`SearchState::accept_worker_rows`] が別に裁く**——`token` と `seq` は
+    /// 別の量である（[`SearchState::enter_folder`] の doc）。
     /// tool 中は §18.5「検索結果が上書きされない」ため受理しない（driver は破棄でなく
     /// 保留せず捨てる——escape で folder へ戻れば次の打鍵/ナビが再ロードする）。
     pub fn accept_folder_result(&self, token: u64) -> bool {
@@ -328,6 +376,8 @@ impl SearchState {
             })
             .collect();
         self.tool = Some(ToolFrame {
+            // 退避（`std::mem::take`）は `put_rows` より前に来る——take が空 Vec を残すので
+            // 下の代入と衝突しない。
             restore_results: std::mem::take(&mut self.results),
             restore_selected: self.selected,
             target_path,
@@ -336,9 +386,9 @@ impl SearchState {
             launch_query: self.query.clone(),
             saved_folder_filter: self.folder_filter.clone(),
         });
-        self.results = rows;
-        self.selected = 0;
-        self.rows_generation += 1; // ツール行への総入れ替え（#699）
+        // ツール行への総入れ替え（#699）。`self.tool` を `Some` にした**後**に呼ぶ——
+        // 遅着した worker 結果はこの失効で落ちる（#1039 が閉じた漏れの 1 つ）。
+        self.put_rows(rows, 0);
     }
 
     /// driver（`shift_activate` / `execute_tool_selected`）が読む（#532 SU3.5 Task 3）。
@@ -357,22 +407,40 @@ impl SearchState {
 
     /// Escape ラダー（M2）: folder 中は展開前状態へ復帰、top-level は Hide。
     /// folder 離脱時は folder_gen を進めて遅延到着した旧ナビ結果を無効化する。
+    ///
+    /// **受容する残余（#1039）: folder を往復すると、[`SearchState::is_unsettled`] が自分の doc の意味
+    /// （「最終クエリの結果がまだ行へ反映されていないか」）に反して偽を返す。** 既知の状態はこれ 1 つである。
+    ///
+    /// 並び: `→` / `←` で folder へ入る経路（`on_nav_keys` の 2 箇所）は `on_enter` を通らないので #631 の
+    /// flush が走らず、`enter_folder` は行を差し替えない（[`SearchState::put_rows`] を通らない）ので
+    /// in-flight が残る。その結果が folder 中に届くと [`SearchState::accept_worker_rows`] の view ガードが
+    /// 捨て、`accept` が pending を take するので `pending_seq` は 0 になる。Escape で復帰した行は
+    /// **展開前の行**——復元した query の最終結果ではない——のまま `armed == false ∧ pending == 0` が
+    /// 成立し、直後の Enter に flush が掛からない。**#1039 以前は「結果が Escape の後に届けば Results
+    /// ビューで採られて行が揃う」偶然の救いがあり、ここでの失効がそれを閉じた**（閉じること自体が
+    /// 受け入れ条件である——遅着結果が復帰行を上書きしてはならない）。
+    ///
+    /// **それでも再検索を撃たないのは、費用が並びの稀さと害に見合わないからである。** Escape のたびに
+    /// 同期 `engine.search` をフレームに乗せることになり、そちらは folder を使う全ユーザーが毎回払う。
+    /// **「表示している行と起動する行が一致するから #631 とは別物だ」とは書けない**——#631 の失敗様式
+    /// （`on_enter` のコメントが定義する「leading 時点の結果や連打前のクエリの結果で起動しうる」）でも
+    /// 両者は一致しており、その差は 2 つを区別しない。区別するのは**到達の仕方**である: ここへ来るには
+    /// 可視の一覧で `→` / `←` を押す必要があり、復帰後もその一覧と選択がそのまま戻る。復帰後に 1 文字
+    /// でも打てば `run_search` が走って解ける。
     pub fn on_escape(&mut self) -> EscapeOutcome {
         if let Some(t) = self.tool.take() {
             // query は復元しない（tool 中は入力無効で不変・ToolFrame doc 参照）
-            self.results = t.restore_results;
-            self.selected = clamp_selected(self.results.len(), t.restore_selected);
             self.folder_filter = t.saved_folder_filter;
-            self.rows_generation += 1; // 退避行への総入れ替え（#699）
+            // 退避行への総入れ替え（#699）＋ in-flight の失効（#1039）
+            self.put_rows(t.restore_results, t.restore_selected);
             return EscapeOutcome::RestoredFromTool;
         }
         if let Some(f) = self.folder.take() {
             self.query = f.restore_query;
-            self.results = f.restore_results;
-            self.selected = clamp_selected(self.results.len(), f.restore_selected);
             self.folder_filter.clear();
             self.folder_gen += 1; // 離脱経路でも失効
-            self.rows_generation += 1; // 退避行への総入れ替え（#699）
+            // 退避行への総入れ替え（#699）＋ in-flight の失効（#1039）
+            self.put_rows(f.restore_results, f.restore_selected);
             EscapeOutcome::RestoredSearch
         } else {
             // Hide 経路は results を触らないので世代も進めない
@@ -388,13 +456,117 @@ impl SearchState {
     /// （§19.7「ホットキーによる再表示でインスタントコマンドモードはリセットされる」の実体）。
     pub fn reset(&mut self) {
         self.query.clear();
-        self.results.clear();
-        self.selected = 0;
         self.folder = None;
         self.folder_filter.clear();
         self.folder_gen += 1;
         self.tool = None;
-        self.rows_generation += 1; // 空行への総入れ替え（#699）——hide を跨いだ stale クリックはこれで失効する
+        // 空行への総入れ替え（#699）——hide を跨いだ stale クリックはこれで失効する。
+        // hide を跨いだ in-flight もここで失効する（#1039。以前は呼び出し側の
+        // `consume_reset_pending` が別に撃っていた）。
+        // 旧実装の `results.clear()` と違い確保を解放するが、**その確保には受益者が最初から
+        // 居なかった**——次に行が入るのは `put_rows` の `self.results = rows` で、Vec ごと
+        // 置き換えるため保っていた容量はそこで必ず捨てられる。挙動差は無い。
+        self.put_rows(Vec::new(), 0);
+    }
+
+    /// 新しい検索要求へ seq を振る（controller が worker へ送る値）。
+    ///
+    /// **これは dispatch seq であって folder token ではない**——[`SearchState::enter_folder`] /
+    /// [`SearchState::navigate_folder`] が返す `u64` は別の量で、消費者も
+    /// [`SearchState::accept_folder_result`] と別である。取り違えても型は通る（受容する残余）。
+    pub fn issue_search(&mut self, key_at: Instant, now: Instant) -> u64 {
+        self.dispatch.issue(key_at, now)
+    }
+
+    /// worker の結果を採り込む。**seq が現 pending と一致し、かつ Results ビューにいるときだけ**
+    /// 行を差し替える（#1004 / #1039）。
+    ///
+    /// **順序は `accept` が先である。** view ガードを前に置くと、Folder ビューで届いた結果が
+    /// pending を残したまま捨てられ、生成 1 : 破棄 0 の終端ができる。seq 不一致のときだけ pending を
+    /// 保つ——より新しい要求がまだ飛んでいるからである。
+    ///
+    /// **`None` の理由は 2 つあり、ここでは区別しない**（返り値は同じ）。呼び出し側が診断の
+    /// ために区別したいなら、呼ぶ**前**に [`SearchState::pending_seq`] を読んで
+    /// `pending_seq() == seq` かを控えておく——真なら view ガード、偽なら追い越しか同期差し替えである。
+    ///
+    /// **view ガードが production で発火するのは Folder ビューだけである。** Tool 側は
+    /// [`SearchState::enter_tool`] が [`SearchState::put_rows`] を通って in-flight を失効させ、
+    /// Tool ビュー中は新しい要求も出ない（`run_search_with` の `ViewKind::Tool` 腕が no-op）ため、
+    /// `accept` が成功したうえで `view_kind() == Tool` になる並びが存在しない。**Tool 枝は
+    /// 防御として残してあるだけである**——`enter_tool` が `put_rows` を通らなくなれば生きる。
+    #[must_use = "落とすと計時 trace（egui_search:settled）の since_key_us / since_dispatch_us を導く材料が消え、打鍵起点・dispatch 起点の経過が観測できなくなる（#1004）"]
+    pub fn accept_worker_rows(
+        &mut self,
+        seq: u64,
+        rows: Vec<SearchResult>,
+        now: Instant,
+    ) -> Option<Settled> {
+        let settled = self.dispatch.accept(seq, now)?;
+        if self.view_kind() != ViewKind::Results {
+            // 遷移前の要求である。`accept` が take 済みゆえ、ここで既に失効している。
+            return None;
+        }
+        let keep = self.selected;
+        // ここでの `invalidate`（`put_rows` の内側）は no-op である——`accept` が take 済み。
+        self.put_rows(rows, keep);
+        Some(settled)
+    }
+
+    /// 現在 in-flight の検索要求の seq（無ければ 0）。**消費者は trace の payload と、その
+    /// payload の理由づけ（`None` の 2 種の切り分け）だけである。**
+    pub fn pending_seq(&self) -> u64 {
+        self.dispatch.pending_seq()
+    }
+
+    /// **最終クエリの結果がまだ行へ反映されていないか**（#1038。#1039 で `search_dispatch.rs` の
+    /// 自由関数からここへ移設）。[`should_flush_on_enter`] の第 3 引数がこれである。
+    ///
+    /// **`armed` だけでは足りない。** 同期実装の頃は `armed == false` が「反映済み」を含意して
+    /// いたが、worker 化（#1004）で trailing 発火の直後は必ず「`armed == false` かつ in-flight
+    /// あり」になり、含意が壊れた。
+    ///
+    /// **`armed` を残すのは、最新クエリの要求がまだ出ていない間を覆うためである。**
+    /// `pending_seq == 0` だが未反映、という状態はバースト継続中に直前の seq が `accept` 済みの
+    /// フレーム（[`crate::egui_shell::layout::Debouncer::on_input`] は armed を立てるだけで発行せず、
+    /// **打鍵のフレームで**要求を出すのは leading だけである——trailing は
+    /// [`crate::egui_shell::layout::Debouncer::poll`] 経由で別に出す）と、空クエリ・`indexing`・
+    /// 送信失敗が行を同期で差し替えた（＝ [`SearchState::put_rows`] が in-flight を失効させた）後に
+    /// 打鍵が armed だけ残した状態で生じる。**これらを名指すのは、「打鍵したフレームの一瞬」と
+    /// 誤読されるのを防ぐためである**——どちらも複数フレームにわたって続き、解けるのは trailing が
+    /// 発火するか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval）、
+    /// `cancel` か行の差し替えが起きたときである。**打鍵が続く限り armed は立ったままなので、
+    /// 持続はバーストの長さで決まる。**
+    ///
+    /// **`armed` は引数で受ける。** [`crate::egui_shell::layout::Debouncer`] は
+    /// [`crate::egui_shell::launcher_controller::LauncherController`] のフィールドであり、純粋核の
+    /// この型からは見えない。**ゆえにこの合成は機構ではなく規約のままである**——正しい `armed` を
+    /// 渡すのは呼び出し側の責務で、型が構造的に所有しているのは in-flight の側（`pending_seq`）だけ
+    /// である。#1039 が規約から機構へ移したのも in-flight の失効に限る。
+    ///
+    /// **armed が下りる経路はメソッドだけではない。**
+    /// [`crate::egui_shell::launcher_controller::LauncherController::consume_reset_pending`] は show の
+    /// たびに [`crate::egui_shell::layout::Debouncer`] を丸ごと作り直すため、`poll` も `cancel` も
+    /// 通らずに armed が落ちる（[`crate::egui_shell::layout::Debouncer::new`] は `armed: false` で
+    /// 作る）。**`armed` 側の状態をこの型へ移すなら、reset 経路で落とす責務も一緒に移ること**——
+    /// いま取り残しが起きないのは `Debouncer` ごと捨てているからであり、フィールドだけを移した瞬間に
+    /// その救いは消える。対で動く `last_input_at`（同じ `impl` のフィールド）は
+    /// `consume_reset_pending` が触らないので show を跨いで古いまま残っており、**今それが無害なのは
+    /// `armed` が false だからである**——`armed` を移して reset を忘れると、show 直後の最初の
+    /// フレームで `poll` が「隠れていた時間」を経過として読み、その場で trailing を撃つ。**同型の
+    /// 残余（show を跨ぐ状態を足して `consume_reset_pending` の一覧へ入れ忘れる形。検知手段が無いこと
+    /// まで）と、その解き方の先例は [`crate::egui_shell::lifecycle::BlurGrace::reset`] の doc が正本で
+    /// ある**（#745。`*self = Self::default()` を `consume_reset_pending` から呼ぶ形で、フィールド代入
+    /// ではなくメソッドで丸ごと畳む）。
+    ///
+    /// **この述語が自分の意味に反して偽を返す既知の状態が 1 つある**——folder を往復した直後である
+    /// （受容する残余。並びと、再検索を撃たない理由は [`SearchState::on_escape`] の doc が正本）。
+    ///
+    /// **否定形で置いたのは呼び出し点に `!` を出さないためである**（#1039 の issue 本文が想定する
+    /// 肯定形 `is_settled()` とは極性が逆。極性を反転すると
+    /// [`crate::egui_shell::results_view::RowsSnapshot::input_idle`] の doc が持つ導出——
+    /// 食い違うのは `armed == false ∧ pending != 0` のとき——を式ごと書き直す必要が生じる）。
+    pub fn is_unsettled(&self, armed: bool) -> bool {
+        armed || self.dispatch.pending_seq() != 0
     }
 }
 
@@ -411,9 +583,9 @@ pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
 
 /// Enter 時の flush 要否（#631 flush-on-Enter・SolidJS flushPendingRefresh 同型）。
 ///
-/// **`unsettled` は「最終クエリの結果がまだ行へ反映されていないか」である**（#1038）。その中身と経緯は [`crate::egui_shell::search_dispatch::is_unsettled`] の doc が正本である。
+/// **`unsettled` は「最終クエリの結果がまだ行へ反映されていないか」である**（#1038）。その中身と経緯は [`SearchState::is_unsettled`] の doc が正本である（#1039 で `search_dispatch.rs` の自由関数から移設）。
 ///
-/// unsettled になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel + invalidate 済み）だが、将来の経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
+/// unsettled になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel + 同期で行を差し替え済み＝[`SearchState::put_rows`] が in-flight を失効させている）だが、将来の経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
 pub fn should_flush_on_enter(view_kind: ViewKind, is_plain: bool, unsettled: bool) -> bool {
     view_kind == ViewKind::Results && is_plain && unsettled
 }
@@ -487,6 +659,8 @@ pub fn needs_index_refresh(last_seen: u64, current: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -676,6 +850,260 @@ mod tests {
         s.move_selection(2);
         s.reset_selection();
         assert_eq!(s.rows_generation(), g, "選択の移動では進まないこと");
+    }
+
+    // ---- 行の差し替えと in-flight の失効（#1039）----
+    //
+    // **どのテストも「`None` を返すこと」と「行が変わっていないこと」を対で assert する。**
+    // 前者だけでは、seq が不一致でも `rows` を代入してしまう実装ミスが素通りする
+    // （`/plan-review` Step 2b の U-5）。
+
+    /// 遅着した worker 結果の材料。`accept_worker_rows` へ渡す行は必ずこれを使い、
+    /// 「上書きされなかったこと」を行の中身で見分けられるようにする。
+    fn late_rows() -> Vec<SearchResult> {
+        vec![res("late-from-worker")]
+    }
+
+    fn names(s: &SearchState) -> Vec<String> {
+        s.results().iter().map(|r| r.name.clone()).collect()
+    }
+
+    #[test]
+    fn late_worker_rows_do_not_overwrite_tool_rows() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a")]);
+        let seq = s.issue_search(base, base);
+        s.enter_tool("C:/t.txt".into(), false, make_tools());
+        let before = names(&s);
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base).is_none(),
+            "tool 突入で in-flight は失効している（#1039 が閉じた漏れ）"
+        );
+        assert_eq!(names(&s), before, "ツール行が上書きされていないこと");
+    }
+
+    #[test]
+    fn late_worker_rows_do_not_overwrite_restored_rows_after_escape() {
+        let base = Instant::now();
+        // (1) tool 復帰の枝
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b")]);
+        s.enter_tool("C:/t.txt".into(), false, make_tools());
+        let seq = s.issue_search(base, base);
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);
+        let before = names(&s);
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base).is_none(),
+            "tool からの復帰で in-flight は失効している"
+        );
+        assert_eq!(names(&s), before, "復帰した行が上書きされていないこと");
+
+        // (2) folder 復帰の枝。片方だけ直すと穴が残る。
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b")]);
+        s.enter_folder("C:/dir".into());
+        s.set_results(vec![res("in-dir")]);
+        let seq = s.issue_search(base, base);
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        let before = names(&s);
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base).is_none(),
+            "folder からの復帰で in-flight は失効している"
+        );
+        assert_eq!(names(&s), before, "展開前の行が上書きされていないこと");
+    }
+
+    /// view 種別ガード（#1039 決定 3）。`enter_folder` は行を差し替えないので `put_rows` を
+    /// 通らない——**失効させるのは採り込み側のガードである**。
+    #[test]
+    fn late_worker_rows_are_dropped_in_folder_view() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a")]);
+        let seq = s.issue_search(base, base);
+        s.enter_folder("C:/dir".into());
+        let before = names(&s);
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base).is_none(),
+            "Folder ビュー中は遅着 worker 結果を採らない"
+        );
+        assert_eq!(names(&s), before, "folder の行が上書きされていないこと");
+    }
+
+    /// `navigate_folder` の窓も同じガードが閉じる（`enter_folder` と別の呼び出し点である）。
+    #[test]
+    fn late_worker_rows_are_dropped_after_navigate_folder() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        s.enter_folder("C:/dir".into());
+        s.set_results(vec![res("in-dir")]);
+        let seq = s.issue_search(base, base);
+        s.navigate_folder("C:/dir/sub".into());
+        let before = names(&s);
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base).is_none(),
+            "ナビ後も Folder ビューゆえ採らない"
+        );
+        assert_eq!(names(&s), before, "行が上書きされていないこと");
+    }
+
+    #[test]
+    fn late_worker_rows_do_not_survive_reset() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a")]);
+        let seq = s.issue_search(base, base);
+        s.reset();
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base).is_none(),
+            "hide を跨いだ in-flight は show 後の行を汚さない"
+        );
+        assert!(
+            s.results().is_empty(),
+            "reset 後の空行が上書きされていないこと"
+        );
+    }
+
+    /// `stale_result_is_dropped_after_synchronous_replacement`（`search_dispatch.rs`）の
+    /// `SearchState` 版。**同期で差し替えた以上、飛んでいる結果は必ず古い。**
+    #[test]
+    fn sync_replacement_invalidates_in_flight() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        // `c:\u` を打って worker が走り出した
+        let seq = s.issue_search(base, base);
+        // クエリを空にした → 同期でクリアする出所が `put_rows` を通る
+        s.set_results(Vec::new());
+        let before = names(&s);
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base + Duration::from_millis(20))
+                .is_none(),
+            "空クエリの下に古い行が生え直してはならない"
+        );
+        assert_eq!(names(&s), before, "空行が上書きされていないこと");
+    }
+
+    /// Results ビューで seq が一致する結果は**採る**。上の 6 件（採らない側）と対で意味を持つ
+    /// ——ガードを広げすぎて全部落とす実装が素通りしないようにする。
+    #[test]
+    fn matching_worker_rows_are_accepted_in_results_view() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        s.set_results(vec![res("old")]);
+        let g = s.rows_generation();
+        let seq = s.issue_search(base, base);
+        assert!(
+            s.accept_worker_rows(seq, late_rows(), base).is_some(),
+            "Results ビューで seq が一致すれば採る"
+        );
+        assert_eq!(names(&s), vec!["late-from-worker".to_string()]);
+        assert_eq!(s.rows_generation(), g + 1, "採り込みも行の差し替えである");
+    }
+
+    /// 移設（`search_dispatch.rs` → ここ・#1039）。真理値表 4 件 + `should_flush_on_enter`
+    /// との合成を固定する。**`armed` の disjunct を落とす変異でここが落ちる**（#1038 の明示要求）。
+    #[test]
+    fn unsettled_covers_in_flight_after_trailing_fired() {
+        let base = Instant::now();
+        // 予約も in-flight も無い
+        let mut s = SearchState::new();
+        assert!(
+            !s.is_unsettled(false),
+            "予約も in-flight も無ければ反映済み"
+        );
+        assert!(
+            s.is_unsettled(true),
+            "最新クエリの要求がまだ出ていない（バースト継続中・同期差し替え直後の打鍵）"
+        );
+        // in-flight あり。**`SearchState` を実際に遷移させて作る**（リテラルの seq を渡さない）。
+        let _ = s.issue_search(base, base);
+        assert!(
+            s.is_unsettled(false),
+            "trailing 発火の直後（armed == false かつ in-flight あり）が #1038 の欠陥そのものである"
+        );
+        assert!(s.is_unsettled(true), "両方立っていても未反映");
+        // #1038 の受け入れ 1 を逐語で写す（`should_flush_on_enter` との合成まで固定する）。
+        assert!(should_flush_on_enter(
+            ViewKind::Results,
+            true,
+            s.is_unsettled(false),
+        ));
+    }
+
+    /// 移設（`unsettled_is_grounded_on_real_dispatch`・#1039）。sentinel（0 = in-flight なし）を
+    /// リテラルで書かず状態遷移から作る——判定の入力が出力側へすり替わる不動点化を避けるため、
+    /// `armed` は false 固定で渡す。
+    #[test]
+    fn unsettled_is_grounded_on_real_dispatch() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        assert!(!s.is_unsettled(false), "発行前は反映済み");
+        let seq = s.issue_search(base, base);
+        assert!(s.is_unsettled(false), "worker へ出した直後は未反映");
+        assert!(s.accept_worker_rows(seq, late_rows(), base).is_some());
+        assert!(!s.is_unsettled(false), "採り込めば反映済みへ戻る");
+        let _ = s.issue_search(base, base);
+        s.set_results(Vec::new());
+        assert!(!s.is_unsettled(false), "同期で差し替えた後も反映済みである");
+    }
+
+    /// 計時 trace（`egui_search:settled` の `since_key_us` / `since_dispatch_us`）の材料が
+    /// 移設で変わっていないこと。`search_dispatch.rs` の `accepts_only_the_latest_seq` と
+    /// 同じ値を返す（**移設は計器を壊してはならない**）。
+    #[test]
+    fn settled_timing_survives_the_move() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        let first = s.issue_search(base, base + Duration::from_millis(50));
+        let second = s.issue_search(
+            base + Duration::from_millis(60),
+            base + Duration::from_millis(110),
+        );
+        assert!(second > first, "seq は単調に増える");
+        assert!(
+            s.accept_worker_rows(first, late_rows(), base + Duration::from_millis(120))
+                .is_none(),
+            "追い越された結果は採らない"
+        );
+        let settled = s
+            .accept_worker_rows(second, late_rows(), base + Duration::from_millis(130))
+            .expect("最新の seq は採る");
+        assert_eq!(settled.since_key, Duration::from_millis(70), "打鍵起点");
+        assert_eq!(
+            settled.since_dispatch,
+            Duration::from_millis(20),
+            "dispatch 起点"
+        );
+    }
+
+    /// `None` の 2 種（追い越し / view 不一致）を呼び出し側が切り分ける手順を固定する
+    /// ——`drain_search` の `egui_search:dropped` が `"reason"` をこれで導く。**`accept_worker_rows`
+    /// を呼ぶ前**に読むことが条件である（採り込みが pending を take するため）。
+    #[test]
+    fn pending_seq_separates_the_two_drop_reasons() {
+        let base = Instant::now();
+        // (1) view 不一致: 呼ぶ前の pending は当の seq と一致する
+        let mut s = SearchState::new();
+        let seq = s.issue_search(base, base);
+        s.enter_folder("C:/dir".into());
+        assert_eq!(s.pending_seq(), seq, "view 不一致では pending が生きている");
+        assert!(s.accept_worker_rows(seq, late_rows(), base).is_none());
+
+        // (2) 追い越し: 新しい要求が pending を上書きしている
+        let mut s = SearchState::new();
+        let old = s.issue_search(base, base);
+        let new = s.issue_search(base, base);
+        assert_ne!(s.pending_seq(), old, "追い越された seq は pending でない");
+        assert_eq!(s.pending_seq(), new);
+        assert!(s.accept_worker_rows(old, late_rows(), base).is_none());
+
+        // (3) 同期差し替えによる失効も「追い越し」側（pending == 0）へ落ちる
+        let mut s = SearchState::new();
+        let seq = s.issue_search(base, base);
+        s.set_results(Vec::new());
+        assert_eq!(s.pending_seq(), 0, "同期差し替えで失効している");
+        assert!(s.accept_worker_rows(seq, late_rows(), base).is_none());
     }
 
     #[test]

@@ -130,8 +130,6 @@ pub(super) struct LauncherController {
     notice: crate::egui_shell::NoticeSlot,
     /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
     notice_base: Instant,
-    /// 検索要求の同一性（#1004）。PR 1 では同期経路の計器、PR 2 では worker 結果の裁定に使う。
-    dispatch: crate::egui_shell::SearchDispatch,
     /// Plain 検索の要求を worker へ送る送信端（#1004 PR 2）。
     search_tx: Sender<crate::egui_shell::SearchRequest>,
     /// worker からの結果受信端。`drain_search` が毎フレーム吸い出す（#1004 PR 2）。
@@ -157,7 +155,6 @@ impl LauncherController {
             last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
             notice_base: Instant::now(),
-            dispatch: Default::default(),
             search_tx,
             search_rx,
         }
@@ -269,8 +266,7 @@ impl LauncherController {
             rx,
             tag,
         });
-        // 突入時に in-flight を失効させる——しないと launching 中に worker の遅着結果が届き、隠れているはずの results 窓が drain_search 経由で生え直す（spec §4.5）。
-        self.dispatch.invalidate();
+        // 突入時のクリアが in-flight も失効させる——しないと launching 中に worker の遅着結果が届き、隠れているはずの results 窓が drain_search 経由で生え直す（#1039 で `SearchState` の内側へ入った）。
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
         let app = self.app_handle.clone();
@@ -430,7 +426,6 @@ impl LauncherController {
     /// 再発させないための集約（/code-review #637 finding 6）。
     fn clear_search(&mut self) {
         self.state.set_query(String::new());
-        self.dispatch.invalidate(); // 同期でクエリごと差し替える＝in-flight は古い（spec §4.5）
         self.state.set_results(Vec::new());
         self.search_debounce.cancel();
         self.instant_rows_query = None;
@@ -757,20 +752,19 @@ impl LauncherController {
     }
 
     fn run_search_with(&mut self, prefix: &str) {
-        // 世代の加算はここには無い（#699）——`SearchState::set_results` が持つ。この関数は
-        // folder cache 未着などで `set_results` を呼ばずに返る経路があり、ここで無条件に
-        // 進めると「行は変わっていないのに世代だけ進む」空撃ちになる。世代の意味を
-        // 「行が差し替わった」と一致させるため、加算は差し替えと同じ場所に置く。
+        // 世代の加算も in-flight の失効もここには無い（#699 / #1039）——`SearchState` の
+        // 行差し替え点が両方を持つ。この関数は folder cache 未着などで `set_results` を
+        // 呼ばずに返る経路があり、ここで無条件に進めると「行は変わっていないのに世代だけ
+        // 進む」空撃ちになる。世代の意味を「行が差し替わった」と一致させるため、加算は
+        // 差し替えと同じ場所に置く。
         // 来歴は行と一体で更新する（Instant 分岐だけが Some を立て直す・finding 0）。
         self.instant_rows_query = None;
         match self.state.view_kind() {
             ViewKind::Folder => {
                 if let Some(err) = &self.folder_error {
-                    self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                     self.state.set_results(err.clone()); // 列挙失敗行（filter 非適用）
                 } else if let Some((ctx, sorted)) = &self.folder_cache {
                     let filtered = ctx.filter_sorted(sorted, self.state.folder_filter());
-                    self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                     self.state.set_results(filtered);
                 }
                 // cache 未着（ロード中）は前フレーム結果を保持（フリット無し・set しない）
@@ -782,13 +776,12 @@ impl LauncherController {
                 match self.state.interp(prefix) {
                     QueryIntent::Plain => {
                         if self.state.query().trim().is_empty() || self.indexing() {
-                            // 空クエリと構築中は**同期でクリアする**（worker を経由させると消した文字が 1 フレーム残る）。同期で差し替える以上、in-flight は失効させる（spec の §4.5）。
-                            self.dispatch.invalidate();
+                            // 空クエリと構築中は**同期でクリアする**（worker を経由させると消した文字が 1 フレーム残る）。同期で差し替える以上 in-flight は失効するが、それは `SearchState` の内側で起きる（#1039）。
                             self.state.set_results(Vec::new());
                             return;
                         }
                         let query = self.state.query().to_string();
-                        let seq = self.dispatch.issue(self.last_input_at, Instant::now());
+                        let seq = self.state.issue_search(self.last_input_at, Instant::now());
                         // 送信できたなら**結果が届くまで前の行を保つ**（folder cache 未着枝と同じ扱い）。
                         if self
                             .search_tx
@@ -802,7 +795,6 @@ impl LauncherController {
                             // 保持が恒久化し、debounce が armed でない Enter が旧クエリの項目を
                             // 起動する（`on_enter` の flush が「どちらの枝でもクリアする」理由と
                             // 同じ危険である）。上の空クエリ枝と同じ処置へ合流させる。
-                            self.dispatch.invalidate();
                             self.state.set_results(Vec::new());
                         }
                     }
@@ -834,7 +826,6 @@ impl LauncherController {
                         // 来歴 snapshot: この行集合が instant 候補であることと、その時点の
                         // instant_query を一体で記録する（activate_or_execute が参照・finding 0）。
                         self.instant_rows_query = Some(instant_query);
-                        self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                         self.state.set_results(rows);
                     }
                     QueryIntent::Command => {
@@ -852,10 +843,8 @@ impl LauncherController {
                                 let engine = state.engine.lock().unwrap();
                                 engine.recent_history()
                             };
-                            self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                             self.state.set_results(rows);
                         } else {
-                            self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                             self.state.set_results(Vec::new());
                         }
                     }
@@ -864,7 +853,19 @@ impl LauncherController {
         }
     }
 
-    /// worker の結果を採り込む（#1004）。**seq が現 pending と一致するときだけ行を差し替える**——追い越された結果は捨てる。世代は `set_results` が進める（#699 は無傷）。
+    /// worker の結果を採り込む（#1004）。**判定は `SearchState` の内側にある**（#1039）——seq が現
+    /// pending と一致し、かつ Results ビューにいるときだけ行が差し替わり、世代と in-flight の失効も
+    /// そこで同時に起きる（#699 は無傷）。
+    ///
+    /// **捨てた理由（`egui_search:dropped` の `"reason"`）は、採り込みを呼ぶ前の `pending_seq` から
+    /// 導く**（`SearchState::accept_worker_rows` は 2 種の `None` を区別しない）。`pending_seq() == seq`
+    /// のまま `None` が返るのは view ガードの発火だけであり、**ガードの効きを実機で観測しているのは
+    /// この区別である**——区別しないと、新設したガードが一度も効いていなくても件数からは分からない。
+    ///
+    /// **この 2 行の順序を固定する検知器は無い。** 入れ替えると view のケースでも `accept` が既に
+    /// pending を take しているため `was_current` が常に偽になり、`reason` が恒久的に `"seq"` へ化ける
+    /// ——**この reason を足した理由そのものが静かに失われる**。`SearchState` 側の
+    /// `pending_seq_separates_the_two_drop_reasons` は純粋核の内側を測るので、ここの入れ替えでは落ちない。
     pub(super) fn drain_search(&mut self) {
         while let Ok(crate::egui_shell::SearchMsg::Done {
             seq,
@@ -873,22 +874,28 @@ impl LauncherController {
         }) = self.search_rx.try_recv()
         {
             let now = Instant::now();
-            let Some(settled) = self.dispatch.accept(seq, now) else {
+            // **採り込みより前に読む**——`accept` が pending を take するため、後では区別できない。
+            let was_current = self.state.pending_seq() == seq;
+            let Some(settled) = self.state.accept_worker_rows(seq, results, now) else {
                 crate::trace::trace(
                     "egui_search:dropped",
                     serde_json::json!({
                         "dispatch_seq": seq,
-                        "pending_seq": self.dispatch.pending_seq(),
+                        "pending_seq": self.state.pending_seq(),
+                        // "view" = Folder ビューへ遷移していた（#1039 のガード）。ガードは Tool も
+                        //          弾くが、そちらは `enter_tool` が in-flight を失効させるため
+                        //          production では到達しない（`accept_worker_rows` の doc）。
+                        // "seq"  = 追い越された、または同期で差し替えて失効していた。
+                        "reason": if was_current { "view" } else { "seq" },
                     }),
                 );
                 continue;
             };
-            self.state.set_results(results);
             crate::trace::trace(
                 "egui_search:settled",
                 serde_json::json!({
                     "dispatch_seq": settled.seq,
-                    "pending_seq": self.dispatch.pending_seq(),
+                    "pending_seq": self.state.pending_seq(),
                     "index_entries": index_entries,
                     "since_key_us": settled.since_key.as_micros() as u64,
                     "since_dispatch_us": settled.since_dispatch.as_micros() as u64,
@@ -979,8 +986,7 @@ impl LauncherController {
             .try_state::<crate::egui_shell::EguiShellState>()
             && sh.reset_pending.swap(false, Ordering::SeqCst)
         {
-            self.state.reset();
-            self.dispatch.invalidate(); // hide を跨いだ in-flight は show 後の行を汚さない
+            self.state.reset(); // hide を跨いだ in-flight もここで失効する（#1039）
             self.folder_cache = None;
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
@@ -1313,16 +1319,13 @@ impl LauncherController {
     /// フレームの IME 確定・paste が旧 state で起動されるのを防ぐ（不変条件 3）。
     pub(super) fn on_enter(&mut self, shift_held: bool, ctx: &egui::Context) {
         // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
-        // **何をもって「未反映」とするかは `search_dispatch::is_unsettled` の doc が正本である**（#1038。`armed` だけを渡していた頃に開いていた隙もそこが記す）。
+        // **何をもって「未反映」とするかは `SearchState::is_unsettled` の doc が正本である**（#1038。`armed` だけを渡していた頃に開いていた隙もそこが記す。#1039 で `search_dispatch.rs` の自由関数から移設）。
         let prefix = self.instant_prefix();
         let is_plain = matches!(self.state.interp(&prefix), QueryIntent::Plain);
         if crate::egui_shell::should_flush_on_enter(
             self.state.view_kind(),
             is_plain,
-            crate::egui_shell::is_unsettled(
-                self.search_debounce.is_armed(),
-                self.dispatch.pending_seq(),
-            ),
+            self.state.is_unsettled(self.search_debounce.is_armed()),
         ) {
             self.search_debounce.cancel();
             // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
@@ -1337,7 +1340,6 @@ impl LauncherController {
                 })
             };
             // **どちらの枝でも同期で行を差し替える**——空クエリ・indexing 中にクリアを落とすと、古い行が残ったまま直後の activate_or_execute がそれを起動する（`run_search_with` の Plain 早期 return が旧実装で担っていた処置である）。
-            self.dispatch.invalidate();
             self.state.set_results(searched.unwrap_or_default());
             // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
             // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。

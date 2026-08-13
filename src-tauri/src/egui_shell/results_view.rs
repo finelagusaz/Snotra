@@ -33,7 +33,7 @@ pub(crate) struct RowsSnapshot {
     ///
     /// **「打鍵が止まった」より広い**（#1074）——`armed` は [`crate::egui_shell::layout::Debouncer::cancel`] でも下りるため、Enter の flush 経路を通った直後もここは真になる。名前が言うのは**debounce が予約を持っていないこと**であって、ユーザーが打鍵を止めたことではない。
     ///
-    /// **これは perf ヒューリスティックであって正しさの述語ではない。** [`crate::egui_shell::search_dispatch::is_unsettled`]（最終クエリの結果が未反映か）とは別概念であり、否定の関係にも無い——食い違うのは `armed == false ∧ pending != 0` のときである。**同じ修正を当ててはならない**（worker 走査中のアイコン取得が遅れて悪化する）。
+    /// **これは perf ヒューリスティックであって正しさの述語ではない。** [`crate::egui_shell::search_state::SearchState::is_unsettled`]（最終クエリの結果が未反映か）とは別概念であり、否定の関係にも無い——食い違うのは `armed == false ∧ pending != 0` のときである。**同じ修正を当ててはならない**（worker 走査中のアイコン取得が遅れて悪化する）。
     pub input_idle: bool,
 }
 

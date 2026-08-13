@@ -139,7 +139,7 @@
   - **却下 — C3（粗い分割）と C6（candidate index の `Vec` を作らない）**。C3 は
     **対照行が 1 フレームのゲート自体を超えた**（`\program files\` max 18,590）
 - [x] `snotra-core/CLAUDE.md` の当該節を更新（**数字は写さず `PERFORMANCE.md` を指す**）
-- [ ] **PR 本文に「ゲートは 2026-08-13 のユーザー決定で max → p90 へ改訂（根拠は ADR）」を 1 行残す。**
+- [x] **PR 本文に「ゲートは 2026-08-13 のユーザー決定で max → p90 へ改訂（根拠は ADR）」を 1 行残す。**
       issue #1070 の本文には `max < 16,700` が逐語で残るため、書かないと `/merge-pr` の時点で
       受け入れ条件が食い違って見える（PR 本文は squash で main の commit message になる）
 - [x] `npm run governance:check`（`*.md` と新規 ADR を触るため・AGENTS.md 条件別チェック）

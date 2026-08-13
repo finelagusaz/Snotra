@@ -23,13 +23,22 @@
 kind = "all_symbols"
 limit = 512
 
-# --- 以下は「重い側」。VS Code も同じファイルを読み、しかもここが優先されるため既定では入れない ---
-
 # rust-analyzer 専用の target ディレクトリ（`target/rust-analyzer/`）。
-# rust-analyzer の `cargo check` とビルドスクリプト実行が `Cargo.lock` を掴まなくなるので、
-# PostToolUse hook の `cargo fmt/clippy/test` と食い合わなくなる。代償はビルド成果物の二重化（ディスク）。
-# [cargo]
-# targetDir = true
+# rust-analyzer の `cargo check` と build script 実行が `target/` のロックを掴まなくなるので、
+# PostToolUse hook の `cargo fmt/clippy/test` と食い合わない。
+#
+# 代償の「成果物の二重化」は 2〜2.5 GB 程度である（2026-08-13 実測）。複製されるのは check
+# 成果物——`.rmeta` 1,853 MiB / 1,508 個と build script 出力 367 MB——だけで、リンク済み
+# バイナリ（`snotra.exe` 33 MB / `.pdb` 244 MB）は入らない。`target/` 全体は 9.9 GB。
+#
+# **効果が実在するかはこの設定自身が測る。** rust-analyzer が本当に `cargo check` を回して
+# いるかは未確認である（`target/` への書き込みを rust-analyzer と手元の cargo とで区別する
+# 手立てが無い）。`target/rust-analyzer/` が出来て育てば回しており競合も実在した、出来なければ
+# 回しておらず**この設定も `checkOnSave = false` も買う意味が無い**、と判る。
+[cargo]
+targetDir = true
+
+# --- 以下は入れない側。VS Code も同じファイルを読み、しかもここが優先される ---
 
 # 必須 lint（`cargo clippy --workspace --all-targets -- -D warnings`）を保存時に走らせる。
 # エージェント側には不要——PostToolUse hook が編集ごとに同じものを既に走らせている。

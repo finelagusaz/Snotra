@@ -185,27 +185,27 @@ PostToolUse hook は A の一部を自動で走らせる（沈黙 = 合格）。
 
 **Phase 1 と Phase 2 は 1 コミットに束ねる**（`AGENTS.md`「条件別チェック」の「新 API の導入と呼び出し点の移行は 1 タスクに束ねる」）。分けると Phase 1 終了時点で `issue_search` / `accept_worker_rows` / `is_unsettled` が未使用になり、`-D warnings` 下の `dead_code` で落ちる。以下は**作業の順序**であってコミットの境界ではない。
 
-- [ ] `SearchState` に `dispatch: SearchDispatch` を足し、private `put_rows` を実装する
-- [ ] `set_results` / `enter_tool` / `on_escape`（2 枝）/ `reset` を `put_rows` へ合流させる
-- [ ] `issue_search` / `accept_worker_rows` / `pending_seq` / `is_unsettled` を実装する（`#[must_use]` は `Option` を返す `accept_worker_rows` に付ける——`Option` は型段が効かないためメソッド段必須・`src-tauri/CLAUDE.md`。`issue_search` の `u64` は `enter_folder` の token 前例に倣い付けない）
-- [ ] 自由関数 `is_unsettled` とそのテスト 2 件を `search_dispatch.rs` から削除し、`search_state.rs` へ `SearchState` 版として移設する
-- [ ] 新規テスト 7 件を書く（上表）。Red → Green を確認する
-- [ ] `dispatch` フィールドと 11 箇所の `dispatch.invalidate()` を削除する
-- [ ] `run_search_with` / `drain_search` / `on_enter` / `consume_reset_pending` を新 API へ移行する
-- [ ] `mod.rs` の re-export から `SearchDispatch` / `is_unsettled` を外す（**compile-fail を移行漏れ検出器にする**）
-- [ ] trace の payload（`dispatch_seq` / `pending_seq` / `index_entries` / `since_*_us`）が不変であることをコードで確かめる
-- [ ] `cargo test -p snotra` と `cargo clippy --workspace --all-targets -- -D warnings` が green
+- [x] `SearchState` に `dispatch: SearchDispatch` を足し、private `put_rows` を実装する
+- [x] `set_results` / `enter_tool` / `on_escape`（2 枝）/ `reset` を `put_rows` へ合流させる
+- [x] `issue_search` / `accept_worker_rows` / `pending_seq` / `is_unsettled` を実装する（`#[must_use]` は `Option` を返す `accept_worker_rows` に付ける——`Option` は型段が効かないためメソッド段必須・`src-tauri/CLAUDE.md`。`issue_search` の `u64` は `enter_folder` の token 前例に倣い付けない）
+- [x] 自由関数 `is_unsettled` とそのテスト 2 件を `search_dispatch.rs` から削除し、`search_state.rs` へ `SearchState` 版として移設する
+- [x] 新規テスト 7 件を書く（上表）。Red → Green を確認する
+- [x] `dispatch` フィールドと 11 箇所の `dispatch.invalidate()` を削除する
+- [x] `run_search_with` / `drain_search` / `on_enter` / `consume_reset_pending` を新 API へ移行する
+- [x] `mod.rs` の re-export から `SearchDispatch` / `is_unsettled` を外す（**compile-fail を移行漏れ検出器にする**）
+- [x] trace の payload（`dispatch_seq` / `pending_seq` / `index_entries` / `since_*_us`）が不変であることをコードで確かめる
+- [x] `cargo test -p snotra` と `cargo clippy --workspace --all-targets -- -D warnings` が green
 
 ### Phase 2 — 文書同期
 
-- [ ] 上の「文書の同期」1〜7 を適用する
-- [ ] **`cargo doc --workspace --no-deps --document-private-items` を手で走らせる**——自由関数 `is_unsettled` の削除で `results_view.rs:36` の intra-doc link が確実に落ちる（3b が指摘・PostToolUse hook は沈黙する）
-- [ ] `npm run governance:check` が green
+- [x] 上の「文書の同期」1〜7 を適用する
+- [x] **`cargo doc --workspace --no-deps --document-private-items` を手で走らせる**——自由関数 `is_unsettled` の削除で `results_view.rs:36` の intra-doc link が確実に落ちる（3b が指摘・PostToolUse hook は沈黙する）
+- [x] `npm run governance:check` が green
 
 ### Phase 3 — 検知器の実測
 
-- [ ] 変異 M1 / M2 / M3 / M4 を 1 つずつ当て、指定のテストが**実際に落ちる**ことを測る（測定後に変異を戻す）
-- [ ] 全検証コマンド（カテゴリ A・F）を通し、実装差分を確定させる
+- [x] 変異 M1 / M2 / M3 / M4 を 1 つずつ当て、指定のテストが**実際に落ちる**ことを測る（測定後に変異を戻す）
+- [x] 全検証コマンド（カテゴリ A・F）を通し、実装差分を確定させる
 
 ## 未確定（実装前に潰す）
 
@@ -274,3 +274,91 @@ PostToolUse hook は A の一部を自動で走らせる（沈黙 = 合格）。
 - [x] スコープの裁定 — 2026-08-13 / 問い: "採り込み点（accept_worker_rows）に「Results ビューのときだけ行を差し替える」ガードを置きますか。issue の WHAT には無い追加です。" / 回答: "置く（推奨）"
 
 **裁定の帰結**: 決定 3（view 種別ガード）は計画どおり実装する。`enter_folder` / `navigate_folder` の窓も閉じ、`egui_search:dropped` の payload に `"reason": "seq" | "view"` を足す（ガードの発火を実機で観測する唯一の手段になる）。
+
+## 実装記録（2026-08-13）
+
+### 計画に無く、実装中に判明して足した作業
+
+- **`search_state.rs` の `should_flush_on_enter` doc にも intra-doc link があった** — 計画の「文書の同期」3 は `results_view.rs:36` だけを挙げていたが、自由関数の削除で落ちる link は 2 か所だった。**計画の列挙を信じず、削除後に `rg -n "search_dispatch::is_unsettled|egui_shell::is_unsettled"` で生存箇所を数え上げて確定させた**
+- **`egui_search:dropped` の `"reason"` は `Option<Settled>` からは導けない** — 計画は「`accept_worker_rows` が `None` を返したら reason を分ける」と書いていたが、seq 不一致と view 不一致は同じ `None` である。**採り込みを呼ぶ前に `pending_seq() == seq` を控える**形で解いた（承認済みシグネチャを保つ側）。分割が全域で正しいことは `pending_seq_separates_the_two_drop_reasons` が 3 ケースで固定する
+- **不変条件 8 が求める「相互の名指し」が設計節に無かった** — `enter_folder` / `navigate_folder` / `accept_folder_result` の doc へ「これは folder token であって dispatch seq ではない」を書いた（`/symmetric-check` Step 2c で検出）
+- **`docs/architecture.md` の見出し参照を正準形へ直した** — 旧規約を指す短縮引用（「同期で行を差し替える経路は…」）が `governance:check` の見出し照合に着地せず、節番号込みの正準形へ直した
+
+### 新規テスト（計画は 7 件・実際は 11 件）
+
+計画の 7 件に加えて 4 件を足した。増えた理由は下の 3 つ:
+
+- `late_worker_rows_are_dropped_after_navigate_folder` — `navigate_folder` は `enter_folder` と別の呼び出し点であり、受け入れ 4 が両方を名指している
+- `matching_worker_rows_are_accepted_in_results_view` — **採らない側 6 件だけでは「ガードを広げすぎて全部落とす実装」が素通りする**（対で意味を持つ）
+- `pending_seq_separates_the_two_drop_reasons` — 上の `"reason"` 導出の全域性を固定する
+- `unsettled_is_grounded_on_real_dispatch` — 計画は移設 2 件のうち 1 件しか test 一覧に書いていなかったが、変更ファイル表は 2 件の移設を指示していた。**接地（sentinel をリテラルで書かない）は別の不変条件なので統合せず 2 件のまま移した**
+
+### 変異注入の実測（Phase 3）
+
+| # | 変異 | 落ちたもの（実測） |
+|---|---|---|
+| M1 | `is_unsettled` から `armed \|\|` を落とす | `unsettled_covers_in_flight_after_trailing_fired`（1 件のみ） |
+| M2 | `put_rows` から `dispatch.invalidate()` を落とす | test 5 件（`sync_replacement_invalidates_in_flight` / `late_worker_rows_do_not_overwrite_restored_rows_after_escape` / `late_worker_rows_do_not_survive_reset` / `unsettled_is_grounded_on_real_dispatch` / `pending_seq_separates_the_two_drop_reasons`）＋ **clippy が `invalidate` を `dead_code` で落とす**（＝呼び出し点がそこ 1 つである機械的証拠） |
+| M3 | `accept_worker_rows` の view ガードを落とす | test 3 件（`late_worker_rows_are_dropped_in_folder_view` / `late_worker_rows_are_dropped_after_navigate_folder` / `pending_seq_separates_the_two_drop_reasons`） |
+| M4 | `enter_folder` を `put_rows` へ通す（やりすぎの側） | 既存 `rows_generation_is_stable_on_enter_folder` |
+
+**M2 は Red → Green の順でも測った**——`invalidate` の 1 行を書く前に同じ 5 件が落ちることを先に確認してから足した。
+
+### 受け入れ条件の確認
+
+1. ✅ `LauncherController` に `dispatch` フィールドは無い。`mod.rs` の re-export からも外れた（`grep` 実測で production の残存参照 0 件）
+2. ✅ `self.results` への代入・`clear` は `put_rows` の 1 箇所（`enter_tool` の `std::mem::take` は退避であり差し替えではない）
+3. ✅ `late_worker_rows_do_not_overwrite_tool_rows` / `_restored_rows_after_escape`（2 枝）
+4. ✅ `late_worker_rows_are_dropped_in_folder_view` / `_after_navigate_folder`
+5. ✅ M1 で実測
+6. ✅ M2 で実測
+7. ✅ `egui_search:settled` のイベント名と `dispatch_seq` / `pending_seq` / `index_entries` / `since_key_us` / `since_dispatch_us` は不変。`dropped` へのキー追加のみで、`dropped` を読む検査はリポジトリ内に 0 件（`grep -rn "egui_search" scripts/` 実測）
+8. ✅ カテゴリ A・F 全件 green
+
+### code-reviewer ラウンド 1 の対応（Critical 0 / High 3 / Medium 5 / Low 4 — 全 12 件を採用）
+
+**機序はすべて一次証拠で裁定してから採った**（所見が正しくても添えられた機序の説明は独立に誤りうるため）。
+
+| # | 所見 | 対応 |
+|---|---|---|
+| H-1 | ADR が untracked。参照実在検査も発火せず沈黙で失われる | `git add` する（コミット時） |
+| H-2 | ADR の帰結が (A)/(B) を取り違え、#699 の機構を規約だと読ませる | 「(A) でも (B) でもない第 3 の合成」と書き分け、手書き `rows_generation += 1` が空撃ちを戻すことまで書いた |
+| H-3 | `invalidate` の doc が、自分で名指しした `rg` の実測（production 1 件）と食い違う（「0 件」と書いていた） | **私が直前の編集で入れた誤り。** 測れない述語を測ったコマンドに帰属させていた。実測値に合わせて書き直し |
+| M-1 | sentinel（seq は 1 始まり）の根拠が削除され、**同じ差分がその根拠に依存する式**（`pending_seq() == seq`）を新設していた | `SearchDispatch::pending_seq` の doc へ根拠を戻し、新しい消費者を名指しした |
+| M-2 | view ガードの Tool 枝は production 到達不能（`enter_tool` が `put_rows` を通るため）。doc / コメント / mermaid が実装より強い | 4 か所を「Folder だけが発火する。Tool は防御として残す」へ。**一次証拠**: `self.tool = Some` は `enter_tool` の 1 箇所のみ・`run_search_with` の Tool 腕は no-op（grep 実測） |
+| M-3 | `drain_search` の新しい順序制約（`pending_seq` を先に読む）を固定する検知器が無い | doc へ「この順序を固定する検知器は無い」と、入れ替えたとき何が静かに失われるかを明記 |
+| M-4 ⚠️ | folder 往復後の Enter に #631 の flush が掛からない並びが確定する（`on_escape` の失効が偶然の救いを閉じた） | **受容する残余として `on_escape` の doc へ記録。** 再検索は撃たない——表示行と起動行は一致しており（#631 の失敗様式ではない）、食い違うのは行と入力欄の文字列である |
+| M-5 | ADR がどこからも引かれていない | `put_rows` の doc から引いた |
+| L-1 | 「`results` へ代入する経路は 1 メソッドに収束」が `enter_tool` の `mem::take` を数え落としている | `put_rows` doc と `architecture.md` の両方へ「退避であって差し替えではない」の裁定を書いた |
+| L-2 | 新設 doc の「唯一」が 2 つとも測り切れていない | `#[must_use]` メッセージは失うものを `since_key_us` / `since_dispatch_us` と名指す形へ。`drain_search` doc の「唯一の手段」も外した |
+| L-3 | `should_flush_on_enter` の doc に旧規約の言い回し「invalidate 済み」が残存 | 機構化された事実へ |
+| L-4 | test コメント「同期でクリアした**出所**が invalidate を呼ぶ」 | 出所は `put_rows` である旨へ |
+
+**争点の裁定**（レビュアの結論を検算して採った）:
+
+- **A（`accept` を先に、view ガードを後に）**: 現行順を維持。**逆順で user-visible な実害の並びは構成できていない**——Folder の全出口が `put_rows` を通るためである。ADR へ「却下の理由は実害ではなく不変条件の局所性である」と書き添えた（実装より強い主張を避ける側）
+- **B（`#[must_use]` の配置）**: 規約と整合。`issue_search` を対象外とする根拠は「前例の字面」ではなく「消費者が `search_tx.send` 1 か所で、落とせば同じ数行の中で目に見える」である
+- **C（`reset` の確保解放）**: 覆す観点なし。**判断より強い根拠へ差し替えた**——`put_rows` は Vec ごと置き換えるので、旧 `clear()` が保っていた容量には受益者が最初から居なかった（doc の主張を弱める側の訂正）
+
+**`plan.md` U-6（`SearchState::new()` の 35 件を目で全件確認していない）の残余は閉じた**——レビュアの構造的論証を採る: 既存テストの `set_results` が初めて `invalidate` を通るが、`dispatch` は `Default`（`pending: None`）から始まるので no-op である。
+
+**修正差分はコードの挙動を変えていない**（doc・コメント・ADR のみ）。ゆえに `AGENTS.md`「条件別チェック」の再実行対象は F（`governance:check`）と `cargo doc` で、どちらも green。
+
+### code-reviewer ラウンド 2（修正差分の検算）— 新規 Medium 2 / Low 4 を全件採用
+
+**同じエージェントを `SendMessage` で継続した**（`/implement` 4b の要求）。ラウンド 1 の 12 件のうち **8 件が解消・3 件が部分解消・1 件は宣言どおり未対応（H-1）** と、レビュア自身が指摘を見つけたときと同じ道具で測った。部分解消 3 件はいずれも「指摘した箇所のうち 1 つが直っていない」形で、**修正が指摘箇所へ注意を集中させた結果そのもの**である。
+
+| # | 所見 | 対応 |
+|---|---|---|
+| R2-1 | M-4 の受容残余の**理由づけが誤り**（結論は支持）。「表示行と起動行が一致する」は #631 の失敗様式でも成り立ち、2 つを区別しない | 根拠を差し替えた。**残余の芯は「`is_unsettled` が自分の doc の意味に反して偽を返す既知状態」**であり、再検索を撃たない理由は「費用が並びの稀さと害に見合わない」＋「到達には可視の一覧で `→`/`←` を押す必要がある」。**区別しない根拠を書いてはならない旨も doc に明記した** |
+| R2-2 | L-1 の指摘箇所そのもの（`rows_generation` の doc）が未修正で、**同じ事実の写しが 3 枚になり 1 枚だけ古い述語を保っていた** | `put_rows` の doc への参照へ畳んだ（写しを置かない） |
+| R2-3 | M-2 の 4 か所のうち 1 つ（`accept_worker_rows` の順序段落）が未修正で、同じ doc の 5 行下と矛盾していた | Folder のみへ |
+| R2-4 | M-5 の修正が新しい数え上げ（「ほか 6 件」）を持ち込んだ。**H-3 / M-1 と同じ型が、その修正の中で再生産された** | 数を落として ADR を指す形へ |
+| R2-5 | M-4 の残余 doc が `←` からの folder 突入を数え落としていた（`enter_folder` の呼び出しは `→` と `←` の 2 箇所） | 「`→` / `←`（`on_nav_keys` の 2 箇所）」へ |
+| R2-6 | 残余が `on_escape` にしか無く、述語の正本（`is_unsettled`）から辿れない | `is_unsettled` の doc から残余を名指して相互に張った |
+
+**ラウンド 1 の H-1 はレビュア自身が自己訂正した。** 「ADR はどこからも参照されないので欠落しても沈黙で失われる」は M-5 の修正（`put_rows` doc から ADR を引く）によって偽になった——`governance:check` の ADR 短縮引用の母集団はコードコメントを含むため、**add し忘れると CI が鳴る**。ADR を一時退避して実測した結果が添えられている（`GOVEXIT=1`）。傍証として、参照を足した前後で短縮引用の件数が 244 → 245 へ増えている。
+
+**修正差分に実行されるコードの変更は無い**（doc・コメント・ADR のみ）。ゆえに再実行対象は F（`governance:check`）と `cargo doc` で、どちらも green。対称ペア / リソース / SPEC 同期 / 性能の判定はラウンド 1 から据え置き。
+
+**レビューは 2 ラウンドで打ち切る。** ラウンド 2 の新規 6 件はすべて「私が書いた散文」に対するもので、コードの正しさに関する所見は 0 件だった（ラウンド 1 でも設計上の実質指摘は M-2 の 1 件）。`AGENTS.md`「レビューは回数でなく枠組みの数」に従い、同じ枠組みの 3 巡目は収束しないと判断する。

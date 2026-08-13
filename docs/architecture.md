@@ -154,8 +154,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 sequenceDiagram
     participant User
     participant View as view.rs・launcher_controller.rs（main 窓の 1 フレーム）
-    participant State as search_state.rs（純粋核）
-    participant Disp as search_dispatch.rs（seq）
+    participant State as search_state.rs（純粋核・seq も内側に持つ）
     participant W as search_worker.rs（プロセス寿命 1 本）
     participant Eng as Engine / SearchEngine (snotra-core)
     participant Results as results_view.rs（results 窓）
@@ -165,30 +164,27 @@ sequenceDiagram
     View->>State: interp(prefix) → QueryIntent
     alt Results / Plain（非空・非 indexing）
         View->>View: Debouncer（leading 発火 + trailing 50ms を arm）
-        View->>Disp: issue(seq)
+        View->>State: issue_search(seq)
         View->>W: SearchRequest{seq, query}
         Note over View: この枝自身は行を差し替えない<br/>（同じ update の後半の drain が前の要求を採ることはある）
     else Results / Plain（空クエリ・indexing 中）
-        View->>Disp: invalidate()
         View->>State: set_results(空)（同期。worker 経由だと消した文字が 1 フレーム残る）
     else Results / Instant
         View->>View: debounce.cancel()
-        View->>Disp: invalidate()
         View->>State: set_results(instant 候補)（同期）
     else Results / Command（/r・部分入力）
         View->>View: debounce.cancel()
-        View->>Disp: invalidate()
         View->>State: set_results(履歴 または 空)（同期）
     else Results / Command（/o /s /q）
         View->>View: debounce.cancel() → execute_slash
         View->>State: clear_search（クエリごとクリア）→ コマンド実行。run_search_with を通らない
     else Folder view
-        View->>Disp: invalidate()
         View->>State: set_results(error 行 または cache のフィルタ)（同期・I/O 無し）
         Note over View: cache も error も未着（ロード中）なら<br/>上の 2 つとも呼ばず前フレームの行を保つ
     else Tool view
         Note over View: no-op（§18.5: ツール選択中は結果を上書きしない）
     end
+    Note over State: 同期の set_results はどれも in-flight を内側で失効させる<br/>（行の差し替えと同じ private メソッドが撃つ・#1039）
 
     Note over View,W: ここから下は Plain の dispatch だけが辿る
     W->>W: coalesce（溜まった要求の最後だけ走らせる）
@@ -199,17 +195,20 @@ sequenceDiagram
 
     Note over User,Results: ── 採り込み（同じ update の後半。worker の結果が届くのは次フレーム以降）──
     View->>View: drain_search()
-    alt seq が pending と一致
-        View->>Disp: accept(seq) → Settled
-        View->>State: set_results（世代はここで進む・#699）
-    else 追い越された結果
-        View->>Disp: accept(seq) → None
-        Note over View: 捨てる（egui_search:dropped）
+    View->>State: accept_worker_rows(seq, rows)
+    alt seq が pending と一致 ∧ Results ビュー
+        State-->>View: Some(Settled)
+        Note over State: 行を差し替え、世代を進める（#699）
+    else 追い越された（または同期差し替えで失効済み）
+        State-->>View: None
+        Note over View: 捨てる（egui_search:dropped・reason="seq"）
+    else Folder ビューへ遷移していた
+        State-->>View: None
+        Note over View: 捨てる（egui_search:dropped・reason="view"・#1039）<br/>Tool も同じガードが弾くが、enter_tool が先に失効させるので到達しない
     end
     View->>View: poll_search_debounce（trailing）
-    opt Enter が来た Plain で最終クエリが未反映（should_flush_on_enter ∘ is_unsettled）
+    opt Enter が来た Plain で最終クエリが未反映（should_flush_on_enter ∘ SearchState::is_unsettled）
         View->>Eng: engine.search（同期・このフレームの中。worker の往復を待てない）
-        View->>Disp: invalidate()
         View->>State: set_results（最終クエリの結果へ置換してから起動する）
     end
     View->>View: Enter の起動（activate_or_execute）→ 可視性判定
@@ -225,9 +224,9 @@ sequenceDiagram
 ```
 
 **補足**:
-- **検索が worker へ出ているのは Plain の打鍵だけである**（#1004）。同期直呼びだった頃の「supersede/single-flight は不要」という判断は、**走査している間 UI がフレームを返せず、打鍵に反応しなくなる**ことを理由に覆った。速さの問題ではなく待たせる場所の問題であり、in-flight の追い越しは `SearchDispatch` の seq が引き受ける
-- **例外は Enter である**——最終クエリの結果がまだ行へ反映されていない間の Enter は worker の往復を待てないため、`on_enter` がその場で同期 `engine.search` を走らせる（判定は `should_flush_on_enter`、正当性の理由は同関数のコメント。**「未反映」の中身は第 3 引数を導く `search_dispatch::is_unsettled` の doc が正本である**）。**この条件は debounce の予約中に限らない**（#1038）——#631 が塞いだ欠陥が同じ形で戻っていた（含意が壊れた経緯は同 doc）。**発火しうる窓は「打鍵 → 50 ms」から「打鍵 → 50 ms + worker の走査（実運用点の値は下の #1032 の bullet が持つ）と、その結果を採り込むフレーム」へ広がった**（**上端**は走査の完了ではなく `drain_search` の `accept` である。Escape・起動突入・空クエリ・reset の `invalidate` はこれより早く閉じる）。ただし**1 回あたりの費用は変わらない**——`on_enter` は判定より前に `instant_prefix` が `engine.lock()` を取るため、**worker の走査待ちは #1038 の前後どちらでも払っている**（2026-08-13 にコードで確認）。#1038 が足すのは同期 `engine.search` 1 回ぶんだけである。**このフレームだけは検索がフレームに乗る。これは受容している**——結果を確定させる Enter は 1 回だけで、打鍵ごとに払う費用ではない。**IME 変換確定の Enter がここへ紛れないのは、`read_post_widget_input` が `response.changed()` より後で Enter を読むからである**（確定した文字列が state へ入った後の値で起動する・同関数の doc が正本）
-- **同期で `set_results` を呼ぶ出所は `dispatch.invalidate()` を通す**（`search_dispatch.rs` の doc が正本）。同期で差し替えた以上、飛んでいる結果は必ず古い。**射程は `set_results` の呼び出し点である**——`SearchState` の `enter_tool` と `on_escape` は `results` を直に置き換えるので、この規律の外にある（`reset` は呼び出し側の `consume_reset_pending` が `invalidate` を撃つ）。**その 2 つには in-flight が残りうる**: `enter_tool` の呼び出し側は debounce だけを畳んで `dispatch` を触らず、`drain_search` に view 種別のガードは無い。飛んでいた結果が次フレームで tool の行を置き換える並びは構造上ありうる（**未再現の観察である**。Shift+Enter も `on_enter` の flush を通り、発火すれば `invalidate` を撃つので、窓が開くのは flush が発火しない条件に限る。**#1038 でその条件は狭まった**——「trailing を予約中」だけでなく worker の in-flight 中も発火するようになったため）
+- **検索が worker へ出ているのは Plain の打鍵だけである**（#1004）。同期直呼びだった頃の「supersede/single-flight は不要」という判断は、**走査している間 UI がフレームを返せず、打鍵に反応しなくなる**ことを理由に覆った。速さの問題ではなく待たせる場所の問題であり、in-flight の追い越しは `SearchState` の内側に住む seq が引き受ける（#1039 以降 `SearchDispatch` は private フィールドで、外から名前で届かない）
+- **例外は Enter である**——最終クエリの結果がまだ行へ反映されていない間の Enter は worker の往復を待てないため、`on_enter` がその場で同期 `engine.search` を走らせる（判定は `should_flush_on_enter`、正当性の理由は同関数のコメント。**「未反映」の中身は第 3 引数を導く `SearchState::is_unsettled` の doc が正本である**）。**この条件は debounce の予約中に限らない**（#1038）——#631 が塞いだ欠陥が同じ形で戻っていた（含意が壊れた経緯は同 doc）。**発火しうる窓は「打鍵 → 50 ms」から「打鍵 → 50 ms + worker の走査（実運用点の値は下の #1032 の bullet が持つ）と、その結果を採り込むフレーム」へ広がった**（**上端**は走査の完了ではなく `drain_search` の `accept` である。Escape・起動突入・空クエリ・reset は**行を同期で差し替えることによって**これより早く閉じる・#1039）。ただし**1 回あたりの費用は変わらない**——`on_enter` は判定より前に `instant_prefix` が `engine.lock()` を取るため、**worker の走査待ちは #1038 の前後どちらでも払っている**（2026-08-13 にコードで確認）。#1038 が足すのは同期 `engine.search` 1 回ぶんだけである。**このフレームだけは検索がフレームに乗る。これは受容している**——結果を確定させる Enter は 1 回だけで、打鍵ごとに払う費用ではない。**IME 変換確定の Enter がここへ紛れないのは、`read_post_widget_input` が `response.changed()` より後で Enter を読むからである**（確定した文字列が state へ入った後の値で起動する・同関数の doc が正本）
+- **行を差し替えたら in-flight は必ず失効する。これは規約ではなく機構である**（#1039）。`SearchState` の内側で `results` を**差し替える**経路は private な 1 メソッドに収束しており（`enter_tool` の `std::mem::take` だけは外にあるが、それは frame への**退避**であって差し替えではなく、直後に同じメソッドを通る）、そこが `rows_generation` の前進（#699）と in-flight の失効を**両方**行う。差し替えを書いて失効を書き忘れる形は表現できない。**射程は `set_results` の呼び出し点に限らない**——`enter_tool` と `on_escape`（tool 復帰・folder 復帰）も同じメソッドを通るため、かつてそこに開いていた 3 つの漏れ（呼び出し側が `dispatch` を触らずに行だけ置き換えていた）は閉じた。`reset` も同様で、`consume_reset_pending` が別に `invalidate` を撃つ必要はもう無い。**採り込み側にはさらに view 種別のガードがある**——Folder ビューへ遷移した後に届いた結果は、seq が一致していても採らない（発火を実機で観測するのは `egui_search:dropped` の `reason="view"` である）。**同じガードは Tool も弾くが、そちらは production では到達しない**——`enter_tool` が先に in-flight を失効させ、Tool ビュー中は新しい要求も出ない（防御として残してある）。旧規約（`docs/superpowers/specs/2026-08-10-search-worker-design.md`「4.5 in-flight の失効 — 同期で行を差し替える経路はすべて `pending_seq` を進める」）は、この機構へ吸収されたことで役目を終えた
 - この流れに現れる非同期は、検索 worker・folder 展開・アイコン抽出・起動である（crate 全体の worker はこれで尽きない——`config_watcher` / index build / platform スレッド / updater は別軸）。**この 4 つの中では検索 worker だけが長寿命であり**、folder は per-nav、起動は per-launch、アイコンは未キャッシュぶんの spawn である（都度 spawn を採らなかった理由は `search_worker.rs` の `//!`）。遅着は folder / 起動が channel drop で、検索が seq の不一致で消す
 - **検索がフレームから出た後も、検索の `Mutex` はフレームに残っていた**（#1032）。worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点で 40〜95 ms）ため、UI が同じ錠越しに設定を読む箇所——`read_window_width` と `max_results`——がそこで待っていた。**待ちは行が差し替わったフレームに限らない**（worker が走っているかで決まるので、`old_rows == new_rows` のフレームでも起きる）。**設定の読みを錠の外へ出して解いた**——`Engine` の `Config` は `Arc<RwLock<Config>>` で、UI は `egui_shell::read_config` から読む。**書き込みは `update_config` の 1 本のまま `Mutex<Engine>` の内側に残す**（`complete_index_drain` の原子性がそこに依る）。A/B の実測は `PERFORMANCE.md`「設定の読みを engine lock の外へ出す」
 - 通常の打鍵で残るフレーム費用は、results 窓の show 遷移（`SW_SHOWNOACTIVATE` + 下地の塗り・行が 0 → N のときだけ）と main の `set_size` である。どちらも予算の内側に収まる

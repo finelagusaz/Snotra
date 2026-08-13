@@ -1,0 +1,242 @@
+敵対的調査（#1039・research.md 検算） 2026-08-13
+
+母集団: research.md の全主張。以下は依頼された 7 項目 + 測定環境の疑い + ⚠️ 追加所見。
+各項目「判定 / 一次証拠 / 偽にする手順」の形式。
+
+============================================================
+1. 「drain_search に view 種別のガードは無い」
+============================================================
+判定: 壊せなかった（主張は正しい）。
+
+一次証拠:
+- launcher_controller.rs:868-898 の `drain_search` 全文を読了。`self.dispatch.accept(seq, now)` が
+  `Some` を返せば `self.state.set_results(results)` を無条件に撃つ（886 行）。`view_kind()` を
+  参照する分岐は一切無い。
+- 呼び出し元 view.rs:1077 `self.controller.drain_search();` の前後（1000-1150 行）を読了。直前は
+  toast 処理、直後は `poll_search_debounce`。view_kind による事前フィルタは無い。
+- さらに下流を辿ると、この欠落が実害化する経路を発見した（research.md には明記が無い付随証拠）:
+  view.rs:1097-1104 の `show_results` 判定は `plain_results_hidden(view_kind, ...)` を経由するが、
+  `plain_results_hidden`（search_state.rs:476-478）は `matches!(view_kind, ViewKind::Results)` の
+  ときしか true にならない。つまり `view_kind() == Tool` の間に `drain_search` が誤って
+  `state.results` を上書きしても、`show_results` 側にもそれを隠す仕組みが無く、**実際に描画され得る**。
+  「未再現の観察」（docs/architecture.md:229-230）は理論上の窓ではなく、表示層まで貫通する実在の窓である。
+
+偽にする手順: `drain_search`（868 行）か `view.rs` の `show_results` 算出（1097-1104 行）に
+`view_kind()` を参照する分岐が存在することを示せば偽になる。存在しないことを 2 箇所で確認済み。
+
+============================================================
+2. 「SearchState へ SearchDispatch を内包しても純粋核へ新しい異物は入らない（Instant は既在）」
+============================================================
+判定: ⚠️（大筋は壊せなかったが、根拠の言い回しに 1 点ニュアンスがある）。
+
+一次証拠:
+- search_state.rs 全文（1-1193 行）を読了。`use std::time` は無く、`Instant` の文字列一致は
+  すべて `QueryIntent::Instant`（enum variant 名）であり、`std::time::Instant` は現状ゼロ。
+  ゆえに「内包しても新しい異物は入らない」という主張は、**厳密には「時刻を保持するフィールドが
+  この型に初めて生まれる」という意味では成立しない**——`SearchDispatch::Pending` は
+  `key_at: Instant` / `dispatched_at: Instant` を**フィールドとして保持**する（search_dispatch.rs:16-20）。
+- ただし「純粋核」の語義は本コードベースで「時計を内部で読まない（driver が注入する）」ことを
+  指す用法が確立している。同義の先例は `notify.rs`（「時刻は driver が注入する純粋核」
+  docs/superpowers/plans/2026-07-24-su5-updater-notification.md:34）で、`SearchDispatch::issue`
+  も `Instant::now()` を内部で呼ばず、`now: Instant` を引数で受ける（search_dispatch.rs:30-38、
+  実装を確認済み）。この意味では「異物」ではなく確立済みパターンの再利用であり、research.md の
+  結論（内包コストが無い）は支持できる。
+- 対抗する先例も存在する: `docs/superpowers/plans/2026-08-09-rescan-in-situ-instrument.md:54`
+  は「純粋核 — 時計を持たない」という別の設計指針を掲げる（rescan_log.rs 向け）。「純粋核」の
+  定義はモジュールごとに異なりうるため、research.md の「既に純粋核を名乗っているから問題ない」
+  という一般化は、**このコードベースで統一された唯一の定義から導いた結論ではない**（別モジュールに
+  矛盾する先例がある）。
+
+偽にする手順: `search_state.rs` に「この型は時刻を持たない／時刻に依存しない」と明記した doc や
+テストが実在すれば、内包はその文言と直接矛盾し主張は壊れる。grep で該当箇所は見つからなかった
+（見つからないことは全称否定の弱い証拠に留まる——探し方を変えて確認済み: `Instant`・`時刻`・
+`時計` の 3 語で search_state.rs を検索し 0 件）。
+
+============================================================
+3. 「production の set_results 呼び出しは 11 箇所」（issue 本文は 10 箇所）
+============================================================
+判定: 壊せなかった（11 箇所で一致。ripgrep と git log の 2 経路で独立検算した）。
+
+一次証拠（ripgrep、LSP とは別ツール）:
+```
+grep -n "\.set_results(" src-tauri/src/egui_shell/launcher_controller.rs
+274, 434, 770, 774, 787, 806, 838, 856, 859, 886, 1341
+```
+11 行で research.md の表と行番号まで完全一致。
+
+一次証拠（git log、3 つ目の独立ツール）:
+```
+git log --oneline 23cba3c..8ca9950 -- src-tauri/src/egui_shell/launcher_controller.rs
+8ca9950 refactor(egui): RowsSnapshot::settled を input_idle へ改め...(#1078)
+28a6342 fix(egui): trailing 発火の直後の Enter が最終クエリでない行で起動するのを塞ぐ (#1072)
+aba1356 fix(egui): 検索 worker の死を送信 Err で検知し、古い行の誤起動を止める (#1053)
+```
+issue 本文の基準コミット `23cba3c`（2026-08-11）から現 HEAD `8ca9950` の間に
+`aba1356`（#1053）が挟まっており、そのコミット件名が research.md の説明（「worker 送信失敗枝」の
+新設）と一致する。ripgrep の数え直しと git history の両方が独立に research.md の 11 箇所・
+差分の理由（#1053 の介在）を裏付けた。
+
+偽にする手順: `grep -c "\.set_results(" launcher_controller.rs` が 11 以外を返せば偽になる
+（実測 11）。あるいは `aba1356` が 23cba3c より前に存在すれば「差分の理由」が崩れる（`git log`
+の順序で確認済み・後）。
+
+============================================================
+4. 「is_unsettled の production 消費者は on_enter（1322 行）の 1 箇所だけ」
+============================================================
+判定: 壊せなかった。
+
+一次証拠: `grep -n "is_unsettled" src-tauri/src/egui_shell/*.rs` の全 15 件を確認。関数呼び出しは
+launcher_controller.rs:1322 の 1 件のみ。他は mod.rs:88-89（re-export とその doc コメント）・
+search_dispatch.rs 内のテスト 9 件・doc コメント 2 件・results_view.rs:36（**doc コメント内の
+名指しであって関数呼び出しではない**）・search_state.rs:414（同じく doc コメント内の名指し）。
+「消費者」を「関数として呼ぶ箇所」と定義する限り 1 箇所は正しい。
+
+偽にする手順: `is_unsettled(` という呼び出し構文（`(` を伴う実引数付き呼び出し）が
+launcher_controller.rs 以外の production コードに実在すれば偽になる。実在しないことを grep で確認済み。
+
+============================================================
+5. 「RowsSnapshot::input_idle と is_unsettled は別概念であり、修正を当ててはならない」
+   ＋逆向き: 「is_unsettled の式を変えると input_idle の doc の導出 1 行が沈黙で腐るか」
+============================================================
+判定（前半・分離の意図）: 壊せなかった。
+判定（後半・式が変わって腐るか）: 壊せなかった、ただし ⚠️ 別経路の腐り方が実在する。
+
+一次証拠（前半）: results_view.rs:36 の doc を読了。「これは perf ヒューリスティックであって
+正しさの述語ではない」「食い違うのは armed == false ∧ pending != 0 のときである」と明記。
+数式で検算した: `input_idle = !armed`、`is_unsettled(armed, pending) = armed || pending != 0`。
+`!is_unsettled = !armed && pending == 0`。両者が食い違うのは `armed == false` かつ
+`!(pending == 0)` すなわち `armed == false ∧ pending != 0` のとき——doc の記述と数学的に一致した
+（自分で式を立てて検算した一次証拠であり、doc の転記の裏取りではない）。8ca9950（#1074 のコミット）
+のコミット件名は「settled の二義性を消す」で、この分離が直近の意図的な設計判断であることと符合する。
+
+一次証拠（後半・式は変わるか）: research.md の決定 2 が明記する新しい式は
+`armed || self.dispatch.pending_seq() != 0`——旧来の自由関数 `is_unsettled(armed, pending_seq)`
+の本体（search_dispatch.rs:79-81）と**論理的に同一の式**である。housing（型の所在）が変わるだけで、
+入出力関係は変わらない。ゆえに doc の導出行「食い違うのは armed==false ∧ pending!=0 のとき」は
+式の意味では腐らない。
+
+⚠️ 別経路の腐り方: research.md の決定 2 は「自由関数を残すか削除するか」を明記していない。
+results_view.rs:36 の intra-doc link は `[crate::egui_shell::search_dispatch::is_unsettled]`
+という**特定のパス**を指す。もし実装時に自由関数を削除し `SearchState::is_unsettled` という
+メソッドだけへ一本化すると、この intra-doc link は解決先を失い `cargo doc` が壊れた link として
+検出する（`.claude/rules/comments.md` の手動検査対象・PostToolUse hook は沈黙する）——これは
+「式が沈黙で腐る」のではなく「リンクが騒がしく壊れる」経路であり、#1039 コメント 2 が
+警告した「cargo doc は式の形を検査しない」という前提そのものは正しいが、**リンク切れ自体は
+cargo doc が捕まえる**ため完全な沈黙ではない。真に沈黙するのは、自由関数を残しつつ実装だけ
+こっそり式を変える（例: `&&` に取り違える）場合で、その場合はリンクが生きたまま式だけ乖離し、
+研究が懸念した「沈黙で腐る」が文字通り起きる。**research.md の決定 2 は自由関数を残すか削除するか
+を確定させていない**ため、この危険（intra-doc link 破壊 or 式の意味的乖離のどちらが起きるか）は
+plan.md 側で明示的に選択する必要がある——現状は §7 未解決の疑問にも入っていない**空白**である。
+
+偽にする手順: plan.md（または実装）が「自由関数 `search_dispatch::is_unsettled` を残す/消す」を
+明記していれば、この ⚠️ は該当箇所を読むだけで解消する。現時点の research.md にその記述は無い
+（決定 2 のコードスニペットはメソッド定義のみを示し、自由関数の去就に触れない）。
+
+============================================================
+6. 「enter_folder / navigate_folder の窓は現行と等価であり、採り込み点の view ガードで閉じる」
+============================================================
+判定: 壊せなかった。
+
+一次証拠:
+- `on_nav_keys`（launcher_controller.rs:1160-1228）を全文読了。`enter_folder` /
+  `navigate_folder` の呼び出し前後に `dispatch.invalidate()`（または将来の同等呼び出し）は
+  一切無い——`self.folder_cache = None; self.folder_error = None; self.spawn_folder_load(...)`
+  だけが続く。research.md の記述と一致。
+- `run_search_with`（759-865 行）を全文読了。`ViewKind::Folder` 分岐は `folder_cache` /
+  `folder_error` の同期フィルタのみ、`ViewKind::Tool` 分岐は no-op——**どちらも
+  `search_tx.send` を呼ばない**。plain 検索が worker へ出るのは `ViewKind::Results` の
+  `QueryIntent::Plain` 分岐（790-807 行）だけである。ゆえに「Folder/Tool ビュー中は plain 検索が
+  発行されない」という前提は正しく、決定 3 の view ガード（`view_kind() == Results` のときだけ
+  行を差し替える）が folder/tool 中に届く in-flight 結果を**構造的に**無害化するという主張は
+  健全である。
+- 窓が実在することも確認した: `enter_folder`（search_state.rs:245-256）は `self.results` を
+  クリアしない（`FolderFrame.restore_results` へ複製するだけ）。列挙未着の間、旧 plain 結果が
+  そのまま残る「フリッカ回避」設計（同ファイルのコメントで確認）。この間に旧 in-flight の
+  plain 結果が届けば、現行実装では無条件に上書きされ 1 フレームぶん誤表示しうる——research.md の
+  記述どおり。
+
+偽にする手順: `on_nav_keys` 内、または `enter_folder`/`navigate_folder` 呼び出しの前後に
+`dispatch` に触れる行が追加されていれば、あるいは `run_search_with` の Folder/Tool 分岐が
+`search_tx.send` を呼ぶよう変更されていれば、この主張は崩れる。現 HEAD では該当しないことを
+確認済み。
+
+============================================================
+7. 「SPEC.md の更新は不要である」
+============================================================
+判定: 壊せなかった。
+
+一次証拠:
+- `SPEC.md` §18.5「状態モデル」820 行「ツール選択中の入力は無効化（検索結果が上書きされない）」を
+  確認。今回の修正が閉じる窓（enter_tool 後に遅着 plain 結果がツール行を上書きする）は、この
+  既存の記述に**違反する状態を正常化する**方向であり、記述自体を変える必要は無い。
+- §6.3「フォルダ展開中の検索」（266-271 行）も確認。folder 側の「遅着 plain 結果を採らない」保証は
+  現状どの節にも明文化されていない。これは AGENTS.md の判定基準（バグ=既存記述に合わせる／
+  仕様変更=記述を変える）に照らすと、folder 側は「既存記述が無い内部の競合防止」に分類され、
+  SPEC.md が扱う対象外（ユーザー可視の仕様というより実装レベルの race 防止）と読める。
+  先例として `accept_folder_result` の token 照合による stale 排除（既存の folder 競合対策）も
+  SPEC.md に単独の記述を持たない（grep で確認）——同種の race 防止は本コードベースで
+  一貫して SPEC.md ではなく実装コメント/architecture.md 側に置かれている。この先例と整合する。
+
+偽にする手順: SPEC.md のいずれかの節が「フォルダ展開中は遅着した検索結果を採らない」等、
+今回変える挙動と**矛盾する**記述を持っていれば、この修正はその記述を「変える」ことになり
+仕様変更に該当する。該当する記述の不在を confirmed（grep 実施済み）。
+
+============================================================
+測定環境そのものを疑う（H6/H7・既存テストの接地）
+============================================================
+
+■ smoke-egui.ps1 / SnotraTraceInvariants.psm1 の H6/H7
+一次証拠: `SnotraTraceInvariants.psm1` の H7 実装（378-433 行）を読了。`egui_search:settled` の
+`data.dispatch_seq` / `data.pending_seq` を読む。現状 `drain_search`（launcher_controller.rs:886-896）
+は `settled.seq` と `self.dispatch.pending_seq()`（accept 後は必ず 0）を trace へ載せている。
+research.md の主張どおりイベント名・キー名は変える予定が無い（§6「該当しない」）。
+ただし research.md §7 未解決の疑問 1 が正しく指摘するとおり、`dispatch` フィールドが
+`LauncherController` から消えると `self.dispatch.pending_seq()` という読み出し経路自体が
+無くなる——**この値をどう再供給するかは未決定**。もし実装時に単純に省略すると
+`Get-SnotraTraceProperty` が null を返し H7 は SKIP（`$unjudgeable`）になる。H7 は既に
+「健全な実装では構造的に発火し得ない」設計（同 psm1 390-393 行のコメント）なので、SKIP 化は
+「検知力の追加低下」ではあるが「偽の PASS」ではない（psm1 冒頭の設計原則「判定不能を PASS へ
+化けさせない」により、null は SKIP へ落ちる作りになっている・412-418 行で確認）。ゆえに
+research.md の「該当しない」という結論は smoke の**合否**に対しては壊れないが、
+「payload を保つ」という言明を**実装で守る責任**は plan.md にまだ落ちていない。
+
+■ 既存テストの接地（unsettled_covers_in_flight_after_trailing_fired /
+  unsettled_is_grounded_on_real_dispatch）
+一次証拠: 両テストとも search_dispatch.rs 内で `SearchDispatch::default()` を直接構築し
+`is_unsettled`（自由関数）を直接呼ぶ（137-181 行）。`cargo test -p snotra search` を実行し
+現状 green を確認済み（60 passed; 0 failed）。
+
+⚠️ 所見: 項目 5 で述べた「自由関数を残すか」の未決定と直結する。もし実装が自由関数を削除し
+`SearchState::is_unsettled(&self, armed)` だけを残すなら、`unsettled_is_grounded_on_real_dispatch`
+は**そのままでは書けない**——このテストは「`armed` は false 固定で渡し、`pending_seq` だけを
+実物の `SearchDispatch` から取る」ことで入力が出力側へすり替わる不動点化を避けている
+（コメント 161 行）。`SearchState` へ移設後にこの接地を保つには、SearchState 側に
+issue/accept/invalidate を直接駆動できるテスト用の口（あるいは `put_rows` /
+`accept_worker_rows` を経由した間接駆動）が要る。research.md にはこの経路の設計が無い
+（決定 1〜3 のどこにも「dispatch を直接駆動するテスト手段」の記述が無い）。**SearchDispatch 自体は
+型として残る**設計（決定 1 冒頭「search_dispatch.rs は残す」）ため、この単体テストを
+search_dispatch.rs 側に残すこと自体は可能——だが、それだと「自由関数 is_unsettled」も
+テストと一緒に search_dispatch.rs に残さざるを得ず、決定 2 が新設する
+`SearchState::is_unsettled` と**同じロジックを持つ 2 つの入口**が並立する（DRY 上望ましくない
+が、両立させないと接地テストが書けないというトレードオフが生じる）。これは research.md が
+明示的に解決していない設計上の分岐点であり、plan.md で名指しして決めるべき点として報告する。
+
+偽にする手順: plan.md（実装後は search_state.rs / search_dispatch.rs）に
+「is_unsettled の自由関数は残す/削除する」「接地テストの移設先と、SearchDispatch を直接駆動する
+手段」が明記されていれば、この ⚠️ は解消する。
+
+============================================================
+意図的に分離された構造（DRY 違反として指摘していない）
+============================================================
+指示どおり、以下は重複として指摘していない: rows_generation と SearchDispatch の seq の分離
+（#1004 由来）、folder_gen/token と dispatch seq の分離（search_worker.rs の //! 由来）、
+RowsSnapshot::input_idle と is_unsettled の分離（#1074 由来）。
+
+============================================================
+総括
+============================================================
+7 項目中、壊せた主張は 0 件。6 件は一次証拠で裏付けが取れ、1 件（項目 2）は結論自体は
+支持できるが根拠の一般化に留保が要る。加えて research.md 自身が §7 で認めている未決定
+（trace の pending_seq 供給経路）とは別に、**是自身が §7 に挙げていない未決定**を 1 件
+発見した——is_unsettled の自由関数を残すか削除するかが、intra-doc link の生死と
+接地テストの書けるか否かの両方を左右する分岐点であり、plan.md で明示的に選択されるべきである。

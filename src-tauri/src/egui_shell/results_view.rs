@@ -161,9 +161,7 @@ impl ResultsView {
         }
     }
 
-    /// 渡された行の未取得アイコンを worker に積む（[`RowsSnapshot::input_idle`] 相当）。**`rows` は結果全件ではなく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側がそのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight（icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
-    /// Task 5 で view.rs から移設し、入力を `self.state.results()` から `snapshot.rows` へ変更した
-    /// （本 view は snapshot を描くだけで検索状態を持たないため）。
+    /// 渡された行の未取得アイコンを worker に積む（[`RowsSnapshot::input_idle`] 相当）。**`rows` は結果全件ではなく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側がそのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight（icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。Task 5 で view.rs から移設し、入力を `self.state.results()` から `snapshot.rows` へ変更した（本 view は snapshot を描くだけで検索状態を持たないため）。
     fn request_icons_for_results(
         &mut self,
         rows: &[SearchResult],

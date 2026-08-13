@@ -240,6 +240,12 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
 /// 出力に添えられなければ、パスクエリのフレームコストは読めない**（tie-break の経路が
 /// 分からないため）。
 ///
+/// **変異を注入して落ちることを実測してある**（2026-08-13）。`extend_with_roots` の早期 return を
+/// `if false && entries.is_empty()` へ潰すと、**腕 3 だけが落ちる**（腕 1 はマージを通らないので
+/// 通過する）。**腕 1 と腕 3 を同じ計算にしてはならない理由がここにある**——同じにすると
+/// この変異で 2 腕が同時に落ち、「空マージが旗を下ろす」退行と「マージ前から旗が偽」の退行を
+/// 区別できなくなる（レビュー M-2）。
+///
 /// **守るのは 3 つ目の腕である。** `IndexTree::extend_with_roots` は冒頭で
 /// `if entries.is_empty() { return; }` と抜けるので、`include_path_env` が真でも
 /// `scan_path_env` が空 vec を返す構成（ユーザー PATH が空・全件が既存と重複）では旗が

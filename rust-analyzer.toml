@@ -1,13 +1,20 @@
 # rust-analyzer のワークスペース設定。VS Code もこのファイルを読む。
 #
-# **ここに書けるのは workspace 水準のキーだけである。** rust-analyzer は設定を 4 水準
-# （global / local / workspace / client）に分けており、リポジトリ直下の `rust-analyzer.toml`
-# が入るのは workspace 水準の枝だけ。`files.exclude` / `hover.*` / `cachePriming.enable` /
-# `lru.capacity` は global 水準なので、ここへ書いても**沈黙で無視される**。
+# **ここに書けるのは workspace 水準と local 水準のキーである。** rust-analyzer は設定を 4 水準
+# （global / local / workspace / client）に分けており、リポジトリ直下の `rust-analyzer.toml` は
+# そのうち **2 枝**を運ぶ——`RatomlFile::Workspace` が抱えるのが
+# `WorkspaceLocalConfigInput { workspace, local }` で、local の解決器も source root を遡りながら
+# `RatomlFile::Workspace(config) => config.local.<key>` を読むためである。ゆえに `diagnostics.*`
+# のような local 水準のキーもここで設定できる。一方 `files.exclude` / `hover.*` /
+# `cachePriming.enable` / `lru.capacity` は global 水準なので、ここへ書いても**沈黙で無視される**。
 # （出典: rustc 1.97.1 に同梱の rust-analyzer の `crates/rust-analyzer/src/config.rs`。
 #   `config_data!` の各ブロックが水準の正本で、解決順は下の注記のとおり）
 #
-# **workspace 水準の解決順は「このファイル → クライアント設定 → ユーザ ratoml → 既定」**。
+# **2026-08-14 に「workspace 水準だけ」から訂正した。** global が無視されることの実測から
+# 「workspace 以外は入らない」を導いてしまった全称表現で、local には当たっていなかった。
+#
+# **workspace 水準の解決順は「このファイル → クライアント設定 → ユーザ ratoml → 既定」**、
+# **local 水準は「source root を遡る ratoml 群 → クライアント設定 → ユーザ ratoml → 既定」**。
 # つまりここに書いた値は `.vscode/settings.json` を**上書きする**。ゆえに VS Code を軽く
 # 保つための調整（`cargo.allTargets` / `check.allTargets`）はここに書かない——書けば
 # VS Code 側からは戻せなくなる。重い設定は下のコメントアウト群として残してある。

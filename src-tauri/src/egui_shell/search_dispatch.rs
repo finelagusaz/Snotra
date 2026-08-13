@@ -66,7 +66,9 @@ impl SearchDispatch {
 ///
 /// **`armed` だけでは足りない。** 同期実装の頃は `armed == false` が「反映済み」を含意していたが、worker 化（#1004）で trailing 発火の直後は必ず「`armed == false` かつ in-flight あり」になり、含意が壊れた。
 ///
-/// **`armed` を残すのは、最新クエリの要求がまだ出ていない間を覆うためである。** `pending_seq == 0` だが未反映、という状態はバースト継続中に直前の seq が `accept` 済みのフレーム（[`crate::egui_shell::layout::Debouncer::on_input`] は armed を立てるだけで発行せず、**打鍵のフレームで**要求を出すのは leading だけである——trailing は [`crate::egui_shell::layout::Debouncer::poll`] 経由で別に出す）と、空クエリ・`indexing`・送信失敗が [`SearchDispatch::invalidate`] を撃った後に打鍵が armed だけ残した状態で生じる。**この 2 つを名指すのは、「打鍵したフレームの一瞬」と誤読されるのを防ぐためである**——どちらも複数フレームにわたって続き、解けるのは trailing が発火するか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval）、`cancel` / [`SearchDispatch::invalidate`] が撃たれたときである。**打鍵が続く限り armed は立ったままなので、持続はバーストの長さで決まる。**
+/// **`armed` を残すのは、最新クエリの要求がまだ出ていない間を覆うためである。** `pending_seq == 0` だが未反映、という状態はバースト継続中に直前の seq が `accept` 済みのフレーム（[`crate::egui_shell::layout::Debouncer::on_input`] は armed を立てるだけで発行せず、**打鍵のフレームで**要求を出すのは leading だけである——trailing は [`crate::egui_shell::layout::Debouncer::poll`] 経由で別に出す）と、空クエリ・`indexing`・送信失敗が [`SearchDispatch::invalidate`] を撃った後に打鍵が armed だけ残した状態で生じる。**これらを名指すのは、「打鍵したフレームの一瞬」と誤読されるのを防ぐためである**——どちらも複数フレームにわたって続き、解けるのは trailing が発火するか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval）、`cancel` / [`SearchDispatch::invalidate`] が撃たれたときである。**打鍵が続く限り armed は立ったままなので、持続はバーストの長さで決まる。**
+///
+/// **armed が下りる経路はメソッドだけではない。** `LauncherController::consume_reset_pending` は show のたびに [`crate::egui_shell::layout::Debouncer`] を丸ごと作り直すため、`poll` も `cancel` も通らずに armed が落ちる（[`crate::egui_shell::layout::Debouncer::new`] は `armed: false` で作る）。**この述語を型の内側へ移すなら、reset 経路で落とす責務も一緒に移ること**——いま取り残しが起きないのは `Debouncer` ごと捨てているからであり、フィールドだけを移した瞬間にその救いは消える。
 ///
 /// `pending_seq` を `bool` でなく生値で受けるのは、**sentinel（0 = in-flight なし）の解釈をテストの届く場所へ入れる**ためである（[`SearchDispatch::issue`] が `next_seq += 1` を先に行うので seq は 1 始まり）。
 ///

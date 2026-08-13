@@ -1,0 +1,42 @@
+## 壊せた項目
+
+- [命題5「改名の網羅性はコンパイラが担保する」] — **偽。コンパイラ（および `broken_intra_doc_links = "deny"`）が担保するのは「識別子の実在」だけであり、研究文書 §2a が改名対象に挙げた散文中の平文言及（intra-doc link 記法 `[`...`]` を使わない裸のバッククォート言及）は一切カバーされない。**
+  一次証拠:
+  - `src-tauri/src/egui_shell/launcher_controller.rs:194` の `` /// 検索 debounce が armed か（snapshot の `settled`・段 30）。`` は平文のバッククォート言及であり、intra-doc link 記法ではない。改名時にこの 1 行を書き換え忘れても、`cargo doc --workspace --no-deps --document-private-items`（`broken_intra_doc_links = "deny"`）はここを走査しない（intra-doc link のみが対象）。
+  - 同様に `results_view.rs:36`「armed→settled の遷移だけで snapshot 差分が生まれ」、`results_view.rs:165`「（settled 相当）」、`results_view.rs:666`「snapshot.settled は旧 view.rs の」も全て平文で、同じ穴に落ちる。
+  - `docs/adr/ADR-stale-identifier-detector-scope.md:250-251`（実機で確認済み）が明記: 「**`.rs` の doc コメントは母集団外である**（却下 9）。#975 の元の欠陥——`.rs` の doc に書かれた存在しないテスト名——は**今も機構では捕まらない**。射程が閉じたのは `.md` 側だけである」。G-stale-identifiers（governance:check）は `.rs` の doc コメントを一切見ない設計だと自ら宣言している。
+  - `.claude/rules/governance-docs.md`「これらの編集に PostToolUse hook 検査は走らない」「G-heading-refs を含む決定的な検査は…事後に走る」は、見出し参照（`` `<path>.md`「<見出し>」 ``）の正準形だけを見る仕組みで、任意の単語（`settled`）の陳腐化検知ではない。
+  - この所見を偽にする手順: `.rs` の doc コメント内の平文言及（intra-doc link でないバッククォート言及）を陳腐化させたまま `cargo doc --workspace --no-deps --document-private-items` と `npm run governance:check` を両方走らせ、どちらかが exit 非 0 で落ちれば本所見は誤り。実測（上記コマンドは走らせていないが、根拠は ADR 本文の明示的な自己申告であり、cargo doc がリンク切れのみを検知することは §3 の実験で直接確認済み）。
+
+  **注記**: 研究文書自身の §4 は「ゆえに改名の網羅性はコンパイラが担保する——grep の網羅性に頼る部分は doc・コメント・intra-doc link だけである」と書いており、**同じ文の中で「コンパイラが担保する」と言った直後に「doc・コメントは grep に頼る」と書く自己矛盾**がある。intra-doc link は担保されるが（§3 参照）、doc・コメントの平文部分は担保されない。命題 5 として渡された「コンパイラが担保する」を字義通り読めば、この平文部分の存在によって偽である。
+
+## 壊せなかった項目
+
+- [命題1「改名すべき箇所は §2a の 9 件で全部」] — `.rs` ファイル全体で `settled`（大文字小文字無視）をリポジトリ全域（`src-tauri` に加え `snotra-core` / `snotra-egui-runtime` / `snotra-settings`）に対して grep し、`#[cfg(test)]` ブロック・テストファイルも含めて確認したが、10 件目は見つからなかった。使った探し方: (1) `grep -rn "settled" --include="*.rs" -i .`（リポジトリ全体、47 行）、(2) `results_view.rs` / `view.rs` に対する word-boundary 版 `\bsettled\b`、(3) 他 3 crate（`snotra-core` / `snotra-egui-runtime` / `snotra-settings`）に対する同型 grep（0 件）。9 件はすべて既に §2a が挙げた行に一致し、残りは `is_unsettled` / `Settled` 構造体（§2b の「触らない」対象）に属した。壊せなかった、が探索は複数手法で行っており見落としの余地は小さい。
+
+- [命題2「§2b の 3 系統は改名してはならない」] — `search_dispatch.rs` を実読し、`SearchDispatch::accept()` が `Some(Settled)` を返すのは `self.pending.seq == seq`（＝直近に issue した「最終」クエリ）のときだけであること、`launcher_controller.rs:877-887` で `accept()` が `Some` を返した直後に必ず `self.state.set_results(results)` が呼ばれ（＝行への反映そのもの）、その直後に `trace::trace("egui_search:settled", …)` が発火することを確認した。`struct Settled` / `accept` の返り値 / trace イベント名の 3 者はいずれも「最終クエリの結果が行へ反映された瞬間」を指しており、受け入れ条件 1 の意味と一致する。反証を試みたが、意味のずれを示す一次証拠は見つからなかった。
+
+- [命題3「search_dispatch.rs:79 の intra-doc link を消さなければ cargo doc が落ちる」] — **実際に検証し、真であることを確認した。** `results_view.rs` の `RowsSnapshot::settled` フィールドと `view.rs` の消費点をすべて `input_idle` へ改名し（`search_dispatch.rs:79` の intra-doc link だけは意図的に放置）、`cargo check --workspace` が緑になることを確認した上で `cargo doc --workspace --no-deps --document-private-items` を実行したところ、`error: unresolved link to crate::egui_shell::results_view::RowsSnapshot::settled`（`-D rustdoc::broken-intra-doc-links`、`Cargo.toml` の `[workspace.lints.rustdoc] broken_intra_doc_links = "deny"` に由来）で失敗した。作業後 `git checkout -- src-tauri/src/egui_shell/results_view.rs src-tauri/src/egui_shell/view.rs` で完全に復元し、`git status --porcelain` と `git diff --stat` の両方で追跡ファイルの差分ゼロを確認済み（`workspace/` の untracked ファイルのみ残存、これは本レポートと研究文書自身）。
+
+- [命題4「input_idle が最良で typing_quiet は造語寄り」] — `layout.rs:429-473` の `Debouncer` 実装を確認し、`cancel()` が `armed = false` を直接代入すること（layout.rs:470-472）、`launcher_controller.rs:1328` で `on_enter` の `should_flush_on_enter` 分岐内から呼ばれていること（＝ Enter の flush 経路そのもの）を実測した。射程注記「`armed` は `Debouncer::cancel()` でも下りる」は正確である。`typing_quiet` が「造語寄り」という判定自体は `docs/comment-guidelines.md`「訳語」の (A)(B) 基準が日本語訳語向けであり英語識別子には字義通り適用できないため定量的な反証はできなかった。`input_idle` を上回る具体的な代替候補も提示できなかった（反証できず）。
+
+- [命題「PostToolUse hook では intra-doc link 検査は沈黙し CI でのみ発火する」] — `.claude/hooks/post-edit.mjs` の `selectChecks()` を実読した。`.rs` ファイル編集時に push される検査 id は `fmt` / `clippy` / crate 別 `*-test`（`isRust` 分岐、127-139 行）のみで、`cargo doc` を呼ぶ id は存在しない（`buildCommand()` の `switch` にも `case` が無い）。一方 `.github/workflows/ci.yml:138-139` に `cargo doc --workspace --no-deps --document-private-items` のステップが実在する（ステップ名「cargo doc (intra-doc link check)」）。研究文書のこの主張は正確。
+
+## ⚠️ 確信が持てない所見
+
+- [命題4 補足] `input_idle` は `cancel()` 経由で armed が下りた場合（Enter flush・モード遷移）にも真になるが、その状況は「打鍵が止まった」わけではなく「debounce の予約を明示的に破棄した」状態である。icon worker ゲートとしての意味は保たれる（連打中でなければ良い）ため機能上の問題ではないが、`input_idle` という**名前**がこのケースを正確に言い当てているかは疑わしい——「idle」は本来「何もしていない」を含意し、Enter 直後（まさに何かが起きた直後）に真になる語感とはやや齟齬がある。研究文書自身が「射程の注記」として自覚的に書いており（`input_idle` は近似）、単なる語感の好みの範囲を出ない可能性が高い。これを偽にする手順: `docs/comment-guidelines.md`「訳語」(B) 造語判定を英語語彙に厳密に適用する具体的な手続きを定義し、`input_idle` と `debounce_idle`（研究文書が却下した候補）のどちらがその手続きで優越するか機械的に判定する。
+
+- [§2b の trace イベント名が「外部契約」であるという性格付け] `scripts/lib/SnotraTraceInvariants.psm1` の H7 判定は「健全な実装では構造的に発火しえない」（同ファイル 390-393 行）契約であり、実質的には恒常 PASS を確認するだけの検査である。「外部契約」という強い言葉が示唆するほど H7 自体が改名の可否を左右する強い制約ではない可能性がある（=trace 名を変えても H7 自体は書き換えれば追随できる。真に効いているのは `PERFORMANCE.md:469-470` の測定手順の逐語依存の方である）。これを偽にする手順: H7 が実際に発火した実測ログ（#1004 PR2 の故障注入時）を確認し、trace 名が変わった場合に H7 のパターンマッチ文字列 (`$script:EventSearchSettled`) がどこまで機械的に追随可能か検証する。
+
+## 道具について判明した事実
+
+- **trace イベント名 `egui_search:settled` への依存は実在し、2 箇所で確認した。**
+  1. `scripts/lib/SnotraTraceInvariants.psm1:18,31,383-399` — H7 不変条件がイベント名を文字列リテラルで直接参照（`$script:EventSearchSettled = 'egui_search:settled'`）。対応する `scripts/lib/SnotraTraceInvariants.Tests.ps1:159-177` にも同名のリテラルが複数箇所（テストフィクスチャ）に現れる。
+  2. `PERFORMANCE.md:469-470` — 「その `egui_search:settled` の直後に現れる最初の `egui_frame`」という測定手順の逐語依存（研究文書の引用は正確）。
+  探索は 2 通り行った: (a) `grep -rn "settled" scripts` で `scripts/` 配下全体を走査し `.psm1` / `.Tests.ps1` / `smoke-egui.ps1` の 3 ファイルがヒット、(b) `.github/workflows/` に対しては `cargo doc` / `broken-intra-doc-links` の grep のみ行い trace 名への依存はゼロ件（workflow は trace 名を直接読まない。smoke 系は `scripts/` 経由で間接的に依存）。**この依存は研究文書 §2b の主張（「触らない」）を裏付ける材料であり、研究文書を反証する材料ではない。**
+
+- **`post-edit.mjs` の `selectChecks()` が `.rs` 編集時に走らせる検査の一覧（実装を直読）**: `isRust` 分岐（125-139 行）により `fmt` → `clippy` → (crate 別) `core-test` / `egui-runtime-test` / `settings-test` / `tauri-test` の最大 3 つ。`cargo doc` はどの分岐にも存在しない（`buildCommand()` の `switch` 文に `case "doc"` は無い）。ゆえに `.rs` の doc コメント編集は、intra-doc link が壊れていても PostToolUse hook では**必ず**沈黙する（CI の `ci.yml:138-139` でのみ発火）。研究文書の主張と完全に一致。
+
+- **G-stale-identifiers（`governance:check`）は `.rs` の doc コメントを母集団に含めない設計であることを `docs/adr/ADR-stale-identifier-detector-scope.md`（却下 9・250-251 行、「残る残余」複数箇所）で確認した。** これは命題5の反証の直接的根拠であり、「改名の網羅性を守る機構がコンパイラ以外に存在しない」ことの一次資料である。
+
+- **`Cargo.toml:22` に `broken_intra_doc_links = "deny"`（`[workspace.lints.rustdoc]`）が設定されており、`cargo doc` はデフォルトで CI 相当の厳格さで動く**（ローカルでも `-D warnings` 相当の挙動。実験で確認済み）。ゆえに命題3の実験は「CI を模した」ものではなく「実際にリポジトリの lint 設定そのもの」で行われた。

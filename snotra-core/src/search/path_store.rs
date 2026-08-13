@@ -35,11 +35,16 @@
 //!
 //! - 索引はソート順ゆえ**隣り合うエントリは祖先を共有する** → [`PathCursor`] が鎖を持ち回り、
 //!   バッファを巻き戻して 1 段だけ書き足す
-//! - 整列済みなら**index の順序がフルパスのバイト順と一致する** → [`PathStore::cmp_paths`] は
-//!   組み立てずに index を比べる（tie-break は `c:\` のようなクエリで総当たりに発火する）
+//! - 整列している範囲の中なら**index の順序がフルパスのバイト順と一致する** →
+//!   [`PathStore::cmp_paths`] は組み立てずに index を比べる（tie-break は `c:\` のような
+//!   クエリで総当たりに発火する）
 //!
-//! どちらも**仮定ではなく構築時の実測**に載っている（`sorted_by_path`）。外れた入力は
+//! どちらも**仮定ではなく構築時の実測**に載っている（`sorted_prefix_len`）。外れた入力は
 //! 遅い経路を通るだけで、結果は変わらない。
+//!
+//! **範囲を真偽で持たない理由は PATH マージにある。** 末尾へ 100 件足すだけで全体の整列は
+//! 崩れるが、**マージ前の 312,108 件は 1 件も動かない**——真偽で持つとその範囲ごと高速路を
+//! 捨てることになり、実運用点で `c:\` の p50 に 7,700〜8,900 µs 乗る（#1067・`PERFORMANCE.md`）。
 
 use std::cmp::Ordering;
 
@@ -103,12 +108,13 @@ pub(super) struct PathStore {
     /// 同居させるのは、組み立ての最後の 1 段（根）が必ずここを引くためである。
     /// 別テーブルにして二分探索させると、**全エントリの組み立てにその探索が乗る**。
     table: Vec<Box<str>>,
-    /// `target_path` のバイト順に並んでいるか。**仮定ではなく構築時の実測である。**
+    /// **先頭から何件まで**が `target_path` のバイト順に並んでいるか。
+    /// **仮定ではなく構築時の実測である**（正本は [`crate::index_tree::IndexTree`] の同名フィールド）。
     ///
-    /// 真なら index の順序がフルパスのバイト順と**厳密に**一致するので、[`Self::cmp_paths`] は
-    /// 組み立てずに index を比べるだけでよい（`sort_entries_canonical` は第 1 キーが
-    /// `target_path` であり、dedup により `target_path` は一意ゆえ第 1 キーだけで全順序が
-    /// 決まる）。偽なら組み立てて比べる経路へ落ち、結果は変わらない。
+    /// この範囲の中では index の順序がフルパスのバイト順と**厳密に**一致するので、
+    /// [`Self::cmp_paths`] は組み立てずに index を比べるだけでよい（`sort_entries_canonical` は
+    /// 第 1 キーが `target_path` であり、dedup により `target_path` は一意ゆえ第 1 キーだけで
+    /// 全順序が決まる）。範囲の外を含む比較は組み立てて比べる経路へ落ち、結果は変わらない。
     ///
     /// **狭義の単調増加でなければならない**——重複を許すと同じパスの 2 件へ index 比較が
     /// `Less`/`Greater` を返し、`Equal` が返らなくなる（判定は `build` のコメント）。
@@ -116,7 +122,7 @@ pub(super) struct PathStore {
     /// **「本番は必ず整列している」という文書上の契約に寄りかからない**のが要点である
     /// ——`SearchEngine::new` は任意順を受け取れるので、契約にすると破れたとき静かに
     /// 順序が変わる。測って持てば、破れた入力は遅い経路を通るだけになる。
-    sorted_by_path: bool,
+    sorted_prefix_len: usize,
 }
 
 impl PathStore {
@@ -154,6 +160,17 @@ impl PathStore {
         self.table.shrink_to_fit();
     }
 
+    /// 整列している範囲を 0 へ潰す（**A/B 検知器専用**）。
+    ///
+    /// [`Self::cmp_paths`] の高速路を殺した「同じ索引」を作るための口である——
+    /// 結果が集合・順序とも変わらないことを実 index 全件で突き合わせるのに要る
+    /// （`search/tests/path.rs` の `sorted_prefix_fast_path_changes_nothing_over_real_index`）。
+    /// **製品から呼べてはならない**ので `#[cfg(test)]` で締める。
+    #[cfg(test)]
+    pub(super) fn force_unsorted_for_test(&mut self) {
+        self.sorted_prefix_len = 0;
+    }
+
     /// 余剰容量の検知器（`search/tests/build.rs`）が読む確保量。
     /// 余剰は検索結果を変えないため、挙動テストでは捕まらない。
     #[cfg(test)]
@@ -165,13 +182,13 @@ impl PathStore {
     /// の `//!`）。**自分の内側は自分で数える**——フィールドは private ゆえ、外から数えると
     /// 表現を変えるたびに数え方も外で直すことになる。
     pub(super) fn footprint_rows(&self, rows: &mut Vec<FootprintRow>) {
-        // **`..` を書かない**（理由は `SearchEngine::footprint_rows`）。`sorted_by_path` は
-        // `bool` ゆえヒープを持たないが、束縛して捨てる形にすることで網羅性は保たれる。
+        // **`..` を書かない**（理由は `SearchEngine::footprint_rows`）。`sorted_prefix_len` は
+        // `usize` ゆえヒープを持たないが、束縛して捨てる形にすることで網羅性は保たれる。
         let Self {
             entries,
             names,
             table,
-            sorted_by_path: _,
+            sorted_prefix_len: _,
         } = self;
         // **アリーナは 2 行に割る。** 連結バイト列と切り出しのオフセットは削減の効き方が違う
         // ——前者は表現を変えても減らず（同じ文字が居る）、後者はアリーナ化で新しく足した額
@@ -257,10 +274,15 @@ impl PathStore {
         if a == b {
             return Ordering::Equal;
         }
-        // 整列済みなら index の順序がフルパスのバイト順と一致する（[`Self::sorted_by_path`]）。
-        // **これは効き所である**——`c:\` のような全件が同スコアになるクエリでは tie-break が
-        // 総当たりで発火し、1 回ごとに両辺を組み立て直すと走査全体を支配する。
-        if self.sorted_by_path {
+        // 整列している範囲の中なら、index の順序がフルパスのバイト順と一致する
+        // （[`Self::sorted_prefix_len`]）。**これは効き所である**——`c:\` のような全件が同スコアに
+        // なるクエリでは tie-break が総当たりで発火し、1 回ごとに両辺を組み立て直すと走査全体を
+        // 支配する（実運用点で p50 の 34%・`PERFORMANCE.md`）。
+        //
+        // **`sorted_prefix_len == len()` を要求してはならない。** PATH マージは末尾へ 100 件
+        // 足すだけなので全体の整列は崩れるが、**312,108 件ぶんの範囲は残っている**——そこを
+        // 捨てると比較の 99.97% が組み立てへ落ちる。
+        if a < self.sorted_prefix_len && b < self.sorted_prefix_len {
             return a.cmp(&b);
         }
         CMP_BUFS.with(|cell| {
@@ -277,7 +299,14 @@ impl PathStore {
     /// 在るのは、**計器が「速い経路と遅い経路のどちらを測ったか」を出力に添えられるようにする
     /// ため**である。旗は構築時の実測であって契約ではないので、添えなければその計測値は読めない。
     pub(super) fn sorted_by_path(&self) -> bool {
-        self.sorted_by_path
+        self.sorted_prefix_len == self.entries.len()
+    }
+
+    /// 先頭から何件までがフルパスのバイト順に並んでいるか（**計測ハーネスと検知器のため**）。
+    ///
+    /// 契約は [`Self::cmp_paths`] の doc。
+    pub(super) fn sorted_prefix_len(&self) -> usize {
+        self.sorted_prefix_len
     }
 
     /// `i` のフルパスを新しい `String` として返す（`SearchResult` 組み立て用・top-k 確定後の
@@ -484,7 +513,7 @@ impl PathStore {
             parent,
             aux,
             table,
-            sorted_by_path,
+            sorted_prefix_len,
         } = tree.into_columns();
         debug_assert_eq!(names.len(), is_folder.len());
         debug_assert_eq!(names.len(), parent.len());
@@ -506,7 +535,7 @@ impl PathStore {
             entries,
             names,
             table: table.into_iter().map(String::into_boxed_str).collect(),
-            sorted_by_path,
+            sorted_prefix_len,
         }
     }
 

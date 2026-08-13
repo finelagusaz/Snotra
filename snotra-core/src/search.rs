@@ -430,6 +430,22 @@ impl SearchEngine {
         self.entries.sorted_by_path()
     }
 
+    /// 先頭から何件までがフルパスのバイト順に並んでいるか（**計測ハーネス専用の観測口**）。
+    ///
+    /// **`sorted_by_path` が偽でも 0 とは限らない。** PATH マージは末尾へ足すだけなので、
+    /// マージ前の範囲は今もバイト順のままである——`cmp_paths` はその範囲の中でだけ
+    /// index 比較の高速路へ入れる（契約は `PathStore::cmp_paths` の doc）。
+    #[doc(hidden)]
+    pub fn sorted_prefix_len(&self) -> usize {
+        self.entries.sorted_prefix_len()
+    }
+
+    /// 整列している範囲を 0 へ潰す（**A/B 検知器専用**・契約は `PathStore` の同名メソッド）。
+    #[cfg(test)]
+    pub(crate) fn force_unsorted_for_test(&mut self) {
+        self.entries.force_unsorted_for_test();
+    }
+
     /// 索引 `i` の表示名。
     pub fn entry_name(&self, i: usize) -> &str {
         self.entries.name_at(i)

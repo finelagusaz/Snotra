@@ -233,6 +233,55 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
     }
 }
 
+/// **PATH マージは整列済みの範囲を壊さない**——壊すのは「全体が整列している」という主張だけである。
+///
+/// `IndexTree::extend_with_roots` は末尾へ足すので、**マージ前の範囲は今もバイト順のまま**である。
+/// `PathStore::cmp_paths` はその範囲の中でだけ index 比較の高速路へ入れる。実運用点では
+/// 312,208 件のうち 312,108 件（**99.97%**）が範囲の中に居るので、tie-break の比較はほぼ
+/// すべて O(1) に戻る（実測は `PERFORMANCE.md`）。
+///
+/// **「マージ後に整列を測り直す」形は空振りする**——実運用点で測ったところ、既存の最大パス
+/// `C:\workspace\...` に対し追加の最小パスは `C:\Users\...` で、PATH エントリは必ず途中に入る
+/// （2026-08-13 実測）。ゆえに旗を測り直しても偽にしかならない。**保つべきは旗ではなく範囲である。**
+#[test]
+fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_sorted() {
+    let mut base = vec![
+        AppEntry {
+            name: "apps".to_string(),
+            target_path: "C:\\apps".to_string(),
+            is_folder: true,
+        },
+        AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\Firefox.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    crate::indexer::sort_entries_canonical(&mut base);
+    let base_len = base.len();
+
+    let (tree, masks) = crate::indexer::derive_columns(base).into_cached_masks();
+    let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
+    // **バイト順で既存より前に来る根**を足す（`C:\Users` < `C:\apps`——大文字は小文字より前）。
+    // 実運用点の PATH エントリと同じ形であり、末尾へ足しても全体の整列は崩れる。
+    material.extend_with_path_entries(vec![AppEntry {
+        name: "Node".to_string(),
+        target_path: "C:\\Users\\node.exe".to_string(),
+        is_folder: false,
+    }]);
+    let engine = SearchEngine::from_material(material, false);
+
+    assert!(
+        !engine.sorted_by_path(),
+        "全体の整列が崩れていない（この fixture は崩れる形で組んである）"
+    );
+    assert_eq!(
+        engine.sorted_prefix_len(),
+        base_len,
+        "マージ前の範囲が保たれていない（末尾へ足しただけで先頭は動かないはず）"
+    );
+}
+
 /// **PATH マージが整列の旗を下ろすのは、足すエントリが非空のときに限る。**
 ///
 /// `SearchEngine::sorted_by_path` は計測ハーネスのための観測口であり、`PathStore::cmp_paths` が

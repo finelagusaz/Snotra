@@ -425,8 +425,10 @@ impl SearchEngine {
     ///
     /// PATH エントリのマージ（`IndexTree::extend_with_roots`）は**非空のときに限り**旗を
     /// 下ろす。ゆえに「`include_path_env` が真か」は代理指標にならない。
-    #[doc(hidden)]
-    pub fn sorted_by_path(&self) -> bool {
+    /// **`pub` にしない。** 唯一の crate 外の読み手は計測ハーネスであり、そちらは
+    /// `Engine` の passthrough を通る（そこは `src-tauri/clippy.toml` が製品 crate で禁じている）。
+    /// ここを `pub` にすると、**禁止の掛からない 2 つ目の綴り**が生まれる。
+    pub(crate) fn sorted_by_path(&self) -> bool {
         self.entries.sorted_by_path()
     }
 
@@ -435,8 +437,11 @@ impl SearchEngine {
     /// **`sorted_by_path` が偽でも 0 とは限らない。** PATH マージは末尾へ足すだけなので、
     /// マージ前の範囲は今もバイト順のままである——`cmp_paths` はその範囲の中でだけ
     /// index 比較の高速路へ入れる（契約は `PathStore::cmp_paths` の doc）。
-    #[doc(hidden)]
-    pub fn sorted_prefix_len(&self) -> usize {
+    /// **読み手は crate 内の検知器だけなので `#[cfg(test)]` で閉じる。**
+    /// 計測ハーネス（別 crate）が読むのは `Engine::sorted_by_path` であってこちらではない
+    /// ——製品から届く綴りを増やさないほうが、禁止を 1 つ足すより強い。
+    #[cfg(test)]
+    pub(crate) fn sorted_prefix_len(&self) -> usize {
         self.entries.sorted_prefix_len()
     }
 

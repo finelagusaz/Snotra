@@ -349,10 +349,17 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
         }]
     };
 
-    // 2. 非空のマージ = 根として末尾へ足すのでバイト順が崩れ、旗は下りる（遅い経路）。
+    // 2. 非空のマージ = 範囲を測り直さないので「全体が整列している」の主張だけが下りる。
+    //
+    //    **この fixture はバイト順を崩していない**（`C:\tools\node.exe` は `C:\apps\...` より後ろ・
+    //    実測）。**それが要点である**——旗が下りる理由は順序が崩れたことではなく、
+    //    **マージ後に測り直さないこと**である。崩れる fixture を使うと 2 つの理由が同居して、
+    //    どちらで下りたのか区別できなくなる（崩れる側は
+    //    `path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_sorted` が持つ）。
     assert!(
         !SearchEngine::from_material(build(Some(path_entry())), false).sorted_by_path(),
-        "PATH エントリを足したのに旗が立ったまま（`cmp_paths` が index 比較を続け順序が変わる）"
+        "PATH エントリを足したのに全体の整列が主張されたまま（範囲を測り直す実装が入った？\
+         入れるなら `extend_with_roots` の doc が却下の理由を持っている）"
     );
 
     // 3. **空のマージは旗を下ろさない。** ここが代理指標との分かれ目である

@@ -420,7 +420,7 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   // 行を切ることを緑側で押さえる。
   const R = 'reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）"';
   const CLIPPY_OK = [
-    "# `Context` 経由で global style を書く 7 メソッドを禁じる（#751 / #900）",
+    "# 群ごとにコメントで区切った禁止集合（#751 / #900 / #1067）",
     "disallowed-methods = [",
     `    { path = "egui::Context::set_visuals", ${R} },`,
     `    { path = "egui::Context::set_visuals_of", ${R} },`,
@@ -589,7 +589,7 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   });
 
   // --- カナリア ---
-  it("カナリア: 実リポジトリで緑であり、守りたい対象（#751 の 7 メソッド）が入力に現れる", () => {
+  it("カナリア: 実リポジトリで緑であり、守りたい対象が全件入力に現れる", () => {
     const s = makeSnapshot(fileURLToPath(new URL("..", import.meta.url)));
     const real = disallowedMethodPaths(s.read("src-tauri/clippy.toml") ?? "");
     expect(real, "実 clippy.toml から disallowed-methods を導出できなかった").not.toBeNull();

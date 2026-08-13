@@ -305,6 +305,7 @@ impl PathStore {
     /// 先頭から何件までがフルパスのバイト順に並んでいるか（**計測ハーネスと検知器のため**）。
     ///
     /// 契約は [`Self::cmp_paths`] の doc。
+    #[cfg(test)]
     pub(super) fn sorted_prefix_len(&self) -> usize {
         self.sorted_prefix_len
     }

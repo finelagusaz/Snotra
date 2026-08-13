@@ -183,17 +183,17 @@ issue は「p50 15.5 ms は 1 フレーム 16,700 µs の**内側**であり、�
 **すべての変異に `-D warnings` の手当てを同時に書く**（PostToolUse hook が `.rs` 編集のたびに
 走るため、手当てが無いと変異のたびに失敗が会話へ届く）。
 
-- [ ] **A（現行）** を測る
-- [ ] **M_all**: `score_one_entry` の `let base_score = score?;` の直後に `return None` を置く
+- [x] **A（現行）** を測る
+- [x] **M_all**: `score_one_entry` の `let base_score = score?;` の直後に `return None` を置く
       → マッチ後の**全部**（履歴照合・`ScoredEntry` 構築・`TopK::push` / `merge` /
       `into_sorted_vec`・tie-break・`local_matches.push`）が消える。
       **A − M_all が、行をまたがない直接測定である**。
       手当て: 以降が到達不能になり `base_score` も未読になるので
       `#[allow(unreachable_code, unused_variables)]` を関数へ付ける
-- [ ] **M_hist**: 履歴照合 3 種を定数（`(0, 0)` / `0` / `0`）へ置き換える。
+- [x] **M_hist**: 履歴照合 3 種を定数（`(0, 0)` / `0` / `0`）へ置き換える。
       手当て: 引数 `history: &HistoryStore`（`scoring.rs:326`）の唯一の使用箇所が消えるので
       `_history` へ改名するか `let _ = history;` を置く
-- [ ] **M_topk**: **`search.rs:317-322` の fold の呼び出し点**で `top_k.push(scored)` だけを
+- [x] **M_topk**: **`search.rs:317-322` の fold の呼び出し点**で `top_k.push(scored)` だけを
       止める（`local_matches.push(i)` は残す）→ top-k 側（push / merge / into_results /
       tie-break）だけが消える。
       **`score_one_entry` を `None` にする形にしてはならない**——`local_matches.push(i)` を
@@ -201,47 +201,122 @@ issue は「p50 15.5 ms は 1 フレーム 16,700 µs の**内側**であり、�
       手当ては 2 種類が要る: 未使用になる**値** `scored` は `let _ = scored;` で受け、
       **`mut` 束縛**は fold のパターンから外す（`|(top_k, mut local_matches), i|` へ）——
       `top_k` への `&mut self` 呼び出しは `push` 1 か所だけなので `unused_mut` が出る
-- [ ] **M_idx**（**第 5 の成分**）: 同じ呼び出し点で `local_matches.push(i)` だけを止める
+- [x] **M_idx**（**第 5 の成分**）: 同じ呼び出し点で `local_matches.push(i)` だけを止める
       → incremental cache 用の全一致 index 収集（`c:\` では 312,108 個の `usize` と
       reduce の `extend`）だけが消える。**issue の 3 成分に入っていない**。
       手当ては同じく `|(mut top_k, local_matches), i|` へ（`unused_mut`）
-- [ ] **M_cmp**: `ScoredEntry::cmp` の第 4 キー `self.paths.cmp_paths(..)` を `Ordering::Equal` へ
+- [x] **M_cmp**: `ScoredEntry::cmp` の第 4 キー `self.paths.cmp_paths(..)` を `Ordering::Equal` へ
       → tie-break の最終段だけが消える（`research.md` §2.5 の機序の検算）。
       **この変異だけは純粋な引き算ではない**——`Equal` を返すと `push` の
       `cmp(&worst) == Ordering::Less` が偽になる回数が増え、置換と `sift_down` が減る。
       **cmp のコストと「ヒープ仕事の減少」が混ざるので、そう注記して記録する。**
       `sorted_by_path = true` 側では差は 0 に近いはずで（`cmp_paths` が `a.cmp(&b)` で即返す）、
       **意味を持つのは実運用点の側だけである**
-- [ ] **A′（drift 対照）**: 全 revert 後に A を測り直す。**A 側の幅を明示し、削減がその何倍かを書く**
-- [ ] **過剰決定の検算 (i)**: `(A − M_hist) + (A − M_topk) + (A − M_idx) ≈ (A − M_all)` が
+- [x] **A′（drift 対照）**: 全 revert 後に A を測り直す。**A 側の幅を明示し、削減がその何倍かを書く**
+- [x] **過剰決定の検算 (i)**: `(A − M_hist) + (A − M_topk) + (A − M_idx) ≈ (A − M_all)` が
       成り立つか。**成り立たなければ、切り出した成分の外にまだ額が在る**
       （`ScoredEntry` の構築そのもの等）。**この検算が #1059 に無かった関係式である**
-- [ ] **過剰決定の検算 (ii)**: `M_all(c:\)` が **888 + 3,204 ≈ 4,100 µs** に着地するか。
+- [x] **過剰決定の検算 (ii)**: `M_all(c:\)` が **888 + 3,204 ≈ 4,100 µs** に着地するか。
       #1067 の 11.4 ms は「`zzz` の行で測ったループ素 888 と組み立て 3,204 を `c:\` の行へ移して
       引く」操作で作られており、**両行で同額であることを誰も測っていない**（`research.md` §2.1）。
       `M_all(c:\)` はまさにその 2 項の和であり、**行をまたぐ転記が妥当だったかの直接の検算になる**
-- [ ] **内部対照**: `\zzz-no-such-path\`（0 件）の行が**どの変異でも動かない**ことを確かめる。
+- [x] **内部対照**: `\zzz-no-such-path\`（0 件）の行が**どの変異でも動かない**ことを確かめる。
       動いたら変異が意図しない枝に効いている。
       （構造的根拠: `zzz` は `let base_score = score?;`（`scoring.rs:478`）で必ず抜けるので、
       **いずれの変異も** `zzz` の経路に 1 行も掛からない）
-- [ ] **task ごとのコストを固定値で見積もらない**（`research.md` §7-3）。`into_par_iter().fold`
+- [x] **task ごとのコストを固定値で見積もらない**（`research.md` §7-3）。`into_par_iter().fold`
       は work-stealing ゆえ task 数は動的である。`TopK::merge` の額を「N × 200」の形で
       推定して記録に書かない——**測った差だけを書く**
-- [ ] 各構成を**実運用点**（Phase 1 の substring + PATH マージ）で測る。旧計測点でも A と M_all
+- [x] 各構成を**実運用点**（Phase 1 の substring + PATH マージ）で測る。旧計測点でも A と M_all
       だけは測り、過去表への橋を残す
-- [ ] p50 と max の両方で分解する（受け入れ条件 4）
-- [ ] **分解表を確定させ、支配項を名指しする**（本フェーズの成果物）。検算 (i)(ii) が
+- [x] p50 と max の両方で分解する（受け入れ条件 4）
+- [x] **分解表を確定させ、支配項を名指しする**（本フェーズの成果物）。検算 (i)(ii) が
       合わなければ、`research.md` §2.6 の第 4・第 5 の候補を切り出す変異を追加してから閉じる
+
+### Phase 3 の測定結果（2026-08-13・GPD WIN MINI・release・同一セッション）
+
+**実運用点**（substring + PATH マージ・`sorted_by_path = false`）の `c:\` p50（µs）。
+変異は 1 つずつ当てて `git checkout` で戻した。**A′ は全 revert 後の drift 対照。**
+
+| 構成 | 殺したもの | p50 | **A − X** |
+|---|---|---:|---:|
+| **A**（現行） | — | 22,535 | — |
+| **A′**（drift 対照） | — | 23,530 | **+995（+4.4%）** |
+| **M_all** | マッチ後の全部 | 6,702 | **15,833** |
+| **M_topk** | top-k（push / merge / into_results / tie-break） | 10,861 | **11,674** |
+| **M_cmp** | tie-break の第 4 キー（`cmp_paths`）だけ | 14,821 | **7,714** |
+| **M_idx** | incremental 用の全一致 index 収集 | 19,714 | **2,821** |
+| **M_hist** | 履歴照合 3 種 | 22,021 | **514** |
+
+**支配項は tie-break の `cmp_paths` である。** top-k の 11,674 µs のうち 66% を占める。
+
+#### 検算 (i) — 過剰決定（#1059 に無かった関係式）
+
+`(A − M_hist) + (A − M_topk) + (A − M_idx) = 514 + 11,674 + 2,821 = **15,009**` に対し
+`A − M_all = **15,833**`。**残差 824 µs（5.2%）** で、`ScoredEntry` の構築そのもの等に相当する。
+**3 成分の外に大きな額は無い。**
+
+#### 検算 (ii) — 行をまたぐ転記は 28% 過小だった
+
+旧計測点（fuzzy + マージ無し）で `M_all(c:\)` = **5,229**。#1059 の分解からの予測は
+`888（ループ素）+ 3,204（組み立て）+ ≒0（find）= 4,092` で、**実測はその 1.28 倍**である。
+同じ実行の `A(c:\)` が 12,179 なので、**旧計測点のマッチ後コストは 12,179 − 5,229 = 6,950 µs**
+——issue が書いた 11.4 ms は、(a) 別日の A（15,525）と (b) 過小なベースライン（4,092）の
+両方で膨らんでいた。**「行をまたぐ引き算をしない」ことが実際に 40% の誤りを消した。**
+
+#### `M_cmp` は `sorted_by_path` が偽のときにしか効かない（独立な裏取り）
+
+同じ実行の旧計測点の腕（`sorted_by_path = true`）では `M_cmp` の `c:\` が 12,313 で、
+A の 12,179 と**差が無い**（`cmp_paths` が `a.cmp(&b)` で即返すため）。
+
+**Phase 2 の要因分解（`sorted_by_path` 真→偽で +7,500〜8,000 µs）と、Phase 3 の `M_cmp`
+（偽の側で −7,714 µs・真の側で ≒0）は、別々の手順で同じ額を指している。**
+
+#### 内部対照
+
+`\zzz-no-such-path\`（0 件）の p50 は A 10,111 / M_all 10,007 / M_hist 10,170 / M_topk 10,536 /
+M_idx 10,160 / M_cmp 10,711 / A′ 10,091 で、**どの変異でも drift の帯（±1,000）を出ない**
+——変異はマッチ後の経路にしか掛かっていない。
+
+#### 受容する残余
+
+- **`M_hist` の 514 µs は drift の帯（995 µs）の内側**であり、**0 と区別できない。**
+  「履歴照合は 514 µs である」とは書かず「**1 ms を超えない**」と書く
+- **`M_cmp` は純粋な引き算ではない**（`Equal` を返すと置換と `sift_down` が減る）。
+  cmp のコストと減ったヒープ仕事が混ざっている
+- `users` は ablation の表に載せない（`M_idx` で実測 4,309 µs へ転落した——`prev_candidates`
+  が空になり incremental が壊れるため。計画どおりの汚染で、パスクエリ 3 本は影響を受けない）
 
 ### Phase 4 — 記録
 
-- [ ] `PERFORMANCE.md` へ節を足す: 実運用点の実額 / 2 要因の分離 / ablation の分解 /
+- [x] `PERFORMANCE.md` へ節を足す: 実運用点の実額 / 2 要因の分離 / ablation の分解 /
       過剰決定の検算 / drift 対照 / **判定**
-- [ ] **数字に「測った対象の限定」を添える**（`RETROSPECTIVE.md`「却下の記録に、測った実装への
+- [x] **数字に「測った対象の限定」を添える**（`RETROSPECTIVE.md`「却下の記録に、測った実装への
       限定を書き落とした」）——機体名（GPD WIN MINI）・日付・commit・config の実値・標本数
-- [ ] `snotra-core/CLAUDE.md` の `tests/path_query_cost.rs` の行へ、実運用点の計器の存在を足す
-- [ ] `npm run governance:check` を通す
-- [ ] **判定を下し、この計画を書き換える。** Phase 3 の分解に照らして「削る手段が在るか」を
+- [x] `snotra-core/CLAUDE.md` の `tests/path_query_cost.rs` の行へ、実運用点の計器の存在を足す
+- [x] `npm run governance:check` を通す
+#### 判定（2026-08-13）— **削る手段は在る。ただし max のゲートは単独では満たさない**
+
+**支配項は `sorted_by_path` が偽であることに由来する tie-break である**（`cmp_paths` = 7,714 µs・
+要因分解でも 7,500〜8,000 µs と別経路で一致）。**手段は「マッチ後のコストを削る」ではなく
+「速い経路を失わないようにする」側にある**——`IndexTree::extend_with_roots` が PATH エントリを
+末尾へ足して旗を無条件に下ろしているのを、**マージ後に測り直す**か**整列を保って併合する**へ替える。
+
+- **正しさは構造で保たれる**（どちらの案も）。旗は「契約ではなく実測」という既存の形をそのまま
+  使うので、測り直して真になったときだけ速い経路へ入る。**「整列しているはず」と仮定しない**
+- **効果の見積もり**: `M_cmp` の p50 14,821 が下限の目安（実際は `cmp_paths` が `a.cmp(&b)` に
+  なるだけなのでもう少し高い）。**p50 は 1 フレーム 16,700 µs の内側へ入る見込み**
+- **max のゲート（< 16,700 µs）は満たさない見込み**: `M_cmp` の max は 23,976、`A` は
+  27,516〜36,709。**マッチ後を全部消した `M_all` でようやく max 8,618** なので、
+  max を満たすには `sorted_by_path` の復元だけでは足りず、残る `M_idx`（2,821）と
+  `ScoredEntry` 構築の残差（824）まで踏み込むことになる
+- **履歴照合（≤1,000 µs・drift の帯の内側）へは手を入れない。** issue が第 1 に挙げた成分だが、
+  実測で支配項ではなかった。`research.md` の第 3 案（index → boost の疎な表）は**採らない**
+
+**実装着手と issue のクローズは 2026-08-13 の承認の射程外である**（承認は「計器を足して測ること」まで）。
+実測をお見せして指示を受けたうえで、計画に実装フェーズを足す。
+
+- [x] **判定を下し、この計画を書き換える。** Phase 3 の分解に照らして「削る手段が在るか」を
       決め、結論を計画本文へ反映する。**下すこと自体は勝敗のどちらでも起きる**ので作業項目に
       置いてよい——**枝の中身は作業項目にしない**（`/start-issue` Step 4）。
       枝は 2 つある: 手段が在れば計画へ実装フェーズを足す（候補は「`extend_with_roots` が旗を
@@ -253,21 +328,21 @@ issue は「p50 15.5 ms は 1 フレーム 16,700 µs の**内側**であり、�
 
 ### Phase 5 — #1059 spike 足場の撤去
 
-- [ ] `snotra-core/src/search/tests/performance.rs` の #1059 spike 6 点を消す。
+- [x] `snotra-core/src/search/tests/performance.rs` の #1059 spike 6 点を消す。
       撤去条件「本 issue の判定を記録した PR がマージされたら消す」は **PR #1066（`2758340`）の
       マージで発火済み**（`research.md` §2.7）
-- [ ] `PERFORMANCE.md`「却下: パスクエリの走査を前向き 1 パスへ替える」の計器への参照を、
+- [x] `PERFORMANCE.md`「却下: パスクエリの走査を前向き 1 パスへ替える」の計器への参照を、
       撤去済みと分かる形へ直す
 
 ### Phase 6 — 実装差分を確定させる
 
-- [ ] `cargo test --workspace`（`#[ignore]` 以外）が緑
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` が緑
-- [ ] `cargo doc --workspace --no-deps --document-private-items`（intra-doc link・hook は沈黙する）
-- [ ] `git diff` で `snotra-core/src/search/scoring.rs` と `snotra-core/src/search.rs` に
+- [x] `cargo test --workspace`（`#[ignore]` 以外）が緑
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` が緑
+- [x] `cargo doc --workspace --no-deps --document-private-items`（intra-doc link・hook は沈黙する）
+- [x] `git diff` で `snotra-core/src/search/scoring.rs` と `snotra-core/src/search.rs` に
       変異が 1 行も残っていないことを確かめる（**引数 1 個の `git diff` で作業ツリーを見る**——
       `main...HEAD` の 3 点形は commit 同士の比較ゆえ未コミットの変異を見ない・#922）
-- [ ] `git diff` で `measure_path_query_frame_cost` が 1 バイトも変わっていないことを確かめる
+- [x] `git diff` で `measure_path_query_frame_cost` が 1 バイトも変わっていないことを確かめる
 
 ## 不変条件と異常系
 

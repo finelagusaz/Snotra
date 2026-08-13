@@ -63,6 +63,7 @@
 - `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）
 - `tests/memory_footprint.rs`（crate ルート統合テスト）: 索引の常駐ヒープをアロケータ実測で取るハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）
 - `tests/path_query_cost.rs`（crate ルート統合テスト）: パスクエリ（`has_path_sep`）全走査のコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）。**`normalized_keys` を保持するか導出するかの差を測る唯一の計器**であり、既存の bench 群はパス区切りを含むクエリを 1 つも持たない
+  - **`measure_path_query_frame_cost_at_operating_point` は実起動の経路を再現する**（#1067）: PATH マージ（`IndexMaterial::extend_with_path_entries`）を通し、実 config の `normal_mode` をそのまま使う。**`measure_path_query_frame_cost` の側は据え置く**——過去の全表との比較可能性がそこに掛かっている。2 つの計器は同一構成で一致することを実測してある（`PERFORMANCE.md`「実運用点のパスクエリのフレームコスト」）。**旗（`Engine::sorted_by_path`）を出力に添えるのが要点である**——`cmp_paths` の経路がそれで変わり、`c:\` の p50 が 7,500〜8,000 µs 動く
 
 ## 開発ルール
 

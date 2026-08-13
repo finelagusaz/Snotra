@@ -1,0 +1,38 @@
+# rust-analyzer のワークスペース設定。VS Code もこのファイルを読む。
+#
+# **ここに書けるのは workspace 水準のキーだけである。** rust-analyzer は設定を 4 水準
+# （global / local / workspace / client）に分けており、リポジトリ直下の `rust-analyzer.toml`
+# が入るのは workspace 水準の枝だけ。`files.exclude` / `hover.*` / `cachePriming.enable` /
+# `lru.capacity` は global 水準なので、ここへ書いても**沈黙で無視される**。
+# （出典: rustc 1.97.1 に同梱の rust-analyzer の `crates/rust-analyzer/src/config.rs`。
+#   `config_data!` の各ブロックが水準の正本で、解決順は下の注記のとおり）
+#
+# **workspace 水準の解決順は「このファイル → クライアント設定 → ユーザ ratoml → 既定」**。
+# つまりここに書いた値は `.vscode/settings.json` を**上書きする**。ゆえに VS Code を軽く
+# 保つための調整（`cargo.allTargets` / `check.allTargets`）はここに書かない——書けば
+# VS Code 側からは戻せなくなる。重い設定は下のコメントアウト群として残してある。
+#
+# **反映は再起動時のみ**（2026-08-13 実測: 稼働中のサーバは書き換えを拾わなかった）。
+# 効いているかの検算: セッション再起動後に workspaceSymbol へ 1 文字クエリ（例 `e`）を投げ、
+# **128 件を超える**か、結果に Function が混ざれば効いている（既定は limit=128 / only_types）。
+
+# シンボル検索を型だけに絞らず、上限で黙って切らない。
+# 既定の `only_types` は「型で 1 件も当たらなかったときだけ全シンボルへ落ちる」挙動なので、
+# 広いクエリでは関数が一切見えない。既定の limit=128 も、網羅性が要件の作業では沈黙の打ち切りになる。
+[workspace.symbol.search]
+kind = "all_symbols"
+limit = 512
+
+# --- 以下は「重い側」。VS Code も同じファイルを読み、しかもここが優先されるため既定では入れない ---
+
+# rust-analyzer 専用の target ディレクトリ（`target/rust-analyzer/`）。
+# rust-analyzer の `cargo check` とビルドスクリプト実行が `Cargo.lock` を掴まなくなるので、
+# PostToolUse hook の `cargo fmt/clippy/test` と食い合わなくなる。代償はビルド成果物の二重化（ディスク）。
+# [cargo]
+# targetDir = true
+
+# 必須 lint（`cargo clippy --workspace --all-targets -- -D warnings`）を保存時に走らせる。
+# エージェント側には不要——PostToolUse hook が編集ごとに同じものを既に走らせている。
+# [check]
+# command = "clippy"
+# extraArgs = ["--", "-D", "warnings"]

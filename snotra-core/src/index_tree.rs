@@ -295,7 +295,7 @@ pub(crate) struct TreeColumns<'a> {
     pub(crate) parent: &'a [u32],
     pub(crate) aux: &'a [u32],
     pub(crate) table: &'a [String],
-    pub(crate) sorted_by_path: bool,
+    pub(crate) sorted_prefix_len: usize,
 }
 
 /// [`IndexTree`] を列へほどいた形（索引側が組み替えるときに使う）。
@@ -307,7 +307,7 @@ pub(crate) struct OwnedTreeColumns {
     pub(crate) parent: Vec<u32>,
     pub(crate) aux: Vec<u32>,
     pub(crate) table: Vec<String>,
-    pub(crate) sorted_by_path: bool,
+    pub(crate) sorted_prefix_len: usize,
 }
 
 /// 木の 1 ノードを読む口。**記憶域の並べ方だけを抽象化する**——規則は [`raw_path_into`] が
@@ -429,12 +429,18 @@ pub struct IndexTree {
     /// 同居させるのは、組み立ての最後の 1 段（根）が必ずここを引くためである。
     /// 別テーブルにして二分探索させると、**全エントリの組み立てにその探索が乗る**。
     table: Vec<String>,
-    /// フルパスのバイト順に**狭義の単調増加**で並んでいるか。索引側の tie-break が
-    /// 「組み立てずに index を比べる」高速路へ入れるかを決める。
+    /// **先頭から何件まで**がフルパスのバイト順に**狭義の単調増加**で並んでいるか。
+    /// 索引側の tie-break が「組み立てずに index を比べる」高速路へ入れる範囲を決める
+    /// （契約の全文は `search/path_store.rs` の `PathStore::cmp_paths`）。
     ///
-    /// **仮定ではなく実測である。** 測れなかった経路では偽を入れること——偽は
+    /// **`bool` ではなく件数である理由は [`Self::extend_with_roots`] にある。** PATH エントリは
+    /// 末尾へ足されるので全体の整列は崩れるが、**マージ前の範囲は 1 件も動かない**。
+    /// 真偽で持つと、100 件足しただけで 312,108 件ぶんの高速路を捨てることになる
+    /// （実運用点で `c:\` の p50 に 7,500〜8,000 µs・`PERFORMANCE.md`）。
+    ///
+    /// **仮定ではなく実測である。** 測れなかった経路では 0 を入れること——0 は
     /// 組み立てて比べる遅い経路へ落ちるだけで、結果は変わらない。
-    pub(crate) sorted_by_path: bool,
+    pub(crate) sorted_prefix_len: usize,
 }
 
 impl TreeNodes for IndexTree {
@@ -519,7 +525,9 @@ impl IndexTree {
             parent,
             aux,
             table,
-            sorted_by_path,
+            // **ディスクは「全体が整列か」しか持たない**（形式を変えずに済ませるため）。
+            // 読み戻した木はまだマージを受けていないので、真なら全件が範囲である。
+            sorted_prefix_len: if sorted_by_path { n } else { 0 },
         })
     }
 
@@ -534,8 +542,8 @@ impl IndexTree {
             parent: Vec::new(),
             aux: Vec::new(),
             table: vec![String::new()],
-            // 空の列は「狭義の単調増加」を空虚に満たすが、`build` が測る値と揃えて真にする。
-            sorted_by_path: true,
+            // 空の列は「狭義の単調増加」を空虚に満たす。件数で持つ表現では 0 がそれである。
+            sorted_prefix_len: 0,
         }
     }
 
@@ -557,7 +565,7 @@ impl IndexTree {
             parent,
             aux,
             table,
-            sorted_by_path,
+            sorted_prefix_len,
         } = self;
         TreeColumns {
             names,
@@ -565,7 +573,7 @@ impl IndexTree {
             parent,
             aux,
             table,
-            sorted_by_path: *sorted_by_path,
+            sorted_prefix_len: *sorted_prefix_len,
         }
     }
 
@@ -580,7 +588,7 @@ impl IndexTree {
             parent,
             aux,
             table,
-            sorted_by_path,
+            sorted_prefix_len,
         } = self;
         OwnedTreeColumns {
             names,
@@ -588,7 +596,7 @@ impl IndexTree {
             parent,
             aux,
             table,
-            sorted_by_path,
+            sorted_prefix_len,
         }
     }
 
@@ -716,7 +724,8 @@ impl IndexTree {
             parent: parent_col,
             aux: aux_col,
             table,
-            sorted_by_path,
+            // 走査した木はまだマージを受けていないので、整列していれば全件が範囲である。
+            sorted_prefix_len: if sorted_by_path { n } else { 0 },
         }
     }
 
@@ -726,9 +735,17 @@ impl IndexTree {
     /// （合計およそ 5 KiB）にしかならない一方、解決すれば「パス → index」の索引を
     /// 全件ぶん建てることになる。反復 9 が PATH スキャンで却下したのと同じ比率の誤りである。
     ///
-    /// **整列の旗は必ず下ろす。** 足したパスがバイト順で末尾に来る保証は無く、実運用点では
-    /// 実際に崩れる（PATH の実行ファイルは `C:\Windows\System32\…` ゆえ途中に入る・実測）。
-    /// 偽は遅い経路へ落ちるだけで結果は変わらない。
+    /// **[`Self::sorted_prefix_len`] に触れない。** 足すのは末尾だけなので、マージ前の範囲は
+    /// 1 件も動かない——その範囲の中では index の順序が今もフルパスのバイト順と一致する。
+    /// 崩れるのは「全体が整列している」という主張だけであり、それは `len()` が伸びて範囲に
+    /// 追いつかなくなる形で表れる。
+    ///
+    /// **範囲を伸ばそうと測り直してはならない**（#1067 で却下）。伸ばせるのは「足すぶんが
+    /// 昇順」かつ「既存の最大より後ろ」のときだけだが、実運用点では既存の最大が
+    /// `C:\workspace\...` で追加の最小が `C:\Users\...` であり、**PATH エントリは必ず途中に
+    /// 入る**（2026-08-13 実測）。測っても偽にしかならないのに、毎回「既存の最大」を
+    /// 組み立てる費用が全ユーザーへ乗る。判断の記録は
+    /// `docs/adr/ADR-sorted-prefix-over-reflagging.md`。
     pub(crate) fn extend_with_roots(&mut self, entries: Vec<AppEntry>) {
         if entries.is_empty() {
             return;
@@ -744,7 +761,9 @@ impl IndexTree {
             parent,
             aux,
             table,
-            sorted_by_path,
+            // **触らないことが振る舞いである**（下のコメント）。`..` を書かずに名前で受けて
+            // `_` にするのは、列を足したときにここが compile error になる規律を保つためである。
+            sorted_prefix_len: _,
         } = self;
         for entry in entries {
             let AppEntry {
@@ -758,7 +777,15 @@ impl IndexTree {
             parent.push(NO_PARENT);
             aux.push((table.len() - 1) as u32);
         }
-        *sorted_by_path = false;
+        // **`sorted_prefix_len` に触れないのが要点である。** 足すのは末尾だけなので、
+        // マージ前の範囲は 1 件も動いていない——その範囲の中では index の順序が今も
+        // フルパスのバイト順と一致する。**全体の整列だけが崩れる**（`len()` が伸びて
+        // `sorted_prefix_len` に追いつかなくなる形で表れる）。
+        //
+        // **範囲を伸ばそうと測り直しても空振りする。** 実運用点で測ったところ、既存の最大パスは
+        // `C:\workspace\...` で追加の最小パスは `C:\Users\...` であり、PATH エントリは必ず
+        // 途中に入る（2026-08-13 実測）。伸ばせる形の入力は実在しうるが、そのために毎回
+        // 「既存の最大」を組み立てる費用を全ユーザーへ課す価値は無い。
     }
 
     /// `i` の**末尾成分**を、`indexer` の篩と同じ規則で正規化して `buf` へ書く。

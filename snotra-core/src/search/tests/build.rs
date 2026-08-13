@@ -233,6 +233,171 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
     }
 }
 
+/// **PATH マージは整列済みの範囲を壊さない**——壊すのは「全体が整列している」という主張だけである。
+///
+/// `IndexTree::extend_with_roots` は末尾へ足すので、**マージ前の範囲は今もバイト順のまま**である。
+/// `PathStore::cmp_paths` はその範囲の中でだけ index 比較の高速路へ入れる。実運用点では
+/// 312,208 件のうち 312,108 件（**99.97%**）が範囲の中に居るので、tie-break の比較はほぼ
+/// すべて O(1) に戻る（実測は `PERFORMANCE.md`）。
+///
+/// **「マージ後に整列を測り直す」形は空振りする**——実運用点で測ったところ、既存の最大パス
+/// `C:\workspace\...` に対し追加の最小パスは `C:\Users\...` で、PATH エントリは必ず途中に入る
+/// （2026-08-13 実測）。ゆえに旗を測り直しても偽にしかならない。**保つべきは旗ではなく範囲である。**
+#[test]
+fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_sorted() {
+    let mut base = vec![
+        AppEntry {
+            name: "apps".to_string(),
+            target_path: "C:\\apps".to_string(),
+            is_folder: true,
+        },
+        AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\Firefox.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    crate::indexer::sort_entries_canonical(&mut base);
+    let base_len = base.len();
+
+    let (tree, masks) = crate::indexer::derive_columns(base).into_cached_masks();
+    let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
+    // **バイト順で既存より前に来る根**を足す（`C:\Users` < `C:\apps`——大文字は小文字より前）。
+    // 実運用点の PATH エントリと同じ形であり、末尾へ足しても全体の整列は崩れる。
+    material.extend_with_path_entries(vec![AppEntry {
+        name: "Node".to_string(),
+        target_path: "C:\\Users\\node.exe".to_string(),
+        is_folder: false,
+    }]);
+    let engine = SearchEngine::from_material(material, false);
+
+    assert!(
+        !engine.sorted_by_path(),
+        "全体の整列が崩れていない（この fixture は崩れる形で組んである）"
+    );
+    assert_eq!(
+        engine.sorted_prefix_len(),
+        base_len,
+        "マージ前の範囲が保たれていない（末尾へ足しただけで先頭は動かないはず）"
+    );
+}
+
+/// **PATH マージが整列の旗を下ろすのは、足すエントリが非空のときに限る。**
+///
+/// `SearchEngine::sorted_by_path` は計測ハーネスのための観測口であり、`PathStore::cmp_paths` が
+/// index 比較（速い）とフルパス組み立て（遅い）のどちらを通るかを決める。**計器がこの値を
+/// 出力に添えられなければ、パスクエリのフレームコストは読めない**（tie-break の経路が
+/// 分からないため）。
+///
+/// **変異を注入して落ちることを実測してある**（2026-08-13）。`extend_with_roots` の早期 return を
+/// `if false && entries.is_empty()` へ潰すと、**腕 3 だけが落ちる**（腕 1 はマージを通らないので
+/// 通過する）。**腕 1 と腕 3 を同じ計算にしてはならない理由がここにある**——同じにすると
+/// この変異で 2 腕が同時に落ち、「空マージが旗を下ろす」退行と「マージ前から旗が偽」の退行を
+/// 区別できなくなる（レビュー M-2）。
+/// **`Engine::sorted_by_path` の本体を `true` リテラルへ潰す変異でも実測してある**——
+/// 腕 4 の**偽の側だけ**が落ちる（真の側は素通りする）。恒真の退行を捕まえるのはこの 1 本である。
+///
+/// **腕ごとに守る不変条件が違う。** 腕 1 は基準線（整列済みなら旗が立つ）、腕 2 は「非空の
+/// マージで下りる」、腕 3 は下の「空マージでは下りない」、**腕 4 は `Engine` 段の passthrough を
+/// 両方向で**（真だけでは恒真への退行を通す）。**どれも他の腕では代われない**——1 つを
+/// 付け足しと見て消すと、その不変条件だけが無防備になる。
+///
+/// **腕 3 が守るのは代理指標との分かれ目である。** `IndexTree::extend_with_roots` は冒頭で
+/// `if entries.is_empty() { return; }` と抜けるので、`include_path_env` が真でも
+/// `scan_path_env` が空 vec を返す構成（ユーザー PATH が空・全件が既存と重複）では旗が
+/// 立ったまま残る。**「`include_path_env` が真なら旗は下りている」は成り立たない**——
+/// 代理指標で計器を書くと、そこで測った値の帰属が静かに誤る。
+#[test]
+fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
+    let mut base = vec![
+        AppEntry {
+            name: "apps".to_string(),
+            target_path: "C:\\apps".to_string(),
+            is_folder: true,
+        },
+        AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\Firefox.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    crate::indexer::sort_entries_canonical(&mut base);
+
+    // **`None` は「マージを 1 度も通さない」である。** `Some(vec![])` と同じにしてはならない
+    // ——同じにすると腕 1 と腕 3 が 1 行も違わなくなり、「マージ前から旗が偽」という退行と
+    // 「空マージが旗を下ろす」という退行を区別できなくなる（どちらでも 2 腕が同時に落ちる）。
+    let build = |path_entries: Option<Vec<AppEntry>>| {
+        let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
+        let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
+        if let Some(entries) = path_entries {
+            material.extend_with_path_entries(entries);
+        }
+        material
+    };
+
+    // 1. **基準線**——マージを 1 度も通さない。整列済みの入力ゆえ旗は立つ（速い経路）。
+    assert!(
+        SearchEngine::from_material(build(None), false).sorted_by_path(),
+        "整列済みの入力で旗が立っていない（`sort_entries_canonical` を通してある）"
+    );
+
+    let path_entry = || {
+        vec![AppEntry {
+            name: "Node".to_string(),
+            target_path: "C:\\tools\\node.exe".to_string(),
+            is_folder: false,
+        }]
+    };
+
+    // 2. 非空のマージ = 範囲を測り直さないので「全体が整列している」の主張だけが下りる。
+    //
+    //    **この fixture はバイト順を崩していない**（`C:\tools\node.exe` は `C:\apps\...` より後ろ・
+    //    実測）。**それが要点である**——旗が下りる理由は順序が崩れたことではなく、
+    //    **マージ後に測り直さないこと**である。崩れる fixture を使うと 2 つの理由が同居して、
+    //    どちらで下りたのか区別できなくなる（崩れる側は
+    //    `path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_sorted` が持つ）。
+    assert!(
+        !SearchEngine::from_material(build(Some(path_entry())), false).sorted_by_path(),
+        "PATH エントリを足したのに全体の整列が主張されたまま（範囲を測り直す実装が入った？\
+         入れるなら `extend_with_roots` の doc が却下の理由を持っている）"
+    );
+
+    // 3. **空のマージは旗を下ろさない。** ここが代理指標との分かれ目である
+    //    ——腕 1 と違い、`extend_with_path_entries` を**実際に通したうえで**旗が残る。
+    assert!(
+        SearchEngine::from_material(build(Some(Vec::new())), false).sorted_by_path(),
+        "空の PATH マージが旗を下ろした（`extend_with_roots` の早期 return が壊れている）"
+    );
+
+    // 4. **`Engine` 段の passthrough を両方向で通す。** 計器が読むのはこの段であり、ここが
+    //    壊れると出力の諸元が静かに嘘をつく——`cargo test` がこの 1 段を一度も評価しない
+    //    状態にしない。
+    //
+    //    **真の側だけでは足りない。** 恒真への退行（`true` リテラル・別の `bool` フィールドへの
+    //    誤配線）は真の側を素通りするが、**実運用点で正しい値は偽**なので、そのとき計器は
+    //    「PATH マージ あり（+100 件）/ sorted_by_path = true」と刷って**支配項の帰属を逆にする**
+    //    ——遅い経路（フルパス組み立て）を測ったのに速い経路を測ったと読める。危ないのは
+    //    通らない側であり、そちらを覆わない検知器は一番効く向きを見ていない（レビュー R2-1）。
+    let engine_sorted = crate::engine::Engine::from_material(
+        build(None),
+        crate::history::HistoryStore::empty(),
+        crate::config::Config::default(),
+    );
+    assert!(
+        engine_sorted.sorted_by_path(),
+        "`Engine` の passthrough が真を返せていない（`SearchEngine` 段とずれている）"
+    );
+    let engine_unsorted = crate::engine::Engine::from_material(
+        build(Some(path_entry())),
+        crate::history::HistoryStore::empty(),
+        crate::config::Config::default(),
+    );
+    assert!(
+        !engine_unsorted.sorted_by_path(),
+        "`Engine` の passthrough が恒真になっている（計器が遅い経路を速い経路として刷る）"
+    );
+}
+
 /// **保存が返した派生データの直後に PATH エントリをマージする経路**（`IndexMaterial::extend_with_path_entries`）。
 ///
 /// **この組み合わせは反復 11 で初めて生きた。** それ以前は保存側が派生データを返さず `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は返るので「マスクへ追記 → 木へ根として追加 → `from_material`」の順に変わる。**上の 2 本の検知器はどちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH マージを通らない）。

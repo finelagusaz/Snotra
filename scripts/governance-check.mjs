@@ -443,7 +443,8 @@ export function checkWorkspaceLints(snapshot) {
 // **守る命題**: この検査が緑 ⇒ `Context` 経由の global style 書き込み（#751 / #900）が src-tauri の clippy で
 // error として落ちる。**前提は 4 つあり、どれも緑が含意しない**——(1) clippy.toml と Cargo.toml を正規表現で
 // 近似パースする範囲で、(2) member 側の opt-in（`[lints] workspace = true`）は G-workspace-lints が見る、
-// (3) 既知 7 パスが上流 egui のピン更新後も解決し続ける（解決しなくなっても文字列は変わらない）、
+// (3) 名指しした各パスが解決し続ける（解決しなくなっても文字列は変わらないので沈黙する。
+//     群 1 は上流 egui のピン更新、群 2 は snotra-core 側の改名が契機になる）、
 // (4) DISALLOWED_METHODS_GROUPS が上流の群構成に追随している。**単独の緑を「禁止は生きている」と読んではならない。**
 //
 // 塞ぐのは **clippy 自身が exit 0 で沈黙する** 次の経路である（clippy 1.94.0 で実測）:
@@ -485,6 +486,8 @@ export const REQUIRED_DISALLOWED_METHODS = [
   "egui::Context::global_style_mut",
   "egui::Context::set_global_style",
   "egui::Context::all_styles_mut",
+  // 群 2（#1067）: 計測ハーネス専用の観測口。製品が読んで分岐してはならない。
+  "snotra_core::engine::Engine::sorted_by_path",
 ];
 
 const CLIPPY_TOML = "src-tauri/clippy.toml";

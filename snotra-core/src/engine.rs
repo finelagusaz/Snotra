@@ -314,6 +314,13 @@ impl Engine {
     pub fn entry_name(&self, i: usize) -> &str {
         self.search_engine.entry_name(i)
     }
+
+    /// 索引が `target_path` のバイト順に並んでいるか（**計測ハーネス専用の観測口**）。
+    /// 契約と「製品はこれを読んで分岐しない」理由は `SearchEngine::sorted_by_path` の doc。
+    #[doc(hidden)]
+    pub fn sorted_by_path(&self) -> bool {
+        self.search_engine.sorted_by_path()
+    }
 }
 
 #[cfg(test)]

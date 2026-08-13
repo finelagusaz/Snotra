@@ -483,6 +483,80 @@ fn path_env_merge_does_not_raise_any_name_has_path_sep() {
     );
 }
 
+/// **実 index 全件 + PATH マージで、整列範囲の高速路を使っても結果が集合・順序とも変わらない。**
+///
+/// 比較相手は「範囲を 0 へ潰して高速路を殺した同じ索引」である（#1067）。**この検知器が
+/// 要るのは `cmp_paths` が tie-break の最終キーだからである**——結果の集合は変わらず、
+/// **順序だけ**が静かに動く形の退行しか起きない。件数の一致では捕まらない。
+///
+/// **PATH マージを通すのが要点である。** 通さないと索引は全件が範囲の中に居て、A も B も
+/// 同じ経路を通る（`force_unsorted_for_test` を当てた B 側だけが遅い経路になるので比較は
+/// 成立するが、**この最適化が新しく生きた組み合わせ**——範囲の内と外をまたぐ比較——は
+/// 1 回も走らない）。
+#[test]
+#[ignore = "実インデックス依存。手元で release 実行する"]
+fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
+    let Some(entries) = real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let config = crate::config::Config::load();
+    let build = || {
+        let (tree, masks) = crate::indexer::derive_columns(entries.clone()).into_cached_masks();
+        let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
+        let path_entries =
+            crate::indexer::scan_path_env(material.tree(), config.search.show_hidden_system);
+        material.extend_with_path_entries(path_entries);
+        SearchEngine::from_material(material, false)
+    };
+    let mut optimized = build();
+    let mut baseline = build();
+    baseline.force_unsorted_for_test();
+
+    let prefix = optimized.sorted_prefix_len();
+    let n = optimized.entry_count();
+    assert!(
+        prefix > 0 && prefix < n,
+        "範囲の内と外が同居していない（prefix {prefix} / 全 {n} 件）——\
+         この形でないと、またぐ比較が 1 回も走らないまま緑になる"
+    );
+    assert_eq!(
+        baseline.sorted_prefix_len(),
+        0,
+        "B 側で高速路が死んでいない"
+    );
+
+    let history = empty_history();
+    let queries = [
+        "c:\\",
+        "c:\\users",
+        "c:\\users\\",
+        "\\program files\\",
+        "\\zzz-no-such-path\\",
+        "c:\\windows\\system32\\",
+        "\\appdata\\local\\",
+        "c:\\notepad.exe",
+    ];
+    for q in queries {
+        let want: Vec<(String, String)> = baseline
+            .search(q, 200, &history, SearchMode::Substring)
+            .into_iter()
+            .map(|r| (r.name, r.path))
+            .collect();
+        let got: Vec<(String, String)> = optimized
+            .search(q, 200, &history, SearchMode::Substring)
+            .into_iter()
+            .map(|r| (r.name, r.path))
+            .collect();
+        assert_eq!(want, got, "クエリ {q:?} で結果または順序が変わった");
+        println!("  {q:?}: {} 件が集合・順序とも一致", want.len());
+    }
+    println!(
+        "{n} 件（うち範囲内 {prefix} 件）で全 {} クエリが一致しました。",
+        queries.len()
+    );
+}
+
 /// **実 index 全件で、name スコアリングを飛ばしても結果が集合・順序とも変わらない。**
 ///
 /// 比較相手は「旗を強制的に立てて最適化を殺した同じエンジン」である（#1057）。合成 fixture では

@@ -659,6 +659,10 @@ impl LauncherController {
 
     /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     /// フィールドは `SearchConfig::instant_command_prefix`（既定は同 struct の `Default` 実装）。
+    ///
+    /// **この読みは `engine.lock()` 越しであり、#1032 の規範（config の live-read は [`crate::egui_shell::read_config`] を通す）の未移行の残余である**——#1036 の移設に入らなかった。射程と例外の定義は `src-tauri/CLAUDE.md` の当該条項が正本で、**「エッジ駆動だから対象外」ではない**（同型の未移行は `egui_shell` にほかにもあり、ここだけが例外なのではない）。**新しい読みを足すなら [`crate::egui_shell::read_config`] へ寄せること。**
+    ///
+    /// **この関数を移設するときは `docs/architecture.md`「検索フロー（入力 → 結果表示）」の Enter の補足も直すこと**——そこが「Enter の費用は #1038 の前後で変わらない」の根拠に、判定より前でここが払う錠待ちを使っている。
     fn instant_prefix(&self) -> String {
         self.app_handle
             .try_state::<crate::AppState>()
@@ -1309,15 +1313,17 @@ impl LauncherController {
     /// 同じ読みで取った modifier）。**TextEdit の `changed()` 処理より後で呼ぶこと**——同一
     /// フレームの IME 確定・paste が旧 state で起動されるのを防ぐ（不変条件 3）。
     pub(super) fn on_enter(&mut self, shift_held: bool, ctx: &egui::Context) {
-        // #631 flush-on-Enter: trailing 窓内（打鍵後 50ms 以内）の Enter は leading 時点の
-        // 結果で起動しうる。armed な plain クエリは cancel → 同期 engine.search で最終クエリの
-        // 結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
+        // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
+        // **何をもって「未反映」とするかは `search_dispatch::is_unsettled` の doc が正本である**（#1038。`armed` だけを渡していた頃に開いていた隙もそこが記す）。
         let prefix = self.instant_prefix();
         let is_plain = matches!(self.state.interp(&prefix), QueryIntent::Plain);
         if crate::egui_shell::should_flush_on_enter(
             self.state.view_kind(),
             is_plain,
-            self.search_debounce.is_armed(),
+            crate::egui_shell::is_unsettled(
+                self.search_debounce.is_armed(),
+                self.dispatch.pending_seq(),
+            ),
         ) {
             self.search_debounce.cancel();
             // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
@@ -1336,7 +1342,7 @@ impl LauncherController {
             self.state.set_results(searched.unwrap_or_default());
             // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
             // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。
-            // trailing 窓内に ↓↑ で動かした非 0 選択は新結果リストへ clamp されたまま引き継がれる
+            // flush までの間に ↓↑ で動かした非 0 選択は新結果リストへ clamp されたまま引き継がれる
             //（WebView2 と同挙動。flush 前のリストで確認した行と別物になりうるのは現行製品と同じ受容済み特性）。
         }
         if !self.state.results().is_empty() {

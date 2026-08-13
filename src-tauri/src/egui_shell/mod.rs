@@ -85,7 +85,8 @@ pub(crate) use layout::Debouncer;
 // view.rs が `update()` のフレーム所要と間隔の計器として消費する（#1004 PR 1）。
 pub(crate) use layout::FrameTimer;
 // launcher_controller.rs が検索 dispatch の同一性（seq 発行・採り込み判定）で消費する（#1004 PR 1: 同期経路の計器、PR 2: worker 結果の裁定）。
-pub(crate) use search_dispatch::SearchDispatch;
+// is_unsettled は同 `on_enter` の flush 判定が消費する（#1038: `armed` だけでは worker の in-flight を覆えない）。
+pub(crate) use search_dispatch::{SearchDispatch, is_unsettled};
 // launcher_controller.rs が Plain 検索の要求送信・結果受信（`drain_search`）で消費する（#1004 PR 2）。
 pub(crate) use search_worker::{SearchMsg, SearchRequest, spawn_search_worker};
 // view.rs が UI 文言（hint/overlay/toast）で、launcher_controller.rs が通知文言（起動失敗・

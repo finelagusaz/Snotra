@@ -245,8 +245,15 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
 /// 通過する）。**腕 1 と腕 3 を同じ計算にしてはならない理由がここにある**——同じにすると
 /// この変異で 2 腕が同時に落ち、「空マージが旗を下ろす」退行と「マージ前から旗が偽」の退行を
 /// 区別できなくなる（レビュー M-2）。
+/// **`Engine::sorted_by_path` の本体を `true` リテラルへ潰す変異でも実測してある**——
+/// 腕 4 の**偽の側だけ**が落ちる（真の側は素通りする）。恒真の退行を捕まえるのはこの 1 本である。
 ///
-/// **守るのは 3 つ目の腕である。** `IndexTree::extend_with_roots` は冒頭で
+/// **腕ごとに守る不変条件が違う。** 腕 1 は基準線（整列済みなら旗が立つ）、腕 2 は「非空の
+/// マージで下りる」、腕 3 は下の「空マージでは下りない」、**腕 4 は `Engine` 段の passthrough を
+/// 両方向で**（真だけでは恒真への退行を通す）。**どれも他の腕では代われない**——1 つを
+/// 付け足しと見て消すと、その不変条件だけが無防備になる。
+///
+/// **腕 3 が守るのは代理指標との分かれ目である。** `IndexTree::extend_with_roots` は冒頭で
 /// `if entries.is_empty() { return; }` と抜けるので、`include_path_env` が真でも
 /// `scan_path_env` が空 vec を返す構成（ユーザー PATH が空・全件が既存と重複）では旗が
 /// 立ったまま残る。**「`include_path_env` が真なら旗は下りている」は成り立たない**——
@@ -285,14 +292,17 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
         "整列済みの入力で旗が立っていない（`sort_entries_canonical` を通してある）"
     );
 
+    let path_entry = || {
+        vec![AppEntry {
+            name: "Node".to_string(),
+            target_path: "C:\\tools\\node.exe".to_string(),
+            is_folder: false,
+        }]
+    };
+
     // 2. 非空のマージ = 根として末尾へ足すのでバイト順が崩れ、旗は下りる（遅い経路）。
-    let merged = build(Some(vec![AppEntry {
-        name: "Node".to_string(),
-        target_path: "C:\\tools\\node.exe".to_string(),
-        is_folder: false,
-    }]));
     assert!(
-        !SearchEngine::from_material(merged, false).sorted_by_path(),
+        !SearchEngine::from_material(build(Some(path_entry())), false).sorted_by_path(),
         "PATH エントリを足したのに旗が立ったまま（`cmp_paths` が index 比較を続け順序が変わる）"
     );
 
@@ -303,16 +313,32 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
         "空の PATH マージが旗を下ろした（`extend_with_roots` の早期 return が壊れている）"
     );
 
-    // 4. **`Engine` 段の passthrough も通す。** 計器が読むのはこの段であり、ここが壊れると
-    //    出力の諸元が静かに嘘をつく——`cargo test` がこの 1 段を一度も評価しない状態にしない。
-    let engine = crate::engine::Engine::from_material(
+    // 4. **`Engine` 段の passthrough を両方向で通す。** 計器が読むのはこの段であり、ここが
+    //    壊れると出力の諸元が静かに嘘をつく——`cargo test` がこの 1 段を一度も評価しない
+    //    状態にしない。
+    //
+    //    **真の側だけでは足りない。** 恒真への退行（`true` リテラル・別の `bool` フィールドへの
+    //    誤配線）は真の側を素通りするが、**実運用点で正しい値は偽**なので、そのとき計器は
+    //    「PATH マージ あり（+100 件）/ sorted_by_path = true」と刷って**支配項の帰属を逆にする**
+    //    ——遅い経路（フルパス組み立て）を測ったのに速い経路を測ったと読める。危ないのは
+    //    通らない側であり、そちらを覆わない検知器は一番効く向きを見ていない（レビュー R2-1）。
+    let engine_sorted = crate::engine::Engine::from_material(
         build(None),
         crate::history::HistoryStore::empty(),
         crate::config::Config::default(),
     );
     assert!(
-        engine.sorted_by_path(),
-        "`Engine` の passthrough が `SearchEngine` と違う値を返している"
+        engine_sorted.sorted_by_path(),
+        "`Engine` の passthrough が真を返せていない（`SearchEngine` 段とずれている）"
+    );
+    let engine_unsorted = crate::engine::Engine::from_material(
+        build(Some(path_entry())),
+        crate::history::HistoryStore::empty(),
+        crate::config::Config::default(),
+    );
+    assert!(
+        !engine_unsorted.sorted_by_path(),
+        "`Engine` の passthrough が恒真になっている（計器が遅い経路を速い経路として刷る）"
     );
 }
 

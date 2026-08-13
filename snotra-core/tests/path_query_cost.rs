@@ -272,9 +272,9 @@ fn measure_path_query_frame_cost() {
 /// 内側である——計測ハーネスは実運用の姿を測るのが目的だからで、兄弟の
 /// [`measure_recent_history_cost`] と同じ扱いになる。
 ///
-/// **`load_or_scan_with_stats` を構成ごとに 2 回呼ぶ**（`extend_with_path_entries` が材料を
-/// 消費するため使い回せない）。旧版の `index.bin` が置かれた機体では現行版への昇格が
-/// 走りうる（`//!` の警告）——**その場合は 2 回とも走る**。
+/// **`load_or_scan_with_stats` は `Engine` を 2 つ建てるので合わせて 2 回呼ぶ**（構成ごとに
+/// 1 回。`extend_with_path_entries` が材料を消費するため使い回せない）。旧版の `index.bin` が
+/// 置かれた機体では現行版への昇格が走りうる（`//!` の警告）——**その場合は 2 回とも走る**。
 ///
 /// # 足場ではない
 ///
@@ -350,12 +350,19 @@ fn measure_path_query_frame_cost_at_operating_point() {
             engine.update_config(cfg);
 
             println!(
-                "\n  --- PATH マージ {} （+{merged} 件・木 {n_before} → {n_after}） / \
+                "\n  --- PATH マージ {}{} （+{merged} 件・木 {n_before} → {n_after}） / \
                  normal_mode = {mode:?} / sorted_by_path = {} ---",
                 // **ループ変数ではなく実際に足した件数で刷る。** `include_path_env = false` の
                 // 機体では 2 腕が同一の測定になり、ループ変数だと片方が嘘のラベルを名乗る
                 // ——この doc が上で「代理指標にしてはならない」と書いた誤りの、出力側の鏡像である。
                 if merged > 0 { "あり" } else { "なし" },
+                // **2 腕が同一構成になる場合はそう書く。** `include_path_env = false` の機体
+                // では「マージ なし」の表が 2 度出るので、読み手が理由を導出せずに済むようにする。
+                if merge_path_env && merged == 0 {
+                    "（`include_path_env` が偽ゆえ下の腕と同一構成）"
+                } else {
+                    ""
+                },
                 engine.sorted_by_path(),
             );
             println!(

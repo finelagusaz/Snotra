@@ -71,7 +71,11 @@ if crate::egui_shell::should_flush_on_enter(
 
 - [x] `search_dispatch.rs` に `is_unsettled(armed: bool, pending_seq: u64) -> bool` を追加する。doc に
       次の 2 点を書く
-  - 「`armed` を残すのは leading 発火の前（要求がまだ出ていない瞬間）を覆うため」
+  - 「`armed` を残すのは**最新クエリの要求がまだ出ていない間**を覆うため」
+    （**当初この計画は「leading 発火の前」と書いていたが誤りだった**——`on_enter` は changed 処理より
+    後に走るので leading フレームでは既に `issue` 済みであり、`armed ∧ pending == 0` が実在するのは
+    バースト継続中と `invalidate` 直後の打鍵で、どちらも複数フレーム続く。code-reviewer の
+    Medium B を一次証拠〔`layout.rs:451-455` の `on_input`、`launcher_controller.rs:1266`〕で追認して訂正）
   - **#1039 への申し送り**: この述語は #1039 で `SearchState::is_settled()` として型の内側へ移る。
     **否定形で置いたのは呼び出し点に `!` を出さないため**であり、#1039 の issue 本文が想定する
     肯定形 `is_settled()` とは**極性が逆である**（引っ越し時は `!is_unsettled(..)` として吸収する）
@@ -107,19 +111,39 @@ if crate::egui_shell::should_flush_on_enter(
 
 ### Phase 4 — 文書と検証
 
-- [ ] `docs/architecture.md` の mermaid `opt Enter が trailing 窓（50ms）内に来た Plain（should_flush_on_enter）`
+- [x] `docs/architecture.md` の mermaid `opt Enter が trailing 窓（50ms）内に来た Plain（should_flush_on_enter）`
       を新しい条件へ書き換える
-- [ ] 同「**例外は Enter である**——trailing 窓内の Enter は…」の補足を更新し、
+- [x] 同「**例外は Enter である**——trailing 窓内の Enter は…」の補足を更新し、
       **窓が worker の走査時間（実運用点で 40〜95 ms・#1036）ぶん広がったこと**と、その受容理由を書く
-- [ ] カテゴリ A を実行する: `cargo fmt --all -- --check` / `cargo check --workspace` /
+      （code-reviewer の Medium A で一度未達を指摘され、追加した。**受容理由は「1 回あたりの費用は
+      変わらない」の一次証拠つき**——`on_enter` は判定より前の `instant_prefix` が `engine.lock()`
+      を取るので走査待ちは新旧どちらでも払っており、#1038 が足すのは同期 search 1 回ぶんだけである）
+- [x] カテゴリ A を実行する: `cargo fmt --all -- --check` / `cargo check --workspace` /
       `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` /
       **`cargo doc --workspace --no-deps --document-private-items`（hook 非発火・手動必須）**
-- [ ] カテゴリ F を実行する: `npm run governance:check`（`docs/architecture.md` を触るため）
-- [ ] `docs/architecture.md` の他の言及を確認する（`rg -n "flush|armed" docs/architecture.md`）——
+- [x] カテゴリ F を実行する: `npm run governance:check`（`docs/architecture.md` を触るため）
+- [x] `docs/architecture.md` の他の言及を確認する（`rg -n "flush|armed" docs/architecture.md`）——
       とくに「その 2 つには in-flight が残りうる…**窓が開くのは flush が発火しない条件に限る**」の
       補足が、書き換えた Enter の例外と矛盾しないこと（#1038 はこの残余を**狭める**方向なので
       文言はそのまま真のはずだが、3 箇所目の腐りを見落とさないため実測する）
-- [ ] 実装差分を確定させる（`git diff main --name-only` で変更ファイルが上表の 5 件に閉じていることを確認する）
+- [x] 実装差分を確定させる（`git diff main --name-only` で変更ファイルが上表の 5 件に閉じていることを確認する）
+
+### Phase 5 — レビュー指摘への fix-forward（計画外・実装中に追加）
+
+- [x] code-reviewer の Medium 2 件・Low 5 件を裁定し、機序を一次証拠で確かめてから反映する
+  - **Medium A**（architecture.md に定量の記述が無い）→ 反映。機序（`instant_prefix` の lock を
+    判定より前に払う）を `launcher_controller.rs:662-675` と `:1317` で自ら確認してから書いた
+  - **Medium B**（`is_unsettled` の doc の機序が誤り）→ 反映。`layout.rs` の `on_input` が
+    `leading && !armed` を返すこと、`launcher_controller.rs:1266` が leading のときだけ
+    `run_search_with` を呼ぶことを実読して追認。doc・assert メッセージ・本計画の 3 か所を訂正
+  - **Low D**（日本語の折返し）→ 反映。新規 4 段落を 1 段落 1 行へ（`docs/comment-guidelines.md`
+    「日本語の折返し」を正本として確認）
+  - **Low E**（intra-doc link 形）→ 反映。相互参照 2 件を `` [`crate::…`] `` へ。`cargo doc` で着地を実測
+  - **Low C / F**（`instant_prefix` の lock・`settled` の語の衝突）→ **#1039 の申し送りへ 1 行ずつ追加**。
+    本 PR では直さない（C は本差分の導入ではなく、F は icon ゲートを変えない前提の帰結）
+  - **Low G**（動機の履歴文 3 か所・⚠️）→ **減らす側で裁定**。`search_state.rs` の履歴文を
+    「正本を指す」形へ縮め、正本（`is_unsettled` の doc）と流れの文書（`architecture.md`）の 2 枚に留めた
+- [x] 修正差分に同じ枠組みを再実行する（カテゴリ A + F・`/dry-check` の写し判定・code-reviewer 2 巡目）
 
 ## 不変条件と異常系
 

@@ -62,20 +62,19 @@ impl SearchDispatch {
     }
 }
 
-/// **最終クエリの結果がまだ行へ反映されていないか**（#1038）。`on_enter` の flush 判定
-/// （`search_state::should_flush_on_enter` の第 3 引数）がこれを読む。
+/// **最終クエリの結果がまだ行へ反映されていないか**（#1038）。[`crate::egui_shell::search_state::should_flush_on_enter`] の第 3 引数がこれである。
 ///
-/// **`armed` だけでは足りない。** 同期実装の頃は `armed == false` が「反映済み」を含意していたが、
-/// worker 化（#1004）で trailing 発火の直後は必ず「`armed == false` かつ in-flight あり」になり、
-/// 含意が壊れた。**`armed` を残すのは leading 発火の前**——打鍵したフレームで要求がまだ出ていない
-/// 瞬間——**を覆うためである**（そこは `pending_seq == 0` だが未反映）。
+/// **`armed` だけでは足りない。** 同期実装の頃は `armed == false` が「反映済み」を含意していたが、worker 化（#1004）で trailing 発火の直後は必ず「`armed == false` かつ in-flight あり」になり、含意が壊れた。
 ///
-/// `pending_seq` を `bool` でなく生値で受けるのは、**sentinel（0 = in-flight なし）の解釈を
-/// テストの届く場所へ入れる**ためである（`issue` が `next_seq += 1` を先に行うので seq は 1 始まり）。
+/// **`armed` を残すのは、最新クエリの要求がまだ出ていない間を覆うためである。** `pending_seq == 0` だが未反映、という状態はバースト継続中に直前の seq が `accept` 済みのフレーム（[`crate::egui_shell::layout::Debouncer::on_input`] は armed を立てるだけで発行せず、要求を出すのは leading だけである）と、空クエリ・`indexing`・送信失敗が [`SearchDispatch::invalidate`] を撃った後に打鍵が armed だけ残した状態で生じる。**この 2 つを名指すのは、「打鍵したフレームの一瞬」と誤読されるのを防ぐためである**——実際にはどちらも最大で debounce の interval ぶん、複数フレームにわたって続く。
 ///
-/// **#1039 への申し送り**: この述語は #1039 で `SearchState::is_settled()` として型の内側へ移る。
-/// 否定形で置いたのは呼び出し点に `!` を出さないためであり、**#1039 の issue 本文が想定する
-/// 肯定形 `is_settled()` とは極性が逆である**（引っ越し時は `!is_unsettled(..)` として吸収する）。
+/// `pending_seq` を `bool` でなく生値で受けるのは、**sentinel（0 = in-flight なし）の解釈をテストの届く場所へ入れる**ためである（[`SearchDispatch::issue`] が `next_seq += 1` を先に行うので seq は 1 始まり）。
+///
+/// **#1039 への申し送り**（この述語を型の内側へ移すとき）:
+///
+/// - **否定形で置いたのは呼び出し点に `!` を出さないためであり、#1039 の issue 本文が想定する肯定形 `is_settled()` とは極性が逆である**（引っ越し時は `!is_unsettled(..)` として吸収する）。
+/// - **`RowsSnapshot::settled`（icon worker のゲート・`!armed`）とは別概念である**——両者は否定の関係に無く、あちらは正しさの述語ではなく「連打中はアイコンを積まない」perf ヒューリスティックである。同じ語なので同一視しないこと。
+/// - `on_enter` を触るなら、flush 判定より前で走る `LauncherController::instant_prefix` の config 読みを [`crate::egui_shell::read_config`] へ寄せる機会である（`engine.lock()` 越しに読んでおり #1032 の規範と同型。毎フレームではなく打鍵・Enter のエッジ駆動ゆえ #1032 の射程外で、本 issue でも触っていない）。
 pub fn is_unsettled(armed: bool, pending_seq: u64) -> bool {
     armed || pending_seq != 0
 }
@@ -141,7 +140,7 @@ mod tests {
         );
         assert!(
             is_unsettled(true, 0),
-            "leading 発火の前——要求がまだ出ていない"
+            "最新クエリの要求がまだ出ていない（バースト継続中・invalidate 直後の打鍵）"
         );
         assert!(
             is_unsettled(false, 1),
@@ -158,8 +157,7 @@ mod tests {
 
     #[test]
     fn unsettled_is_grounded_on_real_dispatch() {
-        // sentinel をリテラルで書かず `SearchDispatch` 自身から取る（判定の入力が出力側へ
-        // すり替わる不動点化を避けるため、`armed` は false 固定で渡す）。
+        // sentinel をリテラルで書かず `SearchDispatch` 自身から取る（判定の入力が出力側へすり替わる不動点化を避けるため、`armed` は false 固定で渡す）。
         let base = Instant::now();
         let mut d = SearchDispatch::default();
         assert!(!is_unsettled(false, d.pending_seq()), "発行前は反映済み");

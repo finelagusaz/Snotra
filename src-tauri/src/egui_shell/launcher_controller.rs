@@ -1309,13 +1309,8 @@ impl LauncherController {
     /// 同じ読みで取った modifier）。**TextEdit の `changed()` 処理より後で呼ぶこと**——同一
     /// フレームの IME 確定・paste が旧 state で起動されるのを防ぐ（不変条件 3）。
     pub(super) fn on_enter(&mut self, shift_held: bool, ctx: &egui::Context) {
-        // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、
-        // leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは
-        // cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch
-        //（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
-        // **未反映は 2 つある**（#1038）——trailing を予約中（打鍵後 50ms 以内）と、worker へ
-        // 出した要求が飛んでいる間である。trailing が発火した瞬間は前者が偽・後者が真になり、
-        // `armed` だけを見ていた頃はそこが素通りしていた（導出は `is_unsettled` の doc が正本）。
+        // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
+        // **何をもって「未反映」とするかは `search_dispatch::is_unsettled` の doc が正本である**（#1038。`armed` だけを渡していた頃に開いていた隙もそこが記す）。
         let prefix = self.instant_prefix();
         let is_plain = matches!(self.state.interp(&prefix), QueryIntent::Plain);
         if crate::egui_shell::should_flush_on_enter(
@@ -1343,7 +1338,7 @@ impl LauncherController {
             self.state.set_results(searched.unwrap_or_default());
             // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
             // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。
-            // trailing 窓内に ↓↑ で動かした非 0 選択は新結果リストへ clamp されたまま引き継がれる
+            // flush までの間に ↓↑ で動かした非 0 選択は新結果リストへ clamp されたまま引き継がれる
             //（WebView2 と同挙動。flush 前のリストで確認した行と別物になりうるのは現行製品と同じ受容済み特性）。
         }
         if !self.state.results().is_empty() {

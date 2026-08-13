@@ -411,12 +411,9 @@ pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
 
 /// Enter 時の flush 要否（#631 flush-on-Enter・SolidJS flushPendingRefresh 同型）。
 ///
-/// **`unsettled` は「最終クエリの結果がまだ行へ反映されていないか」である**（#1038）。導出は
-/// `search_dispatch::is_unsettled` が持つ——debounce の `armed` だけを渡していた頃は、worker 化
-/// （#1004）で trailing 発火の直後に「予約は無いが in-flight あり」の隙が開いていた。
+/// **`unsettled` は「最終クエリの結果がまだ行へ反映されていないか」である**（#1038）。その中身と経緯は [`crate::egui_shell::search_dispatch::is_unsettled`] の doc が正本である。
 ///
-/// unsettled になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel + invalidate 済み）
-/// だが、将来の経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
+/// unsettled になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel + invalidate 済み）だが、将来の経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
 pub fn should_flush_on_enter(view_kind: ViewKind, is_plain: bool, unsettled: bool) -> bool {
     view_kind == ViewKind::Results && is_plain && unsettled
 }

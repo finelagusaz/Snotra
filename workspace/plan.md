@@ -62,16 +62,59 @@
 
 ## 作業項目
 
-- [ ] T1. `results_view.rs` のフィールドと `matches`（引数・分解束縛・比較）を改名する
-- [ ] T2. `view.rs` の生産点（局所変数・struct literal）を追随させる
-- [ ] T3. **機構が守らない平文の言及 4 件**を書き換える（下の一覧を 1 件ずつ潰す）
-  - [ ] `launcher_controller.rs:194`（`snapshot の \`settled\`・段 30`）
-  - [ ] `results_view.rs:36`（`armed→settled の遷移…`・D3）
-  - [ ] `results_view.rs:165`（`（settled 相当）`）
-  - [ ] `results_view.rs:666`（`snapshot.settled は旧 view.rs の…`）
-- [ ] T4. `search_dispatch.rs:79` の bullet を削除する（D2・受け入れ条件 3）
-- [ ] T5. `cargo doc --workspace --no-deps --document-private-items` を手で走らせる（**PostToolUse hook は沈黙する**・`.claude/rules/comments.md`）
-- [ ] T6. 改名後に `settled` を全文検索し、残った出現がすべて「正しさの意味」であることを 1 件ずつ確かめる（受け入れ条件 1 の検算）
+- [x] T1. `results_view.rs` のフィールドと `matches`（引数・分解束縛・比較）を改名する
+- [x] T2. `view.rs` の生産点（局所変数・struct literal）を追随させる
+- [x] T3. **機構が守らない平文の言及 4 件**を書き換える（下の一覧を 1 件ずつ潰す）
+  - [x] `launcher_controller.rs:194`（`snapshot の \`settled\`・段 30` → `snapshot の \`input_idle\` の材料`）
+  - [x] `results_view.rs:36`（`armed→settled の遷移…` → `armed → 非 armed の遷移…`・D3）
+  - [x] `results_view.rs:165`（`（settled 相当）` → `（\`input_idle\` 相当）`）
+  - [x] `results_view.rs:666`（`snapshot.settled は旧 view.rs の…` → `snapshot.input_idle は…`）
+- [x] T4. `search_dispatch.rs:79` の bullet を削除する（D2・受け入れ条件 3）
+- [x] T5. `cargo doc --workspace --no-deps --document-private-items` を手で走らせる（**PostToolUse hook は沈黙する**・`.claude/rules/comments.md`）
+- [x] T6. 改名後に `settled` を全文検索し、残った出現がすべて「正しさの意味」であることを 1 件ずつ確かめる（受け入れ条件 1 の検算）
+
+### T6 の検算結果（受け入れ条件 1）
+
+`.rs` に残る `settled` は全件が正しさの意味だった。
+
+| 位置 | 意味 |
+|---|---|
+| `launcher_controller.rs:877, 891, 894, 895` | `SearchDispatch::accept` が返す `Settled`（採り込み成立） |
+| `launcher_controller.rs:889` | trace イベント名 `egui_search:settled`（**意図的に不変**） |
+| `launcher_controller.rs:1317, 1323` / `mod.rs:88-89` / `search_dispatch.rs` 全般 | `is_unsettled`（最終クエリの結果が未反映か） |
+| `search_state.rs:414-418, 501` | `should_flush_on_enter` の `unsettled` 引数 |
+| `results_view.rs:44` | 新しい `input_idle` の doc が `is_unsettled` を参照している行（正しさ側を正しい名で指している） |
+
+### code-reviewer の指摘への対応（ラウンド 1）
+
+**Critical 0 / High 0。** Medium 1・Low 2（うち ⚠️ 1）。
+
+- [x] **Medium 1（採用）**: `///` に残した平文の名指しを intra-doc link 形へ。`docs/comment-guidelines.md:25` を一次資料で確認（「素の散文名は検査されないので、リンクにできるものはリンクにする。**リンク形が効くのは `///` と `//!` だけである**」）。指摘の 2 件（`launcher_controller.rs:194` / `results_view.rs:174`）に加え、**同じクラスをもう 1 件**（フィールド doc の `!self.search_debounce.is_armed()`）を潰した。**`results_view.rs:675` の `//` インラインは指摘どおり触らない**——rustdoc が読まないため、リンク形は誤った安心だけを与える
+- [x] **Low 2（採用）**: `docs/comment-guidelines.md:57`（1 段落 1 行）を確認し、フィールド doc の 3 段落を物理 1 行へ連結
+**Low 3（⚠️）はこの計画では直さないと裁定し、作業項目から外した。** `results_view.rs` の doc にある「食い違うのは `armed == false ∧ pending != 0`」は `is_unsettled` の式からの導出で、**式を所有していない側に書かれている**。#1039 が述語を型の内側へ移すと沈黙で腐りうる。**片側配置は受け入れ条件 3 そのもの（承認済みの決定）なので復活させない。** 行き先は [#1039 のコメント](https://github.com/finelagusaz/Snotra/issues/1039#issuecomment-5280134602)——再検査対象として名指しで申し送り済み。
+
+**この指摘クラスの意味**: 計画・敵対枠が「機構が守らない 4 件」と名指した平文のうち 3 件は、**リンク形にすることで `cargo doc` の射程へ移せた**。手作業の列挙を機構へ吸収する方向の是正である。
+
+### code-reviewer の指摘への対応（ラウンド 2 — **修正差分の検算**）
+
+ラウンド 1 の Medium 1 / Low 2 は**解消を実測で確認**された（生成 HTML の `href` と `title` を直読み、および文字単位の差分）。**そのうえで新規 2 件**。
+
+- [x] **Medium 1（新規・採用）**: **リンク化が極性を落としていた。** `!self.search_debounce.is_armed()` を `[…Debouncer::is_armed]` へ置き換えたことで、doc が**実際のゲートの否定**を名指す形になっていた（`input_idle` が真になるのは `is_armed()` が**偽**のとき）。**規約の過剰適用**である——リンク形にできるのは項目名だけで、式は項目名ではない。リテラルを戻してリンクを併記する形へ直した。副作用として `!self.search_debounce.is_armed()` の grep が 3 件中 2 件しか返さなくなっていた点も同時に解消
+- [x] **Low 1（新規・採用）**: ラウンド 2 で触った 2 段落（`launcher_controller.rs:194` / `results_view.rs:164`）が 1 行化から漏れていた。連結した
+
+**「解消した」は再実行の結論を受け取らず、指摘を見つけた道具で自分で測った**（`AGENTS.md`「条件別チェック」の fix-forward 行）: リテラルの grep が 3 件（`results_view.rs:32` の doc / `results_view.rs:659` の `//` / `view.rs:1117` の `//`）・触った 3 段落が単一行・`cargo doc` exit 0・clippy 追加警告なし。
+
+**ラウンド 3 は停止規則を先に宣言して依頼した**——同じ枠組みを自分の修正差分へ当て続けると収束しない（`review-frameworks-not-rounds` と同型）。Critical / High が出たときだけ 4 巡目へ行く。
+
+### ラウンド 3 の帰結（**独立レビューは受けていない**）
+
+レビュアからの返答は**ラウンド 2 の再送**だった（指摘された `results_view.rs:32` の極性は既に修正済みで、検算に使われた生成 HTML も修正前の成果物だった）。新規の Critical / High は無く、宣言した停止規則に従いレビューを閉じた。
+
+**ゆえにラウンド 2 の修正（極性の復元・2 段落の 1 行化）を検算したのは呼び出し側の自己測定だけである**——リテラルの grep 3 件・触った段落が単一行・`cargo doc` exit 0・clippy 追加警告なし。独立の目は通っていない。**この差分は識別子と doc だけの変更で、挙動側（`matches` の連言順序・`Default`・struct literal の並び）はラウンド 1 から 1 文字も動いていない**ことをレビュアが再確認しているため、残余は doc の推敲の質に限られる。
+
+### 実装中に判明した計画外の作業
+
+- [x] `results_view.rs` の `input_idle` の doc へ、`is_unsettled` との別概念性を**perf 側から**書いた。D2 で削除した散文の対（正本を 1 か所に定め、危険のある側に置く）
 
 ## 不変条件と異常系
 

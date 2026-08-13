@@ -76,7 +76,6 @@ impl SearchDispatch {
 ///
 /// - **`armed` の disjunct の居場所を先に決めること。** #1039 の提案スケッチは `fn is_settled(&self) -> bool { self.in_flight.is_none() }` で、**`armed` の側が落ちている**。`SearchState`（純粋核）は `Debouncer` を見られない——`search_debounce` は `LauncherController` のフィールドである。そのまま引っ越すと**バースト継続中で trailing 未発火・in-flight 無し**のフレームが「反映済み」と判定され、#631 が塞いだ欠陥が戻る。**しかも合成を固定している検知器は `unsettled_covers_in_flight_after_trailing_fired` だけで、この関数を消すと一緒に消える**——`armed` の disjunct を落とす変異でテストが落ちることを、#1039 の受け入れ条件へ入れること。
 /// - **否定形で置いたのは呼び出し点に `!` を出さないためであり、#1039 の issue 本文が想定する肯定形 `is_settled()` とは極性が逆である**（引っ越し時は `!is_unsettled(..)` として吸収する）。
-/// - **[`crate::egui_shell::results_view::RowsSnapshot::settled`]（icon worker のゲート・`!armed`）とは別概念である**——両者は否定の関係に無く、あちらは正しさの述語ではなく「連打中はアイコンを積まない」perf ヒューリスティックである。同じ語なので同一視しないこと。
 pub fn is_unsettled(armed: bool, pending_seq: u64) -> bool {
     armed || pending_seq != 0
 }

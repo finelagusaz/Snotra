@@ -191,8 +191,7 @@ impl LauncherController {
         self.launching.is_some()
     }
 
-    /// 検索 debounce が armed か（snapshot の `settled`・段 30）。連打中は results 側が
-    /// icon worker を積まないためのゲートで、live 値を snapshot 経由で運ぶ。
+    /// 検索 debounce が armed か（snapshot の [`crate::egui_shell::results_view::RowsSnapshot::input_idle`] の材料・段 30）。連打中は results 側が icon worker を積まないためのゲートで、live 値を snapshot 経由で運ぶ。
     pub(super) fn is_search_armed(&self) -> bool {
         self.search_debounce.is_armed()
     }

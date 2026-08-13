@@ -1,0 +1,447 @@
+# code-reviewer: #1067 実装差分レビュー（基点 ee8dcb1 / ブランチ chore/path-query-post-match-cost）
+
+対象: git diff ee8dcb1（PERFORMANCE.md / docs/build-commands.md / snotra-core/CLAUDE.md /
+snotra-core/src/{engine.rs,search.rs,search/path_store.rs,search/tests/build.rs,search/tests/performance.rs} /
+snotra-core/tests/path_query_cost.rs / workspace/*）
+
+前提として渡された「意図的に分けた構造」3 件（新計器と既存計器の並存 / PATH マージ 2 手の写し /
+標本採取ロジックの二重）は DRY 違反として挙げていない。実施済みの検証（fmt / clippy / test /
+doc / governance:check / symmetric-check / dry-check / ablation の無変異）も再実行していない。
+
+Critical: 0 件 / High: 1 件 / Medium: 6 件 / Low: 5 件（+ 合意が要る改善余地 1 件）
+
+--------------------------------------------------------------------------------
+## Phase 1: 実装検証
+
+- シークレット・API キーの露出: 無し
+- システム境界の入力バリデーション: 該当なし（計器は実 config / 実 index.bin を読むだけで、
+  外部入力を解釈する新しい境界を作っていない）
+- 製品コードの挙動変更: 無し（追加は 3 段の #[doc(hidden)] アクセサのみ。cmp_paths /
+  score_one_entry / fold の呼び出し点はいずれも 1 行も変わっていない — git diff で確認）
+- 実起動の経路との突き合わせ（重点項目）: src-tauri/src/main.rs:176-237 と
+  snotra-core/tests/path_query_cost.rs:311-330 を 1 手ずつ照合した結果、**取りこぼしている段は
+  見つからなかった**。
+    - load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system) OK（main.rs:177）
+    - scan_path_env(material.tree(), config.search.show_hidden_system) → extend_with_path_entries
+      OK（main.rs:208-210・順序も同じ）
+    - Engine::from_material(material, HistoryStore::load(), config) OK（main.rs:227/237・引数順も同じ）
+    - Config::load() と main の Config::load_reporting() は apply_migrations を含む同じ経路
+    - migemo_enabled は Engine::from_material の内側で config から取るので、写しの必要が無い
+  差異は 2 つあるが、いずれも意味を変えない: (a) main は first-run 分岐を持つが計器は
+  paths.scan.is_empty() で自己スキップする、(b) main は startup::mark を打つ。
+
+--------------------------------------------------------------------------------
+## Phase 2: 計画判断の検証
+
+### 2a. plan.md 不変条件との照合
+
+不変条件: 既存 measure_path_query_frame_cost は 1 バイトも変わっていない（受け入れ条件 5）
+  実装箇所: snotra-core/tests/path_query_cost.rs:184-231
+  判定: 守られている（diff は //! と import と新規追加のみ。関数本体に差分行が無い）
+
+不変条件: 製品コードに計測用の変異が 1 行も残っていない（受け入れ条件 7）
+  実装箇所: snotra-core/src/search/scoring.rs / search.rs
+  判定: 守られている（git diff ee8dcb1 --stat に scoring.rs が現れず、search.rs の差分は
+        アクセサ 15 行だけ）
+
+不変条件: 新計器は実 index が無ければ自己スキップする
+  実装箇所: snotra-core/tests/path_query_cost.rs:303-307
+  判定: 守られている（既存 2 関数と同じ config.paths.scan.is_empty() ガード）
+
+不変条件: 旗（sorted_by_path）の実効値を出力に添える
+  実装箇所: snotra-core/tests/path_query_cost.rs:336-341
+  判定: 守られている（ただし M-5 のラベルの件を参照）
+
+不変条件: 「include_path_env が真か」を代理指標にしない
+  実装箇所: snotra-core/src/search/tests/build.rs:245-298（検知器）
+  判定: 守られている（ただし M-2 のとおり 3 腕のうち 2 腕が同一）
+
+不変条件: //! の見出しから数を外す（製品レベルの関数が 2 → 3 になるため）
+  実装箇所: snotra-core/tests/path_query_cost.rs:20
+  判定: **違反あり** — 見出しからは外れたが、6 行上の散文（同ファイル:16）に残った数が
+        腐った。詳細は M-1
+
+### 2b. 対称コードパスチェック
+
+対称チェック: IndexTree::extend_with_roots の「非空なら旗を下ろす」↔ 空のときの早期 return
+  判定: 両方向とも新テストが覆っている（build.rs:270-297）。ただし M-2
+
+対称チェック: 3 段のアクセサ（PathStore → SearchEngine → Engine）の追加 ↔ 対応する破棄
+  判定: 不要 — 読み取り専用のアクセサでライフサイクルを持たない
+
+対称チェック: spike の撤去（関数 6 点）↔ 撤去に伴って不要になる import
+  判定: 同じ修正を適用済み（use crate::index_tree::{NO_PARENT, TreeNodes}; が消えている・
+        performance.rs の diff）。kmp_failure / advance_over / forward_pass /
+        parallel_sweep / sequential_sweep / spike_forward_pass_… はコードベース全体で
+        0 件（grep 実測）。PathStore::parent_of / aux_of / name_of / table_str は
+        TreeNodes impl の一部として残るのが正しい（trait 実装ゆえ孤児にならない）
+
+対称チェック: spike の撤去 ↔ spike を指す文書
+  判定: **違反あり** — PERFORMANCE.md:1285 は直っているが
+        docs/adr/ADR-path-query-forward-single-pass.md:26 が未来形のまま残った。詳細は L-1
+
+### 2c. DRY / 関数カバレッジチェック
+
+新規: Engine::sorted_by_path / SearchEngine::sorted_by_path / PathStore::sorted_by_path
+  同等ロジックを手書きしている呼び出し元: 無し（sorted_by_path の全出現を grep で確認。
+  indexer.rs の出現は IndexCache / OwnedTreeColumns のフィールドで別物、
+  path_store.rs:263 は cmp_paths 内の本来の消費者）
+
+新規: sample_frame_cost / FrameSamples / PATH_QUERY_ROWS
+  既存の同等ロジック: measure_path_query_frame_cost:211-228（20 標本の inline 版）。
+  **意図的な並存として事前に根拠が渡されているので指摘しない。** ただし at(q) の丸めは
+  既存の samples_us[len/2] と 20 標本で一致する（round(19*0.5)=10）ことを確認した
+  ——比較可能性は保たれている
+
+新規テスト: path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries
+  近傍の既存検知器: search/tests/path.rs:466（path_env_merge_does_not_raise_any_name_has_path_sep）
+  と search/tests/build.rs:301-（path_merge_after_cache_miss_agrees_with…）。
+  判定: 重複しない（前者は any_name_has_path_sep、後者は列の長さと内容。旗そのものを
+  見るのは新テストだけ）
+
+### 2d. リソースライフサイクルチェック
+
+リソース: Engine（path_query_cost.rs:330・ループ内で 2 個）
+  破棄: スコープ終端の drop
+  判定: ペア成立
+
+リソース: HistoryStore::load()（同 325 / 330）
+  破棄: move されて Engine が所有
+  判定: ペア成立（L-4 参照）
+
+リソース: IndexMaterial（同 313-328）
+  破棄: Engine::from_material が消費
+  判定: ペア成立。**構成ごとに読み直す**判断（コメント 311-312）は
+        extend_with_path_entries が &mut self で木を伸ばす以上、正しい
+
+### 2e. SPEC.md 同期チェック
+
+SPEC 同期: 差分が変える挙動 — 無し（計器・テスト・文書のみ。製品の分岐・返り値契約・
+  スコア計算式・設定キー・データフォーマットのいずれにも触れていない）
+  SPEC 該当節: 記述なし
+  判定: SPEC 対象外（plan.md「SPEC.md・関連文書の更新要否」の判断と一致）
+
+### 2f. 「変更不要」判断の再評価
+
+再評価: 既存 measure_path_query_frame_cost を据え置く判断
+  ケース A: 既存を実運用点へ寄せる → #1057 / #1059 / 反復 4 の全表と比較できなくなる → 問題
+  ケース B: 別計器を足す（採用） → ハーネスが 2 本になる保守コスト → 許容（doc に区別あり）
+  ケース C: 据え置いた既存が「実運用点を測っている」と誤読される → **PERFORMANCE.md 側で
+            限定が落ちている**（H-1）
+  結論: 据え置き自体は妥当。ただし H-1 の限定を書き足すこと
+
+再評価: sorted_by_path を「include_path_env が真か」で代理しない判断
+  ケース A: PATH が空 / 全件重複 → extend_with_roots が早期 return → 旗は真のまま → 代理が外れる
+  ケース B: 非空 → 旗は無条件で偽（index_tree.rs:761・バイト順を測り直さない）
+  結論: 変更不要を確認（代理を採らなかったのは正しい）
+
+再評価: ablation から users を外す判断
+  ケース A: M_all / M_idx が prev_candidates を空にする → can_reuse の
+            !prev_candidates.is_empty() が落ちる → users だけ毎反復 312,108 件へ転落
+  ケース B: パスクエリ 3 本は !plan.has_path_sep で元から incremental 無効 → 影響なし
+  結論: 変更不要を確認（実測 4,309 µs も記録済み）
+
+--------------------------------------------------------------------------------
+## Phase 3: パフォーマンス検証
+
+search.rs / path_store.rs に触れているので実施した。
+
+- 計算量: ホットパスの変更なし。追加は bool を返す 3 段の passthrough だけで、
+  cmp_paths の分岐（path_store.rs:263）は 1 文字も変わっていない
+- 不要アロケーション: sample_frame_cost は Vec::with_capacity(SAMPLES) を持つ。
+  計測ループ内の確保は engine.search の内側だけ（測定対象そのもの）
+- Rust 固有: at クロージャは f64 演算 2 回で、標本の並べ替え後に 4 回しか呼ばれない
+- egui immediate-mode: 該当なし
+
+指摘なし。
+
+--------------------------------------------------------------------------------
+## 発見事項
+
+### High
+
+#### H-1. PERFORMANCE.md の新節が「実運用点」の限定（**どちらの軸も既定ではない**）を落としている
+
+場所: PERFORMANCE.md:1338-1363（とくに 1361-1363）/ 同じ問題が workspace/plan.md:157-166 にもある
+
+根本原因: 「実運用点」と名付けた構成（normal_mode = "substring" + include_path_env = true）は
+**出荷時の既定と 2 軸とも違う**（既定は normal_mode = Fuzzy・snotra-core/src/config.rs:200-202、
+include_path_env = false・同 302、SPEC.md:322 も「デフォルト無効」）のに、節はその条件を
+限定として書かず「**実運用点では常に落ちている**」と全称で書いている。既定構成の実起動が居るのは
+同じ表の**最終行**（旧計測点・p50 12,681〜13,737）であり、支配項として名指しした cmp_paths は
+include_path_env = true のときにしか発火しない。
+
+これは 3 点で自己矛盾している:
+- **同じファイルの上の節がその限定を持っている**（PERFORMANCE.md:1268-1270「**射程は
+  include_path_env = true の構成に限る。既定は false**（config.rs）——…上の計測に使った
+  開発機の実 config は true である」）。しかもその節は 1276 行で新節を「正本」として指すので、
+  **正本の側にだけ限定が無い**状態になった
+- PERFORMANCE.md:2337 が「**候補を「前提が崩れうる」という理由で却下するときは、既定・実運用点で
+  その前提がどちらかを測る**……**既定は include_path_env = false** で旗は真のまま」を教訓として
+  既に記録している
+- AGENTS.md「検証の作法」の「全称表現は前提条件とセットで書く」
+
+実害: 次のサイクルがこの節を読んで「常に落ちている」を根拠に extend_with_roots の旗の扱いを
+直しに行くと、**既定構成のユーザーには 1 µs も効かない**改修になる（既定では旗は元から真）。
+判定の優先度そのものが変わる。
+
+修正例（新節の諸元の直後、1350 行あたりへ 1 行）:
+
+    **射程**: 開発機の実 config（normal_mode = "substring" / include_path_env = true）。
+    **2 軸とも既定ではない**（既定は fuzzy / false・config.rs）——既定構成の実起動が居るのは
+    下表の最終行「旧計測点」である。上の「計器の限界」節と同じ限定が本節の全数字に掛かる。
+
+plan.md:164 の「**この issue は「余裕を広げる」ではなく「常に落ちているものを直す」issue である**」
+にも同じ限定を添えること。
+
+---
+
+### Medium
+
+#### M-1. //! の「製品レベルの **2 つ** は実 index.bin を書き換えうる」が 3 になった
+
+場所: snotra-core/tests/path_query_cost.rs:16
+
+根本原因: 新関数も load_or_scan_with_stats を通る（同 313-314・326-327）ので、旧版を現行版へ
+昇格させうる関数は 3 本になった（measure_path_query_frame_cost:192、
+measure_recent_history_cost:425、新関数）。**同じ diff が 6 行下の見出しから数を外し、その理由を
+「数を見出しに書かない——製品レベルの関数を 1 本足すたびに腐る」と明記している**（同 20・26）のに、
+直前の散文の数だけが取り残された。AGENTS.md「数え上げも同じ強さである」に当たる。
+
+過去パターン再発の疑い: snotra-core/CLAUDE.md「**枝の数を散文に書かないこと**——版を足したときに
+その数だけが腐り、しかも「揃っている」と読める」と同型。
+
+修正例:
+
+    //! **製品レベルの関数はどれも実 `index.bin` を書き換えうる**（`load_or_scan_with_stats` を
+    //! 通るため）。旧版を読んだらその場で現行版へ昇格するので、…
+
+#### M-2. 新テストの腕 1 と腕 3 が同一の計算で、真の baseline（マージを通さない）が無い
+
+場所: snotra-core/src/search/tests/build.rs:262-297
+
+根本原因: 腕 1 は build(Vec::new()) を呼ぶが、その closure は
+material.extend_with_path_entries(path_entries) を**必ず通る**（同 267）。ゆえに腕 1 の実体は
+「空の PATH マージ」であり、腕 3（同 288-297）と 1 行も違わない計算になっている。にもかかわらず
+コメントは腕 1 を「**1. マージ無し**」、腕 3 を「**3. 空のマージ**……ここが代理指標との分かれ目」
+と別物として書き、doc は「**守るのは 3 つ目の腕である**」（同 245）と言う。
+
+実害（空虚ではないが、名乗った射程に届いていない）: 「マージを 1 度も通さない索引で旗が立つ」
+という基準線が存在しないので、derive_columns / IndexMaterial::derived / from_material 側の
+退行で旗が**最初から偽**になる形と、「空マージが旗を下ろす」退行とを区別できない
+（どちらでも腕 1 と腕 3 が同時に落ちる）。3 腕のうち独立なのは実質 2 通りである。
+
+修正例（腕 1 をマージ経路の外へ出す）:
+
+    let material_of = |path_entries: Option<Vec<AppEntry>>| {
+        let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
+        let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
+        if let Some(entries) = path_entries {
+            material.extend_with_path_entries(entries);
+        }
+        material
+    };
+    // 1. マージ経路を 1 度も通らない索引（基準線）
+    assert!(SearchEngine::from_material(material_of(None), false).sorted_by_path(), …);
+    // 2. 非空のマージ / 3. 空のマージ
+
+#### M-3. PERFORMANCE.md と plan.md で c:\users の p50 下限が食い違う（15.4 対 16.0）
+
+場所: PERFORMANCE.md:1363 対 workspace/plan.md:162
+
+根本原因: 同じ観測を写した 2 文が別の値を持つ。c:\users / c:\users\ の生の分位点は
+どちらの文書にも表として残っていない（両文書とも c:\ の表しか持たない）ので、
+**この 2 文以外に正本が無い**。写しが 2 つあって食い違う典型で、AGENTS.md「文書に事実の写しを
+増やす変更 → 正本を 1 か所に定め他は参照へ」に当たる。
+
+加えて **どちらの値でも「1 フレームに達する」は成り立たない**（上限 16.5 ms < 16,700 µs）。
+
+修正例: 実測値の正本を PERFORMANCE.md 側に定め（c:\ と同じ体裁で 2 行足すのが素直）、
+plan.md は参照にする。文言は「1 フレーム（16,700 µs）に**迫る**」へ。
+再計測は不要 — どちらが正しいかは判定に効かないので、残っている実行ログから 1 つ選んで
+両方をその値に揃えるか、値の範囲を「約 16 ms」へ丸めるのでよい。
+
+#### M-4. Engine::sorted_by_path（3 段目）を通る検査が 1 本も無い
+
+場所: snotra-core/src/engine.rs:318-322
+
+根本原因: 新テスト（build.rs:270-297）が通るのは SearchEngine::sorted_by_path →
+PathStore::sorted_by_path の 2 段だけで、Engine 段を読むのは #[ignore] の計器だけである。
+cargo test --workspace は Engine 段を 1 度も評価しない。この旗は
+「**添えなければその計測値は読めない**」という位置づけ（search.rs:420-426 の doc）なので、
+この 1 段が壊れると**計器の諸元が静かに嘘をつき**、判定の帰属ごと誤る。
+AGENTS.md「検証の層と、層と層の隙間 — **穴は層の内側ではなく境界に空く**」に当たる。
+
+⚠️ 確信度: 中。1 行の passthrough で、先例（IndexMaterial::has_masks）も同様に無検査である。
+「先例に合わせる」という判断も採りうる。
+
+修正例（新テストの末尾に 2 行）:
+
+    // 3 段の passthrough が同じ値を返す（計器は Engine 段からしか読めない）。
+    let engine = crate::engine::Engine::from_material(
+        material_of(None), crate::history::HistoryStore::empty(), crate::config::Config::default());
+    assert!(engine.sorted_by_path(), "Engine 段の passthrough がずれている");
+
+（HistoryStore::empty() は #[cfg(test)] pub(crate)・history.rs:109-110 ゆえ crate 内テストから届く）
+
+#### M-5. 「PATH マージ あり/なし」のラベルが構成ではなくループ変数から出る
+
+場所: snotra-core/tests/path_query_cost.rs:322-339
+
+根本原因: 見出しは if merge_path_env { "あり" } else { "なし" }（同 339）で刷るが、実際に
+マージするかは merge_path_env && config.search.include_path_env（同 322）で決まる。
+**実 config が include_path_env = false の機体では 2 つの腕が同一の測定になり、片方が
+「PATH マージ あり」と名乗る**（既定は false）。計器自身の doc が
+「**include_path_env が真かを代理指標にしてはならない**」（同 250-253）と書いている当の誤りの、
+出力側での鏡像である。
+
+⚠️ 実害は限定的: 同じ行に +{merged} 件・木 {n_before} → {n_after}・sorted_by_path が
+出るので、読めば分かる。ただし「読めば分かる」は代理指標を退けた理由と同じ形で退けられる。
+
+修正例: if merged > 0 { "あり" } else { "なし" },
+
+---
+
+### Low
+
+#### L-1. ADR が撤去済みの spike を現存として書いている
+
+場所: docs/adr/ADR-path-query-forward-single-pass.md:26
+
+根本原因: 「**設計と最小実装は書き上がった**（search/tests/performance.rs の spike・**本判定を
+記録した PR のマージで撤去する**）」が未来形のまま。Phase 5 で実体は消え、PERFORMANCE.md:1285 は
+「にあった……#1067 のサイクルで消した」へ直っているのに、ADR だけが腐った。
+撤去の数え上げの母集団から ADR が漏れている。
+
+修正例: 「（search/tests/performance.rs に置いた spike。撤去条件が発火し #1067 のサイクルで
+**撤去済み**——判定に使った数字は PERFORMANCE.md が持つ）」
+
+#### L-2. 新関数の doc に、plan が書くと決めた 2 点が無い
+
+場所: snotra-core/tests/path_query_cost.rs:233-300（doc 全体）
+
+根本原因: plan.md:83-84 は「実 %APPDATA% を直接読むこと / load_or_scan_with_stats が旧版を
+書き換えうること」を、plan.md:356-357 は「HistoryStore::load() の使用が計測ハーネスに限る規律
+（#963）の内側であること」を関数 doc に書くと定めていたが、どれも入っていない。
+兄弟の measure_recent_history_cost は後者を持っている（同 429-431）。
+//! が前者を部分的に担っているが、その散文は M-1 のとおり数が腐っている。
+
+修正例: measure_recent_history_cost:429-431 と同じ 3 行を新関数の HistoryStore::load() の隣
+（同 325）へ置く。
+
+#### L-3. 添えた「history N 件」は 3 マップのうち global だけを数えている
+
+場所: snotra-core/tests/path_query_cost.rs:325
+
+根本原因: recent_launches(usize::MAX).len() が返すのは data.global の件数だけである
+（history.rs:299-310）。一方 ablation の M_hist が殺した「履歴照合 3 種」は
+global / query / folder_expansion の 3 マップを引く。諸元としては 1/3 しか添えていないので、
+「17 件」から履歴照合の仕事量を帰属させることはできない。
+
+⚠️ 実測では M_hist が drift の帯の内側（1 ms 以下）だったので、今回の判定は動かない。
+次に履歴照合を疑うときにこの諸元では足りない、という話である。
+
+修正例: 総数を返す既存 pub API が無いので、出力の文言を
+「history global **17** 件（query / folder_expansion は未計測）」へ正すのが安い。
+
+#### L-4. HistoryStore::load() を 1 実行で 3 回読む
+
+場所: snotra-core/tests/path_query_cost.rs:325 / 330（ループ 2 周）
+
+根本原因: 件数用に 1 回、Engine 2 個ぶんで 2 回。HistoryStore は Clone を持たない
+（history.rs:40）ので、Engine が 2 個要る以上 2 回は避けられない。1 回ぶんの実 I/O が余分、
+というだけで**実害は無い**（計測ループの外で、測定中に history.bin を書き換える経路も無い）。
+記録として残す。
+
+#### L-5. load_or_scan_with_stats を 2 回呼ぶ（cache-miss 機では全走査 2 度）
+
+場所: snotra-core/tests/path_query_cost.rs:313-314
+
+根本原因: 構成ごとに材料を読み直す設計（同 311-312 のコメントは正しい——
+extend_with_path_entries が &mut self で木を伸ばすので使い回せない）の帰結。
+index.bin が在れば 2 回ともロードで済むが、cache-miss の機体では 22〜30 秒の全走査と
+index.bin の書き込みが 2 回走る。//! の既存警告（実 index.bin を書き換えうる）の射程内だが、
+「2 回走る」ことは書かれていない。
+
+修正例: 関数 doc の「2 軸は対称ではない」節へ「Engine を 2 つ建てるので
+load_or_scan_with_stats も 2 回走る（cache-miss の機体では全走査が 2 度）」を 1 行。
+
+---
+
+### 改善余地（Low・合意が要る）
+
+#### N-1. アクセサを製品が読む誘惑は、機構で塞ぐ余地がある
+
+場所: snotra-core/src/engine.rs:318-322
+
+SearchEngine::sorted_by_path / Engine::sorted_by_path はどちらも pub なので、
+src-tauri から読んで分岐するコードは**今もコンパイルが通る**。止めているのは doc だけである。
+src-tauri/clippy.toml の disallowed-methods に snotra_core::engine::Engine::sorted_by_path を
+足せば、製品 crate 側だけを機構で塞げる（統合テストは別 crate なので計器は影響を受けない。
+先例は ctx.set_visuals 等 7 メソッド・src-tauri/CLAUDE.md「Win32 / Tauri 注意事項」）。
+
+**ただしセーフティネットの変更なので、ルート CLAUDE.md 最重要ルール 2 により合意が要る。**
+IndexMaterial::has_masks が doc だけで運用されている先例に揃える判断も等しく妥当であり、
+ここでは選択肢として置くにとどめる。
+
+--------------------------------------------------------------------------------
+## 指摘しなかったもの（判定の記録）
+
+- 分位点 at(q)（path_query_cost.rs:399）: ((len-1) * q).round() は標本数によらず意味が動かない。
+  SAMPLES=100 で p50 は idx 50 / p90 は 89 / p99 は 98 / max は 99 と単調かつ重複しない。
+  既存ハーネスの 20 標本 samples_us[len/2]（= idx 10）とも一致する（round(19*0.5)=10）
+  ——比較可能性は保たれている
+- docs/build-commands.md:189 の追加コマンド: --test path_query_cost at_operating_point --
+  --ignored … は cargo の TESTNAME 位置として正しく、フィルタとして働く
+- Engine::update_config で normal_mode だけを振る形（path_query_cost.rs:333-335）:
+  normal_mode は IndexInputs に含まれず、Engine::search が毎回読む live-read
+  （engine.rs:148-149）なので、同じ Engine のまま振ってよい。IncrementalCache は
+  prev_mode を持つので mode をまたぐ再利用も起きない
+- 新テスト腕 2 が !sorted_by_path() を主張できる根拠: extend_with_roots はバイト順を
+  測り直さず**無条件で旗を下ろす**（index_tree.rs:761）。fixture の並びに依存していない
+- PERFORMANCE.md の数値と plan.md の測定表の照合: c:\ の 2 要因表（4 行 × 3 回）・ablation 表
+  （6 行 × p50 と A−X）・検算 (i) の 15,009 / 15,833 / 824（5.2%）・検算 (ii) の 5,229 / 4,092 /
+  1.28 倍 / 12,179 / 6,950・M_cmp の旧計測点 12,313 対 A 12,179・zzz の 10,007〜10,711・
+  users の 4,309・諸元（312,108 + 100 / history 17 件 / 暖機 2 + 100 標本 / GPD WIN MINI）は
+  **すべて一致した**。食い違いは M-3 の 1 件のみ
+
+
+--------------------------------------------------------------------------------
+## 追補（advisor 指摘を受けた追加検査）
+
+### Medium
+
+#### M-6. snotra-core/CLAUDE.md の「2 つの計器は同一構成で一致することを実測してある」を、
+####       参照先の PERFORMANCE.md が裏付けていない
+
+場所: snotra-core/CLAUDE.md:66（参照先は PERFORMANCE.md:1338 の節）
+
+根本原因: その一致を示す**ブリッジの実測**——既存 measure_path_query_frame_cost を同一
+セッションで走らせ、c:(バックスラッシュ) p50 = 16,312 / users の results = 169（substring の
+指紋。fuzzy なら 200）を得て、新計器の同構成 14,671〜15,725 と同じ帯にあることを確かめた——は
+**workspace/plan.md:148-151 にしか無い**（PERFORMANCE.md を "16,312" / "ブリッジ" で grep して
+0 件・実測）。
+
+**workspace/plan.md はサイクル終了処理で撤去される**（直近では ff4267a「plan.md 撤去」・
+ee8dcb1「#1059 サイクルの終了処理」）。ゆえに、恒久のガバナンス文書（snotra-core/CLAUDE.md）に
+書いた「実測してある」の**唯一の証拠が、次のサイクルで消える**。
+
+この型は governance:check の死角である——参照先の見出しは実在するので検査は通り、
+「その見出しの中身が当該事実を運んでいるか」は誰も見ない（AGENTS.md「検証の層と、層と層の
+隙間」）。番号の照合でも捕まらない: 私の照合は**両方の文書に在る値**を突き合わせたので、
+片方にしか無い値は原理的に見えない。
+
+修正例（PERFORMANCE.md の新節へ 1 文。plan.md の文をほぼそのまま移す）:
+
+    **2 つの計器は同一構成で一致する**: 同一セッションで既存 measure_path_query_frame_cost を
+    走らせ（計器は 1 バイトも触っていない）、実 config ＝ substring・マージ無しで c:(区切り) の
+    p50 16,312 / users の results 169（substring の指紋。fuzzy なら 200）。新計器の同構成
+    14,671〜15,725 と同じ帯にある。
+
+### L-1 の補足（既知の 1 件とは別物である）
+
+ブリーフの「撤去シンボルの残存参照は歴史的言及 1 件のみ」が指すのは PERFORMANCE.md:1285 で、
+そちらは過去形へ正しく書き換わっている。L-1 の docs/adr/ADR-path-query-forward-single-pass.md:26 は
+**それとは別の箇所**であり、未来形（「本判定を記録した PR のマージで撤去する」）のまま残っている。
+既知の 1 件として片付けないこと。
+

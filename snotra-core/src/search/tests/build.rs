@@ -261,40 +261,52 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
     ];
     crate::indexer::sort_entries_canonical(&mut base);
 
-    let build = |path_entries: Vec<AppEntry>| {
+    // **`None` は「マージを 1 度も通さない」である。** `Some(vec![])` と同じにしてはならない
+    // ——同じにすると腕 1 と腕 3 が 1 行も違わなくなり、「マージ前から旗が偽」という退行と
+    // 「空マージが旗を下ろす」という退行を区別できなくなる（どちらでも 2 腕が同時に落ちる）。
+    let build = |path_entries: Option<Vec<AppEntry>>| {
         let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
         let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
-        material.extend_with_path_entries(path_entries);
-        SearchEngine::from_material(material, false)
+        if let Some(entries) = path_entries {
+            material.extend_with_path_entries(entries);
+        }
+        material
     };
 
-    // 1. マージ無し = 整列済みの索引ゆえ旗は立つ（速い経路）。
+    // 1. **基準線**——マージを 1 度も通さない。整列済みの入力ゆえ旗は立つ（速い経路）。
     assert!(
-        build(Vec::new()).sorted_by_path(),
+        SearchEngine::from_material(build(None), false).sorted_by_path(),
         "整列済みの入力で旗が立っていない（`sort_entries_canonical` を通してある）"
     );
 
     // 2. 非空のマージ = 根として末尾へ足すのでバイト順が崩れ、旗は下りる（遅い経路）。
+    let merged = build(Some(vec![AppEntry {
+        name: "Node".to_string(),
+        target_path: "C:\\tools\\node.exe".to_string(),
+        is_folder: false,
+    }]));
     assert!(
-        !build(vec![AppEntry {
-            name: "Node".to_string(),
-            target_path: "C:\\tools\\node.exe".to_string(),
-            is_folder: false,
-        }])
-        .sorted_by_path(),
+        !SearchEngine::from_material(merged, false).sorted_by_path(),
         "PATH エントリを足したのに旗が立ったまま（`cmp_paths` が index 比較を続け順序が変わる）"
     );
 
-    // 3. **空のマージは旗を下ろさない。** ここが代理指標との分かれ目である。
-    let material_empty = {
-        let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
-        let mut m = crate::indexer::IndexMaterial::derived(tree, masks);
-        m.extend_with_path_entries(Vec::new());
-        m
-    };
+    // 3. **空のマージは旗を下ろさない。** ここが代理指標との分かれ目である
+    //    ——腕 1 と違い、`extend_with_path_entries` を**実際に通したうえで**旗が残る。
     assert!(
-        SearchEngine::from_material(material_empty, false).sorted_by_path(),
+        SearchEngine::from_material(build(Some(Vec::new())), false).sorted_by_path(),
         "空の PATH マージが旗を下ろした（`extend_with_roots` の早期 return が壊れている）"
+    );
+
+    // 4. **`Engine` 段の passthrough も通す。** 計器が読むのはこの段であり、ここが壊れると
+    //    出力の諸元が静かに嘘をつく——`cargo test` がこの 1 段を一度も評価しない状態にしない。
+    let engine = crate::engine::Engine::from_material(
+        build(None),
+        crate::history::HistoryStore::empty(),
+        crate::config::Config::default(),
+    );
+    assert!(
+        engine.sorted_by_path(),
+        "`Engine` の passthrough が `SearchEngine` と違う値を返している"
     );
 }
 

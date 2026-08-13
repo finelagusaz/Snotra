@@ -13,9 +13,10 @@
 //! タイミング測定は環境依存ゆえ CI では回さない。手元で release 実行する（コマンドの
 //! SSOT は `docs/build-commands.md`）。
 //!
-//! **製品レベルの 2 つは実 `index.bin` を書き換えうる。** `load_or_scan_with_stats` は旧版を
-//! 読んだらその場で現行版へ昇格するので、**旧版のロードを測りたければ先に退避すること**
-//! （契約は同関数の doc）。走らせてから気づいても、その版はもう手元に無い。
+//! **製品レベルの関数はどれも実 `index.bin` を書き換えうる**（`load_or_scan_with_stats` を
+//! 通るため。**数を書かない**——1 本足すたびに腐る）。旧版を読んだらその場で現行版へ昇格するので、
+//! **旧版のロードを測りたければ先に退避すること**（契約は同関数の doc）。走らせてから気づいても、
+//! その版はもう手元に無い。
 //!
 //! # 層を混ぜない
 //!
@@ -264,6 +265,17 @@ fn measure_path_query_frame_cost() {
 /// 「実運用点を再現できたか」が確かめられる（`docs/development-principles.md`
 /// 「判定を持たない道具を層に数えてよい」）。
 ///
+/// # 実データを直接読む
+///
+/// **実 `%APPDATA%\Snotra` を直読する**（`SNOTRA_CONFIG_DIR` も temp コピーも使わない）。
+/// `HistoryStore::load()` を使うのは #963 の規律（ユニットテストの fixture には使わない）の
+/// 内側である——計測ハーネスは実運用の姿を測るのが目的だからで、兄弟の
+/// [`measure_recent_history_cost`] と同じ扱いになる。
+///
+/// **`load_or_scan_with_stats` を構成ごとに 2 回呼ぶ**（`extend_with_path_entries` が材料を
+/// 消費するため使い回せない）。旧版の `index.bin` が置かれた機体では現行版への昇格が
+/// 走りうる（`//!` の警告）——**その場合は 2 回とも走る**。
+///
 /// # 足場ではない
 ///
 /// **撤去条件を持たない恒久の計器である。** 実運用点との乖離は #1057 が発見し、#1059 は
@@ -290,13 +302,17 @@ fn measure_path_query_frame_cost_at_operating_point() {
     // hashbrown が `get` の冒頭でハッシュ計算前に短絡するので、履歴照合のコストが丸ごと
     // 消える。**併記しなければこの要因は次の反復でも未統制のまま残る。**
     // 件数は既存の pub API から取る（`recent_launches` は高々 `max` 件を返す契約ゆえ、
-    // `usize::MAX` を渡せば global の全件になる）。
-    let history_entries = HistoryStore::load().recent_launches(usize::MAX).len();
+    // `usize::MAX` を渡せば全件になる）。**ただし数えられるのは `global` の 1 マップだけである**
+    // ——照合は global / query / folder_expansion の 3 種を引くので、諸元は 3 分の 1 しか
+    // 添えていない。**「履歴照合が支配項か」を疑う反復では足りない**（残り 2 マップの件数を
+    // 返す口が今は無い）。
+    let history_global_entries = HistoryStore::load().recent_launches(usize::MAX).len();
 
     println!("\n=== パスクエリのフレームコスト（実運用点・2×2）===");
     println!(
         "  実 config: normal_mode = {:?} / include_path_env = {} / result_limit = {} / \
-         migemo = {} / history_normalization = {:?} / history {history_entries} 件",
+         migemo = {} / history_normalization = {:?} / \
+         history global {history_global_entries} 件（query / folder_expansion は未計測）",
         config.search.normal_mode,
         config.search.include_path_env,
         config.search.effective_result_limit(),
@@ -336,7 +352,10 @@ fn measure_path_query_frame_cost_at_operating_point() {
             println!(
                 "\n  --- PATH マージ {} （+{merged} 件・木 {n_before} → {n_after}） / \
                  normal_mode = {mode:?} / sorted_by_path = {} ---",
-                if merge_path_env { "あり" } else { "なし" },
+                // **ループ変数ではなく実際に足した件数で刷る。** `include_path_env = false` の
+                // 機体では 2 腕が同一の測定になり、ループ変数だと片方が嘘のラベルを名乗る
+                // ——この doc が上で「代理指標にしてはならない」と書いた誤りの、出力側の鏡像である。
+                if merged > 0 { "あり" } else { "なし" },
                 engine.sorted_by_path(),
             );
             println!(

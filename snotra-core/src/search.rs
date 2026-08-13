@@ -189,6 +189,41 @@ struct IncrementalCache {
 }
 
 impl IncrementalCache {
+    /// このクエリの全一致 index を `prev_candidates` として扱うか——**収集（write）と
+    /// 再利用（read）の両方が通る唯一の述語**（#1070）。
+    ///
+    /// **同じ関数が 1 回の検索で 2 つの時制で呼ばれる**: 検索前は「前回集めたものを**今回**
+    /// 再利用してよいか」（[`Self::can_reuse`] 経由）、fold では「**次回**のために今回の
+    /// 一致を集めるか」。片側だけ変わるドリフト（読むのに集めない／集めるのに読まない）は
+    /// 呼び出し点を 1 本の関数へ寄せることでしか防げない
+    /// （`normalize_entry_key_into` / `measure_derived_sharing` と同じ理屈）。
+    ///
+    /// **`plan.has_path_sep` と `plan.norm_query_has_path_sep` の取り違えについて。** 2 つは
+    /// 同じ型の隣接フィールドで、**現在の `nucleo-matcher` の下では外延的に一致する**ため、
+    /// ここを書き換えても挙動テストは緑のまま通る（前提と射程は `search/scoring.rs` の
+    /// `skip_name` のコメントが条件つきで記録している）。**その前提が崩れた版では結果が変わる**
+    /// ——`has_path_sep` が真で `norm_query_has_path_sep` が偽のクエリに対し、
+    /// [`Self::can_reuse`] が単調性の無いまま真を返しうるからである。
+    ///
+    /// 構造が禁じたのは**2 か所の食い違い**であって、この 1 か所での取り違えではない。
+    /// 述語を 1 本にしたことで read と write が別々のフィールドを見る形は書けなくなったが、
+    /// **どちらのフィールドを見るかの誤りはここに残る**。
+    ///
+    /// **収集を止めることの安全性は、正規化の詳細に依存しない**（上の段の「取り違え」とは
+    /// 別の話であり、こちらの射程は述語が**偽になったとき**に限る）。集めなければ
+    /// `prev_candidates` が空になり、[`Self::can_reuse`] の
+    /// `!self.prev_candidates.is_empty()` が落ちて**全件走査へ倒れるだけ**である。全件走査は
+    /// 候補集合の上位集合ではなく**母集団そのもの**で、`score_one_entry` は呼び出し間状態を
+    /// 読まない純粋な述語ゆえ、結果は 1 件も変わらない。**集めないこと**が `can_reuse` を
+    /// 動かす向きも一方通行である（真 → 偽にしか動かせない）——**述語の本体を取り違えた
+    /// 場合は別で、そちらは偽 → 真へも動く**（上の段）。
+    fn caches_candidates(plan: &QueryPlan) -> bool {
+        // パスクエリは norm_query と path_query で正規化が異なり単調性を保証できないため、
+        // 再利用できない（下の can_reuse の doc）。読み手が居ない候補を集めるのは、
+        // 実運用点で毎打鍵 312,208 件ぶんの push を裾に積むだけである（額は `PERFORMANCE.md`）。
+        !plan.has_path_sep
+    }
+
     /// incremental search（前回候補の再利用）の可否を判定する（read のみ）。
     ///
     /// 全述語は「今回の候補集合 ⊆ 前回の候補集合」を保証する単調条件。
@@ -199,8 +234,14 @@ impl IncrementalCache {
     /// - kana_monotonic: kana_query の単調性。(None,_)→OK / (Some curr, Some prev) は
     ///   `curr.starts_with(prev)` のとき候補が狭まる / (Some,None) は新規出現ゆえ full scan。
     ///   ローマ字→かな変換は非単調（"kan"→"かん", "kana"→"かな"）ゆえ実値比較が必要。
-    /// - `!has_path_sep`: パスクエリは norm_query と path_query で正規化が異なり単調性を
-    ///   保証できないため無条件で無効化する（稀ゆえ性能影響は無視できる）。
+    /// - [`Self::caches_candidates`]: パスクエリは norm_query と path_query で正規化が異なり
+    ///   単調性を保証できないため無条件で無効化する。**この項は落とせない**——述語は収集
+    ///   （write）側と共有するが、**`prev_candidates` を満たした write は前回の検索の `plan` で
+    ///   評価されている**（1 回の検索の中では read も write も同じ `plan` を見る）。
+    ///   ゆえに「非パス → パス」の遷移では `prev_candidates` が
+    ///   **非空のまま**この項だけが偽になり、下の `!is_empty()` は助けにならない。ここを落とすと
+    ///   `path_query_results_are_identical_to_a_fresh_engine` が落ちる（変異注入で実測）。
+    ///   **正しさを担うのはこの read 側であり、write 側の停止は最適化である。**
     fn can_reuse(&self, plan: &QueryPlan, mode: SearchMode) -> bool {
         let kana_monotonic = match (&plan.kana_query, &self.prev_kana_query) {
             (None, _) => true,
@@ -212,7 +253,7 @@ impl IncrementalCache {
             && !self.prev_query.is_empty()
             && plan.norm_query.starts_with(self.prev_query.as_str())
             && (!plan.has_dot || self.prev_query.contains('.'))
-            && !plan.has_path_sep
+            && Self::caches_candidates(plan)
             && kana_monotonic
     }
 
@@ -221,8 +262,14 @@ impl IncrementalCache {
         std::mem::take(&mut self.prev_candidates)
     }
 
-    /// 検索完了後に状態を更新する（write）。`candidates` は truncation 前の全一致 index。
+    /// 検索完了後に状態を更新する（write）。`candidates` は truncation 前の全一致 index
+    /// ——ただし [`Self::caches_candidates`] が偽のクエリでは**空である**（#1070）。
     /// `can_reuse` が read する全フィールドをここで対にして書き、対称更新漏れを構造で防ぐ。
+    ///
+    /// **残り 3 フィールド（`prev_query` / `prev_mode` / `prev_kana_query`）は条件づけない。**
+    /// 止めると「`can_reuse` が read する全フィールドを `update` が書く」という上の対称
+    /// 不変条件のほうが壊れる。候補が空になれば `!is_empty()` で再利用は落ちるので、
+    /// 条件づける必要もない。
     fn update(
         &mut self,
         norm_query: String,
@@ -281,9 +328,14 @@ impl SearchEngine {
 
         // Phase 4: incremental search — クエリが前回クエリの単調拡張でモードが不変の
         // とき、前回のマッチ候補を再利用する。
-        // 述語（no-dot→dot / kana 単調性 / !has_path_sep）と前回状態の read は
-        // IncrementalCache::can_reuse に集約する。ここでは write のみを fold 後に行う。
+        // 述語（no-dot→dot / kana 単調性 / caches_candidates）と前回状態の read は
+        // IncrementalCache::can_reuse に集約する。
         let use_incremental = self.incremental_cache.can_reuse(&plan, mode);
+
+        // 次回のために全一致 index を集めるか（write 側の時制）。read 側と同じ述語を通す
+        // ——読み手が居ないクエリで集めない根拠は IncrementalCache::caches_candidates の doc。
+        // Copy な bool としてクロージャに move する（kana_available と同じイディオム）。
+        let collect_candidates = IncrementalCache::caches_candidates(&plan);
 
         let candidate_indices: Vec<usize> = if use_incremental {
             self.incremental_cache.take_candidates()
@@ -312,12 +364,17 @@ impl SearchEngine {
                 |(mut top_k, mut local_matches), i| {
                     // スコアリング本体は score_one_entry に委譲する（bitmask pre-filter →
                     // name/file_name/kana/path スコア → 履歴ブースト → ScoredEntry 構築）。
-                    // Some ⟺ マッチ成立。local_matches.push(i) は top-k 採否より前に無条件で
+                    // Some ⟺ マッチ成立。local_matches.push(i) は top-k 採否とは独立に
                     // 行い、top-k から落ちた一致も incremental cache に残す（縮小を防ぐ）。
+                    // **収集そのものは collect_candidates が条件づける**（#1070）——
+                    // 再利用されえないクエリで集めないだけであり、top_k.push は影響を受けない
+                    // ので結果は 1 件も変わらない（IncrementalCache::caches_candidates の doc）。
                     if let Some(scored) =
                         self.score_one_entry(i, &plan, mode, kana_available, history, options)
                     {
-                        local_matches.push(i);
+                        if collect_candidates {
+                            local_matches.push(i);
+                        }
                         top_k.push(scored);
                     }
 
@@ -339,7 +396,8 @@ impl SearchEngine {
         let results = top_k.into_results(&self.entries);
 
         // write: can_reuse が read する全状態を IncrementalCache::update で対にして更新する。
-        // all_match_indices は top-k から落ちた一致も含む全件。
+        // all_match_indices は top-k から落ちた一致も含む全件（ただし collect_candidates が
+        // 偽のクエリでは空。#1070）。
         self.incremental_cache.update(
             plan.norm_query.into_owned(),
             all_match_indices,

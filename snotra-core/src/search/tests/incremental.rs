@@ -141,6 +141,100 @@ fn incremental_search_no_dot_to_dot_falls_back_to_full_scan() {
     );
 }
 
+/// パスクエリの収集停止（#1070）を突くための 2 件 fixture。
+///
+/// - `Chrome` — クエリ `"c"` に**名前で**マッチする。`target_path` は `D:` 配下ゆえ
+///   `"c:\"` には**マッチしない**
+/// - `Zephyr` — 名前にも file_name にも `c` を含まず、`target_path` だけが `c:\` 配下にある
+///
+/// この非対称が、read 側（`can_reuse`）だけ述語を落とす変異を観測可能にする
+/// ——`"c"` の候補（`Chrome` のみ）を `"c:\"` で再利用すると `Zephyr` が欠ける。
+fn path_drift_entries() -> Vec<AppEntry> {
+    vec![
+        AppEntry {
+            name: "Chrome".to_string(),
+            target_path: "D:\\apps\\Chrome.lnk".to_string(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "Zephyr".to_string(),
+            target_path: "C:\\tools\\zephyr.lnk".to_string(),
+            is_folder: false,
+        },
+    ]
+}
+
+#[test]
+fn path_query_leaves_the_incremental_candidates_empty() {
+    // #1070 の新しい不変条件そのもの: パス区切りを含むクエリでは全一致 index を集めない。
+    let mut engine = SearchEngine::new(path_drift_entries());
+    let h = empty_history();
+
+    let results = engine.search("c:\\", 8, &h, SearchMode::Fuzzy);
+
+    // マッチ 0 件では「空」が自明に成立して述語反転の変異を検出できない。
+    // 収集が起きたなら非空になる状態であることを先に固定する。
+    assert_eq!(
+        results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        vec!["Zephyr"],
+        "パスクエリは Zephyr にマッチする（収集が起きれば候補は非空になる状態）"
+    );
+    assert!(
+        engine.incremental_cache.prev_candidates.is_empty(),
+        "パスクエリでは candidate index を収集しない（読み手 can_reuse が !has_path_sep を要求するため）"
+    );
+}
+
+#[test]
+fn non_path_query_still_populates_the_incremental_candidates() {
+    // 逆向き: 述語の反転・収集の無条件停止を捕まえる。
+    let mut engine = SearchEngine::new(path_drift_entries());
+    let h = empty_history();
+
+    let results = engine.search("c", 8, &h, SearchMode::Fuzzy);
+
+    assert_eq!(
+        results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        vec!["Chrome"],
+        "区切りを含まないクエリは名前で Chrome にマッチする"
+    );
+    assert!(
+        !engine.incremental_cache.prev_candidates.is_empty(),
+        "区切りを含まないクエリでは今までどおり全一致 index を収集する（incremental の再利用元）"
+    );
+}
+
+#[test]
+fn path_query_results_are_identical_to_a_fresh_engine() {
+    // read 側（can_reuse）だけ述語を落とすドリフトを捕まえる唯一の形。
+    // 打鍵列 "c" → "c:\" は can_reuse の他条件（prev_mode 一致 / prev_candidates 非空 /
+    // starts_with / dot 単調性 / kana 単調性）を**全部満たす**ため、has_path_sep だけが
+    // 分岐点になる。既存の path_match_incremental_cache_monotonic は 2 打鍵ともパスクエリで、
+    // 2 回目は自分自身の has_path_sep で必ず落ちるのでこの差を見ない。
+    let mut engine = SearchEngine::new(path_drift_entries());
+    let h = empty_history();
+
+    let first = engine.search("c", 8, &h, SearchMode::Fuzzy);
+    assert!(!first.is_empty(), "1 打鍵目が候補を残す前提を固定する");
+    let incremental = engine.search("c:\\", 8, &h, SearchMode::Fuzzy);
+
+    let mut fresh = SearchEngine::new(path_drift_entries());
+    let fresh_result = fresh.search("c:\\", 8, &h, SearchMode::Fuzzy);
+
+    let inc: Vec<(&str, &str)> = incremental
+        .iter()
+        .map(|r| (r.name.as_str(), r.path.as_str()))
+        .collect();
+    let expected: Vec<(&str, &str)> = fresh_result
+        .iter()
+        .map(|r| (r.name.as_str(), r.path.as_str()))
+        .collect();
+    assert_eq!(
+        inc, expected,
+        "非パス → パスの遷移でも、結果は新品 engine と順序込みで一致する"
+    );
+}
+
 #[test]
 fn incremental_search_empty_prev_candidates_falls_back() {
     let mut engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));

@@ -1309,15 +1309,22 @@ impl LauncherController {
     /// 同じ読みで取った modifier）。**TextEdit の `changed()` 処理より後で呼ぶこと**——同一
     /// フレームの IME 確定・paste が旧 state で起動されるのを防ぐ（不変条件 3）。
     pub(super) fn on_enter(&mut self, shift_held: bool, ctx: &egui::Context) {
-        // #631 flush-on-Enter: trailing 窓内（打鍵後 50ms 以内）の Enter は leading 時点の
-        // 結果で起動しうる。armed な plain クエリは cancel → 同期 engine.search で最終クエリの
-        // 結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
+        // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、
+        // leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは
+        // cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch
+        //（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
+        // **未反映は 2 つある**（#1038）——trailing を予約中（打鍵後 50ms 以内）と、worker へ
+        // 出した要求が飛んでいる間である。trailing が発火した瞬間は前者が偽・後者が真になり、
+        // `armed` だけを見ていた頃はそこが素通りしていた（導出は `is_unsettled` の doc が正本）。
         let prefix = self.instant_prefix();
         let is_plain = matches!(self.state.interp(&prefix), QueryIntent::Plain);
         if crate::egui_shell::should_flush_on_enter(
             self.state.view_kind(),
             is_plain,
-            self.search_debounce.is_armed(),
+            crate::egui_shell::is_unsettled(
+                self.search_debounce.is_armed(),
+                self.dispatch.pending_seq(),
+            ),
         ) {
             self.search_debounce.cancel();
             // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。

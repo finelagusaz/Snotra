@@ -62,6 +62,24 @@ impl SearchDispatch {
     }
 }
 
+/// **最終クエリの結果がまだ行へ反映されていないか**（#1038）。`on_enter` の flush 判定
+/// （`search_state::should_flush_on_enter` の第 3 引数）がこれを読む。
+///
+/// **`armed` だけでは足りない。** 同期実装の頃は `armed == false` が「反映済み」を含意していたが、
+/// worker 化（#1004）で trailing 発火の直後は必ず「`armed == false` かつ in-flight あり」になり、
+/// 含意が壊れた。**`armed` を残すのは leading 発火の前**——打鍵したフレームで要求がまだ出ていない
+/// 瞬間——**を覆うためである**（そこは `pending_seq == 0` だが未反映）。
+///
+/// `pending_seq` を `bool` でなく生値で受けるのは、**sentinel（0 = in-flight なし）の解釈を
+/// テストの届く場所へ入れる**ためである（`issue` が `next_seq += 1` を先に行うので seq は 1 始まり）。
+///
+/// **#1039 への申し送り**: この述語は #1039 で `SearchState::is_settled()` として型の内側へ移る。
+/// 否定形で置いたのは呼び出し点に `!` を出さないためであり、**#1039 の issue 本文が想定する
+/// 肯定形 `is_settled()` とは極性が逆である**（引っ越し時は `!is_unsettled(..)` として吸収する）。
+pub fn is_unsettled(armed: bool, pending_seq: u64) -> bool {
+    armed || pending_seq != 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +130,54 @@ mod tests {
         assert!(
             d.accept(seq, base).is_none(),
             "同期で行を差し替えたら in-flight は必ず古い（spec §4.5）"
+        );
+    }
+
+    #[test]
+    fn unsettled_covers_in_flight_after_trailing_fired() {
+        assert!(
+            !is_unsettled(false, 0),
+            "予約も in-flight も無ければ反映済み"
+        );
+        assert!(
+            is_unsettled(true, 0),
+            "leading 発火の前——要求がまだ出ていない"
+        );
+        assert!(
+            is_unsettled(false, 1),
+            "trailing 発火の直後（armed == false かつ in-flight あり）が #1038 の欠陥そのものである"
+        );
+        assert!(is_unsettled(true, 3), "両方立っていても未反映");
+        // #1038 の受け入れ 1 を逐語で写す（`should_flush_on_enter` との合成まで固定する）。
+        assert!(crate::egui_shell::should_flush_on_enter(
+            crate::egui_shell::ViewKind::Results,
+            true,
+            is_unsettled(false, 1),
+        ));
+    }
+
+    #[test]
+    fn unsettled_is_grounded_on_real_dispatch() {
+        // sentinel をリテラルで書かず `SearchDispatch` 自身から取る（判定の入力が出力側へ
+        // すり替わる不動点化を避けるため、`armed` は false 固定で渡す）。
+        let base = Instant::now();
+        let mut d = SearchDispatch::default();
+        assert!(!is_unsettled(false, d.pending_seq()), "発行前は反映済み");
+        let seq = d.issue(base, base);
+        assert!(
+            is_unsettled(false, d.pending_seq()),
+            "worker へ出した直後は未反映"
+        );
+        assert!(d.accept(seq, base).is_some());
+        assert!(
+            !is_unsettled(false, d.pending_seq()),
+            "採り込めば反映済みへ戻る"
+        );
+        let _ = d.issue(base, base);
+        d.invalidate();
+        assert!(
+            !is_unsettled(false, d.pending_seq()),
+            "同期で差し替えた（invalidate）後も反映済みである"
         );
     }
 

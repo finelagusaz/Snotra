@@ -69,13 +69,13 @@ if crate::egui_shell::should_flush_on_enter(
 
 ### Phase 1 — 純粋核と検知器
 
-- [ ] `search_dispatch.rs` に `is_unsettled(armed: bool, pending_seq: u64) -> bool` を追加する。doc に
+- [x] `search_dispatch.rs` に `is_unsettled(armed: bool, pending_seq: u64) -> bool` を追加する。doc に
       次の 2 点を書く
   - 「`armed` を残すのは leading 発火の前（要求がまだ出ていない瞬間）を覆うため」
   - **#1039 への申し送り**: この述語は #1039 で `SearchState::is_settled()` として型の内側へ移る。
     **否定形で置いたのは呼び出し点に `!` を出さないため**であり、#1039 の issue 本文が想定する
     肯定形 `is_settled()` とは**極性が逆である**（引っ越し時は `!is_unsettled(..)` として吸収する）
-- [ ] `is_unsettled` のユニットテストを 2 本書く
+- [x] `is_unsettled` のユニットテストを 2 本書く
   - `unsettled_covers_in_flight_after_trailing_fired`: リテラル 4 通り
     （`(false, 0) == false` / `(true, 0) == true` / **`(false, 1) == true`（受け入れ 1）** / `(true, 3) == true`）
   - `unsettled_is_grounded_on_real_dispatch`: 実 `SearchDispatch` を `issue` → `pending_seq()` を渡して真、
@@ -84,23 +84,26 @@ if crate::egui_shell::should_flush_on_enter(
   - 上のいずれかに **受け入れ 1 を逐語で写した合成アサーション**を 1 行加える:
     `assert!(should_flush_on_enter(ViewKind::Results, true, is_unsettled(false, 1)))`
     （issue の受け入れ 1「`armed == false` かつ in-flight あり」をコードのまま固定する）
-- [ ] `search_state.rs` の `should_flush_on_enter` の第 3 引数名と doc を改める。既存テストの
+- [x] `search_state.rs` の `should_flush_on_enter` の第 3 引数名と doc を改める。既存テストの
       4 ケースはそのまま真理値が保たれる（引数の意味替えのみ）ので、名前とメッセージだけ追随させる
 
 ### Phase 2 — 呼び出し点
 
-- [ ] `mod.rs` の `pub(crate) use search_dispatch::SearchDispatch;` を `{SearchDispatch, is_unsettled}` へ広げ、
+- [x] `mod.rs` の `pub(crate) use search_dispatch::SearchDispatch;` を `{SearchDispatch, is_unsettled}` へ広げ、
       消費者コメントに「`on_enter` の flush 判定（#1038）」を足す
-- [ ] `launcher_controller.rs:1317–1321` の第 3 引数を `is_unsettled(is_armed(), pending_seq())` へ差し替える
-- [ ] 同 1312–1314 のコメントを更新する（「trailing 窓内（打鍵後 50ms 以内）」→
+- [x] `launcher_controller.rs:1317–1321` の第 3 引数を `is_unsettled(is_armed(), pending_seq())` へ差し替える
+- [x] 同 1312–1314 のコメントを更新する（「trailing 窓内（打鍵後 50ms 以内）」→
       「最終クエリの結果が未反映（trailing 予約中 **または** worker in-flight）」）
 
 ### Phase 3 — 変異注入（検知器が実際に落ちることを測る）
 
-- [ ] `is_unsettled` から `|| pending_seq != 0` を一時的に外し、`cargo test -p snotra` が
+- [x] `is_unsettled` から `|| pending_seq != 0` を一時的に外し、`cargo test -p snotra` が
       **Phase 1 の 2 本とも落ちる**ことを確認する。落ちない項があればテストを直す
-- [ ] 変異を戻し、緑に戻ることを確認する
-- [ ] 落ちたテスト名と exit code を本ファイルの「変異注入の記録」へ書く
+      （**TDD の Red と同一の観測になったので順序を入れ替えた**——先に `armed` のみの実装を置き、
+      呼び出し点まで配線した状態でテストを当てて落とした。変異を後から入れるのと測るものは同じで、
+      加えて「呼び出し点の配線が済んだ状態で落ちる」ことまで確かめられる）
+- [x] 変異を戻し、緑に戻ることを確認する
+- [x] 落ちたテスト名と exit code を本ファイルの「変異注入の記録」へ書く
 
 ### Phase 4 — 文書と検証
 
@@ -246,7 +249,28 @@ if crate::egui_shell::should_flush_on_enter(
 
 ## 変異注入の記録
 
-（Phase 3 で埋める）
+**変異**: `is_unsettled` の本体を `armed || pending_seq != 0` ではなく `armed`（＝現行 main の判定と
+等価な、性質をまだ持たない実装）にする。`_pending_seq` は未使用。
+
+**測った状態**: 呼び出し点（`launcher_controller.rs` / `mod.rs` の re-export）まで**配線済み**。
+clippy は緑（`dead_code` 解消済み）で、落ちるのはテストだけという状態で観測した。
+
+**結果**: `cargo test -p snotra` → **exit 101**、`254 passed; 2 failed`
+
+```
+failures:
+    egui_shell::search_dispatch::tests::unsettled_covers_in_flight_after_trailing_fired
+    egui_shell::search_dispatch::tests::unsettled_is_grounded_on_real_dispatch
+```
+
+- `unsettled_covers_in_flight_after_trailing_fired` — assert メッセージ
+  「trailing 発火の直後（armed == false かつ in-flight あり）が #1038 の欠陥そのものである」で停止
+- `unsettled_is_grounded_on_real_dispatch` — assert メッセージ「worker へ出した直後は未反映」で停止
+
+**変異を戻した後**: `cargo test -p snotra` → **256 passed; 0 failed**（新規 2 本が加わった数と一致）。
+
+**判定**: 検知器は**新設した 2 本とも**この変異で落ちる。`|| pending_seq != 0` を消す退行は
+沈黙せず捕まる。
 
 ## 引き継ぎ（この計画が所有しない作業・チェックボックスを置かない）
 

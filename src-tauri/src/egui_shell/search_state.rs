@@ -409,11 +409,16 @@ pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
     if len == 0 { 0 } else { idx.min(len - 1) }
 }
 
-/// Enter 時の trailing flush 要否（#631 flush-on-Enter・SolidJS flushPendingRefresh 同型）。
-/// armed になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel 済み）だが、
-/// 将来の armed 経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
-pub fn should_flush_on_enter(view_kind: ViewKind, is_plain: bool, armed: bool) -> bool {
-    view_kind == ViewKind::Results && is_plain && armed
+/// Enter 時の flush 要否（#631 flush-on-Enter・SolidJS flushPendingRefresh 同型）。
+///
+/// **`unsettled` は「最終クエリの結果がまだ行へ反映されていないか」である**（#1038）。導出は
+/// `search_dispatch::is_unsettled` が持つ——debounce の `armed` だけを渡していた頃は、worker 化
+/// （#1004）で trailing 発火の直後に「予約は無いが in-flight あり」の隙が開いていた。
+///
+/// unsettled になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel + invalidate 済み）
+/// だが、将来の経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
+pub fn should_flush_on_enter(view_kind: ViewKind, is_plain: bool, unsettled: bool) -> bool {
+    view_kind == ViewKind::Results && is_plain && unsettled
 }
 
 /// 親ディレクトリを返す。ルート（`C:\` / `\\server\share\`）で None。folderNav.computeParentDir 相当。
@@ -496,11 +501,11 @@ mod tests {
     }
 
     #[test]
-    fn flush_on_enter_only_for_armed_plain_results() {
+    fn flush_on_enter_only_for_unsettled_plain_results() {
         assert!(should_flush_on_enter(ViewKind::Results, true, true));
         assert!(
             !should_flush_on_enter(ViewKind::Results, true, false),
-            "armed でなければ flush 不要"
+            "反映済みなら flush 不要"
         );
         assert!(
             !should_flush_on_enter(ViewKind::Results, false, true),

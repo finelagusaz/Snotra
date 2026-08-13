@@ -1439,10 +1439,20 @@ drift の帯の内側で、0 と区別できない**（「514 µs である」�
 p50 13,390・max 16,444 で 1 フレームの内側にある。** 落ちているのは
 `include_path_env = true` を選んだ構成だけである。
 
-**`result_limit` の既定は 200 である**（`config.rs` の `default_result_limit`）。**表示に使うのは
-`visible_rows`（既定 8）だけで、残りは履歴の剪定容量として使われる**（`Engine` が
-`effective_result_limit()` を `history` の `top_n` へ live-read で渡す）。ゆえに「200 件取る」は
-表示のためではない——**この設定の 2 つの役割を分けないと、片方の都合でもう片方が高くつく。**
+**`result_limit` の既定は 200 である**（`config.rs` の `default_result_limit`）。**200 は絞り込みの
+閾値ではなく top-k の器の大きさである**——全件走査は器の大きさに依らず必ず走り、`k` が減らすのは
+維持費（置換ごとの `sift_down` と、そこから落ちる `cmp_paths`）だけである。総量が `k` に対して
+超線形なのはこのためで、**走査を減らしているのではない。**
+
+**器を小さくすることは最適化ではなく機能変更である。** 200 行は**すべて UI へ渡り**
+（`snapshot.rows` は `visible_rows` ではなく `effective_result_limit`・`egui_shell/results_view.rs`）、
+`ScrollArea` が 200 行ぶんを確保するので**スクロールで到達できる**。`visible_rows`（既定 8）が
+決めるのは同時に見える行数であって、結果の件数ではない。
+
+**`result_limit` は 3 つの役割を兼ねる**（`snotra-core/src/engine.rs`）: 検索の取得件数
+（`search`）/ フォルダ一覧の最大件数（`capture_folder_list_context`）/ **履歴の剪定容量**
+（`prepare_save_if_dirty` / `prepare_flush` の `top_n` へ live-read）。**表示と無関係なのは
+3 つ目だけである**——分けるなら分けられるのはそこであって、取得件数の側ではない。
 
 #### `#1059` の「11.4 ms」は 40% 過大だった（行をまたぐ引き算の代償）
 

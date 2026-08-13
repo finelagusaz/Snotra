@@ -125,6 +125,8 @@
 
 `has_path_sep` 時は incremental search を無条件で無効化する。理由: `norm_query`（アクセント折畳み・スペース圧縮）と `path_query`（生クエリベース・アクセント保持・スペース保持）で正規化が異なり、`norm_query` の `starts_with` では `path_query` の単調性を保証できない。パス区切りを含むクエリは稀なため性能影響は無視できる。将来 incremental を有効化するには `prev_path_query` を別途保持して単調性を検証する必要がある。
 
+**非互換は「読まない」だけでなく「書かない」でもある**（#1070）。読み手が `can_reuse` 1 つしか無いのだから、パスクエリで全一致 index を集める意味は無い——実運用点では索引の全件が `c:\` にマッチするため、読まれないまま捨てられる `Vec` が毎打鍵の裾に積まれていた（額は `PERFORMANCE.md`「採用: パスクエリで再利用されえない候補を集めない」が正本）。**収集（write）と再利用（read）は `IncrementalCache::caches_candidates` の 1 本を必ず通す**——片側だけ変わるドリフト（集めないのに読む＝結果が欠ける）を防ぐ根拠はそれだけであり、`plan.has_path_sep` と `plan.norm_query_has_path_sep` の取り違えもフィールドの参照点が 1 か所であることで書けなくなる（前提と射程は `search/scoring.rs` の `skip_name` のコメント）。**安全性を正規化器の挙動へ立脚させてはならない**——論証は「集めなければ `prev_candidates` が空になり `!is_empty()` が落ちて全件走査へ倒れる。全件走査は母集団そのもの」だけで閉じる（却下した論証経路は `docs/adr/ADR-path-query-tail-top-k.md`）。
+
 ## データ永続化の注意
 
 - シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）

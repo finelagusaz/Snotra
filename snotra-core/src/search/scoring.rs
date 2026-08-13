@@ -307,8 +307,10 @@ impl SearchEngine {
     }
 
     /// 1 エントリ（index `i`）をスコアリングし、マッチすれば `ScoredEntry` を返す。
-    /// `Some` ⟺ マッチ成立（= base score が Some）。呼び出し側はこの条件で incremental
-    /// cache 用の index 記録（`local_matches.push(i)`）を行う。
+    /// `Some` ⟺ マッチ成立（= base score が Some）。呼び出し側は**この条件と、収集可否の述語
+    /// （`IncrementalCache::caches_candidates`）の両方**が立つときに incremental cache 用の
+    /// index 記録（`local_matches.push(i)`）を行う（#1070）。**top-k への採否はこの述語に
+    /// 依存しない**——ゆえに収集を止めても検索結果は 1 件も変わらない。
     ///
     /// **内部順序の不変条件（性能）**:
     /// - bitmask pre-filter を関数**先頭**に置く（`entry_view` / `Utf32String::from` より前）。

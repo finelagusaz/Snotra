@@ -198,12 +198,16 @@ impl IncrementalCache {
     /// 呼び出し点を 1 本の関数へ寄せることでしか防げない
     /// （`normalize_entry_key_into` / `measure_derived_sharing` と同じ理屈）。
     ///
-    /// **`plan.has_path_sep` と `plan.norm_query_has_path_sep` の取り違えを、構造で
-    /// 表現不能にするのもこの関数の役目である。** 2 つは同じ型の隣接フィールドで、
-    /// 取り違えても**収集をやめるクエリ集合が変わるだけで結果は変わらない**ため、
-    /// 挙動テストで検出できない（その前提と射程は `search/scoring.rs` の `skip_name` の
-    /// コメントが条件つきで記録している）。フィールドの参照点がここ 1 か所である限り、
-    /// この誤りは書けない。
+    /// **`plan.has_path_sep` と `plan.norm_query_has_path_sep` の取り違えについて。** 2 つは
+    /// 同じ型の隣接フィールドで、**現在の `nucleo-matcher` の下では外延的に一致する**ため、
+    /// ここを書き換えても挙動テストは緑のまま通る（前提と射程は `search/scoring.rs` の
+    /// `skip_name` のコメントが条件つきで記録している）。**その前提が崩れた版では結果が変わる**
+    /// ——`has_path_sep` が真で `norm_query_has_path_sep` が偽のクエリに対し、
+    /// [`Self::can_reuse`] が単調性の無いまま真を返しうるからである。
+    ///
+    /// 構造が禁じたのは**2 か所の食い違い**であって、この 1 か所での取り違えではない。
+    /// 述語を 1 本にしたことで read と write が別々のフィールドを見る形は書けなくなったが、
+    /// **どちらのフィールドを見るかの誤りはここに残る**。
     ///
     /// **安全性は正規化の詳細に依存しない。** 集めなければ `prev_candidates` が空になり、
     /// [`Self::can_reuse`] の `!self.prev_candidates.is_empty()` が落ちて**全件走査へ倒れる
@@ -228,9 +232,12 @@ impl IncrementalCache {
     ///   `curr.starts_with(prev)` のとき候補が狭まる / (Some,None) は新規出現ゆえ full scan。
     ///   ローマ字→かな変換は非単調（"kan"→"かん", "kana"→"かな"）ゆえ実値比較が必要。
     /// - [`Self::caches_candidates`]: パスクエリは norm_query と path_query で正規化が異なり
-    ///   単調性を保証できないため無条件で無効化する。**この述語は収集（write）側と共有する**
-    ///   ——ゆえに偽のとき `prev_candidates` はそもそも空であり、下の `!is_empty()` でも同じ
-    ///   結論に達する（二重の門は冗長ではなく、片方が緩んでも結果が変わらないための余裕である）。
+    ///   単調性を保証できないため無条件で無効化する。**この項は落とせない**——述語は収集
+    ///   （write）側と共有するが、**評価するクエリが違う**（write は前回の検索の `plan`、
+    ///   read は今回の検索の `plan`）。ゆえに「非パス → パス」の遷移では `prev_candidates` が
+    ///   **非空のまま**この項だけが偽になり、下の `!is_empty()` は助けにならない。ここを落とすと
+    ///   `path_query_results_are_identical_to_a_fresh_engine` が落ちる（変異注入で実測）。
+    ///   **正しさを担うのはこの read 側であり、write 側の停止は最適化である。**
     fn can_reuse(&self, plan: &QueryPlan, mode: SearchMode) -> bool {
         let kana_monotonic = match (&plan.kana_query, &self.prev_kana_query) {
             (None, _) => true,

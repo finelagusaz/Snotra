@@ -1117,20 +1117,20 @@ impl EguiView for SearchWindowView {
             // 旧 view.rs の icon request ゲート `!self.search_debounce.is_armed()`（連打中は
             // icon worker を積まない・perf 最適化）の後継。ResultsView は search_debounce を
             // 持てないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix・controller 依頼）。
-            let settled = !self.controller.is_search_armed();
+            let input_idle = !self.controller.is_search_armed();
             {
                 let mut guard = shared.snapshot.lock().unwrap();
                 if !guard.matches(
                     rows,
                     selected,
                     self.controller.state().rows_generation(),
-                    settled,
+                    input_idle,
                 ) {
                     *guard = crate::egui_shell::RowsSnapshot {
                         rows: rows.to_vec(),
                         selected,
                         generation: self.controller.state().rows_generation(),
-                        settled,
+                        input_idle,
                     };
                     drop(guard);
                     crate::egui_shell::wake_results(&app);

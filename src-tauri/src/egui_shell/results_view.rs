@@ -29,13 +29,12 @@ pub(crate) struct RowsSnapshot {
     /// 偶然 0 のまま」を検出できないため、この世代番号で ResultsView の scroll gate を
     /// 独立にリセットする。Default=0（PartialEq 比較にも自然に入る）。
     pub generation: u64,
-    /// main の `search_debounce` が非 armed（連打の trailing 窓の外）かどうか。旧実装（Task 5 移設前）
-    /// の `!self.search_debounce.is_armed()` ゲート（連打中は icon worker を積まない・perf 最適化）の
-    /// 後継——`ResultsView` は `search_debounce` を持てないため、main が代わりに live 値を snapshot に
-    /// 載せて運ぶ（#532 SU4 の系譜・controller fix 依頼）。Default=false（PartialEq 比較にも自然に
-    /// 入る。armed→settled の遷移だけで snapshot 差分が生まれ wake が 1 回走るのは「打鍵停止後に
-    /// アイコン要求を起こす」という意図どおりの信号）。
-    pub settled: bool,
+    /// main の `search_debounce` が**予約を持っていない**かどうか（= 非 armed）。旧実装（Task 5 移設前）の `!self.search_debounce.is_armed()`（[`crate::egui_shell::layout::Debouncer::is_armed`] の**否定**）ゲート（連打中は icon worker を積まない・perf 最適化）の後継——`ResultsView` は `search_debounce` を持てないため、main が代わりに live 値を snapshot に載せて運ぶ（#532 SU4 の系譜・controller fix 依頼）。Default=false（PartialEq 比較にも自然に入る。armed → 非 armed の遷移だけで snapshot 差分が生まれ wake が 1 回走るのは「打鍵停止後にアイコン要求を起こす」という意図どおりの信号）。
+    ///
+    /// **「打鍵が止まった」より広い**（#1074）——`armed` は [`crate::egui_shell::layout::Debouncer::cancel`] でも下りるため、Enter の flush 経路を通った直後もここは真になる。名前が言うのは**debounce が予約を持っていないこと**であって、ユーザーが打鍵を止めたことではない。
+    ///
+    /// **これは perf ヒューリスティックであって正しさの述語ではない。** [`crate::egui_shell::search_dispatch::is_unsettled`]（最終クエリの結果が未反映か）とは別概念であり、否定の関係にも無い——食い違うのは `armed == false ∧ pending != 0` のときである。**同じ修正を当ててはならない**（worker 走査中のアイコン取得が遅れて悪化する）。
+    pub input_idle: bool,
 }
 
 impl RowsSnapshot {
@@ -49,18 +48,18 @@ impl RowsSnapshot {
         rows: &[SearchResult],
         selected: usize,
         generation: u64,
-        settled: bool,
+        input_idle: bool,
     ) -> bool {
         let Self {
             rows: cur_rows,
             selected: cur_selected,
             generation: cur_generation,
-            settled: cur_settled,
+            input_idle: cur_input_idle,
         } = self;
         cur_rows.as_slice() == rows
             && *cur_selected == selected
             && *cur_generation == generation
-            && *cur_settled == settled
+            && *cur_input_idle == input_idle
     }
 }
 
@@ -162,15 +161,7 @@ impl ResultsView {
         }
     }
 
-    /// 渡された行の未取得アイコンを worker に積む（settled 相当）。**`rows` は結果全件では
-    /// なく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側が
-    /// そのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。
-    /// ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight
-    /// （icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による
-    /// 同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending
-    /// へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
-    /// Task 5 で view.rs から移設し、入力を `self.state.results()` から `snapshot.rows` へ変更した
-    /// （本 view は snapshot を描くだけで検索状態を持たないため）。
+    /// 渡された行の未取得アイコンを worker に積む（[`RowsSnapshot::input_idle`] 相当）。**`rows` は結果全件ではなく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側がそのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight（icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。Task 5 で view.rs から移設し、入力を `self.state.results()` から `snapshot.rows` へ変更した（本 view は snapshot を描くだけで検索状態を持たないため）。
     fn request_icons_for_results(
         &mut self,
         rows: &[SearchResult],
@@ -663,10 +654,10 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             // 扱いのまま `needs_extraction` を素通りできず、その行のアイコンは戻らない。
             self.icon_pending.retain(|p| visible.contains(p));
         }
-        // snapshot.settled は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
+        // snapshot.input_idle は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
         // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
         // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。
-        if snapshot.settled {
+        if snapshot.input_idle {
             // **抽出だけを viewport 範囲へ絞る**（描画・テクスチャ保持は全件のまま）。
             // `snapshot.rows` は可視行数ではなく `effective_result_limit`（既定 200）ゆえ、
             // 絞る前は画面に出る 8 個のために 200 回シェルへ問い合わせていた

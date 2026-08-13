@@ -485,6 +485,8 @@ export const REQUIRED_DISALLOWED_METHODS = [
   "egui::Context::global_style_mut",
   "egui::Context::set_global_style",
   "egui::Context::all_styles_mut",
+  // 群 2（#1067）: 計測ハーネス専用の観測口。製品が読んで分岐してはならない。
+  "snotra_core::engine::Engine::sorted_by_path",
 ];
 
 const CLIPPY_TOML = "src-tauri/clippy.toml";

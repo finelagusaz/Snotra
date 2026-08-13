@@ -1,4 +1,8 @@
-# `Context` 経由で global style を書く 7 メソッドを、この crate で禁じる（#751 / #900）。
+# この crate で禁じるメソッドの集合。**関心は 1 つではない**——配列は群ごとにコメントで区切る。
+# 群を足すときは `scripts/governance-check.mjs` の `REQUIRED_DISALLOWED_METHODS` へも登録すること
+# （**登録しないパスの書き損じは沈黙する**。理由は下の「この設定が死ぬ経路」の 1・2）。
+#
+# ## 群 1: `Context` 経由で global style を書く 7 メソッド（#751 / #900）
 #
 # root `Ui` は pass 冒頭で `ctx.global_style()` を `Arc<Style>` として掴む。ゆえに run_ui の
 # callback 内からの書き込みは**その pass に届かず**、色だけを変えた config 適用フレーム
@@ -45,6 +49,16 @@
 #   **パスを足す・変えるときは、その場で違反を注入して赤くなることを必ず測ること**——
 #   G-clippy-disallowed が見るのは既知 7 件の在否であって、**足したパスが解決することは見ない**。
 #
+# ## 群 2: 計測ハーネス専用の観測口（#1067）
+#
+# `Engine::sorted_by_path` は索引が `target_path` のバイト順に並んでいるかを返す。**計器が
+# 「速い経路と遅い経路のどちらを測ったか」を出力に添えるため**に在り、製品がこれを読んで
+# 分岐してはならない——分岐は `PathStore::cmp_paths` の内側に閉じている。`#[doc(hidden)]` は
+# 意図を示すだけで呼び出しを止めないので、製品 crate だけを機構で塞ぐ。
+#
+# **統合テスト（`snotra-core/tests/`）は別 crate ゆえ無影響である**——計器はそちらに在る。
+# **`sorted_prefix_len` は禁じていない**（呼び出し点が無く、禁じる対象が存在しない）。
+#
 # **egui のピンを動かしたら、この表を注入で測り直すこと。** 上流の API 変更でパスが解決しなく
 # なっても、上の 2 番の形で黙る（型エラーにも警告にもならない）。ピンはルート `Cargo.toml`。
 #
@@ -62,4 +76,6 @@ disallowed-methods = [
     { path = "egui::Context::global_style_mut", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
     { path = "egui::Context::set_global_style", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
     { path = "egui::Context::all_styles_mut", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+    # --- ここから下は #751 とは別の関心である（上の群は egui の global style・こちらは計測用の観測口） ---
+    { path = "snotra_core::engine::Engine::sorted_by_path", reason = "計測ハーネス専用の観測口であり、製品はこれを読んで分岐してはならない（#1067）。索引が整列しているかで振る舞いを変えたいなら、分岐は PathStore::cmp_paths の内側に閉じる" },
 ]

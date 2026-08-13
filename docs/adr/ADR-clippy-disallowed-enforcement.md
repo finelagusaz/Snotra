@@ -37,7 +37,7 @@
 **足ごとに名指しする**（`.claude/rules/safety-nets.md`「検出器のカバー範囲は、欠落のパターンごとに検算する」）。
 
 1. **cargo の fingerprint に `clippy.toml` は入らない。** ここだけを変えて同じコマンドを打つとキャッシュ replay で設定を適用せず exit 0 を返す。静的検査はテキストを見るので**この足には無関係**であり、依然として `.rs` を触るか `cargo clean -p snotra` を挟む必要がある。
-2. **カナリアが見るのは既知 7 件の在否だけであって、それが解決することは見ない。** 8 件目として足したパスの書き損じは、`does not refer to a reachable function` の warning が exit 0 で流れる元の沈黙のままである。**既知 7 件も同じ穴を持つ**——上流 egui のピンを動かして API が消えても、`clippy.toml` のテキストは 1 文字も変わらないので検査は緑を返す。`clippy.toml` 冒頭の「違反を注入して赤くなることを測れ」という規範が、どちらに対しても唯一の防御である。
+2. **カナリアが見るのは名指しした件の在否だけであって、それが解決することは見ない。** 名指しの母集団は `REQUIRED_DISALLOWED_METHODS` であり、**そこへ登録せずに足したパスの書き損じ**は `does not refer to a reachable function` の warning が exit 0 で流れる元の沈黙のままである（禁止を足すときはカナリアへも足す、が運用である。#1067 の群 2 はそうした）。**名指しした件も同じ穴を持つ**——上流 egui のピンを動かして API が消えても、`clippy.toml` のテキストは 1 文字も変わらないので検査は緑を返す。`clippy.toml` 冒頭の「違反を注入して赤くなることを測れ」という規範が、どちらに対しても唯一の防御である。
 3. **打ち消しうる lint group の名指しは、上流の群構成に追随している間だけ正しい。** `disallowed_methods` を含む群は `clippy::all` と `clippy::style` の 2 つで（`clippy-driver -W help` で数え上げ）、検査はこの 2 つの `allow` だけを打ち消しと見る。上流が 3 つ目の群へ入れたら、配列が更新されるまで沈黙する。**群を ∀ で塞がない**（隣の `rustdocLintsAreDenied` はそうしている）のは、`[workspace.lints.clippy]` が唯一の設定面だからである——member 側の `[lints]` での局所上書きは cargo が `cannot override 'workspace.lints' in 'lints'` で拒むため、正当な `allow` もここにしか書けない。∀ にすると、その正当な用途が検査を緩める圧力に変わる。
 4. **`reason` 文言の変更と `#[allow]` による迂回は射程外である**（lint に内在する性質）。
 5. **`disallowed_methods` 以外の clippy lint のレベルは、どの検査も見ていない。** 1 で置いた deny は `G-clippy-disallowed` が見張るが、他の clippy lint を `[workspace.lints.clippy]` へ足しても降格を捕まえる機構は無い。

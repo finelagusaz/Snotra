@@ -429,6 +429,9 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
     `    { path = "egui::Context::global_style_mut", ${R} },`,
     `    { path = "egui::Context::set_global_style", ${R} },`,
     `    { path = "egui::Context::all_styles_mut", ${R} },`,
+    // 群 2（#1067）。**fixture は群を跨いで持つ**——実ファイルが 1 つの関心ではなくなった以上、
+    // 1 群だけの入力で緑にすると「群を足したらカナリアへも足す」運用が検算されない。
+    `    { path = "snotra_core::engine::Engine::sorted_by_path", reason = "計測専用の観測口（#1067）" },`,
     "]",
     "",
   ].join("\n");
@@ -579,7 +582,10 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   });
   it("clippyDisallowedCount は読めない入力で 0 を返す（evidence が undefined にならない）", () => {
     expect(clippyDisallowedCount(snap({}))).toBe(0);
-    expect(clippyDisallowedCount(snap(base))).toBe(7);
+    // **数を書かない。** fixture は `REQUIRED_DISALLOWED_METHODS` を全件持つ形で組んであるので、
+    // 禁止を 1 つ足すたびにこの行だけが腐る（#1067 で実際に踏んだ）。測りたいのは
+    // 「読めた入力で件数が evidence に出る」ことであって、その時点の件数ではない。
+    expect(clippyDisallowedCount(snap(base))).toBe(REQUIRED_DISALLOWED_METHODS.length);
   });
 
   // --- カナリア ---

@@ -49,11 +49,11 @@
 
 ### Phase 1 — 収集の停止（述語の一元化）
 
-- [ ] `IncrementalCache` に**収集可否の述語を 1 本置く**（例: `fn caches_candidates(plan: &QueryPlan) -> bool`）。
+- [x] `IncrementalCache` に**収集可否の述語を 1 本置く**（例: `fn caches_candidates(plan: &QueryPlan) -> bool`）。
       `can_reuse` の `!plan.has_path_sep` もこの関数を通すよう書き換える
       ——**read と write が同じ関数を通ることだけが、片側だけ変わるドリフトを防ぐ根拠**である
       （`normalize_entry_key_into` / `measure_derived_sharing` と同じ理屈）
-- [ ] **`plan.has_path_sep` と `plan.norm_query_has_path_sep` の取り違えを、構造で表現不能にする**
+- [x] **`plan.has_path_sep` と `plan.norm_query_has_path_sep` の取り違えを、構造で表現不能にする**
       （`/symmetric-check` Step 2c）。2 つは同じ型の隣接フィールドで、取り違えても
       **収集をやめるクエリ集合が変わるだけで結果は変わらない**ため、**現在の正規化器の下では
       挙動テストで検出できない**。述語を関数 1 本にしてフィールド参照を 1 か所へ寄せれば、
@@ -64,11 +64,11 @@
     **既に条件つきで記録している**。**同じ事実を 2 か所へ書かず、そこを参照する**
     （AGENTS.md「文書に事実の写しを増やす変更」）。一次証拠は当該クレートの
     `src/chars/normalize.rs`（`DATA1` の先頭が `U+00C0`・`00A5` のエントリは無い）
-- [ ] 述語の doc に、**write 側（今回のクエリを評価して収集するか）と read 側（今回のクエリを
+- [x] 述語の doc に、**write 側（今回のクエリを評価して収集するか）と read 側（今回のクエリを
       評価して再利用するか）で、同じ関数が別の時制で 2 回呼ばれる**ことを 1 行書く
       （plan-review 軽微 4）
-- [ ] `search_with_options` の fold で、`local_matches.push(i)` をその述語で条件づける
-- [ ] `can_reuse` / `update` / 当該述語の doc に、**「書かない」側の不変条件**を書く。
+- [x] `search_with_options` の fold で、`local_matches.push(i)` をその述語で条件づける
+- [x] `can_reuse` / `update` / 当該述語の doc に、**「書かない」側の不変条件**を書く。
       安全性の論証は**正規化の詳細に依存させない形**で書く: 収集を止めると `prev_candidates` が
       空になり `can_reuse` の `!self.prev_candidates.is_empty()` が落ちて**全件走査へ倒れるだけ**であり、
       **全件走査は母集団そのもの**ゆえ結果は不変。**`¥` や `nucleo_normalize` の挙動に
@@ -76,11 +76,11 @@
 
 ### Phase 2 — 検知器
 
-- [ ] `path_query_leaves_the_incremental_candidates_empty`: パス区切りを含むクエリの後、
+- [x] `path_query_leaves_the_incremental_candidates_empty`: パス区切りを含むクエリの後、
       `prev_candidates` が空である（新しい不変条件そのもの）
-- [ ] `non_path_query_still_populates_the_incremental_candidates`: 区切りを含まないクエリでは
+- [x] `non_path_query_still_populates_the_incremental_candidates`: 区切りを含まないクエリでは
       今までどおり積む（**述語の反転・無条件 off を捕まえる逆向き**）
-- [ ] `path_query_results_are_identical_to_a_fresh_engine`: **fixture と打鍵列を次の形に固定する**
+- [x] `path_query_results_are_identical_to_a_fresh_engine`: **fixture と打鍵列を次の形に固定する**
       （plan-review 要対処 1。任意の打鍵列では変異 (c) を捕まえられない）:
   - fixture 2 件 —— (i) クエリ `c` に**名前で**マッチするエントリ、
     (ii) 名前にも file_name にも `c` を含まず、`target_path` が `c:\` 配下にあるエントリ
@@ -93,7 +93,7 @@
     `has_path_sep` だけが分岐点になる**遷移でしか、read 側の変異は観測できない。
     既存の `path_match_incremental_cache_monotonic` は 2 打鍵とも パスクエリなので、
     2 回目は自分自身の `has_path_sep` で必ず落ちて**この差を見ない**
-- [ ] **変異注入でこの 3 本が落ちることを実測する**（AGENTS.md「検知器を置き、呼び忘れを
+- [x] **変異注入でこの 3 本が落ちることを実測する**（AGENTS.md「検知器を置き、呼び忘れを
       再現する変異で落ちることまで確かめる」）。当てる変異と、落ちるはずの本数:
       **(a) 述語を反転する → #1 と #2** / **(b) 収集を無条件に止める → #2 のみ**
       （#1 は元から空を期待するので検知できない）/ **(c) `can_reuse` 側だけ元へ戻す → #3 のみ**

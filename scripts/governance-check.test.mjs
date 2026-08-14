@@ -281,6 +281,25 @@ describe("G-module-linkage checkModuleLinkage", () => {
       const s = withLib('pub const U: &str = "http://x";\npub const S: &str = "\nmod ghost;\n";\n', { "demo/src/ghost.rs": "" });
       expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
     });
+    // 固定長の窓（かつて 24 文字）で raw string の開始を探すと、ハッシュが窓を超えた瞬間に
+    // 中身をコードとして読み、そこに綴られた `mod` を拾って孤児を緑にした（レビューが 23 個で閾値を実測）。
+    // Rust はハッシュを 255 個まで許すので、**窓の内外をまたぐ個数**で固定する。
+    // **中身に `"` を 1 つ挟むのが要点である。** 挟まないと、窓を外した実装でも `"` から始まる
+    // 通常の文字列として同じ範囲を潰してしまい、欠陥が再現しない（＝縛らないカナリアになる）。
+    // ハッシュ 0 個は `r"…"` が最初の `"` で閉じるためこの形を作れず、母集団から外れる。
+    for (const hashes of [1, 22, 23, 40, 255]) {
+      it(`赤: ハッシュ ${hashes} 個の raw string の中の mod 宣言を拾わない`, () => {
+        const h = "#".repeat(hashes);
+        const s = withLib(`pub const S: &str = r${h}"x"y\nmod ghost;\n"${h};\n`, { "demo/src/ghost.rs": "" });
+        expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
+      });
+    }
+
+    it("緑: ハッシュ無しの r\"…\" は最初の `\"` で閉じる（Rust の意味論どおりに扱う）", () => {
+      // `r"x"` の後ろは**コード**なので、そこに書かれた宣言は本物として拾われる。
+      expect(checkModuleLinkage(withLib('pub const S: &str = r"x";\nmod extra;\n', { "demo/src/extra.rs": "" }))).toEqual([]);
+    });
+
     it("赤: 先行する char リテラルがあっても、後続の複数行文字列の中身を拾わない", () => {
       const s = withLib("pub const Q: char = '\"';\npub const S: &str = \"\nmod ghost;\n\";\n", { "demo/src/ghost.rs": "" });
       expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);

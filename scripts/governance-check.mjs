@@ -188,7 +188,15 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
 //   「ビルド構成でコンパイルされる」ではない。**決して有効化されない cfg / feature の下だけで
 //   宣言されたファイルは緑になる**——上で名指しした最悪の帰結（テストが黙って走らない）を、
 //   この検査は取りこぼす。cfg を評価しないのは誤検出を避けるための選択である。
+// - **`macro_rules!` の本体で列 0 に来た `mod` を拾う**（沈黙の向き）。インライン `mod x { ... }` と
+//   同類型だが、そちらは列で外れるのに対しこちらは外れない。rustfmt はマクロ本体を整形しないことが
+//   あるので、列 0 に来る余地は消えない（`macro_rules!` は現在 0 件）。
 // - `include!` によるファイル取り込みを追わない（現在 0 件）。当該ファイルが赤に倒れる向き。
+// - **cfg で分けた同名モジュールの片方だけが `#[path]` を持つと、もう片方が赤になる**
+//   （`#[cfg(windows)] #[path="win.rs"] mod platform;` ＋ `#[cfg(unix)] mod platform;`）。
+//   名前で重複を落とすため通常形の候補が消える。**通常形も併せて積む向きへは倒さない**——
+//   `#[path]` だけで宣言された名前と同名のファイルが実在すると、それを到達済みに見せて沈黙するため。
+//   現在 0 件（`ime.rs` は非 Windows 側をインライン `mod` で書いているので当たらない）。
 // - **属性の綴りが `#[path = "..."]`（二重引用符・同一行）から外れると赤に倒れる**——
 //   `#[path = r"..."]`（raw string）・`#[path = "dir"]`（ディレクトリ指定）・
 //   `#[cfg_attr(..., path = "...")]`・`#[cfg(windows)] mod win;` のような同一行の属性つき宣言。
@@ -219,6 +227,9 @@ function moduleChildDir(file) {
  * char リテラル。**char とライフタイムは綴りで区別する**——`'x'` / `'\n'` / `'"'` は char、
  * `'a` は閉じないのでライフタイムとして素通しする。
  */
+/** raw string の開始（`r"` / `r#"` / `br##"` …）。**sticky** ゆえ走査位置ちょうどからしか当たらない。 */
+const RAW_STRING_PREFIX = /b?r(#*)"/y;
+
 function blankRustNonCode(text) {
   const n = text.length;
   let out = "";
@@ -246,7 +257,11 @@ function blankRustNonCode(text) {
       blank(j);
       continue;
     }
-    const raw = /^b?r(#*)"/.exec(text.slice(i, i + 24));
+    // **窓で切らない。** 固定長の窓（かつて 24 文字）だと、ハッシュがその長さを超える raw string を
+    // 見落として中身をコードとして読み、そこに綴られた `mod` を拾って孤児を緑にする（沈黙の向き。
+    // 2026-08-14 のレビューが 23 個で閾値を実測）。Rust はハッシュを 255 個まで許す。
+    RAW_STRING_PREFIX.lastIndex = i;
+    const raw = RAW_STRING_PREFIX.exec(text);
     if (raw) {
       const close = `"${"#".repeat(raw[1].length)}`;
       const end = text.indexOf(close, i + raw[0].length);

@@ -60,3 +60,22 @@ describe("undeclared（PR 本文に逐語で現れない delta を返す）", ()
     expect(undeclared(["+G-c"], null)).toEqual(["+G-c"]);
   });
 });
+
+describe("フォールトインジェクション — #1088 が求めた「発火しうるか」の実測", () => {
+  it("登録配列から検査が 1 本落ちれば差分が発火する（#1088 の当の欠陥）", () => {
+    const base = manifest(makeSnapshot(process.cwd()));
+    // 稼働中のガードは弱めない——返り値の複製に変異を当てる（.claude/rules/safety-nets.md）
+    const mutated = { ...base, checks: base.checks.filter((id) => id !== "G-references") };
+    expect(diffManifest(base, mutated)).toEqual(["-G-references"]);
+    expect(undeclared(diffManifest(base, mutated), "宣言のない PR 本文")).toEqual(["-G-references"]);
+  });
+  it("走査の母集団が黙って縮んでも発火する（WALK_EXCLUDE_PATHS へ 1 行足した形）", () => {
+    const base = manifest(makeSnapshot(process.cwd()));
+    const mutated = { ...base, rules: base.rules.slice(1) };
+    expect(diffManifest(base, mutated)).toEqual([`-${base.rules[0]}`]);
+  });
+  it("変異が無ければ発火しない（常に赤いゲートはゲートが無いのと同じ）", () => {
+    const base = manifest(makeSnapshot(process.cwd()));
+    expect(diffManifest(base, manifest(makeSnapshot(process.cwd())))).toEqual([]);
+  });
+});

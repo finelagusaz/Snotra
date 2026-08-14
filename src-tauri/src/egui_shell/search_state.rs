@@ -82,6 +82,24 @@ pub struct FolderFrame {
     pub restore_results: Vec<SearchResult>,
     pub restore_selected: usize,
     pub current_dir: String,
+    /// 突入した時点で [`SearchState::is_unsettled`] が真だったか（#1079）。**復帰させる行が
+    /// 復元 query の最終結果かどうかを、常に観測できる点は突入時だけである**——`enter_folder` は
+    /// 行を差し替えないので in-flight が残るが、`on_escape` の `put_rows` がそれを無条件に落として
+    /// しまうため、Escape の時点では材料がもう無い。ゆえにここへ控える。（folder の列挙結果が届く
+    /// までの間も観測できるが、届いたかどうかが Escape の時点で判らない以上、**常に**有効な点ではない。）
+    ///
+    /// **控えた `armed` は減衰しない**（受容する残余）。`armed` はそれ自体が過剰近似で、
+    /// [`crate::egui_shell::layout::Debouncer::poll`] の trailing 発火で**最後の打鍵から** debounce
+    /// interval のうちに落ちる——ところがここへ写した値は folder に居る間に落ちる契機を持たない。
+    /// ゆえに「打鍵 → interval 内に結果が届いて行は最新 → まだ armed のまま `→`」で突入すると、
+    /// 復帰後の Enter に不要な同期 `engine.search` が 1 回乗る。**受容する。** 余分な費用はその 1 回
+    /// だけであり、**過剰近似の向きは安全側である**——[`should_flush_on_enter`] は `unsettled` が
+    /// 真のときに flush を**足す**だけなので、**古い行のまま起動する side へは倒れない**（偽陽性が
+    /// 何をするかは flush の枝で分かれる: 通常は行を作り直し、空クエリ・`indexing()` 中は
+    /// `set_results(Vec::new())` で起動そのものが止まる——後者は flush の既定の扱いである）。
+    /// **窓の長さをここに書かない**（interval の正本は `LauncherController` が `Debouncer::new` へ
+    /// 渡す値であって、この doc ではない）。
+    pub unsettled_at_entry: bool,
 }
 
 /// ツール選択モードの退避/復元単位（#532 SU3.5・SolidJS ToolSelectionFrame parity）。
@@ -170,6 +188,30 @@ pub struct SearchState {
     /// 同じ出来事に対する 2 つの義務（世代の前進と in-flight の失効）が
     /// [`SearchState::put_rows`] の内側で合流する。
     dispatch: SearchDispatch,
+    /// 現在の `results` が、frame から**復帰した行**であって現 `query` の最終結果ではないこと
+    /// （#1079）。[`SearchState::is_unsettled`] の第 3 の disjunct であり、folder の往復を
+    /// 跨いで未反映を運ぶ唯一の材料である。
+    ///
+    /// **立てるのは [`SearchState::on_escape`] の folder 枝だけ、落とすのは
+    /// [`SearchState::put_rows`] だけである。** 後者に置いたのは #1039 の設計を踏襲するため
+    /// ——行が実際に差し替われば、それが何であれ「復帰した行」ではなくなる。**show を跨ぐ
+    /// クリアが構造で付いてくるのもここに置いた帰結である**（[`SearchState::reset`] が
+    /// `put_rows` を通るため、`consume_reset_pending` の一覧へ入れ忘れる形の残余を作らない）。
+    ///
+    /// **[`ToolFrame`] に対称のフィールドを置かないのは、`enter_tool` が
+    /// [`crate::egui_shell::launcher_controller::LauncherController::on_enter`] の flush の**下流に
+    /// しか無い**からである**——`enter_tool` の production 呼び出しは `shift_activate` の 1 つ、その
+    /// `shift_activate` の呼び出しは `on_enter` の 1 つで、`on_enter` は flush を先に済ませる
+    /// （クリック経路は `activate_or_execute` を直呼びし `enter_tool` へ届かない・2026-08-14 実測）。
+    /// folder の上に積まれた tool から Escape 2 回で戻る並びは、2 回目の folder 枝が控えを立て直す。
+    ///
+    /// **却下: 「folder から復帰したら無条件に立てる」。** [`FolderFrame::unsettled_at_entry`] を
+    /// 持たずに済み `enter_folder` の signature も変えずに済むが、**未反映が無いまま往復した場合
+    /// まで真になる**——[`SearchState::is_unsettled`] が今度は逆向きに自分の doc と食い違い、
+    /// #1079 が主題にしたのと同じ種類の不一致を良性の向きで作り直すことになる（費用も、**未反映が
+    /// 無いまま往復したときの最初の Enter へ**同期 `engine.search` を 1 回乗せる形で実在する——
+    /// 未反映が在る往復では採用案も同じ flush を撃つので差が出ない）。
+    restored_rows_stale: bool,
 }
 
 impl SearchState {
@@ -184,6 +226,7 @@ impl SearchState {
             tool: None,
             rows_generation: 0,
             dispatch: SearchDispatch::default(),
+            restored_rows_stale: false,
         }
     }
 
@@ -207,7 +250,10 @@ impl SearchState {
     }
 
     /// **行の差し替えの単一チョークポイント**（#1039）。`results` の代入・`selected` のクランプ・
-    /// 世代の前進（#699）・in-flight の失効を必ず同時に行う。
+    /// 世代の前進（#699）・in-flight の失効・[`SearchState::restored_rows_stale`] のクリア（#1079）を
+    /// 必ず同時に行う。**最後の 1 つをここへ置いたのは、`reset` がこのメソッドを通るからである**
+    /// ——show を跨ぐクリアが構造で付いてくるので、show を跨ぐ状態を足しておいて
+    /// `consume_reset_pending` の一覧へ入れ忘れる形の残余を作らずに済む。
     ///
     /// **同じ出来事に対する 2 つの義務をここへ合流させたのが #1039 である**——同期で行を差し替えた
     /// 以上、飛んでいる worker の結果は必ず古い。呼び出し側が [`SearchDispatch::invalidate`] を
@@ -228,6 +274,9 @@ impl SearchState {
         self.selected = clamp_selected(self.results.len(), next_selected);
         self.rows_generation += 1;
         self.dispatch.invalidate();
+        // 行が差し替わった以上、いま在るのは「復帰した行」ではない（#1079）。**立てる側は
+        // `on_escape` の folder 枝だけで、そこは必ずこの後に立て直す**（順序に意味がある）。
+        self.restored_rows_stale = false;
     }
 
     /// 結果を差し替える。選択は範囲内へクランプ（空なら 0）。世代を進め、in-flight を失効させる
@@ -285,12 +334,22 @@ impl SearchState {
     /// **行は差し替えない**（frame へ退避するだけ）ので [`SearchState::put_rows`] を通らず、
     /// 世代も in-flight も動かさない。**Folder ビュー中の遅着 worker 結果を落とすのは
     /// [`SearchState::accept_worker_rows`] の view ガードである。**
-    pub fn enter_folder(&mut self, dir: String) -> u64 {
+    ///
+    /// **`armed` を受けて [`SearchState::is_unsettled`] の合成をこの型の内側で行う**（#1079）。
+    /// 呼び出し側に `is_unsettled(armed)` を書かせる形は採らない——誤って `armed` だけを渡しても
+    /// 型は通り、`SearchState` のユニットテストは値を直接渡すので**その誤配線を検知できない**。
+    /// `armed` だけを受ければ、呼び出し側の義務は `is_unsettled` の既存の呼び出し
+    /// （`LauncherController::on_enter`）と同じ形のままである。**なぜ突入時点で控えるかは
+    /// [`FolderFrame::unsettled_at_entry`] の doc が正本。**
+    pub fn enter_folder(&mut self, dir: String, armed: bool) -> u64 {
+        // frame の構築より前に撃つ——`&mut self` の中で `&self` メソッドを呼ぶため。
+        let unsettled_at_entry = self.is_unsettled(armed);
         self.folder = Some(FolderFrame {
             restore_query: self.query.clone(),
             restore_results: self.results.clone(),
             restore_selected: self.selected,
             current_dir: dir,
+            unsettled_at_entry,
         });
         self.folder_filter.clear();
         self.selected = 0;
@@ -408,25 +467,30 @@ impl SearchState {
     /// Escape ラダー（M2）: folder 中は展開前状態へ復帰、top-level は Hide。
     /// folder 離脱時は folder_gen を進めて遅延到着した旧ナビ結果を無効化する。
     ///
-    /// **受容する残余（#1039）: folder を往復すると、[`SearchState::is_unsettled`] が自分の doc の意味
-    /// （「最終クエリの結果がまだ行へ反映されていないか」）に反して偽を返す。** 既知の状態はこれ 1 つである。
+    /// **folder 枝は復帰させた行の未反映を [`SearchState::restored_rows_stale`] へ立て直す**（#1079）。
+    /// `→` / `←` で folder へ入る経路（`on_nav_keys` の 2 箇所）は `on_enter` を通らないので #631 の
+    /// flush が走らず、[`SearchState::enter_folder`] は行を差し替えない（[`SearchState::put_rows`] を
+    /// 通らない）ので in-flight が残る。ところが復帰でその `put_rows` を通った瞬間、`invalidate` が
+    /// in-flight を**無条件に**落とす——復帰した行は**展開前の行**、すなわち復元した query の最終結果
+    /// ではないのに、`armed == false ∧ pending == 0` が成立してしまう。ゆえに突入時点の値を frame から
+    /// 戻す（**なぜ突入時が唯一の常に有効な観測点なのかは [`FolderFrame::unsettled_at_entry`] の
+    /// doc が正本**）。
     ///
-    /// 並び: `→` / `←` で folder へ入る経路（`on_nav_keys` の 2 箇所）は `on_enter` を通らないので #631 の
-    /// flush が走らず、`enter_folder` は行を差し替えない（[`SearchState::put_rows`] を通らない）ので
-    /// in-flight が残る。その結果が folder 中に届くと [`SearchState::accept_worker_rows`] の view ガードが
-    /// 捨て、`accept` が pending を take するので `pending_seq` は 0 になる。Escape で復帰した行は
-    /// **展開前の行**——復元した query の最終結果ではない——のまま `armed == false ∧ pending == 0` が
-    /// 成立し、直後の Enter に flush が掛からない。**#1039 以前は「結果が Escape の後に届けば Results
-    /// ビューで採られて行が揃う」偶然の救いがあり、ここでの失効がそれを閉じた**（閉じること自体が
-    /// 受け入れ条件である——遅着結果が復帰行を上書きしてはならない）。
+    /// **worker の結果が folder 中に届くことはこの並びの要件ではない。** #1079 の issue 本文と、
+    /// #1039 当時のこの doc は [`SearchState::accept_worker_rows`] の view ガードが捨てる段を並びへ
+    /// 含めていたが、`invalidate` は届いたかを見ずに pending を落とすので**遅着の有無によらず成立する**
+    /// （2026-08-14 に検知器で実測）。当時「稀」を受容の根拠の一つに置けたのは、この過剰仕様のためである。
     ///
-    /// **それでも再検索を撃たないのは、費用が並びの稀さと害に見合わないからである。** Escape のたびに
-    /// 同期 `engine.search` をフレームに乗せることになり、そちらは folder を使う全ユーザーが毎回払う。
-    /// **「表示している行と起動する行が一致するから #631 とは別物だ」とは書けない**——#631 の失敗様式
-    /// （`on_enter` のコメントが定義する「leading 時点の結果や連打前のクエリの結果で起動しうる」）でも
-    /// 両者は一致しており、その差は 2 つを区別しない。区別するのは**到達の仕方**である: ここへ来るには
-    /// 可視の一覧で `→` / `←` を押す必要があり、復帰後もその一覧と選択がそのまま戻る。復帰後に 1 文字
-    /// でも打てば `run_search` が走って解ける。
+    /// **却下した修正案は 2 つある。** どちらも controller 側に処置を置くもので、
+    /// **2026-08-14 時点で** `launcher_controller.rs` には `#[cfg(test)]` が 1 つも無く（`tests/` も
+    /// tauri の test feature も無い）、**修正が効いたことを測る検知器を置けない**のが却下の理由である:
+    /// (A) ここで `run_search()` を撃つ、(B) `on_nav_keys` の 2 箇所で flush を挟む。
+    /// **#1079 の issue 本文が (A) の費用として書く「Escape のたびに同期 `engine.search` をフレームへ
+    /// 乗せる」は現在のコードに当たらない**——`run_search_with` の Plain 腕は #1004 の worker 化以降
+    /// **同期 `engine.search` を含まない**（`search_tx.send` か、空クエリ・`indexing()`・送信失敗での
+    /// `set_results` のいずれかである）。同期 `engine.search` が残るのは `on_enter` の flush だけである。
+    /// 実際の費用は `run_search` 入口の `instant_prefix` が `engine.lock()` を取ること（#1032）と、
+    /// Plain 腕が `indexing()` 中に復帰行を空にすることであって、doc が名指していたものではない。
     pub fn on_escape(&mut self) -> EscapeOutcome {
         if let Some(t) = self.tool.take() {
             // query は復元しない（tool 中は入力無効で不変・ToolFrame doc 参照）
@@ -441,6 +505,10 @@ impl SearchState {
             self.folder_gen += 1; // 離脱経路でも失効
             // 退避行への総入れ替え（#699）＋ in-flight の失効（#1039）
             self.put_rows(f.restore_results, f.restore_selected);
+            // **`put_rows` の後に立てる**（#1079）——`put_rows` が無条件に false へ戻すため、
+            // 逆順にすると立てた瞬間に消える。復帰させた行が復元 query の最終結果かどうかを
+            // 常に観測できる点は突入時だけなので、frame に控えた値をそのまま戻す。
+            self.restored_rows_stale = f.unsettled_at_entry;
             EscapeOutcome::RestoredSearch
         } else {
             // Hide 経路は results を触らないので世代も進めない
@@ -558,15 +626,21 @@ impl SearchState {
     /// ある**（#745。`*self = Self::default()` を `consume_reset_pending` から呼ぶ形で、フィールド代入
     /// ではなくメソッドで丸ごと畳む）。
     ///
-    /// **この述語が自分の意味に反して偽を返す既知の状態が 1 つある**——folder を往復した直後である
-    /// （受容する残余。並びと、再検索を撃たない理由は [`SearchState::on_escape`] の doc が正本）。
+    /// **第 3 の disjunct `restored_rows_stale` は folder の往復を跨いで未反映を運ぶ**（#1079）。
+    /// `armed` と `pending_seq` はどちらも folder 突入から Escape までの間に落ちうる——前者は
+    /// folder 中の trailing poll で、後者は `on_escape` 自身の [`SearchState::put_rows`] が呼ぶ
+    /// `invalidate` で——ため、突入時点の値を [`FolderFrame::unsettled_at_entry`] へ控えて
+    /// 復帰時に立て直す。**この disjunct だけは `armed` と違い機構である**——立てる場所も落とす
+    /// 場所もこの型の内側にあり、[`SearchState::reset`] が `put_rows` を通ることで show を跨ぐ
+    /// クリアまで構造で付いてくる（上段が `armed` について警告している懸念は当たらない）。
     ///
     /// **否定形で置いたのは呼び出し点に `!` を出さないためである**（#1039 の issue 本文が想定する
     /// 肯定形 `is_settled()` とは極性が逆。極性を反転すると
     /// [`crate::egui_shell::results_view::RowsSnapshot::input_idle`] の doc が持つ導出——
-    /// 食い違うのは `armed == false ∧ pending != 0` のとき——を式ごと書き直す必要が生じる）。
+    /// 食い違うのは `armed == false` かつ残る 2 つの disjunct のいずれかが立つとき——を
+    /// 式ごと書き直す必要が生じる）。
     pub fn is_unsettled(&self, armed: bool) -> bool {
-        armed || self.dispatch.pending_seq() != 0
+        armed || self.dispatch.pending_seq() != 0 || self.restored_rows_stale
     }
 }
 
@@ -799,7 +873,7 @@ mod tests {
     fn rows_generation_advances_on_escape_from_folder() {
         let mut s = SearchState::new();
         s.set_results(vec![res("a"), res("b")]);
-        s.enter_folder("C:/dir".into()); // 退避のみ（results は差し替えない）
+        s.enter_folder("C:/dir".into(), false); // 退避のみ（results は差し替えない）
         s.set_results(vec![res("in-dir")]); // folder の列挙結果
         let g = s.rows_generation();
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
@@ -813,7 +887,7 @@ mod tests {
         let mut s = SearchState::new();
         s.set_results(vec![res("a"), res("b")]);
         let g = s.rows_generation();
-        s.enter_folder("C:/dir".into());
+        s.enter_folder("C:/dir".into(), false);
         assert_eq!(s.rows_generation(), g);
     }
 
@@ -902,7 +976,7 @@ mod tests {
         // (2) folder 復帰の枝。片方だけ直すと穴が残る。
         let mut s = SearchState::new();
         s.set_results(vec![res("a"), res("b")]);
-        s.enter_folder("C:/dir".into());
+        s.enter_folder("C:/dir".into(), false);
         s.set_results(vec![res("in-dir")]);
         let seq = s.issue_search(base, base);
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
@@ -922,7 +996,7 @@ mod tests {
         let mut s = SearchState::new();
         s.set_results(vec![res("a")]);
         let seq = s.issue_search(base, base);
-        s.enter_folder("C:/dir".into());
+        s.enter_folder("C:/dir".into(), false);
         let before = names(&s);
         assert!(
             s.accept_worker_rows(seq, late_rows(), base).is_none(),
@@ -936,7 +1010,7 @@ mod tests {
     fn late_worker_rows_are_dropped_after_navigate_folder() {
         let base = Instant::now();
         let mut s = SearchState::new();
-        s.enter_folder("C:/dir".into());
+        s.enter_folder("C:/dir".into(), false);
         s.set_results(vec![res("in-dir")]);
         let seq = s.issue_search(base, base);
         s.navigate_folder("C:/dir/sub".into());
@@ -1048,6 +1122,163 @@ mod tests {
         assert!(!s.is_unsettled(false), "同期で差し替えた後も反映済みである");
     }
 
+    /// #1079 の検知器。**folder を往復すると述語が自分の意味に反して偽を返す**——`enter_folder` は
+    /// 行を差し替えない（[`SearchState::put_rows`] を通らない）ので in-flight が残り、`on_escape` の
+    /// folder 枝が復帰させる行は**展開前の行**、すなわち復元した query の最終結果ではない。それなのに
+    /// `put_rows` の `invalidate` が in-flight を**無条件に**落とすため `pending_seq == 0` になる。
+    ///
+    /// **worker の結果が folder 中に届くことは要件ではない。** #1079 の issue 本文と `on_escape` の
+    /// doc はその段を並びに含めるが、`invalidate` は届いたかを見ずに `pending = None` を代入する
+    /// （`search_dispatch.rs`）ため、遅着の有無によらずこの 3 段で成立する。
+    #[test]
+    fn unsettled_survives_a_folder_round_trip() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        s.set_results(vec![res("stale-row")]);
+        // 打鍵 → worker へ発行。行はまだこの要求より前のものである。
+        let _ = s.issue_search(base, base);
+        // `→` / `←` で folder 突入（`on_enter` を通らないので flush が走らない）。
+        s.enter_folder("C:/dir".into(), false);
+        // Escape で展開前の行へ復帰する。
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert_eq!(
+            names(&s),
+            vec!["stale-row".to_string()],
+            "復帰したのは展開前の行であり、復元した query の最終結果ではない"
+        );
+        assert!(
+            s.is_unsettled(false),
+            "復帰行が最終クエリの結果でない以上、述語は真でなければならない（#1079）"
+        );
+    }
+
+    /// #1079: **突入時に捕まえるのは `pending_seq` だけではない。** [`SearchState::enter_folder`] が
+    /// [`SearchState::is_unsettled`] を丸ごと撃つ以上、debounce が予約を持ったまま（trailing 未発火で
+    /// in-flight がまだ無い）突入した場合も捕まる。**`armed` の項を落とす変異——`enter_folder` の合成を
+    /// `self.dispatch.pending_seq() != 0` に書き換える——でここが落ちる**（それ以外の #1079 のテストは
+    /// 全部緑のまま通ることを 2026-08-14 に実測した。`is_unsettled` 自身の `armed` を守る
+    /// `unsettled_covers_in_flight_after_trailing_fired` は、合成の呼び出し側であるここを覆わない）。
+    #[test]
+    fn folder_entry_captures_armed_not_only_in_flight() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("stale-row")]);
+        assert!(!s.is_unsettled(false), "in-flight はまだ無い");
+        // trailing 未発火のまま `→` を押す（`armed` だけが立っている）。
+        s.enter_folder("C:/dir".into(), true);
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert!(
+            s.is_unsettled(false),
+            "予約だけの未反映も folder の往復を跨いで運ばれる"
+        );
+    }
+
+    /// #1079 の境界 #2: **過剰近似しない。** in-flight も予約も無いまま folder を往復したなら、
+    /// 復帰する行は復元 query の最終結果そのものである。ここで真を返す実装（「folder から
+    /// 戻ったら無条件に立てる」）は、述語を逆向きに doc と食い違わせる。
+    #[test]
+    fn folder_round_trip_without_in_flight_stays_settled() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("fresh-row")]);
+        s.enter_folder("C:/dir".into(), false);
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert!(
+            !s.is_unsettled(false),
+            "未反映が無いまま往復したなら復帰行は最終結果である"
+        );
+    }
+
+    /// #1079 の境界 #3 / #4: **行が実際に差し替われば落ちる。** clear を
+    /// [`SearchState::put_rows`] へ置いた帰結であり、`reset` が覆われるのはそれが `put_rows` を
+    /// 通るからである（`consume_reset_pending` の一覧へ入れ忘れる形の残余を作らない）。
+    #[test]
+    fn restored_stale_clears_on_any_row_replacement() {
+        let base = Instant::now();
+        // (3) 同期の差し替えで落ちる
+        let mut s = SearchState::new();
+        let _ = s.issue_search(base, base);
+        s.enter_folder("C:/dir".into(), false);
+        let _ = s.on_escape();
+        assert!(s.is_unsettled(false), "復帰直後は未反映");
+        s.set_results(vec![res("fresh")]);
+        assert!(!s.is_unsettled(false), "行を差し替えたら反映済みへ戻る");
+
+        // (4) show を跨ぐクリア（`reset` は `put_rows` を通る）
+        let mut s = SearchState::new();
+        let _ = s.issue_search(base, base);
+        s.enter_folder("C:/dir".into(), false);
+        let _ = s.on_escape();
+        assert!(s.is_unsettled(false));
+        s.reset();
+        assert!(!s.is_unsettled(false), "reset-on-show を跨いで残らない");
+    }
+
+    /// #1079 の境界 #5: [`SearchState::navigate_folder`] は frame を作り直さず `current_dir` を
+    /// 書き換えるだけなので、突入時に控えた値は folder 内の深掘り・親移動を跨いで生き続ける。
+    #[test]
+    fn navigate_folder_preserves_the_captured_unsettled() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        let _ = s.issue_search(base, base);
+        s.enter_folder("C:/dir".into(), false);
+        s.navigate_folder("C:/dir/child".into());
+        s.navigate_folder("C:/dir".into());
+        let _ = s.on_escape();
+        assert!(
+            s.is_unsettled(false),
+            "folder 内を動き回っても突入時点の未反映は失われない"
+        );
+    }
+
+    /// #1079 の境界 #6: 復帰後に打鍵して worker へ出した場合、**フラグは残る**——
+    /// `run_search_with` の Plain 腕は送信できたら行を保つ（`set_results` を呼ばない）ので
+    /// [`SearchState::put_rows`] を通らず、そして行はまだ古いのだからそれが正しい。落ちるのは
+    /// 結果が届いて行が実際に差し替わる瞬間である。
+    #[test]
+    fn restored_stale_survives_dispatch_and_clears_on_accept() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        let _ = s.issue_search(base, base);
+        s.enter_folder("C:/dir".into(), false);
+        let _ = s.on_escape();
+        let seq = s.issue_search(base, base);
+        assert!(
+            s.is_unsettled(false),
+            "dispatch しても行はまだ古い——フラグは残る"
+        );
+        assert!(s.accept_worker_rows(seq, late_rows(), base).is_some());
+        assert!(
+            !s.is_unsettled(false),
+            "結果が届いて行が差し替わった瞬間に落ちる"
+        );
+    }
+
+    /// #1079 × §18.5 の直交: **tool は folder の上に積まれる。** その状態の Escape は 2 回に
+    /// 分かれ、1 回目（tool 枝）が [`SearchState::put_rows`] でフラグを落としても、2 回目
+    /// （folder 枝）が frame から立て直す。**tool 枝は `self.tool.take()` で早期 return し
+    /// `self.folder` に触らない**ので、控えた値は tool の出入りとは独立に生き残る。
+    #[test]
+    fn tool_stacked_on_folder_still_restores_the_captured_unsettled() {
+        let base = Instant::now();
+        let mut s = SearchState::new();
+        let _ = s.issue_search(base, base);
+        s.enter_folder("C:/dir".into(), false);
+        s.enter_tool("C:/dir/t.txt".into(), false, make_tools());
+        assert_eq!(
+            s.on_escape(),
+            EscapeOutcome::RestoredFromTool,
+            "1 回目は tool から抜ける"
+        );
+        assert!(
+            !s.is_unsettled(false),
+            "tool 復帰は folder の中へ戻るだけなので、まだ立たない"
+        );
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert!(
+            s.is_unsettled(false),
+            "folder 枝が frame の控えを立て直す（tool の出入りで失われない）"
+        );
+    }
+
     /// 計時 trace（`egui_search:settled` の `since_key_us` / `since_dispatch_us`）の材料が
     /// 移設で変わっていないこと。`search_dispatch.rs` の `accepts_only_the_latest_seq` と
     /// 同じ値を返す（**移設は計器を壊してはならない**）。
@@ -1086,7 +1317,7 @@ mod tests {
         // (1) view 不一致: 呼ぶ前の pending は当の seq と一致する
         let mut s = SearchState::new();
         let seq = s.issue_search(base, base);
-        s.enter_folder("C:/dir".into());
+        s.enter_folder("C:/dir".into(), false);
         assert_eq!(s.pending_seq(), seq, "view 不一致では pending が生きている");
         assert!(s.accept_worker_rows(seq, late_rows(), base).is_none());
 
@@ -1197,7 +1428,7 @@ mod tests {
         s.set_results(vec![res("a"), res("b")]);
         s.move_selection(1); // selected=1
         assert_eq!(s.view_kind(), ViewKind::Results);
-        let tok = s.enter_folder("C:\\proj".into());
+        let tok = s.enter_folder("C:\\proj".into(), false);
         assert_eq!(s.view_kind(), ViewKind::Folder);
         assert_eq!(s.folder_current_dir(), Some("C:\\proj"));
         assert_eq!(s.folder_filter(), "");
@@ -1209,7 +1440,7 @@ mod tests {
     #[test]
     fn navigate_folder_bumps_gen_and_clears_filter() {
         let mut s = SearchState::new();
-        let t1 = s.enter_folder("C:\\a".into());
+        let t1 = s.enter_folder("C:\\a".into(), false);
         s.set_folder_filter("x".into());
         let t2 = s.navigate_folder("C:\\a\\b".into());
         assert!(t2 > t1);
@@ -1232,7 +1463,7 @@ mod tests {
     #[test]
     fn left_twice_climbs_two_levels() {
         let mut s = SearchState::new();
-        let t0 = s.enter_folder("C:\\a\\b\\c".into());
+        let t0 = s.enter_folder("C:\\a\\b\\c".into(), false);
         let p1 = s.parent_dir().expect("孫フォルダからは親が取れる");
         assert_eq!(p1, "C:\\a\\b");
         let t1 = s.navigate_folder(p1);
@@ -1256,10 +1487,10 @@ mod tests {
     #[test]
     fn left_at_root_has_no_parent() {
         let mut drive = SearchState::new();
-        drive.enter_folder("C:\\".into());
+        drive.enter_folder("C:\\".into(), false);
         assert_eq!(drive.parent_dir(), None, "ドライブルートは終端");
         let mut unc = SearchState::new();
-        unc.enter_folder("\\\\srv\\share".into());
+        unc.enter_folder("\\\\srv\\share".into(), false);
         assert_eq!(unc.parent_dir(), None, "UNC 共有ルートは終端");
     }
 
@@ -1271,7 +1502,7 @@ mod tests {
         s.set_results(vec![res("a"), res("b"), res("c")]);
         s.move_selection(2);
         assert_eq!(s.selected(), 2);
-        s.enter_folder("C:\\a\\b".into());
+        s.enter_folder("C:\\a\\b".into(), false);
         assert_eq!(s.selected(), 0, "通常検索からの突入で先頭へ");
         s.set_results(vec![res("x"), res("y"), res("z")]);
         s.move_selection(2);
@@ -1287,7 +1518,7 @@ mod tests {
     #[test]
     fn arriving_rows_clamp_selection_without_resetting_it() {
         let mut s = SearchState::new();
-        s.enter_folder("C:\\a".into());
+        s.enter_folder("C:\\a".into(), false);
         s.set_results(vec![res("a"), res("b"), res("c"), res("d"), res("e")]); // 置換前の候補
         s.navigate_folder("C:\\a\\b".into()); // ← / → の打鍵: 選択は 0 へ・行はまだ古いまま
         s.move_selection(3); // ロード窓で ↑↓ が入る
@@ -1307,7 +1538,7 @@ mod tests {
     #[test]
     fn arriving_empty_rows_leaves_no_selectable_row() {
         let mut s = SearchState::new();
-        s.enter_folder("C:\\empty".into());
+        s.enter_folder("C:\\empty".into(), false);
         s.set_results(vec![res("a"), res("b"), res("c")]);
         s.move_selection(2);
         assert_eq!(s.selected(), 2);
@@ -1338,7 +1569,7 @@ mod tests {
     #[test]
     fn folder_filter_typing_resets_selection_to_first_row() {
         let mut s = SearchState::new();
-        s.enter_folder("C:\\a".into());
+        s.enter_folder("C:\\a".into(), false);
         s.set_results(vec![res("a"), res("b"), res("c")]);
         s.move_selection(2);
         assert_eq!(s.selected(), 2, "前提: 打鍵の前に選択は非ゼロである");
@@ -1357,7 +1588,7 @@ mod tests {
         s.set_query("fire".into());
         s.set_results(vec![res("a"), res("b"), res("c")]);
         s.move_selection(2); // selected=2
-        s.enter_folder("C:\\proj".into());
+        s.enter_folder("C:\\proj".into(), false);
         s.set_folder_filter("x".into());
         // 1 回目の Escape → 展開前状態へ復帰
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
@@ -1372,7 +1603,7 @@ mod tests {
     #[test]
     fn stale_folder_result_is_rejected() {
         let mut s = SearchState::new();
-        let t1 = s.enter_folder("C:\\a".into());
+        let t1 = s.enter_folder("C:\\a".into(), false);
         let t2 = s.navigate_folder("C:\\a\\b".into());
         assert!(!s.accept_folder_result(t1)); // 旧 token は破棄
         assert!(s.accept_folder_result(t2)); // 最新 token は受理
@@ -1382,7 +1613,7 @@ mod tests {
     fn escape_invalidates_gen_so_late_nav_result_is_dropped() {
         let mut s = SearchState::new();
         s.set_results(vec![res("a")]);
-        let tok = s.enter_folder("C:\\a".into());
+        let tok = s.enter_folder("C:\\a".into(), false);
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch); // folder 離脱 → gen 失効 + folder None
         assert!(!s.accept_folder_result(tok)); // 離脱後は旧ナビ結果を受理しない
         assert_eq!(s.view_kind(), ViewKind::Results);
@@ -1391,7 +1622,7 @@ mod tests {
     #[test]
     fn reset_invalidates_folder_gen_and_clears_mode() {
         let mut s = SearchState::new();
-        let tok = s.enter_folder("C:\\a".into());
+        let tok = s.enter_folder("C:\\a".into(), false);
         s.reset(); // show 時 reset
         assert!(!s.accept_folder_result(tok));
         assert_eq!(s.view_kind(), ViewKind::Results);
@@ -1401,7 +1632,7 @@ mod tests {
     #[test]
     fn folder_mode_interp_is_plain_even_with_prefix() {
         let mut s = SearchState::new();
-        s.enter_folder("C:\\a".into());
+        s.enter_folder("C:\\a".into(), false);
         s.set_folder_filter("@x".into()); // folder_filter に @ が入っても
         // interp は view_kind()==Folder ゆえ Plain（query 相乗りしないので query は空のまま）
         assert_eq!(s.interp("@"), QueryIntent::Plain);
@@ -1516,7 +1747,7 @@ mod tests {
             is_folder: true,
             is_error: false,
         }]);
-        s.enter_folder("C:\\dir".into());
+        s.enter_folder("C:\\dir".into(), false);
         s.set_folder_filter("fil".into());
         s.set_results(vec![SearchResult {
             name: "child".into(),
@@ -1576,7 +1807,7 @@ mod tests {
         // §18.5「ツール選択中の検索結果が上書きされない」: tool 中に遅延到着した folder ナビ
         // 結果（dead/slow UNC）を drain が受理してツール一覧を潰さない。
         let mut s = SearchState::new();
-        let tok = s.enter_folder("C:\\slow".into());
+        let tok = s.enter_folder("C:\\slow".into(), false);
         s.enter_tool("C:\\slow\\x".into(), false, make_tools());
         assert!(!s.accept_folder_result(tok));
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool); // tool 解除 → folder 復帰
@@ -1590,9 +1821,9 @@ mod tests {
         // defense-in-depth: is_some ガードと gen bump の両方が効いていることを固定）。
         let mut s = SearchState::new();
         s.set_results(vec![res("a")]);
-        let t1 = s.enter_folder("C:\\a".into());
+        let t1 = s.enter_folder("C:\\a".into(), false);
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch); // folder=None・gen 進む
-        let t2 = s.enter_folder("C:\\a".into()); // 再突入・folder=Some・gen 進む
+        let t2 = s.enter_folder("C:\\a".into(), false); // 再突入・folder=Some・gen 進む
         assert!(!s.accept_folder_result(t1)); // 旧 token は folder Some でも拒否
         assert!(s.accept_folder_result(t2)); // 最新 token は受理
         assert_eq!(s.view_kind(), ViewKind::Folder);

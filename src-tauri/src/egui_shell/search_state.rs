@@ -208,8 +208,9 @@ pub struct SearchState {
     /// **却下: 「folder から復帰したら無条件に立てる」。** [`FolderFrame::unsettled_at_entry`] を
     /// 持たずに済み `enter_folder` の signature も変えずに済むが、**未反映が無いまま往復した場合
     /// まで真になる**——[`SearchState::is_unsettled`] が今度は逆向きに自分の doc と食い違い、
-    /// #1079 が主題にしたのと同じ種類の不一致を良性の向きで作り直すことになる（費用も、Escape の
-    /// たびに Enter へ同期 `engine.search` を 1 回乗せる形で実在する）。
+    /// #1079 が主題にしたのと同じ種類の不一致を良性の向きで作り直すことになる（費用も、**未反映が
+    /// 無いまま往復したときの最初の Enter へ**同期 `engine.search` を 1 回乗せる形で実在する——
+    /// 未反映が在る往復では採用案も同じ flush を撃つので差が出ない）。
     restored_rows_stale: bool,
 }
 

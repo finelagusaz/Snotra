@@ -53,6 +53,8 @@
 | `src-tauri/Cargo.toml` | `cargo-check` | |
 | `Cargo.toml` | `cargo-check` `hook-selftest` | **ルートだけは両方走る**——ワークスペース定義であると同時に「検査の定義を変えるファイル」でもあるから |
 | `.claude/settings.json` | `hook-selftest` | `.claude/hooks/**` / `package.json` / `vitest.config.ts` も同じ |
+| `.claude/lsp/snotra-rust-lsp/.lsp.json` | `hook-selftest` | `.claude/lsp/**` 全体。Claude Code の RA インスタンスへ渡す設定で、**設定が届かない・上書きされる壊れ方は沈黙する**（下節） |
+| `rust-analyzer.toml` | `hook-selftest` | basename でアンカーするので crate 直下も拾う。同じカナリアの被検査対象（ratoml はクライアント設定より優先される） |
 | `.githooks/pre-commit` | `githooks-selftest` | `.githooks/**` 全体 |
 | `docs/hooks.md` | （なし） | 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等）は**何も走らない**——沈黙は「合格」ではない |
 
@@ -61,6 +63,34 @@
 TS 型検査は #532 SU7 のフロント撤去で消滅した（`.ts` 編集は「検査はありません」の情報行のみ）。
 
 **沈黙しうる経路は塞いである**（#471）。タイムアウト（検査ごと 300s）・出力溢れ・起動失敗・スクリプト内部エラーはいずれも必ず報告される（診断が予算を超えても、再現コマンドで全件を見られる）。**この閉塞を壊す変更を入れてはならない**——「沈黙 = 合格」という意味づけが成り立たなくなる。
+
+## Claude Code の RA インスタンスと hook の分担
+
+**この分担の正本はここである**（`.lsp.json` は JSON でコメントを持てないため、`.claude/hooks/lsp-config.mjs` の `//!` 相当のコメントがこの見出しを指す）。
+
+Claude Code が起動する rust-analyzer は **semantic navigation の道具**であり、**検証の権威ではない**。確定判定は PostToolUse hook の `fmt` / `clippy` / crate test が持ち、その判定材料に LSP の状態（診断の到着順・quiescence）を混ぜない——非同期な状態を混ぜると「沈黙 = 合格」が成り立たなくなる。
+
+| 層 | 担うもの |
+|---|---|
+| rust-analyzer（Claude Code） | findReferences / definition / implementation / hover / workspace symbols |
+| PostToolUse（`post-edit.mjs`） | `cargo fmt` / `cargo clippy -D warnings` / 編集した crate の `cargo test` |
+| CI | 最終保証 |
+
+設定は `.claude/lsp/`（リポジトリ所有の project-scope plugin）が運び、`.claude/settings.json` の `extraKnownMarketplaces` + `enabledPlugins` で配送する。**VS Code 側の rust-analyzer は巻き込まない**——`rust-analyzer.toml` は両クライアントが読むため、そこには書かない。
+
+**壊れ方は 2 つに分かれ、片方だけが沈黙する。** ここが分担の要である。
+
+| 壊れ方 | 現れ方 |
+|---|---|
+| **設定が届かない・上書きされる**（抑制キーの消失・ratoml による上書き・宣言箇所の取り違え） | **沈黙する**——rust-analyzer は設定が無ければ既定値で普通に起動するので、navigation は動いたまま `checkOnSave` だけが復活する |
+| **plugin の load 自体が失敗する**（trust 未受諾・マニフェスト不正・パス解決失敗・名前の不一致） | 沈黙しない——公式 plugin を無効化してあるため `.rs` の LSP が上がらず、**navigation が消える**形で現れる（ただしエラー自体は debug log にしか出ない） |
+
+公式の `claude plugin validate --strict` は `.lsp.json` を視界に入れない（JSON として壊しても抑制キーを消しても exit 0・2026-08-14 実測）。ゆえに上段（沈黙する側）は `.claude/hooks/lsp-config.mjs` のカナリアだけが機械的に捕まえる（発火は上の一覧、故障注入の実測は `lsp-config.test.mjs`）。**このカナリアは `rust-analyzer.toml` を、生成物ディレクトリ（`target` / `node_modules` / `dist` 等）を除くツリー全体から読む**——local 水準の設定は crate 直下の ratoml でも効くため、発火（basename アンカー）と判定の母集団を揃えてある。
+
+**残余は 2 つあり、どちらもリポジトリの外に原因がある。**
+
+- `known_marketplaces.json` はマシン全体で marketplace 名をキーに持つため、宣言した相対パスが存在しないツリー（この変更より前の枝から作った worktree）では、Claude Code は debug log に `keeping materialized entry` と書いて**別のツリーの plugin を使い続ける**。カナリアはそのツリーのファイルを読むので、この乖離は検知できない。
+- settings.local.json（gitignore 済みゆえバッククォートで参照しない——CI のチェックアウトに存在せず `G-references` が赤くなる）は project より**優先順位が高い**ため、そこへ `enabledPlugins` を書けば plugin を無効化できる。カナリアは `.claude/settings.json` しか読まず、`selectChecks` もそのファイルに検査を割り当てていない。**リポジトリからは守れない**（現在そのキーは書かれていない）。
 
 ## PostToolUse（post-edit.mjs）の機構と保守
 

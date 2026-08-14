@@ -1,0 +1,8 @@
+{
+  "name": "snotra-rust-lsp",
+  "description": "Claude Code の rust-analyzer インスタンスにだけ効く設定を渡す（VS Code 側は変えない）",
+  "version": "1.0.0",
+  "author": {
+    "name": "Snotra"
+  }
+}

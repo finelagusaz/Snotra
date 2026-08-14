@@ -1,0 +1,19 @@
+{
+  "rust-analyzer": {
+    "command": "rust-analyzer",
+    "extensionToLanguage": {
+      ".rs": "rust"
+    },
+    "initializationOptions": {
+      "checkOnSave": false,
+      "workspace": {
+        "symbol": {
+          "search": {
+            "kind": "all_symbols",
+            "limit": 512
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "snotra",
+  "description": "Snotra リポジトリが所有する plugin の marketplace（project scope で配送する）",
+  "owner": {
+    "name": "Snotra"
+  },
+  "plugins": [
+    {
+      "name": "snotra-rust-lsp",
+      "source": "./snotra-rust-lsp",
+      "description": "Claude Code の rust-analyzer インスタンスにだけ効く設定を渡す（VS Code 側は変えない）",
+      "version": "1.0.0",
+      "author": {
+        "name": "Snotra"
+      }
+    }
+  ]
+}

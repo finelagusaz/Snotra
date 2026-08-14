@@ -1681,6 +1681,21 @@ describe("G-stale-identifiers の凍結フィクスチャ（#984 の実在の欠
   });
 });
 
+// `checkReferences` の既定引数は「何も免除しない」ので、`buildChecks` が実物を渡し忘れると
+// gitignore 済みファイルの誤爆が戻る（#1088 で解いた当の欠陥）。この describe だけがそれを縛る。
+describe("G-references の配線（buildChecks が gitignore 判定を渡す）", () => {
+  const wired = (contents) => buildChecks(snap(contents), {}).find((c) => c.id === "G-references").run();
+  it("ignore 対象の不在パスは buildChecks 経由で緑になる", () => {
+    // `AGENTS.md` は governanceDocs の母集団に入る（固定パス）
+    const f = wired({ "AGENTS.md": "記録は `test-results/.last-run.json` に出る\n" });
+    expect(f.filter((x) => x.message.includes("test-results/.last-run.json"))).toEqual([]);
+  });
+  it("非 ignore の typo は buildChecks 経由でも赤（免除が広がっていない）", () => {
+    const f = wired({ "AGENTS.md": "`docs/typo-nonexistent.md` を見よ\n" });
+    expect(f.some((x) => x.message.includes("docs/typo-nonexistent.md"))).toBe(true);
+  });
+});
+
 // 上の describe が固定するのは各関数の戻り値までで、**buildChecks がどちらを検査へ渡すか**は見ていない。
 // `staleTargets` を `staleDocs` へ戻しても実リポジトリの finding は 0 / 照合 1 のまま変わらないため、
 // dogfood テストも証跡の印字も気づけない——軸 B の主張（SPEC.md が検査対象になった）を守るのは

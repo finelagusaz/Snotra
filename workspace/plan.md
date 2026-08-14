@@ -171,6 +171,17 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
 - **異常系: plugin が load されない**（trust 未受諾・マニフェスト不正・パス解決失敗）。このとき `.rs` の LSP は**上がらない**（公式 plugin を `false` にしたため）。fail-closed ではあるが「navigation が消える」形で現れるので、PR 本文の実測項目で必ず確かめる。
 - **異常系: `rust-analyzer` が PATH に無い。** 現状も同じ前提（公式 plugin も `command: "rust-analyzer"`）なので条件は変わらない。
 - **cwd 依存**: `path` の相対解決は cwd 基準（証拠 C-2）。リポジトリルート以外を cwd にして起動すると marketplace が見つからない。**これは受容する残余**——`.claude/settings.json` 自体が同じ前提（`${CLAUDE_PROJECT_DIR:-.}`）で動いている。
+- **worktree での沈黙する乖離（R-14・呼び出し側で機序を裁定済み）**。`known_marketplaces.json` は `~/.claude/plugins/` の**グローバルな平坦マップで、キーは marketplace 名**（実測: 4 件登録・各エントリが `source` と `installLocation` を 1 つずつ持つ）。ゆえに名前 `snotra` はマシンに 1 個しか無いのに、`"./.claude/lsp"` はメインツリーと `.claude/worktrees/agent-xxxx` で**別の絶対パスへ resolve される**。さらに reconciler に次の分岐が在る（`claude.exe` から逐語抽出・`pZ` は `source==="file"||source==="directory"` で自分で確認済み）:
+
+  ```js
+  if (d.action === "update" && pZ(d.source) && !await Oy(d.source.path)) {
+    w(`[reconcile] '${d.name}' declared path does not exist; keeping materialized entry`); s.push(d.name); continue }
+  ```
+
+  → **宣言パスが無いとき、debug log へ書いて「以前マテリアライズした登録を維持する」。** `.claude/lsp` を持たないコミットから作った worktree（＝この変更より前の枝・移行期）では、**別のツリーの plugin を黙って使い続ける**。カナリアは**そのツリーのファイル**を読むので、**検査は緑・実際に効いている plugin は別物**という乖離が成立する。**受け入れ条件 7 はこの経路に届かない**——それが今回の残余である。
+
+  **今サイクルでは検知機構を置かない。** 検知するには `~/.claude/plugins/known_marketplaces.json`（ユーザーマシンの状態・CI に無い）を読んで「登録された `snotra` の path がこのツリーか」を突き合わせることになるが、(i) CI では必ず skip する検査になり、(ii) ファイルを作った直後から次のセッション再起動までの**正当な過渡状態で赤くなる**。**再マテリアライズの実挙動を測る前に、鳴りうる検知器を静的読解だけで設計しない**（`measure-whether-detector-can-fire`）。→ PR 本文で実測し、次サイクルで決める。
+  ⚠️ `Xdg` が比較の前に相対→絶対を解決すること（＝ツリーを移るたび `sourceChanged` が立つこと）はレビュアの静的読解であり、呼び出しグラフを自分で辿ってはいない。
 - **実装中の副作用（想定しておく）**: `.claude/settings.json` の編集は file watcher が即座に拾う（`docs/hooks.md`「機構と保守」で実測済み）。ゆえに Phase 1 の配線を入れた瞬間に、実装中のセッションで公式 plugin が無効化され `.rs` の LSP が落ちる／trust の確認が出る、という挙動がありうる。**それ自体は異常ではない**が、実装中に LSP ツールが使えなくなったら「壊した」ではなく「切り替わった」を先に疑う。plugin の適用そのものは再起動が要る（証拠 A）。 受け入れ条件 6（`post-edit.mjs` の判定材料に LSP の状態を混ぜない）は**規範であって機構ではない**。既存の `hook-selftest` は `post-edit.mjs` の挙動を守るが、「LSP の状態を混ぜていないこと」を直接は検査しない。今回それを機構化しない理由は、混ぜるには非同期の待ちを新設する必要があり、その変更は必ず `.claude/hooks/**` の編集として `hook-selftest` と `.claude/rules/safety-nets.md` の配送に掛かるためである（**沈黙で入る経路が無い**）。
 
 ## テスト方針と検証コマンド
@@ -220,6 +231,7 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
 - **挙動プローブ 2（入れ子キーが渡ったか）**: `workspaceSymbol("config")` に **Function が混ざる**こと（今は Struct / Enum だけ・証拠 F-2）。**これは `workspace.symbol.search` の検証であると同時に、入れ子形の `initializationOptions` が受理されるかの検証でもある**
 - `RA_LOG=rust_analyzer=info` を `env` に渡して実効 config を読む（**機序の解明用・補助**。`RA_LOG` が実効 config を吐くかは未検証なので、上の 2 プローブを主とする。測り終えたら `env` は外す）
 - サブディレクトリ起動・agent worktree で marketplace の相対 path が解決されるか（証拠 C-2 の 2 サイトのどちらが効くか）
+- **worktree のセッションで LSP が上がるか、そして「どのツリーの `.lsp.json` が効いているか」**（R-14）。ツリーを移った直後の再マテリアライズが冪等で安価か。`.claude/lsp` を持たない枝の worktree で `[reconcile] ... keeping materialized entry` が実際に出るか（debug log で確認）
 
 ## plan-review 結果
 
@@ -248,6 +260,7 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
 | R-9 | `.lsp.json` は 3 つの宣言箇所のうち**優先度が最も低い**（manifest が `Object.assign` で上書き） | **採用**。カナリアの足 6（他 2 か所に `lspServers` が無いこと）を追加 | `claude.exe` の `cJt` を自分で抽出済み——`.lsp.json` を読んだ後に `if(e.manifest.lspServers){...Object.assign(n,s)}` |
 | R-6 | marketplace 名が 3 か所で一致しないと**沈黙で load されない** | **採用**。カナリアの足 7 を追加 | バイナリ逐語 *"Must match the extraKnownMarketplaces key (enforced)"*（自分の抽出にも同じ文字列が在る） |
 | M-9 | `settings` は `initializationOptions` と役割が重なる | **採用**。「使わない」を明示 | 証拠 A——`settings` を書くと `workspace/configuration` capability が true になり決定論性が落ちる |
+| **R-14**（レビュアの追加報告・**独立ではなく差分レビュー**として受領） | worktree では marketplace 名がグローバルに 1 個なのに相対 path が別の絶対パスへ解決され、宣言パスが無いツリーでは**別ツリーの plugin を黙って使い続ける** | **採用**。異常系へ残余として明記 ＋ PR 本文へ実測項目。**検知機構は今サイクルでは置かない**（理由は当該節） | 足を 2 本とも自分で測った——(1) `known_marketplaces.json` は名前キーの平坦マップ（実ファイルを読んだ・4 件）、(2) `keeping materialized entry` の分岐を `claude.exe` から逐語抽出（`pZ` は自分で確認済み） |
 | R-12 | 検査の層を hook + governance の 2 枚にする | **不採用（降格）**。残る差は `skip-ci` PR だけで、削除は CI のカナリアが捕まえ、語彙供給は `lsp-config.mjs` が果たす。**受容する残余として明記** | `ci.yml:45,155` の `npm test` はカナリアを実行し、カナリアは実ファイルを読むので削除でも落ちる |
 | R-1 / R-2 / R-4 / R-5 / R-7 / R-8 / R-10 / R-11 / R-13 | カナリアが対で要る・発火表を同じ変更で直す・vitest include・二重 LSP は settings の 1 行が防いでいる・rules の paths・セーフティネット母集団・双条件の訂正・PR 本文への振り分け・検証の層の表を通す | **既に計画に在った** | 各 Phase に対応項目あり |
 

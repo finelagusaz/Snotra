@@ -270,6 +270,59 @@ LSP は**起動時に初期化**されるため、`initializationOptions` を変
 **`BUDGETS` + `buildCommand` の `case` + `repro` + `docs/hooks.md` の新行 + `REPRESENTATIVE_EDITS`
 の 5 点セット**が同時に要ります（`post-edit.test.mjs:653-682` の完全性カナリアが強制）。
 
+### R-14. **worktree を跨ぐと marketplace の登録が毎回 `sourceChanged` になる**（追記・2026-08-14 12:0x）
+
+**⚠️ 追記の経緯**: この項は、team-lead からの進捗確認に添えられた system-reminder で
+`workspace/plan.md` が**自動的にコンテキストへ配送された後**に書いています（私が読みに行ったのではなく、
+harness が差分を押し込みました）。**この時点で私の独立性は完全に尽きています。**
+ただし下の所見自体は `claude.exe` のバイナリから私が導出したもので、plan.md には無い内容です。
+
+`claude.exe` の reconciler（関数 `bvc`）の逐語構造:
+
+```
+c = Xdg(declared.source, projectRoot)            // 相対 directory path を projectRoot 基準で resolve
+if (!known[name])                → missing      → action "install"
+else if (!deepEqual(c, known[name].source)) → sourceChanged → action "update"
+```
+
+そして **`known_marketplaces.json` は `~/.claude/plugins/` にあるグローバルな登録簿で、
+キーは marketplace 名**です（実測: 現ファイルは `claude-plugins-official` / `anthropic-agent-skills` /
+`ja-writing-tools` / `openai-codex` の 4 件）。
+
+**帰結**: marketplace 名を `snotra` にして `path` を相対で書くと、
+
+- メインツリーでは `C:\workspace\Snotra\.claude\lsp` へ resolve される
+- **`.claude/worktrees/agent-xxxx` のセッションでは別の絶対パスへ resolve される**
+
+同じグローバルキー `snotra` に対して**別の絶対パスが宣言される**ので、
+**メインツリー ⇄ worktree、worktree ⇄ worktree を移るたびに `sourceChanged` が立ち、
+marketplace が「update」として再マテリアライズされます。**
+このリポジトリはサブエージェント委譲で worktree を常用します（ルート `CLAUDE.md`
+「サブエージェント委譲と worktree」）ので、**低頻度の事故ではなく常態**になります。
+
+さらに悪い分岐が 1 本あります。同じ関数の直後（逐語）:
+
+```
+if (action === "update" && isLocalSource(source) && !exists(source.path))
+    → w(`[reconcile] '<name>' declared path does not exist; keeping materialized entry`), skip
+```
+
+**宣言したパスが存在しないとき、警告を debug log へ書いて「以前マテリアライズした登録を維持する」**——
+つまり `.claude/lsp` を持たないコミットから作った worktree では、**別のツリーの plugin を
+黙って使い続けます**。エラーにも赤にもならず、`.lsp.json` の機械検査はそのツリーのファイルを見るので
+**検査は緑のまま、実際に動いている plugin は別物**という乖離が成立します。
+
+**検討すべき対処**（どれを採るかは計画側の判断です）:
+
+- marketplace 名にツリーを含める案は、`enabledPlugins` のキー（`<plugin>@<marketplace>`）が
+  追跡ファイルである以上**採れません**（R-6 の名前一致が壊れる）
+- `sourceChanged` による再マテリアライズが**冪等で安価**なら受容してよい ⚠️ 未測定
+- 「keeping materialized entry」の沈黙のほうが本命の残余です。**PR 本文のチェックリストへ
+  「worktree で LSP が上がること／上がらないこと」を実測項目として置く**のが最小の手当てに見えます
+
+**⚠️ この項は静的読解であり、実行して確かめていません**（marketplace 登録は状態変更ゆえブリーフで禁止）。
+`bvc` / `Xdg` / 「keeping materialized entry」の 3 つの文字列は逐語で確認済みです。
+
 ### R-13. 「検査・検証手段を新設する」トリガーが立つ — `docs/development-principles.md` の死角の表を通す
 
 `AGENTS.md:59` 近傍の条件別チェック表に

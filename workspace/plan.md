@@ -30,18 +30,20 @@ issue が「まず測ること」として挙げた 4 点を実測し、その�
 
 ## 受け入れ条件
 
-- [ ] issue の「まず測ること」4 点それぞれに、実測値か「測らない理由」が記録に残っている
-- [ ] issue の「決めること」2 点に結論が付き、根拠が実測を指している
-- [ ] 決定と否定の知識が `docs/adr/` に残る
-- [ ] 新しい検査が**足 2 の変異で赤くなる**（実際の回帰の姿＝索引に載せて `mod` を忘れる）
-- [ ] 新しい検査が**現状のリポジトリで緑**（誤検出 0。`#[path]` と `mod.rs` を含む）
-- [ ] 新しい検査が**「検査を殺す変異」で赤くなる**（母集団が空・crate 一覧が空でも緑を返さない）
-- [ ] 新しい検査が**実際に配線されている**——実ファイルへ足 2 の変異を 1 回当て、
-      `npm run governance:check` の**出力に findings が現れる**ことを確かめる
-      （vitest は純関数を見るが「配線されているか」は見ない・
-      `docs/development-principles.md`「検証の層と、層と層の隙間」）
-- [ ] `npm run governance:check` と `npm test`（`governance-check.test.mjs` を含む）が緑
-- [ ] メモリ `ra-diagnostics-noise-is-baseline-not-edits` が LSP 側の実態へ更新されている
+- [x] issue の「まず測ること」4 点それぞれに、実測値か「測らない理由」が記録に残っている
+      （ADR「決定を支える実測」が正本。4 点目は「抑制を採らない決定により不要」と記録）
+- [x] issue の「決めること」2 点に結論が付き、根拠が実測を指している
+- [x] 決定と否定の知識が `docs/adr/` に残る（`ADR-ra-diagnostics-suppression`・却下 8 件）
+- [x] 新しい検査が**足 2 の変異で赤くなる**（カナリア + 実ファイルでの e2e）
+- [x] 新しい検査が**現状のリポジトリで緑**（誤検出 0。`#[path]` と `mod.rs` を含む。
+      本物のリポジトリで 95/95 到達、フィクスチャでも両者を個別に固定）
+- [x] 新しい検査が**「検査を殺す変異」で赤くなる**——`checkModuleLinkage` を `return []` へ
+      無力化すると**赤いフィクスチャ 4 本が落ちた**（緑 4 本は no-op でも通る＝縛らない。構造上正しい）
+- [x] 新しい検査が**実際に配線されている**——実ファイルへ足 2 の変異を 1 回当て、
+      `npm run governance:check` の出力に findings が現れることを確認（検査 19 → 20 件）
+- [x] `npm run governance:check` と `npm test`（`governance-check.test.mjs` を含む）が緑
+      （20 検査 passed / 8 ファイル 663 件 passed。訂正の反映後に再実行）
+- [x] メモリ `ra-diagnostics-noise-is-baseline-not-edits` が LSP 側の実態へ更新されている
 
 ## 変更ファイル一覧と対象シンボル
 
@@ -172,21 +174,27 @@ Rust 側の検証は不要（製品コードを触らない）。`.md` の編集
 
 ### Phase 2 — 記録
 
-- [ ] `docs/adr/ADR-ra-diagnostics-suppression.md` を書く（決定・実測の要約・却下理由・受容する残余）
-- [ ] `docs/hooks.md`「Claude Code の RA インスタンスと hook の分担」へ「何が届くか」を足し、
+- [x] `docs/adr/ADR-ra-diagnostics-suppression.md` を書く（決定・実測の要約・却下理由・受容する残余）
+- [x] `docs/hooks.md`「Claude Code の RA インスタンスと hook の分担」へ「何が届くか」を足し、
       ADR を正準形で参照する
-- [ ] `AGENTS.md`「条件別チェック（トリガー → 参照先）」の `.rs` 追加/削除の行を更新する。
+- [x] `AGENTS.md`「条件別チェック（トリガー → 参照先）」の `.rs` 追加/削除の行を更新する。
       **書くのは帰結だけ**（「`mod` 宣言の有無も機構が見る」）で、機構の実装の詳細
       （母集団・述語・件数）を写さない（`.claude/rules/governance-docs.md`）。
       **全称表現にしない**——「全 `.rs` の `mod` 漏れを検知」とは書けない
       （母集団はルート `Cargo.toml` の members に載る crate の `src/` に限る）
-- [ ] メモリ `ra-diagnostics-noise-is-baseline-not-edits` を更新する
+- [x] メモリ `ra-diagnostics-noise-is-baseline-not-edits` を更新する（数値を写さず ADR を指す形へ。
+      あわせて **stdio クライアントという再測定の手段**を残した——リポジトリに残らないため）
 
 ### Phase 3 — 検証
 
-- [ ] `npm run governance:check` を実行して緑を確認する
-- [ ] `npm test` を実行して緑を確認する
-- [ ] 書いた記述に実装より強い主張（全称表現・未測定の機序）が無いか `research.md` と突き合わせる
+- [x] `npm run governance:check` を実行して緑を確認する（検査 20 件 / ADR 50 本 / 見出し参照 209 件）
+- [x] `npm test` を実行して緑を確認する（8 ファイル・663 件）
+- [x] 書いた記述に実装より強い主張（全称表現・未測定の機序）が無いか `research.md` と突き合わせる
+      —— **1 件見つかって直した**。「未リンクの `.rs` は rust-analyzer からも見えない」と 3 か所へ
+      書いていたが、実測は逆で **RA は当該ファイルの構文エラーを届けている**。見えないのは
+      `mod` 忘れという事実のほうなので「cargo も rust-analyzer も**報せない**」へ改めた
+      （`AGENTS.md` / `governance-check.mjs` のコメントと finding 文言）。
+      あわせて `docs/hooks.md` の「構文エラーだけ」に**測った 4 種の変異**という前提を添えた
 
 ## 未確定（実装前に潰す）
 

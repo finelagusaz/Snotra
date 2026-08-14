@@ -158,9 +158,9 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
 //   索引にも `mod` にも書かない → G-module-index が赤
 //   **索引には書き、`mod` 宣言だけ忘れる → どの検査も緑だった**（本検査が塞ぐのはこの足）
 //
-// **cargo からも LSP からも見えない。** 未リンクの `.rs` は `cargo fmt/clippy/test` の視界に無く
-// （PostToolUse hook は沈黙する）、rust-analyzer も `unlinked-file` を publish しない（#1085 で
-// stdio クライアントから生の publishDiagnostics を読んで実測）。最悪の帰結は
+// **`mod` 忘れは cargo も LSP も報せない。** 未リンクの `.rs` は `cargo fmt/clippy/test` の視界に無く
+// （PostToolUse hook は沈黙する）、rust-analyzer は当該ファイルを読むが `unlinked-file` を publish
+// しない（#1085 で stdio クライアントから生の publishDiagnostics を読んで実測）。最悪の帰結は
 // `#[cfg(test)] mod tests` を持つファイルが 1 度もコンパイルされず**テストが黙って走らない**ことである。
 //
 // 母集団はルート `Cargo.toml` の `[workspace] members`（`workspaceMembers` が唯一の口・関数巻き上げで
@@ -187,17 +187,6 @@ function moduleChildDir(file) {
   return `${dir}/${base.slice(0, -3)}`;
 }
 
-/** `a/b/../c` のような相対要素を畳む（`#[path]` は任意の相対パスを取れる）。 */
-function normalizeRelative(p) {
-  const out = [];
-  for (const seg of p.split("/")) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === "..") out.pop();
-    else out.push(seg);
-  }
-  return out.join("/");
-}
-
 /** `file` が宣言する子モジュールの候補ファイルパスを返す。 */
 function declaredModuleFiles(file, text) {
   const slash = file.lastIndexOf("/");
@@ -211,7 +200,9 @@ function declaredModuleFiles(file, text) {
   for (const m of text.matchAll(
     /#\[path\s*=\s*"([^"]+)"\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/g,
   )) {
-    out.push(normalizeRelative(`${ownDir}/${m[1]}`));
+    // `#[path]` は任意の相対パスを取れるので畳む。**上へ抜けた形（`../x.rs`）は畳まず残す**——
+    // 母集団に一致せず赤に倒れる向きであり、黙って別ファイルへ一致させるより安全である。
+    out.push(path.posix.normalize(`${ownDir}/${m[1]}`));
     viaPath.add(m[2]);
   }
   // 通常の `mod name;`（行頭アンカー——コメント行・文字列中の綴りを拾わない）
@@ -260,7 +251,7 @@ export function checkModuleLinkage(snapshot) {
     for (const f of population) {
       if (!seen.has(f)) {
         findings.push(
-          finding(f, 1, `crate ルートから mod 宣言で到達できない（mod 宣言の書き忘れ。cargo も rust-analyzer も見ない）`),
+          finding(f, 1, `crate ルートから mod 宣言で到達できない（mod 宣言の書き忘れ。cargo も rust-analyzer も報せない）`),
         );
       }
     }

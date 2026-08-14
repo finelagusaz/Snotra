@@ -420,9 +420,38 @@ git commit -m "refactor: 判定を持たない計器を検査配列から外す 
 - `.claude/settings.local.json`（gitignore 済み。実在検査は ignore 対象を免除するので参照してよい・#1088）は project より**優先順位が高い**ため、
 ```
 
-- [ ] **Step 2: スクリプト冒頭の契約コメントへ 1 行足す**
+- [ ] **Step 2: 冒頭の契約コメントを、Task 3 が変えた事実へ合わせる**
 
-`scripts/governance-check.mjs` の「意味判断（責務の妥当性・…）は `/health-check` に残る」の行の後ろへ:
+**これは飾りではない。** `scripts/governance-check.mjs:18` は「**例外は G-hook-fires ただ 1 つ**」と
+全称で書いており、Task 3 で `buildChecks` が `gitIgnoredPaths` を渡した時点で**偽になる**——
+G-references も外部の `git` と cwd の `.gitignore` に依存する第 2 の例外になるからである。
+全称表現は実装より強い主張になった瞬間に嘘になり、規範を守る読者を誤りへ導く（`AGENTS.md`
+「検証の作法（全タスク共通）」）。**触った節の隣にある主張が今も真か見る**のがこの Step の役目である。
+
+現行（`scripts/governance-check.mjs:18-21`）:
+
+```javascript
+//   - **例外は G-hook-fires ただ 1 つ**: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
+//     `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
+//     **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
+//     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる
+```
+
+これを:
+
+```javascript
+//   - **例外は 2 つある。** (1) G-hook-fires: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
+//     `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
+//     **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
+//     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
+//     (2) G-references: `gitIgnoredPaths` が同じチェックアウトの `.gitignore` を外部の `git` で読む
+//     （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
+//     テストは fixture のまま走る。決定的性は保たれる——読むのは同じチェックアウトの `.gitignore` だけで、
+//     ネットワーク・時刻・環境変数に依らない（「依存ゼロ」は npm 依存の話であり、`git` は
+//     チェックアウトが在る以上どちらの環境にも在る）
+```
+
+続けて「意味判断（責務の妥当性・…）は `/health-check` に残る」の行の後ろへ:
 
 ```javascript
 // なお `G-workspace-lints` / `G-clippy-disallowed` は文書ではなくリポジトリ規約を見る。責務としては

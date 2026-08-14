@@ -22,6 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 // G-hook-fires は判定を再実装せず hook の純関数そのものを呼ぶ（理由は同検査のコメント）。
 // post-edit.mjs は import しただけでは main() を走らせない（I13 のガード）。
 import { selectChecks } from "../.claude/hooks/post-edit.mjs";
@@ -399,6 +400,25 @@ export function checkArchitectureTable(snapshot) {
 //   workspace/ 配下でない・`\` を含まない。
 //   → ベア名（`SPEC.md` 等）とランタイム生成物（`config.toml`・`*.bin`・`*.bak`）は構造的に対象外。
 // ---------------------------------------------------------------------------
+
+/** `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測: 不在の
+ *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）。ゆえに
+ *  CI のチェックアウトでも手元と同じ判定が出る——これが「CI に存在しない生成物の名前を散文へ
+ *  バッククォートで書けない」という表記の歪みを解く（#1088）。
+ *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合は
+ *  空集合を返す＝何も免除しない側へ倒す（誤爆より見落としを避ける）。
+ *  **決定的性**: 読むのは同じチェックアウトの `.gitignore` だけで、ネットワーク・時刻・環境変数に依らない。 */
+export function gitIgnoredPaths(paths, root = process.cwd()) {
+  if (paths.length === 0) return new Set();
+  const r = spawnSync("git", ["check-ignore", "--stdin", "-z"], {
+    cwd: root,
+    input: paths.join("\0"),
+    encoding: "utf8",
+  });
+  if (r.error || r.status === 128) return new Set();
+  return new Set(r.stdout.split("\0").filter(Boolean));
+}
+
 export function checkReferences(snapshot, docs) {
   const findings = [];
   const fileSet = new Set(snapshot.files);

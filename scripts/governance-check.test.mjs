@@ -16,6 +16,7 @@ import {
   checkModuleLinkage,
   declaredModuleFiles,
   checkArchitectureTable,
+  gitIgnoredPaths,
   checkReferences,
   checkSpecSections,
   checkBuildCommands,
@@ -353,6 +354,25 @@ describe("G-architecture-table checkArchitectureTable", () => {
   it("コードフェンス内の表行は無視する", () => {
     const s = snap({ "docs/architecture.md": "```\n| `engine.rs` | x |\n```\n" });
     expect(checkArchitectureTable(s)).toEqual([]);
+  });
+});
+
+describe("gitIgnoredPaths（存在に依らずパス名で判定する・#1088）", () => {
+  it("ignore 対象は不在でも返り、非 ignore は返らない", () => {
+    const got = gitIgnoredPaths([
+      "test-results/never-created.json",
+      ".claude/settings.local.json",
+      "docs/nonexistent-typo.md",
+    ]);
+    expect(got.has("test-results/never-created.json")).toBe(true);
+    expect(got.has(".claude/settings.local.json")).toBe(true);
+    expect(got.has("docs/nonexistent-typo.md"), "非 ignore の typo が緑に化けている").toBe(false);
+  });
+  it("該当なし（git の exit 1）は失敗ではなく空集合", () => {
+    expect(gitIgnoredPaths(["docs/nonexistent-typo.md"])).toEqual(new Set());
+  });
+  it("空入力では spawn しない", () => {
+    expect(gitIgnoredPaths([])).toEqual(new Set());
   });
 });
 

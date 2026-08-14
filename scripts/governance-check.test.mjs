@@ -371,7 +371,7 @@ describe("gitIgnoredPaths（存在に依らずパス名で判定する・#1088�
   it("該当なし（git の exit 1）は失敗ではなく空集合", () => {
     expect(gitIgnoredPaths(["docs/nonexistent-typo.md"])).toEqual(new Set());
   });
-  it("空入力では spawn しない", () => {
+  it("空入力は空集合を返す", () => {
     expect(gitIgnoredPaths([])).toEqual(new Set());
   });
 });

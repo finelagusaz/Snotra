@@ -50,7 +50,8 @@
 
 `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測。
 `test-results/never-created-file.json` が不在のまま `.gitignore:34` に当たり、
-`docs/nonexistent-typo.md` は当たらない）。ゆえに CI のチェックアウトでも手元と同じ判定が出る。
+`docs/nonexistent-typo.md` は当たらない）。ファイルの実在に依らず判定できるので、CI に存在しない
+生成物の名前も判定対象にできる（読む入力の内訳・手元/CI の乖離は `gitIgnoredPaths` の JSDoc が正本）。
 
 | 状態 | 判定 |
 |---|---|

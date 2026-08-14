@@ -21,11 +21,10 @@
 //     `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
 //     **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
 //     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
-//     (2) G-references: `gitIgnoredPaths` が同じチェックアウトの `.gitignore` を外部の `git` で読む
+//     (2) G-references: `gitIgnoredPaths` が外部の `git` でチェックアウトの gitignore 設定を読む
 //     （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
-//     テストは fixture のまま走る。決定的性は保たれる——読むのは同じチェックアウトの `.gitignore` だけで、
-//     ネットワーク・時刻・環境変数に依らない（「依存ゼロ」は npm 依存の話であり、`git` は
-//     チェックアウトが在る以上どちらの環境にも在る）
+//     テストは fixture のまま走る。読む入力の内訳・機体間の乖離の向きは `gitIgnoredPaths` の JSDoc が
+//     正本（「依存ゼロ」は npm 依存の話であり、`git` はチェックアウトが在る以上どちらの環境にも在る）
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -409,12 +408,20 @@ export function checkArchitectureTable(snapshot) {
 // ---------------------------------------------------------------------------
 
 /** `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測: 不在の
- *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）。ゆえに
- *  CI のチェックアウトでも手元と同じ判定が出る——これが「CI に存在しない生成物の名前を散文へ
- *  バッククォートで書けない」という表記の歪みを解く（#1088）。
- *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合は
- *  空集合を返す＝何も免除しない側へ倒す（誤爆より見落としを避ける）。
- *  **決定的性**: 読むのは同じチェックアウトの `.gitignore` だけで、ネットワーク・時刻・環境変数に依らない。 */
+ *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）——これが
+ *  「CI に存在しない生成物の名前を散文へバッククォートで書けない」という表記の歪みを解く（#1088）。
+ *  **読む入力は 3 つ**: 追跡された `.gitignore`（任意の深さのものを含む）・`.git/info/exclude`・
+ *  `core.excludesFile`。後 2 者はチェックアウトの外（機体ごとのローカル状態）にあり CI のチェックアウトには
+ *  存在しないので、**免除の面は「手元 ⊇ CI」になりうる**——手元だけで免除されるパスがあれば、その回は
+ *  「手元で緑・CI で赤」が起こる（逆は起きない。CI が手元より広く免除することは無い）。実例:
+ *  `.claude/agent-registry.json` は追跡された `.gitignore` に無いが `.git/info/exclude` にあり、
+ *  この機体では免除される（2026-08-14 実測）。
+ *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合、
+ *  および**候補のいずれか 1 件でもリポジトリ外パス（絶対パス・`..` でツリー外へ出る相対パス）で
+ *  status が 128 になった場合**は空集合を返す——後者は batch 単位の判定ゆえ、1 件の汚染が
+ *  同じ回の他の候補の免除も道連れに落とす（向きは赤側＝安全。何も免除しない側へ倒す）。
+ *  **決定的性**: 同一チェックアウト・同一機体では再現する（ネットワーク・時刻・環境変数に依らない）。
+ *  機体をまたぐ決定性は無い（上記のとおり `.git/info/exclude` 等が機体ごとに違う）。 */
 export function gitIgnoredPaths(paths, root = process.cwd()) {
   if (paths.length === 0) return new Set();
   const r = spawnSync("git", ["check-ignore", "--stdin", "-z"], {
@@ -429,11 +436,14 @@ export function gitIgnoredPaths(paths, root = process.cwd()) {
 export function checkReferences(snapshot, docs, filterIgnored = () => new Set()) {
   const findings = [];
   const fileSet = new Set(snapshot.files);
+  // 実在判定（exists）と ignore 照合（下の candidates）が同じ「文書ディレクトリ基準の正規化」を
+  // 使う——exists はここを呼ぶ（独立した式を 2 つ持つと、片方だけ変えたときに実在判定と
+  // 免除照合がずれ、偽の赤か偽の緑になる）。
+  const docRelative = (doc, ref) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), ref));
   const exists = (doc, ref, { allowSuffix = false } = {}) => {
     const norm = (p) => path.posix.normalize(p);
     if (fileSet.has(norm(ref))) return true; // リポジトリルート基準
-    const rel = norm(path.posix.join(path.posix.dirname(doc), ref)); // 文書ディレクトリ基準
-    if (fileSet.has(rel)) return true;
+    if (fileSet.has(docRelative(doc, ref))) return true; // 文書ディレクトリ基準
     // crate 内相対参照（`lib/types.ts` = ui/src/lib/types.ts、`commands/launch.rs` =
     // src-tauri/src/commands/launch.rs 等）はサフィックス一致で解決する（意図的な近似）。
     // バッククォート参照（`/` 必須の述語 = 2 セグメント以上）に限る——Markdown リンクへ
@@ -445,7 +455,6 @@ export function checkReferences(snapshot, docs, filterIgnored = () => new Set())
   // 実在しなかった参照は**いったん保留する**——ignore 判定を 1 回の spawn に束ねるため（#1088）。
   // findings の順序は pending の順序がそのまま保つ。
   const pending = [];
-  const docRelative = (doc, ref) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), ref));
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) {

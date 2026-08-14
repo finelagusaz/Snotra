@@ -80,12 +80,16 @@ import { spawnSync } from "node:child_process";
 
 ```javascript
 /** `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測: 不在の
- *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）。ゆえに
- *  CI のチェックアウトでも手元と同じ判定が出る——これが「CI に存在しない生成物の名前を散文へ
- *  バッククォートで書けない」という表記の歪みを解く（#1088）。
- *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合は
- *  空集合を返す＝何も免除しない側へ倒す（誤爆より見落としを避ける）。
- *  **決定的性**: 読むのは同じチェックアウトの `.gitignore` だけで、ネットワーク・時刻・環境変数に依らない。 */
+ *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）——これが
+ *  「CI に存在しない生成物の名前を散文へバッククォートで書けない」という表記の歪みを解く（#1088）。
+ *  **読む入力は 3 つ**: 追跡された `.gitignore`（任意の深さのものを含む）・`.git/info/exclude`・
+ *  `core.excludesFile`。後 2 者はチェックアウトの外（機体ごとのローカル状態）にあり CI のチェックアウトには
+ *  存在しないので、**免除の面は「手元 ⊇ CI」になりうる**——「手元で緑・CI で赤」が起こりうる
+ *  （逆は起きない）。
+ *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合、および
+ *  候補のいずれか 1 件でもリポジトリ外パスで status が 128 になった場合は空集合を返す（batch 単位
+ *  ゆえ 1 件の汚染が他の免除も道連れに落とす。向きは赤側＝安全）。
+ *  **決定的性**: 同一チェックアウト・同一機体では再現する（ネットワーク・時刻・環境変数に依らない）。 */
 export function gitIgnoredPaths(paths, root = process.cwd()) {
   if (paths.length === 0) return new Set();
   const r = spawnSync("git", ["check-ignore", "--stdin", "-z"], {
@@ -308,9 +312,9 @@ Expected: FAIL — 1 件目が `test-results/.last-run.json` の finding を返�
 Run: `npx vitest run scripts/governance-check.test.mjs -t "G-references の配線"`
 Expected: PASS
 
-- [ ] **Step 5: 実リポジトリで、過去に赤くなった形が緑になることを測る**
+- [ ] **Step 5: 実リポジトリで、配線あり/なしを対照して測る**
 
-`docs/hooks.md:99` は現在「settings.local.json（gitignore 済みゆえバッククォートで参照しない）」とバッククォートを剥がして書かれている。**複製に変異を当てて**（稼働中の文書を書き換えず）、2026-08-14 に CI を赤くした形が緑になることを確かめる:
+`docs/hooks.md:99` は現在「settings.local.json（gitignore 済みゆえバッククォートで参照しない）」とバッククォートを剥がして書かれている。**この機体では `.claude/settings.local.json` が実ファイルとして存在する**ため、`checkReferences` に `gitIgnoredPaths` を渡すか渡さないかだけでは判定が割れない——`exists()` がファイルの実在で先に真を返し、gitignore 免除を一度も踏まない。ゆえに**複製の files 列から `.claude/settings.local.json` を抜いて CI のチェックアウトを模し**（稼働中の文書は書き換えず）、配線あり/なしを対照する:
 
 Run:
 ```bash
@@ -318,14 +322,19 @@ node -e '
 import("./scripts/governance-check.mjs").then((m) => {
   const s = m.makeSnapshot(process.cwd());
   const orig = s.read("docs/hooks.md");
-  const mutated = { ...s, read: (rel) => (rel === "docs/hooks.md"
+  const files = s.files.filter((f) => f !== ".claude/settings.local.json"); // CI のチェックアウトを模す
+  const mutated = { files, read: (rel) => (rel === "docs/hooks.md"
     ? orig.replace("settings.local.json（gitignore 済みゆえ", "`.claude/settings.local.json`（gitignore 済みゆえ")
     : s.read(rel)) };
-  const f = m.checkReferences(mutated, ["docs/hooks.md"], m.gitIgnoredPaths);
-  console.log("findings =", JSON.stringify(f));
+  const wired = m.checkReferences(mutated, ["docs/hooks.md"], m.gitIgnoredPaths);
+  const unwired = m.checkReferences(mutated, ["docs/hooks.md"]);
+  console.log("配線あり findings =", JSON.stringify(wired));
+  console.log("配線なし findings =", JSON.stringify(unwired));
 });'
 ```
-Expected: `findings = []`（2026-08-14 の CI ではこの形が 2 件の赤だった）
+Expected: 配線あり `findings = []`。配線なしは `.claude/settings.local.json` の実在しない参照 1 件を含む
+（`message: "バッククォート参照のパスが実在しない: .claude/settings.local.json"`）。この対照が
+配線の有無を実際に区別する（#1088 で、files を抜かない形は区別しないと判明）。
 
 - [ ] **Step 6: 全体が緑であることを確認する**
 
@@ -444,11 +453,10 @@ G-references も外部の `git` と cwd の `.gitignore` に依存する第 2 �
 //     `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
 //     **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
 //     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
-//     (2) G-references: `gitIgnoredPaths` が同じチェックアウトの `.gitignore` を外部の `git` で読む
+//     (2) G-references: `gitIgnoredPaths` が外部の `git` でチェックアウトの gitignore 設定を読む
 //     （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
-//     テストは fixture のまま走る。決定的性は保たれる——読むのは同じチェックアウトの `.gitignore` だけで、
-//     ネットワーク・時刻・環境変数に依らない（「依存ゼロ」は npm 依存の話であり、`git` は
-//     チェックアウトが在る以上どちらの環境にも在る）
+//     テストは fixture のまま走る。読む入力の内訳・機体間の乖離の向きは `gitIgnoredPaths` の JSDoc が
+//     正本（「依存ゼロ」は npm 依存の話であり、`git` はチェックアウトが在る以上どちらの環境にも在る）
 ```
 
 続けて「意味判断（責務の妥当性・…）は `/health-check` に残る」の行の後ろへ:
@@ -461,9 +469,10 @@ G-references も外部の `git` と cwd の `.gitignore` に依存する第 2 �
 - [ ] **Step 3: 検証**
 
 Run: `npm run governance:check`
-Expected: 全検査 passed（`.claude/settings.local.json` がバッククォート参照に戻ったが、ignore 対象なので緑）
-
-**この 1 回が Task 2〜3 の end-to-end の実測である**——実リポジトリの散文に、CI では存在しないファイル名がバッククォートで書かれ、それが緑になった。
+Expected: 全検査 passed（`.claude/settings.local.json` がバッククォート参照に戻ったが緑のまま——ただし
+この機体では実ファイルとして存在するため、この 1 回は「配線が効いている」ことの証明にならない。
+配線あり/なしの対照は Task 3 Step 5 が既に取っている。**真の end-to-end**（CI では存在しないファイル名が
+実際に緑になること）は ubuntu のチェックアウトでしか測れない——それが Step 5 の PR 本文チェックリストの役目である。
 
 - [ ] **Step 4: コミット**
 

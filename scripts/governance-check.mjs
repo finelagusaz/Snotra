@@ -7,6 +7,8 @@
 // 本スクリプトはその残余のうち決定的に照合できる項目を PR CI（governance-check job）と
 // `npm run governance:check` で引き取る。意味判断（責務の妥当性・npm 系ラッパーの等価判断・
 // メモリ整合）は `/health-check` に残る（cargo フラグ照合は G-hook-commands が機械化済み・#589）。
+// なお `G-workspace-lints` / `G-clippy-disallowed` は文書ではなくリポジトリ規約を見る。責務としては
+// 越境だが、**唯一の検出器であり移す先が無い**ため意図してここに置く（#1088 で帰属見直しを却下）。
 //
 // 契約:
 // - 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻・環境変数に非依存）
@@ -15,13 +17,18 @@
 // - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（沈黙経路の閉塞）
 // - 各検査はスナップショット注入の純関数（scripts/governance-check.test.mjs がフィクスチャで
 //   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する）
-//   - **例外は G-hook-fires ただ 1 つ**: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
+//   - **例外は 2 つある。** (1) G-hook-fires: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
 //     `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
 //     **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
-//     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる
+//     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
+//     (2) G-references: `gitIgnoredPaths` が外部の `git` でチェックアウトの gitignore 設定を読む
+//     （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
+//     テストは fixture のまま走る。読む入力の内訳・機体間の乖離の向きは `gitIgnoredPaths` の JSDoc が
+//     正本（「依存ゼロ」は npm 依存の話であり、`git` はチェックアウトが在る以上どちらの環境にも在る）
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 // G-hook-fires は判定を再実装せず hook の純関数そのものを呼ぶ（理由は同検査のコメント）。
 // post-edit.mjs は import しただけでは main() を走らせない（I13 のガード）。
 import { selectChecks } from "../.claude/hooks/post-edit.mjs";
@@ -399,14 +406,45 @@ export function checkArchitectureTable(snapshot) {
 //   workspace/ 配下でない・`\` を含まない。
 //   → ベア名（`SPEC.md` 等）とランタイム生成物（`config.toml`・`*.bin`・`*.bak`）は構造的に対象外。
 // ---------------------------------------------------------------------------
-export function checkReferences(snapshot, docs) {
+
+/** `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測: 不在の
+ *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）——これが
+ *  「CI に存在しない生成物の名前を散文へバッククォートで書けない」という表記の歪みを解く（#1088）。
+ *  **読むのはチェックアウト内の `.gitignore` だけではない**——`.git/info/exclude` と、ユーザ全体の
+ *  除外ファイル（`core.excludesFile`。未設定なら `$XDG_CONFIG_HOME/git/ignore`、既定
+ *  `~/.config/git/ignore`）も読む。これらはどちらもチェックアウトの外（機体ごとのローカル状態）に
+ *  あり CI のチェックアウトには存在しないので、**免除の面は「手元 ⊇ CI」になりうる**——手元だけで
+ *  免除されるパスがあれば、その回は「手元で緑・CI で赤」が起こる（逆は起きない。CI が手元より
+ *  広く免除することは無い）。実例: `.claude/agent-registry.json` は追跡された `.gitignore` に無いが
+ *  `.git/info/exclude` にあり、この機体では免除される（2026-08-14 実測）。
+ *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合、
+ *  および**候補のいずれか 1 件でもリポジトリ外パス（絶対パス・`..` でツリー外へ出る相対パス）で
+ *  status が 128 になった場合**は空集合を返す——後者は batch 単位の判定ゆえ、1 件の汚染が
+ *  同じ回の他の候補の免除も道連れに落とす（向きは赤側＝安全。何も免除しない側へ倒す）。
+ *  **決定的性**: 同一チェックアウト・同一機体では再現する（ネットワーク・時刻・環境変数に依らない）。
+ *  機体をまたぐ決定性は無い（上記のとおり `.git/info/exclude` 等が機体ごとに違う）。 */
+export function gitIgnoredPaths(paths, root = process.cwd()) {
+  if (paths.length === 0) return new Set();
+  const r = spawnSync("git", ["check-ignore", "--stdin", "-z"], {
+    cwd: root,
+    input: paths.join("\0"),
+    encoding: "utf8",
+  });
+  if (r.error || r.status === 128) return new Set();
+  return new Set(r.stdout.split("\0").filter(Boolean));
+}
+
+export function checkReferences(snapshot, docs, filterIgnored = () => new Set()) {
   const findings = [];
   const fileSet = new Set(snapshot.files);
+  // 実在判定（exists）と ignore 照合（下の candidates）が同じ「文書ディレクトリ基準の正規化」を
+  // 使う——exists はここを呼ぶ（独立した式を 2 つ持つと、片方だけ変えたときに実在判定と
+  // 免除照合がずれ、偽の赤か偽の緑になる）。
+  const docRelative = (doc, ref) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), ref));
   const exists = (doc, ref, { allowSuffix = false } = {}) => {
     const norm = (p) => path.posix.normalize(p);
     if (fileSet.has(norm(ref))) return true; // リポジトリルート基準
-    const rel = norm(path.posix.join(path.posix.dirname(doc), ref)); // 文書ディレクトリ基準
-    if (fileSet.has(rel)) return true;
+    if (fileSet.has(docRelative(doc, ref))) return true; // 文書ディレクトリ基準
     // crate 内相対参照（`lib/types.ts` = ui/src/lib/types.ts、`commands/launch.rs` =
     // src-tauri/src/commands/launch.rs 等）はサフィックス一致で解決する（意図的な近似）。
     // バッククォート参照（`/` 必須の述語 = 2 セグメント以上）に限る——Markdown リンクへ
@@ -415,6 +453,9 @@ export function checkReferences(snapshot, docs) {
     const suffix = `/${norm(ref)}`;
     return !suffix.includes("..") && snapshot.files.some((f) => f.endsWith(suffix));
   };
+  // 実在しなかった参照は**いったん保留する**——ignore 判定を 1 回の spawn に束ねるため（#1088）。
+  // findings の順序は pending の順序がそのまま保つ。
+  const pending = [];
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) {
@@ -429,7 +470,7 @@ export function checkReferences(snapshot, docs) {
         target = target.split("#")[0];
         if (!target) continue; // 純アンカー
         if (!exists(doc, target)) {
-          findings.push(finding(doc, lineNo, `Markdown リンク先が実在しない: ${m[1]}`));
+          pending.push({ doc, lineNo, ref: target, message: `Markdown リンク先が実在しない: ${m[1]}` });
         }
       }
       // (ii) バッククォート内パス様参照
@@ -441,10 +482,17 @@ export function checkReferences(snapshot, docs) {
         if (!REF_EXTENSIONS.test(t)) continue;
         if (t.startsWith("workspace/") || t.startsWith("~")) continue;
         if (!exists(doc, t, { allowSuffix: true })) {
-          findings.push(finding(doc, lineNo, `バッククォート参照のパスが実在しない: ${t}`));
+          pending.push({ doc, lineNo, ref: t, message: `バッククォート参照のパスが実在しない: ${t}` });
         }
       }
     }
+  }
+  // ルート基準と文書ディレクトリ基準の**両方**を候補に出す（散文がどちらの形で書くかは選べない）
+  const candidates = pending.flatMap((p) => [p.ref, docRelative(p.doc, p.ref)]);
+  const ignored = filterIgnored([...new Set(candidates)]);
+  for (const p of pending) {
+    if (ignored.has(p.ref) || ignored.has(docRelative(p.doc, p.ref))) continue;
+    findings.push(finding(p.doc, p.lineNo, p.message));
   }
   return findings;
 }
@@ -2084,7 +2132,7 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-module-index", run: () => checkModuleIndex(snapshot) },
     { id: "G-module-linkage", run: () => checkModuleLinkage(snapshot) },
     { id: "G-architecture-table", run: () => checkArchitectureTable(snapshot) },
-    { id: "G-references", run: () => checkReferences(snapshot, docs) },
+    { id: "G-references", run: () => checkReferences(snapshot, docs, gitIgnoredPaths) },
     { id: "G-spec-sections", run: () => checkSpecSections(snapshot, docs) },
     { id: "G-build-commands", run: () => checkBuildCommands(snapshot) },
     { id: "G-workspace-lints", run: () => checkWorkspaceLints(snapshot) },
@@ -2094,7 +2142,6 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-skill-table", run: () => checkSkillTable(snapshot) },
     { id: "G-hook-commands", run: () => checkHookCommands(snapshot) },
     { id: "G-hook-fires", run: () => checkHookFires(snapshot) },
-    { id: "G-area-instrument", run: () => checkNormativeAreaInstrument(snapshot) },
     { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
     { id: "G-adr-file-names", run: () => checkAdrFileNames(snapshot) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
@@ -2120,6 +2167,10 @@ export function runAll(snapshot) {
   if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
   if (ctx.staleGuides.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の開発ガイド（docs/**）が 0 件（母集団の欠落）"));
   for (const c of checks) findings.push(...c.run());
+  // 計器は検査ではない——面積に合否は無い（`ADR-retire-area-budget`）ので「検査 N 件」に数えない。
+  // ただし母集団が欠ければ下の evidence が嘘になるため、入力の健全性だけは findings に残す
+  // （空母集団の明示 fail と同じ役割・検査配列の外に置く理由がこれである）。
+  findings.push(...checkNormativeAreaInstrument(snapshot));
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;

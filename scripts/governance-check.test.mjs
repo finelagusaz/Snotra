@@ -16,6 +16,7 @@ import {
   checkModuleLinkage,
   declaredModuleFiles,
   checkArchitectureTable,
+  gitIgnoredPaths,
   checkReferences,
   checkSpecSections,
   checkBuildCommands,
@@ -356,6 +357,25 @@ describe("G-architecture-table checkArchitectureTable", () => {
   });
 });
 
+describe("gitIgnoredPaths（存在に依らずパス名で判定する・#1088）", () => {
+  it("ignore 対象は不在でも返り、非 ignore は返らない", () => {
+    const got = gitIgnoredPaths([
+      "test-results/never-created.json",
+      ".claude/settings.local.json",
+      "docs/nonexistent-typo.md",
+    ]);
+    expect(got.has("test-results/never-created.json")).toBe(true);
+    expect(got.has(".claude/settings.local.json")).toBe(true);
+    expect(got.has("docs/nonexistent-typo.md"), "非 ignore の typo が緑に化けている").toBe(false);
+  });
+  it("該当なし（git の exit 1）は失敗ではなく空集合", () => {
+    expect(gitIgnoredPaths(["docs/nonexistent-typo.md"])).toEqual(new Set());
+  });
+  it("空入力は空集合を返す", () => {
+    expect(gitIgnoredPaths([])).toEqual(new Set());
+  });
+});
+
 describe("G-references checkReferences", () => {
   it("緑: 実在するリンクとパス参照", () => {
     const s = snap({
@@ -415,6 +435,45 @@ describe("G-references checkReferences", () => {
   it("コードフェンス内の参照は検査しない", () => {
     const s = snap({ "AGENTS.md": "```bash\ncat docs/gone.md\n`docs/gone2.md`\n```\n" });
     expect(checkReferences(s, ["AGENTS.md"])).toEqual([]);
+  });
+  // --- gitignore の 3 分類（#1088）---
+  // 実在する → 緑 / 実在しないが ignore 対象 → 緑 / どちらでもない → 赤
+  it("実在しないが ignore 対象なら緑（生成物・ローカル設定を意図して指している）", () => {
+    const s = snap({ "AGENTS.md": "実行の記録は `test-results/.last-run.json` に出る\n" });
+    const ignored = () => new Set(["test-results/.last-run.json"]);
+    expect(checkReferences(s, ["AGENTS.md"], ignored)).toEqual([]);
+  });
+  it("実在せず ignore 対象でもなければ赤のまま（typo の検出という本来の目的）", () => {
+    const s = snap({ "AGENTS.md": "`docs/typo-nonexistent.md` を見よ\n" });
+    const f = checkReferences(s, ["AGENTS.md"], () => new Set());
+    expect(f.some((x) => x.message.includes("docs/typo-nonexistent.md"))).toBe(true);
+  });
+  it("既定引数は何も免除しない（注入を忘れた経路は緑でなく赤へ倒れる）", () => {
+    const s = snap({ "AGENTS.md": "`test-results/.last-run.json` を見よ\n" });
+    expect(checkReferences(s, ["AGENTS.md"])).toHaveLength(1);
+  });
+  it("文書ディレクトリ基準の候補も判定へ渡る", () => {
+    const s = snap({ "docs/a.md": "`gen/out.json` に出る\n" });
+    const seen = [];
+    const ignored = (paths) => {
+      seen.push(...paths);
+      return new Set(paths.filter((p) => p === "docs/gen/out.json"));
+    };
+    expect(checkReferences(s, ["docs/a.md"], ignored)).toEqual([]);
+    expect(seen, "ルート基準の候補も渡っていない").toContain("gen/out.json");
+  });
+  it("Markdown リンクにも同じ 3 分類が当たる", () => {
+    const s = snap({ "AGENTS.md": "[記録](test-results/.last-run.json)\n" });
+    expect(checkReferences(s, ["AGENTS.md"], () => new Set(["test-results/.last-run.json"]))).toEqual([]);
+  });
+  it("filterIgnored の呼び出しは 1 回（spawn を束ねる構造の固定）", () => {
+    const s = snap({ "AGENTS.md": "`docs/x1.md` と `docs/x2.md` と [y](docs/x3.md)\n" });
+    let calls = 0;
+    checkReferences(s, ["AGENTS.md"], (paths) => {
+      calls += 1;
+      return new Set(paths);
+    });
+    expect(calls).toBe(1);
   });
 });
 
@@ -1092,6 +1151,14 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
     const { findings } = runAll(s);
     expect(findings.length).toBeGreaterThan(0);
   });
+  it("計器（G-area-instrument）は検査配列に無い——面積に合否は無い（ADR-retire-area-budget）", () => {
+    const ids = buildChecks(snap({}), {}).map((c) => c.id);
+    expect(ids).not.toContain("G-area-instrument");
+  });
+  it("それでも計器の母集団欠落は runAll の findings に残る（検査配列の外でも沈黙しない）", () => {
+    const { findings } = runAll(snap({}));
+    expect(findings.some((f) => f.message.includes("G-area-instrument 母集団の欠落"))).toBe(true);
+  });
 });
 
 describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない計器・母集団だけを判定・ADR-retire-area-budget）", () => {
@@ -1619,6 +1686,21 @@ describe("G-stale-identifiers の凍結フィクスチャ（#984 の実在の欠
 
   it("緑の対: 同じ形で末尾セグメントが語彙に在れば鳴らない", () => {
     expect(checkStaleIdentifiers(snap({ ...SRC, [DOC]: LINE("from_material") }), [DOC])).toEqual([]);
+  });
+});
+
+// `checkReferences` の既定引数は「何も免除しない」ので、`buildChecks` が実物を渡し忘れると
+// gitignore 済みファイルの誤爆が戻る（#1088 で解いた当の欠陥）。この describe だけがそれを縛る。
+describe("G-references の配線（buildChecks が gitignore 判定を渡す）", () => {
+  const wired = (contents) => buildChecks(snap(contents), {}).find((c) => c.id === "G-references").run();
+  it("ignore 対象の不在パスは buildChecks 経由で緑になる", () => {
+    // `AGENTS.md` は governanceDocs の母集団に入る（固定パス）
+    const f = wired({ "AGENTS.md": "記録は `test-results/.last-run.json` に出る\n" });
+    expect(f.filter((x) => x.message.includes("test-results/.last-run.json"))).toEqual([]);
+  });
+  it("非 ignore の typo は buildChecks 経由でも赤（免除が広がっていない）", () => {
+    const f = wired({ "AGENTS.md": "`docs/typo-nonexistent.md` を見よ\n" });
+    expect(f.some((x) => x.message.includes("docs/typo-nonexistent.md"))).toBe(true);
   });
 });
 

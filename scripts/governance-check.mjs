@@ -2125,7 +2125,6 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-skill-table", run: () => checkSkillTable(snapshot) },
     { id: "G-hook-commands", run: () => checkHookCommands(snapshot) },
     { id: "G-hook-fires", run: () => checkHookFires(snapshot) },
-    { id: "G-area-instrument", run: () => checkNormativeAreaInstrument(snapshot) },
     { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
     { id: "G-adr-file-names", run: () => checkAdrFileNames(snapshot) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
@@ -2151,6 +2150,10 @@ export function runAll(snapshot) {
   if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
   if (ctx.staleGuides.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の開発ガイド（docs/**）が 0 件（母集団の欠落）"));
   for (const c of checks) findings.push(...c.run());
+  // 計器は検査ではない——面積に合否は無い（`ADR-retire-area-budget`）ので「検査 N 件」に数えない。
+  // ただし母集団が欠ければ下の evidence が嘘になるため、入力の健全性だけは findings に残す
+  // （空母集団の明示 fail と同じ役割・検査配列の外に置く理由がこれである）。
+  findings.push(...checkNormativeAreaInstrument(snapshot));
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;

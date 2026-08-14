@@ -1151,6 +1151,14 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
     const { findings } = runAll(s);
     expect(findings.length).toBeGreaterThan(0);
   });
+  it("計器（G-area-instrument）は検査配列に無い——面積に合否は無い（ADR-retire-area-budget）", () => {
+    const ids = buildChecks(snap({}), {}).map((c) => c.id);
+    expect(ids).not.toContain("G-area-instrument");
+  });
+  it("それでも計器の母集団欠落は runAll の findings に残る（検査配列の外でも沈黙しない）", () => {
+    const { findings } = runAll(snap({}));
+    expect(findings.some((f) => f.message.includes("G-area-instrument 母集団の欠落"))).toBe(true);
+  });
 });
 
 describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない計器・母集団だけを判定・ADR-retire-area-budget）", () => {

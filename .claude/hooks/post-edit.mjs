@@ -152,6 +152,21 @@ export function selectChecks(rel) {
   // 「セーフティネットそのものを編集したらセーフティネットを検査する」が適用される（#484）。
   if (rel.startsWith(".githooks/")) checks.push("githooks-selftest");
 
+  // .claude/lsp/ は Claude Code の rust-analyzer インスタンスへ渡す設定（#1083）。**設定が届かない・
+  // 上書きされる壊れ方は沈黙する**のでここに置く——RA は設定が無ければ既定値で普通に起動し、
+  // navigation は動いたまま checkOnSave だけが復活する。`claude plugin validate` も .lsp.json を
+  // 視界に入れない（実測）。壊れ方の分類は docs/hooks.md「Claude Code の RA インスタンスと
+  // hook の分担」が正本で、検証は lsp-config.test.mjs のカナリアが担う（hook-selftest が回す）。
+  //
+  // rust-analyzer.toml も同じカナリアの被検査対象である——ratoml はクライアント設定より優先される
+  // ので、ここへ checkOnSave / diagnostics.* を書くと plugin の設定が黙って無効化される。
+  // **basename でアンカーする**のは crate 直下の ratoml も local 水準で効くためで、判定側
+  // （checkLspConfig）もツリー内の全 rust-analyzer.toml を読む——発火と母集団を揃えないと、
+  // hook が走ったのに別のファイルを見て緑になる。
+  if (rel.startsWith(".claude/lsp/") || /(^|\/)rust-analyzer\.toml$/.test(rel)) {
+    checks.push("hook-selftest");
+  }
+
   return checks;
 }
 

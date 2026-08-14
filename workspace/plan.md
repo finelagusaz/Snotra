@@ -55,7 +55,7 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
 
 ### Phase 1 — plugin の器と配線
 
-- [ ] `.claude/lsp/.claude-plugin/marketplace.json` を作る（スクラッチで validate 済みの形）
+- [x] `.claude/lsp/.claude-plugin/marketplace.json` を作る（スクラッチで validate 済みの形）
 
   ```json
   { "name": "snotra",
@@ -65,8 +65,8 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
                    "description": "...", "version": "1.0.0", "author": { "name": "Snotra" } } ] }
   ```
 
-- [ ] `.claude/lsp/snotra-rust-lsp/.claude-plugin/plugin.json` を作る（`name` / `description` / `version` / `author`）
-- [ ] `.claude/lsp/snotra-rust-lsp/.lsp.json` を作る
+- [x] `.claude/lsp/snotra-rust-lsp/.claude-plugin/plugin.json` を作る（`name` / `description` / `version` / `author`）
+- [x] `.claude/lsp/snotra-rust-lsp/.lsp.json` を作る
 
   ```json
   { "rust-analyzer": {
@@ -79,7 +79,7 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
 
   **入れ子で書く**（dotted key ではない）。RA の内部識別子は `workspace_symbol_search_kind` / `cargo_targetDir` で、dotted 形の文字列はバイナリに literal として存在しない（`config_data!` が実行時に `_` → `.` で組み立てる）ため、**文字列の有無では入れ子か dotted かを決められなかった**。ratoml の TOML 表現・issue のスニペット（`diagnostics.enable` を `{"diagnostics":{"enable":false}}` と書いている）と揃えて入れ子を採り、**効いたかどうかは PR 本文の挙動プローブで測る**（F と同型の「入れたのに効かない」を沈黙で再演させない）。
 
-- [ ] `.claude/settings.json` に配線を足す。**`claude plugin marketplace add` は使わない**——絶対パスを書き込むため（証拠 C-2）。相対パスで手書きする
+- [x] `.claude/settings.json` に配線を足す。**`claude plugin marketplace add` は使わない**——絶対パスを書き込むため（証拠 C-2）。相対パスで手書きする
 
   ```json
   "extraKnownMarketplaces": {
@@ -89,13 +89,13 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
     "rust-analyzer-lsp@claude-plugins-official": false, ... }
   ```
 
-- [ ] `claude plugin validate .claude/lsp --strict` と `claude plugin validate .claude/lsp/snotra-rust-lsp --strict` が exit 0 になることを確認する（マニフェスト 2 枚の妥当性はここまで。`.lsp.json` はこの検証器の視界の外・下記 Phase 2）
+- [x] `claude plugin validate .claude/lsp --strict` と `claude plugin validate .claude/lsp/snotra-rust-lsp --strict` が exit 0 になることを確認する（マニフェスト 2 枚の妥当性はここまで。`.lsp.json` はこの検証器の視界の外・下記 Phase 2）
 
 ### Phase 2 — 機械検査（カナリア）
 
 **`.lsp.json` は native の検証器に守られない**（実測: 壊しても `✔ Validation passed`）。この 1 枚が沈黙で腐る唯一の経路なので、自前のカナリアで縛る。
 
-- [ ] `post-edit.mjs` の `selectChecks` に分岐を足す（`CHECK_DEFINITION` には入れない——あれは「検査の定義を変えるファイル」の集合であり、意味が違う）
+- [x] `post-edit.mjs` の `selectChecks` に分岐を足す（`CHECK_DEFINITION` には入れない——あれは「検査の定義を変えるファイル」の集合であり、意味が違う）
 
   ```js
   // Claude Code の RA インスタンスの設定。抑制キーが消えても、二重 LSP に戻っても、
@@ -103,10 +103,10 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
   if (rel.startsWith(".claude/lsp/")) checks.push("hook-selftest");
   ```
 
-- [ ] **判定を `.claude/hooks/lsp-config.mjs`（非 test）へ、テストを `.claude/hooks/lsp-config.test.mjs` へ分ける。** 分割には**独立した 2 つの理由**がある
+- [x] **判定を `.claude/hooks/lsp-config.mjs`（非 test）へ、テストを `.claude/hooks/lsp-config.test.mjs` へ分ける。** 分割には**独立した 2 つの理由**がある
   - (i) 稼働中のガードへ変異を当てずに済む（`safety-nets.md`「複製に変異を当てる」）
   - (ii) **`G-stale-identifiers` の語彙源になる**（実測: `governance-check.mjs:1518` の `VOCAB_SOURCE_EXT` に `.json` は入らず、`:1522` の `VOCAB_TEST_FILE` が `*.test.mjs` を語彙源から外す）。`checkOnSave` / `initializationOptions` / `extensionToLanguage` / `lspServers` / `extraKnownMarketplaces` / `enabledPlugins` はどれも**現行語彙に無い**ので、判定を test ファイルにだけ置くと `docs/hooks.md` にキー名を書いた瞬間に `governance:check` が赤くなる。**キー名は文字列リテラルとしてコードに現れること**——`currentVocabulary` は `.mjs` のコメントを落とす（`:1599`）
-- [ ] `checkLspConfig(rootDir)` は**リポジトリ root を引数で受ける**——これで (a) 実リポジトリを指す薄いテスト 1 本と (b) temp へ複製した木へ変異を当てるテスト群、の 2 層に分けられる。稼働中の `.claude/settings.json` へ変異を当てずに済み（`safety-nets.md`「稼働中のガードを弱めない——複製に変異を当てる」）、worktree での cwd 依存も同時に消える。`vitest.config.ts` の include は `.claude/hooks/**/*.test.mjs`（実測）なので `hook-selftest` と CI の `npm test` の両方が自動で拾う
+- [x] `checkLspConfig(rootDir)` は**リポジトリ root を引数で受ける**——これで (a) 実リポジトリを指す薄いテスト 1 本と (b) temp へ複製した木へ変異を当てるテスト群、の 2 層に分けられる。稼働中の `.claude/settings.json` へ変異を当てずに済み（`safety-nets.md`「稼働中のガードを弱めない——複製に変異を当てる」）、worktree での cwd 依存も同時に消える。`vitest.config.ts` の include は `.claude/hooks/**/*.test.mjs`（実測）なので `hook-selftest` と CI の `npm test` の両方が自動で拾う
 
   検査する不変条件は次の 5 つ（**実ファイルを読む**——期待値の写しを持たない）
 
@@ -118,13 +118,13 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
   6. **`.lsp.json` 以外の 2 か所に `lspServers` が書かれていない**（`plugin.json` と marketplace entry）。**`.lsp.json` は 3 つの宣言箇所のうち優先度が最も低い**——`cJt` は `.lsp.json` を読んだ後に `Object.assign(n, manifest.lspServers)` で**上書きする**（自分でバイナリを読んで確認済み）。正本を 1 か所に定めるなら、残り 2 か所が黙って勝つ経路を塞ぐ必要がある
   7. **名前が一致している**——`marketplace.json` の `name` ／ `extraKnownMarketplaces` のキー ／ `enabledPlugins` キーの `@` 以降、および `plugin.json` の `name` ／ entry の `name` ／ `enabledPlugins` キーの `@` 以前。バイナリ逐語: *"Marketplace name. Must match the extraKnownMarketplaces key (enforced)"*。**ずれると LSP が上がらないだけで、エラーは debug log にしか出ない**
   8. `rust-analyzer.toml` が `checkOnSave` も `diagnostics` も書いていない（**クライアント非対称性の土台**——ratoml は workspace / local 水準でクライアント設定を上書きするので、ここへ書かれた瞬間に plugin の設定が黙って無効化され、しかも VS Code 側にも波及する。証拠 D）
-- [ ] `post-edit.test.mjs` に `selectChecks(".claude/lsp/snotra-rust-lsp/.lsp.json") === ["hook-selftest"]` を足す
-- [ ] `.claude/rules/safety-nets.md` の frontmatter `paths` に `".claude/lsp/**"` を足す。**Phase 1 より後でなければならない**——`G-rules-globs` は各 glob が**実在ファイルに 1 件以上マッチする**ことを要求する（`scripts/governance-check.mjs:805`）。ファイルを作る前に glob を足すと赤くなる
-- [ ] `docs/hooks.md` の発火一覧へ 1 行足す（**実在する具体パス 1 件**が要件・`G-hook-fires` が検査する）
+- [x] `post-edit.test.mjs` に `selectChecks(".claude/lsp/snotra-rust-lsp/.lsp.json") === ["hook-selftest"]` を足す
+- [x] `.claude/rules/safety-nets.md` の frontmatter `paths` に `".claude/lsp/**"` を足す。**Phase 1 より後でなければならない**——`G-rules-globs` は各 glob が**実在ファイルに 1 件以上マッチする**ことを要求する（`scripts/governance-check.mjs:805`）。ファイルを作る前に glob を足すと赤くなる
+- [x] `docs/hooks.md` の発火一覧へ 1 行足す（**実在する具体パス 1 件**が要件・`G-hook-fires` が検査する）
 
   | `.claude/lsp/snotra-rust-lsp/.lsp.json` | `hook-selftest` | `.claude/lsp/**` 全体 |
 
-- [ ] **不変条件の足ごとに変異を当て、カナリアが赤くなることを実測する**（#858: 足が複数あるとき、どの足が欠けても赤くなるとは限らない）。**変異はすべて temp へ複製した木に当てる**——稼働中の `.claude/settings.json` と `.lsp.json` には触れない
+- [x] **不変条件の足ごとに変異を当て、カナリアが赤くなることを実測する**（#858: 足が複数あるとき、どの足が欠けても赤くなるとは限らない）。**変異はすべて temp へ複製した木に当てる**——稼働中の `.claude/settings.json` と `.lsp.json` には触れない
   1. `.lsp.json` から `initializationOptions.checkOnSave` を消す（足 3・前半）
   1b. `.lsp.json` から `initializationOptions.workspace.symbol.search` を消す（足 3・後半。**同じ足でも枝が 2 本あるので別々に測る**）
   2. `.lsp.json` を JSON として壊す（足 1）
@@ -134,9 +134,9 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
   6. `plugin.json` に `lspServers` を足して `.lsp.json` と矛盾させる（足 6・**正本が黙って負ける**形）
   7. `marketplace.json` の `name` を `extraKnownMarketplaces` のキーとずらす（足 7・**沈黙で load されない**形）
   8. `rust-analyzer.toml` に `checkOnSave = false` を足す（足 8・**設定は正しく見えるのに ratoml が上書きしている**形）
-- [ ] 9 変異それぞれで赤くなり、無変異の複製では緑になることを確認する（**発火しない向きも測る**——変異が本来の回帰より強くて赤くなっているのではないことの検算）
+- [x] 9 変異それぞれで赤くなり、無変異の複製では緑になることを確認する（**発火しない向きも測る**——変異が本来の回帰より強くて赤くなっているのではないことの検算）
 
-- [ ] `.lsp.json` に `settings`（`workspace/didChangeConfiguration` 経由）を**書かない**と明示する。`initializationOptions` と役割が重なるうえ、`settings` を書くと `workspace/configuration` capability が true になり、RA が設定を pull できる経路が開いて決定論性が落ちる（証拠 A）
+- [x] `.lsp.json` に `settings`（`workspace/didChangeConfiguration` 経由）を**書かない**と明示する。`initializationOptions` と役割が重なるうえ、`settings` を書くと `workspace/configuration` capability が true になり、RA が設定を pull できる経路が開いて決定論性が落ちる（証拠 A）
 
 **検査の層は 1 枚に留める（`docs/development-principles.md`「検証の層と、層と層の隙間」を通した結果）**
 
@@ -148,20 +148,29 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
 
 ### Phase 3 — `rust-analyzer.toml` のコメント訂正
 
-- [ ] `[cargo] targetDir` の検算コメントから双条件を外し、**測定事実だけ**を書く（機序へ踏み込まない）
+- [x] `[cargo] targetDir` の検算コメントから双条件を外し、**測定事実だけ**を書く（機序へ踏み込まない）
   - `target/rust-analyzer/` は RA の `cargo check` だけでなく build script / proc-macro build にも使われるので、**育っても** cargo work の存在までしか言えない
   - **2026-08-14 の実測**: flycheck は実際に走っている（`target/flycheck0/stdout` が `cargo check --message-format=json` の生出力）が、その artifact は `target/debug/` にあり `target/rust-analyzer/` は不在。**この設定は Claude Code の RA には効いていない**
   - **同じ実測が `[workspace.symbol.search]` にも当たる**（`workspaceSymbol("config")` が Struct / Enum だけを返す）。**独立な 2 キーの不発ゆえ、このファイル全体が Claude Code の RA へ届いていない**と読める。**機序は未確定**
   - 判定の手段は「ディレクトリが出来たか」ではなく**挙動プローブ**である（`workspaceSymbol` に Function が混ざるか・`target/flycheck0/stdout` の mtime が編集後に動くか）
-- [ ] `checkOnSave` を切っても `targetDir` の価値（build script / proc-macro build と通常 `target/` のロック分離）が残ることを書く
-- [ ] **このファイルは消さない・値も動かさない。** 機序が未確定なまま撤去すると、届くようになったときに workspace 水準の解決順で plugin を上書きする世界が黙って戻る。現状の値は plugin へ入れる値と同じ向きなので衝突せず、足 6 のカナリアがその世界も守る
-- [ ] 「以下は入れない側」の節へ 1 行足す: **`checkOnSave` / `diagnostics.*` をこのファイルへ書くと、workspace / local 水準ゆえ plugin の `initializationOptions` を上書きし、しかも VS Code 側にも掛かる**（証拠 D）
+- [x] `checkOnSave` を切っても `targetDir` の価値（build script / proc-macro build と通常 `target/` のロック分離）が残ることを書く
+- [x] **このファイルは消さない・値も動かさない。** 機序が未確定なまま撤去すると、届くようになったときに workspace 水準の解決順で plugin を上書きする世界が黙って戻る。現状の値は plugin へ入れる値と同じ向きなので衝突せず、足 6 のカナリアがその世界も守る
+- [x] 「以下は入れない側」の節へ 1 行足す: **`checkOnSave` / `diagnostics.*` をこのファイルへ書くと、workspace / local 水準ゆえ plugin の `initializationOptions` を上書きし、しかも VS Code 側にも掛かる**（証拠 D）
 
 ### Phase 4 — 文書整合
 
-- [ ] `docs/hooks.md` に「Claude Code の RA インスタンスと hook の分担」節を置く（**この分担の正本はここ 1 か所**。`.lsp.json` は JSON でコメントを持てないため、カナリアのコメントからこの見出しを参照する）
-- [ ] `npm run governance:check` を通す（新規ファイルを含むので必須・`pr-governance-check-before-pr`）
-- [ ] `npx vitest run .claude/hooks` が緑であることを確認する
+- [x] `docs/hooks.md` に「Claude Code の RA インスタンスと hook の分担」節を置く（**この分担の正本はここ 1 か所**。`.lsp.json` は JSON でコメントを持てないため、カナリアのコメントからこの見出しを参照する）
+- [x] `npm run governance:check` を通す（新規ファイルを含むので必須・`pr-governance-check-before-pr`）
+- [x] `npx vitest run .claude/hooks` が緑であることを確認する
+
+### 実装中に判明した計画外の作業（すべて完了）
+
+- [x] **`checkLspConfig` の母集団を「ツリー内の全 `rust-analyzer.toml`」へ広げる**（`findRatomlFiles` を新設）。code-reviewer の H-1 は `selectChecks` を basename でアンカーせよという指摘だったが、それだけ入れると `snotra-core/rust-analyzer.toml` で**hook が走ったのに判定は root しか見ず緑**になる。割り当てられたファイルの緑は「合格」を意味するので沈黙より悪い——発火と判定の母集団を揃えた
+- [x] **ratoml 検査を配送経路の検査より前へ移す**（M-1）。前段の早期 return に道連れにされ、多重故障のとき報告から消えていた。独立性の回帰テストも足した
+- [x] **引用キー `"checkOnSave" = false` の偽陰性を閉じる**（M-2）。TOML として正当な構文が素通りしていた。行末コメントの偽陽性も `governance-check.mjs` の toml 先例に合わせて解消
+- [x] **故障注入を 14 → 22 本へ**。`/symmetric-check` が 2 本（真偽の対・名前の対の片枝）、code-reviewer の `if (false)` 注入が 3 本（`extraKnownMarketplaces` 検査・entry 実在検査・サーバ数検査が誰にも縛られていなかった）、残りは L-2 と ratoml の 2 形
+- [x] **「壊れ方がどれも沈黙する」という偽の全称を限定する**（M-3）。反例は計画自身の異常系に在った（load 失敗は navigation の消失として現れる）。`docs/hooks.md` を 2 分類の表に開き、写し 4 か所は主張を限定して正本の見出しへの参照に落とした
+- [x] `.claude/settings.local.json` が project より優先されることを残余として記録（⚠️-2）
 
 ## 不変条件と異常系
 

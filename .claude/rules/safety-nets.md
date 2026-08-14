@@ -3,6 +3,7 @@ paths:
   - ".claude/hooks/**"
   - ".githooks/**"
   - ".claude/settings.json"
+  - ".claude/lsp/**"
   - ".github/workflows/**"
   - ".claude/rules/**"
   - ".claude/skills/**"

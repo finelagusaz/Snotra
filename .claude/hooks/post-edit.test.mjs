@@ -150,7 +150,26 @@ describe("selectChecks", () => {
     expect(selectChecks(".claude/hooks/post-edit.test.mjs")).toEqual(["hook-selftest"]);
   });
 
-  it(".claude 配下でも hooks 以外は発火しない", () => {
+  // Claude Code の rust-analyzer インスタンスへ渡す設定（#1083）。設定が届かない・上書きされる
+  // 壊れ方は沈黙する（RA は既定値で起動する）ので、hook-selftest のカナリアで縛る。
+  // 壊れ方の分類は docs/hooks.md「Claude Code の RA インスタンスと hook の分担」が正本。
+  it(".claude/lsp/ は hook-selftest を発火する", () => {
+    expect(selectChecks(".claude/lsp/snotra-rust-lsp/.lsp.json")).toEqual(["hook-selftest"]);
+    expect(selectChecks(".claude/lsp/.claude-plugin/marketplace.json")).toEqual(["hook-selftest"]);
+  });
+
+  // ratoml はカナリアの被検査対象そのものなので、編集したらカナリアが走らねばならない。
+  // basename アンカーゆえ crate 直下も拾う（判定側も全 ratoml を読む・母集団が揃っている）。
+  it("rust-analyzer.toml は階層を問わず hook-selftest を発火する", () => {
+    expect(selectChecks("rust-analyzer.toml")).toEqual(["hook-selftest"]);
+    expect(selectChecks("snotra-core/rust-analyzer.toml")).toEqual(["hook-selftest"]);
+    // 紛らわしい名前は拾わない（basename 一致であって部分一致ではない）
+    expect(selectChecks("docs/rust-analyzer.toml.md")).toEqual([]);
+  });
+
+  // 題を「hooks 以外は発火しない」から改めた（#1083）。`.claude/lsp/` が加わって全称が偽になり、
+  // 主張より広い題は、次に読む者を「ここは何も走らない」という誤りへ導く。
+  it(".claude/skills/ と settings.local.json は発火しない", () => {
     expect(selectChecks(".claude/skills/implement/SKILL.md")).toEqual([]);
     expect(selectChecks(".claude/settings.local.json")).toEqual([]);
   });

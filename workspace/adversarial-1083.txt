@@ -1,0 +1,381 @@
+敵対的検証: research.md（#1083 rust-analyzer plugin 分離）
+検証日時: 2026-08-14
+検証者: 敵対的レビュー担当（team-lead から委譲）
+方針: 同意ではなく反証。壊せた項目と壊せなかった項目を両方宣言する。
+
+============================================================
+総括
+============================================================
+
+research.md の核となる技術的主張（P1〜P4 の骨格）は、claude.exe バイナリの直接抽出と
+rust-analyzer 公式ソース（GitHub master）の照合により、**ほぼすべて独立に再現・強化確認できた**。
+壊せなかった。
+
+一方で、**research.md 自身が「未測定」「未解決」と書いた箇所に、今回の検証で実測値が得られた**。
+その実測値は research.md の楽観的な仮定（案 A の効果は後で測ればよい）を裏切る方向に倒れている。
+これは既存の主張を「壊す」というより、research.md が意図的に開けたままにした問いを埋めて、
+GO 判断の前提を変える発見である。最重要点を先に書く:
+
+  【新発見】このセッション自身が起動した rust-analyzer（後述のプロセス系譜で確認）が、
+  つい先ほど（本検証実行時刻の直前）cargo check（flycheck）を実行し、その出力が
+  `target/debug/` に書かれていた。`rust-analyzer.toml` には既に `[cargo] targetDir = true`
+  が設定済み（2026-08-13 19:25 のコミットで導入。#1083 の提案より前、既に main にマージ済み）
+  にもかかわらず、である。`target/rust-analyzer/` は今回も確認したとおり不在のまま。
+  → 「target/rust-analyzer/ の有無で効果を判定する」という rust-analyzer.toml のコメント自身の
+    検算手段が、**実際に測ってみると「効いていない」ことを示す**。research.md の Evidence E は
+    これを「未測定」と留保していたが、実測すると留保では済まない。P5 の項目で詳述。
+
+============================================================
+母集団ごとの判定（壊せた／壊せなかった）
+============================================================
+
+--- 測定環境 ---
+
+[壊せなかった] Claude Code 2.1.232 / GIT_SHA a640e968
+  検証: `claude.exe --version` を独立に実行 → `2.1.232 (Claude Code)`。
+  `CLAUDE_CODE_EXECPATH=C:\Users\Eoh\.local\bin\claude.exe` とも一致。
+  偽にする手順: `"/c/Users/Eoh/.local/bin/claude.exe" --version` を再実行し不一致を見る。
+
+  ⚠️ ただし環境変数 `AI_AGENT=claude-code_2-1-229_agent` は **2.1.229**（1 世代前）を指しており、
+  `.local/share/claude/versions/` には 2.1.229 / 2.1.231 / 2.1.232 の 3 バージョンがキャッシュ
+  されている。バイナリ内の該当コードを読むと、この値はプロセス起動系譜のどこかで一度セットされた
+  自己申告タグであり（`process.env.AI_AGENT.startsWith("claude-code_")` なら上書きするロジックが
+  ある）、実行バイナリのバージョンそのものではない。実際に使われているバイナリは
+  `CLAUDE_CODE_EXECPATH` と `--version` の両方が指す 2.1.232 で一致しており、この ⚠️ は
+  「調べたバイナリが実行中のものと違う」という懸念を裏付けはしなかったが、**エージェント
+  オーケストレーション層でバージョンタグが古いまま伝播する経路がある**ことは実測できた。
+  偽にする手順: `env | grep AI_AGENT` を子セッションと親セッションの両方で比較する。
+
+[壊せなかった] rust-analyzer 1.97.1 (8bab26f4 2026-07-14)
+  検証: `rust-analyzer --version` 実行、および `where rust-analyzer` が指す
+  `C:\Users\Eoh\.cargo\bin\rust-analyzer.exe` を直接実行。両方とも同一バージョン文字列。
+  偽にする手順: 同上コマンドの再実行。
+
+[壊せなかった] user ratoml 不在（`%APPDATA%/rust-analyzer/` ごと無い）
+  検証: `ls "/c/Users/Eoh/AppData/Roaming/rust-analyzer"` → ENOENT を独立に再現。
+  偽にする手順: 同コマンド再実行。
+
+[壊せなかった（文字どおりは真）だが解釈が崩れる] `target/rust-analyzer/` 不在
+  検証: `ls target/rust-analyzer` → ENOENT を再確認。
+  しかし `target/` 直下に **`flycheck0/`**（`stdout` 435KB, `stderr` 3.5KB、両方とも
+  本検証実行時刻の直前に更新）を発見。中身は `cargo check --message-format=json` の
+  生出力そのもの（`"reason":"compiler-artifact"` / `Check { test: false }` を含む
+  cargo のフィンガープリントログ）。リポジトリ全体を grep しても `flycheck0` という文字列は
+  スクリプト等どこにも現れない（0 件）→ Snotra 側のカスタム target ではなく、
+  rust-analyzer 自身の flycheck 実装が生成した既知の命名パターンと判断できる。
+  → 直接の意味: **flycheck（cargo check on save 相当）は実際に走っている**。研究が
+    「未測定」とした問い（未解決の疑問 2）に対する実測値がすでに手元にあった。
+  → 間接の意味: **走った flycheck の出力は `target/debug/` へ書かれており、
+    `target/rust-analyzer/` ではない**。つまり既にマージ済みの `[cargo] targetDir = true`
+    は、この瞬間、意図どおりに効いていない。
+  偽にする手順: `Get-Item target/flycheck0/stdout | Select LastWriteTime` を取り直し、
+  検証時刻との近さを確認する。stdout の中身が `--message-format=json` の cargo check
+  artifact であることを再度確認する（`head -c 500 target/flycheck0/stdout`）。
+
+--- プロセス系譜（research.md には無い、今回追加した実測） ---
+
+[新規実測・強い証拠] このセッションが起動した rust-analyzer が今まさに動いている
+  検証: `Get-Process rust-analyzer` で 2 プロセスを検出:
+    PID 19952: `C:\Users\Eoh\.cargo\bin\rust-analyzer.exe`（`where rust-analyzer` と同一パス）
+    PID  8844: `C:\Users\Eoh\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rust-analyzer.exe`
+  `Get-CimInstance Win32_Process` で親子関係を確認:
+    PID 19952 の ParentProcessId = **1520**（= このセッションの `$CLAUDE_PID`）
+    PID  8844 の ParentProcessId = 19952
+  → `.cargo/bin/rust-analyzer.exe` は実バイナリと bytewise で異なり（`cmp` で確認）、
+    rustup 系の薄いプロキシシムであり、実体（.rustup 配下）を子プロセスとして再exec する。
+    したがって「二重起動」ではなく単一の論理インスタンス。
+  → 結論: **公式 plugin の `command: "rust-analyzer"`（PATH 解決）で Claude Code が
+    起動した RA が、このセッション自身の直下で今も稼働中**であり、両プロセスの起動時刻は
+    本日 9:50 台——`[cargo] targetDir = true` のコミット（8/13 19:25）より確実に後。
+    つまり上記の flycheck0 は「設定が反映されていない古いセッションの残骸」ではあり得ず、
+    **設定コミット後に新規起動されたこのセッションの RA 自身が targetDir を無視して
+    target/debug に書いた**、と解釈するのが最も自然である。
+  ⚠️ Get-Process Code（VS Code）は 0 件——現時点で VS Code の RA は存在しない。
+    したがって「VS Code 側の古い RA が書いた」という代替説明は今回は排除できる
+    （マシン全体で rust-analyzer.exe は上記 2 プロセス＝1 系譜のみ）。
+  偽にする手順: `Get-CimInstance Win32_Process -Filter "Name='rust-analyzer.exe'"` を
+  再実行し ParentProcessId が変わっていないか確認。`Get-Process Code` で VS Code 不在を
+  再確認。
+
+--- 一次証拠 A（LSP diagnostics スキーマ） ---
+
+[壊せなかった・強化] `diagnostics: boolean` フィールドの実在
+  検証: `claude.exe` から
+  `diagnostics:jt().optional().describe("Whether to push publishDiagnostics into the agent
+  context after edits. Set to false to keep LSP navigation (goToDefinition, hover, etc.) but
+  suppress automatic diagnostic injection. Defaults to true.")`
+  を直接抽出。research.md の逐語引用と一致。
+  さらに、この `diagnostics` フィールドが `command`/`args`/`extensionToLanguage`/`transport`/
+  `env`/`initializationOptions`/`settings`/`workspaceFolder`/`startupTimeout`/`shutdownTimeout`/
+  `restartOnCrash`/`maxRestarts` と**同一の zod オブジェクト定義（変数名 `hEr`）の内部**に
+  在ることを、途切れない 1 つの文字列として確認した。MCP 用スキーマ等の別物との混同ではない。
+  偽にする手順: `grep -a -o -E ".{50}hEr=Ee\(\(\)=>ni\(\{.{2000}" claude.exe` を再実行し
+  同じフィールド列が出るか確認。
+
+[壊せなかった・最重要の追加確認] `diagnostics` フラグは実際に消費されている（死んだスキーマではない）
+  検証: `xlp` 関数内に
+  `if(c?.config?.diagnostics===!1){w(\`Diagnostics disabled for ${l}, skipping\`),s++;continue}`
+  を発見。これは診断通知をエージェント context へ流す処理のループ内で、サーバーごとに
+  `diagnostics===false` なら**丸ごと skip する**実装。research.md が「発見」と呼んだ機構は
+  スキーマ宣言だけでなく実行時にも配線されている。
+  ⚠️ ただしこの gate が publishDiagnostics 通知の注入だけを止め、navigation
+  （goToDefinition/hover 等の request-response 経路）を妨げないことまでは、
+  request 処理関数（`d(v)`→`T.sendRequest`）が別コードパスであることの傍証止まりで、
+  「diagnostics===false のときに navigation の request が実際に成功する」ところまでは
+  実行時テストしていない（バイナリの静的読解のみ）。
+  偽にする手順: 実際に `.lsp.json` へ `diagnostics: false` を設定した plugin を有効化し、
+  セッション再起動後に goToDefinition が動くか、`<new-diagnostics>` が context に注入
+  されなくなるかを打鍵/ログで確認する（未実施）。
+
+[壊せなかった] 公式 docs (plugins-reference) の記述と実体は**意味的に**一致
+  検証: WebFetch で該当ページを取得。
+  docs: "Whether to push diagnostics into Claude's context after edits (default true).
+  Set to false to keep code navigation but suppress automatic diagnostic injection."
+  ⚠️ research.md は「docs とバイナリが一致」と書いたが、**逐語では一致しない**
+  （"publishDiagnostics"→"diagnostics"、"LSP navigation (goToDefinition, hover, etc.)"→
+  "code navigation" など言い換えが複数箇所にある）。意味は同一だが「一致」という強い表現は
+  厳密には言い過ぎ。些末だが、研究の「全称表現は前提条件とセットで書く」という自己規律から見て
+  一貫していない。
+  偽にする手順: 両方の文字列を並べて diff する。
+
+[壊せなかった] `initializationOptions` は変数展開の対象外
+  検証: plugin LSP 設定を組み立てる関数内で
+  `a={CLAUDE_PLUGIN_ROOT:...};for(...)a[l]=i(c);if(s.env=a,s.workspaceFolder)
+  s.workspaceFolder=i(s.workspaceFolder);` という処理を確認。`s.args` も `i(l)` で展開されるが、
+  `s.initializationOptions` に対する展開呼び出しはこの関数内に存在しない。
+  偽にする手順: 同じ関数の全文をさらに広い context で再抽出し、
+  `initializationOptions` に対する `i(...)` 呼び出しが本当に無いか数える。
+
+--- 一次証拠 B（.lsp.json / plugin.json 形式） ---
+
+[壊せなかった・強化] `.lsp.json` は `record<serverName, LspServerConfig>` として parse される
+  検証: `cJt` 関数の全文を抽出:
+  `s=await WYo.readFile(i,"utf-8")...let a=Jt(s),l=so(F(),hEr()).safeParse(a);
+  if(l.success)Object.assign(n,l.data)`
+  → `so(F(),hEr())` は「string キー → hEr（LSP server config）スキーマ」の record。
+  research.md の記述と完全一致。
+
+[壊せなかった・強化] `.lsp.json` を先に読み、`plugin.json` の `lspServers` を Object.assign で重ねる
+  検証: 同じ `cJt` 関数の続き:
+  `if(e.manifest.lspServers){let s=await o1b(e.manifest.lspServers,e,t,r,o);if(s)Object.assign(n,s)}`
+  `n` は `.lsp.json` の内容から始まり、その後 manifest 側で上書きされる。research.md の記述と一致。
+
+[壊せなかった] plugin.json の `lspServers` は「パス | record | (パス|record)の配列」の union
+  検証: `Ee(()=>ve({lspServers:Cs([Q5t().describe("Path to .lsp.json..."),
+  so(F(),hEr()).describe("LSP server configurations keyed by server name"),
+  ht(Cs([Q5t()...,so(F(),hEr())...])).describe("Array of...")])}))`
+  research.md の記述と一致。
+
+[壊せなかった] plugin 認定マーカーの一覧
+  検証: バイナリのエラーメッセージ文字列と設定配列の両方で
+  `[".claude-plugin","commands","skills","agents","hooks","themes","output-styles",
+  "monitors","workflows","SKILL.md",".mcp.json",".lsp.json"]` を確認。
+  `.lsp.json` 単体で認定されることを示す文言
+  "monitors/, workflows/, SKILL.md, .mcp.json, or .lsp.json at the top level).
+  Nothing was installed." も確認。research.md の記述と一致。
+
+[壊せなかった] 公式 plugin `rust-analyzer-lsp` は `.lsp.json` を持たず、宣言は
+  marketplace.json エントリ側の `lspServers` にある
+  検証: `ls ~/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/`
+  → `LICENSE`, `README.md`, `.in_use/` のみ。`.lsp.json` 無し。
+  marketplace.json を grep して該当エントリを直接読み、research.md のコードブロックと
+  **完全に逐語一致**（`command`, `extensionToLanguage` のみ、`initializationOptions` 無し）
+  することを確認した。
+
+--- 一次証拠 C（repo からの配送経路・二重起動） ---
+
+[壊せなかった] `extraKnownMarketplaces` の説明文
+  検証: バイナリから逐語一致で抽出。
+  "Additional marketplaces to make available for this repository. Typically used in
+  repository .claude/settings.json to ensure team members have required plugin sources."
+
+[壊せなかった] 設定優先順位 `userSettings < projectSettings < localSettings < flagSettings <
+  policySettings`（後が勝つ）、および project が user の enabledPlugins を上書きできること
+  検証: `enabledPlugins` の docstring 全文を抽出:
+  "Settings precedence is user < project < local < flag < policy, so to disable a plugin
+  that project settings enable, set it to false in .claude/settings.local.json —
+  setting false in ~/.claude/settings.json is overridden by the project."
+  スコープ配列 `["userSettings","projectSettings","localSettings","flagSettings",
+  "policySettings"]` をバイナリ中に 3 箇所で確認。research.md の記述と一致し、むしろ
+  より直接的な逐語証拠（"is overridden by the project" というピンポイントの一文）が
+  今回追加で見つかった。
+
+[壊せなかった] 二重宣言の検知メッセージ
+  検証: `case"lsp-extension-conflict":...return \`Disable plugin "${t}" to use this plugin's
+  LSP server for ${e.extension} files, or disable "${e.plugin}" to silence this warning\`}`
+  を発見。research.md の逐語引用と一致。
+
+[壊せなかった] "LSP servers start only after you trust the workspace"
+  検証: WebFetch で公式 docs から逐語確認（Skills-directory plugins セクション、
+  project スコープ plugin の文脈）。research.md の引用と一致。
+  ⚠️ この一文はバイナリ内の埋め込み文字列としては見つからなかった（docs 側にしかない
+  可能性がある）。ドキュメント文言が実装と一致しているかまでは、この検証だけでは確定できない
+  （docs は逐語一致を保証する一次資料ではなく、two-source 化されている）。
+  偽にする手順: バイナリ全体を "trust" を含む一致でさらに広く検索し、実際に project スコープ
+  plugin のロードが workspace trust dialog の承認後まで delay される制御フローのコードを
+  直接確認する（未実施）。
+
+[新規実測・部分的に解決] 「未解決の疑問 1」— `extraKnownMarketplaces` の `directory` source の
+  `path` はどう解決されるか
+  検証: `Xdg` 関数を発見:
+  `function Xdg(e,t){if((e.source==="directory"||e.source==="file")&&!cQi.isAbsolute(e.path)){
+  let r=t??Tn(),n=Hu(r);return{...e,path:cQi.resolve(n??r,e.path)}}return e}`
+  `Tn()` は `KM()?.originalCwd??gr.project.originalCwd`（起動時のカレントディレクトリ）。
+  `Hu(r)` は `r` の git root を正準化して返す（`Kc(e)` でルート探索し
+  `canonicalRootByRoot` マップで正準化）。
+  呼び出し箇所（実際にインストール判断で使われる経路）は `Xdg(t[d].source)` で
+  第 2 引数省略——常にデフォルトの `Tn()`（originalCwd）が使われる。
+  → **相対パスは絶対パス必須ではなく、起動時のカレントディレクトリ（の git root）を
+    基準に解決される**。research.md が「絶対パス必須なら worktree で再現しない」と
+    留保していた懸念について、少なくとも「絶対パス必須」ではないことは実測で判明した。
+  ⚠️ ただし「起動時のカレントディレクトリ」は `${CLAUDE_PROJECT_DIR}` と常に一致するとは
+  限らない（agent worktree でセッションをどのディレクトリから起動したかに依存する）。
+  したがって「worktree で再現するか」という研究の本来の懸念自体は、絶対パス問題ではなく
+  **cwd 依存問題として形を変えて残る**——完全解決ではなく論点のすり替わりに近い。
+  research.md の未解決欄はこの新事実で更新されるべきだが、「再現性の懸念そのもの」は消えない。
+  偽にする手順: `.claude/worktrees/` 配下であえて別ディレクトリから claude を起動し、
+  相対 path 指定の directory source marketplace が解決されるか実地で確認する（未実施）。
+
+--- 一次証拠 D（ratoml の水準・解決順） ---
+
+[壊せなかった・独立ソースで補強] `checkOnSave` は workspace 水準、`diagnostics.*` は local 水準
+  検証: GitHub `rust-lang/rust-analyzer` の `master` ブランチ `config.rs` を WebFetch で参照。
+  `checkOnSave | checkOnSave_enable: bool = true` は `workspace: struct
+  WorkspaceDefaultConfigData` ブロック内。
+  `diagnostics_enable: bool = true` は `local: struct LocalDefaultConfigData` ブロック内。
+  → repo の `rust-analyzer.toml` のコメントおよび `#1082` の既訂正記述と一致。
+  ⚠️ 参照したのは **master（最新開発版）** であり、手元にインストールされている
+  rust-analyzer 1.97.1（2026-07-14 ビルド）のタグそのものではない。水準分類が
+  バージョン間で変わっている可能性はゼロではない（低確率だが未確認）。
+  偽にする手順: `git tag` 一覧から 1.97.1 相当のコミット/タグを特定し、その時点の
+  config.rs を fetch して同じ分類を再確認する。
+
+[壊せなかった] `cargo.targetDir` も workspace 水準であり、`true` は文書化されたサポート値
+  検証: 同じ config.rs 参照で
+  `cargo_targetDir | rust_analyzerTargetDir: Option<TargetDirectory> = None` が
+  `workspace` ブロック内にあることを確認。ドキュメントコメントには
+  "Set to true to use a subdirectory of the existing target directory or set to a path
+  relative to the workspace to use that path." とあり、`targetDir = true` が
+  型として妥当であることが分かる。
+  → これにより「TOML の型不一致で無視されている」という代替説明の可能性が下がり、
+  上記「flycheck0 が target/debug に書かれている」という観測が**設定の型ミスではなく、
+  反映の失敗（未反映 or 別要因）を示している可能性が高まった**。
+
+--- 設計候補と評価 ---
+
+[壊せなかった] 案 A（repo 所有 plugin + directory source marketplace）が公式にサポートされた
+  経路であること自体は、上の一次証拠 B・C の総体で裏付けられている。
+
+[未検証・低優先度] 案 B（`--plugin-dir`）が「再現性が無い」という評価
+  検証していない。issue 側の既存判断を追認しているだけで、research.md 独自の主張ではないため
+  優先度を下げた。
+
+[壊せなかった] 案 C（user ratoml）の却下理由の論理構造
+  検証: 「checkOnSave/diagnostics.* は workspace/local 水準ゆえ、repo ratoml → client 設定 →
+  user ratoml → 既定、の順で解決される」という一次証拠 D の分類と整合しており、
+  「案 A を入れると client 設定が repo ratoml の空欄を埋めるため、user ratoml は
+  さらに一段押しのけられる」という推論は妥当。
+
+[壊せなかった] 案 D（shim 自作）の却下理由
+  「スキーマが initializationOptions を正規に持つ以上、写しを自作する理由が無い」は、
+  一次証拠 A で initializationOptions が実在し実際に消費される正規の経路であることが
+  確認された今、なお妥当な判断。
+
+--- 関連ファイル・技術的制約（未検証・時間配分の都合で対象外にした項目） ---
+
+[未検証] `.claude/hooks/post-edit.mjs` の `selectChecks` が新設 JSON をどう扱うか。
+[未検証] `.claude/hooks/post-edit.test.mjs` の網羅性。
+[未検証] `npm run governance:check` が新設 marketplace.json / .lsp.json をどう検査するか。
+[未検証] `.claude/rules/safety-nets.md` の該当箇所。
+これらは今回のスコープ（技術的機構の実在性）よりも「実装後にどう検査層へ組み込むか」という
+計画判断であり、`plan.md` 段階で改めて検証する方が費用対効果が高いと判断し対象外とした。
+未検証であることを明示する。
+
+============================================================
+今回新たに壊した/更新すべき点のまとめ（optional な追加所見）
+============================================================
+
+1. `target/flycheck0/` の発見により、「一次証拠 E」の「未測定」という留保は**もはや正確ではない**。
+   実測すると「flycheck は走っているが、targetDir 設定が効いていない」という、
+   research.md が想定していなかった第 3 の状態が観測された（「出来た」＝効いている、
+   「出来ない」＝不明、の二分法ではなく「別の形跡はあるが狙った場所には無い」）。
+   これは `plan.md` に進む前に、**まず `[cargo] targetDir = true` 自体が壊れていないか**
+   （反映漏れなのか、リポジトリ設定の適用条件を満たしていないのか）を切り分ける追加タスクを
+   要求する可能性が高い。#1083 の plugin 提案そのものより手前の問題である。
+
+2. 「未解決の疑問 1」（marketplace directory source の path 解決）は、`Xdg`/`Tn`/`Hu` という
+   具体的な関数と挙動が特定できたことで、「絶対パス必須という不安」は否定できたが、
+   「cwd 依存」という形の再現性リスクは残った、という形に更新されるべき。
+
+3. プロセス系譜の実測により、公式 plugin 経由で Claude Code がこのセッション自身の rust-analyzer
+   を今まさに起動していることが確認できた——一次証拠 A・B の「今は initializationOptions
+   を渡していないので既定値で動いている」という結論と矛盾しない、むしろ直接支持する事実。
+
+============================================================
+偽にできなかった中心的主張（再掲・要点）
+============================================================
+
+- P1: 実在する。スキーマ宣言と実行時消費（`xlp` 関数の gate）の両方を確認した。
+- P2: 実在する。`.lsp.json` の record parse、`.lsp.json`→manifest の Object.assign 重ね合わせ、
+  plugin 認定マーカー一覧、公式 plugin の実体（`.lsp.json` 無し・marketplace.json 側に宣言）を
+  すべて逐語で確認した。
+- P3: 実在する。優先順位・project による user の上書き・二重宣言検知・trust gate をすべて
+  確認した。directory source の path 解決は新たに判明（絶対パス不要、cwd 基準）。
+- P4: 実在する。checkOnSave=workspace / diagnostics.*=local / cargo.targetDir=workspace という
+  分類を独立ソース（rust-analyzer 本家 config.rs）で確認した。
+- P5: 論理構造（双条件不成立）自体は壊せなかったが、**実測データが手に入ったことで
+  「未測定」という前提が崩れた**——flycheck は走っているが targetDir が効いていない、
+  という具体的な形で。
+
+============================================================
+追記（2026-08-14・呼び出し側の後続実測に対する裁定）
+============================================================
+
+呼び出し側が本検証の後に独自に実測し research.md（C-2, C-3, 追加の実測表）へ反映した項目を、
+このセクションで裁定する。
+
+[決着済み・独立に再確認] C-2「directory source の path は `path.resolve()` で cwd 基準」
+  自分の一次抽出（diag13.txt）にも同一の switch 文が写っていた:
+  `case"directory":{let g=Dh.resolve(e.path),s=Dh.join(g,".claude-plugin","marketplace.json"),
+  i=g,a=!1;break}`（`Dh=require("path")`）。この switch 文（`case"url"/"github"/"git"/"npm"/
+  "file"/"directory"/"settings"`）は marketplace のソースを実際に読み込む中核関数であり、
+  research.md の主張を裏付ける。
+
+  ⚠️ **自己訂正**: 本検証の一次報告で「directory source の path 解決は `Xdg`/`Tn`/`Hu` で
+  git root 正準化される」と書いたが、これは**別の関数**（`bvc` が使う reconciliation の
+  staleness 比較——「登録済み marketplace の宣言が変わったか」を判定し再インストールを
+  トリガーする経路）の話であり、**実際に marketplace.json を読み込む主経路ではない**。
+  主経路は上記の plain `path.resolve()`（cwd 基準・git root 正準化なし）である。
+  research.md C-2 の記述の方が正確——先の自分の報告を訂正する。
+  偽にする手順: 両関数の呼び出しグラフをさらに遡り、どちらがセッション起動時の
+  marketplace ロードから直接呼ばれるか確定させる（今回は静的な位置関係と処理内容から
+  推論した。呼び出しグラフの直接トレースは未実施）。
+
+[決着済み・独立に再確認] C-3「inline settings marketplace は却下」
+  同じ switch 文内に `case"settings":{i=Dh.join(o,e.name),s=Dh.join(i,".claude-plugin",
+  "marketplace.json"),...}` を確認済み（`o` はキャッシュ配下のプラグインルート）。
+  repo のパスを一切参照しない構造であり、research.md の却下理由と整合する。
+
+[決着済み・自分で再現実験まで行った] 「`claude plugin validate --strict` は `.lsp.json` を
+  一切見ない」
+  検証: スクラッチ plugin（`plugin.json` + `.lsp.json`）を実際に作り、
+  `claude.exe plugin validate <dir> --strict` を 3 パターンで実行した。
+    1. 正常な `.lsp.json`（`checkOnSave:false` と `diagnostics:false` 両方あり）→
+       `✔ Validation passed` / exit 0
+    2. `.lsp.json` を構文として壊す（`this is not valid json,,,` を混入）→
+       **それでも** `✔ Validation passed` / exit 0
+    3. 抑制キー（`checkOnSave`/`diagnostics`）を両方削除した有効な JSON → 同じく exit 0
+  出力はいずれも `Validating plugin manifest: <plugin.json のパス>` のみで、`.lsp.json` への
+  言及が一切無い。research.md の記述をバイナリ読解ではなく実行結果で独立に再現し、確定させた。
+  これは「plan.md で自前カナリアが必須」という設計判断の土台であり、揺らいでいない。
+  偽にする手順: 上記 3 パターンを再実行する（コマンドは本ファイルの上に記載の手順と同一）。
+
+[決着済み] `checkOnSave` は rust-analyzer 1.97.1 の実体（rustup toolchain 版、40 MB 側）に
+  3 件存在する
+  検証: `grep -a -o -c "checkOnSave"
+  "/c/Users/Eoh/.rustup/toolchains/stable-x86_64-pc-windows-msvc/bin/rust-analyzer.exe"` → `3`。
+  research.md の記述と一致。
+
+以上により、呼び出し側の後続実測はすべて独立に裏付けられた。壊せなかった。
+唯一の訂正は自分自身の先行報告（directory source の path 解決に関する機序の説明）であり、
+research.md 側の記述ではない。

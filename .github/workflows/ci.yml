@@ -50,6 +50,9 @@ jobs:
   # （依存ゼロ・数秒で完了するため常時実行し、「走らなかった」経路を作らない）。
   governance-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
 
     steps:
       - name: Checkout
@@ -62,6 +65,35 @@ jobs:
 
       - name: governance check
         run: node scripts/governance-check.mjs
+
+      # #1088: 構造母集団（検査・対象文書・rules・skills）の集合を main と比べ、
+      # 差分が在るのに PR 本文で宣言されていなければ落とす。散文母集団（見出し参照・文字数）は
+      # 変動が多すぎて承認がゴム印化するので対象にしない（実測は
+      # docs/superpowers/specs/2026-08-14-governance-check-scope-design.md）。
+      #
+      # **skip は「main 側にスクリプトが無い」ときだけに狭める。** `origin/main` が解決できない
+      # 場合まで skip へ落とすと、恒久的に沈黙して緑になる（#1088 が問うている欠陥の CI 版）。
+      # ゆえに fetch の refspec を明示し、`rev-parse --verify` を分岐の前に置いて失敗を鳴らす。
+      #
+      # **PR 本文は payload ではなく都度取る。** `github.event.pull_request.body` は event の
+      # payload に凍結されており、`pull_request` の既定 types に `edited` は無く、再実行は同じ
+      # payload を再生する。凍結値では「本文へ宣言を書いて再実行する」という復帰手順が成立しない。
+      - name: governance manifest delta
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          git rev-parse --verify origin/main >/dev/null
+          if git cat-file -e origin/main:scripts/governance-manifest.mjs 2>/dev/null; then
+            git worktree add --detach /tmp/gov-base origin/main
+            (cd /tmp/gov-base && node scripts/governance-manifest.mjs) > /tmp/base.json
+            PR_BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)" \
+              node scripts/governance-manifest.mjs --compare /tmp/base.json
+          else
+            echo "governance manifest — main 側に scripts/governance-manifest.mjs が無いので比較を飛ばす（この機構を導入する PR 自身）"
+          fi
 
   rust-check:
     if: >-

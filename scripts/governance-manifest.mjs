@@ -81,6 +81,7 @@ if (isMain) {
       for (const d of missing) console.error(`  ${d}`);
       console.error("PR 本文へ次の行を足してください（逐語で照合します）:");
       console.error(`  ## governance manifest delta\n  ${missing.join(", ")}`);
+      console.error("本文を編集したら、この governance-check job を re-run してください（push は不要です）。");
       process.exitCode = 1;
     }
   } else {

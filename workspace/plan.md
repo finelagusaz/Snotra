@@ -79,29 +79,29 @@ is_unsettled(armed) = armed || pending_seq() != 0 || self.restored_rows_stale
 
 ### Phase 1 — 検知器を置き、落ちることを測る（Red）
 
-- [ ] `search_state.rs` の `#[cfg(test)]` へ検知器を追加する: `issue_search` → `enter_folder` → `on_escape` → `assert!(s.is_unsettled(false))`。**この時点では `enter_folder` は現行 signature のまま**書き、Phase 2 で引数を足す
-- [ ] `cargo test -p snotra -q folder` を実行し、**この 1 本が落ちること**を出力ごと記録する（緑のまま通ったら検知器が並びを再現していない）
+- [x] `search_state.rs` の `#[cfg(test)]` へ検知器を追加する: `issue_search` → `enter_folder` → `on_escape` → `assert!(s.is_unsettled(false))`。**この時点では `enter_folder` は現行 signature のまま**書き、Phase 2 で引数を足す
+- [x] `cargo test -p snotra -q folder` を実行し、**この 1 本が落ちること**を出力ごと記録する（緑のまま通ったら検知器が並びを再現していない）
 
 ### Phase 2 — 修正（core + 呼び出し点を束ねる）
 
-- [ ] `SearchState` へ `restored_rows_stale: bool` を追加する。**`SearchState` は `Default` を導出していない**（実測）——`new()` の手書き構造体リテラル（`search_state.rs:179-186`）へ `restored_rows_stale: false,` を足す。足し忘れは compile-fail になる
-- [ ] `FolderFrame` へ `unsettled_at_entry: bool` を追加する
-- [ ] `enter_folder` の signature へ `armed: bool` を足し、**内側で** `self.is_unsettled(armed)` を撃って frame へ格納する（frame 構築より前に `let` で束縛する——`&mut self` の中で `&self` メソッドを呼ぶため）
-- [ ] `put_rows` に `self.restored_rows_stale = false;` を足す
-- [ ] `on_escape` の folder 枝で、`put_rows` の**後に** `self.restored_rows_stale = f.unsettled_at_entry;` を置く
-- [ ] `is_unsettled` へ第 3 の disjunct を足す
-- [ ] `launcher_controller.rs:1192` / `:1224` の呼び出しへ `self.search_debounce.is_armed()` を渡す（`self.state` と別フィールドゆえ two-phase borrow で通る。`self.state.is_unsettled(..)` を引数に置く形は採らない——上記「合成を呼び出し側に書かせない」）
-- [ ] **既存テスト内の `enter_folder` 呼び出しにも引数を足す**——`search_state.rs` の `enter_folder(` は 26 ヒットで、うち 2 つが production（`launcher_controller.rs`）、残りはテストである（grep 実測）。**compile-fail が移行漏れの検出器になる**ので、列挙は `cargo build -p snotra --all-targets` に任せてよい（`AGENTS.md`「改名・旧 API の削除は下流の compile-fail を移行漏れ検出器に」）。テストが渡す値は各ケースの意図に合わせる（in-flight を仕込んだケースは真、そうでなければ偽）
-- [ ] Phase 1 の検知器が緑になることを確認する
+- [x] `SearchState` へ `restored_rows_stale: bool` を追加する。**`SearchState` は `Default` を導出していない**（実測）——`new()` の手書き構造体リテラル（`search_state.rs:179-186`）へ `restored_rows_stale: false,` を足す。足し忘れは compile-fail になる
+- [x] `FolderFrame` へ `unsettled_at_entry: bool` を追加する
+- [x] `enter_folder` の signature へ `armed: bool` を足し、**内側で** `self.is_unsettled(armed)` を撃って frame へ格納する（frame 構築より前に `let` で束縛する——`&mut self` の中で `&self` メソッドを呼ぶため）
+- [x] `put_rows` に `self.restored_rows_stale = false;` を足す
+- [x] `on_escape` の folder 枝で、`put_rows` の**後に** `self.restored_rows_stale = f.unsettled_at_entry;` を置く
+- [x] `is_unsettled` へ第 3 の disjunct を足す
+- [x] `launcher_controller.rs:1192` / `:1224` の呼び出しへ `self.search_debounce.is_armed()` を渡す（`self.state` と別フィールドゆえ two-phase borrow で通る。`self.state.is_unsettled(..)` を引数に置く形は採らない——上記「合成を呼び出し側に書かせない」）
+- [x] **既存テスト内の `enter_folder` 呼び出しにも引数を足す**——`search_state.rs` の `enter_folder(` は 26 ヒットで、うち 2 つが production（`launcher_controller.rs`）、残りはテストである（grep 実測）。**compile-fail が移行漏れの検出器になる**ので、列挙は `cargo build -p snotra --all-targets` に任せてよい（`AGENTS.md`「改名・旧 API の削除は下流の compile-fail を移行漏れ検出器に」）。テストが渡す値は各ケースの意図に合わせる（in-flight を仕込んだケースは真、そうでなければ偽）
+- [x] Phase 1 の検知器が緑になることを確認する
 
 ### Phase 3 — 境界条件のテストと変異検査
 
-- [ ] 境界テストを **5 本**追加する（下記「境界条件と検証」の表 #2〜#6 と一対一。#1 は Phase 1 の検知器）
-- [ ] **変異 3 種を一時的に入れ、それぞれで検知器か境界テストが落ちることを実測する**（`AGENTS.md`「検知器を置き、呼び忘れを再現する変異で落ちることまで確かめる」）:
+- [x] 境界テストを **5 本**追加する（下記「境界条件と検証」の表 #2〜#6 と一対一。#1 は Phase 1 の検知器）
+- [x] **変異 3 種を一時的に入れ、それぞれで検知器か境界テストが落ちることを実測する**（`AGENTS.md`「検知器を置き、呼び忘れを再現する変異で落ちることまで確かめる」）:
   (a) `put_rows` の clear を消す → 境界テスト「復帰後に行が差し替わったら偽へ戻る」が落ちる
   (b) `on_escape` の代入を消す → 検知器が落ちる
   (c) `is_unsettled` の第 3 disjunct を落とす → 検知器が落ちる
-- [ ] 変異をすべて戻し、`cargo test -p snotra -q` が緑であることを確認する
+- [x] 変異をすべて戻し、`cargo test -p snotra -q` が緑であることを確認する
 
 ### Phase 4 — 散文の同期
 

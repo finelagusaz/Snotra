@@ -1189,7 +1189,10 @@ impl LauncherController {
             let tok = if self.state.view_kind() == ViewKind::Folder {
                 self.state.navigate_folder(dir.clone())
             } else {
-                self.state.enter_folder(dir.clone())
+                // #1079: 突入時点の未反映を frame へ控えさせる。**渡すのは `armed` だけである**
+                // ——合成は `SearchState` の内側が持つ（`enter_folder` の doc）。
+                self.state
+                    .enter_folder(dir.clone(), self.search_debounce.is_armed())
             };
             // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
             // （SolidJS enterFolderExpansion と同一サイト・#532 SU3 M2 Finding #1）。
@@ -1221,7 +1224,10 @@ impl LauncherController {
                         && !sel.is_error
                         && let Some(parent) = compute_parent_dir(&sel.path)
                     {
-                        let tok = self.state.enter_folder(parent.clone());
+                        // #1079: `→` 側と同じく突入時点の未反映を控えさせる。
+                        let tok = self
+                            .state
+                            .enter_folder(parent.clone(), self.search_debounce.is_armed());
                         // ← from Results は enterFolderExpansion(parent) 相当・記録する。
                         self.record_folder_expansion(&parent);
                         self.folder_cache = None;

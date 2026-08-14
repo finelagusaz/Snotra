@@ -89,7 +89,9 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 **残余は 2 つあり、どちらもリポジトリの外に原因がある。**
 
-- `known_marketplaces.json` はマシン全体で marketplace 名をキーに持つため、宣言した相対パスが存在しないツリー（この変更より前の枝から作った worktree）では、Claude Code は debug log に `keeping materialized entry` と書いて**別のツリーの plugin を使い続ける**。カナリアはそのツリーのファイルを読むので、この乖離は検知できない。
+- **worktree は自分の設定ではなく、最初に登録したツリーの設定で動く**（2026-08-14 実測）。`known_marketplaces.json` はマシン全体で marketplace 名をキーに持ち、その installLocation が**最初に登録したツリーの絶対パスを指し続ける**。ゆえに worktree で `.claude/lsp/` を編集しても、そのセッションには効かない。**カナリアはそのツリーのファイルを読むので緑のまま**で、この乖離は検知できない。
+  - 実測の形: worktree 側の `.lsp.json` のサーバ名だけを変えて起動したところ、登録されたのは**メインツリー側の名前**だった。宣言パスは両方に存在しており、**パスの不在は条件ではない**。
+  - 一方、`.claude/lsp/` を持たない古い枝から作った worktree は**公式 plugin へ素直に落ちる**（project 設定がツリーごとに読まれるため）。LSP サーバはどのツリーでも常にちょうど 1 つで、二重に付くことはない。
 - settings.local.json（gitignore 済みゆえバッククォートで参照しない——CI のチェックアウトに存在せず `G-references` が赤くなる）は project より**優先順位が高い**ため、そこへ `enabledPlugins` を書けば plugin を無効化できる。カナリアは `.claude/settings.json` しか読まず、`selectChecks` もそのファイルに検査を割り当てていない。**リポジトリからは守れない**（現在そのキーは書かれていない）。
 
 ## PostToolUse（post-edit.mjs）の機構と保守

@@ -1,0 +1,81 @@
+敵対的レビュー — research.md（#1085: Claude Code の RA 診断をどう扱うか）
+実施日時: 2026-08-14（本レビュー実施時刻はおよそ 14:15〜14:30 JST 台）
+
+## 壊せた項目
+
+(明確に「主張が誤り」と断定できたものは無い。研究の中核主張は概ね生き残った。以下は「実証の穴」であり、⚠️ 節で詳述する。)
+
+## 壊せなかった項目
+
+- [争点1 / M0] 主張: 「shim → 本体の親子1本であり、論理的な RA は 1 つ」
+  試した攻め方: `Get-CimInstance Win32_Process` で PID/ParentProcessId/CreationDate/CommandLine を再取得し、`rust-analyzer.exe` 名を持つ全プロセスを列挙。
+  結果: PID 5952（`.cargo\bin` shim, parent 7868 `claude.exe`）→ PID 19196（toolchain 本体, parent 5952）→ PID 9352（proc-macro-srv, parent 19196）の 1 系統のみ実在。他に `rust-analyzer.exe` は存在しない。
+  なぜ壊れなかったか: 現在のスナップショットでは事実。ただし母集団の取り方（プロセス名 `rust-analyzer` だけで検索）に穴があることを別途 ⚠️ で報告する。
+
+- [争点2 / M1] 主張: 「`target/flycheck0/stdout` の mtime は 12:09:44 で、現 RA 起動（13:00:47）より前」
+  試した攻め方: `stat target/flycheck0/stdout` と PowerShell `Get-Item .LastWriteTime` の両方で mtime を独立に再取得し、`date` で現在時刻（14:14:55）と突き合わせた。
+  結果: Modify: 2026-08-14 12:09:44.411035900（stat）／`2026年8月14日 12:09:44`（PowerShell、文字化けはあるが数値は一致）。現在時刻・RA 起動時刻との前後関係は主張どおり。
+  なぜ壊れなかったか: 独立した 2 経路（POSIX stat / Win32 API）が一致し、時刻の前後関係は算術的に自明。ただし「#1083 の時点では動いていた」という比較対象は過去セッションの記録であり本レビューでは再現できない——research.md 自身もこの限界を認めている。
+
+- [争点3 / M2] 主張: 「`workspaceSymbol("config")` が Function を含む 114 件を返したことは `kind=all_symbols` が効いた証拠」
+  試した攻め方: rust-analyzer 本体のソース（`gh api` で `crates/rust-analyzer/src/handlers/request.rs` の `handle_workspace_symbol` を取得）を読み、`only_types` 既定時の**フォールバック分岐**を確認した:
+  ```
+  let mut res = exec_query(&snap, query, config.search_limit)?;
+  if res.is_empty() && !all_symbols {
+      res = exec_query(&snap, Query::new(params.query), config.search_limit)?;  // only_types を外して再検索
+  }
+  ```
+  つまり「型検索が 0 件のときだけ全シンボルへ落ちる」という ratoml のコメントの記述は**正確**だが、これは「既定の only_types のままでも Function が返りうる条件」が実在することを意味する——研究の対抗仮説はソース上は成立しうる。
+  これを退けたのは PR #1086 自身の実測記録: 変更**前**（既定 `only_types`）で同じクエリ `"config"` が **14 件・全部 Struct/Enum** を返していた（PR #1086 本文に記載）。型検索が 0 件でなかった以上、フォールバックは発火しない。ゆえに M2 の 114 件・Function 混在は `all_symbols` 設定が効いた結果としか説明できない。
+  なぜ壊れなかったか: フォールバック機構は実在するが、この具体的なクエリでは発火条件（型検索 0 件）が満たされないことが独立資料（#1086）で確認できた。
+  ⚠️ 影響: research.md 自体はこの反証手順（フォールバックの実在確認＋#1086 の 14 件という反例）を書いておらず、「既定の `only_types` は…という挙動なので」という一般論だけで結論づけている。読者がフォールバックの存在を知ると主張の隙に見える。**#1086 の「14 件・全部 Struct/Enum」という数値を M2 の節に明示的に引用すべき**（フォールバックが発火しないことの直接証拠になる）。
+
+- [争点5] 主張: 「底値 96 件（うち `Ra:inactive-code` 94 件）は CLI のアーティファクト」
+  試した攻め方: `rust-analyzer diagnostics .` を実際に実行し、出力を診断コード別に集計した。
+  結果: 94 件が `Ra("inactive-code", WeakWarning)`（理由: `test is disabled` / `windows is enabled` / `debug_assertions is disabled` の `#[cfg]` 由来）。件数は research.md の記述と一致。
+  なぜ壊れなかったか: 独立再実行で同じ 94 件・同じ診断種別が再現した。CLI が `cfg(test)` を立てないという既知の性質（`ratoml-workspace-level-only` メモリ）と整合し、本セッションの `<new-diagnostics>` に 1 件も出ていないという non-occurrence の主張とも矛盾しない。
+
+## ⚠️ 確信の持てない所見
+
+- [争点1 / M0] **母集団が「プロセス名 `rust-analyzer`」だけで、同じ `target/flycheck0/` を書きうる「別クライアント」の存在を機械的に排除していない。** 実際に **Zed.exe というエディタが本セッションのものと別に稼働している**（PID 19708, 起動 2026-08-14 13:52:18・現 RA 起動 13:00:47 より後）。Zed の workspace 履歴 DB（`C:\Users\Eoh\AppData\Local\Zed\db\0-stable\db.sqlite` / `.sqlite-wal`）には `C:\workspace\Snotra` への参照が複数存在し、**WAL ファイルの mtime は 2026-08-14 14:10:49**——research.md が「本セッション」の測定窓と書いた 14:00〜14:10 の**まさに終端**である。現在のプロセスツリーでは Zed の子プロセスに `rust-analyzer.exe` は無い（`package-version-server` と `json-language-server` のみ確認）。
+  確信が持てない理由: Zed が実際に Snotra の `.rs` を開いて RA を起動した形跡は「現在」は無いが、(a) WAL の更新時刻が測定窓と重なること、(b) Zed の workspace 履歴に Snotra が記録されていること、の 2 点から「測定窓の間、一度も RA を起動しなかった」と断定はできない——RA は編集していない間は起動されず、起動後もアイドルタイムアウトで終了しうる（一般的な LSP クライアントの挙動）。M0 はこの可能性を検討した形跡が無い。
+  これを偽にする手順: (1) Zed の設定（`~/.config/zed/settings.json` 相当、Windows では `%APPDATA%\Zed\settings.json`）で rust-analyzer の起動が無効化されているか確認する。(2) 測定窓の間 Zed のプロセスログ／`RA_LOG` 相当の出力が無いか確認する。(3) 今後同種の測定をする際は、`rust-analyzer.exe` だけでなく `Zed.exe` / `Code.exe` / `devenv.exe` 等の稼働状況もあわせて確認し、M0 の判定条件に加える。
+
+- [争点2 / claim「本セッションが起動した RA インスタンスそのもの」] research.md 冒頭は「測定対象は**このセッションが起動した RA インスタンスそのもの**」と書くが、実測した RA の起動時刻は **13:00:47** であり、これは PR #1086 の PR 本文が記録する検証時間帯「13:00〜13:08」と一致する。一方、本 issue（#1085）の実測時間帯は「14:00〜14:10」と書かれている。
+  確信が持てない理由: 「本セッション」が「#1086 の検証を行ったのと同じ継続的な Claude Code プロセス（claude.exe PID 7868, 起動 12:58:44）」を指すなら記述は正確（そのプロセスが RA を起動したことに変わりはない）。しかし「#1085 のための独立した計測セッション」という含意で読者が受け取ると、実際には**RA は #1085 の作業が始まる前、#1086 の検証時にすでに起動されており、一度も再起動されていない**——1 時間以上にわたり同一の RA プロセスを使い回している。これ自体は M1/M2 の結論（設定が届いている）を否定しないが、「本セッションが起動した」という言い回しは「このタスク用に新規起動された」という誤解を招きうる。
+  これを偽にする手順: `claude.exe`（PID 7868）の起動時刻とその会話ログのタイムスタンプを突き合わせ、#1086 の作業と #1085 の作業が同一の対話セッション内で連続して行われたかどうかを確認する。連続していれば記述は許容範囲、独立したセッションだったなら訂正が要る。
+
+- [争点4 / Q1「unlinked-file が届かなかった機序」] research.md の Q1 は候補を (a) severity 絞り込み・(b) RA が publish していない・(c) 観測窓外し の 3 つに開いているが、**rust-analyzer 本体のソース（`crates/rust-analyzer/src/main_loop.rs` の `update_diagnostics`）を読むと、(b) をさらに一段具体化する第 4 の機序がある**:
+  ```rust
+  fn update_diagnostics(&mut self) {
+      let subscriptions = {
+          let vfs = &self.vfs.read().0;
+          self.mem_docs.iter()  // ← mem_docs = クライアントが textDocument/didOpen した文書だけ
+              .map(|path| vfs.file_id(path).unwrap())
+              ...
+      };
+      // Syntax/Semantic 診断タスクをこの subscriptions（=開いているファイル）にだけ投げる
+  }
+  ```
+  つまり RA は「未リンクファイルだから publish しない」のではなく、**診断計算そのものが `mem_docs`（クライアントが明示的に開いたファイル）に限定されており、unlinked-file を含むあらゆる診断種別が、ファイルが開かれていなければ最初から計算対象に入らない**。これは severity（候補 a）とも観測窓（候補 c）とも独立な、4 番目の機序である。
+  また `claude.exe` バイナリを逐語で確認したところ、Claude Code 側は Read/Edit/Write 相当のファイル操作時に `textDocument/didOpen` を送る同期処理を持つ（ログ文字列: `"LSP: Sent didOpen for %s (languageId: %s)"` / `"LSP: File already open, skipping didOpen for %s"`）。ただしこの呼び出しが**新規作成ファイル（`Write` で存在しなかったパスに書いた場合）でも同じタイミングで発火するか**は、呼び出し元関数（匿名化された `m(v,S)`）まで遡って特定できておらず、静的読解だけでは確証が持てない。
+  確信が持てない理由: 「probe1085.rs（未リンクファイル）が実際に `mem_docs` に入っていたか」を確認する手段が本レビューには無い（LSP プロトコルのトレースを取っていない）。もし入っていなければ Q1 は severity 論争ではなく「開いていないから計算されていない」で完全に説明がつき、(a)(b)(c) いずれの原型とも微妙に異なる結論になる。もし入っていたなら、RA は unlinked-file を計算したが publish しなかった（真の (b)）か、Claude Code 側が受け取って捨てた（真の (a) に近い）ことになり、Q1 の判断が変わる。
+  これを偽にする手順: RA 起動時に `--log-file` または環境変数 `RA_LOG=rust_analyzer=info,rust_analyzer::main_loop=debug` を付けて再起動し、`didOpen` 通知の受信ログと `update_diagnostics` の `subscriptions` に probe ファイルが含まれるかを直接確認する（セッション再起動が要るため本レビューの権限内では実施できない——上記「実測を許可する範囲」外）。
+  影響: research.md の Q1 は「この答えは決定を左右する」と明記している重要な未解決点であるにもかかわらず、**RA 自身のソースコードという最も直接的な一次資料を一度も参照していない**。M0〜M3 は「挙動プローブ」（間接観測）に終始しており、rust-analyzer のリポジトリを読めば `mem_docs` ゲーティングという具体的な機序仮説が Q1 の候補に追加できたはずである。次の実測サイクルでは、この第 4 候補を Q1 に明示的に追加し、`RA_LOG` を使った直接観測（issue の「まず測ること」に既に挙げられている手段）で切り分けることを推奨する。
+
+- [測定環境] `.claude/settings.json`（ユーザーレベル、`C:\Users\Eoh\.claude\settings.json`）では `"rust-analyzer-lsp@claude-plugins-official": true` になっている一方、プロジェクトレベルの `.claude/settings.json`（`C:\workspace\Snotra\.claude\settings.json`）では同じキーが `false`。PR #1086 は「project / user とも `✘ disabled`」と実測済みと書いているが、これは project 設定がユーザー設定を上書きする、という優先順位の存在を裏付ける一方、**本レビューはその優先順位規則自体を Claude Code のソースやドキュメントで確認していない**（PR #1086 の `claude plugin list` 実行結果を信じているだけ）。
+  確信が持てない理由: 優先順位が「常に」project が勝つのか、特定バージョンでの挙動なのか未確認。
+  これを偽にする手順: `claude plugin list --scope user` と `--scope project` を個別に実行し、実際の disabled/enabled 判定と、両者が矛盾したときにどちらが実効かを再確認する。
+
+## 測定環境そのものへの確認結果（争点に挙げられていないが指示された確認事項）
+
+- `.claude/settings.json`（project）: `extraKnownMarketplaces.snotra` = `{source:"directory", path:"./.claude/lsp"}`、`enabledPlugins["snotra-rust-lsp@snotra"]=true`、`enabledPlugins["rust-analyzer-lsp@claude-plugins-official"]=false`。research.md の記述と一致。
+- `.claude/lsp/snotra-rust-lsp/.lsp.json`: `checkOnSave:false`、`workspace.symbol.search={kind:"all_symbols",limit:512}`。`diagnostics` キーは存在しない。research.md の記述と一致。
+- `rust-analyzer.toml`: `[workspace.symbol.search]` と `[cargo] targetDir=true` のみが有効。`checkOnSave` / `diagnostics.*` はコメントアウトされた説明文の中にのみ文字列として現れ、実キーとしては存在しない（カナリアの `RATOML_FORBIDDEN` 判定はコメントを除去してから正規表現照合するため、これらのコメント内文字列で誤検知しないことも `lsp-config.mjs` のソースで確認した）。
+- `C:\Users\Eoh\.claude\settings.json`（ユーザー）: 上記「⚠️」参照。加えて `extraKnownMarketplaces` に snotra は登録されていない（当然、プロジェクト側にのみ存在）。
+- `%APPDATA%\rust-analyzer\rust-analyzer.toml`（ユーザー ratoml）: **存在しない**（`C:\Users\Eoh\AppData\Roaming\rust-analyzer\` ディレクトリ自体が無い）。research.md はこのファイルの有無について直接言及していないが、「機序は未確定」としている `rust-analyzer.toml が届いていない」問題に、ユーザー ratoml が競合している可能性は排除される。
+- `known_marketplaces.json`（`C:\Users\Eoh\.claude\plugins\known_marketplaces.json`）: `snotra` の `installLocation` は `C:\workspace\Snotra\.claude\lsp`——**メインツリーそのもの**。ADR が書く「worktree は最初に登録したツリーの設定で動く」残余は、本レビューの実行環境（メインツリー）には影響しない。research.md の前提と矛盾なし。
+
+## 総評
+
+research.md の M0〜M3 の実測データそのもの（プロセスツリー・mtime・診断件数）は本レビューで独立に再現でき、いずれも改竄・誤読の跡は無かった。**主張が覆った項目は無い**が、(1) 争点1（RA の排他性）は Zed という具体的で現に稼働中の対抗候補を見落としており、(2) 争点3（only_types）は自己完結した反証手順を欠いており、(3) 争点4（Q1）は rust-analyzer 自身のソースという一次資料に一度も当たっておらず、専用の観測手段（`RA_LOG`）が issue に既に挙げられているのに使われていない。これら 3 点は「今回はたまたま結論を変えなかった」だけであり、次のサイクルで同種の実測を行う際は埋めておくべき穴である。

@@ -165,6 +165,9 @@ describe("G-module-linkage checkModuleLinkage", () => {
     "demo/src/search.rs": "",
     "demo/src/folder.rs": "",
   };
+  /** `base` の `lib.rs` へ `body` を足したスナップショット。**既定の構成を書き写さない**——
+   *  写すと、`base` を変えたときに片方だけ古い母集団を検査し、しかもテストは通り続ける。 */
+  const withLib = (body, extra = {}) => snap({ ...base, "demo/src/lib.rs": base["demo/src/lib.rs"] + body, ...extra });
 
   it("緑: 全ファイルが crate ルートから mod 宣言で到達できる", () => {
     expect(checkModuleLinkage(snap(base))).toEqual([]);
@@ -196,9 +199,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
   it("緑（誤検出なし）: #[path] は「そのソースファイルが在るディレクトリ」から解決する", () => {
     // 実例: snotra-egui-runtime/src/ime.rs の `#[cfg(windows)] #[path = "windows_ime.rs"] mod platform;`
     // が src/windows_ime.rs を指す（src/ime/windows_ime.rs ではない）。
-    const s = snap({
-      ...base,
-      "demo/src/lib.rs": 'mod search;\npub mod folder;\nmod ime;\n',
+    const s = withLib("mod ime;\n", {
       "demo/src/ime.rs": '#[cfg(windows)]\n#[path = "windows_ime.rs"]\nmod platform;\n',
       "demo/src/windows_ime.rs": "",
     });
@@ -206,38 +207,28 @@ describe("G-module-linkage checkModuleLinkage", () => {
   });
 
   it("緑（誤検出なし）: mod.rs 経由のネストを辿る", () => {
-    const s = snap({
-      ...base,
-      "demo/src/lib.rs": "mod search;\npub mod folder;\nmod commands;\n",
+    const s = withLib("mod commands;\n", {
       "demo/src/commands/mod.rs": "mod open;\n",
       "demo/src/commands/open.rs": "",
     });
     expect(checkModuleLinkage(s)).toEqual([]);
   });
 
-  // 以下 4 本は 2026-08-14 のレビューが実測で見つけた**沈黙の経路**を塞いだことを固定する。
+  // 以下 3 本は 2026-08-14 のレビューが実測で見つけた**沈黙の経路**を塞いだことを固定する。
   // どれも「宣言らしき綴りを拾ってしまい、孤児を到達済みに見せる」形だった。
   it("赤: ブロックコメントの中の mod 宣言を拾わない（孤児が緑にならない）", () => {
-    const s = snap({ ...base, "demo/src/lib.rs": "mod search;\npub mod folder;\n/*\nmod ghost;\n*/\n", "demo/src/ghost.rs": "" });
+    const s = withLib("/*\nmod ghost;\n*/\n", { "demo/src/ghost.rs": "" });
     expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
   });
 
   it("赤: 複数行文字列リテラルの中の mod 宣言を拾わない", () => {
-    const s = snap({
-      ...base,
-      "demo/src/lib.rs": 'mod search;\npub mod folder;\npub const S: &str = "\nmod fake;\n";\n',
-      "demo/src/fake.rs": "",
-    });
+    const s = withLib('pub const S: &str = "\nmod fake;\n";\n', { "demo/src/fake.rs": "" });
     expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/fake.rs")).toBe(true);
   });
 
   it("赤: インライン mod の中の mod 宣言を拾わない（同名の兄弟ファイルを緑にしない）", () => {
     // 拾うと基準ディレクトリを外したまま demo/src/inner.rs へ一致し、孤児が到達済みに見えていた。
-    const s = snap({
-      ...base,
-      "demo/src/lib.rs": "mod search;\npub mod folder;\nmod outer {\n    mod inner;\n}\n",
-      "demo/src/inner.rs": "",
-    });
+    const s = withLib("mod outer {\n    mod inner;\n}\n", { "demo/src/inner.rs": "" });
     expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/inner.rs")).toBe(true);
   });
 
@@ -250,8 +241,6 @@ describe("G-module-linkage checkModuleLinkage", () => {
   // 初版はコメントの潰しと引用符の数え上げが別パスで、一方の数え違いがもう一方の判定を反転させた。
   // **誤検出（赤）と沈黙（緑）の両方が出る**ため、両向きを固定する。
   describe("コードでない部分の判別", () => {
-    const withLib = (body, extra = {}) => snap({ ...base, "demo/src/lib.rs": `mod search;\npub mod folder;\n${body}`, ...extra });
-
     it("緑: 文字列の中の // をコメントと誤認しない（誤認すると閉じ引用符を食べて以降の宣言が消える）", () => {
       expect(checkModuleLinkage(withLib('pub const U: &str = "http://example.com";\n'))).toEqual([]);
     });
@@ -265,7 +254,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
       expect(checkModuleLinkage(withLib('pub const S: &str = "a\\\n    https://x";\n'))).toEqual([]);
     });
     it("緑: BOM 付きでも 1 行目の宣言を拾う", () => {
-      const s = snap({ ...base, "demo/src/lib.rs": "﻿mod search;\npub mod folder;\n" });
+      const s = snap({ ...base, "demo/src/lib.rs": `﻿${base["demo/src/lib.rs"]}` });
       expect(checkModuleLinkage(s)).toEqual([]);
     });
 
@@ -304,6 +293,15 @@ describe("G-module-linkage checkModuleLinkage", () => {
       const s = withLib("pub const Q: char = '\"';\npub const S: &str = \"\nmod ghost;\n\";\n", { "demo/src/ghost.rs": "" });
       expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
     });
+  });
+
+  // 実リポジトリで緑（`G-workspace-lints` / `G-clippy-disallowed` が持つのと同型のカナリア）。
+  // **ドッグフードとは別の命題である**——あちらは「宣言を拾えるか」、こちらは「いま findings が無いか」。
+  // これが無いと、実コードの回帰は `npm test` を素通りして PR CI まで気づけない。
+  it("カナリア: 実リポジトリで緑", () => {
+    const s = makeSnapshot(fileURLToPath(new URL("..", import.meta.url)));
+    expect(workspaceMembers(s).error, "母集団が取れない（カナリアの欠落）").toBeNull();
+    expect(checkModuleLinkage(s)).toEqual([]);
   });
 
   // ドッグフード: フィクスチャは自分が想像した形しか守らない。**実ファイルで宣言が拾えること**を測る。

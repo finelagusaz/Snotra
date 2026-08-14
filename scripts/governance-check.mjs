@@ -206,9 +206,8 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
 /** ある `.rs` が宣言する子モジュールの探索基準ディレクトリ。
  *  `lib.rs` / `main.rs` / `mod.rs` は自分のディレクトリ、それ以外は自分の stem のディレクトリを持つ。 */
 function moduleChildDir(file) {
-  const slash = file.lastIndexOf("/");
-  const dir = slash < 0 ? "" : file.slice(0, slash);
-  const base = file.slice(slash + 1);
+  const dir = path.posix.dirname(file);
+  const base = path.posix.basename(file);
   if (base === "lib.rs" || base === "main.rs" || base === "mod.rs") return dir;
   return `${dir}/${base.slice(0, -3)}`;
 }
@@ -268,7 +267,9 @@ function blankRustNonCode(text) {
       blank(end < 0 ? n : end + close.length);
       continue;
     }
-    const quote = text[i] === '"' ? i : text[i] === "b" && text[i + 1] === '"' ? i + 1 : -1;
+    // `b` 接頭辞（byte 文字列 / byte char）を許して、リテラル本体の開始位置を返す。
+    const literalStart = (ch) => (text[i] === ch ? i : text[i] === "b" && text[i + 1] === ch ? i + 1 : -1);
+    const quote = literalStart('"');
     if (quote >= 0) {
       let j = quote + 1;
       while (j < n) {
@@ -281,7 +282,7 @@ function blankRustNonCode(text) {
       blank(j);
       continue;
     }
-    const tick = text[i] === "'" ? i : text[i] === "b" && text[i + 1] === "'" ? i + 1 : -1;
+    const tick = literalStart("'");
     if (tick >= 0) {
       const ch = /^'(?:\\.|[^'\\\n])'/.exec(text.slice(tick, tick + 12));
       if (ch) {
@@ -300,8 +301,7 @@ export function declaredModuleFiles(file, raw) {
   // BOM は落とす（残すと 1 行目の宣言が列 0 から外れて拾えない）。以降は同じ文字列を基準にする。
   const source = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
   const text = blankRustNonCode(source);
-  const slash = file.lastIndexOf("/");
-  const ownDir = slash < 0 ? "" : file.slice(0, slash);
+  const ownDir = path.posix.dirname(file);
   const childDir = moduleChildDir(file);
   const out = [];
   const viaPath = new Set();

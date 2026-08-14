@@ -90,7 +90,7 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 **残余は 2 つあり、どちらもリポジトリの外に原因がある。**
 
 - `known_marketplaces.json` はマシン全体で marketplace 名をキーに持つため、宣言した相対パスが存在しないツリー（この変更より前の枝から作った worktree）では、Claude Code は debug log に `keeping materialized entry` と書いて**別のツリーの plugin を使い続ける**。カナリアはそのツリーのファイルを読むので、この乖離は検知できない。
-- `.claude/settings.local.json`（gitignore 済み）は project より**優先順位が高い**ため、そこへ `enabledPlugins` を書けば plugin を無効化できる。カナリアは `.claude/settings.json` しか読まず、`selectChecks` も `.claude/settings.local.json` に検査を割り当てていない。**リポジトリからは守れない**（現在そのキーは書かれていない）。
+- settings.local.json（gitignore 済みゆえバッククォートで参照しない——CI のチェックアウトに存在せず `G-references` が赤くなる）は project より**優先順位が高い**ため、そこへ `enabledPlugins` を書けば plugin を無効化できる。カナリアは `.claude/settings.json` しか読まず、`selectChecks` もそのファイルに検査を割り当てていない。**リポジトリからは守れない**（現在そのキーは書かれていない）。
 
 ## PostToolUse（post-edit.mjs）の機構と保守
 

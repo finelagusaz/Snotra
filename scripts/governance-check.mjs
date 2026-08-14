@@ -419,7 +419,7 @@ export function gitIgnoredPaths(paths, root = process.cwd()) {
   return new Set(r.stdout.split("\0").filter(Boolean));
 }
 
-export function checkReferences(snapshot, docs) {
+export function checkReferences(snapshot, docs, filterIgnored = () => new Set()) {
   const findings = [];
   const fileSet = new Set(snapshot.files);
   const exists = (doc, ref, { allowSuffix = false } = {}) => {
@@ -435,6 +435,10 @@ export function checkReferences(snapshot, docs) {
     const suffix = `/${norm(ref)}`;
     return !suffix.includes("..") && snapshot.files.some((f) => f.endsWith(suffix));
   };
+  // 実在しなかった参照は**いったん保留する**——ignore 判定を 1 回の spawn に束ねるため（#1088）。
+  // findings の順序は pending の順序がそのまま保つ。
+  const pending = [];
+  const docRelative = (doc, ref) => path.posix.normalize(path.posix.join(path.posix.dirname(doc), ref));
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) {
@@ -449,7 +453,7 @@ export function checkReferences(snapshot, docs) {
         target = target.split("#")[0];
         if (!target) continue; // 純アンカー
         if (!exists(doc, target)) {
-          findings.push(finding(doc, lineNo, `Markdown リンク先が実在しない: ${m[1]}`));
+          pending.push({ doc, lineNo, ref: target, message: `Markdown リンク先が実在しない: ${m[1]}` });
         }
       }
       // (ii) バッククォート内パス様参照
@@ -461,10 +465,17 @@ export function checkReferences(snapshot, docs) {
         if (!REF_EXTENSIONS.test(t)) continue;
         if (t.startsWith("workspace/") || t.startsWith("~")) continue;
         if (!exists(doc, t, { allowSuffix: true })) {
-          findings.push(finding(doc, lineNo, `バッククォート参照のパスが実在しない: ${t}`));
+          pending.push({ doc, lineNo, ref: t, message: `バッククォート参照のパスが実在しない: ${t}` });
         }
       }
     }
+  }
+  // ルート基準と文書ディレクトリ基準の**両方**を候補に出す（散文がどちらの形で書くかは選べない）
+  const candidates = pending.flatMap((p) => [p.ref, docRelative(p.doc, p.ref)]);
+  const ignored = filterIgnored([...new Set(candidates)]);
+  for (const p of pending) {
+    if (ignored.has(p.ref) || ignored.has(docRelative(p.doc, p.ref))) continue;
+    findings.push(finding(p.doc, p.lineNo, p.message));
   }
   return findings;
 }

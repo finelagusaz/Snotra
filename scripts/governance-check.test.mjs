@@ -214,6 +214,37 @@ describe("G-module-linkage checkModuleLinkage", () => {
     expect(checkModuleLinkage(s)).toEqual([]);
   });
 
+  // 以下 4 本は 2026-08-14 のレビューが実測で見つけた**沈黙の経路**を塞いだことを固定する。
+  // どれも「宣言らしき綴りを拾ってしまい、孤児を到達済みに見せる」形だった。
+  it("赤: ブロックコメントの中の mod 宣言を拾わない（孤児が緑にならない）", () => {
+    const s = snap({ ...base, "demo/src/lib.rs": "mod search;\npub mod folder;\n/*\nmod ghost;\n*/\n", "demo/src/ghost.rs": "" });
+    expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
+  });
+
+  it("赤: 複数行文字列リテラルの中の mod 宣言を拾わない", () => {
+    const s = snap({
+      ...base,
+      "demo/src/lib.rs": 'mod search;\npub mod folder;\npub const S: &str = "\nmod fake;\n";\n',
+      "demo/src/fake.rs": "",
+    });
+    expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/fake.rs")).toBe(true);
+  });
+
+  it("赤: インライン mod の中の mod 宣言を拾わない（同名の兄弟ファイルを緑にしない）", () => {
+    // 拾うと基準ディレクトリを外したまま demo/src/inner.rs へ一致し、孤児が到達済みに見えていた。
+    const s = snap({
+      ...base,
+      "demo/src/lib.rs": "mod search;\npub mod folder;\nmod outer {\n    mod inner;\n}\n",
+      "demo/src/inner.rs": "",
+    });
+    expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/inner.rs")).toBe(true);
+  });
+
+  it("緑（判定対象外の不混入）: src/bin/*.rs は cargo が自動発見するので mod 宣言を要さない", () => {
+    const s = snap({ ...base, "demo/src/bin/tool.rs": "fn main() {}\n" });
+    expect(checkModuleLinkage(s)).toEqual([]);
+  });
+
   it("赤（検査を殺す変異）: ルート Cargo.toml が読めないとき緑を返さない", () => {
     const s = snap({ "demo/src/lib.rs": "", "demo/src/orphan.rs": "" });
     const f = checkModuleLinkage(s);

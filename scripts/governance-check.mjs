@@ -168,13 +168,27 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
 // 縛るのは `CLAUDE.md` を持つ member だけであり、`CLAUDE.md` の無い crate を黙って飛ばす。
 // リンク性は `CLAUDE.md` の有無と無関係である。
 //
-// 射程外（`mod` 宣言を要さないまま正当なもの）: crate 直下の `tests/*.rs`・`benches/`・`examples/`・
-// `build.rs`——cargo が target として自動発見する。母集団を `<crate>/src/` に閉じることで外れる。
+// 射程外（`mod` 宣言を要さないまま正当なもの）: cargo が target として自動発見するもの——crate 直下の
+// `tests/*.rs`・`benches/`・`examples/`・`build.rs` は母集団を `<crate>/src/` に閉じることで外れ、
+// **`src/bin/` は `src/` の内側なので明示的に除外する**（除外しないと `mod` 宣言の書き忘れという
+// 誤った直し方を指示する赤が出る。現在 0 件）。
+//
+// **判定は「行頭ちょうどの `mod name;`」だけを拾う。** 空白を許すと、インライン `mod x { ... }` の中の
+// `mod y;` を拾ったうえで基準ディレクトリを外し、**同名の兄弟ファイルへ誤って一致して孤児を緑にする**
+// （2026-08-14 のレビューで実測）。列を固定すればインライン内は一切拾わず、当該ファイルは未到達＝
+// 赤に倒れる。**誤りの向きを赤側へ寄せるのが設計の要**である。同じ理由で、判定前にコメントを落とし、
+// 文字列リテラルの内側で始まる綴りを捨てる——落としすぎれば宣言を見失って赤になるだけで、沈黙しない。
 //
 // 受容する残余:
-// - **インライン `mod x { ... }` の中の `mod y;` を追わない。** 現在 0 件（`^\s+mod \w+;` が 1 件も
-//   当たらない）。在れば当該ファイルが未到達として**赤に倒れる**ので、沈黙ではなく過検出の向きである。
-// - `include!` によるファイル取り込みを追わない（現在 0 件）。同じく赤に倒れる向き。
+// - **`#[cfg]` は無視して和を取る。** ゆえに保証は「どれかの cfg で宣言されている」であって
+//   「ビルド構成でコンパイルされる」ではない。**決して有効化されない cfg / feature の下だけで
+//   宣言されたファイルは緑になる**——上で名指しした最悪の帰結（テストが黙って走らない）を、
+//   この検査は取りこぼす。cfg を評価しないのは誤検出を避けるための選択である。
+// - `include!` によるファイル取り込みを追わない（現在 0 件）。当該ファイルが赤に倒れる向き。
+// - **属性の綴りが `#[path = "..."]`（二重引用符・同一行）から外れると赤に倒れる**——
+//   `#[path = r"..."]`（raw string）・`#[path = "dir"]`（ディレクトリ指定）・
+//   `#[cfg_attr(..., path = "...")]`・`#[cfg(windows)] mod win;` のような同一行の属性つき宣言。
+//   現在 0 件で、いずれも沈黙ではなく過検出の向きである。
 // - `[lib] path = ...` で `src/` の外へソースを置く crate は母集団から外れる（現在 0 件）。
 
 /** ある `.rs` が宣言する子モジュールの探索基準ディレクトリ。
@@ -187,8 +201,54 @@ function moduleChildDir(file) {
   return `${dir}/${base.slice(0, -3)}`;
 }
 
+/** コメント（`//` 行と、入れ子を許すブロックコメント）を空白へ潰す。**長さと改行位置を保つ**ので、
+ *  この後の行頭アンカーと引用符の数え上げがそのまま使える。
+ *  取りこぼしても取りすぎても宣言を見失う側＝赤へ倒れるだけで、沈黙しない。 */
+function blankRustComments(src) {
+  let out = "";
+  let depth = 0;
+  for (let i = 0; i < src.length; ) {
+    const two = src.slice(i, i + 2);
+    if (depth === 0 && two === "//") {
+      while (i < src.length && src[i] !== "\n") out += " ", i++;
+      continue;
+    }
+    if (two === "/*") {
+      depth++;
+      out += "  ";
+      i += 2;
+      continue;
+    }
+    if (depth > 0 && two === "*/") {
+      depth--;
+      out += "  ";
+      i += 2;
+      continue;
+    }
+    out += depth > 0 && src[i] !== "\n" ? " " : src[i];
+    i++;
+  }
+  return out;
+}
+
+/** `text` の先頭から `index` までに現れる**エスケープされていない `"`** が奇数か。
+ *  奇数なら、その位置は文字列リテラルの内側である（複数行文字列の中で行頭に来た綴りを捨てるため）。
+ *  raw string や `'"'` の文字リテラルでは数え違えるが、**向きは「宣言を捨てる＝赤」**である。 */
+function insideStringLiteral(text, index) {
+  let quotes = 0;
+  for (let i = 0; i < index; i++) {
+    if (text[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (text[i] === '"') quotes++;
+  }
+  return quotes % 2 === 1;
+}
+
 /** `file` が宣言する子モジュールの候補ファイルパスを返す。 */
-function declaredModuleFiles(file, text) {
+function declaredModuleFiles(file, source) {
+  const text = blankRustComments(source);
   const slash = file.lastIndexOf("/");
   const ownDir = slash < 0 ? "" : file.slice(0, slash);
   const childDir = moduleChildDir(file);
@@ -200,14 +260,15 @@ function declaredModuleFiles(file, text) {
   for (const m of text.matchAll(
     /#\[path\s*=\s*"([^"]+)"\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/g,
   )) {
-    // `#[path]` は任意の相対パスを取れるので畳む。**上へ抜けた形（`../x.rs`）は畳まず残す**——
-    // 母集団に一致せず赤に倒れる向きであり、黙って別ファイルへ一致させるより安全である。
+    // `..` は畳んで解決する（Rust の意味論と一致）。根を越えた形だけが残り、母集団に一致せず赤に倒れる。
     out.push(path.posix.normalize(`${ownDir}/${m[1]}`));
     viaPath.add(m[2]);
   }
-  // 通常の `mod name;`（行頭アンカー——コメント行・文字列中の綴りを拾わない）
-  for (const m of text.matchAll(/^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/gm)) {
+  // 通常の `mod name;` — **行頭ちょうど**に限る（空白を許すとインライン `mod` の中身を拾い、
+  // 基準ディレクトリを外したまま同名の兄弟ファイルへ一致して孤児を緑にする）。
+  for (const m of text.matchAll(/^(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/gm)) {
     if (viaPath.has(m[1])) continue; // `#[path]` 付きは上で解決済み
+    if (insideStringLiteral(text, m.index)) continue; // 複数行文字列の中の綴り
     out.push(`${childDir}/${m[1]}.rs`, `${childDir}/${m[1]}/mod.rs`);
   }
   return out;
@@ -220,7 +281,10 @@ export function checkModuleLinkage(snapshot) {
   const findings = [];
   for (const crate of members) {
     const prefix = `${crate}/src/`;
-    const population = snapshot.files.filter((f) => f.startsWith(prefix) && f.endsWith(".rs"));
+    // `src/bin/` は cargo が target として自動発見するので `mod` 宣言を要さない（射程外）。
+    const population = snapshot.files.filter(
+      (f) => f.startsWith(prefix) && f.endsWith(".rs") && !f.startsWith(`${prefix}bin/`),
+    );
     // 空母集団を合格に見せない（沈黙経路の閉塞・本ファイル冒頭の契約）
     if (population.length === 0) {
       findings.push(finding(`${crate}/Cargo.toml`, 1, `${prefix} 配下に .rs が無い（G-module-linkage 母集団の欠落）`));

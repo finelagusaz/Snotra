@@ -18,8 +18,8 @@ import { makeSnapshot, buildChecks, governanceDocs } from "./governance-check.mj
  *
  *  `checks` は `buildChecks` が積む検査 ID のみを見る——`G-area-instrument` は合否を持たない
  *  計器で `buildChecks` を経由せず `runAll` へ直接 push されるため、この列には現れない
- *  （その push 行を消しても manifest は沈黙する。唯一の歯止めは `governance-check.test.mjs` の
- *  カナリアテスト）。 */
+ *  （その push 行を消しても manifest は沈黙する。歯止めは `governance-check.test.mjs` の
+ *  カナリアテストの側にある）。 */
 export function manifest(snapshot) {
   const files = (re) => snapshot.files.filter((f) => re.test(f)).sort();
   return {

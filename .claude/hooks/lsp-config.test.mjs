@@ -292,7 +292,19 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     const v = violationsAfter((dir) => {
       fs.rmSync(path.join(dir, "rust-analyzer.toml"));
     });
-    expect(v.join("\n")).toMatch(/rust-analyzer\.toml が 1 枚も無い/);
+    expect(v.join("\n")).toMatch(/リポジトリ直下の rust-analyzer\.toml が無い/);
+  });
+
+  // 「ツリーに 1 枚でもあればよい」にすると、設定を crate 側へ移す変更で root が消えても緑になる。
+  // 空虚な真は 1 段内側にも作れる——問うのは所在であって存在ではない。
+  it("足 8e2 — root が消えて crate 直下だけ残っても赤", () => {
+    const v = violationsAfter((dir) => {
+      fs.rmSync(path.join(dir, "rust-analyzer.toml"));
+      const crate = path.join(dir, "snotra-core");
+      fs.mkdirSync(crate, { recursive: true });
+      fs.writeFileSync(path.join(crate, "rust-analyzer.toml"), "[cargo]\ntargetDir = true\n");
+    });
+    expect(v.join("\n")).toMatch(/リポジトリ直下の rust-analyzer\.toml が無い/);
   });
 
   it("settings を書くと赤（initializationOptions 以外の設定経路が開く）", () => {

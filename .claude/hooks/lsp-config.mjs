@@ -89,11 +89,15 @@ export function checkLspConfig(rootDir) {
   // ratoml だけ）のに、後ろへ置くと連鎖側の早期 return に道連れにされ、多重故障のとき報告から
   // 消える。打ち切ってよいのは「前段が決まらないと後段を検査できない」依存がある場合だけである。
   const ratomlFiles = findRatomlFiles(rootDir);
-  if (ratomlFiles.length === 0) {
-    // 0 件だと禁止キー検査が**空虚に真**になる。検知器が「守る対象を失っても緑」であってはならない
-    // （旧実装は root の 1 枚を必ず読んでいたので、削除は読み取り失敗として赤くなっていた）。
+  // **問うのは「リポジトリ直下の 1 枚が在るか」であって「ツリーに 1 枚でも在るか」ではない。**
+  // 後者にすると、設定を crate 側へ移す変更で root が消えても緑になり、workspace 水準の設定
+  // （`workspace.symbol.search` / `cargo.targetDir`）が VS Code から黙って失われる。
+  // 0 件だと禁止キー検査が**空虚に真**になる、という同じ型の穴が 1 段内側に残る形である
+  // （旧実装は root の 1 枚を必ず読んでいたので、削除は読み取り失敗として赤くなっていた）。
+  if (!ratomlFiles.some((f) => path.dirname(f) === path.resolve(rootDir))) {
     violations.push(
-      "rust-analyzer.toml が 1 枚も無い — 禁止キー検査が空虚に真になる。VS Code 側の workspace 設定も失われる",
+      "リポジトリ直下の rust-analyzer.toml が無い — 禁止キー検査が空虚に真になり、" +
+        "VS Code 側の workspace 水準の設定も失われる",
     );
   }
   for (const file of ratomlFiles) {

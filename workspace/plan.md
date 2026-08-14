@@ -105,22 +105,48 @@ is_unsettled(armed) = armed || pending_seq() != 0 || self.restored_rows_stale
 
 ### Phase 4 — 散文の同期
 
-- [ ] `on_escape` の doc（:411-429）の受容残余の記述を、#1079 で閉じた旨へ書き換える。**同時に、案 A の費用記述「Escape のたびに同期 `engine.search` をフレームに乗せる」が現在のコードに当たらないことを記す**（`run_search` の Plain 腕は worker への `send`。却下の実際の理由は「検知器が置けない」である）
-- [ ] `is_unsettled` の doc（:524-567）へ第 3 disjunct の意味を書き、**clear が `put_rows` にあるため reset 経路が構造で覆われる**ことを記す（:546-558 が `armed` について警告している懸念が、このフラグには当たらない理由）
-- [ ] **`is_unsettled` の doc :561-562「この述語が自分の意味に反して偽を返す既知の状態が 1 つある——folder を往復した直後である（受容する残余…）」を消す**（この一文が #1079 そのものである）
-- [ ] **`is_unsettled` の doc :566-567 が極性の理由づけの中で写している式「食い違うのは `armed == false ∧ pending != 0` のとき」を同期する**（`results_view.rs:36` と対になっている写し）
-- [ ] `enter_folder` の doc（:285-287）へ新引数の意味を書く
-- [ ] `put_rows` の doc（:209-225）へ clear を足す（「行の差し替えに伴う義務」の一覧に載る）
-- [ ] `results_view.rs:36` の「食い違うのは `armed == false ∧ pending != 0` のときである」を、第 3 disjunct を含む形へ直す
-- [ ] `docs/architecture.md:228` の記述を直す。**対象は 2 つある**——(a) flush が「発火しうる窓」の上端の記述、(b) 同行の「**Escape**・起動突入・空クエリ・reset は行を同期で差し替えることによってこれより早く閉じる」という言い切り。**(b) は folder からの Escape については成立しなくなる**（本変更が窓を跨いで持ち越すため）
+- [x] `on_escape` の doc（:411-429）の受容残余の記述を、#1079 で閉じた旨へ書き換える。**同時に、案 A の費用記述「Escape のたびに同期 `engine.search` をフレームに乗せる」が現在のコードに当たらないことを記す**（`run_search` の Plain 腕は worker への `send`。却下の実際の理由は「検知器が置けない」である）
+- [x] `is_unsettled` の doc（:524-567）へ第 3 disjunct の意味を書き、**clear が `put_rows` にあるため reset 経路が構造で覆われる**ことを記す（:546-558 が `armed` について警告している懸念が、このフラグには当たらない理由）
+- [x] **`is_unsettled` の doc :561-562「この述語が自分の意味に反して偽を返す既知の状態が 1 つある——folder を往復した直後である（受容する残余…）」を消す**（この一文が #1079 そのものである）
+- [x] **`is_unsettled` の doc :566-567 が極性の理由づけの中で写している式「食い違うのは `armed == false ∧ pending != 0` のとき」を同期する**（`results_view.rs:36` と対になっている写し）
+- [x] `enter_folder` の doc（:285-287）へ新引数の意味を書く
+- [x] `put_rows` の doc（:209-225）へ clear を足す（「行の差し替えに伴う義務」の一覧に載る）
+- [x] `results_view.rs:36` の「食い違うのは `armed == false ∧ pending != 0` のときである」を、第 3 disjunct を含む形へ直す
+- [x] `docs/architecture.md:228` の記述を直す。**対象は 2 つある**——(a) flush が「発火しうる窓」の上端の記述、(b) 同行の「**Escape**・起動突入・空クエリ・reset は行を同期で差し替えることによってこれより早く閉じる」という言い切り。**(b) は folder からの Escape については成立しなくなる**（本変更が窓を跨いで持ち越すため）
 
 ### Phase 5 — 検証
 
-- [ ] `cargo test -p snotra -q`（**`--lib` を付けない**——`src-tauri` は `[lib]` を持たない）
-- [ ] `cargo clippy -p snotra --all-targets -- -D warnings`
-- [ ] `cargo doc --workspace --no-deps --document-private-items`（intra-doc link 切れは PostToolUse hook が沈黙し CI でのみ発火する・`.claude/rules/comments.md`）
-- [ ] `npm run governance:check`（`.rs` の doc とガバナンス文書を変更したため・`AGENTS.md` 条件別チェック）
-- [ ] `/symmetric-check`（フラグの真偽ペア）と `/state-check`（flush のガード条件）を実装差分へ当てる
+- [x] `cargo test -p snotra -q`（**`--lib` を付けない**——`src-tauri` は `[lib]` を持たない）
+- [x] `cargo clippy -p snotra --all-targets -- -D warnings`
+- [x] `cargo doc --workspace --no-deps --document-private-items`（intra-doc link 切れは PostToolUse hook が沈黙し CI でのみ発火する・`.claude/rules/comments.md`）
+- [x] `npm run governance:check`（`.rs` の doc とガバナンス文書を変更したため・`AGENTS.md` 条件別チェック）
+- [x] `/symmetric-check`（フラグの真偽ペア）と `/state-check`（flush のガード条件）を実装差分へ当てる
+
+### Phase 6 — 実装中に判明した作業
+
+- [x] **tool が folder の上に積まれた状態での Escape 2 回にテストが無かった**（4a の `/state-check` を実装差分へ当てて発見）。SPEC §18.5 が直交と定める組み合わせであり、`on_escape` の tool 枝は `self.tool.take()` で早期 return して `self.folder` に触らない——控えた値が tool の出入りで失われないことを `tool_stacked_on_folder_still_restores_the_captured_unsettled` で固定した
+
+### Phase 7 — code-reviewer 指摘への fix-forward
+
+- [x] **[High] `enter_folder` が合成する `armed` の項に検知器が無かった**。変異 `let unsettled_at_entry = self.dispatch.pending_seq() != 0;` が **271 passed で素通りすることを自分で実測**（Phase 3 の変異 (a)(b)(c) がこの 1 種を落としていた＝受け入れ条件 6 が `armed` の項について未達だった）。テスト `folder_entry_captures_armed_not_only_in_flight` を追加し、**変異 (d) でこの 1 本だけが落ちることを実測**（271 passed; 1 failed → 復元後 272 passed）
+- [x] **[Medium] `on_escape` の doc「Plain 腕は `search_tx.send` を撃つだけである」が偽**。Plain 腕の `set_results` は 2 件（実測）。「同期 `engine.search` を含まない」へ書き換え——**言いたかったことは正しいが、書いた主張が実装より強かった**
+- [x] **[Low] 同 doc の `#[cfg(test)]` 不在の主張へ「2026-08-14 時点で」を付与**（`docs/comment-guidelines.md`「第一原則」が名指す「他のコードの現在の状態を主張する根拠」）
+- [x] **[Low] `FolderFrame::unsettled_at_entry` の doc「突入の時点でしか判らない」を精確化**（厳密には folder の列挙結果が届くまでも観測できる。「常に観測できる点は突入時だけ」が正しい）
+- [x] **[Low] 控えた `armed` が減衰しないことを受容残余として明記**（`layout.rs:451-465` を自分で読み機序を裁定。窓 50 ms・害 1 フレーム・過剰近似の向きは安全側）
+- [x] **採らなかった指摘 2 件を記録**: [Medium] `ToolFrame` に対称のフィールドが無い / [Low] `architecture.md` の「folder からの Escape だけは閉じない」が tool 枝の閉じ方に依存する。**この 2 件はラウンド 2 で決着した**（Phase 8）——添えられていた機序「クリック経路から踏める」は誤りで、`enter_tool` は `on_enter` の flush の下流にしか無く実質到達不能である。所見 7 は取り下げ、ToolFrame の非対称は理由を doc へ残した
+
+### Phase 8 — code-reviewer ラウンド 2 への fix-forward
+
+**ラウンド 2 は「解消したか」を私の報告ではなく自分の道具で測って返した**（変異 (d) を自分で当てて 271 passed; 1 failed を再現し、`cmp` で復元の byte 一致まで確認）。加えて**修正の周辺に新しい誤りが 3 件生じていた**——`AGENTS.md`「修正は指摘箇所へ注意が集中し、周辺に新しい誤りを生む」の実例である。
+
+- [x] **[Medium] 正本を直して写しを 2 か所落としていた**（#977 の型）。`FolderFrame::unsettled_at_entry` の doc（正本）を「常に観測できる点は突入時だけ」へ直したのに、`on_escape` の doc が「**なぜ突入時点でしか判らないかは**（正本）が正本」、インライン `//` が「突入時点でしか判らないので」のまま残っていた。**正本を名指しながら、その正本が明示的に否定した表現で要約していた**ので、リンクを辿った読者は矛盾に当たる。`//` は rustdoc が読まないため `cargo doc` も `governance:check` も緑のまま素通りした
+- [x] **[Low] 「その `set_results` は必ず来る」が不要な全称だった**。反例 2 件（`spawn_folder_load` は `try_state` が `None` なら何も send せず return / dead・slow UNC の滞留窓は `folder_load_pending` の存在が認めている）。**そもそも論証に要らない**ので「届いたかどうかが Escape の時点で判らない」へ置き換えた
+- [x] **[Low] 偽陽性の「安全側」の説明が `indexing()` を落としていた**。「行を余計に作り直す side へ倒れ」は空クエリ・`indexing()` 中に成り立たない（flush の `None` 枝が `set_results(Vec::new())` を撃ち、起動そのものが止まる）。plan.md が「挙動が変わる 1 点（意図的）」として自分で名指している事象を、doc の言い回しが落としていた
+- [x] **[Low] 「trailing 発火で interval のうちに落ちる」に「最後の打鍵から」が無かった**（同ファイルの既存 doc は「**最後の**打鍵から interval」と書いており不一致だった）
+- [x] **`ToolFrame` に対称のフィールドを置かない理由を doc へ残した**（否定の知識）。**ラウンド 1 で添えられた機序「production で踏めるのはクリック経路だけ」はレビュア自身が撤回し、私も一次証拠で裁定した**——`enter_tool`(:570) ← `shift_activate`(:546) ← `on_enter`(:1357) の 1 本鎖で、クリック(`view.rs:1146`)は `activate_or_execute` を直呼びして `enter_tool` へ届かない。ルート `CLAUDE.md`「所見が正しくても、そこに添えられた機序の説明は独立に誤りうる」の実例
+- [x] **[取り下げ] 所見 7（`architecture.md:228`）**: 所見 2 が「到達不能」で決着したため、「folder からの Escape だけは閉じない」は但し書き無しで真。現行文のままとする
+
+**自己検算で 1 件、レビュアの指摘より先に自分で見つけて直した**: 「窓が 50 ms」は `launcher_controller.rs` の 2 箇所にあるリテラルの写しで、interval を変えれば黙って腐る（`AGENTS.md`「数ではなく正本を指す」）。**全称表現を訂正する当のコミットで、別の数え上げを新しく書いていた。**
 
 ## 不変条件と異常系
 

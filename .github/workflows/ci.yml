@@ -47,7 +47,10 @@ jobs:
   # #587: ガバナンス文書の決定的検査。skip-ci ガードを意図的に付けない —
   # skip-safe と定義された変更（docs/rules/skills/*.md）こそが本検査の対象であり、
   # ガードを付けると Markdown-only PR が再び未検査に戻る。paths フィルタも付けない
-  # （依存ゼロ・数秒で完了するため常時実行し、「走らなかった」経路を作らない）。
+  # （`governance check` step は依存ゼロ・数秒で完了するため常時実行し、「走らなかった」
+  # 経路を作らない）。**#1088 の `governance manifest delta` step はこの前提の外にある**——
+  # ネットワークと GitHub API に依存し、skip-ci ガードも無い。この step の一時的な失敗は
+  # Markdown-only PR も含め全 PR を赤くする——受容する残余とする（速さの理由は変わらず有効）。
   governance-check:
     runs-on: ubuntu-latest
     permissions:
@@ -66,33 +69,47 @@ jobs:
       - name: governance check
         run: node scripts/governance-check.mjs
 
-      # #1088: 構造母集団（検査・対象文書・rules・skills）の集合を main と比べ、
+      # #1088: 構造母集団（検査・対象文書・rules・skills）の集合を **この PR の base** と比べ、
       # 差分が在るのに PR 本文で宣言されていなければ落とす。散文母集団（見出し参照・文字数）は
       # 変動が多すぎて承認がゴム印化するので対象にしない（実測は
       # docs/superpowers/specs/2026-08-14-governance-check-scope-design.md）。
       #
-      # **skip は「main 側にスクリプトが無い」ときだけに狭める。** `origin/main` が解決できない
-      # 場合まで skip へ落とすと、恒久的に沈黙して緑になる（#1088 が問うている欠陥の CI 版）。
-      # ゆえに fetch の refspec を明示し、`rev-parse --verify` を分岐の前に置いて失敗を鳴らす。
+      # **base は `pull_request.base.sha` である——実行時の `origin/main` ではない。**
+      # checkout される merge commit は event payload に凍結されており、base だけを実行時の
+      # main tip から取ると、event 発火と job 実行の間に main が動いた分が**この PR の delta として
+      # 現れる**。他人が足した rules の「削除」を無関係な PR の作者が宣言する羽目になり、
+      # ゴム印を防ぐための機構が自らゴム印を要求する。base も payload 側で凍結して対称にする。
       #
-      # **PR 本文は payload ではなく都度取る。** `github.event.pull_request.body` は event の
-      # payload に凍結されており、`pull_request` の既定 types に `edited` は無く、再実行は同じ
-      # payload を再生する。凍結値では「本文へ宣言を書いて再実行する」という復帰手順が成立しない。
+      # **可変なのは PR 本文だけでよい。** `github.event.pull_request.body` は payload に凍結
+      # されており、`pull_request` の既定 types に `edited` は無く、再実行は同じ payload を再生する。
+      # 凍結値では「本文へ宣言を書いて再実行する」という復帰手順が成立しない。base と head は
+      # 凍結、本文は都度取得——この非対称が意図である。
+      #
+      # **skip は「base 側にスクリプトが無い」ときだけである。** base が解決できなければ
+      # `set -e` 下で fetch がそこで落ちる（skip へは落ちない。後段の `rev-parse` は 2 枚目の網）。
+      # この分岐が要るのは**この機構を導入する PR 自身**のためだけで、マージ後は base に必ず在る。
+      # **撤去の合図は「main に `scripts/governance-manifest.mjs` が在ることを観測したら」であり、
+      # その時点で else 分岐は `exit 1` へ倒してよい**（issue の close を合図にすると、閉じるのが
+      # 撤去 PR 自身になって自己参照し発火しない）。マージ後にこの分岐が沈黙しうるのは base から
+      # スクリプトが消えたときだが、そこへ至る PR は head 側の呼び出しが落ちて赤くなるので、
+      # 赤い CI を承知でマージした場合に限られる。
       - name: governance manifest delta
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main
-          git rev-parse --verify origin/main >/dev/null
-          if git cat-file -e origin/main:scripts/governance-manifest.mjs 2>/dev/null; then
-            git worktree add --detach /tmp/gov-base origin/main
+          git fetch --depth=1 origin "$BASE_SHA"
+          git rev-parse --verify "$BASE_SHA^{commit}" >/dev/null
+          if git cat-file -e "$BASE_SHA:scripts/governance-manifest.mjs" 2>/dev/null; then
+            git worktree add --detach /tmp/gov-base "$BASE_SHA"
             (cd /tmp/gov-base && node scripts/governance-manifest.mjs) > /tmp/base.json
-            PR_BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)" \
-              node scripts/governance-manifest.mjs --compare /tmp/base.json
+            PR_BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)"
+            export PR_BODY
+            node scripts/governance-manifest.mjs --compare /tmp/base.json
           else
-            echo "governance manifest — main 側に scripts/governance-manifest.mjs が無いので比較を飛ばす（この機構を導入する PR 自身）"
+            echo "governance manifest — base 側に scripts/governance-manifest.mjs が無いので比較を飛ばす（この機構を導入する PR 自身）"
           fi
 
   rust-check:

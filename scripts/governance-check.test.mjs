@@ -14,6 +14,7 @@ import {
   checkHookFires,
   checkModuleIndex,
   checkModuleLinkage,
+  declaredModuleFiles,
   checkArchitectureTable,
   checkReferences,
   checkSpecSections,
@@ -243,6 +244,61 @@ describe("G-module-linkage checkModuleLinkage", () => {
   it("緑（判定対象外の不混入）: src/bin/*.rs は cargo が自動発見するので mod 宣言を要さない", () => {
     const s = snap({ ...base, "demo/src/bin/tool.rs": "fn main() {}\n" });
     expect(checkModuleLinkage(s)).toEqual([]);
+  });
+
+  // --- 字句スキャナの両方向（2026-08-14 のレビューが実測した 8 入力＋BOM）---
+  // 初版はコメントの潰しと引用符の数え上げが別パスで、一方の数え違いがもう一方の判定を反転させた。
+  // **誤検出（赤）と沈黙（緑）の両方が出る**ため、両向きを固定する。
+  describe("コードでない部分の判別", () => {
+    const withLib = (body, extra = {}) => snap({ ...base, "demo/src/lib.rs": `mod search;\npub mod folder;\n${body}`, ...extra });
+
+    it("緑: 文字列の中の // をコメントと誤認しない（誤認すると閉じ引用符を食べて以降の宣言が消える）", () => {
+      expect(checkModuleLinkage(withLib('pub const U: &str = "http://example.com";\n'))).toEqual([]);
+    });
+    it("緑: char リテラルの `\"` で位相が反転しない", () => {
+      expect(checkModuleLinkage(withLib("pub const Q: char = '\"';\n"))).toEqual([]);
+    });
+    it("緑: 文字列の中の /* でブロックコメントを開かない", () => {
+      expect(checkModuleLinkage(withLib('pub const S: &str = "/*";\n'))).toEqual([]);
+    });
+    it("緑: 行継続で 2 行にまたがる文字列の中の // を誤認しない", () => {
+      expect(checkModuleLinkage(withLib('pub const S: &str = "a\\\n    https://x";\n'))).toEqual([]);
+    });
+    it("緑: BOM 付きでも 1 行目の宣言を拾う", () => {
+      const s = snap({ ...base, "demo/src/lib.rs": "﻿mod search;\npub mod folder;\n" });
+      expect(checkModuleLinkage(s)).toEqual([]);
+    });
+
+    it("赤: raw string の中に奇数個の `\"` があっても孤児を緑にしない", () => {
+      const s = withLib('pub const S: &str = r#"x"y\nmod ghost;\n"#;\n', { "demo/src/ghost.rs": "" });
+      expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
+    });
+    it("赤: raw string の中に綴られた #[path] を拾わない", () => {
+      const s = withLib('pub const S: &str = r#"\n#[path = "ghost.rs"]\nmod g;\n"#;\n', { "demo/src/ghost.rs": "" });
+      expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
+    });
+    it("赤: 先行する URL 文字列があっても、後続の複数行文字列の中身を拾わない", () => {
+      const s = withLib('pub const U: &str = "http://x";\npub const S: &str = "\nmod ghost;\n";\n', { "demo/src/ghost.rs": "" });
+      expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
+    });
+    it("赤: 先行する char リテラルがあっても、後続の複数行文字列の中身を拾わない", () => {
+      const s = withLib("pub const Q: char = '\"';\npub const S: &str = \"\nmod ghost;\n\";\n", { "demo/src/ghost.rs": "" });
+      expect(checkModuleLinkage(s).some((x) => x.file === "demo/src/ghost.rs")).toBe(true);
+    });
+  });
+
+  // ドッグフード: フィクスチャは自分が想像した形しか守らない。**実ファイルで宣言が拾えること**を測る。
+  // 初版はこの形でだけ見つかる欠陥を 3 枚抱えていた（`"http://x"` / `'"'` / `"/*"` を含むファイル）。
+  it("実リポジトリの全 .rs へ宣言を注入すると、すべて拾える", () => {
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const s = makeSnapshot(root);
+    const rs = s.files.filter((f) => /^[^/]+\/src\/.*\.rs$/.test(f));
+    expect(rs.length, "母集団が空（ドッグフードの欠落）").toBeGreaterThan(50);
+    const missed = rs.filter((f) => {
+      const injected = `${s.read(f)}\nmod probe_zz;\n`;
+      return !declaredModuleFiles(f, injected).some((c) => c.endsWith("/probe_zz.rs"));
+    });
+    expect(missed, "末尾へ足した mod 宣言を拾えないファイル（字句の判別が壊れている）").toEqual([]);
   });
 
   it("赤（検査を殺す変異）: ルート Cargo.toml が読めないとき緑を返さない", () => {

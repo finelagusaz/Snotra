@@ -176,8 +176,12 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
 // **判定は「行頭ちょうどの `mod name;`」だけを拾う。** 空白を許すと、インライン `mod x { ... }` の中の
 // `mod y;` を拾ったうえで基準ディレクトリを外し、**同名の兄弟ファイルへ誤って一致して孤児を緑にする**
 // （2026-08-14 のレビューで実測）。列を固定すればインライン内は一切拾わず、当該ファイルは未到達＝
-// 赤に倒れる。**誤りの向きを赤側へ寄せるのが設計の要**である。同じ理由で、判定前にコメントを落とし、
-// 文字列リテラルの内側で始まる綴りを捨てる——落としすぎれば宣言を見失って赤になるだけで、沈黙しない。
+// 赤に倒れる。同じ理由で、判定前に**コードでない部分**（コメント・文字列・char リテラル）を
+// 1 パスの字句スキャナで潰す。**この判定を誤れば両方向へ倒れる**——潰しすぎれば本物の宣言を
+// 見失って赤、潰し足りなければ文字列やコメントの中の綴りを拾って孤児を緑にする。ゆえに
+// `governance-check.test.mjs` のカナリアが**両方向**を固定し、さらに実リポジトリの全 `.rs` へ
+// 宣言を注入して拾えることをドッグフードで測る（2 パスだった初版は、実ファイル 3 枚が
+// 誤検出の縁に居た——`"http://x"` の `//` を行コメントと誤認する形・レビューが実測）。
 //
 // 受容する残余:
 // - **`#[cfg]` は無視して和を取る。** ゆえに保証は「どれかの cfg で宣言されている」であって
@@ -201,54 +205,86 @@ function moduleChildDir(file) {
   return `${dir}/${base.slice(0, -3)}`;
 }
 
-/** コメント（`//` 行と、入れ子を許すブロックコメント）を空白へ潰す。**長さと改行位置を保つ**ので、
- *  この後の行頭アンカーと引用符の数え上げがそのまま使える。
- *  取りこぼしても取りすぎても宣言を見失う側＝赤へ倒れるだけで、沈黙しない。 */
-function blankRustComments(src) {
+/**
+ * Rust ソースの**コードでない部分**（コメント・文字列・char リテラル）を空白へ潰す。
+ * 長さと改行位置を保つので、潰した文字列に対する行頭アンカーと、元テキスト上のオフセットが両立する。
+ *
+ * **1 パスの字句スキャナである。** コメントの除去と文字列の判定を別々のパスでやると、
+ * 一方の数え違いがもう一方の判定を**反転**させる（2026-08-14 のレビューが実測: `"http://x"` の
+ * `//` を行コメントと誤認して閉じ引用符を食べ、以降の文字列の内側が「外側」に見えた）。
+ * 状態を 1 つ持てば、文字列の中の `//` もコメントの中の `"` も原理的に取り違えない。
+ *
+ * 扱う字句: 入れ子ブロックコメント / `//` 行コメント / 文字列（`\` エスケープ・行継続を含む）/
+ * raw string（`r"…"`・`r#"…"#`・`#` は任意個）/ byte 版（`b"…"`・`br#"…"#`・`b'…'`）/
+ * char リテラル。**char とライフタイムは綴りで区別する**——`'x'` / `'\n'` / `'"'` は char、
+ * `'a` は閉じないのでライフタイムとして素通しする。
+ */
+function blankRustNonCode(text) {
+  const n = text.length;
   let out = "";
-  let depth = 0;
-  for (let i = 0; i < src.length; ) {
-    const two = src.slice(i, i + 2);
-    if (depth === 0 && two === "//") {
-      while (i < src.length && src[i] !== "\n") out += " ", i++;
-      continue;
-    }
+  let i = 0;
+  const blank = (to) => {
+    for (; i < to; i++) out += text[i] === "\n" ? "\n" : " ";
+  };
+  while (i < n) {
+    const two = text.slice(i, i + 2);
     if (two === "/*") {
-      depth++;
-      out += "  ";
-      i += 2;
+      let depth = 1;
+      let j = i + 2;
+      while (j < n && depth > 0) {
+        const t = text.slice(j, j + 2);
+        if (t === "/*") depth++, (j += 2);
+        else if (t === "*/") depth--, (j += 2);
+        else j++;
+      }
+      blank(j);
       continue;
     }
-    if (depth > 0 && two === "*/") {
-      depth--;
-      out += "  ";
-      i += 2;
+    if (two === "//") {
+      let j = i;
+      while (j < n && text[j] !== "\n") j++;
+      blank(j);
       continue;
     }
-    out += depth > 0 && src[i] !== "\n" ? " " : src[i];
+    const raw = /^b?r(#*)"/.exec(text.slice(i, i + 24));
+    if (raw) {
+      const close = `"${"#".repeat(raw[1].length)}`;
+      const end = text.indexOf(close, i + raw[0].length);
+      blank(end < 0 ? n : end + close.length);
+      continue;
+    }
+    const quote = text[i] === '"' ? i : text[i] === "b" && text[i + 1] === '"' ? i + 1 : -1;
+    if (quote >= 0) {
+      let j = quote + 1;
+      while (j < n) {
+        if (text[j] === "\\") j += 2;
+        else if (text[j] === '"') {
+          j++;
+          break;
+        } else j++;
+      }
+      blank(j);
+      continue;
+    }
+    const tick = text[i] === "'" ? i : text[i] === "b" && text[i + 1] === "'" ? i + 1 : -1;
+    if (tick >= 0) {
+      const ch = /^'(?:\\.|[^'\\\n])'/.exec(text.slice(tick, tick + 12));
+      if (ch) {
+        blank(tick + ch[0].length);
+        continue;
+      }
+    }
+    out += text[i];
     i++;
   }
   return out;
 }
 
-/** `text` の先頭から `index` までに現れる**エスケープされていない `"`** が奇数か。
- *  奇数なら、その位置は文字列リテラルの内側である（複数行文字列の中で行頭に来た綴りを捨てるため）。
- *  raw string や `'"'` の文字リテラルでは数え違えるが、**向きは「宣言を捨てる＝赤」**である。 */
-function insideStringLiteral(text, index) {
-  let quotes = 0;
-  for (let i = 0; i < index; i++) {
-    if (text[i] === "\\") {
-      i++;
-      continue;
-    }
-    if (text[i] === '"') quotes++;
-  }
-  return quotes % 2 === 1;
-}
-
-/** `file` が宣言する子モジュールの候補ファイルパスを返す。 */
-function declaredModuleFiles(file, source) {
-  const text = blankRustComments(source);
+/** `file` が宣言する子モジュールの候補ファイルパスを返す（カナリアが実ファイルで検算するため export）。 */
+export function declaredModuleFiles(file, raw) {
+  // BOM は落とす（残すと 1 行目の宣言が列 0 から外れて拾えない）。以降は同じ文字列を基準にする。
+  const source = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  const text = blankRustNonCode(source);
   const slash = file.lastIndexOf("/");
   const ownDir = slash < 0 ? "" : file.slice(0, slash);
   const childDir = moduleChildDir(file);
@@ -257,9 +293,12 @@ function declaredModuleFiles(file, source) {
   // `#[path = "..."] mod n;` — **`#[path]` は「そのソースファイルが在るディレクトリ」からの相対**である
   // （実例: snotra-egui-runtime/src/ime.rs の `#[path = "windows_ime.rs"]` が src/windows_ime.rs を指す）。
   // 間に他の属性（`#[cfg(...)]` 等）が挟まる形も拾う。
-  for (const m of text.matchAll(
+  // **元テキストで照合し、その位置がコードであることを潰した側で確かめる。** 属性の中の文字列は
+  // 解決に要るので潰せないが、raw string の中に綴られた `#[path]` は拾ってはならない（実測で沈黙した）。
+  for (const m of source.matchAll(
     /#\[path\s*=\s*"([^"]+)"\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/g,
   )) {
+    if (text[m.index] !== "#") continue; // コメント・文字列の内側
     // `..` は畳んで解決する（Rust の意味論と一致）。根を越えた形だけが残り、母集団に一致せず赤に倒れる。
     out.push(path.posix.normalize(`${ownDir}/${m[1]}`));
     viaPath.add(m[2]);
@@ -268,7 +307,6 @@ function declaredModuleFiles(file, source) {
   // 基準ディレクトリを外したまま同名の兄弟ファイルへ一致して孤児を緑にする）。
   for (const m of text.matchAll(/^(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/gm)) {
     if (viaPath.has(m[1])) continue; // `#[path]` 付きは上で解決済み
-    if (insideStringLiteral(text, m.index)) continue; // 複数行文字列の中の綴り
     out.push(`${childDir}/${m[1]}.rs`, `${childDir}/${m[1]}/mod.rs`);
   }
   return out;

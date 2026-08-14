@@ -78,6 +78,10 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 設定は `.claude/lsp/`（リポジトリ所有の project-scope plugin）が運び、`.claude/settings.json` の `extraKnownMarketplaces` + `enabledPlugins` で配送する。**VS Code 側の rust-analyzer は巻き込まない**——`rust-analyzer.toml` は両クライアントが読むため、そこには書かない。
 
+**診断（diagnostics）は抑制していない。抑制する理由が無かったからである**（#1085 で実測）。エージェントへ届くのは**構文エラー**で、正常な編集では 0 件だった。ゆえに `.lsp.json` の `diagnostics` キーも RA 側の `diagnostics.enable` も置かない。**測った変異の範囲・却下した 2 層・受容する残余は `docs/adr/ADR-ra-diagnostics-suppression.md`「決定を支える実測」が正本。**
+
+分担にとって効くのは 1 点である: 未リンクの `.rs`（`mod` 宣言を書き忘れたファイル）は cargo の視界に無いので hook は沈黙するが、**その構文エラーは LSP が届ける**。`mod` 忘れそのものはどちらも報せず、それを見るのは `governance:check` の `G-module-linkage` である（機序と残余は同検査の注釈が正本・#1085）。
+
 **壊れ方は 2 つに分かれ、片方だけが沈黙する。** ここが分担の要である。
 
 | 壊れ方 | 現れ方 |

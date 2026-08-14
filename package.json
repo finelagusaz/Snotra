@@ -9,6 +9,7 @@
     "test:powershell": "pwsh -NoProfile -File scripts/run-pester.ps1",
     "clean:worktrees": "node scripts/clean-worktrees.mjs",
     "governance:check": "node scripts/governance-check.mjs",
+    "governance:manifest": "node scripts/governance-manifest.mjs",
     "race:boundaries": "node scripts/race-boundaries.mjs",
     "plan:ledger": "node scripts/plan-review-ledger.mjs",
     "smoke:startup": "pwsh -NoProfile -File scripts/smoke-startup.ps1",

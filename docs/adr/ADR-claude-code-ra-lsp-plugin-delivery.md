@@ -18,7 +18,13 @@ issue は「repo 所有の plugin root に `.lsp.json` を置き、`initializati
 ## 検討した代替案と却下理由
 
 - **`claude plugin marketplace add <path> --scope project` で配線する**: 却下。CLI は入力を `path.resolve()` して**絶対パスで書き込む**（バイナリから逐語抽出）。絶対パスは他マシンと agent worktree で壊れる。読み手側も `path.resolve()`（cwd 基準）なので、`.claude/settings.json` へ**相対パスを手書きする**ほうが可搬性が高い。
-- **inline `settings` marketplace source を使う**（`{"source":"settings", "plugins":[…]}`）: 却下。パスを一切持たないので魅力的に見えるが、合成 marketplace の root が**キャッシュ配下**（`path.join(<cache>, name)`）に書かれるため、plugin entry の相対 `source` はリポジトリではなくキャッシュを指す。plugin entry の source union に `directory` も絶対パス形も無い（`npm` / `archive` / `github` / `git` / `command` と marketplace root 相対のパスのみ）。**リポジトリ内の plugin を指せない。**
+- **inline `settings` marketplace source を使う**（`{"source":"settings", "plugins":[…]}`）: 却下。**リポジトリ内の plugin を指せない。** ファイルを 1 枚も足さずに済むので最も筋が良く見え、しかも「パスが無いなら worktree の乖離も原理的に消えるのでは」という期待があったため、マージ後に改めて実測した（2026-08-14）。settings の検証がそのまま答えを返す（逐語）:
+
+  > Plugins in a settings-sourced marketplace must use remote sources (github, git-subdir, npm, url, archive, command). Relative-path sources like "./foo" have no marketplace repository to resolve against.
+
+  合成 marketplace の root がキャッシュ配下（`path.join(<cache>, name)`）に書かれるため、相対 `source` には解決先が無い、というのが理由である。**この経路は将来も開かない**——リポジトリ内を指す手段が構文として存在しない。
+- **marketplace を介さずリポジトリから plugin を読ませる**: 却下（**手段が無い**）。設定キーの一覧を実測したところ、plugin 関連は `enabledPlugins` / `extraKnownMarketplaces`（＋その別名と管理者向けのポリシー列）だけで、**`lspServers` を settings へ直接書く口は無い**。project-local な plugin ディレクトリの自動走査も無い（`.claude/plugins` の参照はすべてユーザーグローバル側）。残る抜け道は `--plugin-dir` sideload だけで、起動フラグ依存ゆえ clone 後の再現性が無い。**ゆえに marketplace 層は省けない**——リポジトリ外に出るのは登録エントリ 1 個だけで、それが残余 1 の原因である。
+- **`lspServers` を marketplace エントリへ直書きし、`.lsp.json` と `plugin.json` を捨てる**: 却下（費用対効果）。公式 `rust-analyzer-lsp` が実際に取っている形で、3 ファイルを 2 ファイルへ減らせる（plugin の source ディレクトリは実在が要り、git は空ディレクトリを追跡しないのでプレースホルダが 1 枚残る）。しかし (i) 宣言の強弱が反転してカナリアの不変条件を書き直すことになり、(ii) 残余 1（worktree の乖離）は**ファイル構成ではなく登録簿が原因**なので消えない。1 枚減らす対価としては高い。
 - **user ratoml（`%APPDATA%/rust-analyzer/rust-analyzer.toml`）でクライアント間の非対称を作る**: 却下。全プロジェクトに掛かる／repo 外所有で機械検査ができない／`checkOnSave`・`diagnostics.*` は workspace・local 水準ゆえ**クライアント設定より下**で、plugin を入れた瞬間に無効化される二重機構になる。
 - **`command` を stdio proxy へ向け、`initialize` の params へ設定を書き足す shim**: 却下。スキーマが `initializationOptions` を正規に持つ以上、**写しを自作する理由が無い**。
 - **`--plugin-dir` を常用運用にする**: 却下（issue の判断を追認）。起動手段に依存し、clone 後の再現性が無い。
@@ -33,11 +39,25 @@ issue は「repo 所有の plugin root に `.lsp.json` を置き、`initializati
 
 **足ごとに名指しする。**
 
-1. **`known_marketplaces.json` はマシン全体で marketplace 名をキーに持つ。** 宣言した相対パスが存在しないツリー（この変更より前の枝から作った worktree）では、reconciler が debug log に `keeping materialized entry` と書いて**別のツリーの plugin を使い続ける**。カナリアはそのツリーのファイルを読むので、この乖離は検知できない。検知するにはユーザーマシンの状態（CI に無い）を読む必要があり、かつファイル作成から次のセッション再起動までの**正当な過渡状態で赤くなる**。実挙動を測ってから決める。
+1. **worktree は自分の設定ではなく、最初に登録したツリーの設定で動く**（2026-08-14 に実測。**当初書いた機序は誤っていた**——下の「実測で訂正した機序」参照）。`known_marketplaces.json` はマシン全体で marketplace 名をキーに持ち、その `installLocation` が最初に登録したツリーの絶対パスを指し続ける。ゆえに worktree で `.claude/lsp/` を編集してもそのセッションには効かず、カナリアはそのツリーのファイルを読むので緑のままである。検知するにはユーザーマシンの状態（CI に無い）を読む必要があり、かつファイル作成から次のセッション再起動までの**正当な過渡状態で赤くなる**。今は置かない。
 2. **`.claude/settings.local.json` は project より優先順位が高い**（user < project < local < flag < policy）。そこへ `enabledPlugins` を書けば plugin を無効化できるが、gitignore 済みでリポジトリからは守れない。
 3. **`skip-ci` ラベル付き PR ではカナリアが走らない。** 層を 1 枚に留めた代償。
 4. **除外は名前一致・全階層である。** `crates/dist/` のような名前のディレクトリができれば ratoml を取りこぼす（現存しない）。
 5. **`toPosixPath` の使用は検知器で縛れない。** Windows では `path.sep` が `\` ゆえ `replaceAll("\\","/")` と同値で、POSIX でも差が出るのはファイル名にバックスラッシュを含む場合だけである。読解で担保する。
+
+## 実測で訂正した機序（所見は正しく、説明が誤っていた）
+
+**マージ後に worktree の挙動を実測したところ、この ADR と `docs/hooks.md` に当初書いた機序が誤っていた。** 訂正の記録を残す——**所見が正しくても、そこに添えた機序は独立に誤りうる**（ルート `CLAUDE.md`）の実例であり、しかも今回は誤った機序を**規範文書へ書いてしまった**側の実例だからである。
+
+| | 当初書いた機序 | 実測した機序 |
+|---|---|---|
+| 条件 | 宣言した相対パスが**存在しない**ツリー | **パスが両方に存在していても**起きる |
+| 経路 | reconciler が `keeping materialized entry` と書いて古い登録を維持する | `known_marketplaces.json` の `installLocation` が**最初に登録したツリーを固定する** |
+| 古い枝の worktree | 別ツリーの plugin を使い続ける | **公式 plugin へ素直に落ちる**（project 設定はツリーごとに読まれる） |
+
+測り方: worktree 側の `.lsp.json` の**サーバ名だけ**を変えて起動し、debug log に現れる `plugin:<plugin>:<サーバ名>` でどちらのファイルが読まれたかを判別した。当初の機序（`keeping materialized entry`）はバイナリから逐語で抽出した実在の分岐だが、**この現象の原因ではなかった**——実在することと、それが原因であることは別である。
+
+なお当初の機序を提示したのは外部レビューであり、呼び出し側は所見（worktree で乖離が起きる）を採って機序の説明も一緒に書き写した。**採るのは所見であって説明ではない**という規範を、書いた本人が同じ差分で破っている。
 
 ## 検知器自身のカバー範囲を検算して見つかった足
 

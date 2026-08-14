@@ -161,9 +161,14 @@ Rust 側の検証は不要（製品コードを触らない）。`.md` の編集
 
 ### Phase 1 — 検知器（足 2 を塞ぐ）
 
-- [ ] `scripts/governance-check.mjs` に `checkModuleLinkage` を実装し、`G-module-linkage` として登録する
-- [ ] インライン `mod x { ... }` の中に `mod y;` が無いことを grep で確かめる（在れば判定へ足す）
-- [ ] `scripts/governance-check.test.mjs` にカナリアを書き、3 方向の変異で赤/緑を実測する
+- [x] `scripts/governance-check.mjs` に `checkModuleLinkage` を実装し、`G-module-linkage` として登録する
+- [x] インライン `mod x { ... }` の中に `mod y;` が無いことを grep で確かめる（**0 件**——
+      インデントされた `mod \w+;` が 4 crate の `src/` に 1 件も無い。判定へ足さない）
+- [x] `scripts/governance-check.test.mjs` にカナリアを書き、5 方向の変異で赤/緑を実測する
+      （8 本すべて緑。**検査を無力化する変異では赤 4 本だけが落ちた**＝赤いフィクスチャが
+      検査を縛っている。緑の 4 本は no-op でも通るが、役割は誤検出の防止であり正しい構造）
+- [x] **配線を end-to-end で確認**（vitest は純関数を見るが登録は見ない）——実ファイルへ足 2 の
+      変異を当て、`npm run governance:check` の出力に findings が現れることを確認。検査 19 → 20 件
 
 ### Phase 2 — 記録
 

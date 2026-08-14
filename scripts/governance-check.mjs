@@ -150,6 +150,125 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
 }
 
 // ---------------------------------------------------------------------------
+// G-module-linkage — `<crate>/src/**/*.rs` が crate ルートから `mod` 宣言で到達できるか（#1085）。
+//
+// **G-module-index が塞がない足を塞ぐ。** 両者は同じ「`.rs` を足したときの取りこぼし」を守るが、
+// 見ているものが違う——G-module-index は実ファイル ↔ `CLAUDE.md` の索引、本検査は `mod` の到達性。
+// 足ごとに壊して測った結果（2026-08-14・#1085）:
+//   索引にも `mod` にも書かない → G-module-index が赤
+//   **索引には書き、`mod` 宣言だけ忘れる → どの検査も緑だった**（本検査が塞ぐのはこの足）
+//
+// **cargo からも LSP からも見えない。** 未リンクの `.rs` は `cargo fmt/clippy/test` の視界に無く
+// （PostToolUse hook は沈黙する）、rust-analyzer も `unlinked-file` を publish しない（#1085 で
+// stdio クライアントから生の publishDiagnostics を読んで実測）。最悪の帰結は
+// `#[cfg(test)] mod tests` を持つファイルが 1 度もコンパイルされず**テストが黙って走らない**ことである。
+//
+// 母集団はルート `Cargo.toml` の `[workspace] members`（`workspaceMembers` が唯一の口・関数巻き上げで
+// 参照する）。**`MODULE_INDEX_CRATES` を使わない**——あれは同じ members の写しで、その母集団カナリアが
+// 縛るのは `CLAUDE.md` を持つ member だけであり、`CLAUDE.md` の無い crate を黙って飛ばす。
+// リンク性は `CLAUDE.md` の有無と無関係である。
+//
+// 射程外（`mod` 宣言を要さないまま正当なもの）: crate 直下の `tests/*.rs`・`benches/`・`examples/`・
+// `build.rs`——cargo が target として自動発見する。母集団を `<crate>/src/` に閉じることで外れる。
+//
+// 受容する残余:
+// - **インライン `mod x { ... }` の中の `mod y;` を追わない。** 現在 0 件（`^\s+mod \w+;` が 1 件も
+//   当たらない）。在れば当該ファイルが未到達として**赤に倒れる**ので、沈黙ではなく過検出の向きである。
+// - `include!` によるファイル取り込みを追わない（現在 0 件）。同じく赤に倒れる向き。
+// - `[lib] path = ...` で `src/` の外へソースを置く crate は母集団から外れる（現在 0 件）。
+
+/** ある `.rs` が宣言する子モジュールの探索基準ディレクトリ。
+ *  `lib.rs` / `main.rs` / `mod.rs` は自分のディレクトリ、それ以外は自分の stem のディレクトリを持つ。 */
+function moduleChildDir(file) {
+  const slash = file.lastIndexOf("/");
+  const dir = slash < 0 ? "" : file.slice(0, slash);
+  const base = file.slice(slash + 1);
+  if (base === "lib.rs" || base === "main.rs" || base === "mod.rs") return dir;
+  return `${dir}/${base.slice(0, -3)}`;
+}
+
+/** `a/b/../c` のような相対要素を畳む（`#[path]` は任意の相対パスを取れる）。 */
+function normalizeRelative(p) {
+  const out = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return out.join("/");
+}
+
+/** `file` が宣言する子モジュールの候補ファイルパスを返す。 */
+function declaredModuleFiles(file, text) {
+  const slash = file.lastIndexOf("/");
+  const ownDir = slash < 0 ? "" : file.slice(0, slash);
+  const childDir = moduleChildDir(file);
+  const out = [];
+  const viaPath = new Set();
+  // `#[path = "..."] mod n;` — **`#[path]` は「そのソースファイルが在るディレクトリ」からの相対**である
+  // （実例: snotra-egui-runtime/src/ime.rs の `#[path = "windows_ime.rs"]` が src/windows_ime.rs を指す）。
+  // 間に他の属性（`#[cfg(...)]` 等）が挟まる形も拾う。
+  for (const m of text.matchAll(
+    /#\[path\s*=\s*"([^"]+)"\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/g,
+  )) {
+    out.push(normalizeRelative(`${ownDir}/${m[1]}`));
+    viaPath.add(m[2]);
+  }
+  // 通常の `mod name;`（行頭アンカー——コメント行・文字列中の綴りを拾わない）
+  for (const m of text.matchAll(/^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z_0-9]*)\s*;/gm)) {
+    if (viaPath.has(m[1])) continue; // `#[path]` 付きは上で解決済み
+    out.push(`${childDir}/${m[1]}.rs`, `${childDir}/${m[1]}/mod.rs`);
+  }
+  return out;
+}
+
+export function checkModuleLinkage(snapshot) {
+  const { members, error } = workspaceMembers(snapshot);
+  if (error) return [finding("Cargo.toml", 1, `${error}（G-module-linkage 母集団の欠落）`)];
+
+  const findings = [];
+  for (const crate of members) {
+    const prefix = `${crate}/src/`;
+    const population = snapshot.files.filter((f) => f.startsWith(prefix) && f.endsWith(".rs"));
+    // 空母集団を合格に見せない（沈黙経路の閉塞・本ファイル冒頭の契約）
+    if (population.length === 0) {
+      findings.push(finding(`${crate}/Cargo.toml`, 1, `${prefix} 配下に .rs が無い（G-module-linkage 母集団の欠落）`));
+      continue;
+    }
+    const present = new Set(population);
+    const roots = [`${prefix}lib.rs`, `${prefix}main.rs`].filter((f) => present.has(f));
+    // ルートが無ければ探索が始まらず、全ファイルが未到達になる。**その形を「全部赤」ではなく
+    // 母集団の欠落として 1 件で報告する**——原因（ルート不在）を名指ししないと直し方が伝わらない。
+    if (roots.length === 0) {
+      findings.push(finding(`${prefix}lib.rs`, 1, `crate ルート（lib.rs / main.rs）が無い（G-module-linkage 母集団の欠落）`));
+      continue;
+    }
+
+    const seen = new Set();
+    const queue = [...roots];
+    while (queue.length > 0) {
+      const f = queue.shift();
+      if (seen.has(f)) continue;
+      seen.add(f);
+      const text = snapshot.read(f);
+      if (text == null) continue;
+      for (const cand of declaredModuleFiles(f, text)) {
+        if (present.has(cand) && !seen.has(cand)) queue.push(cand);
+      }
+    }
+
+    for (const f of population) {
+      if (!seen.has(f)) {
+        findings.push(
+          finding(f, 1, `crate ルートから mod 宣言で到達できない（mod 宣言の書き忘れ。cargo も rust-analyzer も見ない）`),
+        );
+      }
+    }
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
 // G-architecture-table — docs/architecture.md にファイル単位モジュール表が再導入されていないか（旧 Check 2）
 // ---------------------------------------------------------------------------
 export function checkArchitectureTable(snapshot) {
@@ -1855,6 +1974,7 @@ export function buildChecks(snapshot, sink = {}) {
   };
   return [
     { id: "G-module-index", run: () => checkModuleIndex(snapshot) },
+    { id: "G-module-linkage", run: () => checkModuleLinkage(snapshot) },
     { id: "G-architecture-table", run: () => checkArchitectureTable(snapshot) },
     { id: "G-references", run: () => checkReferences(snapshot, docs) },
     { id: "G-spec-sections", run: () => checkSpecSections(snapshot, docs) },

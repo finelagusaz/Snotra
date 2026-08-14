@@ -13,6 +13,7 @@ import {
   checkHookCommands,
   checkHookFires,
   checkModuleIndex,
+  checkModuleLinkage,
   checkArchitectureTable,
   checkReferences,
   checkSpecSections,
@@ -149,6 +150,89 @@ describe("G-module-index checkModuleIndex", () => {
       "src-tauri/src/commands/search.rs": "",
     });
     expect(checkModuleIndex(s, ["src-tauri"])).toEqual([]);
+  });
+});
+
+// G-module-linkage が塞ぐのは **G-module-index が塞がない足**である（#1085 で足ごとに実測）。
+// 索引にも mod にも書かない形は G-module-index が赤にするので、ここで守るのは
+// 「索引には載るが mod 宣言が無い」＝どの検査も緑だった足のほうである。
+describe("G-module-linkage checkModuleLinkage", () => {
+  const cargo = '[workspace]\nmembers = ["demo"]\nresolver = "2"\n';
+  const base = {
+    "Cargo.toml": cargo,
+    "demo/src/lib.rs": "mod search;\npub mod folder;\n",
+    "demo/src/search.rs": "",
+    "demo/src/folder.rs": "",
+  };
+
+  it("緑: 全ファイルが crate ルートから mod 宣言で到達できる", () => {
+    expect(checkModuleLinkage(snap(base))).toEqual([]);
+  });
+
+  it("赤（守りたい足）: 索引には載るが mod 宣言が無い .rs", () => {
+    // G-module-index を満たす（＝CLAUDE.md に載っている）状態でも、mod 宣言が無ければ赤になる。
+    const s = snap({
+      ...base,
+      "demo/CLAUDE.md": "## モジュール構成\n- `lib.rs`\n- `search.rs`\n- `folder.rs`\n- `orphan.rs`\n",
+      "demo/src/orphan.rs": "pub fn f() {}\n",
+    });
+    const f = checkModuleLinkage(s);
+    expect(f.some((x) => x.file === "demo/src/orphan.rs")).toBe(true);
+  });
+
+  it("緑（判定対象外の不混入）: tests/・benches/・examples/・build.rs は mod 宣言を要さない", () => {
+    // cargo が target として自動発見するため、宣言が無いまま正当である。
+    const s = snap({
+      ...base,
+      "demo/build.rs": "fn main() {}\n",
+      "demo/tests/it.rs": "#[test]\nfn t() {}\n",
+      "demo/benches/b.rs": "",
+      "demo/examples/e.rs": "",
+    });
+    expect(checkModuleLinkage(s)).toEqual([]);
+  });
+
+  it("緑（誤検出なし）: #[path] は「そのソースファイルが在るディレクトリ」から解決する", () => {
+    // 実例: snotra-egui-runtime/src/ime.rs の `#[cfg(windows)] #[path = "windows_ime.rs"] mod platform;`
+    // が src/windows_ime.rs を指す（src/ime/windows_ime.rs ではない）。
+    const s = snap({
+      ...base,
+      "demo/src/lib.rs": 'mod search;\npub mod folder;\nmod ime;\n',
+      "demo/src/ime.rs": '#[cfg(windows)]\n#[path = "windows_ime.rs"]\nmod platform;\n',
+      "demo/src/windows_ime.rs": "",
+    });
+    expect(checkModuleLinkage(s)).toEqual([]);
+  });
+
+  it("緑（誤検出なし）: mod.rs 経由のネストを辿る", () => {
+    const s = snap({
+      ...base,
+      "demo/src/lib.rs": "mod search;\npub mod folder;\nmod commands;\n",
+      "demo/src/commands/mod.rs": "mod open;\n",
+      "demo/src/commands/open.rs": "",
+    });
+    expect(checkModuleLinkage(s)).toEqual([]);
+  });
+
+  it("赤（検査を殺す変異）: ルート Cargo.toml が読めないとき緑を返さない", () => {
+    const s = snap({ "demo/src/lib.rs": "", "demo/src/orphan.rs": "" });
+    const f = checkModuleLinkage(s);
+    expect(f.length).toBeGreaterThan(0);
+    expect(f.some((x) => x.message.includes("母集団の欠落"))).toBe(true);
+  });
+
+  it("赤（検査を殺す変異）: crate ルートが 1 つも無いとき、母集団の欠落として名指しする", () => {
+    // 全ファイルを未到達として列挙すると原因（ルート不在）が伝わらないので 1 件に畳む。
+    const s = snap({ "Cargo.toml": cargo, "demo/src/a.rs": "", "demo/src/b.rs": "" });
+    const f = checkModuleLinkage(s);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("crate ルート");
+  });
+
+  it("赤（検査を殺す変異）: member の src/ に .rs が 1 件も無いとき緑を返さない", () => {
+    const s = snap({ "Cargo.toml": cargo, "demo/README.md": "" });
+    const f = checkModuleLinkage(s);
+    expect(f.some((x) => x.message.includes("母集団の欠落"))).toBe(true);
   });
 });
 

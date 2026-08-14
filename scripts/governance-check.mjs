@@ -213,6 +213,9 @@ function moduleChildDir(file) {
   return `${dir}/${base.slice(0, -3)}`;
 }
 
+/** raw string の開始（`r"` / `r#"` / `br##"` …）。**sticky** ゆえ走査位置ちょうどからしか当たらない。 */
+const RAW_STRING_PREFIX = /b?r(#*)"/y;
+
 /**
  * Rust ソースの**コードでない部分**（コメント・文字列・char リテラル）を空白へ潰す。
  * 長さと改行位置を保つので、潰した文字列に対する行頭アンカーと、元テキスト上のオフセットが両立する。
@@ -227,9 +230,6 @@ function moduleChildDir(file) {
  * char リテラル。**char とライフタイムは綴りで区別する**——`'x'` / `'\n'` / `'"'` は char、
  * `'a` は閉じないのでライフタイムとして素通しする。
  */
-/** raw string の開始（`r"` / `r#"` / `br##"` …）。**sticky** ゆえ走査位置ちょうどからしか当たらない。 */
-const RAW_STRING_PREFIX = /b?r(#*)"/y;
-
 function blankRustNonCode(text) {
   const n = text.length;
   let out = "";

@@ -249,9 +249,13 @@ Claude Code が起動する rust-analyzer（RA）の設定を **リポジトリ�
 | R-6 | marketplace 名が 3 か所で一致しないと**沈黙で load されない** | **採用**。カナリアの足 7 を追加 | バイナリ逐語 *"Must match the extraKnownMarketplaces key (enforced)"*（自分の抽出にも同じ文字列が在る） |
 | M-9 | `settings` は `initializationOptions` と役割が重なる | **採用**。「使わない」を明示 | 証拠 A——`settings` を書くと `workspace/configuration` capability が true になり決定論性が落ちる |
 | R-12 | 検査の層を hook + governance の 2 枚にする | **不採用（降格）**。残る差は `skip-ci` PR だけで、削除は CI のカナリアが捕まえ、語彙供給は `lsp-config.mjs` が果たす。**受容する残余として明記** | `ci.yml:45,155` の `npm test` はカナリアを実行し、カナリアは実ファイルを読むので削除でも落ちる |
-| R-1 / R-2 / R-4 / R-5 / R-7 / R-8 / R-10 / R-11 / R-13 | カナリアが対で要る・発火表を同じ変更で直す・vitest include・二重 LSP は settings の 1 行が防いでいる・rules の paths・セーフティネット母集団・双条件の訂正・PR 本文への振り分け・検証の層の表を通す | **既に計画に在った**（独立に同じ結論へ到達＝計画の裏づけ） | 各 Phase に対応項目あり |
+| R-1 / R-2 / R-4 / R-5 / R-7 / R-8 / R-10 / R-11 / R-13 | カナリアが対で要る・発火表を同じ変更で直す・vitest include・二重 LSP は settings の 1 行が防いでいる・rules の paths・セーフティネット母集団・双条件の訂正・PR 本文への振り分け・検証の層の表を通す | **既に計画に在った** | 各 Phase に対応項目あり |
 
 **独立導出 ∖ plan の差分（漏れ候補）は上記 4 件で尽きた。plan ∖ 独立導出（スコープ過剰）は 0 件。**
+
+**⚠️ ただし「独立に収束した」とは書けない。** レビュア自身が汚染を開示している——`*.md` 全域への概念ラベル grep で `workspace/` の除外を掛け忘れ、`plan.md` / `research.md` の一部を読んでいる。本人が「grep より前に自力導出した」と線を引いたのは**ファイル集合・シンボル集合・検査の発火・偽になる散文**（R 系の大半がここに属する）で、**leak 由来として母集団から外すよう明示された**のは証拠 F・スコープ裁定・受け入れ条件リスト・ファイル表の一部・「CLI が絶対パスを書く」件である。ゆえに上表の「既に計画に在った」は**一致の観測**であって独立性の証拠ではない。**採否の根拠は一致ではなく、右列の再照合（自分で読んだ `file:line`）に置いてある。**
+
+**R-3 の対処先はレビュアの提案と異なる。** レビュアは `scripts/governance-check.mjs` へ置くことを薦めたが、`currentVocabulary`（`governance-check.mjs:1590-1600`）は `snapshot.files` を**ディレクトリで制限せず**、`VOCAB_SOURCE_EXT` と `VOCAB_TEST_FILE` だけで振り分ける。ゆえに `.claude/hooks/lsp-config.mjs`（非 test の `.mjs`）でも語彙は供給される。**検査を governance 層へ動かす理由にはならない**ので、責務（判定は hook 層・純関数）を優先した。
 
 ### 未検証（PR 本文のチェックリストへ送る）
 

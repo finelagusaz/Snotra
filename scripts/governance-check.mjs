@@ -410,12 +410,13 @@ export function checkArchitectureTable(snapshot) {
 /** `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測: 不在の
  *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）——これが
  *  「CI に存在しない生成物の名前を散文へバッククォートで書けない」という表記の歪みを解く（#1088）。
- *  **読む入力は 3 つ**: 追跡された `.gitignore`（任意の深さのものを含む）・`.git/info/exclude`・
- *  `core.excludesFile`。後 2 者はチェックアウトの外（機体ごとのローカル状態）にあり CI のチェックアウトには
- *  存在しないので、**免除の面は「手元 ⊇ CI」になりうる**——手元だけで免除されるパスがあれば、その回は
- *  「手元で緑・CI で赤」が起こる（逆は起きない。CI が手元より広く免除することは無い）。実例:
- *  `.claude/agent-registry.json` は追跡された `.gitignore` に無いが `.git/info/exclude` にあり、
- *  この機体では免除される（2026-08-14 実測）。
+ *  **読むのはチェックアウト内の `.gitignore` だけではない**——`.git/info/exclude` と、ユーザ全体の
+ *  除外ファイル（`core.excludesFile`。未設定なら `$XDG_CONFIG_HOME/git/ignore`、既定
+ *  `~/.config/git/ignore`）も読む。これらはどちらもチェックアウトの外（機体ごとのローカル状態）に
+ *  あり CI のチェックアウトには存在しないので、**免除の面は「手元 ⊇ CI」になりうる**——手元だけで
+ *  免除されるパスがあれば、その回は「手元で緑・CI で赤」が起こる（逆は起きない。CI が手元より
+ *  広く免除することは無い）。実例: `.claude/agent-registry.json` は追跡された `.gitignore` に無いが
+ *  `.git/info/exclude` にあり、この機体では免除される（2026-08-14 実測）。
  *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合、
  *  および**候補のいずれか 1 件でもリポジトリ外パス（絶対パス・`..` でツリー外へ出る相対パス）で
  *  status が 128 になった場合**は空集合を返す——後者は batch 単位の判定ゆえ、1 件の汚染が

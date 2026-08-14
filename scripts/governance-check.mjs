@@ -7,6 +7,8 @@
 // 本スクリプトはその残余のうち決定的に照合できる項目を PR CI（governance-check job）と
 // `npm run governance:check` で引き取る。意味判断（責務の妥当性・npm 系ラッパーの等価判断・
 // メモリ整合）は `/health-check` に残る（cargo フラグ照合は G-hook-commands が機械化済み・#589）。
+// なお `G-workspace-lints` / `G-clippy-disallowed` は文書ではなくリポジトリ規約を見る。責務としては
+// 越境だが、**唯一の検出器であり移す先が無い**ため意図してここに置く（#1088 で帰属見直しを却下）。
 //
 // 契約:
 // - 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻・環境変数に非依存）
@@ -15,10 +17,15 @@
 // - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（沈黙経路の閉塞）
 // - 各検査はスナップショット注入の純関数（scripts/governance-check.test.mjs がフィクスチャで
 //   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する）
-//   - **例外は G-hook-fires ただ 1 つ**: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
+//   - **例外は 2 つある。** (1) G-hook-fires: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
 //     `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
 //     **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
-//     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる
+//     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
+//     (2) G-references: `gitIgnoredPaths` が同じチェックアウトの `.gitignore` を外部の `git` で読む
+//     （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
+//     テストは fixture のまま走る。決定的性は保たれる——読むのは同じチェックアウトの `.gitignore` だけで、
+//     ネットワーク・時刻・環境変数に依らない（「依存ゼロ」は npm 依存の話であり、`git` は
+//     チェックアウトが在る以上どちらの環境にも在る）
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

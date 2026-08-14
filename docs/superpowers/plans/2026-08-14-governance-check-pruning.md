@@ -615,16 +615,18 @@ export function manifest(snapshot) {
 
 const KEYS = ["checks", "docs", "rules", "skills"];
 
-/** `+<name>` / `-<name>` の列。列をまたいで平坦化する（名前が一意なので衝突しない）。 */
+/** `+<name>` / `-<name>` の列。列をまたいで平坦化し、集合で重複を落とす——`governanceDocs()` は
+ *  `.claude/rules/` と `SKILL.md` の glob を腕として持つので、`rules`/`skills` は `docs` の
+ *  部分集合として同じ path を二度もたらす。名前は列が違っても同じものを指す。 */
 export function diffManifest(base, head) {
-  const out = [];
+  const out = new Set();
   for (const key of KEYS) {
     const b = new Set(base[key] ?? []);
     const h = new Set(head[key] ?? []);
-    for (const x of h) if (!b.has(x)) out.push(`+${x}`);
-    for (const x of b) if (!h.has(x)) out.push(`-${x}`);
+    for (const x of h) if (!b.has(x)) out.add(`+${x}`);
+    for (const x of b) if (!h.has(x)) out.add(`-${x}`);
   }
-  return out;
+  return [...out];
 }
 
 /** 宣言されていない delta を返す。**書式は強制しない**——本文に逐語で現れるかだけを見る。
@@ -696,6 +698,12 @@ git commit -m "feat: 構造母集団の manifest と差分・宣言照合を足�
 
 **背景（実装者向け）:** base 側（`main`）には `governance-manifest.mjs` がまだ存在しない——この PR で新設するのだから当然である。**base にスクリプトが無ければ比較を飛ばす**（初回だけ緑）。これを忘れると、この PR 自身が永久に赤くなって入らない。
 
+**実行時に計画を 3 点修正した（実測に基づく・詳細は下の YAML のコメント）:**
+
+1. **base は `pull_request.base.sha` から取る**——`origin/main` の実行時 tip を base にすると、head（payload に凍結された merge commit）との間に非対称ができ、event 発火から job 実行までに main が動いた分が**この PR の delta として現れる**。他人の変更を無関係な PR の作者がゴム印する経路であり、この機構が防ごうとしている当のものである。
+2. **PR 本文は `gh pr view` で都度取る**——`github.event.pull_request.body` は payload に凍結され、`pull_request` の既定 types に `edited` は無く、再実行は同じ payload を再生する。凍結値では「本文へ宣言を書いて再実行する」という復帰手順が成立しない。**可変なのは本文だけでよい**という非対称が要点である。
+3. **skip を「base 側にスクリプトが無い」ときだけに狭め、パスを 1 か所にする**——`origin/main` が解決できない場合まで skip へ落ちる形は fail-open で恒久的に沈黙する。また probe と呼び出しに path の literal を 2 つ持つと、改名で片方だけ直したとき**赤い run を一度も経ずに**沈黙の緑へ入る。
+
 - [ ] **Step 1: `ci.yml` の `governance-check` job へ step を足す**
 
 `- name: governance check` の**後ろ**へ:
@@ -705,21 +713,36 @@ git commit -m "feat: 構造母集団の manifest と差分・宣言照合を足�
       # 差分が在るのに PR 本文で宣言されていなければ落とす。散文母集団（見出し参照・文字数）は
       # 変動が多すぎて承認がゴム印化するので対象にしない（実測は
       # docs/superpowers/specs/2026-08-14-governance-check-scope-design.md）。
-      # main 側にスクリプトが無い場合（この機構を導入する PR 自身）は比較を飛ばす。
+      #
+      # **base は `pull_request.base.sha` である——実行時の `origin/main` ではない**（上の修正 1）。
+      # **可変なのは PR 本文だけでよい**——base と head は凍結、本文は都度取得（修正 2）。
+      # **skip は「base 側にスクリプトが無い」ときだけ**で、パスは `GOV_MANIFEST` に 1 本化する（修正 3）。
+      # 撤去の合図は「main に `$GOV_MANIFEST` が在ることを観測したら」であり、その時点で else 分岐は
+      # `exit 1` へ倒してよい（issue の close を合図にすると、閉じるのが撤去 PR 自身になって自己参照する）。
       - name: governance manifest delta
         if: github.event_name == 'pull_request'
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GOV_MANIFEST: scripts/governance-manifest.mjs
         run: |
-          git fetch --depth=1 origin main
-          if git cat-file -e origin/main:scripts/governance-manifest.mjs 2>/dev/null; then
-            git worktree add --detach /tmp/gov-base origin/main
-            (cd /tmp/gov-base && node scripts/governance-manifest.mjs) > /tmp/base.json
-            node scripts/governance-manifest.mjs --compare /tmp/base.json
+          git fetch --depth=1 origin "$BASE_SHA"
+          git rev-parse --verify "$BASE_SHA^{commit}" >/dev/null
+          if git cat-file -e "$BASE_SHA:$GOV_MANIFEST" 2>/dev/null; then
+            git worktree add --detach /tmp/gov-base "$BASE_SHA"
+            (cd /tmp/gov-base && node "$GOV_MANIFEST") > /tmp/base.json
+            PR_BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)"
+            export PR_BODY
+            node "$GOV_MANIFEST" --compare /tmp/base.json
           else
-            echo "governance manifest — main 側にスクリプトが無いので比較を飛ばす（導入 PR）"
+            echo "governance manifest — base 側に $GOV_MANIFEST が無いので比較を飛ばす（この機構を導入する PR 自身）"
           fi
 ```
+
+job へ `permissions: contents: read` と `pull-requests: read` を足す。**両方書く**——最上位に `permissions:` が無いため、job 水準で列挙しなかったものは `none` になり、`contents` を落とすと `actions/checkout` が失敗する。`gh` は Actions で自動認証されないので `GH_TOKEN` も明示する。
+
+`git rev-parse --verify` には `^{commit}` を付ける。**素の `git rev-parse --verify <40-hex>` は object が無くても exit 0 を返す**（実測）ため、付けなければ 2 枚目の網は網ですらない。
 
 - [ ] **Step 2: シェルの分岐を手元で測る**
 
@@ -749,6 +772,12 @@ git commit -m "ci: 構造母集団の manifest 差分を PR 本文の宣言と�
 
 **Files:**
 - Test: `scripts/governance-manifest.test.mjs`（末尾へ describe を追加）
+- Modify: `docs/build-commands.md`（実行時に足した doc 債務 2 件・下記）
+
+**実行時に足した doc 債務（計画の漏れ）:**
+
+1. 「CI/CD メモ」対応表へ `` `npm run governance:manifest` `` の行を足す。**`` `node scripts/...` `` と書いてはならない**——`G-ci-table` は `npm` / `cargo` に錨止めしたトークンしか取り出さないので、行が 1 件も照合しないまま緑になる。`npm run` の形なら `package.json` の値のパストークン経由で workflow と照合される。トリガー列は他の governance 行と違い **PR 限定**である。
+2. 表の下の「`governance-check` job は `skip-ci` を貼っても走る／push では必ず走る」という記述を直す。job 単位では今も真だが、新 step は step 単位の `if` を持つため push では走らない。
 
 **背景（実装者向け）:** #1088 が求めたのは「その検知器が発火しうるかを先に測る」ことだった。**登録配列から 1 本消したときに manifest 差分が発火する**——これがその実測である。稼働中のガードは弱めない: 実ファイルを書き換えず、`manifest()` の返り値の複製に変異を当てる。
 

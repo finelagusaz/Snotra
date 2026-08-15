@@ -1,5 +1,6 @@
-//! governance:check の共有基盤。**2 つ以上の移送先が使うものだけ**を置く——
-//! 1 つの検査しか使わない helper はその検査のファイルへ置く（`scripts/governance/checks/`）。
+//! governance:check の共有基盤。1 つの検査しか使わない helper はここへ置かず、
+//! その検査のファイルへ一緒に移す（`scripts/governance/checks/`）。ここに在るのは、
+//! 複数の検査ファイルが使うものか、facade 自身が直接使うもの（母集団・0 件検知・evidence の算出など）。
 //! 依存は Node 標準モジュールのみ（`governance-check.mjs` の契約を継承する）。
 import fs from "node:fs";
 import path from "node:path";

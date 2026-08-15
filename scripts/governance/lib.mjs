@@ -253,3 +253,35 @@ export function staleIdentifierGuideDocs(snapshot) {
 export function staleIdentifierTargets(snapshot) {
   return [...staleIdentifierDocs(snapshot), ...staleIdentifierGuideDocs(snapshot), ...STALE_EXTRA_DOCS];
 }
+
+/** TOML の 1 行から**引用符の外の** `#` 以降を落とす。**引用符を見ない実装にしてはならない**——
+ *  `src-tauri/clippy.toml` の reason は `（#751）` を含み、素朴な `replace(/#.*$/, "")` は行を途中で切る
+ *  （#950 で実測。切れた先に `path` が在れば禁止集合が丸ごと消えたように見える）。 */
+export function stripTomlComment(raw) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '"' && raw[i - 1] !== "\\") inString = !inString;
+    if (c === "#" && !inString) break;
+    out += c;
+  }
+  return out;
+}
+
+/** TOML の 1 行から行末コメントを落として trim する。`[lints]  # opt-in` も有効な TOML ゆえ、
+ *  厳密文字列比較のままだと表記の揺れで false negative になる（#713） */
+export const tomlLine = (raw) => stripTomlComment(raw).trim();
+
+/** Cargo の lints テーブルの値から level を取る。文字列形（`= "deny"`）とテーブル形
+ *  （`= { level = "deny", priority = 1 }`）の 2 形を受ける。**rustdoc と clippy の 2 検査が共有する**——
+ *  cargo が 3 つ目の表記を足したとき、直す場所が 1 か所であるために切り出してある（#950）。 */
+export const lintLevel = (value) => (value.startsWith("{") ? (value.match(/level\s*=\s*"([^"]+)"/)?.[1] ?? null) : (value.match(/^"([^"]+)"$/)?.[1] ?? null));
+
+/** TOML の整数リテラル。**数値区切りの `_` を落とす**——落とさないと `1_0`（TOML では 10）から 1 だけを
+ *  読み、群の allow が実際より小さい priority に見えて緑へ倒れる（#950 のレビューで実測）。 */
+export const tomlInt = (text) => Number((String(text).match(/-?[0-9_]+/)?.[0] ?? "0").replaceAll("_", ""));
+
+/** 同じく priority。文字列形は既定の 0。**priority が大きいほど後に当たる**ので、群の allow が個別 lint の
+ *  deny と同じか大きい priority を持つと禁止が消える（#950 で実測）。 */
+export const lintPriority = (value) => (value.startsWith("{") ? tomlInt(value.match(/priority\s*=\s*([^,}]+)/)?.[1] ?? "0") : 0);

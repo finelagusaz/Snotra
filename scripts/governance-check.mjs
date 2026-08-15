@@ -30,6 +30,8 @@ import { fileURLToPath } from "node:url";
 // G-hook-fires は判定を再実装せず hook の純関数そのものを呼ぶ（理由は同検査のコメント）。
 // post-edit.mjs は import しただけでは main() を走らせない（I13 のガード）。
 import { selectChecks } from "../.claude/hooks/post-edit.mjs";
+import { CHECK_MODULES } from "./governance/registry.mjs";
+import { checkArchitectureTable } from "./governance/checks/G-architecture-table.mjs";
 import {
   makeSnapshot,
   finding,
@@ -61,6 +63,7 @@ export {
   collectAnchors,
   resolveRefTarget,
   STALE_EXTRA_DOCS,
+  checkArchitectureTable,
 };
 
 /** 実在検査の対象と見なすソース系拡張子（G-references）。ランタイム生成物（.bin/.bak 等）は含めない。
@@ -356,22 +359,6 @@ export function checkModuleLinkage(snapshot) {
           finding(f, 1, `crate ルートから mod 宣言で到達できない（mod 宣言の書き忘れ。cargo も rust-analyzer も報せない）`),
         );
       }
-    }
-  }
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
-// G-architecture-table — docs/architecture.md にファイル単位モジュール表が再導入されていないか（旧 Check 2）
-// ---------------------------------------------------------------------------
-export function checkArchitectureTable(snapshot) {
-  const findings = [];
-  const p = "docs/architecture.md";
-  const text = snapshot.read(p);
-  if (text == null) return [finding(p, 1, "docs/architecture.md が読めない")];
-  for (const [lineNo, line] of linesOutsideFences(text)) {
-    if (/^\|\s*`[^`]+\.(rs|ts|tsx|mts|mjs)`\s*\|/.test(line)) {
-      findings.push(finding(p, lineNo, `ファイル単位のモジュール表行が再導入されている: ${line.trim().slice(0, 60)}（責務の正本は //! / TSDoc・#562）`));
     }
   }
   return findings;
@@ -1937,10 +1924,13 @@ export function buildChecks(snapshot, sink = {}) {
     sink[key] = r.checked;
     return r.findings;
   };
-  return [
+  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record };
+  const moved = new Set(CHECK_MODULES.map((m) => m.id));
+  const legacy = [
+    // 未移送の検査は現行の登録行のまま残す。移送が済んだものはここから消す——
+    // **移送の途中でも 19 件が揃うことを、この 2 本の連結が保つ**
     { id: "G-module-index", run: () => checkModuleIndex(snapshot) },
     { id: "G-module-linkage", run: () => checkModuleLinkage(snapshot) },
-    { id: "G-architecture-table", run: () => checkArchitectureTable(snapshot) },
     { id: "G-references", run: () => checkReferences(snapshot, docs, gitIgnoredPaths) },
     { id: "G-spec-sections", run: () => checkSpecSections(snapshot, docs) },
     { id: "G-build-commands", run: () => checkBuildCommands(snapshot) },
@@ -1957,7 +1947,8 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, allRefDocs)) },
     { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleTargets)) },
     { id: "G-near-heading-refs", run: () => record("nearRefs", scanNearHeadingRefs(snapshot, allRefDocs)) },
-  ];
+  ].filter((c) => !moved.has(c.id));
+  return [...CHECK_MODULES.map((m) => ({ id: m.id, run: () => m.run(snapshot, ctx) })), ...legacy];
 }
 
 export function runAll(snapshot) {

@@ -79,3 +79,13 @@ describe("フォールトインジェクション — #1088 が求めた「発�
     expect(diffManifest(base, manifest(makeSnapshot(process.cwd())))).toEqual([]);
   });
 });
+
+describe("per-check 分割後の欠落 — 検査ファイルが消えれば manifest 差分が発火する（#1088）", () => {
+  it("checks/ から 1 本消えた形は差分として現れる", () => {
+    const base = manifest(makeSnapshot(process.cwd()));
+    // 稼働中の checks/ は触らない——返り値の複製に変異を当てる
+    const mutated = { ...base, checks: base.checks.filter((id) => id !== "G-ci-table") };
+    expect(diffManifest(base, mutated)).toEqual(["-G-ci-table"]);
+    expect(undeclared(diffManifest(base, mutated), "宣言のない PR 本文")).toEqual(["-G-ci-table"]);
+  });
+});

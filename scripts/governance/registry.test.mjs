@@ -53,3 +53,20 @@ describe("registry の形の検証（複製に変異を当てる）", () => {
     });
   });
 });
+
+describe("走査が母集団である — ファイルの増減がそのまま検査の増減になる（#1088）", () => {
+  it("使い捨てディレクトリからファイルを 1 本消すと、その id が registry から消える", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "gov-registry-"));
+    try {
+      const mod = (id) => `export const id = "${id}";\nexport function run() { return []; }\n`;
+      writeFileSync(path.join(dir, "G-a.mjs"), mod("G-a"));
+      writeFileSync(path.join(dir, "G-b.mjs"), mod("G-b"));
+      expect((await checkModulesFrom(dir)).map((m) => m.id)).toEqual(["G-a", "G-b"]);
+      rmSync(path.join(dir, "G-b.mjs"));
+      // 対照との差が証拠である——緑になったこと自体は証拠ではない
+      expect((await checkModulesFrom(dir)).map((m) => m.id)).toEqual(["G-a"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -239,7 +239,9 @@ export function normativeArea(snapshot) {
 // 実行
 // ---------------------------------------------------------------------------
 
-/** 検査の登録表。**ここが検査 ID の SSOT である**——サマリ行の件数もこの配列から計算するので、
+/** 検査の登録表を組む。**検査 ID の SSOT は `checks/` ディレクトリの一覧である**——ファイルを
+ *  置けばそのまま検査になり、ファイル名が `id` と一致することは `registry.mjs` の
+ *  `checkModulesFrom` が強制する。サマリ行の件数もこの配列から計算するので、
  *  「G1..G15 passed」のような範囲を手で書く面が存在しない（範囲は黙って腐る。実例が
  *  `docs/build-commands.md` に「G1〜G12」と残っていた・#812）。
  *  ID は `G-<name>` 形で連番を持たない——連番は「いま空いている最大値 + 1」をマージの瞬間に
@@ -266,12 +268,7 @@ export function buildChecks(snapshot, sink = {}) {
     return r.findings;
   };
   const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record };
-  const moved = new Set(CHECK_MODULES.map((m) => m.id));
-  const legacy = [
-    // 未移送の検査は現行の登録行のまま残す。移送が済んだものはここから消す——
-    // **移送の途中でも 19 件が揃うことを、この 2 本の連結が保つ**
-  ].filter((c) => !moved.has(c.id));
-  return [...CHECK_MODULES.map((m) => ({ id: m.id, run: () => m.run(snapshot, ctx) })), ...legacy];
+  return CHECK_MODULES.map((m) => ({ id: m.id, run: () => m.run(snapshot, ctx) }));
 }
 
 export function runAll(snapshot) {

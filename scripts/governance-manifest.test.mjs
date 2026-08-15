@@ -80,7 +80,17 @@ describe("フォールトインジェクション — #1088 が求めた「発�
   });
 });
 
-describe("per-check 分割後の欠落 — 検査ファイルが消えれば manifest 差分が発火する（#1088）", () => {
+// このテストは「今日、`checks/` の実ファイルを 1 本消したら何が起きるか」の再現ではない。
+// facade は各検査を `import { checkFoo } from "./governance/checks/G-foo.mjs"` の形で静的に
+// 名指し re-export しているため、ファイルが物理的に無くなれば `buildChecks`／`manifest()` に
+// 到達する前、import 解決の時点で `ERR_MODULE_NOT_FOUND` が飛んで facade ごと落ちる——それが
+// 今日の一次防御線であり、この diff より先に、より大きな音で発火する（実測: 独立コピーで
+// facade を import → 削除前 `imported OK` / 削除後 `ERR_MODULE_NOT_FOUND`）。
+// このテストが変異させるのは `manifest()` の**返り値の複製**であり、import 経路を経由しない。
+// 効いてくるのは facade が検査ごとの静的 re-export をやめた後——そのとき初めて、ファイル消失は
+// import エラーを起こさず manifest の集合からだけ静かに欠けるようになり、この diff が
+// 「消失を検知する側」に回る。今のうちに書くのは、その切り替わりに備えるためである。
+describe("per-check 分割後の欠落 — manifest 差分は発火しうる（将来、facade の re-export が縮んだ後に効く・#1088）", () => {
   it("checks/ から 1 本消えた形は差分として現れる", () => {
     const base = manifest(makeSnapshot(process.cwd()));
     // 稼働中の checks/ は触らない——返り値の複製に変異を当てる

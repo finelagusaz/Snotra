@@ -736,7 +736,7 @@ git commit -m "feat: 構造母集団の manifest と差分・宣言照合を足�
             export PR_BODY
             node "$GOV_MANIFEST" --compare /tmp/base.json
           else
-            echo "governance manifest — base 側に $GOV_MANIFEST が無いので比較を飛ばす（この機構を導入する PR 自身）"
+            echo "governance manifest — base 側に $GOV_MANIFEST が無いので比較を飛ばす（base がこの機構の導入より前に凍結された PR）"
           fi
 ```
 
@@ -825,8 +825,10 @@ git push -u origin HEAD && gh pr create --title "chore: 構造母集団の manif
 PR 本文のチェックリスト（CI の実測は PR が在って初めて行える）:
 
 ```markdown
-- [ ] CI の `governance manifest delta` step が「main 側にスクリプトが無いので比較を飛ばす」を出して緑
-- [ ] マージ後、次の PR で差分照合が実際に動くことを確認する（この PR では原理的に測れない）
+- [ ] CI の `governance manifest delta` step が skip 枝へ入り exit 0 になった
+- [ ] `permissions:` を足した後も `actions/checkout` が成功した（`contents: read` の十分性）
+- [ ] マージ後の最初の非 trivial な PR で、比較の枝が実際に走り delta 0 で緑になった
+- [ ] 同じ PR で、故意に rules か skill を 1 枚足して赤になり、本文へ宣言して緑になった（CI 側のフォールトインジェクション）
 ```
 
 ---

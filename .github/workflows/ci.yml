@@ -125,7 +125,7 @@ jobs:
             export PR_BODY
             node "$GOV_MANIFEST" --compare /tmp/base.json
           else
-            echo "governance manifest — base 側に $GOV_MANIFEST が無いので比較を飛ばす（この機構を導入する PR 自身）"
+            echo "governance manifest — base 側に $GOV_MANIFEST が無いので比較を飛ばす（base がこの機構の導入より前に凍結された PR）"
           fi
 
   rust-check:

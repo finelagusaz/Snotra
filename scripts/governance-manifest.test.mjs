@@ -79,7 +79,7 @@ describe("フォールトインジェクション — 検査 ID が manifest の
   // - **全 19 本ではない。** `checks/` の**外**から静的 import されている検査は、ペア消失でも
   //   import エラーで落ちる。**数を書かない**——`checks/` を触るたびに腐るので、母集団は次の grep が持つ:
   //     grep -rn 'from ".*checks/G-' --include=*.mjs .
-  //   **この母集団には穴が 1 つある**——`checks/` の中どうしの import はこの形に当たらない
+  //   **この母集団には穴がある**——`checks/` の中どうしの import はこの形に当たらない
   //   （`from "./G-X.mjs"` と書かれ、パス断片 `checks/` を含まないため）。隣のテストが持つ
   //   sibling import が落ちるのは意図どおり（上の層の話）だが、**同じ理由で非兄弟の cross-import も
   //   落ちる**。今日は 0 件だが、`checks/` の中で他の検査を import したら、それはこの母集団の外に居る。

@@ -67,7 +67,8 @@ import { checkNormativeAreaInstrument, normativeArea } from "./governance/instru
 // ゆえに検査ファイルが消えると `buildChecks` へ到達する前に `ERR_MODULE_NOT_FOUND` で落ち、
 // **#1092 の manifest 差分は消失に対して発火する機会が無かった**。再輸出を実際の消費者まで絞った
 // ことで、その遮蔽が外れている。**消費者の一覧をここへ写さない**（増減しても赤くならない写しになる）
-// ——母集団は次の grep が持つ:
+// ——母集団は次の grep が持つ（**動的 `import()` は当たらない**。今日の動的消費者は同じファイルが
+// 静的 import も持つので取りこぼしは無いが、動的だけの消費者が現れれば母集団の外に居る）:
 //   grep -rn 'from ".*governance-check\.mjs"' --include=*.mjs scripts/
 // **射程と残余は `governance-manifest.test.mjs` のフォールトインジェクション節が正本**である。
 //

@@ -6,11 +6,7 @@
 
 その検査モジュールは、隣のテストごと消えても `ERR_MODULE_NOT_FOUND` で落ちる。すなわち **#1088 の manifest 差分が唯一の検知器になる射程から外れる**。「せっかく絞ったのだから全部揃えたい」という圧力が構造的に掛かる面である。
 
-**この 2 つは、射程から外れる経路の全部ではない。** `governance/instrument.mjs` が計器の算出のため `G-skill-table` を、`checks/` の外に在るテスト（`governance/lib.test.mjs` / `governance-check.test.mjs`）が数本を、それぞれ独立に静的 import している。**数を書かない**——母集団の正本は次の grep であり、射程の記述は `scripts/governance-manifest.test.mjs` のフォールトインジェクション節が持つ。
-
-```
-grep -rn 'from ".*checks/G-' --include=*.mjs . | grep -v "^./scripts/governance/checks/"
-```
+**この 2 つは、射程から外れる経路の全部ではない。** `governance/instrument.mjs` が計器の算出のため `G-skill-table` を、`checks/` の外に在るテスト（`governance/lib.test.mjs` / `governance-check.test.mjs`）が数本を、それぞれ独立に静的 import している。**数を書かない**——母集団の導出も射程の記述も `scripts/governance-manifest.test.mjs`「フォールトインジェクション — 検査 ID が manifest の集合から消えたときに diffManifest／undeclared が発火するかの実測（#1088）」が正本であり、**本 ADR はそれを指すだけにする**（走査コマンドの写しをここへ置かない）。
 
 本 ADR が扱うのは、このうち **facade の evidence 経由の分だけ**である。
 

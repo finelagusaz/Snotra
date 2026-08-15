@@ -1,5 +1,5 @@
 # この crate で禁じるメソッドの集合。**関心は 1 つではない**——配列は群ごとにコメントで区切る。
-# 群を足すときは `scripts/governance-check.mjs` の `REQUIRED_DISALLOWED_METHODS` へも登録すること
+# 群を足すときは `scripts/governance/checks/G-clippy-disallowed.mjs` の `REQUIRED_DISALLOWED_METHODS` へも登録すること
 # （**登録しないパスの書き損じは沈黙する**。理由は下の「この設定が死ぬ経路」の 1・2）。
 #
 # ## 群 1: `Context` 経由で global style を書く 7 メソッド（#751 / #900）

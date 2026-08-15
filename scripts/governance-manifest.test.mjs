@@ -62,16 +62,32 @@ describe("undeclared（PR 本文に逐語で現れない delta を返す）", ()
 });
 
 describe("フォールトインジェクション — 検査 ID が manifest の集合から消えたときに diffManifest／undeclared が発火するかの実測（#1088）", () => {
-  // このテストは「今日、`checks/` の実ファイルを 1 本消したら何が起きるか」の再現ではない。
-  // facade は各検査を `import { checkFoo } from "./governance/checks/G-foo.mjs"` の形で静的に
-  // 名指し re-export しているため、ファイルが物理的に無くなれば `buildChecks`／`manifest()` に
-  // 到達する前、import 解決の時点で `ERR_MODULE_NOT_FOUND` が飛んで facade ごと落ちる——それが
-  // 今日の一次防御線であり、この diff より先に、より大きな音で発火する（実測: 独立コピーで
-  // facade を import → 削除前 `imported OK` / 削除後 `ERR_MODULE_NOT_FOUND`）。
-  // このテストが変異させるのは `manifest()` の**返り値の複製**であり、import 経路を経由しない。
-  // 効いてくるのは facade が検査ごとの静的 re-export をやめた後——そのとき初めて、ファイル消失は
-  // import エラーを起こさず manifest の集合からだけ静かに欠けるようになり、この diff が
-  // 「消失を検知する側」に回る。今のうちに書くのは、その切り替わりに備えるためである。
+  // **この diff は「消失を検知する側」に回っている**（#1094 で facade が検査ごとの静的
+  // re-export をやめた）。かつては facade が 19 本すべてを名指し import していたため、ファイルが
+  // 物理的に無くなれば `buildChecks`／`manifest()` へ到達する前に `ERR_MODULE_NOT_FOUND` が飛び、
+  // この diff は発火の機会を持たなかった。
+  //
+  // **ただし「検査ファイルが消えれば manifest 差分が捕まえる」と全称では言えない。** 言えるのは
+  // 次の下限までである（すべて #1094 で使い捨て worktree に実測）。
+  //
+  // - **消え方で捕まえる層が違う。** `G-X.mjs` **だけ**が消えて `G-X.test.mjs` が残る形は、隣の
+  //   テストが `import { checkX } from "./G-X.mjs"` を持つため `npm test` が落ちる（19/19 のテストが
+  //   この形で、`vitest.config.ts` の `include` が `scripts/**/*.test.mjs` を含む）。**この層は
+  //   facade と無関係であり、絞る前も後も変わらない。** manifest 差分が唯一の検知器になるのは
+  //   `.mjs` と `.test.mjs` が**ペアで**消えたとき——検査を 1 本やめる実際の操作がその形である。
+  // - **全 19 本ではない。** facade は evidence の算出のため `G-clippy-disallowed`
+  //   （`clippyDisallowedCount`）と `G-adr-file-names`（`adrFiles`）を今も名指し import しており
+  //   （`governance-check.mjs` の当該 import のコメントが意図の正本）、`governance/instrument.mjs` は
+  //   計器の算出のため `G-skill-table` を import している。この 3 本はペア消失でも `ERR_MODULE_NOT_FOUND`
+  //   で落ちる。切り替わったのは残りである。
+  // - **検知の性質も変わった。** 旧: `governance check` step の import エラー——push でも
+  //   pull_request でも赤く、宣言では回避できない。新: `governance manifest delta` step——
+  //   `ci.yml` の `if` により **PR でしか走らず**、差分を PR 本文へ逐語で書けば通る（`undeclared`）。
+  //   「不可能にする」から「意図的だと宣言させる」への移行であり、これは #1088 の設計意図そのもの
+  //   だが、**守りが一様に増えたわけではない**。
+  //
+  // このテストが変異させるのは `manifest()` の**返り値の複製**であり、import 経路を経由しない
+  // （稼働中の `checks/` へ変異を当てないため・`.claude/rules/safety-nets.md`）。
   it("checks/ から 1 本消えた形は差分として現れる", () => {
     const base = manifest(makeSnapshot(process.cwd()));
     // 稼働中の checks/ は触らない——返り値の複製に変異を当てる

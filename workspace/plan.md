@@ -67,6 +67,23 @@
 7. **対照 B**: 絞った後の複製で `G-hook-fires.mjs` **だけ**を消し、`npm test` が `ERR_MODULE_NOT_FOUND` で赤くなることを実測する（制約 1b 上段の裏取り＝下限主張の根拠）。
 8. 複製を撤去し、測定値を `plan.md` へ書き戻す。
 
+#### Phase 2 の実測結果（2026-08-16・使い捨て worktree 2 本。稼働中の `checks/` は不変）
+
+変異対象の実在確認: base の `checks` は 19 件で `G-hook-fires` を含む（実在しないものを消しても差分は出ず、テストは自明に通る）。
+
+| # | 条件 | コマンド | 結果 | 意味 |
+|---|---|---|---|---|
+| (a) | 絞った後・ペア消失 | `node scripts/governance-check.mjs` | **exit 0** / `全検査 passed（検査 18 件 …）` | 旧防御線が消えた |
+| (b) | 絞った後・ペア消失 | `vitest run` | **exit 0** / `30 passed (30)` / `698 passed (698)` | 他の層も黙っている |
+| (c) | 絞った後・ペア消失 | `governance-manifest.mjs --compare`（`PR_BODY` なし） | **exit 1** / `-G-hook-fires` | 新検知器が唯一の見張りとして発火 |
+| 対照 A | **絞る前**（main）・ペア消失 | `node scripts/governance-check.mjs` | **exit 1** / `ERR_MODULE_NOT_FOUND` | 前後差＝切り替わりの証拠 |
+| 対照 B | 絞った後・**単独消失**（`.mjs` のみ） | `vitest run` | **exit 1** / `Cannot find module './G-hook-fires.mjs'`（`1 failed \| 30 passed`） | 単独消失は今も `npm test` が捕まえる（下限主張の根拠） |
+| 対照 C | 絞った後・変異なし | `node scripts/governance-check.mjs` | **exit 0** / `検査 19 件 …`（evidence が Phase 1 前と 1 文字も違わない） | 常に赤いゲートではない |
+
+**測定環境について 1 件訂正した。** worktree には `node_modules` が無く、初回の (b) は vitest が**起動前に** `ERR_MODULE_NOT_FOUND` で落ちた——出力を読まず終了コードだけ見ていれば「層が捕まえた」と誤読しえた形である（しかも `| tail` 越しの `$?` は tail の値を返し `exit=0` と表示した）。junction で `node_modules` を張ってから測り直した値が上表である。
+
+**副産物の観測**: (a) で `検査 19 件` → `検査 18 件` と黙って減った。**ローカルにこの件数を凍結する見張りは無い**（`governance-check.test.mjs` の件数テストは `buildChecks` 由来の自己参照ゆえ 19→18 でも緑）。件数の見張りは PR CI の manifest 差分だけになる。
+
 ### Phase 3 — 散文の同期
 
 1. `governance-check.mjs:91-92` の再輸出ブロック導入コメントを、縮小後の消費者と「なぜこれだけか」へ書き換える。
@@ -117,22 +134,22 @@
 
 ### Phase 2 — 切り替わりの実測
 
-- [ ] 使い捨てコピー（worktree・スクラッチパッド）を作り、`cd` してから相対パスで base manifest を取る
-- [ ] `G-hook-fires` をペアで消し、`node scripts/governance-check.mjs` が import エラーで落ちないことを実測する
-- [ ] 同じ複製で `npm test` が緑であることを実測する
-- [ ] 同じ複製で `--compare` が exit 1 と `-G-hook-fires` を返すことを実測する
-- [ ] 対照 A: main（絞る前）の複製で同じペア消失が `ERR_MODULE_NOT_FOUND` を起こすことを実測する
-- [ ] 対照 B: 絞った後の複製で単独消失（`.mjs` のみ）が `npm test` を赤にすることを実測する
-- [ ] 複製を撤去し、実測値を `plan.md` へ書き戻す
+- [x] 使い捨てコピー（worktree・スクラッチパッド）を作り、`cd` してから相対パスで base manifest を取る
+- [x] `G-hook-fires` をペアで消し、`node scripts/governance-check.mjs` が import エラーで落ちないことを実測する
+- [x] 同じ複製で `npm test` が緑であることを実測する
+- [x] 同じ複製で `--compare` が exit 1 と `-G-hook-fires` を返すことを実測する
+- [x] 対照 A: main（絞る前）の複製で同じペア消失が `ERR_MODULE_NOT_FOUND` を起こすことを実測する
+- [x] 対照 B: 絞った後の複製で単独消失（`.mjs` のみ）が `npm test` を赤にすることを実測する
+- [x] 複製を撤去し、実測値を `plan.md` へ書き戻す
 
 ### Phase 3 — 散文の同期
 
-- [ ] `governance-check.mjs` の再輸出ブロック導入コメントを更新する
-- [ ] `governance-check.test.mjs` の公開面カナリア根拠コメントを更新する
-- [ ] `governance-manifest.test.mjs:64-74` を現在形へ書き換え、射程 2 条件と残余 3 本と検知の性質変化を下限の形で明記する
-- [ ] `docs/build-commands.md:30` の `REQUIRED_DISALLOWED_METHODS` の所在を `G-clippy-disallowed.mjs` へ直す
-- [ ] `src-tauri/clippy.toml:2` の同じ所在参照を直す
-- [ ] `npm run governance:check` が緑
+- [x] `governance-check.mjs` の再輸出ブロック導入コメントを更新する
+- [x] `governance-check.test.mjs` の公開面カナリア根拠コメントを更新する
+- [x] `governance-manifest.test.mjs:64-74` を現在形へ書き換え、射程 2 条件と残余 3 本と検知の性質変化を下限の形で明記する
+- [x] `docs/build-commands.md:30` の `REQUIRED_DISALLOWED_METHODS` の所在を `G-clippy-disallowed.mjs` へ直す
+- [x] `src-tauri/clippy.toml:2` の同じ所在参照を直す
+- [x] `npm run governance:check` が緑
 
 ## plan-review 結果
 

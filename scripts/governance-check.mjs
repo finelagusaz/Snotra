@@ -27,9 +27,6 @@
 //     正本（「依存ゼロ」は npm 依存の話であり、`git` はチェックアウトが在る以上どちらの環境にも在る）
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-// G-hook-fires は判定を再実装せず hook の純関数そのものを呼ぶ（理由は同検査のコメント）。
-// post-edit.mjs は import しただけでは main() を走らせない（I13 のガード）。
-import { selectChecks } from "../.claude/hooks/post-edit.mjs";
 import { CHECK_MODULES } from "./governance/registry.mjs";
 import { checkArchitectureTable } from "./governance/checks/G-architecture-table.mjs";
 import { MODULE_INDEX_CRATES, checkModuleIndex } from "./governance/checks/G-module-index.mjs";
@@ -37,6 +34,12 @@ import { checkBuildCommands } from "./governance/checks/G-build-commands.mjs";
 import { checkCiTable } from "./governance/checks/G-ci-table.mjs";
 import { globToRegex, checkRulesGlobs } from "./governance/checks/G-rules-globs.mjs";
 import { skillFiles, modelHiddenSkills, checkSkillTable } from "./governance/checks/G-skill-table.mjs";
+import { checkHookCommands } from "./governance/checks/G-hook-commands.mjs";
+import { checkHookFires } from "./governance/checks/G-hook-fires.mjs";
+import { checkCheckSkillEnumeration } from "./governance/checks/G-check-skill-enumeration.mjs";
+// evidence 専用の導出は、その検査のファイルから名指しで取る。**登録行と違い、
+// ファイルが消えれば import が失敗して鳴る**（沈黙する写しにはならない）。
+import { adrFiles, checkAdrFileNames } from "./governance/checks/G-adr-file-names.mjs";
 import {
   makeSnapshot,
   finding,
@@ -79,6 +82,11 @@ export {
   checkRulesGlobs,
   modelHiddenSkills,
   checkSkillTable,
+  checkHookCommands,
+  checkHookFires,
+  checkCheckSkillEnumeration,
+  adrFiles,
+  checkAdrFileNames,
 };
 
 /** 実在検査の対象と見なすソース系拡張子（G-references）。ランタイム生成物（.bin/.bak 等）は含めない。
@@ -782,192 +790,6 @@ export function checkClippyDisallowed(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G-hook-commands — PostToolUse hook の cargo コマンド ↔ docs/build-commands.md カテゴリ A の照合（#589）。
-// hook は触らない（非 export・import は main 実行の副作用があるため、ソーステキストから
-// `cargoSpec([...])` を抽出する。抽出アンカーが hook のリファクタで腐ったら抽出 0 件 fail で
-// 明示的に失敗する）。出力整形のみのフラグ（exit code を変えないもの）は arity 付き除去リストで
-// 落としてから照合する（build-commands.md の既存整合規約の機械化）。
-// nodeSpec / vitest 系（npm SSOT の部分集合ラッパー）は意味判断を要するため対象外＝
-// /health-check の Check 5 残置部分が受け持つ（受容する範囲）。
-// ---------------------------------------------------------------------------
-const OUTPUT_ONLY_FLAGS = { "--message-format": 1 }; // フラグ名 → 後続引数の個数
-
-export function checkHookCommands(snapshot) {
-  const findings = [];
-  const hookPath = ".claude/hooks/post-edit.mjs";
-  const hookSrc = snapshot.read(hookPath);
-  if (hookSrc == null) return [finding(hookPath, 1, "post-edit.mjs が読めない（G-hook-commands 母集団の欠落）")];
-  // cargoSpec([...]) の引数配列を抽出（clippy は複数行折返しのため dotall 必須）
-  const hookCommands = [...hookSrc.matchAll(/cargoSpec\(\[([\s\S]*?)\]\)/g)].map((m) =>
-    [...m[1].matchAll(/"([^"]*)"/g)].map((t) => t[1]),
-  );
-  if (hookCommands.length === 0) {
-    return [finding(hookPath, 1, "cargoSpec([...]) が 1 件も抽出できない（G-hook-commands 母集団の欠落。抽出アンカーの腐敗か buildCommand のリファクタ）")];
-  }
-  const docsPath = "docs/build-commands.md";
-  const docsText = snapshot.read(docsPath);
-  if (docsText == null) return [finding(docsPath, 1, "docs/build-commands.md が読めない（G-hook-commands）")];
-  // カテゴリ A 節の bash フェンス内 cargo 行を母集団にする（行末 # コメントを除去）
-  const sectionA = docsText.split(/^### A\. /m)[1]?.split(/^### /m)[0] ?? "";
-  // 行分割は \r?\n — CRLF checkout（Windows CI・autocrlf=true）では `.` が \r に
-  // マッチしないため、\r を残すと行末コメント除去 `#.*$` が発火しない（PR #595 で実測）
-  const docsLines = sectionA
-    .split(/\r?\n/)
-    .filter((l) => l.trim().startsWith("cargo "))
-    .map((l) => l.replace(/\s+#.*$/, "").trim().split(/\s+/).join(" "));
-  if (docsLines.length === 0) {
-    return [finding(docsPath, 1, "カテゴリ A の cargo コマンド行が 0 件（G-hook-commands 母集団の欠落）")];
-  }
-  for (const args of hookCommands) {
-    // 出力整形フラグを arity 込みで除去し、"cargo" を前置してトークン列を正規化
-    const normalized = ["cargo"];
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] in OUTPUT_ONLY_FLAGS) {
-        i += OUTPUT_ONLY_FLAGS[args[i]];
-        continue;
-      }
-      normalized.push(args[i]);
-    }
-    const cmd = normalized.join(" ");
-    if (!docsLines.includes(cmd)) {
-      findings.push(
-        finding(hookPath, 1, `hook の cargo コマンドが docs/build-commands.md カテゴリ A に無い（フラグ乖離の疑い）: ${cmd}`),
-      );
-    }
-  }
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
-// G-hook-fires — PostToolUse hook の発火割り当て ↔ docs/hooks.md「PostToolUse（post-edit.mjs）の
-// 発火一覧」の照合（#863）。
-//
-// 表は selectChecks の写しであり、同型のドリフトは一度起きている——ルート CLAUDE.md の同じ表が腐り、
-// その退去先が docs/hooks.md である（#474〜#497）。#858 で fmt を足したとき、この行は実際に計画の
-// 変更ファイル一覧から漏れた。
-//
-// **G-hook-commands と形が違うのは、可視性が違うからである。** あちらが hook のソーステキストから
-// `cargoSpec([...])` を抽出するのは cargoSpec が**非 export** だからであって、import が危険だから
-// ではない（post-edit.mjs は I13 のガードで import 安全であり、pre-bash.test.mjs が既に import している）。
-// selectChecks は export 済みなので、**判定を再実装せず関数そのものを呼ぶ** — 抽出で近似すると、
-// 閉じたい写しを一段下で作り直すことになる。テストのため既定値付き引数で注入する
-// （checkModuleIndex / checkConfigFieldReachability と同形）。
-//
-// 照合は 2 方向:
-//   (1) 行ごと — select(代表パス) と「走る検査 id」列が**順序込みで**一致する。順序は表自身の主張
-//       （fmt を先頭に置く理由が本文に書いてある）ゆえ、集合ではなく配列で比較する。
-//   (2) 母集団 — ソースの `checks.push("<id>")` リテラル全件が表のどこかに現れる。逆向き（表にあって
-//       発行されない id）は (1) から導かれるので、こちらは順方向だけでよい。
-//
-// 母集団を BUDGETS から取らない: BUDGETS ⊇ 発行されうる id であり、どのパスも発火させない id が
-// BUDGETS に入ったとき、表に「決して走らない検査」を書かせることになる。
-//
-// **代表パスの実在は自前で見る。** G-references に委ねる案は却下した——あちらの述語は「バッククォート内で
-// `/` を含み REF_EXTENSIONS に当たる」であり、実測すると現行 10 行のうち `Cargo.toml`（`/` 無し）と
-// `.githooks/pre-commit`（拡張子無し）の 2 行が述語の外にある。代償として実在しない入力（4 crate 外の
-// `.rs`・`config.toml`）は行にできない＝受容する残余は ADR-hook-fires-table-check が名指しする。
-// ---------------------------------------------------------------------------
-const HOOK_FIRES_HEADER = /^\|\s*編集したファイル（代表パス）\s*\|\s*走る検査 id\s*\|/;
-
-export function checkHookFires(snapshot, select = selectChecks) {
-  const findings = [];
-  const docsPath = "docs/hooks.md";
-  const hookPath = ".claude/hooks/post-edit.mjs";
-  const text = snapshot.read(docsPath);
-  if (text == null) return [finding(docsPath, 1, "docs/hooks.md が読めない（G-hook-fires 母集団の欠落）")];
-  const hookSrc = snapshot.read(hookPath);
-  if (hookSrc == null) return [finding(hookPath, 1, "post-edit.mjs が読めない（G-hook-fires 母集団の欠落）")];
-  // 行分割は \r?\n — CRLF checkout では列末に \r が残り、id の一致がすべて外れる（#587/#589 で二度踏んでいる）
-  const lines = text.split(/\r?\n/);
-  const headers = lines.map((l, i) => (HOOK_FIRES_HEADER.test(l) ? i : -1)).filter((i) => i >= 0);
-  if (headers.length === 0) {
-    return [
-      finding(docsPath, 1, "発火一覧のヘッダ行（| 編集したファイル（代表パス） | 走る検査 id | …）が見つからない（G-hook-fires 母集団の欠落）"),
-    ];
-  }
-  // 例示（コードフェンス内の書き方の見本など）でヘッダが 2 本になると、findIndex は先に現れた方を
-  // 掴み、本物の表が照合されないまま緑になる。母集団の曖昧化は明示的な赤にする
-  if (headers.length > 1) {
-    return [finding(docsPath, headers[1] + 1, `発火一覧のヘッダ行が ${headers.length} 本ある（どれが本物か決まらない・G-hook-fires 母集団の曖昧化）`)];
-  }
-  const start = headers[0];
-  const fileSet = new Set(snapshot.files);
-  const mentioned = new Set();
-  let rows = 0;
-  let sawEmptyRow = false;
-  // 終了条件は「最初の空行」である（checkCiTable と同じ理由）——`startsWith("|")` で打ち切ると、
-  // 表の途中に非表の行が 1 行紛れただけで**以降の行が照合されないまま緑になる**（#863 の code-review が実測）
-  for (let i = start + 2; i < lines.length && lines[i].trim() !== ""; i++) {
-    if (!lines[i].startsWith("|")) {
-      findings.push(finding(docsPath, i + 1, `発火一覧の途中に表でない行がある（以降が照合されない経路）: ${lines[i]}`));
-      continue;
-    }
-    // 必要なのは先頭 2 列 = split で 4 要素以上（実表は補足列を持つ 3 列 = 5 要素）
-    const cols = lines[i].split("|").map((c) => c.trim());
-    if (cols.length < 4) {
-      findings.push(finding(docsPath, i + 1, `発火一覧の行に代表パス列と検査 id 列がそろっていない: ${lines[i]}`));
-      continue;
-    }
-    // 代表パス列は「バッククォート括りの単一パス」だけを許す。glob や複数併記を通すと
-    // select() へ何を食わせたかが曖昧になり、緑の意味が薄まる
-    const rel = cols[1].match(/^`([^`]+)`$/)?.[1];
-    if (!rel) {
-      findings.push(finding(docsPath, i + 1, `代表パス列がバッククォート括りの単一パスでない: ${cols[1]}`));
-      continue;
-    }
-    rows += 1;
-    // 実在は自前で見る。G-references に委ねると、その述語（`/` を含み REF_EXTENSIONS に当たる）から
-    // 外れる代表パス（`Cargo.toml`・`.githooks/pre-commit`）が素通りする——実測で 10 行中 2 行。
-    // 死んだパスは `selectChecks` の接頭辞判定を通り続けるので、表だけが静かに嘘になる
-    if (!fileSet.has(rel)) {
-      findings.push(finding(docsPath, i + 1, `代表パスが実在しない（死んだ行は判定を通り続ける）: ${rel}`));
-    }
-    // 検査 id 列のバッククォートは検査 id だけ（散文は補足列へ置く、が書式規約）
-    const declared = [...cols[2].matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-    if (declared.length === 0) {
-      // 空集合は「（なし）」と綴らせる。散文・空白・空バッククォートを空集合と読むと、
-      // 書き崩しが「検査は走らない」という主張に化ける
-      if (cols[2] === "（なし）") sawEmptyRow = true;
-      else findings.push(finding(docsPath, i + 1, `検査 id 列にバッククォートが無い。空集合は「（なし）」と書く: ${cols[2]}`));
-    }
-    for (const id of declared) mentioned.add(id);
-    const actual = select(rel);
-    if (declared.join(" ") !== actual.join(" ")) {
-      findings.push(
-        finding(
-          docsPath,
-          i + 1,
-          `発火一覧が selectChecks と一致しない: \`${rel}\` は [${actual.join(", ")}] を発火するが表は [${declared.join(", ")}]`,
-        ),
-      );
-    }
-  }
-  if (rows === 0) {
-    findings.push(finding(docsPath, start + 1, "発火一覧の行が 0 件（G-hook-fires 母集団の欠落）"));
-    return findings;
-  }
-  // 行の削除は、id を持つ行なら下の母集団照合が拾う。**唯一拾えないのが空集合の行**であり、
-  // それは「割り当ての無いファイルの沈黙は合格ではない」という最上位の契約を運ぶ行である（#471/#497）。
-  // 消しても緑になる経路をここで閉じる
-  if (!sawEmptyRow) {
-    findings.push(finding(docsPath, start + 1, "検査が 1 つも走らないパスの行が無い——「沈黙は合格ではない」という主張が表から消えている"));
-  }
-  const emitted = new Set([...hookSrc.matchAll(/checks\.push\("([^"]+)"\)/g)].map((m) => m[1]));
-  if (emitted.size === 0) {
-    findings.push(
-      finding(hookPath, 1, 'checks.push("<id>") が 1 件も抽出できない（G-hook-fires 母集団の欠落。抽出アンカーの腐敗か selectChecks のリファクタ）'),
-    );
-    return findings;
-  }
-  for (const id of emitted) {
-    if (!mentioned.has(id)) {
-      findings.push(finding(docsPath, start + 1, `selectChecks が発行しうる検査 id が発火一覧のどの行にも現れない: ${id}`));
-    }
-  }
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
 // G-area-instrument — 恒久規範の面積の計器（合否を持たない）。ADR-retire-area-budget。
 // **上限判定は廃止した。** 一次規範は「書く約束」（`.claude/rules/governance-docs.md`: かぶりなく・
 // 必要なことだけ・古い情報を残さない）であり、数字はその代役になれない。ratchet 期の 3 発火は
@@ -1413,130 +1235,6 @@ export function checkStaleIdentifiers(snapshot, docs) {
 }
 
 // ---------------------------------------------------------------------------
-// G-check-skill-enumeration — `/implement`「4a. check スキルの実行」の列挙 ↔ `AGENTS.md`「条件別チェック」表（#778）。
-//
-// `/implement`「出力」のレビュー表は報告の母集団を 4a の列挙で閉じており、それは表の**写し**である。
-// 乖離すると、表に増えた check スキルが報告母集団から**沈黙して落ちる**。
-//
-// **問題は義務が行為者の視界の外にあることだった。** 同期義務は 4a の括弧書きに書いてあるが、
-// それを実行するのは `AGENTS.md` の表を編集する人であり、その人が `/implement`「出力」を読む
-// 必然性は無い。#765 が塞いだ「実施の有無が報告から消える」より一段手前で、報告を読んでも気づけない。
-//
-// **述語は着手前に現行コーパスへ当てて実測した**（#778 が明示的に要求している。表は rules 参照・
-// grep 指示を含む混成表で、`/plan-review` のような非 check スキルも現れるため）:
-// - 表の `/…-check` = {cache, dry, persistence, race, state, symmetric}（6 件）
-// - 4a の `/…-check` = 同じ 6 件
-// `/plan-review` は `-check` で終わらないため**構造的に外れる**。`/health-check` は
-// 表に現れない（ルート `CLAUDE.md` のスキル表に在り、そちらは G-skill-table が見る）。
-//
-// これで #778 の (a)（表側へ同期義務を 1 行置く）が不要になった——`AGENTS.md` は G-area-instrument の常時ロード面で
-// 余裕が小さいため、機構で吸収できるならそちらが安い。
-// ---------------------------------------------------------------------------
-
-const CHECK_SKILL_REF = /\/[a-z][a-z0-9-]*-check\b/g;
-/** 節を見出しで切り出す（次の同レベル以上の見出しまで）。見つからなければ null */
-function sectionOf(text, headingRe) {
-  const lines = text.split("\n");
-  const start = lines.findIndex((l) => headingRe.test(l));
-  if (start < 0) return null;
-  const level = (lines[start].match(/^#+/) ?? ["#"])[0].length;
-  const rest = lines.slice(start + 1);
-  const end = rest.findIndex((l) => /^#+\s/.test(l) && (l.match(/^#+/) ?? [""])[0].length <= level);
-  return rest.slice(0, end < 0 ? rest.length : end).join("\n");
-}
-
-export function checkCheckSkillEnumeration(snapshot) {
-  const findings = [];
-  const agents = snapshot.read("AGENTS.md");
-  const impl = snapshot.read(".claude/skills/implement/SKILL.md");
-  if (agents == null || impl == null) {
-    return [finding("AGENTS.md", 1, "G-check-skill-enumeration の母集団が読めない（AGENTS.md か /implement の SKILL.md）")];
-  }
-  const table = sectionOf(agents, /^##\s+条件別チェック/);
-  const step4a = sectionOf(impl, /^###\s+4a\./);
-  if (table == null) findings.push(finding("AGENTS.md", 1, "G-check-skill-enumeration: 「条件別チェック」節が見つからない（見出しが変わった）"));
-  if (step4a == null) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G-check-skill-enumeration: 「4a.」節が見つからない（見出しが変わった）"));
-  if (findings.length > 0) return findings;
-
-  const setOf = (t) => new Set((t.match(CHECK_SKILL_REF) ?? []).map((s) => s.trim()));
-  const inTable = setOf(table);
-  const in4a = setOf(step4a);
-  // 空母集団は明示 fail（沈黙経路の閉塞）
-  if (inTable.size === 0) findings.push(finding("AGENTS.md", 1, "G-check-skill-enumeration: 表に check スキルが 0 件（母集団の欠落）"));
-  if (in4a.size === 0) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G-check-skill-enumeration: 4a に check スキルが 0 件（母集団の欠落）"));
-
-  for (const s of inTable) {
-    if (!in4a.has(s)) {
-      findings.push(
-        finding(".claude/skills/implement/SKILL.md", 1, `G-check-skill-enumeration: \`${s}\` が AGENTS.md の表に在るが 4a の列挙に無い（報告母集団から沈黙して落ちる）`),
-      );
-    }
-  }
-  for (const s of in4a) {
-    if (!inTable.has(s)) {
-      findings.push(finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` が 4a の列挙に在るが AGENTS.md の表に無い（起動条件を持たない検査）`));
-    }
-  }
-  // 列挙されたスキルが実在するか（誤記の検出）
-  for (const s of new Set([...inTable, ...in4a])) {
-    const p = `.claude/skills/${s.slice(1)}/SKILL.md`;
-    if (!snapshot.files.includes(p)) findings.push(finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` に対応する ${p} が実在しない`));
-  }
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
-// G-adr-file-names — `docs/adr/` のファイル名が `ADR-<slug>.md` 形で、本文の見出しと一致するか（#816）。
-//
-// `G-adr-citations` は**引用側**しか見ない——「`ADR-<slug>` と書かれた引用に対応するファイルが
-// 在るか」を照合する。**ファイルの側が規約に従っているか**は見ておらず、`docs/adr/foo.md` を
-// 作っても誰も引用しなければ静かに通る（#789 の見直しで残余として特定した）。
-//
-// 見出しと stem の一致まで見るのは、#812 の裁定が「**stem = 引用文字列**」にすることで機械照合を
-// 可能にしたからである。2 つがずれると、文書の自己申告と実体が食い違う——引用は解決するのに
-// 開いた先が別の名前を名乗る形になり、どちらが正しいかを機械で決められなくなる。
-//
-// **連番へ戻る変更もここで落ちる**（`0019-foo.md` は形に合わない）。#812 が廃した連番は、
-// 規範だけでは戻りうる——「番号の方が並び順が分かる」という理由は毎回もっともらしく見える。
-// ---------------------------------------------------------------------------
-
-/** ADR のファイル名の形。stem がそのまま短縮引用になる（#812） */
-const ADR_FILE_NAME = /^ADR-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.md$/;
-
-export function adrFiles(snapshot) {
-  return snapshot.files.filter((f) => /^docs\/adr\/[^/]+\.md$/.test(f));
-}
-
-export function checkAdrFileNames(snapshot) {
-  const findings = [];
-  const files = adrFiles(snapshot);
-  // 空母集団は明示 fail——走査が空でも「逸脱なし」に見える沈黙経路を塞ぐ（#497）
-  if (files.length === 0) return [finding("docs/adr", 1, "ADR が 0 件（G-adr-file-names 母集団の欠落）")];
-  for (const f of files) {
-    const base = f.slice("docs/adr/".length);
-    const m = base.match(ADR_FILE_NAME);
-    if (!m) {
-      findings.push(finding(f, 1, `ADR のファイル名が \`ADR-<slug>.md\` 形でない: ${base}（連番を振らない・#812）`));
-      continue;
-    }
-    const text = snapshot.read(f);
-    if (text == null) {
-      findings.push(finding(f, 1, "ADR が読めない（G-adr-file-names 母集団の欠落）"));
-      continue;
-    }
-    const heading = text.split("\n")[0].match(/^#\s+(ADR-[a-z0-9-]+)\s*[:：]/);
-    if (heading == null) {
-      findings.push(finding(f, 1, `冒頭が \`# ADR-<slug>: <題>\` の形でない（stem = 引用文字列の対応が取れない）`));
-    } else if (heading[1] !== `ADR-${m[1]}`) {
-      findings.push(
-        finding(f, 1, `見出しがファイル名と食い違う: 見出し \`${heading[1]}\` / ファイル名 \`ADR-${m[1]}\``),
-      );
-    }
-  }
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
 // G-adr-citations — `ADR-<slug>` の短縮引用が実在の ADR を指すか（#812 の A）。
 //
 // **連番だった頃、この検査は書けなかった。** `ADR-0007` はファイル名の一部でしかなく、
@@ -1632,10 +1330,6 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-spec-sections", run: () => checkSpecSections(snapshot, docs) },
     { id: "G-workspace-lints", run: () => checkWorkspaceLints(snapshot) },
     { id: "G-clippy-disallowed", run: () => checkClippyDisallowed(snapshot) },
-    { id: "G-hook-commands", run: () => checkHookCommands(snapshot) },
-    { id: "G-hook-fires", run: () => checkHookFires(snapshot) },
-    { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
-    { id: "G-adr-file-names", run: () => checkAdrFileNames(snapshot) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
     { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, allRefDocs)) },
     { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleTargets)) },

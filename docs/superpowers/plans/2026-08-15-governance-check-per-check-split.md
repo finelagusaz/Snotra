@@ -14,7 +14,7 @@
 
 - **`main` へ直接コミット・プッシュしない。** ブランチ `chore/governance-per-check-split` を `main` から切る。
 - **移すコードは逐語で移す。** 移送中にコメントの言い回し・変数名・実装を変えない（例外は下の「契約コメント」1 か所だけ）。4000 行規模の差分がレビュー可能なのは「そのまま移った」ことを検算できるからであり、ついでの改善はその性質を壊す。
-- **evidence 行を 1 バイトも変えない。** これが本計画で最強の不変条件である（Task 1 で凍結し、以降の各コミットで byte 比較する）。
+- **evidence 行を 1 バイトも変えない。** これが本計画で最強の不変条件である（Task 1 で凍結し、以降の各コミットで byte 比較する）。**実行時に測定・訂正: この形は強すぎた。** 新設した source file が ADR を正当に引用すれば、その引用自体が `ADR の短縮引用` の件数を動かす——本計画自身が `registry.mjs` と `instrument.mjs` にそうしたヘッダを書くよう指示しており、実際に両者で 1 件ずつ動いた（予測どおりの 2 か所）。運用として実際に効いたのは:**ADR 短縮引用の件数を除く全フィールドは 1 バイトも変わらない。その件数だけは、新設 source file での正当な新規引用に限り動いてよく、動かすときは原因を名指しして baseline を撮り直す。それ以外の動きは欠陥である。**
 - **`scripts/governance-check.mjs` の契約を壊さない**（ファイル冒頭の「契約」コメント）: 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻・環境変数に非依存）・各検査はスナップショット注入の純関数・findings ゼロなら exit 0 と母集団の件数を印字・空母集団は明示 fail。
 - **公開 API を壊さない。** `scripts/governance-manifest.mjs` が `makeSnapshot` / `buildChecks` / `governanceDocs` を、`scripts/governance-check.test.mjs` が 50 個の名前を `./governance-check.mjs` から import している。**facade がすべて re-export する**——壊せば、A を守るために作った B が同じ PR で壊れる。
 - **`checkNormativeAreaInstrument` を registry に入れてはならない。** 面積に合否は無く（`ADR-retire-area-budget`）、入れれば manifest 差分に `+G-area-instrument` として現れる。`checks/` の外（`scripts/governance/instrument.mjs`）へ置き、**ディレクトリ境界が「検査であること」の定義になる**。
@@ -684,7 +684,7 @@ Run: Task 3 Step 6 と同じ 4 本
 Expected: すべて green、`evidence 一致` と `ID 集合 一致` が出る
 
 Run: `grep -c "export function check\|export function scan" scripts/governance-check.mjs`
-Expected: `0`（検査の本体が facade に 1 つも残っていない）
+Expected: `1`（実行時に測定・訂正）——面積の計器（`checkNormativeAreaInstrument` 等）が本 Task 時点ではまだ facade に残っており `0` にならない。`0` になるのは Task 8 で計器を `instrument.mjs` へ移した後である。この期待値は Task 8 に属する。
 
 - [ ] **Step 4: コミット**
 
@@ -832,7 +832,7 @@ Expected: すべて green
 | `G-adr-citations.test.mjs` | 1940 | |
 | `lib.mjs` のテスト（`scripts/governance/lib.test.mjs`） | 360（`gitIgnoredPaths`）・1325（見出し参照のソースの腕）・1402（凍結された歴史）・1879（`makeSnapshot` の走査除外） | いずれも lib の関数か、2 つの検査にまたがる母集団を見ている |
 | `instrument.test.mjs` | 1164 | 計器 |
-| `governance-check.test.mjs`（残す） | 95（母集団カナリア #701）・1148（`runAll` の空母集団）・1991（検査 ID の形）・2009（実リポジトリ スモーク） | facade そのものの振る舞い |
+| `governance-check.test.mjs`（残す） | 95（母集団カナリア #701）・1148（`runAll` の空母集団）・1991（検査 ID の形）・2009（実リポジトリ スモーク） | facade そのものの振る舞い。**実行時に測定・訂正: 5 本目として「facade の公開面（export の凍結）」も残る**（凍結一覧は `governance-check.mjs` の export そのものを見るため、他のどの検査の隣にも属さない） |
 
 ⚠ 1991 の「検査 ID の形」は **registry のテストへ移してもよい**——`CHECK_MODULES` の id を見る形になっているなら `registry.test.mjs` が正しい場所である。**現物を読んで決め、どちらにしたか報告に書くこと。**
 
@@ -846,7 +846,7 @@ Run: `npm test`
 Expected: PASS。**テスト総数が Task 9 Step 3 の件数と一致すること。**
 
 Run: `grep -c "^describe(" scripts/governance-check.test.mjs`
-Expected: `4`（表の最終行の 4 本だけが残る）
+Expected: `5`（実行時に測定・訂正。表の最終行に書いた 4 本に加え、「facade の公開面（export の凍結）」describe が独立に要り、5 本になる）
 
 Run: Task 3 Step 6 と同じ 4 本
 Expected: すべて green

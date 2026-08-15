@@ -109,11 +109,11 @@
 
 ### Phase 1 — 消費者の付け替えと公開面の縮小
 
-- [ ] `governance-check.test.mjs` の `MODULE_INDEX_CRATES` を `G-module-index.mjs` からの直接 import へ付け替える
-- [ ] `governance-check.mjs` から evidence 用 2 本以外の検査モジュール import を削除する
-- [ ] `export { … }` を `governanceDocs` / `makeSnapshot` の 2 名へ縮小する
-- [ ] 公開面カナリアの凍結配列を 4 名へ更新する
-- [ ] `npm test` / `npm run governance:check` が緑（hook は走らないので手動）
+- [x] `governance-check.test.mjs` の `MODULE_INDEX_CRATES` を `G-module-index.mjs` からの直接 import へ付け替える
+- [x] `governance-check.mjs` から evidence 用 2 本以外の検査モジュール import を削除する
+- [x] `export { … }` を `governanceDocs` / `makeSnapshot` の 2 名へ縮小する
+- [x] 公開面カナリアの凍結配列を 4 名へ更新する
+- [x] `npm test` / `npm run governance:check` が緑（hook は走らないので手動）
 
 ### Phase 2 — 切り替わりの実測
 

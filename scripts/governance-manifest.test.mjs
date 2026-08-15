@@ -61,18 +61,33 @@ describe("undeclared（PR 本文に逐語で現れない delta を返す）", ()
   });
 });
 
-describe("フォールトインジェクション — #1088 が求めた「発火しうるか」の実測", () => {
-  it("登録配列から検査が 1 本落ちれば差分が発火する（#1088 の当の欠陥）", () => {
+describe("フォールトインジェクション — 検査 ID が manifest の集合から消えたときに diffManifest／undeclared が発火するかの実測（#1088）", () => {
+  // このテストは「今日、`checks/` の実ファイルを 1 本消したら何が起きるか」の再現ではない。
+  // facade は各検査を `import { checkFoo } from "./governance/checks/G-foo.mjs"` の形で静的に
+  // 名指し re-export しているため、ファイルが物理的に無くなれば `buildChecks`／`manifest()` に
+  // 到達する前、import 解決の時点で `ERR_MODULE_NOT_FOUND` が飛んで facade ごと落ちる——それが
+  // 今日の一次防御線であり、この diff より先に、より大きな音で発火する（実測: 独立コピーで
+  // facade を import → 削除前 `imported OK` / 削除後 `ERR_MODULE_NOT_FOUND`）。
+  // このテストが変異させるのは `manifest()` の**返り値の複製**であり、import 経路を経由しない。
+  // 効いてくるのは facade が検査ごとの静的 re-export をやめた後——そのとき初めて、ファイル消失は
+  // import エラーを起こさず manifest の集合からだけ静かに欠けるようになり、この diff が
+  // 「消失を検知する側」に回る。今のうちに書くのは、その切り替わりに備えるためである。
+  it("checks/ から 1 本消えた形は差分として現れる", () => {
     const base = manifest(makeSnapshot(process.cwd()));
-    // 稼働中のガードは弱めない——返り値の複製に変異を当てる（.claude/rules/safety-nets.md）
-    const mutated = { ...base, checks: base.checks.filter((id) => id !== "G-references") };
-    expect(diffManifest(base, mutated)).toEqual(["-G-references"]);
-    expect(undeclared(diffManifest(base, mutated), "宣言のない PR 本文")).toEqual(["-G-references"]);
+    // 稼働中の checks/ は触らない——返り値の複製に変異を当てる
+    const mutated = { ...base, checks: base.checks.filter((id) => id !== "G-ci-table") };
+    expect(diffManifest(base, mutated)).toEqual(["-G-ci-table"]);
+    expect(undeclared(diffManifest(base, mutated), "宣言のない PR 本文")).toEqual(["-G-ci-table"]);
   });
   it("走査の母集団が黙って縮んでも発火する（WALK_EXCLUDE_PATHS へ 1 行足した形）", () => {
     const base = manifest(makeSnapshot(process.cwd()));
     const mutated = { ...base, rules: base.rules.slice(1) };
     expect(diffManifest(base, mutated)).toEqual([`-${base.rules[0]}`]);
+  });
+  it("skills 列の母集団が黙って縮んでも発火する（SKILL.md が 1 本消えた形）", () => {
+    const base = manifest(makeSnapshot(process.cwd()));
+    const mutated = { ...base, skills: base.skills.slice(1) };
+    expect(diffManifest(base, mutated)).toEqual([`-${base.skills[0]}`]);
   });
   it("変異が無ければ発火しない（常に赤いゲートはゲートが無いのと同じ）", () => {
     const base = manifest(makeSnapshot(process.cwd()));

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
+import { snap } from "./governance/test-helpers.mjs";
 import {
   MODULE_INDEX_CRATES,
   governanceDocs,
@@ -57,12 +58,6 @@ import {
   scanAdrCitations,
   adrCitationDocs,
 } from "./governance-check.mjs";
-
-/** 最小スナップショット: files はリポジトリ相対（"/" 区切り）、contents は path → 本文 */
-function snap(contents, extraFiles = []) {
-  const files = [...Object.keys(contents), ...extraFiles];
-  return { files, read: (p) => contents[p] ?? null };
-}
 
 describe("globToRegex（G-rules-globs の意味論固定・代表入力）", () => {
   const cases = [

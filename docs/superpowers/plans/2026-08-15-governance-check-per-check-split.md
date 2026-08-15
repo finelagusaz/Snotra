@@ -832,9 +832,9 @@ Expected: すべて green
 | `G-adr-citations.test.mjs` | 1940 | |
 | `lib.mjs` のテスト（`scripts/governance/lib.test.mjs`） | 360（`gitIgnoredPaths`）・1325（見出し参照のソースの腕）・1402（凍結された歴史）・1879（`makeSnapshot` の走査除外） | いずれも lib の関数か、2 つの検査にまたがる母集団を見ている |
 | `instrument.test.mjs` | 1164 | 計器 |
-| `governance-check.test.mjs`（残す） | 95（母集団カナリア #701）・1148（`runAll` の空母集団）・1991（検査 ID の形）・2009（実リポジトリ スモーク） | facade そのものの振る舞い。**実行時に測定・訂正: 5 本目として「facade の公開面（export の凍結）」も残る**（凍結一覧は `governance-check.mjs` の export そのものを見るため、他のどの検査の隣にも属さない） |
+| `governance-check.test.mjs`（残す） | 95（母集団カナリア #701）・1148（`runAll` の空母集団）・1991（検査 ID の形）・2009（実リポジトリ スモーク） | facade そのものの振る舞い。**実行時に測定・訂正: 5 本目として「facade の公開面（export の凍結）」も残る**（凍結一覧は `governance-check.mjs` の export そのものを見るため、他のどの検査の隣にも属さない）。**この 5 本目は本表にも元の 34 の母集団にも一度も載っていない**——ブランチ途中で追加され、移送の割り当て判断を必要としなかったため数え落とされていた。表自体が自分の残り母集団を過小に見積もっていた、という 2 つ目の原因である |
 
-⚠ 1991 の「検査 ID の形」は **registry のテストへ移してもよい**——`CHECK_MODULES` の id を見る形になっているなら `registry.test.mjs` が正しい場所である。**現物を読んで決め、どちらにしたか報告に書くこと。**
+⚠ **実行時に測定・訂正:** 1991 の「検査 ID の形」describe は 3 つの assertion を持つ。`buildChecks` を呼ぶこと自体は移送先を決める理由にならない——`buildChecks` は `CHECK_MODULES` の id を 1:1 でそのまま通す passthrough であり、フィルタも変換もしないため。assertion ごとに答えは割れる: 1 件目（id が `G-<kebab>` 形）は `buildChecks` を経由する必要が無く、2 件目（id が重複しない）は `registry.test.mjs` に既にある検査と機能的に重複する。**移せるのはこの 2 件だけで、3 件目（`runAll(...)` の evidence 文字列が「検査 N 件」を含むこと）は facade の summary 出力そのものを見ており、他のどこにも書けない。** 1 つの atomic な describe を割って 2 件だけ移す益は、まとまりを壊すコストに見合わないため、**describe ごと `governance-check.test.mjs` に残す**——3 件目が facade 固有であることだけが理由になる。
 
 - [ ] **Step 1: 表のとおりに移す**
 
@@ -846,7 +846,7 @@ Run: `npm test`
 Expected: PASS。**テスト総数が Task 9 Step 3 の件数と一致すること。**
 
 Run: `grep -c "^describe(" scripts/governance-check.test.mjs`
-Expected: `5`（実行時に測定・訂正。表の最終行に書いた 4 本に加え、「facade の公開面（export の凍結）」describe が独立に要り、5 本になる）
+Expected: `5`（実行時に測定・訂正。原因は上の表に記した 2 つ——「facade の公開面（export の凍結）」describe が独立に要ることと、それがブランチ途中の追加で本表の母集団に一度も載っていなかったこと。次に読む者が `4` を再導出しないよう、値と原因の両方をここに残す）
 
 Run: Task 3 Step 6 と同じ 4 本
 Expected: すべて green

@@ -63,12 +63,13 @@ describe("undeclared（PR 本文に逐語で現れない delta を返す）", ()
 
 describe("フォールトインジェクション — 検査 ID が manifest の集合から消えたときに diffManifest／undeclared が発火するかの実測（#1088）", () => {
   // **この diff は「消失を検知する側」に回っている**（#1094 で facade が検査ごとの静的
-  // re-export をやめた）。かつては facade が 19 本すべてを名指し import していたため、ファイルが
-  // 物理的に無くなれば `buildChecks`／`manifest()` へ到達する前に `ERR_MODULE_NOT_FOUND` が飛び、
-  // この diff は発火の機会を持たなかった。
+  // re-export をやめた）。かつては facade が `checks/` の全モジュールを名指し import していたため、
+  // ファイルが物理的に無くなれば `buildChecks`／`manifest()` へ到達する前に `ERR_MODULE_NOT_FOUND`
+  // が飛び、この diff は発火の機会を持たなかった。
   //
   // **ただし「検査ファイルが消えれば manifest 差分が捕まえる」と全称では言えない。** 言えるのは
-  // 次の下限までである（すべて #1094 で使い捨て worktree に実測）。
+  // 次の下限までである（下 3 つの層はいずれも #1094 で使い捨て worktree に故障注入して実測した。
+  // 最後の「検知の性質」だけは実測ではなく `ci.yml` の読みである）。
   //
   // - **消え方で捕まえる層が違う。** `G-X.mjs` **だけ**が消えて `G-X.test.mjs` が残る形は、隣の
   //   テストが `import { checkX } from "./G-X.mjs"` を持つため `npm test` が落ちる（19/19 のテストが

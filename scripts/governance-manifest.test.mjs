@@ -84,6 +84,11 @@ describe("フォールトインジェクション — 検査 ID が manifest の
     const mutated = { ...base, rules: base.rules.slice(1) };
     expect(diffManifest(base, mutated)).toEqual([`-${base.rules[0]}`]);
   });
+  it("skills 列の母集団が黙って縮んでも発火する（SKILL.md が 1 本消えた形）", () => {
+    const base = manifest(makeSnapshot(process.cwd()));
+    const mutated = { ...base, skills: base.skills.slice(1) };
+    expect(diffManifest(base, mutated)).toEqual([`-${base.skills[0]}`]);
+  });
   it("変異が無ければ発火しない（常に赤いゲートはゲートが無いのと同じ）", () => {
     const base = manifest(makeSnapshot(process.cwd()));
     expect(diffManifest(base, manifest(makeSnapshot(process.cwd())))).toEqual([]);

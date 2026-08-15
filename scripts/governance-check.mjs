@@ -11,20 +11,30 @@
 // 越境だが意図的な選択であり、帰属の作り直し（他の責務分担への割り当て直し）は #1088 で却下された。
 //
 // 契約:
-// - 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻・環境変数に非依存）
+// - 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻・環境変数に非依存）——facade だけでなく
+//   `checks/` 配下の各検査・`registry.mjs`・`instrument.mjs` も含む全層が同じ制約を負う
 // - findings ゼロ → exit 0 + 照合母集団の件数を印字（根拠の接地）
 // - findings あり → exit 1 + `file:line` 付き全件列挙。免除注記の機構は設けない
 // - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（沈黙経路の閉塞）
-// - 各検査はスナップショット注入の純関数（scripts/governance-check.test.mjs がフィクスチャで
-//   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する）
-//   - **例外は 2 つある。** (1) G-hook-fires: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
-//     `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
-//     **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
-//     `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
+// - 検査の登録は `scripts/governance/checks/` の走査から導出される（`registry.mjs`）——ファイルを
+//   置けばそのまま検査になり、忘れうる登録行が無い。ファイル名と export した `id` の食い違いは
+//   `registry.mjs` が throw で拒む（#1088 が問うた「検査が沈黙で 1 本落ちる」構造の解消）
+// - `checks/` の外に置いたものは検査ではない——合否を持たない計器（恒久規範の面積など）は
+//   `governance/instrument.mjs` に置き、登録走査の対象外であることで「検査 N 件」に数えられない
+// - facade（本ファイル）が持つのは母集団の算出・0 件検知・evidence の組み立て・CLI 起動であり、
+//   各検査の判定ロジックそのものは `checks/` 側にある
+// - 各検査はスナップショット注入の純関数が既定であり、それぞれ隣の `*.test.mjs` が
+//   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する
+//   - **既定の純関数から外れる検査もある。少なくとも次を含み、増えてもこの記述は偽にならない——
+//     偽になるのは、ここに名指した検査自身が外れなくなったときである。**
+//     (1) G-hook-fires: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
+//       `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
+//       **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
+//       `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
 //     (2) G-references: `gitIgnoredPaths` が外部の `git` でチェックアウトの gitignore 設定を読む
-//     （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
-//     テストは fixture のまま走る。読む入力の内訳・機体間の乖離の向きは `gitIgnoredPaths` の JSDoc が
-//     正本（「依存ゼロ」は npm 依存の話であり、`git` はチェックアウトが在る以上どちらの環境にも在る）
+//       （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
+//       テストは fixture のまま走る。読む入力の内訳・機体間の乖離の向きは `gitIgnoredPaths` の JSDoc が
+//       正本（「依存ゼロ」は npm 依存の話であり、`git` はチェックアウトが在る以上どちらの環境にも在る）
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHECK_MODULES } from "./governance/registry.mjs";

@@ -1,0 +1,97 @@
+# 敵対的調査 — #1094 research.md
+
+## 壊せた項目
+
+### 1. 【最重要】constraint 1「evidence 経由の 2 本を除く 17 本のいずれを消しても、facade 由来の import エラーは起きない」は偽
+
+research.md 47-52 行は「静的 import が残るのは `G-clippy-disallowed.mjs` / `G-adr-file-names.mjs` の 2 本だけ」と書いているが、**`scripts/governance/instrument.mjs:6`** が
+
+```
+import { skillFiles, modelHiddenSkills } from "./checks/G-skill-table.mjs";
+```
+
+を静的に import しており、これは facade の再輸出ブロックとは独立した経路である。`instrument.mjs` は facade（`governance-check.mjs:84-89`）から常に import され、narrowing 対象外（`checkNormativeAreaInstrument`/`normativeArea` は facade 自身が使う）。
+
+**実測**（scratchpad の使い捨て `git worktree` コピーで実施。稼働中の `checks/` は無傷）:
+1. `governance-check.mjs` から `G-skill-table.mjs` の静的 import/export 行を削除して narrowing 後の状態を再現（`modelHiddenSkills`/`checkSkillTable` の import 文と export 2 行を除去）
+2. この状態で `node scripts/governance-check.mjs` を実行 → 緑（`検査 19 件` で exit 0）で narrowing 自体は機能することを確認
+3. `scripts/governance/checks/G-skill-table.mjs` を削除して再実行 →
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '...\checks\G-skill-table.mjs'
+imported from '...\scripts\governance\instrument.mjs'
+```
+
+narrowing 後も **`node scripts/governance-check.mjs` 自体が exit 1 で落ちる**——research.md が「manifest 差分だけが検知する」と主張する対象のうち、少なくとも G-skill-table.mjs はこの主張の対象外である。
+
+**この所見を偽にする手順**: `scripts/governance/instrument.mjs:6` を読み、`./checks/G-skill-table.mjs` への import が無くなっていることを確認する。または上記と同じ手順（narrowing 済みコピーで G-skill-table.mjs を消して `node scripts/governance-check.mjs` を走らせる）をやり直し、exit 0 になることを確認する。
+
+### 2. 【最重要】constraint 1 のもう一つの穴——各検査は隣接テストからも静的に import されており、npm test は narrowing の影響を受けない
+
+`scripts/governance/checks/` の 19 検査モジュールは**全数**、隣の `G-X.test.mjs` から `import { checkX } from "./G-X.mjs"` の形で直接 import されている（`grep` で全 19 ファイルを確認済み。例: `G-ci-table.test.mjs:3`）。これは facade を経由しない独立した静的 import であり、**facade の再輸出を絞っても一切変化しない**。
+
+**実測**（同じ使い捨てコピーで実施）:
+1. `checks/G-ci-table.mjs`（research.md が実測に使うと明言している対象）だけを削除（`G-ci-table.test.mjs` は残す）
+2. `node_modules` を junction で共有し `vitest run scripts/governance/checks/G-ci-table.test.mjs` を実行 →
+
+```
+FAIL  scripts/governance/checks/G-ci-table.test.mjs
+Error: Cannot find module './G-ci-table.mjs' imported from '...\G-ci-table.test.mjs'
+Test Files  1 failed (1)
+```
+
+exit code 1。**この失敗は facade の narrowing 状態と無関係**——`G-ci-table.test.mjs` の import 文はそもそも facade を経由していない。`npm test`（`vitest run`、`vitest.config.ts` の include が `scripts/**/*.test.mjs` を含む）は CI の Linux/Windows 両ジョブで常時実行される（`.github/workflows/ci.yml:44-45,219-220`）ため、**「検査ファイルの消失」は narrowing 前後を問わず `npm test` の失敗として今日から既に検知されている**——これは #1093（per-check 分割でテストを検査の隣へ移した）の副産物であり、facade とは無関係に存在する第二の静的防御線である。
+
+**帰結**: issue #1094 とresearch.md 全体の中心主張「再輸出を絞ると、manifest 差分が検査ファイル消失の検知器として初めて load-bearing になる」は、**`node scripts/governance-check.mjs`（CLI 単体実行）というスコープに限れば真だが、`npm test` を含めた実際の CI 全体としては誇張である**。`npm test` は narrowing の前後を問わず変わらず検知し続ける。manifest 差分が「初めて」効くのは、(a) `.mjs` と隣接 `.test.mjs` が**同時に**消える場合、または (b) 誰かがローカルで `governance:check` だけ実行して `npm test` を走らせない場合、に限られる——これは issue 本文にも research.md にも明記されていない下限条件である。
+
+**この所見を偽にする手順**: `scripts/governance/checks/G-ci-table.test.mjs:3` を読み、`./G-ci-table.mjs` への直接 import が無いことを確認する。または `vitest.config.ts` の `include` から `scripts/**/*.test.mjs` が外れていることを確認する。
+
+### 3. 「制約 1」の被害範囲の見積もりも過小——少なくとも 3 種の独立した静的 import が narrowing の射程外にある
+
+上の 2 点をまとめると、facade の再輸出を絞っても以下は無傷のまま残る:
+- `G-clippy-disallowed.mjs` / `G-adr-file-names.mjs` — facade 自身の evidence import（research.md も認識済み）
+- `G-skill-table.mjs` — `instrument.mjs` からの production import（**research.md 未検出**）
+- 19 検査モジュール全数 — 各自の `*.test.mjs` からの test import（**research.md 未検出、npm test 経路全体を見落とし**）
+
+**この所見を偽にする手順**: `grep -rn 'from "\./checks/\|governance/checks/' --include=*.mjs .`（node_modules 除外）を実行し、`scripts/governance-check.mjs` 以外に checks/ 配下を直接 import しているファイルが `instrument.mjs` と各 `*.test.mjs` 以外に無いことを確認する（逆に言えば、この grep 結果自体が壊した根拠）。
+
+## 壊せなかった項目
+
+### 命題 1: facade の外部消費者は 6 静的 + 2 動的である
+
+`grep -rln 'governance-check' --include=*.mjs --include=*.ts --include=*.js --include=*.json --include=*.yml --include=*.yaml --include=*.ps1 --include=*.cjs .`（node_modules 除外）を全拡張子で実行し、`.claude/hooks/lsp-config.mjs` / `.claude/hooks/post-edit.mjs` / `package.json` / `.github/workflows/ci.yml` を含む全ヒットを個別に確認した。hooks 2 本は**コメント内の文字列言及のみ**（`governance-check` という語をコメントに書いているだけで import 文は無い）、`package.json`/`ci.yml` は `node scripts/governance-check.mjs` という**CLI 起動**（プロセス起動であって ESM import ではない）。動的 `import(` の検索でも `governance-check.test.mjs:83,98` の 2 箇所以外は見つからなかった。**「facade から named export を import する」という意味では、research.md の 6 静的 + 2 動的という数え上げは壊せなかった。**
+
+ただし、この命題は「facade を import する消費者」だけを数えており、「facade を経由せず checks/ を直接 import する消費者」（＝上の壊せた項目 1・2）を母集団に含んでいない。issue のタイトルと本文が問題にしているのは後者（検査ファイル消失の検知）であり、命題自体は真でも、**issue の結論を支える根拠としては不十分**——これは命題を壊したのではなく、命題の射程が issue の主張の射程と一致していないという指摘である。
+
+### 命題 3: 公開面の縮小は `manifest()` の 4 列に一切現れない
+
+`scripts/governance-manifest.mjs:23-33` を読んだ。`manifest()` は `checks`（`buildChecks(...).map(c => c.id)`）/ `docs`（`governanceDocs()`）/ `rules`（`.claude/rules/*.md` の glob）/ `skills`（`.claude/skills/*/SKILL.md` の glob）の 4 列のみを返し、いずれも export 名の集合ではない。`buildChecks` の `id` は `registry.mjs` の `checkModulesFrom` がディレクトリ走査で dynamic import して得る `m.id`（各検査モジュールが `export const id = "G-..."` の形で持つ文字列）であり、facade の named export 一覧とは無関係の値である。**壊せなかった。**
+
+### 命題 4: G-stale-identifiers は再輸出を消しても鳴らない
+
+`scripts/governance/checks/G-stale-identifiers.mjs:109` の `VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml|yml)$/` は `.mjs` を含み、`VOCAB_TEST_FILE = /\.test\.(mjs|ts|tsx)$/`（113 行）は `.test.mjs` だけを除外する。`checks/G-architecture-table.mjs` 等（`.mjs`・非 `.test.mjs`）は narrowing 後も `currentVocabulary` の走査対象であり続けるため、`checkArchitectureTable` などの識別子は facade から re-export が消えても語彙から落ちない。**壊せなかった。**
+
+また「他の検査が facade の中身（import 行・export 行・行数）を見ていないか」も調べた。`G-references.mjs`・`G-heading-refs.mjs` は `finding`/`linesOutsideFences` を lib.mjs から使うのみで、governance-check.mjs の内部構造（import/export 行・行数）への特別な参照は見当たらなかった。`G-module-index.mjs`/`G-module-linkage.mjs`/`G-build-commands.test.mjs`/`G-rules-globs.test.mjs` が `governance-check` を含むのは全てコメント中の言及（例: `G-stale-identifiers.mjs:15` の JSDoc）であり、コードとしての依存ではない。**壊せなかった（ただし 19 検査すべてを 1 行ずつ読んだわけではなく、grep ヒットの再検査に留まる——⚠️ 参照）。**
+
+### 命題 5: `.claude/skills/health-check/` の 2 箇所は絞った後も真
+
+`SKILL.md:23` は「`MODULE_INDEX_CRATES` と `governanceDocs()` の両方に載ることを `npm test` で固定する」と書く。narrowing 後も `governance-check.test.mjs` の母集団カナリア（91-157 行）は生き残る設計であり（research.md 自身がこのテストを維持する前提で書いている）、`governanceDocs` は facade の必須 5 名に含まれるため確実に残る。`MODULE_INDEX_CRATES` は research.md の未解決疑問 1（facade に残すか、テストの import 先を直接 `G-module-index.mjs` へ付け替えるか）が未確定だが、**どちらの選択でも SKILL.md の文自体（「npm test で固定する」という主張）は真のまま**——固定する経路が facade 経由か直接かは、この文の主張内容に現れない。`mechanized-checks.md:9` の「`governance-check.mjs` は re-export のみ」も、narrowing 後は再輸出面が小さくなるだけで「re-export のみ」という性質自体は変わらない。**壊せなかった。**
+
+## ⚠️ 確信の持てない所見
+
+- ⚠️ **research.md の未解決疑問 1（`MODULE_INDEX_CRATES` を facade に残すか）の決定次第で、`.claude/skills/health-check/SKILL.md:23` の一文が「facade 経由」から「直接 import」に変わり、文自体は真のままでも、読者が抱く「facade が担保している」という含意が変わる**——文言の更新は必須ではないが、含意のずれは PR レビューで指摘されうる。断定はしない。
+- ⚠️ **`.claude/hooks/lsp-config.mjs` と `post-edit.mjs` は governance-check.mjs を文字列としてしか参照していないが、`post-edit.mjs` の `selectChecks` が「`.mjs` を編集したら該当ディレクトリの vitest を走らせる」という判定をしている可能性があり、`checks/*.mjs` を Edit/Write すると PostToolUse hook 経由でも自動的に `npm test` 相当が走るかもしれない**——これが事実なら、検知は「CI の npm test」だけでなく「編集直後の hook」でも二重に効いていることになり、壊せた項目 2 の主張（npm test が独立した防御線）をさらに補強する側の話だが、`selectChecks` の実装を読み切っていないため確信は持てない。
+- ⚠️ **G-hook-fires.mjs のコメントに `checkCiTable` という文字列が出るが、import ではなくコメントであることは確認したものの、`selectChecks` 自体が `checks/*.mjs` のパスパターンを内部に持ち、facade の構造に依存する分岐を持っている可能性**は完全には排除できていない（`.claude/hooks/post-edit.mjs` の該当箇所を読み切っていない）。
+
+## 測定環境についての判定
+
+- **`registry.mjs` の `CHECKS_DIR`（`import.meta.url` 起点）と `makeSnapshot`（`process.cwd()` 起点）の不一致**: 実測で確認した通り、`node scripts/governance-check.mjs` を**コピー側ツリーへ `cd` してから**相対パスで起動すれば、`import.meta.url` はコピー側ツリーを指し、`CHECK_MODULES` はコピー側 `checks/` を走査し、`makeSnapshot(process.cwd())` もコピー側を見るため、両者は一致する（混成ツリーにならない）。research.md の制約 3 が書いている手順（「コピー側のスクリプトを cwd = コピーで走らせる」）は正しく、この点は壊せなかった。**ただし研究文書には「`cd` してから相対パスで起動する」という具体的な起動コマンドの形までは書かれておらず、実装時に `node <絶対パス>/scripts/governance-check.mjs`（cwd を変えず絶対パスで起動)のような形を取ると `makeSnapshot` はコピー、`CHECKS_DIR` は絶対パスが指すコピー側の場所になり結局一致するので実害は無いが、`cwd` を本体リポジトリのままにして `node <コピーの絶対パス>` する形だと `makeSnapshot(process.cwd())` が本体リポジトリを読み、`CHECK_MODULES` はコピー側を読む混成が起きうる**——起動コマンドの正確な形を計画へ明記すべき（⚠️ 未確定要素ではなく、実測で再現できる具体的な失敗モードとして指摘する）。
+
+- **CI の `governance manifest delta` step**: `.github/workflows/ci.yml:111-129` を読んだ。base 側は `git worktree add --detach /tmp/gov-base "$BASE_SHA"` の後 `(cd /tmp/gov-base && node "$GOV_MANIFEST")` と**明示的に `cd` してから相対パスで起動**しており、head 側は `node "$GOV_MANIFEST" --compare ...` を（`cd` なしで）GitHub Actions の既定 cwd（チェックアウトルート）から起動している。両方とも「起動 cwd = 読み取り対象の木」が一致する形になっており、混成ツリーは起きない。**ローカルでのシミュレーション（使い捨てコピー + `cd`）は、この CI の比較経路と同じ形の cwd 整合を再現できる**——ここは壊せなかった。ただし CI は `PR_BODY` を `gh pr view` から取得する副作用があり、これはローカルでは再現不能（research.md 自身が「実 CI の確認は PR 本文チェックリストへ送る」としており、この限界は認識済み）。
+
+- **`vitest.config.ts` の `include`**: `["​.claude/hooks/**/*.test.mjs", "​.githooks/**/*.test.mjs", "scripts/**/*.test.mjs"]` であり、`scripts/governance/checks/*.test.mjs` は `scripts/**/*.test.mjs` に含まれる。**「テストが守る」という前提は成立している**——ただし研究文書はこの事実を「narrowing 後に manifest 差分が唯一の検知器になる」という主張の**反証**として使うべきだったのに、使っていない（壊せた項目 2 参照）。
+
+- **`node scripts/governance-check.mjs` と `npm test` の現状**: 両方とも実行し、無改変の実リポジトリで green を確認した。
+  - `node scripts/governance-check.mjs` → `governance:check — 全検査 passed（検査 19 件 / ...）` exit 0
+  - `npx vitest run scripts/governance` → `Test Files  24 passed (24)` `Tests  310 passed (310)` exit 0
+  research.md はこの実測を行っていなかった（未実施の指摘通り）。

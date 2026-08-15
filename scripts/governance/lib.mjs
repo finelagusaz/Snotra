@@ -1,6 +1,9 @@
-//! governance:check の共有基盤。1 つの検査しか使わない helper はここへ置かず、
-//! その検査のファイルへ一緒に移す（`scripts/governance/checks/`）。ここに在るのは、
-//! 複数の検査ファイルが使うものか、facade 自身が直接使うもの（母集団・0 件検知・evidence の算出など）。
+//! governance:check の共有基盤。運用規則はただ一つ——**helper を置く前に、まずその検査のファイル
+//! （`scripts/governance/checks/`）へ移せないかを問う。移しても何も壊れないなら、ここへ置いてはならない。**
+//! ここに残ってよいのは、単一の検査ファイルへ移すと壊れるもの——複数の検査ファイルが import する・
+//! facade が直接 import する・lib 内の他の宣言が参照する、など——だけである。
+//! **「ここに何が在るか」の理由は列挙しない**——列挙は次に来る成員のたびに書き足しを要求し、
+//! 書き漏らせば偽になる（このヘッダー自身が `gitIgnoredPaths`・`STALE_EXTRA_DOCS` で 2 回そうなった）。
 //! 依存は Node 標準モジュールのみ（`governance-check.mjs` の契約を継承する）。
 import fs from "node:fs";
 import path from "node:path";

@@ -1,5 +1,5 @@
 //! G-clippy-disallowed — src-tauri/clippy.toml の禁止集合が実効しているか（#950）。
-import { finding, stripTomlComment, tomlLine, lintLevel, tomlInt, lintPriority } from "../lib.mjs";
+import { finding, stripTomlComment, tomlLine, lintLevel } from "../lib.mjs";
 
 export const id = "G-clippy-disallowed";
 
@@ -112,6 +112,14 @@ export function declaresEguiDependency(text) {
  *  この 2 つは `clippy-driver -W help` の群一覧から disallowed-methods を含むものを数え上げた結果である
  *  ——**上流が 3 つ目の群へ入れたら、この配列が更新されるまで沈黙する**（受容する残余）。 */
 const DISALLOWED_METHODS_GROUPS = ["all", "style"];
+
+/** TOML の整数リテラル。**数値区切りの `_` を落とす**——落とさないと `1_0`（TOML では 10）から 1 だけを
+ *  読み、群の allow が実際より小さい priority に見えて緑へ倒れる（#950 のレビューで実測）。 */
+const tomlInt = (text) => Number((String(text).match(/-?[0-9_]+/)?.[0] ?? "0").replaceAll("_", ""));
+
+/** 同じく priority。文字列形は既定の 0。**priority が大きいほど後に当たる**ので、群の allow が個別 lint の
+ *  deny と同じか大きい priority を持つと禁止が消える（#950 で実測）。 */
+const lintPriority = (value) => (value.startsWith("{") ? tomlInt(value.match(/priority\s*=\s*([^,}]+)/)?.[1] ?? "0") : 0);
 
 /** ルート [workspace.lints.clippy] の disallowed_methods が deny/forbid で、**かつ後から allow で
  *  打ち消されていない**か。level と priority の 2 形は lintLevel / lintPriority が受ける

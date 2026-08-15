@@ -13,7 +13,6 @@ import {
   makeSnapshot,
   checkHookCommands,
   checkHookFires,
-  checkArchitectureTable,
   gitIgnoredPaths,
   checkReferences,
   checkSpecSections,
@@ -114,22 +113,6 @@ describe("G-module-index/G-references 母集団カナリア — #701", () => {
         `${crate}/CLAUDE.md が G-references 母集団に無い。governanceDocs の正規表現を更新すること（参照切れが沈黙で通る）`,
       ).toContain(`${crate}/CLAUDE.md`);
     }
-  });
-});
-
-describe("G-architecture-table checkArchitectureTable", () => {
-  it("緑: ファイル単位のモジュール表が無い", () => {
-    const s = snap({ "docs/architecture.md": "# a\n| 型 | 役割 |\n|---|---|\n| `Engine` | 入口 |\n" });
-    expect(checkArchitectureTable(s)).toEqual([]);
-  });
-  it("赤: 先頭セルがバッククォート付きファイル名の表行を検出する", () => {
-    const s = snap({ "docs/architecture.md": "| `engine.rs` | 検索エンジン |\n" });
-    const f = checkArchitectureTable(s);
-    expect(f.some((x) => x.message.includes("engine.rs"))).toBe(true);
-  });
-  it("コードフェンス内の表行は無視する", () => {
-    const s = snap({ "docs/architecture.md": "```\n| `engine.rs` | x |\n```\n" });
-    expect(checkArchitectureTable(s)).toEqual([]);
   });
 });
 

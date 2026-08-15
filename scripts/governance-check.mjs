@@ -38,34 +38,12 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHECK_MODULES } from "./governance/registry.mjs";
-import { checkArchitectureTable } from "./governance/checks/G-architecture-table.mjs";
-import { MODULE_INDEX_CRATES, checkModuleIndex } from "./governance/checks/G-module-index.mjs";
-import { checkBuildCommands } from "./governance/checks/G-build-commands.mjs";
-import { checkCiTable } from "./governance/checks/G-ci-table.mjs";
-import { globToRegex, checkRulesGlobs } from "./governance/checks/G-rules-globs.mjs";
-import { modelHiddenSkills, checkSkillTable } from "./governance/checks/G-skill-table.mjs";
-import { checkHookCommands } from "./governance/checks/G-hook-commands.mjs";
-import { checkHookFires } from "./governance/checks/G-hook-fires.mjs";
-import { checkCheckSkillEnumeration } from "./governance/checks/G-check-skill-enumeration.mjs";
-import { checkModuleLinkage, declaredModuleFiles } from "./governance/checks/G-module-linkage.mjs";
-import { checkReferences } from "./governance/checks/G-references.mjs";
-import { checkHeadingRefs, scanHeadingRefs } from "./governance/checks/G-heading-refs.mjs";
-import { checkNearHeadingRefs, scanNearHeadingRefs } from "./governance/checks/G-near-heading-refs.mjs";
-import { checkStaleIdentifiers, scanStaleIdentifiers, currentVocabulary } from "./governance/checks/G-stale-identifiers.mjs";
-import { checkAdrCitations, scanAdrCitations, adrCitationDocs } from "./governance/checks/G-adr-citations.mjs";
-import { checkSpecSections } from "./governance/checks/G-spec-sections.mjs";
-import { checkWorkspaceLints, REQUIRED_RUSTDOC_LINTS, hasWorkspaceLintsOptIn, rustdocLintsAreDenied } from "./governance/checks/G-workspace-lints.mjs";
-import {
-  checkClippyDisallowed,
-  clippyDisallowedCount,
-  disallowedMethodPaths,
-  declaresEguiDependency,
-  clippyMethodsDenied,
-  REQUIRED_DISALLOWED_METHODS,
-} from "./governance/checks/G-clippy-disallowed.mjs";
 // evidence 専用の導出は、その検査のファイルから名指しで取る。**登録行と違い、
 // ファイルが消えれば import が失敗して鳴る**（沈黙する写しにはならない）。
-import { adrFiles, checkAdrFileNames } from "./governance/checks/G-adr-file-names.mjs";
+// **facade から `checks/` を静的 import するのはこの 2 本だけである**（#1094 で他を落とした）。
+// 意図的な非対称であり、下の再輸出ブロックの注記がその帰結を持つ。
+import { clippyDisallowedCount } from "./governance/checks/G-clippy-disallowed.mjs";
+import { adrFiles } from "./governance/checks/G-adr-file-names.mjs";
 import {
   makeSnapshot,
   finding,
@@ -76,76 +54,27 @@ import {
   staleIdentifierDocs,
   staleIdentifierGuideDocs,
   staleIdentifierTargets,
-  collectAnchors,
-  resolveRefTarget,
-  STALE_EXTRA_DOCS,
   workspaceMembers,
 } from "./governance/lib.mjs";
-import {
-  ALWAYS_LOADED_FILES,
-  skillDescriptionArea,
-  checkNormativeAreaInstrument,
-  normativeArea,
-} from "./governance/instrument.mjs";
+import { checkNormativeAreaInstrument, normativeArea } from "./governance/instrument.mjs";
 
-// 既存の import 元（`governance-manifest.mjs` と `governance-check.test.mjs`）を壊さないための再輸出。
-// **`export *` にしない**——公開する名前を明示的に持つことで、意図しない露出が起きない。
-export {
-  makeSnapshot,
-  gitIgnoredPaths,
-  governanceDocs,
-  headingRefDocs,
-  headingRefSourceDocs,
-  staleIdentifierDocs,
-  staleIdentifierGuideDocs,
-  staleIdentifierTargets,
-  collectAnchors,
-  resolveRefTarget,
-  STALE_EXTRA_DOCS,
-  workspaceMembers,
-  checkArchitectureTable,
-  MODULE_INDEX_CRATES,
-  checkModuleIndex,
-  checkBuildCommands,
-  checkCiTable,
-  globToRegex,
-  checkRulesGlobs,
-  modelHiddenSkills,
-  checkSkillTable,
-  checkHookCommands,
-  checkHookFires,
-  checkCheckSkillEnumeration,
-  adrFiles,
-  checkAdrFileNames,
-  checkModuleLinkage,
-  declaredModuleFiles,
-  checkReferences,
-  checkHeadingRefs,
-  scanHeadingRefs,
-  checkNearHeadingRefs,
-  scanNearHeadingRefs,
-  checkStaleIdentifiers,
-  scanStaleIdentifiers,
-  currentVocabulary,
-  checkAdrCitations,
-  scanAdrCitations,
-  adrCitationDocs,
-  checkSpecSections,
-  checkWorkspaceLints,
-  REQUIRED_RUSTDOC_LINTS,
-  hasWorkspaceLintsOptIn,
-  rustdocLintsAreDenied,
-  checkClippyDisallowed,
-  clippyDisallowedCount,
-  disallowedMethodPaths,
-  declaresEguiDependency,
-  clippyMethodsDenied,
-  REQUIRED_DISALLOWED_METHODS,
-  ALWAYS_LOADED_FILES,
-  skillDescriptionArea,
-  checkNormativeAreaInstrument,
-  normativeArea,
-};
+// `lib.mjs` の 2 名を、facade 経由で読む消費者のために再輸出する（`buildChecks` / `runAll` は
+// 下で `export function` として定義するのでここに要らない）。**`export *` にしない**——公開する
+// 名前を明示的に持つことで、意図しない露出が起きない。
+//
+// **この一覧が短いことには機構上の役目がある**（#1094）。かつてここは 19 検査の関数を名指しで
+// 再輸出しており、その副作用として `checks/` の全ファイルが facade へ静的 import されていた。
+// ゆえに検査ファイルが消えると `buildChecks` へ到達する前に `ERR_MODULE_NOT_FOUND` で落ち、
+// **#1092 の manifest 差分は消失に対して発火する機会が無かった**。再輸出を実際の消費者まで絞った
+// ことで、その遮蔽が外れている。**消費者の一覧をここへ写さない**（増減しても赤くならない写しになる）
+// ——母集団は次の grep が持つ（**動的 `import()` は当たらない**。今日の動的消費者は同じファイルが
+// 静的 import も持つので取りこぼしは無いが、動的だけの消費者が現れれば母集団の外に居る）:
+//   grep -rn 'from ".*governance-check\.mjs"' --include=*.mjs scripts/
+// **射程と残余は `governance-manifest.test.mjs` のフォールトインジェクション節が正本**である。
+//
+// **名前を足す前に、その名前を読む消費者が実在するか確かめること。** `checks/` の関数をここへ
+// 戻すと、そのファイルだけ消失の検知が manifest 差分から import エラーへ戻る。
+export { makeSnapshot, governanceDocs };
 
 // ---------------------------------------------------------------------------
 // 実行

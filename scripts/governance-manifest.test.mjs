@@ -62,16 +62,44 @@ describe("undeclared（PR 本文に逐語で現れない delta を返す）", ()
 });
 
 describe("フォールトインジェクション — 検査 ID が manifest の集合から消えたときに diffManifest／undeclared が発火するかの実測（#1088）", () => {
-  // このテストは「今日、`checks/` の実ファイルを 1 本消したら何が起きるか」の再現ではない。
-  // facade は各検査を `import { checkFoo } from "./governance/checks/G-foo.mjs"` の形で静的に
-  // 名指し re-export しているため、ファイルが物理的に無くなれば `buildChecks`／`manifest()` に
-  // 到達する前、import 解決の時点で `ERR_MODULE_NOT_FOUND` が飛んで facade ごと落ちる——それが
-  // 今日の一次防御線であり、この diff より先に、より大きな音で発火する（実測: 独立コピーで
-  // facade を import → 削除前 `imported OK` / 削除後 `ERR_MODULE_NOT_FOUND`）。
-  // このテストが変異させるのは `manifest()` の**返り値の複製**であり、import 経路を経由しない。
-  // 効いてくるのは facade が検査ごとの静的 re-export をやめた後——そのとき初めて、ファイル消失は
-  // import エラーを起こさず manifest の集合からだけ静かに欠けるようになり、この diff が
-  // 「消失を検知する側」に回る。今のうちに書くのは、その切り替わりに備えるためである。
+  // **この diff は「消失を検知する側」に回っている**（#1094 で facade が検査ごとの静的
+  // re-export をやめた）。かつては facade が `checks/` の全モジュールを名指し import していたため、
+  // ファイルが物理的に無くなれば `buildChecks`／`manifest()` へ到達する前に `ERR_MODULE_NOT_FOUND`
+  // が飛び、この diff は発火の機会を持たなかった。
+  //
+  // **ただし「検査ファイルが消えれば manifest 差分が捕まえる」と全称では言えない。** 言えるのは
+  // 次の下限までである（下 3 つの層はいずれも #1094 で使い捨て worktree に故障注入して実測した。
+  // 最後の「検知の性質」だけは実測ではなく `ci.yml` の読みである）。
+  //
+  // - **消え方で捕まえる層が違う。** `G-X.mjs` **だけ**が消えて `G-X.test.mjs` が残る形は、隣の
+  //   テストが `import { checkX } from "./G-X.mjs"` を持つため `npm test` が落ちる（19/19 のテストが
+  //   この形で、`vitest.config.ts` の `include` が `scripts/**/*.test.mjs` を含む）。**この層は
+  //   facade と無関係であり、絞る前も後も変わらない。** manifest 差分が唯一の検知器になるのは
+  //   `.mjs` と `.test.mjs` が**ペアで**消えたとき——検査を 1 本やめる実際の操作がその形である。
+  // - **全 19 本ではない。** `checks/` の**外**から静的 import されている検査は、ペア消失でも
+  //   import エラーで落ちる。**数を書かない**——`checks/` を触るたびに腐るので、母集団は次の grep が持つ:
+  //     grep -rn 'from ".*checks/G-' --include=*.mjs .
+  //   **この母集団には穴が 1 つある**——`checks/` の中どうしの import はこの形に当たらない
+  //   （`from "./G-X.mjs"` と書かれ、パス断片 `checks/` を含まないため）。隣のテストが持つ
+  //   sibling import が落ちるのは意図どおり（上の層の話）だが、**同じ理由で非兄弟の cross-import も
+  //   落ちる**。今日は 0 件だが、`checks/` の中で他の検査を import したら、それはこの母集団の外に居る。
+  //   少なくとも 3 経路がこれを作る——facade が evidence のため名指しする分（意図の正本は
+  //   `governance-check.mjs` の当該 import のコメント）、`instrument.mjs` が計器のため名指しする分、
+  //   そして **`checks/` の外に在るテスト**（`governance/lib.test.mjs` / `governance-check.test.mjs`）が
+  //   名指しする分である。**3 つ目は見落としやすい**——「テストの import は隣のものだけ」という前提で
+  //   走査から除くと母集団から丸ごと落ちる（#1094 の調査が実際にそう誤った）。
+  // - **さらに、生きた散文が名指す検査は `governance:check` 自身が拾うことがある。** 検査の識別子や
+  //   パスを規範文書が引いていれば、消したときに G-stale-identifiers や G-references が鳴る。
+  //   **恒常的な検知器として当てにはできない**（散文を直せば消える）が、「manifest 差分が唯一」を
+  //   無条件では言えない理由の 3 つ目である。
+  // - **検知の性質も変わった。** 旧: `governance check` step の import エラー——push でも
+  //   pull_request でも赤く、宣言では回避できない。新: `governance manifest delta` step——
+  //   `ci.yml` の `if` により **PR でしか走らず**、差分を PR 本文へ逐語で書けば通る（`undeclared`）。
+  //   「不可能にする」から「意図的だと宣言させる」への移行であり、これは #1088 の設計意図そのもの
+  //   だが、**守りが一様に増えたわけではない**。
+  //
+  // このテストが変異させるのは `manifest()` の**返り値の複製**であり、import 経路を経由しない
+  // （稼働中の `checks/` へ変異を当てないため・`.claude/rules/safety-nets.md`）。
   it("checks/ から 1 本消えた形は差分として現れる", () => {
     const base = manifest(makeSnapshot(process.cwd()));
     // 稼働中の checks/ は触らない——返り値の複製に変異を当てる

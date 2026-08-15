@@ -5,7 +5,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { snap } from "./governance/test-helpers.mjs";
-import { MODULE_INDEX_CRATES, governanceDocs, makeSnapshot, runAll, buildChecks } from "./governance-check.mjs";
+import { governanceDocs, makeSnapshot, runAll, buildChecks } from "./governance-check.mjs";
+// facade を経由しない——per-check 分割（#1093）が確立した「テストは自分の検査モジュールから直接
+// import する」形に揃える（#1094）。**`G-module-index.mjs` への静的 import が消えるわけではない**
+// ——ここへ移っただけで、ペア消失は今も `npm test` の import エラーとして現れる。facade 側から
+// 落とす効果は、`governance check` step が `buildChecks` へ到達できるようになることにある。
+import { MODULE_INDEX_CRATES } from "./governance/checks/G-module-index.mjs";
 
 // G-module-index/G-references の母集団は手で列挙する定数であり、**crate を足しても何も鳴らない**（沈黙する経路）。
 // `snotra-egui-runtime` は「#532 の検証層」として作られたまま両方から漏れ、SU7 で製品の
@@ -89,70 +94,18 @@ describe("実リポジトリ スモーク（dogfood）", () => {
 });
 
 describe("facade の公開面（export { … } の凍結）", () => {
-  // export { … } は手書きの一覧であり、この per-check 分割で検査を 1 本 checks/ へ移すたびに
-  // 書き足す唯一の面である。書き忘れは npm test にも governance:check にも現れるとは限らない——
-  // テストファイルが直接 import していない名前が消えても、どちらのコマンドも検知しない。
-  // 公開面を丸ごと凍結することで、この一覧への変更は気づかず起きることではなく、
+  // export { … } は手書きの一覧であり、書き忘れ・書き足しは npm test にも governance:check にも
+  // 現れるとは限らない——テストファイルが直接 import していない名前が消えても、どちらのコマンドも
+  // 検知しない。公開面を丸ごと凍結することで、この一覧への変更は気づかず起きることではなく、
   // 意図して行う編集になる。
+  //
+  // **この凍結が守るものは #1094 で変わった。** かつては「検査を 1 本 checks/ へ移すたびに
+  // 書き足す面」を守っていたが、再輸出を実際の消費者まで絞った今、守るのは逆向きである——
+  // **`checks/` の名前がここへ戻ってくることを検知する**。戻すとその検査ファイルは facade へ
+  // 静的 import され、消失が manifest 差分ではなく import エラーとして現れる側へ帰る
+  // （射程の正本は `governance-manifest.test.mjs` のフォールトインジェクション節）。
   it("公開する名前の集合が凍結した一覧と一致する", async () => {
     const mod = await import("./governance-check.mjs");
-    expect(Object.keys(mod).sort()).toEqual([
-      "ALWAYS_LOADED_FILES",
-      "MODULE_INDEX_CRATES",
-      "REQUIRED_DISALLOWED_METHODS",
-      "REQUIRED_RUSTDOC_LINTS",
-      "STALE_EXTRA_DOCS",
-      "adrCitationDocs",
-      "adrFiles",
-      "buildChecks",
-      "checkAdrCitations",
-      "checkAdrFileNames",
-      "checkArchitectureTable",
-      "checkBuildCommands",
-      "checkCheckSkillEnumeration",
-      "checkCiTable",
-      "checkClippyDisallowed",
-      "checkHeadingRefs",
-      "checkHookCommands",
-      "checkHookFires",
-      "checkModuleIndex",
-      "checkModuleLinkage",
-      "checkNearHeadingRefs",
-      "checkNormativeAreaInstrument",
-      "checkReferences",
-      "checkRulesGlobs",
-      "checkSkillTable",
-      "checkSpecSections",
-      "checkStaleIdentifiers",
-      "checkWorkspaceLints",
-      "clippyDisallowedCount",
-      "clippyMethodsDenied",
-      "collectAnchors",
-      "currentVocabulary",
-      "declaredModuleFiles",
-      "declaresEguiDependency",
-      "disallowedMethodPaths",
-      "gitIgnoredPaths",
-      "globToRegex",
-      "governanceDocs",
-      "hasWorkspaceLintsOptIn",
-      "headingRefDocs",
-      "headingRefSourceDocs",
-      "makeSnapshot",
-      "modelHiddenSkills",
-      "normativeArea",
-      "resolveRefTarget",
-      "runAll",
-      "rustdocLintsAreDenied",
-      "scanAdrCitations",
-      "scanHeadingRefs",
-      "scanNearHeadingRefs",
-      "scanStaleIdentifiers",
-      "skillDescriptionArea",
-      "staleIdentifierDocs",
-      "staleIdentifierGuideDocs",
-      "staleIdentifierTargets",
-      "workspaceMembers",
-    ]);
+    expect(Object.keys(mod).sort()).toEqual(["buildChecks", "governanceDocs", "makeSnapshot", "runAll"]);
   });
 });

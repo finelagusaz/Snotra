@@ -1,0 +1,75 @@
+//! G-module-index — 各サブディレクトリの CLAUDE.md モジュール構成表と実ファイルの双方向対応。
+import { finding } from "../lib.mjs";
+
+export const id = "G-module-index";
+
+/** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
+export function run(snapshot, ctx) {
+  return checkModuleIndex(snapshot);
+}
+
+// ---------------------------------------------------------------------------
+// G-module-index — 各サブディレクトリ CLAUDE.md「モジュール構成」↔ 実ファイルの双方向照合。
+// basename 包含方式: ディレクトリ集約行（`commands/` のベア名列挙）・`tabs/` プレフィックス省略・
+// 1 行複数バッククォートをパースせずに済ませる意図的な弱化（wrong-directory 検出は放棄）。
+// ---------------------------------------------------------------------------
+// ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
+// snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
+// SU7 で製品の描画層になった後も更新されていなかった（G-references の governanceDocs も同時に是正）
+/** G-module-index が照合する crate。**本検査の保証は狭い**——crate を新設してここへ足さなければ、
+ *  その `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されず `governance:check` は緑を
+ *  返す（2026-08-09 実測: member を 1 つ増やし、その索引へ実在しない `.rs` を書いても緑・#1008）。
+ *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。
+ *  **ただし写しのずれ自体は本ファイルの外で固定されている**——`governance-check.test.mjs` の
+ *  母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ member が本表と
+ *  `governanceDocs()` の**両方**に載ることを `npm test` で強制する。**残る穴は `CLAUDE.md` を
+ *  持たない crate だけで、そのとき照合すべき索引もまだ無い**（`skip-ci` ラベルの付いた PR では
+ *  そのカナリアも走らない）。 */
+export const MODULE_INDEX_CRATES = {
+  "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
+  "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
+  "src-tauri": { src: "src-tauri/src/", exts: /\.rs$/ },
+  "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
+};
+
+export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
+  const findings = [];
+  const allBasenames = new Set(snapshot.files.map((f) => f.split("/").pop()));
+  for (const crate of crates) {
+    const cfg = MODULE_INDEX_CRATES[crate];
+    const mdPath = `${crate}/CLAUDE.md`;
+    const text = snapshot.read(mdPath);
+    if (text == null) {
+      findings.push(finding(mdPath, 1, "CLAUDE.md が読めない（G-module-index 母集団の欠落）"));
+      continue;
+    }
+    const section = text.split(/^## モジュール構成$/m)[1]?.split(/^## /m)[0];
+    if (!section) {
+      findings.push(finding(mdPath, 1, "「モジュール構成」節が見つからない"));
+      continue;
+    }
+    // 順方向: 節内のバッククォート付きソースファイル名 → basename がリポジトリに実在。
+    // **見るのは直下の正規表現が挙げる拡張子だけである**——`` `foo.mjs` `` のような他種の
+    // バッククォート参照は実在照合されない（2026-08-09 実測・#1008）。どれを対象にするかは
+    // 本プロジェクトの編集方針であって、外部仕様の写しではない。
+    for (const m of section.matchAll(/`([^`\n]+\.(?:rs|ts|tsx|html))`/g)) {
+      const token = m[1];
+      if (/[*?{]/.test(token)) continue; // glob・パターン例は対象外
+      const base = token.split("/").pop();
+      if (!allBasenames.has(base)) {
+        findings.push(finding(mdPath, 1, `索引に記載の \`${token}\` に対応する実ファイル（basename: ${base}）が無い`));
+      }
+    }
+    // 逆方向: production ファイルの basename が CLAUDE.md 本文に出現
+    const production = snapshot.files.filter(
+      (f) => f.startsWith(cfg.src) && cfg.exts.test(f) && !(cfg.excludeTest && cfg.excludeTest.test(f)),
+    );
+    for (const f of production) {
+      const base = f.split("/").pop();
+      if (!text.includes(`\`${base}\``) && !text.includes(`/${base}\``)) {
+        findings.push(finding(mdPath, 1, `実ファイル ${f} が索引（本文のバッククォート）に見当たらない`));
+      }
+    }
+  }
+  return findings;
+}

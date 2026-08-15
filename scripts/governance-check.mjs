@@ -32,6 +32,11 @@ import { fileURLToPath } from "node:url";
 import { selectChecks } from "../.claude/hooks/post-edit.mjs";
 import { CHECK_MODULES } from "./governance/registry.mjs";
 import { checkArchitectureTable } from "./governance/checks/G-architecture-table.mjs";
+import { MODULE_INDEX_CRATES, checkModuleIndex } from "./governance/checks/G-module-index.mjs";
+import { checkBuildCommands } from "./governance/checks/G-build-commands.mjs";
+import { checkCiTable } from "./governance/checks/G-ci-table.mjs";
+import { globToRegex, checkRulesGlobs } from "./governance/checks/G-rules-globs.mjs";
+import { skillFiles, modelHiddenSkills, checkSkillTable } from "./governance/checks/G-skill-table.mjs";
 import {
   makeSnapshot,
   finding,
@@ -47,6 +52,7 @@ import {
   resolveRefTarget,
   normAnchor,
   STALE_EXTRA_DOCS,
+  workspaceMembers,
 } from "./governance/lib.mjs";
 
 // 既存の import 元（`governance-manifest.mjs` と `governance-check.test.mjs`）を壊さないための再輸出。
@@ -63,79 +69,22 @@ export {
   collectAnchors,
   resolveRefTarget,
   STALE_EXTRA_DOCS,
+  workspaceMembers,
   checkArchitectureTable,
+  MODULE_INDEX_CRATES,
+  checkModuleIndex,
+  checkBuildCommands,
+  checkCiTable,
+  globToRegex,
+  checkRulesGlobs,
+  modelHiddenSkills,
+  checkSkillTable,
 };
 
 /** 実在検査の対象と見なすソース系拡張子（G-references）。ランタイム生成物（.bin/.bak 等）は含めない。
  *  **保証は狭い**——バッククォート内のパス様参照は、拡張子がここに無ければ（`/` を含んでいても）
  *  静かにスキップされる（2026-08-09 実測: `.psm1` の実在しないパスが素通り・#1008）。 */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
-
-// ---------------------------------------------------------------------------
-// G-module-index — 各サブディレクトリ CLAUDE.md「モジュール構成」↔ 実ファイルの双方向照合。
-// basename 包含方式: ディレクトリ集約行（`commands/` のベア名列挙）・`tabs/` プレフィックス省略・
-// 1 行複数バッククォートをパースせずに済ませる意図的な弱化（wrong-directory 検出は放棄）。
-// ---------------------------------------------------------------------------
-// ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
-// snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
-// SU7 で製品の描画層になった後も更新されていなかった（G-references の governanceDocs も同時に是正）
-/** G-module-index が照合する crate。**本検査の保証は狭い**——crate を新設してここへ足さなければ、
- *  その `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されず `governance:check` は緑を
- *  返す（2026-08-09 実測: member を 1 つ増やし、その索引へ実在しない `.rs` を書いても緑・#1008）。
- *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。
- *  **ただし写しのずれ自体は本ファイルの外で固定されている**——`governance-check.test.mjs` の
- *  母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ member が本表と
- *  `governanceDocs()` の**両方**に載ることを `npm test` で強制する。**残る穴は `CLAUDE.md` を
- *  持たない crate だけで、そのとき照合すべき索引もまだ無い**（`skip-ci` ラベルの付いた PR では
- *  そのカナリアも走らない）。 */
-export const MODULE_INDEX_CRATES = {
-  "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
-  "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
-  "src-tauri": { src: "src-tauri/src/", exts: /\.rs$/ },
-  "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
-};
-
-export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
-  const findings = [];
-  const allBasenames = new Set(snapshot.files.map((f) => f.split("/").pop()));
-  for (const crate of crates) {
-    const cfg = MODULE_INDEX_CRATES[crate];
-    const mdPath = `${crate}/CLAUDE.md`;
-    const text = snapshot.read(mdPath);
-    if (text == null) {
-      findings.push(finding(mdPath, 1, "CLAUDE.md が読めない（G-module-index 母集団の欠落）"));
-      continue;
-    }
-    const section = text.split(/^## モジュール構成$/m)[1]?.split(/^## /m)[0];
-    if (!section) {
-      findings.push(finding(mdPath, 1, "「モジュール構成」節が見つからない"));
-      continue;
-    }
-    // 順方向: 節内のバッククォート付きソースファイル名 → basename がリポジトリに実在。
-    // **見るのは直下の正規表現が挙げる拡張子だけである**——`` `foo.mjs` `` のような他種の
-    // バッククォート参照は実在照合されない（2026-08-09 実測・#1008）。どれを対象にするかは
-    // 本プロジェクトの編集方針であって、外部仕様の写しではない。
-    for (const m of section.matchAll(/`([^`\n]+\.(?:rs|ts|tsx|html))`/g)) {
-      const token = m[1];
-      if (/[*?{]/.test(token)) continue; // glob・パターン例は対象外
-      const base = token.split("/").pop();
-      if (!allBasenames.has(base)) {
-        findings.push(finding(mdPath, 1, `索引に記載の \`${token}\` に対応する実ファイル（basename: ${base}）が無い`));
-      }
-    }
-    // 逆方向: production ファイルの basename が CLAUDE.md 本文に出現
-    const production = snapshot.files.filter(
-      (f) => f.startsWith(cfg.src) && cfg.exts.test(f) && !(cfg.excludeTest && cfg.excludeTest.test(f)),
-    );
-    for (const f of production) {
-      const base = f.split("/").pop();
-      if (!text.includes(`\`${base}\``) && !text.includes(`/${base}\``)) {
-        findings.push(finding(mdPath, 1, `実ファイル ${f} が索引（本文のバッククォート）に見当たらない`));
-      }
-    }
-  }
-  return findings;
-}
 
 // ---------------------------------------------------------------------------
 // G-module-linkage — `<crate>/src/**/*.rs` が crate ルートから `mod` 宣言で到達できるか（#1085）。
@@ -517,28 +466,6 @@ const tomlInt = (text) => Number((String(text).match(/-?[0-9_]+/)?.[0] ?? "0").r
  *  deny と同じか大きい priority を持つと禁止が消える（#950 で実測）。 */
 const lintPriority = (value) => (value.startsWith("{") ? tomlInt(value.match(/priority\s*=\s*([^,}]+)/)?.[1] ?? "0") : 0);
 
-/** ルート `Cargo.toml` の `[workspace] members`（ディレクトリ相対パス）を導出する唯一の口。
- *  返り値 `{ members, error }` の `error` は**母集団の欠落**（fail-closed）——読めない・`[workspace]` 節が無い・
- *  `members` 行が無い・0 件・glob 要素。glob（`crates/*`）は展開器を持たないので「読めなかった」側へ倒す。
- *  `[workspace]` セクションへスコープするのは、`default-members = [...]` を足したときに
- *  全文正規表現が**先に現れた方**を拾うため（`.claude/hooks/post-edit.test.mjs` のカナリアと同じ形）。 */
-export function workspaceMembers(snapshot) {
-  const src = snapshot.read("Cargo.toml");
-  if (src == null) return { members: [], error: "ルート Cargo.toml が読めない" };
-  const section = src.match(/\[workspace\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/);
-  if (section == null) return { members: [], error: "ルート Cargo.toml に [workspace] セクションが無い" };
-  const m = section[1].match(/^members\s*=\s*\[([^\]]*)\]/m);
-  if (m == null) return { members: [], error: "[workspace] に members 行が無い（書式が変わった）" };
-  const members = m[1]
-    .split(",")
-    .map((s) => s.trim().replace(/^"|"$/g, ""))
-    .filter((s) => s.length > 0);
-  if (members.length === 0) return { members: [], error: "[workspace] members が 0 件" };
-  const glob = members.find((s) => s.includes("*"));
-  if (glob) return { members: [], error: `members に glob 要素が在る（展開器を持たない）: ${glob}` };
-  return { members, error: null };
-}
-
 // ---------------------------------------------------------------------------
 // G-workspace-lints — ルート `[workspace.lints.rustdoc]` の deny が全 member で実効しているか（#713）。
 //
@@ -850,235 +777,6 @@ export function checkClippyDisallowed(snapshot) {
     findings.push(
       finding("Cargo.toml", 1, "[workspace.lints.clippy] の disallowed_methods が deny/forbid で無い（warn 既定へ戻り、禁止が -D warnings 依存の助言へ黙って降格する・#950）"),
     );
-  }
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
-// G-build-commands — docs/build-commands.md の npm script / cargo test -p crate の実在（旧 Check 5 の決定的部分）。
-// crate 名はディレクトリ名でなく各 member Cargo.toml の [package] name（`-p snotra` = src-tauri/）。
-// check/clippy は --workspace で cargo 自身が SSOT を読むため照合対象外（#500）。
-// ---------------------------------------------------------------------------
-export function checkBuildCommands(snapshot) {
-  const findings = [];
-  const p = "docs/build-commands.md";
-  const text = snapshot.read(p);
-  if (text == null) return [finding(p, 1, "docs/build-commands.md が読めない")];
-  let scripts = {};
-  try {
-    scripts = JSON.parse(snapshot.read("package.json") ?? "{}").scripts ?? {};
-  } catch {
-    findings.push(finding("package.json", 1, "package.json がパースできない"));
-  }
-  const crateNames = new Set();
-  // 母集団は workspaceMembers に一本化する（#713）。error はここでは報告しない——同じ欠落を
-  // 2 検査で 2 件にしないため。members が空なら crateNames も空になり、`cargo test -p` の行が
-  // すべて赤くなるので、この検査は従来どおり fail-closed のままである。
-  for (const dir of workspaceMembers(snapshot).members) {
-    const name = (snapshot.read(`${dir}/Cargo.toml`) ?? "").match(/^name\s*=\s*"([^"]+)"/m)?.[1];
-    if (name) crateNames.add(name);
-  }
-  text.split("\n").forEach((line, i) => {
-    for (const m of line.matchAll(/npm run ([A-Za-z0-9:_-]+)/g)) {
-      if (!(m[1] in scripts)) findings.push(finding(p, i + 1, `npm script が package.json に無い: ${m[1]}`));
-    }
-    if (/(?:^|[^a-z])npm test(?:$|[^a-z])/.test(line) && !("test" in scripts)) {
-      findings.push(finding(p, i + 1, "npm test に対応する scripts.test が無い"));
-    }
-    for (const m of line.matchAll(/cargo test -p ([A-Za-z0-9_-]+)/g)) {
-      if (!crateNames.has(m[1])) findings.push(finding(p, i + 1, `cargo test -p の crate が workspace に無い: ${m[1]}`));
-    }
-  });
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
-// G-ci-table — 「CI/CD メモ」対応表 ↔ .github/workflows/*.yml（旧 Check 10 の機械部分）。
-// wrapper 等価: `npm run X` が verbatim に無くても、scripts[X] の値のパス様トークンが
-// workflow に現れれば「実行あり」（CI は引数を上書きしてスクリプトを直接呼ぶことがある）。
-// ---------------------------------------------------------------------------
-export function checkCiTable(snapshot) {
-  const findings = [];
-  const p = "docs/build-commands.md";
-  const text = snapshot.read(p);
-  if (text == null) return [finding(p, 1, "docs/build-commands.md が読めない")];
-  let scripts = {};
-  try {
-    scripts = JSON.parse(snapshot.read("package.json") ?? "{}").scripts ?? {};
-  } catch {
-    /* G-build-commands が報告する */
-  }
-  const lines = text.split("\n");
-  const start = lines.findIndex((l) => /^\| 検証コマンド \| workflow \|/.test(l));
-  if (start === -1) return [finding(p, 1, "「CI/CD メモ」対応表（| 検証コマンド | workflow |）が見つからない")];
-  // 終了条件は「最初の空行」である。`startsWith("|")` で打ち切ると、表の途中に非表の行が 1 行
-  // 紛れただけで**以降の行が照合されないまま緑になる**（#863 で発見した 2 つ目の沈黙経路。
-  // 崩れた行の黙殺が 1 つ目）。走査の終わりは表の終わりであって、最初の異常ではない。
-  for (let i = start + 2; i < lines.length && lines[i].trim() !== ""; i++) {
-    if (!lines[i].startsWith("|")) {
-      findings.push(finding(p, i + 1, `対応表の途中に表でない行がある（以降が照合されない経路）: ${lines[i]}`));
-      continue;
-    }
-    // 必要なのは先頭 2 列 = split で 4 要素以上（実表は トリガー 列を持つ 3 列 = 5 要素）
-    const cols = lines[i].split("|").map((c) => c.trim());
-    if (cols.length < 4) {
-      findings.push(finding(p, i + 1, `対応表の行に検証コマンド列と workflow 列がそろっていない: ${lines[i]}`));
-      continue;
-    }
-    const wf = cols[2].match(/`?([A-Za-z0-9_-]+\.yml)`?/)?.[1];
-    if (!wf) {
-      findings.push(finding(p, i + 1, `workflow 列から .yml ファイル名を特定できない: ${cols[2]}`));
-      continue;
-    }
-    const wfText = snapshot.read(`.github/workflows/${wf}`);
-    if (wfText == null) {
-      findings.push(finding(p, i + 1, `workflow ファイルが実在しない: ${wf}`));
-      continue;
-    }
-    for (const m of cols[1].matchAll(/`((?:npm|cargo)[^`]*)`/g)) {
-      const cmd = m[1];
-      if (wfText.includes(cmd)) continue;
-      const scriptName = cmd.match(/^npm run ([A-Za-z0-9:_-]+)/)?.[1];
-      const wrapperPaths = (scripts[scriptName] ?? "")
-        .split(/\s+/)
-        .filter((t) => t.includes("/") || /\.(ps1|mjs|ts)$/.test(t));
-      if (wrapperPaths.some((t) => wfText.includes(t))) continue;
-      // npm ライフサイクル経由（1 段）: workflow が `npm run Y` を実行し、Y または preY が
-      // `npm run X` を呼ぶなら X も実行される（例: build の prebuild が typecheck を呼ぶ）
-      const viaLifecycle =
-        scriptName &&
-        Object.keys(scripts).some(
-          (y) =>
-            wfText.includes(`npm run ${y}`) &&
-            (scripts[y]?.includes(`npm run ${scriptName}`) || scripts[`pre${y}`]?.includes(`npm run ${scriptName}`)),
-        );
-      if (viaLifecycle) continue;
-      findings.push(finding(p, i + 1, `表のコマンド \`${cmd}\` が ${wf} のどの run にも現れない（wrapper パスも不一致）`));
-    }
-  }
-  return findings;
-}
-
-// ---------------------------------------------------------------------------
-// G-rules-globs — .claude/rules/*.md の paths glob が実在ファイルに 1 件以上マッチ（旧 Check 8）。
-// documented 意味論（bare 名 = ルート直下のみ・`**` = 階層横断・{a,b} ブレース）の自前変換。
-// harness の配送判定の再現ではなく「マッチ 0 件の検知」に限定した近似。
-// ---------------------------------------------------------------------------
-export function globToRegex(pattern) {
-  let re = "";
-  let i = 0;
-  while (i < pattern.length) {
-    const c = pattern[i];
-    if (c === "{" && pattern.indexOf("}", i) === -1) {
-      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの明示的な赤に倒れる）
-      i += 1;
-    } else if (c === "*") {
-      if (pattern.startsWith("**/", i)) {
-        re += "(?:.*/)?";
-        i += 3;
-        continue;
-      }
-      if (pattern.startsWith("**", i)) {
-        re += ".*";
-        i += 2;
-        continue;
-      }
-      re += "[^/]*";
-      i += 1;
-    } else if (c === "{") {
-      const end = pattern.indexOf("}", i);
-      re += `(?:${pattern
-        .slice(i + 1, end)
-        .split(",")
-        .map((s) => s.replace(/[.+^$()|[\]]/g, "\\$&"))
-        .join("|")})`;
-      i = end + 1;
-    } else {
-      re += /[.+^$()|[\]?\\]/.test(c) ? `\\${c}` : c;
-      i += 1;
-    }
-  }
-  return new RegExp(`^${re}$`);
-}
-
-export function checkRulesGlobs(snapshot) {
-  const findings = [];
-  const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f));
-  if (rules.length === 0) return [finding(".claude/rules", 1, "rules ファイルが 0 件（G-rules-globs 母集団の欠落）")];
-  for (const rule of rules) {
-    const text = snapshot.read(rule) ?? "";
-    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? ""; // CRLF checkout 耐性
-    const patterns = [...fm.matchAll(/^\s*-\s*"([^"]+)"/gm)].map((m) => m[1]);
-    if (patterns.length === 0) {
-      findings.push(finding(rule, 1, "frontmatter に paths パターンが 1 件も無い"));
-      continue;
-    }
-    for (const pat of patterns) {
-      const re = globToRegex(pat);
-      if (!snapshot.files.some((f) => re.test(f))) {
-        findings.push(finding(rule, 1, `paths glob が実在ファイルに 1 件もマッチしない: ${pat}`));
-      }
-    }
-  }
-  return findings;
-}
-
-const SKILL_FILE_RE = /^\.claude\/skills\/[^/]+\/SKILL\.md$/;
-
-/** `.claude/skills/<name>/SKILL.md` の一覧（G-skill-table・G-area-instrument の共通母集団） */
-function skillFiles(snapshot) {
-  return snapshot.files.filter((f) => SKILL_FILE_RE.test(f));
-}
-
-/**
- * `disable-model-invocation: true` の skill 名の集合 = **harness の roster に注入されない skill**。
- * G-skill-table（表が索引すべき対象）と G-area-instrument（常時ロード面に載る description）の両方がこの集合で決まるため、
- * 導出は 1 箇所に閉じる。判定は frontmatter ブロックの中だけを見る——本文が同じキー名に言及する
- * 実例がある（`/retrospective` が `/health-check` の起動方法を説明している）。
- *
- * **判定不能はすべて「隠しでない」へ倒す。** 同じ状態へ入る経路は 4 本ある——値が `true` でない /
- * キーが無い / frontmatter が壊れている・無い / ファイルが読めない。この向きなら、判定できなかった
- * skill は「roster が覆う側」に残り、表に行が無くても緑になる（静かな方の失敗）。逆へ倒すと、
- * 存在しない表の行を要求して赤になる。
- */
-export function modelHiddenSkills(snapshot) {
-  const hidden = new Set();
-  for (const f of skillFiles(snapshot)) {
-    const text = snapshot.read(f);
-    if (text == null) continue;
-    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (!fm) continue;
-    if (/^disable-model-invocation:[ \t]*true[ \t]*$/m.test(fm[1])) hidden.add(f.split("/")[2]);
-  }
-  return hidden;
-}
-
-// ---------------------------------------------------------------------------
-// G-skill-table — ルート CLAUDE.md「利用できるスキル」表 ↔ roster に載らない skill（旧 Check 9）
-// harness は毎セッション skill roster を description 付きで注入するため、注入される skill を
-// 表へ書き写すことは同じ面での二重課税である（ADR-area-metric-characters が description を常時ロード面に算入した
-// のと同じ理由）。ゆえに表が索引すべき対象は `disable-model-invocation: true` の skill だけであり、
-// G-skill-table はその集合と表の**双方向**一致を見る。「表の射程」を規範ではなくこの判定で固定する。
-// ---------------------------------------------------------------------------
-export function checkSkillTable(snapshot) {
-  const findings = [];
-  const text = snapshot.read("CLAUDE.md");
-  if (text == null) return [finding("CLAUDE.md", 1, "ルート CLAUDE.md が読めない")];
-  const section = text.split(/^## 利用できるスキル$/m)[1]?.split(/^## /m)[0] ?? "";
-  const inTable = new Set([...section.matchAll(/^\|\s*`\/([a-z0-9-]+)`/gm)].map((m) => m[1]));
-  const inDirs = new Set(skillFiles(snapshot).map((f) => f.split("/")[2]));
-  const hidden = modelHiddenSkills(snapshot);
-  if (inDirs.size === 0) findings.push(finding(".claude/skills", 1, "SKILL.md が 0 件（G-skill-table 母集団の欠落）"));
-  for (const s of inTable) {
-    if (!inDirs.has(s)) findings.push(finding("CLAUDE.md", 1, `スキル表の /${s} に SKILL.md が無い（.claude/skills/${s}/）`));
-    else if (!hidden.has(s)) {
-      findings.push(
-        finding("CLAUDE.md", 1, `スキル表の /${s} は harness の roster に載る（表の対象は disable-model-invocation: true の skill だけ）`),
-      );
-    }
-  }
-  for (const s of hidden) {
-    if (!inTable.has(s)) findings.push(finding("CLAUDE.md", 1, `.claude/skills/${s}/ は roster に載らないのにスキル表に無い`));
   }
   return findings;
 }
@@ -1929,16 +1627,11 @@ export function buildChecks(snapshot, sink = {}) {
   const legacy = [
     // 未移送の検査は現行の登録行のまま残す。移送が済んだものはここから消す——
     // **移送の途中でも 19 件が揃うことを、この 2 本の連結が保つ**
-    { id: "G-module-index", run: () => checkModuleIndex(snapshot) },
     { id: "G-module-linkage", run: () => checkModuleLinkage(snapshot) },
     { id: "G-references", run: () => checkReferences(snapshot, docs, gitIgnoredPaths) },
     { id: "G-spec-sections", run: () => checkSpecSections(snapshot, docs) },
-    { id: "G-build-commands", run: () => checkBuildCommands(snapshot) },
     { id: "G-workspace-lints", run: () => checkWorkspaceLints(snapshot) },
     { id: "G-clippy-disallowed", run: () => checkClippyDisallowed(snapshot) },
-    { id: "G-ci-table", run: () => checkCiTable(snapshot) },
-    { id: "G-rules-globs", run: () => checkRulesGlobs(snapshot) },
-    { id: "G-skill-table", run: () => checkSkillTable(snapshot) },
     { id: "G-hook-commands", run: () => checkHookCommands(snapshot) },
     { id: "G-hook-fires", run: () => checkHookFires(snapshot) },
     { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },

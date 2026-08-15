@@ -2015,3 +2015,72 @@ describe("実リポジトリ スモーク（dogfood）", () => {
     expect(findings).toEqual([]);
   });
 });
+
+describe("facade の公開面（export { … } の凍結）", () => {
+  // export { … } は手書きの一覧であり、この per-check 分割で検査を 1 本 checks/ へ移すたびに
+  // 書き足す唯一の面である。書き忘れは npm test にも governance:check にも現れるとは限らない——
+  // テストファイルが直接 import していない名前が消えても、どちらのコマンドも検知しない。
+  // 公開面を丸ごと凍結することで、この一覧への変更は気づかず起きることではなく、
+  // 意図して行う編集になる。
+  it("公開する名前の集合が凍結した一覧と一致する", async () => {
+    const mod = await import("./governance-check.mjs");
+    expect(Object.keys(mod).sort()).toEqual([
+      "ALWAYS_LOADED_FILES",
+      "MODULE_INDEX_CRATES",
+      "REQUIRED_DISALLOWED_METHODS",
+      "REQUIRED_RUSTDOC_LINTS",
+      "STALE_EXTRA_DOCS",
+      "adrCitationDocs",
+      "adrFiles",
+      "buildChecks",
+      "checkAdrCitations",
+      "checkAdrFileNames",
+      "checkArchitectureTable",
+      "checkBuildCommands",
+      "checkCheckSkillEnumeration",
+      "checkCiTable",
+      "checkClippyDisallowed",
+      "checkHeadingRefs",
+      "checkHookCommands",
+      "checkHookFires",
+      "checkModuleIndex",
+      "checkModuleLinkage",
+      "checkNearHeadingRefs",
+      "checkNormativeAreaInstrument",
+      "checkReferences",
+      "checkRulesGlobs",
+      "checkSkillTable",
+      "checkSpecSections",
+      "checkStaleIdentifiers",
+      "checkWorkspaceLints",
+      "clippyDisallowedCount",
+      "clippyMethodsDenied",
+      "collectAnchors",
+      "currentVocabulary",
+      "declaredModuleFiles",
+      "declaresEguiDependency",
+      "disallowedMethodPaths",
+      "gitIgnoredPaths",
+      "globToRegex",
+      "governanceDocs",
+      "hasWorkspaceLintsOptIn",
+      "headingRefDocs",
+      "headingRefSourceDocs",
+      "makeSnapshot",
+      "modelHiddenSkills",
+      "normativeArea",
+      "resolveRefTarget",
+      "runAll",
+      "rustdocLintsAreDenied",
+      "scanAdrCitations",
+      "scanHeadingRefs",
+      "scanNearHeadingRefs",
+      "scanStaleIdentifiers",
+      "skillDescriptionArea",
+      "staleIdentifierDocs",
+      "staleIdentifierGuideDocs",
+      "staleIdentifierTargets",
+      "workspaceMembers",
+    ]);
+  });
+});

@@ -117,6 +117,28 @@ export function resolveRefTarget(snapshot, doc, target) {
   return hit.length === 1 ? hit[0] : null;
 }
 
+/** ルート `Cargo.toml` の `[workspace] members`（ディレクトリ相対パス）を導出する唯一の口。
+ *  返り値 `{ members, error }` の `error` は**母集団の欠落**（fail-closed）——読めない・`[workspace]` 節が無い・
+ *  `members` 行が無い・0 件・glob 要素。glob（`crates/*`）は展開器を持たないので「読めなかった」側へ倒す。
+ *  `[workspace]` セクションへスコープするのは、`default-members = [...]` を足したときに
+ *  全文正規表現が**先に現れた方**を拾うため（`.claude/hooks/post-edit.test.mjs` のカナリアと同じ形）。 */
+export function workspaceMembers(snapshot) {
+  const src = snapshot.read("Cargo.toml");
+  if (src == null) return { members: [], error: "ルート Cargo.toml が読めない" };
+  const section = src.match(/\[workspace\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/);
+  if (section == null) return { members: [], error: "ルート Cargo.toml に [workspace] セクションが無い" };
+  const m = section[1].match(/^members\s*=\s*\[([^\]]*)\]/m);
+  if (m == null) return { members: [], error: "[workspace] に members 行が無い（書式が変わった）" };
+  const members = m[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^"|"$/g, ""))
+    .filter((s) => s.length > 0);
+  if (members.length === 0) return { members: [], error: "[workspace] members が 0 件" };
+  const glob = members.find((s) => s.includes("*"));
+  if (glob) return { members: [], error: `members に glob 要素が在る（展開器を持たない）: ${glob}` };
+  return { members, error: null };
+}
+
 /** G-references/G-spec-sections の対象文書（ガバナンス文書群）。docs/superpowers/ は歴史資料（#589 で非規範化）ゆえ除外 */
 /** G-references / G-spec-sections の走査元。`docs/adr/` を除くのは**凍結された歴史**の契約
  *  （`ADR-adr-frozen-history`）——ADR 本文は決定日時点の世界の記述であり、そこから外への参照

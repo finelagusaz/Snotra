@@ -717,8 +717,8 @@ git commit -m "feat: 構造母集団の manifest と差分・宣言照合を足�
       # **base は `pull_request.base.sha` である——実行時の `origin/main` ではない**（上の修正 1）。
       # **可変なのは PR 本文だけでよい**——base と head は凍結、本文は都度取得（修正 2）。
       # **skip は「base 側にスクリプトが無い」ときだけ**で、パスは `GOV_MANIFEST` に 1 本化する（修正 3）。
-      # 撤去の合図は「main に `$GOV_MANIFEST` が在ることを観測したら」であり、その時点で else 分岐は
-      # `exit 1` へ倒してよい（issue の close を合図にすると、閉じるのが撤去 PR 自身になって自己参照する）。
+      # この分岐は恒久的なものであって導入 PR 用の足場ではない——`base.sha` は event 発火時点の
+      # base tip なので、マージ後も**それより前に base が凍結された open PR** は base に持たない。
       - name: governance manifest delta
         if: github.event_name == 'pull_request'
         env:

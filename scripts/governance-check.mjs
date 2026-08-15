@@ -39,6 +39,7 @@ import { checkHookFires } from "./governance/checks/G-hook-fires.mjs";
 import { checkCheckSkillEnumeration } from "./governance/checks/G-check-skill-enumeration.mjs";
 import { checkModuleLinkage, declaredModuleFiles } from "./governance/checks/G-module-linkage.mjs";
 import { checkReferences } from "./governance/checks/G-references.mjs";
+import { checkSpecSections } from "./governance/checks/G-spec-sections.mjs";
 import { checkWorkspaceLints, REQUIRED_RUSTDOC_LINTS, hasWorkspaceLintsOptIn, rustdocLintsAreDenied } from "./governance/checks/G-workspace-lints.mjs";
 import {
   checkClippyDisallowed,
@@ -101,6 +102,7 @@ export {
   checkModuleLinkage,
   declaredModuleFiles,
   checkReferences,
+  checkSpecSections,
   checkWorkspaceLints,
   REQUIRED_RUSTDOC_LINTS,
   hasWorkspaceLintsOptIn,
@@ -112,56 +114,6 @@ export {
   clippyMethodsDenied,
   REQUIRED_DISALLOWED_METHODS,
 };
-
-// ---------------------------------------------------------------------------
-// G-spec-sections — SPEC.md 番号連続性 + SPEC 前置の §N(.x) 参照の実在（旧 Check 4 + #587 新規）。
-// 裸の `§N` は各文書自身の節参照でありうるため対象外（不混入はテストで固定）。
-// ---------------------------------------------------------------------------
-export function checkSpecSections(snapshot, docs) {
-  const findings = [];
-  const spec = snapshot.read("SPEC.md");
-  if (spec == null) return [finding("SPEC.md", 1, "SPEC.md が読めない")];
-  const sections = new Set();
-  let prevTop = null;
-  let prevSub = null;
-  for (const [lineNo, line] of linesOutsideFences(spec)) {
-    const top = line.match(/^## (\d+)\. /);
-    if (top) {
-      const n = Number(top[1]);
-      if (prevTop != null && n !== prevTop + 1) {
-        findings.push(finding("SPEC.md", lineNo, `セクション番号が連続しない: ## ${prevTop}. の次が ## ${n}.`));
-      }
-      prevTop = n;
-      prevSub = 0;
-      sections.add(`${n}`);
-      continue;
-    }
-    const sub = line.match(/^### (\d+)\.(\d+) /);
-    if (sub) {
-      const [n, x] = [Number(sub[1]), Number(sub[2])];
-      if (n !== prevTop) {
-        findings.push(finding("SPEC.md", lineNo, `子セクション ### ${n}.${x} が親 ## ${prevTop}. と不一致`));
-      } else if (x !== prevSub + 1) {
-        findings.push(finding("SPEC.md", lineNo, `子セクション番号が連続しない: ${n}.${prevSub} の次が ${n}.${x}`));
-      }
-      prevSub = x;
-      sections.add(`${n}.${x}`);
-    }
-  }
-  if (sections.size === 0) findings.push(finding("SPEC.md", 1, "セクション見出し（## N.）が 1 件も無い（G-spec-sections 母集団の欠落）"));
-  for (const doc of docs) {
-    const text = snapshot.read(doc);
-    if (text == null) continue; // 母集団欠落は G-references が報告する
-    for (const [lineNo, line] of linesOutsideFences(text)) {
-      for (const m of line.matchAll(/SPEC(?:\.md)?`?(?: の)? ?§(\d+(?:\.\d+)?)/g)) {
-        if (!sections.has(m[1])) {
-          findings.push(finding(doc, lineNo, `SPEC §${m[1]} が SPEC.md に実在しない`));
-        }
-      }
-    }
-  }
-  return findings;
-}
 
 // ---------------------------------------------------------------------------
 // G-area-instrument — 恒久規範の面積の計器（合否を持たない）。ADR-retire-area-budget。
@@ -699,7 +651,6 @@ export function buildChecks(snapshot, sink = {}) {
   const legacy = [
     // 未移送の検査は現行の登録行のまま残す。移送が済んだものはここから消す——
     // **移送の途中でも 19 件が揃うことを、この 2 本の連結が保つ**
-    { id: "G-spec-sections", run: () => checkSpecSections(snapshot, docs) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
     { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, allRefDocs)) },
     { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleTargets)) },

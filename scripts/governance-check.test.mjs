@@ -7,8 +7,9 @@ import { describe, it, expect } from "vitest";
 import { snap } from "./governance/test-helpers.mjs";
 import { governanceDocs, makeSnapshot, runAll, buildChecks } from "./governance-check.mjs";
 // facade を経由しない——per-check 分割（#1093）が確立した「テストは自分の検査モジュールから直接
-// import する」形に揃える。facade へ再輸出を残すと `G-module-index.mjs` が静的 import され続け、
-// **ファイル消失が manifest 差分ではなく import エラーとして現れる本数が 1 増える**（#1094）。
+// import する」形に揃える（#1094）。**`G-module-index.mjs` への静的 import が消えるわけではない**
+// ——ここへ移っただけで、ペア消失は今も `npm test` の import エラーとして現れる。facade 側から
+// 落とす効果は、`governance check` step が `buildChecks` へ到達できるようになることにある。
 import { MODULE_INDEX_CRATES } from "./governance/checks/G-module-index.mjs";
 
 // G-module-index/G-references の母集団は手で列挙する定数であり、**crate を足しても何も鳴らない**（沈黙する経路）。

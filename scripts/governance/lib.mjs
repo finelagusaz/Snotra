@@ -225,7 +225,9 @@ export function headingRefSourceDocs(snapshot) {
  *  **保証は狭い**——「意図の SSOT」級の文書を新設してここへ足さなければ、その文書の腐り識別子は
  *  一度も照合されない（2026-08-09 実測: ルート直下に新設した文書へ実在しない識別子を 3 形置いても
  *  照合件数が動かなかった・#1008）。 */
-export const STALE_EXTRA_DOCS = ["SPEC.md", "CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"];
+// `export` を持たない——#1094 で facade からの import が消え、外部の消費者が 0 になった。
+// この PR が確立した「公開面は実際の消費者と一致させる」をこの行にも当てる（`staleIdentifierTargets` の内部利用のみ）。
+const STALE_EXTRA_DOCS = ["SPEC.md", "CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"];
 
 /** 規範の散文。skills / rules / agents の md。
  *  **検査対象の全体ではない**——`staleIdentifierTargets` と分けてあるのは、`runAll` の

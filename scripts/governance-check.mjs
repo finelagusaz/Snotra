@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 import { CHECK_MODULES } from "./governance/registry.mjs";
 // evidence 専用の導出は、その検査のファイルから名指しで取る。**登録行と違い、
 // ファイルが消えれば import が失敗して鳴る**（沈黙する写しにはならない）。
-// **この 2 本だけが `checks/` への静的 import として残る**——他 17 本は #1094 で落とした。
+// **facade から `checks/` を静的 import するのはこの 2 本だけである**（#1094 で他を落とした）。
 // 意図的な非対称であり、下の再輸出ブロックの注記がその帰結を持つ。
 import { clippyDisallowedCount } from "./governance/checks/G-clippy-disallowed.mjs";
 import { adrFiles } from "./governance/checks/G-adr-file-names.mjs";
@@ -65,11 +65,11 @@ import { checkNormativeAreaInstrument, normativeArea } from "./governance/instru
 // **この一覧が短いことには機構上の役目がある**（#1094）。かつてここは 19 検査の関数を名指しで
 // 再輸出しており、その副作用として `checks/` の全ファイルが facade へ静的 import されていた。
 // ゆえに検査ファイルが消えると `buildChecks` へ到達する前に `ERR_MODULE_NOT_FOUND` で落ち、
-// **#1092 の manifest 差分は消失に対して発火する機会が無かった**。再輸出を実際の消費者
-// （`governance-manifest.mjs` / `governance-check.test.mjs` / `governance-manifest.test.mjs` /
-// `governance/lib.test.mjs` / `checks/G-references.test.mjs` / `checks/G-stale-identifiers.test.mjs`）
-// まで絞ったことで、その遮蔽が外れている。**射程と残余は `governance-manifest.test.mjs` の
-// フォールトインジェクション節が正本**——ここに写しを置かない。
+// **#1092 の manifest 差分は消失に対して発火する機会が無かった**。再輸出を実際の消費者まで絞った
+// ことで、その遮蔽が外れている。**消費者の一覧をここへ写さない**（増減しても赤くならない写しになる）
+// ——母集団は次の grep が持つ:
+//   grep -rn 'from ".*governance-check\.mjs"' --include=*.mjs scripts/
+// **射程と残余は `governance-manifest.test.mjs` のフォールトインジェクション節が正本**である。
 //
 // **名前を足す前に、その名前を読む消費者が実在するか確かめること。** `checks/` の関数をここへ
 // 戻すと、そのファイルだけ消失の検知が manifest 差分から import エラーへ戻る。

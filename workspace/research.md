@@ -42,7 +42,9 @@ issue は「`scripts/governance/checks/*.test.mjs` のうち **3 本**（配線�
 
 ## 制約（この変更の射程 — 全称にできない点）
 
-### 制約 1: 静的 import は 3 本残る（うち 1 本は facade の外の経路）
+### 制約 1: 静的 import が残る経路（**この節は実装後レビューが訂正した**）
+
+> **⚠️ 訂正（実装後レビューによる）**: 以下の「3 本」と、それを前提にした帰結（「16/19」）は**誤り**である。走査コマンド末尾の `grep -v` が**兄弟でないテスト**（`governance/lib.test.mjs` が 4 本・`governance-check.test.mjs` が 1 本）まで母集団から外していた。実装後の `code-reviewer` が全 19 本のペア消失を実測し、残余 8・切り替わり 11 が正しいと判明した。**「テストの import は隣のものだけ」は前提であって観測ではない。** 正しい母集団は `grep -rn 'from ".*checks/G-' --include=*.mjs . | grep -v "^./scripts/governance/checks/"` が持つ（数を書かない）。恒久的な記録は `docs/adr/ADR-facade-evidence-static-imports.md`、射程の正本は `scripts/governance-manifest.test.mjs` のフォールトインジェクション節。**以下の記述は誤りの経緯として残す。**
 
 **3b で 1 本追加された。** `grep -rn 'from ".*checks/G-' --include=*.mjs scripts/ .claude/ .githooks/ | grep -v '\.test\.mjs:'` の全走査で、facade 以外に検査モジュールを静的 import する非テストファイルが 1 本だけ在る。
 

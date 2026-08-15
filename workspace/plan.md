@@ -4,10 +4,12 @@
 
 `scripts/governance-check.mjs` の公開面を 56 名から実測した消費者の分（4 名）まで縮め、19 検査モジュールへの静的名指し import を落とす。その結果として、**検査モジュールが隣のテストごと消えたとき、16 本については #1092 の manifest 差分が唯一の検知器になる**——今日は facade の `ERR_MODULE_NOT_FOUND` が先に鳴るため manifest 差分は発火の機会を持たない。
 
-**射程は 2 つの条件で限定される**（3b で実測。詳細は `research.md` の制約 1 / 1b）。
+**射程は 2 つの条件で限定される**（詳細は `research.md` の制約 1 / 1b）。
 
-1. **16 / 19 本**——`G-clippy-disallowed` / `G-adr-file-names`（facade の evidence 行）と `G-skill-table`（`instrument.mjs:6` 経由）は絞った後も静的 import が残る。
+1. **全 19 本ではない**——`checks/` の**外**から静的 import されている検査は、絞った後もペア消失で import エラーに落ちる。母集団は `grep -rn 'from ".*checks/G-' --include=*.mjs . | grep -v "^./scripts/governance/checks/"` が持つ（数を書かない）。
 2. **ペア消失のときだけ**——`G-X.mjs` だけが消えて `G-X.test.mjs` が残る形は、`npm test` が facade と無関係に `ERR_MODULE_NOT_FOUND` で捕まえる（絞る前も後も同じ）。
+
+> **⚠️ 訂正（実装後レビューによる）**: 計画立案時の本文は「**16 / 19 本**」「静的 import は **3 本**残る」と書いていた。`code-reviewer` が全 19 本のペア消失を実測し、**11/19・残余 8** が正しいと判明した。誤りの源は `research.md` の走査コマンドが `grep -v '\.test\.mjs:'` で**兄弟でないテスト**（`governance/lib.test.mjs` / `governance-check.test.mjs`）まで母集団から外していたことである。ユーザーへ提示した射程の選択肢「最小差分・16/19」もこの誤った数を含んでいた。**射程の選択（最小差分）自体は変更しない**——変わるのは記述だけで、どちらの案でも `checks/` の外のテストによる import は残るため、選択の優劣は動かない。訂正の恒久的な記録は `docs/adr/ADR-facade-evidence-static-imports.md`。
 
 ## 受け入れ条件
 

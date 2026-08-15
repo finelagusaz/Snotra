@@ -75,11 +75,19 @@ describe("フォールトインジェクション — 検査 ID が manifest の
   //   この形で、`vitest.config.ts` の `include` が `scripts/**/*.test.mjs` を含む）。**この層は
   //   facade と無関係であり、絞る前も後も変わらない。** manifest 差分が唯一の検知器になるのは
   //   `.mjs` と `.test.mjs` が**ペアで**消えたとき——検査を 1 本やめる実際の操作がその形である。
-  // - **全 19 本ではない。** facade は evidence の算出のため `G-clippy-disallowed`
-  //   （`clippyDisallowedCount`）と `G-adr-file-names`（`adrFiles`）を今も名指し import しており
-  //   （`governance-check.mjs` の当該 import のコメントが意図の正本）、`governance/instrument.mjs` は
-  //   計器の算出のため `G-skill-table` を import している。この 3 本はペア消失でも `ERR_MODULE_NOT_FOUND`
-  //   で落ちる。切り替わったのは残りである。
+  // - **全 19 本ではない。** `checks/` の**外**から静的 import されている検査は、ペア消失でも
+  //   import エラーで落ちる。**数を書かない**——`checks/` を触るたびに腐るので、母集団は次の grep が持つ
+  //   （隣のテストによる sibling import は上の層の話なので除く）:
+  //     grep -rn 'from ".*checks/G-' --include=*.mjs . | grep -v "^./scripts/governance/checks/"
+  //   少なくとも 3 経路がこれを作る——facade が evidence のため名指しする分（意図の正本は
+  //   `governance-check.mjs` の当該 import のコメント）、`instrument.mjs` が計器のため名指しする分、
+  //   そして **`checks/` の外に在るテスト**（`governance/lib.test.mjs` / `governance-check.test.mjs`）が
+  //   名指しする分である。**3 つ目は見落としやすい**——「テストの import は隣のものだけ」という前提で
+  //   走査から除くと母集団から丸ごと落ちる（#1094 の調査が実際にそう誤った）。
+  // - **さらに、生きた散文が名指す検査は `governance:check` 自身が拾うことがある。** 検査の識別子や
+  //   パスを規範文書が引いていれば、消したときに G-stale-identifiers や G-references が鳴る。
+  //   **恒常的な検知器として当てにはできない**（散文を直せば消える）が、「manifest 差分が唯一」を
+  //   無条件では言えない理由の 3 つ目である。
   // - **検知の性質も変わった。** 旧: `governance check` step の import エラー——push でも
   //   pull_request でも赤く、宣言では回避できない。新: `governance manifest delta` step——
   //   `ci.yml` の `if` により **PR でしか走らず**、差分を PR 本文へ逐語で書けば通る（`undeclared`）。

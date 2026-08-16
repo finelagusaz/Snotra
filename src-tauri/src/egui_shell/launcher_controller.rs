@@ -36,8 +36,8 @@ use snotra_core::ui_types::SearchResult;
 use tauri::{Emitter, Manager};
 
 use crate::egui_shell::{
-    Debouncer, EscapeOutcome, QueryIntent, SearchState, SlashCmd, ViewKind, compute_parent_dir,
-    find_slash_command, folder_load_pending,
+    Debouncer, EscapeOutcome, FrameIndexing, QueryIntent, SearchState, SlashCmd, ViewKind,
+    compute_parent_dir, find_slash_command, folder_load_pending, plain_results_hidden,
 };
 
 /// ナビゲーションスレッド → driver のメッセージ（#532 SU3 M2）。token（= folder_gen）で
@@ -194,7 +194,9 @@ impl LauncherController {
     }
 
     /// 表示中の行が instant 候補なら Some（表示ゲートの連言②・段 29）。来歴 snapshot の
-    /// 意味は同名フィールドの doc が正本。
+    /// 意味は同名フィールドの doc が正本。**この読み口は `view.rs` の表示ゲート用である**——
+    /// 起動側（`activate_or_execute` / `shift_activate`）は同じ述語へ `self.instant_rows_query` を
+    /// 直接渡すので、ここを通らない（#1077）。
     pub(super) fn instant_rows_query(&self) -> Option<&str> {
         self.instant_rows_query.as_deref()
     }
@@ -530,7 +532,35 @@ impl LauncherController {
     /// run_search が同一フレームで一体更新するため常に整合する。行 index で参照（パス文字列を
     /// 使わない・ui ルール踏襲）。tool ビュー中は Shift の有無に依らず `execute_tool_selected` へ
     /// 振る（`shift_activate` が Tool ビューではここへ委譲するため到達点が一致する）。
-    pub(super) fn activate_or_execute(&mut self, index: usize, ctx: &egui::Context) {
+    pub(super) fn activate_or_execute(
+        &mut self,
+        index: usize,
+        indexing: FrameIndexing,
+        ctx: &egui::Context,
+    ) {
+        // §4.7 の表示ゲートで隠れている行は起動しない（#1077）。index 再構築中の通常結果は
+        // results 窓から消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
+        // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 枝を
+        // 通らず、**画面に 1 行も出ていないまま古い行を起動する**（2026-08-16 に実機再現）。
+        // #1072 が塞いだのは同じ族の unsettled 側の切片だけだった。
+        //
+        // **判定は表示側と同じ述語を使う**——別式を書けば真実が 2 つになり、片方だけ変わる
+        // 将来が生まれる。ゲートが真になるのは `Results ∧ !instant_rows` のときだけなので、
+        // 下の tool / instant の枝は構造的に阻害されない（§19.7 の carve-out は不変）。
+        //
+        // **止めるのは不可逆な起動だけである**——行を消さないのは `folder_load_pending` と
+        // 同じ方針で、前フレーム結果の保持は意図的設計ゆえ温存する。→ / ← のフォルダ突入も
+        // 止めない（`on_nav_keys`。突入すれば Folder ビューになり行は可視へ戻る）。
+        //
+        // **`indexing` は引数で受け取る**（#1077）——`view.rs` が status 行のために 1 フレーム 1 回
+        // 読んだ値をそのまま使う。自分で読み直すと、同じフレームの表示ゲートと食い違いうる。
+        if plain_results_hidden(
+            self.state.view_kind(),
+            self.instant_rows_query.is_some(),
+            indexing.get(),
+        ) {
+            return;
+        }
         if self.state.view_kind() == ViewKind::Tool {
             self.execute_tool_selected(index, ctx); // §18.4 Enter/クリック＝選択ツールで起動
         } else if let Some(iq) = self.instant_rows_query.clone() {
@@ -543,10 +573,21 @@ impl LauncherController {
     /// Shift+Enter（§18.3）: 選択行の tools ≥ 2 ならツール選択メニューへ、それ以外
     /// （≤1・instant 行・tool ビュー中）は通常 Enter と同一（hide も同様）。folder ロード
     /// 未確定窓は activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
-    fn shift_activate(&mut self, index: usize, ctx: &egui::Context) {
+    fn shift_activate(&mut self, index: usize, indexing: FrameIndexing, ctx: &egui::Context) {
         if self.instant_rows_query.is_some() || self.state.view_kind() == ViewKind::Tool {
             // instant 行は §19.6「Shift+Enter=Enter」。tool ビュー中の Shift+Enter も Enter と同一。
-            self.activate_or_execute(index, ctx);
+            self.activate_or_execute(index, indexing, ctx);
+            return;
+        }
+        // §4.7 の表示ゲート（#1077）。**`activate_or_execute` の同じガードでは覆えない**——
+        // `tools >= 2` の枝はそちらを通らず `SearchState::enter_tool` を直接呼ぶ。ツール選択への
+        // 入場も、ユーザーが見ていない行を対象に始まる点で起動と同じ性質を持つ。理由の全文と、
+        // `indexing` を引数で受け取る理由は `activate_or_execute` のガードのコメントが正本である。
+        if plain_results_hidden(
+            self.state.view_kind(),
+            self.instant_rows_query.is_some(),
+            indexing.get(),
+        ) {
             return;
         }
         if folder_load_pending(
@@ -578,7 +619,7 @@ impl LauncherController {
                 );
             }
         } else {
-            self.activate_or_execute(index, ctx); // §18.3: 1 件以下は通常 Enter と同じ動作
+            self.activate_or_execute(index, indexing, ctx); // §18.3: 1 件以下は通常 Enter と同じ動作
         }
     }
 
@@ -675,7 +716,13 @@ impl LauncherController {
     /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。実装は
     /// `window_coordinator::read_indexing` へ委譲する——show 経路とバイト単位で同一の
     /// 独立実装を持っていた重複の解消（レビュー是正 3）。
-    pub(super) fn indexing(&self) -> bool {
+    ///
+    /// **返すのは [`FrameIndexing`] であって `bool` ではない**（#1077）——「実際に読んだ」
+    /// 証拠を型で運び、別の `bool` を `indexing` のつもりで渡す書き方を構築不能にする。
+    /// **`view.rs` はこれを 1 フレーム 1 回だけ呼ぶ**。ここが `pub(super)` のままなのは
+    /// `run_search_with` が自分の時点で読むためで（用途が違う——行をクリアするか）、
+    /// そこは意図的に live-read を残してある。
+    pub(super) fn indexing(&self) -> FrameIndexing {
         super::window_coordinator::read_indexing(&self.app_handle)
     }
 
@@ -775,7 +822,7 @@ impl LauncherController {
             ViewKind::Results => {
                 match self.state.interp(prefix) {
                     QueryIntent::Plain => {
-                        if self.state.query().trim().is_empty() || self.indexing() {
+                        if self.state.query().trim().is_empty() || self.indexing().get() {
                             // 空クエリと構築中は**同期でクリアする**（worker を経由させると消した文字が 1 フレーム残る）。同期で差し替える以上 in-flight は失効するが、それは `SearchState` の内側で起きる（#1039）。
                             self.state.set_results(Vec::new());
                             return;
@@ -1323,7 +1370,19 @@ impl LauncherController {
     /// 段 28: Enter の処置（呼ぶのは `key_pressed(Enter)` が真のフレームだけ・`shift_held` は
     /// 同じ読みで取った modifier）。**TextEdit の `changed()` 処理より後で呼ぶこと**——同一
     /// フレームの IME 確定・paste が旧 state で起動されるのを防ぐ（不変条件 3）。
-    pub(super) fn on_enter(&mut self, shift_held: bool, ctx: &egui::Context) {
+    ///
+    /// **`indexing` は引数で受け取る**（#1077）。`AppState.indexing` は `AtomicBool` の live-read で
+    /// 同一フレーム内でも変わりうるため、ここで読み直すと `view.rs` が同じフレームで表示ゲート
+    /// （`plain_results_hidden`）へ渡す値と食い違いうる——「画面には出ていないが Enter は起動する」
+    /// あるいはその逆が構築可能になる。**値の出所は `view.rs` が status 行のために読む 1 回だけ**で、
+    /// [`FrameIndexing`] がその 1 回ぶんを表す。**`shift_held` との取り違えを型で塞ぐために
+    /// newtype にしてある**（両方 `bool` なので素で並べると入れ替えてもコンパイルが通る）。
+    pub(super) fn on_enter(
+        &mut self,
+        shift_held: bool,
+        indexing: FrameIndexing,
+        ctx: &egui::Context,
+    ) {
         // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
         // **何をもって「未反映」とするかは `SearchState::is_unsettled` の doc が正本である**（#1038。`armed` だけを渡していた頃に開いていた隙もそこが記す。#1039 で `search_dispatch.rs` の自由関数から移設）。
         let prefix = self.instant_prefix();
@@ -1337,7 +1396,7 @@ impl LauncherController {
             // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
             // Enter は 1 回きりで、ユーザーは結果を待っている——ここの同期は正当である。
             let query = self.state.query().to_string();
-            let searched = if query.trim().is_empty() || self.indexing() {
+            let searched = if query.trim().is_empty() || indexing.get() {
                 None
             } else {
                 self.app_handle.try_state::<crate::AppState>().map(|state| {
@@ -1354,10 +1413,137 @@ impl LauncherController {
         }
         if !self.state.results().is_empty() {
             if shift_held {
-                self.shift_activate(self.state.selected(), ctx);
+                self.shift_activate(self.state.selected(), indexing, ctx);
             } else {
-                self.activate_or_execute(self.state.selected(), ctx);
+                self.activate_or_execute(self.state.selected(), indexing, ctx);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// メソッドの本体を切り出す（終端は 4 スペース字下げの閉じ括弧・内側のブロックはより深い）。
+    ///
+    /// **母集団は狭すぎても広すぎても壊れる。両方を assert する。**
+    ///
+    /// - **狭すぎる（空）**: 目印（`canary`）が本体に在ることで確かめる。沈黙する検知器は検知器ではない
+    /// - **広すぎる（終端を取り逃す）**: 終端が実際に見つかったことで確かめる。**取り逃すと本体が
+    ///   EOF まで伸び、この `mod tests` 自身が持つ文字列リテラルを飲み込む**——`contains` 系の
+    ///   assert は必ず真になり、**検知器が空虚になったまま緑で通る**
+    ///
+    /// **行の走査に `str::lines` を使うのは改行コード非依存にするためである**（CI 実測）。
+    /// `find("\n    }\n")` は CRLF で checkout された作業ツリーに一致せず、上の「広すぎる」を
+    /// 起こした。手元の `core.autocrlf=input` では再現せず、**CI（git-for-windows の system
+    /// 既定 `core.autocrlf=true`）でだけ落ちた**。同じ非対称は `.gitattributes` の冒頭コメントが
+    /// `.githooks/**` について記録している。`str::lines` は `\n` で分割し末尾の `\r` を落とす。
+    fn method_body(src: &str, anchor: &str, canary: &str) -> String {
+        let after = src
+            .split_once(anchor)
+            .unwrap_or_else(|| panic!("{anchor} が見つからない（改名したらこの検査も直す）"))
+            .1;
+        let mut body = String::new();
+        let mut terminated = false;
+        for line in after.lines() {
+            if line == "    }" {
+                terminated = true;
+                break;
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+        assert!(
+            terminated,
+            "{anchor} の終端（4 スペース字下げの `}}`）が見つからない——母集団が EOF まで\
+             伸びており、この検査は空虚である"
+        );
+        assert!(
+            body.contains(canary),
+            "母集団が {anchor} の本体を含まない——終端の切り出しがずれた。\
+             沈黙する検知器は検知器ではない"
+        );
+        body
+    }
+
+    /// [`method_body`] が改行コードに依存しないことを、**この作業ツリーの改行コードによらず**
+    /// 固定する（#1077）。`include_str!` は checkout された実ファイルを読むため、
+    /// LF の環境で `cargo test` が緑でも CRLF の環境で母集団が壊れうる——実際に CI でそうなった。
+    #[test]
+    fn method_body_is_line_ending_agnostic() {
+        let lf = "    fn target(&self) {\n        marker();\n    }\n    fn next(&self) {\n";
+        let crlf = lf.replace('\n', "\r\n");
+        for (label, src) in [("LF", lf), ("CRLF", crlf.as_str())] {
+            let body = method_body(src, "fn target(", "marker(");
+            assert!(
+                !body.contains("fn next("),
+                "{label}: 終端を取り逃して次の関数まで飲み込んでいる"
+            );
+        }
+    }
+
+    /// Enter の判定と表示ゲートが**同一フレームの同じ `indexing` の値**を見ることを固定する（#1077）。
+    ///
+    /// `AppState.indexing` は `AtomicBool` の live-read で、**同一フレーム内でも変わりうる**。
+    /// 起動の入口が自分で読み直すと、`view.rs` が表示ゲートへ渡す値と食い違いうる——
+    /// 「画面には出ていないが Enter は起動する」あるいはその逆が構築可能になる。
+    /// 値は `view.rs` が status 行のために 1 回だけ読み、[`FrameIndexing`] として配る。
+    ///
+    /// **測れるのは構造だけである。** この型にはテスト席が無く、食い違いの発生は
+    /// タイミング依存ゆえ決定的に再現できない。ゆえに「渡された値を使っていること」を
+    /// ソーステキストで固定する——`self.indexing()` が本体に無いことがその形である。
+    ///
+    /// **`run_search_with` は対象外である**（意図的）。あちらの読みは用途が違い
+    /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。
+    #[test]
+    fn activation_uses_the_frame_indexing_value_not_a_live_read() {
+        let src = include_str!("launcher_controller.rs");
+        let targets = [
+            ("fn on_enter(", "should_flush_on_enter("),
+            ("fn activate_or_execute(", "execute_tool_selected("),
+            ("fn shift_activate(", "folder_load_pending("),
+        ];
+        for (anchor, canary) in targets {
+            let body = method_body(src, anchor, canary);
+            assert!(
+                !body.contains("self.indexing()"),
+                "{anchor} が `indexing` を自分で読み直している——`view.rs` が表示ゲートへ渡す値と\
+                 同一フレーム内で食い違いうる（#1077）。引数で受けた FrameIndexing を使うこと"
+            );
+        }
+    }
+
+    /// 起動の入口が §4.7 の表示ゲートを見ていることを、**ソーステキストで**固定する（#1077）。
+    ///
+    /// **述語のテストでは呼び出し点の脱落を捕まえられない。** `plain_results_hidden` 自身は
+    /// [`crate::egui_shell::search_state`] の `mod tests` が固定しているが、それは
+    /// 「述語がどんな値を返すか」しか測らず、**入口がその述語を呼んでいるか**は測らない。
+    /// この型にはテスト席が無い——本ファイルに `mod tests` が無かったのは
+    /// [`LauncherController`] の構築が `AppHandle` と engine lock を要求するためで、
+    /// **ソーステキスト検査はそのどちらも要らない**（`indexing.rs` の
+    /// `start_index_build_invalidates_the_icon_cache` と同じ形）。
+    ///
+    /// **これが落ちたとき失うもの**: index 再構築中は §4.7 の表示ゲートが通常結果を隠すが、
+    /// 行データは保持される（「データと選択は保持——クリアしない」）。入口がゲートを見なくなると、
+    /// **画面に 1 行も出ていない状態の Enter / クリック / Shift+Enter が古い行を起動する**。
+    /// 2026-08-16 に実機で再現済みで、行は正しく出るため挙動テストでは捕まらない。
+    ///
+    /// **残る死角**: 母集団は当該メソッドのソーステキストだけであり、呼び出しグラフは辿らない。
+    /// ゲートをこのメソッドの外のヘルパーへ移すと、母集団の外なので捕まらない。
+    #[test]
+    fn activation_entry_points_consult_the_display_gate() {
+        let src = include_str!("launcher_controller.rs");
+        // (アンカー, 母集団が空でないことを示す目印)
+        let targets = [
+            ("fn activate_or_execute(", "execute_tool_selected("),
+            ("fn shift_activate(", "folder_load_pending("),
+        ];
+        for (anchor, canary) in targets {
+            let body = method_body(src, anchor, canary);
+            assert!(
+                body.contains("plain_results_hidden("),
+                "{anchor} が §4.7 の表示ゲートを見ていない——画面に出ていない行を\
+                 Enter / クリック / Shift+Enter が起動する（#1077 で実機再現済み）"
+            );
         }
     }
 }

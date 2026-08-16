@@ -917,7 +917,16 @@ impl EguiView for SearchWindowView {
         // `finish_index_build()` が 2 つの読みの間に割り込み、status 行を描いたフレームが
         // バー高だけの `set_size` を撃つ（案内が切り取られる）——この diff の前は
         // `has_status = overlay_text.is_some()` で一致が構造的に保証されていた。
-        let indexing_raw = self.controller.indexing();
+        //
+        // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
+        // 射程が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
+        // 腐る。正本は `indexing_raw` の参照そのもの（`launcher_controller.rs` の
+        // `activation_uses_the_frame_indexing_value_not_a_live_read` が、起動側で読み直しが
+        // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
+        // `indexing` 読みは用途が違い（行をクリアするか）、到達経路ごとにその時点で判断するのが
+        // 正しいので live のまま残してある。
+        let indexing = self.controller.indexing();
+        let indexing_raw = indexing.get();
         let is_results = self.controller.state().view_kind() == ViewKind::Results;
         let launching_now = self.controller.is_launching();
         let notice_now = self.controller.notice_message().map(|m| m.to_string());
@@ -1083,7 +1092,9 @@ impl EguiView for SearchWindowView {
         // TextEdit の changed 処理より後で読む理由は `read_post_widget_input` の doc 参照。
         let post = read_post_widget_input(&ctx);
         if post.enter {
-            self.controller.on_enter(post.shift, &ctx);
+            // `indexing` は上で 1 回だけ読んだ `indexing_raw` を渡す（#1077）——起動の判定と
+            // 下の表示ゲートが**同一フレームで同じ値**を見ることが受け入れ条件である。
+            self.controller.on_enter(post.shift, indexing, &ctx);
         }
 
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
@@ -1094,10 +1105,25 @@ impl EguiView for SearchWindowView {
         // 連言③は**1 フレーム 1 回だけ**読む（#752 F2）。`indexing` は `AtomicBool` の live-read で
         // 同一フレーム内でも変わりうるため、pre/post で 2 回読むと連言③がフレーム内で食い違う。
         // ここで得た値を snapshot 用と `drive_results_window` の両方へ配る。
+        //
+        // **`indexing` は上の `indexing_raw` を使う**（#1077 でここの読み直しを止めた）。同じ値が
+        // status 行・この表示ゲート・`on_enter` の起動判定とクリック逆流へ配られ、
+        // 「画面には出ていないが Enter は起動する」の類が構築できなくなる。**凍結してよいのは
+        // `indexing` だけである**——`view_kind` と `instant_rows_query` はここで読むのが正しい
+        // （`on_enter` が Tool ビューへ入る等、この行より前で正当に変わる）。
+        //
+        // **受容する残余が 2 つある。** (1) この値は `indexing_raw` を読んだ時点のもので、
+        // 表示ゲートとしては最大 1 フレーム古い——`on_enter` の同期 `engine.search` は engine lock を
+        // 40〜95 ms 握る（#1032 実測）ので、その間に立つ余地がある。帰結は results 窓が隠れるのが
+        // 1 フレーム遅れることだけで、**起動と表示は同じ値を見たまま**である。(2)
+        // `run_search_with` の `indexing` 読みは live のままである（用途が違う——行をクリアするか。
+        // **到達経路は数えない**——凍結より前に走るものも後に走るものも在り、足すたびに腐る）。
+        // 食い違うと「Enter が 1 フレーム飲まれる」か「行が空で何も起きない」になり、どちらも
+        // 次フレームの再検索が回復する。
         let plain_hidden = crate::egui_shell::plain_results_hidden(
             self.controller.state().view_kind(),
             self.controller.instant_rows_query().is_some(),
-            self.controller.indexing(),
+            indexing_raw,
         );
         // snapshot publish 用は**クリック逆流の消費より前**の値である（#699: publish → 消費の順序）。
         // 一方 `drive_results_window` は件数を消費**後**に読む——この非対称が #752 F2 の要点。
@@ -1143,7 +1169,10 @@ impl EguiView for SearchWindowView {
             // 「積んだ後・消費する前に総入れ替えが起きた」窓を塞げない。
             match shared.take_clicked_for(self.controller.state().rows_generation()) {
                 crate::egui_shell::ClickTake::Current(i) => {
-                    self.controller.activate_or_execute(i, &ctx)
+                    // クリックも Enter と同じ `indexing_raw` を見る（#1077）——`rows_generation` の
+                    // 照合は「行が差し替わったか」だけを見ており、**その行が画面に出ているか**は
+                    // 見ない。判定は `activate_or_execute` の中の表示ゲートが持つ。
+                    self.controller.activate_or_execute(i, indexing, &ctx)
                 }
                 // 破棄は目に見えず手で再現もできないので観測点を残す。**診断用であって
                 // 不変条件の担保ではない**（担保は search_state / results_view のユニットテスト）。
@@ -1275,6 +1304,41 @@ mod tests {
     use egui::text_edit::TextEditState;
 
     use super::{InputVisuals, SearchInputParams, move_text_cursor_to_end, search_input_ui};
+
+    /// `indexing` をこのファイルが読むのは**フレームで 1 回だけ**であることを固定する（#1077）。
+    ///
+    /// `AppState.indexing` は `AtomicBool` の live-read で、同一フレーム内でも index build
+    /// スレッドが値を変えうる。独立に 2 回読むと、status 行・表示ゲート・起動判定のうち
+    /// **どの 2 つかが同じフレームで食い違う**——#752 F2 が status 行と窓高について踏み、
+    /// #1077 が表示ゲートと Enter の起動判定について踏んだ。どちらも「片方だけ古い値で
+    /// 描く／判断する」形で、**挙動テストは通り抜ける**（行は正しく出る）。
+    ///
+    /// [`crate::egui_shell::FrameIndexing`] の構築子は `window_coordinator` に閉じているので、
+    /// **偽の値を作る**書き方はコンパイルが塞ぐ。この検査が塞ぐのは残りの一手——
+    /// **本物をもう 1 回読む**ことである。
+    ///
+    /// **残る死角**: 母集団はこのファイルのソーステキストだけである。読みを別のヘルパーへ
+    /// 移すと母集団の外になる。
+    /// **母集団は production 側だけである**——この検査自身がソース中に読みの形を書くため、
+    /// ファイル全体を数えると自分を勘定に入れて必ず 2 になる（実測して気づいた）。
+    #[test]
+    fn indexing_is_read_exactly_once_per_frame() {
+        let src = include_str!("view.rs");
+        let (production, _) = src
+            .split_once("#[cfg(test)]")
+            .expect("view.rs に #[cfg(test)] が無い——母集団の切り出しがずれた");
+        // 母集団が空でないことを、まずそれ自体で確かめる（沈黙する検知器は検知器ではない）。
+        assert!(
+            production.contains("fn update("),
+            "母集団が update() を含まない——切り出しがずれた"
+        );
+        let reads = production.matches(".controller.indexing()").count();
+        assert_eq!(
+            reads, 1,
+            "view.rs が `indexing` を {reads} 回読んでいる。1 回だけ読み、\
+             FrameIndexing のまま配ること（#752 F2 / #1077）"
+        );
+    }
 
     /// 検査用のテーマ 3 値。**3 値とも非既定色にする**——既定色と偶然一致すると、適用が
     /// 落ちていても通ってしまう。

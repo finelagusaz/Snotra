@@ -255,8 +255,8 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
 | `npm run governance:manifest`（#1088・構造母集団の manifest 差分） | `ci.yml`（governance-check） | PR 自動のみ（step 自身が `if: github.event_name == 'pull_request'` を持つ。job 自体は push でも走るがこの step は走らない） |
-| `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（依存 manifest 変更時）/ 手動 dispatch |
-| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（依存 manifest 変更時）/ 手動 dispatch |
+| `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・下記ノート参照）/ 手動 dispatch |
+| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・下記ノート参照）/ 手動 dispatch |
 
 （注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリが trace を出し、seed 済み検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。**その帰結として、この job のバイナリだけは `[profile.release]` の `lto` / `codegen-units` を env で緩めて建てる**（`e2e.yml` の "Build release binary" ステップにコメントで根拠を置いた。`Cargo.toml` は変えないので `release.yml` が建てる配布物は fat LTO のまま）。`panic = "abort"` と `opt-level` は共有するため、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
 
@@ -265,7 +265,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 - **`skip-ci` を貼ってよいのは skip-safe な変更のみ** — node-check / rust-check がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけ（これらの決定的検査は skip されない governance-check が担う・#587）。**貼ってはならない**: `.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` — これらは `npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）。「`.claude`-only だから安全」と一括りにしない（同じ表層形 `.claude/` が「Claude が読むだけの設定」と「CI が検査するセーフティネット」の二概念を担うため・#500）。
 - カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
 - **`Smoke` は main への push でも起動する。そちらは `paths` を持たず、全マージで走る**。**目的が回帰検出ではなく rust-cache の warm だからである** — Actions のキャッシュは `pull_request` 実行の書き込みが PR 自身のスコープに閉じ、base ブランチ（main）のスコープだけが全 PR から読める。**`paths` で絞らないのは、キャッシュキーが Cargo.lock だけでなく rustc のバージョンでも変わり、後者を paths で表現できないからである**（`dtolnay/rust-toolchain@stable` は 6 週ごとに動く。絞ると更新週から次の Cargo.lock 変更まで全 PR が完全 cold へ戻る）。PUBLIC リポジトリゆえ Actions の分数課金は無い。**main の run だけ `cancel-in-progress` を外してあるのも同じ目的による**（キャンセルされるとキャッシュを保存する Post ステップに到達しない。理由と実測は `e2e.yml` のコメント）。
-- この対応関係のドリフト（必須コマンドに対応 workflow が無い等）は `npm run governance:check`（G-ci-table）が検出する（#587。旧 `/health-check` Check 10）。
+- 表のコマンドが対応 workflow のどの `run:` にも現れないドリフトは `npm run governance:check`（G-ci-table）が検出する（#587）。**ただしトリガー列は照合されない**——記述が実際の `on:` / `paths` と食い違っても緑のままで、判定は `/health-check`「Check 10 — docs/build-commands.md ↔ .github/workflows/\*」の意味判断に残る。**これは理屈上の穴ではない**: 2026-08-16 まで smoke の 2 行が main への push を「依存 manifest 変更時」と限定しており、実際の `push:` は `paths` を持たない（全マージ）。
 
 ### その他
 

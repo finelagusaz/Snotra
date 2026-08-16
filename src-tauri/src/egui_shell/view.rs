@@ -938,7 +938,7 @@ impl EguiView for SearchWindowView {
         // フレームの途中で適用した新しい値は次フレームまで効かない（最大 1 フレーム古い）。
         // **表示と起動が同じ値を見ること**がこの凍結の目的であり、遅れは `config-applied` の
         // wake が起こす次フレームが回復する（`SPEC.md`「4.7 結果表示制御（2 窓構成）」の反映機構）。
-        let visible_rows = crate::egui_shell::window_coordinator::read_visible_rows(&app);
+        let visible_rows = super::window_coordinator::read_visible_rows(&app);
         let is_results = self.controller.state().view_kind() == ViewKind::Results;
         let launching_now = self.controller.is_launching();
         let notice_now = self.controller.notice_message().map(|m| m.to_string());
@@ -1336,24 +1336,11 @@ mod tests {
     ///
     /// **残る死角**: 母集団はこのファイルのソーステキストだけである。読みを別のヘルパーへ
     /// 移すと母集団の外になる。
-    /// **母集団は production 側だけである**——この検査自身がソース中に読みの形を書くため、
-    /// ファイル全体を数えると自分を勘定に入れて必ず 2 になる（実測して気づいた）。
     #[test]
     fn indexing_is_read_exactly_once_per_frame() {
-        let src = include_str!("view.rs");
-        let (production, _) = src
-            .split_once("#[cfg(test)]")
-            .expect("view.rs に #[cfg(test)] が無い——母集団の切り出しがずれた");
-        // 母集団が空でないことを、まずそれ自体で確かめる（沈黙する検知器は検知器ではない）。
-        assert!(
-            production.contains("fn update("),
-            "母集団が update() を含まない——切り出しがずれた"
-        );
-        let reads = production.matches(".controller.indexing()").count();
-        assert_eq!(
-            reads, 1,
-            "view.rs が `indexing` を {reads} 回読んでいる。1 回だけ読み、\
-             FrameIndexing のまま配ること（#752 F2 / #1077）"
+        assert_read_once_in_production(
+            ".controller.indexing()",
+            "1 回だけ読み、FrameIndexing のまま配ること（#752 F2 / #1077）",
         );
     }
 
@@ -1366,24 +1353,38 @@ mod tests {
     /// このファイルの 1 か所にした。ゆえにこの検査が塞ぐのは「**view.rs の中で**もう 1 回読む」
     /// 形だけであり、他モジュールに読みが復活する形は母集団の外である（`fn max_results` の doc が
     /// 呼び出し点の唯一性を規範として持つ）。
-    ///
-    /// **母集団は production 側だけである**（上の検査と同じ理由——この検査自身が読みの形を
-    /// ソース中に書くため、ファイル全体を数えると自分を勘定に入れる）。
     #[test]
     fn visible_rows_is_read_exactly_once_per_frame() {
+        assert_read_once_in_production(
+            "read_visible_rows(",
+            "1 回だけ読み、FrameVisibleRows のまま表示側と起動側の両方へ配ること（#1106）",
+        );
+    }
+
+    /// 上の 2 検査が共有する骨格——production 側で `needle` がちょうど 1 回現れることを測る。
+    ///
+    /// **母集団の切り出しをここ 1 か所へ閉じるのが要点である。** `split_once` の形と
+    /// 「母集団が空でない」のカナリアを検査ごとに書き写すと、**片方だけ壊れても両方が緑で
+    /// 通りうる**——母集団を持つ検査は広すぎる方向で沈黙する（#1077 サイクルで実測し、
+    /// `docs/development-principles.md`「検証の層と、層と層の隙間」へ括り付けた形）。
+    ///
+    /// **母集団を production 側に限るのは意図である**——呼び出し側の検査は `needle` の
+    /// リテラルを自分のソースへ書くため、ファイル全体を数えると自分を勘定に入れて必ず 2 になる
+    /// （実測して気づいた）。
+    fn assert_read_once_in_production(needle: &str, lost: &str) {
         let src = include_str!("view.rs");
         let (production, _) = src
             .split_once("#[cfg(test)]")
             .expect("view.rs に #[cfg(test)] が無い——母集団の切り出しがずれた");
+        // 母集団が空でないことを、まずそれ自体で確かめる（沈黙する検知器は検知器ではない）。
         assert!(
             production.contains("fn update("),
             "母集団が update() を含まない——切り出しがずれた"
         );
-        let reads = production.matches("read_visible_rows(").count();
+        let reads = production.matches(needle).count();
         assert_eq!(
             reads, 1,
-            "view.rs が `visible_rows` を {reads} 回読んでいる。1 回だけ読み、\
-             FrameVisibleRows のまま表示側と起動側の両方へ配ること（#1106）"
+            "view.rs が `{needle}` を {reads} 回書いている。{lost}"
         );
     }
 

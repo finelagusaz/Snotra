@@ -124,10 +124,14 @@ tool ビュー・instant 行・folder 展開の行も同時に見えなくなる
 
 ### フェーズ 2 — `layout.rs` の述語
 
-- [ ] `results_area_collapsed` を新設し、doc に「連言④の正本」「起動側もこれを見る」「`row_height` を
+- [x] `results_area_collapsed` を新設し、doc に「連言④の正本」「起動側もこれを見る」「`row_height` を
       引数に持たない根拠は `metrics_row_floor_is_24`」を書く
-- [ ] `results_window_height` の早期 return を述語呼び出しへ書き換える（契約 doc「`0.0` は hide の契約値」は維持）
-- [ ] 既存テスト（`results_window_height(0, row) == 0.0` ほか）が緑
+- [x] `results_window_height` の早期 return を述語呼び出しへ書き換える（契約 doc「`0.0` は hide の契約値」は維持）
+- [x] 既存テスト（`results_window_height(0, row) == 0.0` ほか）が緑。**新テスト
+      `results_area_collapsed_matches_the_zero_height_contract` は Red を実測してから通した**——
+      述語を `false` 固定にした状態で `assertion failed: results_area_collapsed(0)`（276 passed / 1 failed）。
+      なお既存の高さテストはこの Red では落ちない（早期 return を外しても `0.0 * drawn_row == 0.0` で
+      値が一致するため）——**新しい性質を測れるのは新テストだけである**
 
 ### フェーズ 3 — 型の新設・配線・ゲートを **1 コミットに束ねる**
 

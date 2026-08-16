@@ -1424,22 +1424,61 @@ impl LauncherController {
 #[cfg(test)]
 mod tests {
     /// メソッドの本体を切り出す（終端は 4 スペース字下げの閉じ括弧・内側のブロックはより深い）。
-    /// **母集団が黙って空にならないことを目印で確かめてから返す**——沈黙する検知器は検知器ではない。
-    fn method_body<'a>(src: &'a str, anchor: &str, canary: &str) -> &'a str {
+    ///
+    /// **母集団は狭すぎても広すぎても壊れる。両方を assert する。**
+    ///
+    /// - **狭すぎる（空）**: 目印（`canary`）が本体に在ることで確かめる。沈黙する検知器は検知器ではない
+    /// - **広すぎる（終端を取り逃す）**: 終端が実際に見つかったことで確かめる。**取り逃すと本体が
+    ///   EOF まで伸び、この `mod tests` 自身が持つ文字列リテラルを飲み込む**——`contains` 系の
+    ///   assert は必ず真になり、**検知器が空虚になったまま緑で通る**
+    ///
+    /// **行の走査に `str::lines` を使うのは改行コード非依存にするためである**（CI 実測）。
+    /// `find("\n    }\n")` は CRLF で checkout された作業ツリーに一致せず、上の「広すぎる」を
+    /// 起こした。手元の `core.autocrlf=input` では再現せず、**CI（git-for-windows の system
+    /// 既定 `core.autocrlf=true`）でだけ落ちた**。同じ非対称は `.gitattributes` の冒頭コメントが
+    /// `.githooks/**` について記録している。`str::lines` は `\n` で分割し末尾の `\r` を落とす。
+    fn method_body(src: &str, anchor: &str, canary: &str) -> String {
         let after = src
             .split_once(anchor)
             .unwrap_or_else(|| panic!("{anchor} が見つからない（改名したらこの検査も直す）"))
             .1;
-        let body = match after.find("\n    }\n") {
-            Some(idx) => &after[..idx],
-            None => after,
-        };
+        let mut body = String::new();
+        let mut terminated = false;
+        for line in after.lines() {
+            if line == "    }" {
+                terminated = true;
+                break;
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+        assert!(
+            terminated,
+            "{anchor} の終端（4 スペース字下げの `}}`）が見つからない——母集団が EOF まで\
+             伸びており、この検査は空虚である"
+        );
         assert!(
             body.contains(canary),
             "母集団が {anchor} の本体を含まない——終端の切り出しがずれた。\
              沈黙する検知器は検知器ではない"
         );
         body
+    }
+
+    /// [`method_body`] が改行コードに依存しないことを、**この作業ツリーの改行コードによらず**
+    /// 固定する（#1077）。`include_str!` は checkout された実ファイルを読むため、
+    /// LF の環境で `cargo test` が緑でも CRLF の環境で母集団が壊れうる——実際に CI でそうなった。
+    #[test]
+    fn method_body_is_line_ending_agnostic() {
+        let lf = "    fn target(&self) {\n        marker();\n    }\n    fn next(&self) {\n";
+        let crlf = lf.replace('\n', "\r\n");
+        for (label, src) in [("LF", lf), ("CRLF", crlf.as_str())] {
+            let body = method_body(src, "fn target(", "marker(");
+            assert!(
+                !body.contains("fn next("),
+                "{label}: 終端を取り逃して次の関数まで飲み込んでいる"
+            );
+        }
     }
 
     /// Enter の判定と表示ゲートが**同一フレームの同じ `indexing` の値**を見ることを固定する（#1077）。

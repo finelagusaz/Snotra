@@ -94,8 +94,8 @@ pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
 
 /// `AppState.indexing` を**実際に読んだ**という証拠つきの値（#1077）。
 ///
-/// **フィールドは private で、構築子は [`read_indexing`] ただ 1 つである。** ゆえに
-/// 「別の `bool` を `indexing` のつもりで渡す」書き方が**構築できない**。素の `bool` で
+/// **フィールドが private なので、このモジュールの外ではこの型を構築できない。** ゆえに
+/// 「別の `bool` を `indexing` のつもりで渡す」書き方が**コンパイルを通らない**。素の `bool` で
 /// 配っていた頃は、受け取る側の
 /// [`crate::egui_shell::launcher_controller::LauncherController::on_enter`] が
 /// `shift_held: bool` を先に取るため、2 引数を入れ替えてもコンパイルもテストも通った
@@ -107,7 +107,7 @@ pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
 /// フレーム内でも変わりうるため、`view.rs` の `update()` は 1 回だけ読み、この型のまま
 /// status 行・表示ゲート・起動判定へ配る。**`self.` へ保持してはならない**——フレームを跨いで
 /// 持つと index build の開始・完了が反映されなくなる。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct FrameIndexing(bool);
 
 impl FrameIndexing {
@@ -121,7 +121,7 @@ impl FrameIndexing {
 /// 毎フレーム側は `launcher_controller::LauncherController::indexing` がこの実装へ委譲する
 /// （両者がバイト単位で同一実装を独立に持っていた重複の解消・レビュー是正 3）。
 ///
-/// **[`FrameIndexing`] を作れる唯一の場所である**（#1077）——返り値の型がその証拠を担う。
+/// **[`FrameIndexing`] はこの返り値としてしか外へ出ない**（#1077）——型がその証拠を担う。
 pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
     FrameIndexing(
         app.try_state::<crate::AppState>()

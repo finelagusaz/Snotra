@@ -719,7 +719,7 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
 /// `instant_rows` は表示中行の来歴 snapshot（`instant_rows_query.is_some()`）——live interp でなく
 /// 来歴で判定するのは prefix hot-change の stale 行対策（#637 finding 0）と同じ理由。
 ///
-/// **消費者は表示と起動の 2 つである**（#1077）。`view.rs` の表示ゲート（`present_results` の
+/// **表示だけでなく起動もこの述語で決める**（#1077）。`view.rs` の表示ゲート（`present_results` の
 /// 連言③）と、`launcher_controller.rs` の `activate_or_execute` / `shift_activate` の起動ガードが
 /// **同じ述語を共有する**——別式を書けば「画面に出ていない行を Enter が起動する」が再び生まれる
 /// （2026-08-16 に実機再現済み）。**行を消すのはこの述語の仕事ではない**: §4.7 は

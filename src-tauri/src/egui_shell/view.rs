@@ -1115,8 +1115,9 @@ impl EguiView for SearchWindowView {
         // **受容する残余が 2 つある。** (1) この値は `indexing_raw` を読んだ時点のもので、
         // 表示ゲートとしては最大 1 フレーム古い——`on_enter` の同期 `engine.search` は engine lock を
         // 40〜95 ms 握る（#1032 実測）ので、その間に立つ余地がある。帰結は results 窓が隠れるのが
-        // 1 フレーム遅れることだけで、**起動と表示は同じ値を見たまま**である。(2) 上の
-        // `poll_search_debounce` → `run_search_with` の `indexing` 読みは live のまま（用途が違う）。
+        // 1 フレーム遅れることだけで、**起動と表示は同じ値を見たまま**である。(2)
+        // `run_search_with` の `indexing` 読みは live のままである（用途が違う——行をクリアするか。
+        // **到達経路は数えない**——凍結より前に走るものも後に走るものも在り、足すたびに腐る）。
         // 食い違うと「Enter が 1 フレーム飲まれる」か「行が空で何も起きない」になり、どちらも
         // 次フレームの再検索が回復する。
         let plain_hidden = crate::egui_shell::plain_results_hidden(

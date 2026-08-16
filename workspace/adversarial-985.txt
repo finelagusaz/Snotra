@@ -1,0 +1,220 @@
+敵対的レビュー — research.md（issue #985: temp_dir テストヘルパーのプロセス一意化）
+実施日: 2026-08-16 / 対象コミット: fix/temp-dir-process-unique（main と差分なし）
+
+方針: 逐語追認しない。5つの争点それぞれについて再測定・再現実験を行い、
+「壊せた」「壊せなかった」「⚠️確信なし」を全て列挙する。
+
+================================================================
+サマリ（結論だけ先に）
+================================================================
+- research.md の核心的主張（プロセス間 %TEMP% 衝突で無関係な panic が起きる）は
+  **理論ではなく実測で再現した**（2 プロセス並行実行で 21 件中 5〜9 件が毎回 FAILED、
+  10/10 回で再現）。これは research.md 自身が測っていなかった一次証拠であり、
+  「壊せなかった」どころか issue の深刻さを研究ノートより強く裏付ける。
+- 一方で研究ノートの**個別の数値主張**には誤りが 1 件見つかった: config.rs の
+  「9」はループで動的生成される 3 タグを数え落としており、実際は 12 である
+  （重複は無いという結論自体は生き残る）。
+- claim 5「pid を足すだけで欠陥は消える」は **狭い意味では実測で確認できた**
+  （衝突は消える）が、**ゴミの蓄積は消えない**ことも実測で確認した——
+  pid 付き済みの indexer.rs の一時ディレクトリが、8/9〜8/12 日付のまま
+  %TEMP% に 30 件以上残存していた（今回のテスト実行前から存在）。
+
+================================================================
+争点1: 母集団は 11 hit で全数か
+================================================================
+[壊せなかった] 2 経路の grep（`env::temp_dir` / `temp_dir(`、'*.rs' のみ）を独立に
+取り直し、11 hit・内訳（binfmt/config×2/folder×2/history/indexer/window_data/
+search_frame_cost/icon×2）が research.md の表と完全一致することを確認した。
+追加で以下を独立に検索し、すべて 0 hit だった:
+  - `TempDir`（tempfile crate 型） -- 0 hit
+  - `CARGO_TARGET_TMPDIR` -- 0 hit
+  - `env::var("TEMP"|"TMP"|"TMPDIR")` -- 0 hit
+  - `GetTempPath`（大文字小文字問わず） -- 0 hit
+  - `dirs::` -- config_dir() 系のみで temp 系は 0 hit
+  - 綴り違い（tempdir/tmp_dir/temp_path/tmpdir、大文字小文字問わず） -- 0 hit
+  - snotra-settings/snotra-egui-runtime クレート -- 0 hit
+偽にする手順: `git grep -n "temp_dir\|TempDir\|CARGO_TARGET_TMPDIR" -- '*.rs'` を
+再実行し、research.md の 11 件と一致しない行が出るか確認する。
+
+[壊せなかった、だが要注意 ⚠️] research.md の見出し「母集団（除外句なしで
+取り直した全数）」は文脈を読まないと「リポジトリ全体の一時ディレクトリ使用箇所の
+全数」に見える。実際には `'*.rs'` に絞った 2 grep の全数であり、`*.ps1` /
+`*.mjs` / `*.yml` は対象外。これは issue #985 自身が Rust の 5 ファイルだけを
+挙げているので範囲設定として正当だが、`.claude/hooks/*.test.mjs` /
+`scripts/*.ps1` は `$env:TEMP` / `os.tmpdir()` を多数使っており
+（`scripts/smoke-egui.ps1` `scripts/manual-smoke.ps1` `scripts/bench-startup.ps1`
+`.claude/hooks/*.test.mjs` 等、grep で 40+ 件確認）、これらは「一時ディレクトリを
+作る/参照する箇所」の母集団としては research.md に含まれていない。
+偽にする手順: `git grep -in "tmpdir\|env:temp" -- '*.ps1' '*.mjs'` を実行し件数を見る。
+→ 採否: research.md の主張（.rs スコープ内で 11 件は全数）は破れない。ただし
+「母集団」という見出し語がスコープを明示していない点は文書としての精度の問題。
+
+================================================================
+争点2: 各モジュール内のタグ重複は無い / プロセス内衝突は無い
+================================================================
+[部分的に壊せた] binfmt(14) / folder(11) / history(8) / window_data(2) は
+再カウントして完全一致（すべて相異なる）。
+**config.rs の「9」は誤り。** research.md のカウント方法は
+`temp_dir("リテラル文字列")` の grep とみられ、config.rs:3350-3369 の
+```
+for (case, modifier, key) in [
+    ("unknown_modifier", "Hyper", "Q"),
+    ("unsupported_key", "Alt", "!"),
+    ("semantic_conflict", "Alt+Alt", "F4"),
+] {
+    let dir = temp_dir(case);   // ← リテラルでなく変数 case
+```
+という動的呼び出し（`load_from_dir_repairs_and_saves_invalid_hotkey`）を
+1 呼び出しとしてしか数えず、実行時に生成される 3 種のタグ
+（unknown_modifier / unsupported_key / semantic_conflict）を見落としている。
+実際の実行時タグ数は 9 + 3 = **12**（静的 9 + ループ 3）。
+ただし 12 個は互いにすべて相異なる（静的 9 との重複も無い）ので、
+「プロセス内の衝突は無い」という**結論自体**は生き残る。数え方（リテラル
+文字列 grep）が動的生成を系統的に見落とすという**方法論の穴**が実測で確認できた。
+偽にする手順: `grep -n 'temp_dir(' snotra-core/src/config.rs | grep -v 'temp_dir("'`
+→ `temp_dir(case)` が 1 行出る。3 ケースのループ本体を読めば動的タグが 3 つ判明する。
+
+[壊せなかった] folder.rs のヘルパー prefix `snotra_test_` と直書き固定名
+`snotra_test_nonexistent_zzz` の「巻き添え」仮説は、構造的に成立しないことを
+確認した。`remove_dir_all` は厳密パス一致でのみ動作し、prefix/glob マッチで
+兄弟ディレクトリを掃除するコードは本 crate のどこにも無い（grep で確認）。
+したがって「一方が他方の接頭辞である」こと自体はリスク要因にならない。
+偽にする手順: `git grep -n "starts_with.*snotra_test\|glob.*snotra_test"` で
+prefix ベースの掃除コードが存在するか確認する（0 hit）。
+
+[壊せなかった] `snotra_test_nonexistent_zzz` という正確な文字列を作る主体は
+リポジトリ全体で folder.rs:356 の参照 1 箇所のみ（grep で確認、他に生成側は無い）。
+
+================================================================
+争点3: pid 付き既存 5 例、区切り文字は "-" 3 / "_" 2
+================================================================
+[壊せなかった] 実物を再読し確認:
+  - indexer.rs: `snotra_idx_test_{tag}-{pid}` -- "-"
+  - config.rs (dedup): `snotra-dedup-{pid}` -- "-"
+  - search_frame_cost.rs: `snotra-search-frame-cost-{pid}-unused` -- "-"
+  - icon.rs ×2: `snotra_icon_522_{pid}` / `snotra_icon_522_det_{pid}` -- "_"
+件数・内訳とも research.md と完全一致。
+
+================================================================
+争点4: SPEC.md はテストヘルパー命名を規定しない／規範文書に命名規約なし
+================================================================
+[壊せなかった] `grep -n "テスト\|ヘルパー\|helper" SPEC.md` は 0 hit。
+`grep -n "temp_dir" SPEC.md` も 0 hit。SPEC.md にテスト関連記述自体が存在しない。
+
+[壊せなかった] `git grep -n "temp_dir" -- '*.md'` の全 hit を再実行し、
+`docs/superpowers/plans/` 配下の過去計画書 5 ファイルのみであることを確認した
+（root-level の AGENTS.md/CLAUDE.md/docs/development-principles.md/
+docs/build-commands.md/.claude/rules/ いずれにも "temp_dir" という語自体が無い）。
+
+[⚠️ 確信の持てない所見・部分的に壊せた] 「規範文書に命名規約は無い」という
+**文字通りの主張**は生き残るが、research.md はより広く関連する既存規範を
+見落としている。`snotra-core/CLAUDE.md`「Gotcha（計測の罠）」節に以下の
+直接関連する既存原則がある（research.md はこれを一度も引用していない）:
+
+  > 製品の入口を通るテストは、その経路へ計器を足した瞬間に実 %APPDATA%\Snotra
+  > を書き始める … 直し方は dir 注入の入口（load_cache_in / save_cache_sorted_in
+  > のように dir: &Path を取る形）へ寄せること。SNOTRA_CONFIG_DIR で迂回しては
+  > ならない——プロセス大域の env であり、並列実行中の他テストの保存先まで動かす
+
+これは「テストが**プロセス大域の共有資源**へ書き込み、並列実行中の他テストを
+汚す」という**同じ欠陥クラス**であり、確立した解決パターンは「dir 注入」
+（本 issue が既に採用している形そのもの）である。research.md の
+「技術的制約」節・「未解決の疑問」節はこの precedent に触れておらず、
+「共有ヘルパーへ寄せるか」という設計判断に対する既存の設計選好
+（env var 迂回を明示的に禁止し dir 注入を規範とする）を見落としている。
+これは claim 4 の文字通りの主張を破りはしないが、研究ノートの調査範囲の
+甘さを示す。
+偽にする手順: `snotra-core/CLAUDE.md` の "Gotcha" 節を読み、"dir 注入" /
+"SNOTRA_CONFIG_DIR" の記述が本当に issue #985 の設計判断（共有ヘルパー化・
+pid vs dir 注入）と無関係と言えるか判定する。
+
+さらに icon.rs のテストコメント（争点5で詳述）にも「過去の残骸との衝突を
+避ける」という pid 導入の**先行する明文の理由**があり、research.md の
+「再利用できる既存パターン」節はこの2つの一次資料（`snotra-core/CLAUDE.md`
+Gotcha 節・icon.rs のコメント）のどちらも引用していない。
+
+================================================================
+争点5: 挙動変更は無い／pid を足すだけで欠陥は消える
+================================================================
+[壊せなかった、むしろ強化] 実際に **2 プロセスを同時実行して再現実験**を行った
+（research.md はこれを一度も実行していない——コード読解のみで機序を主張していた）。
+
+手順: すでにビルド済みの `target/debug/deps/snotra_core-*.exe` を直接、
+`binfmt::` フィルタで 2 並行×5 回（計10ペア）実行。
+
+結果: **10/10 回、両プロセスとも FAILED**（21 件中 5〜9 件が毎回落ちる）。
+失敗の中身は research.md/issue が予告した通りの
+"assertion failed: bf.save(...)" / "left: None, right: Some(...)" で、
+コードは一切変更していないのに fs レベルの衝突だけで壊れる。
+再現ログ: race_a_1.log〜race_b_5.log（10 ファイル、
+`C:\Users\Eoh\AppData\Local\Temp\claude\...\scratchpad\` に保存済み・
+本タスクの scratchpad ディレクトリなので workspace 外）。
+偽にする手順: 同じ 2 並行実行を再度行う（`cargo test -p snotra-core --lib
+binfmt:: --test-threads=8` を 2 プロセス同時起動）。再現しなければこの所見は撤回。
+
+[壊せなかった] pid 付き（indexer.rs、#982 で修正済み）で同じ実験を行うと
+**6/6 回とも 0 failed**（60 件全部 pass）。pid サフィックスがこの特定の
+衝突を実際に消すことを実測で確認した。
+
+[壊せた] 「pid を足すだけで issue の欠陥は消える」という文の**全称的な**
+含意は破れる。**衝突は消えるがゴミは消えない**ことを実測した:
+テスト実行前の %TEMP% に、pid サフィックスを既に持つ
+`snotra_idx_test_upgrade_save_ms_legacy-{pid}` 系のディレクトリが
+**8/9〜8/12 の日付で 30 件以上残存**していた（本セッションの操作より前から
+存在。`ls "$TEMP" | grep -ic snotra` = 118、うち idx_test 系だけで約35件）。
+これは「pid で一意化された」ディレクトリでも、テストが panic して
+末尾の `remove_dir_all` に到達しない・プロセスが強制終了される等の経路で
+確実に掃除されない残余が実運用で発生していることの一次証拠である。
+research.md の「未解決の疑問」節・「技術的制約」節はこの残余
+（ゴミの蓄積そのもの、#6 の固定名とは別問題）を主張として書いていない。
+これは issue #985 の「撤去条件」（5件がプロセス一意になったら閉じる）には
+影響しない（issue のスコープは衝突であってゴミ掃除ではない）が、
+「pid を足すだけで欠陥は消える」を**残余なしで**読むと過大主張になる。
+偽にする手順: `ls "$TEMP" | grep -i snotra_idx_test` を実行し、pid 付き
+ディレクトリが複数日にわたって残存しているか確認する。
+
+[壊せなかった] 同一プロセス内のスレッド並列（`cargo test` の既定並列実行）に
+よる衝突は無い、という claim を実測で確認した: フルテストスイート
+（`cargo test -p snotra-core --lib`、581 tests、6.25s、既定並列）を実行前後で
+%TEMP% 内の snotra 関連エントリ数が 118 → 118 のまま変化せず、対象5モジュール
+いずれも取りこぼしを残さなかった（タグがモジュール内で相異なるため、争点2の
+結論と整合）。
+
+[壊せなかった] 実行環境の前提（全テストプロセスが同じ temp root を共有する）を
+確認した: `$env:TEMP` == `$env:TMP` == `C:\Users\Eoh\AppData\Local\Temp`
+（PowerShell と .NET `GetTempPath()` の両方で一致）。開発機ではこの前提は成立する。
+
+[⚠️ 確信の持てない所見] CI（`.github/workflows/ci.yml` windows-latest job）では
+`cargo test -p snotra-core` → `-p snotra-egui-runtime` → `-p snotra` →
+`-p snotra-settings` が**同一ジョブ内で逐次 step として実行**されており、
+GitHub ホストランナーはジョブごとに使い捨ての VM であるため、**別々の CI 実行
+同士が %TEMP% を共有して衝突する可能性は低い**（self-hosted runner の使用有無は
+未確認・.github/workflows 内に自明な記述なし）。したがって本 issue が実際に
+問題化する主な経路は「同一開発機での並行実行」（複数 worktree・IDE のバックグラウンド
+テスト・手動再実行の重なり）であり、indexer.rs のコメントが挙げる
+「temp root を共有する2ジョブ」は文字通りには CI では起きにくい可能性がある。
+ただし self-hosted runner や matrix 構成が将来追加されれば成立しうるため、
+「CI では起きない」と断定はできない——確信度は低い。
+偽にする手順: リポジトリの runner 設定・organization の self-hosted runner
+一覧を確認し、windows ジョブが専有 VM かどうかを裏取りする（本レビューでは未実施）。
+
+================================================================
+測定環境そのものへの疑い（結果）
+================================================================
+- cargo test 実行 → %TEMP% の生成物を実際に読んだ: 上記の通り、5モジュールは
+  正常実行では 0 残骸。ただし過去の実行履歴（本セッション開始前）には
+  indexer.rs（pid 付き済み）由来の残骸が 30+件、日付をまたいで残存していた。
+- std::env::temp_dir() の実際の解決先を確認: %TEMP%=%TMP%=%USERPROFILE%\AppData\Local\Temp。
+  「全テストプロセスが同じ temp root を共有する」という research.md の暗黙の前提は
+  この開発機では成立する（揺らがない）。
+- 2 プロセス同時実行で赤を実際に再現した（10/10）。「欠陥は理論上のもので実測
+  されていない」という懐疑の仮説は**棄却**——理論ではなく高確率で再現する実害である。
+
+================================================================
+実施しなかった調査（時間の都合で省略・要検討なら追加実験可能）
+================================================================
+- folder.rs（temp_dir_with_contents、未修正）での同種の並行再現実験は binfmt.rs
+  で確認できたパターンと機構が同一（同じヘルパー実装形）のため省略した。
+  厳密には未実測——binfmt.rs の結果からの類推である。
+- config.rs / history.rs / window_data.rs での同種の並行再現実験も同様に省略。
+- self-hosted runner の有無の裏取り（争点5 の ⚠️ 項目）は未実施。

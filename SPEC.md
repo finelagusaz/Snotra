@@ -557,7 +557,7 @@ stateDiagram-v2
 - `SearchVisible -> Standby` の focus_lost は `auto_hide_on_focus_lost` 有効時のみ成立
 - `/q` または `exit-requested` は `Standby` / `SearchVisible` のいずれからでも `LauncherStopped` へ遷移
 - `/o` 実行時に `indexing == true` の場合、設定オープンは no-op
-- `NormalMode -> ToolSelectionMode` の `Shift+Enter` は **§4.7 の表示ゲートにも従う**——インデックス構築中に隠れている通常結果からは入場しない（規則の正本は §4.7）。**スラッシュコマンドはこのゲートを通らない**——完全一致した時点で Enter を経ずに実行されるためである（§15.1）。ただし構築中に効くかは各コマンド側の `indexing` ガードが別に決めており、設定オープンも索引再構築も同じ `ERR_INDEXING_IN_PROGRESS` で拒否される（上の `/o` の行）。**拒否されてもクエリのクリアは走り、索引再構築ではさらに非表示も走る**ので、見た目は成功時と区別が付かない（意図的無音・#434）
+- `NormalMode -> ToolSelectionMode` の `Shift+Enter` は **§4.7 の表示ゲートにも従う**——インデックス構築中に隠れている通常結果からは入場しない（規則の正本は §4.7）。**ゲートが効くのは行の起動・入場であって、スラッシュコマンドの実行ではない**——後者は完全一致した時点で Enter を経ずに走る（§15.1）。ただし `/r` が出す履歴行は通常結果なので、その**起動**には §4.7 が効く。また構築中にコマンドが効くかは各コマンド側の `indexing` ガードが別に決めており、設定オープンも索引再構築も同じ `ERR_INDEXING_IN_PROGRESS` で拒否される（上の `/o` の行）。**拒否されてもクエリのクリアは走り、索引再構築ではさらに非表示も走る**ので、見た目は成功時と区別が付かない（意図的無音・#434）
 - 初回起動では `snotra-settings` を子プロセスとして直接起動する（indexing ガードをバイパス）
 - `snotra-settings` 起動中のホットキー入力は無視する（ホットキー再設定中の誤動作防止）
 - **`indexing`（インデックス構築中）・`launching`（起動 in-flight）・一時通知・updater トーストは

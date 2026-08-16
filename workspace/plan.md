@@ -152,19 +152,40 @@ SolidJS 非 parity・instant carve-out 破壊・bool エッジのパルス見逃
 
 ### フェーズ 2 — フレーム内で 1 つの `indexing`（AC4）
 
-- [ ] `FrameIndexing(bool)` newtype を `search_state.rs` か `layout.rs` へ足す（`on_enter` の隣接 `bool` 取り違え対策・「不変条件と異常系」参照）
-- [ ] `on_enter` / `activate_or_execute` / `activate` / `shift_activate` の署名へ `FrameIndexing` を足し、内部の `self.indexing()` をその値へ置き換える
-- [ ] `view.rs` の `update()` で `indexing_raw`（`:920` の既存の読み）を `on_enter` とクリック逆流の `activate_or_execute` へ渡す
-- [ ] 表示ゲートの `self.controller.indexing()`（`:1100`）を `indexing_raw` へ差し替える
-- [ ] `view.rs:914-919`（#752 F2 のコメント）を更新し、**1 回読みの射程が status 行から表示ゲートと起動ガードまで広がった**ことを書く。射程を数えず「この `indexing_raw` を配る先」を指す形にする
-- [ ] `run_search_with` の読み（`launcher_controller.rs:778`）は**触らない**。理由（順序不変条件・打鍵時点で判断する）を当該箇所か `view.rs` のコメントへ 1 行残す
+- [x] `FrameIndexing(bool)` newtype を `search_state.rs` の `plain_results_hidden` の隣へ足した
+      （`on_enter` の隣接 `bool` 取り違え対策・「不変条件と異常系」参照）。`mod.rs` から re-export
+- [x] `on_enter` / `activate_or_execute` / `shift_activate` の署名へ `FrameIndexing` を足し、
+      内部の `self.indexing()` をその値へ置き換えた。**`activate` は対象外**——ガードの置き場所を
+      `activate_or_execute` へ変えたため、`activate` はこの値を使わない（計画時の一覧から 1 つ減る）
+- [x] `view.rs` の `update()` で `indexing_raw`（既存の 1 回読み）を `on_enter` とクリック逆流の
+      `activate_or_execute` へ渡した
+- [x] 表示ゲートの `self.controller.indexing()` を `indexing_raw` へ差し替えた
+- [x] `#752 F2` のコメント（`indexing_raw` の読み点）を更新した。**配り先を数えず**
+      「`indexing_raw` の参照そのものが正本」と書き、唯一でない 1 件（`run_search_with`）を名指した
+- [x] `run_search_with` の読みは**触っていない**。理由（用途が違う・到達経路ごとにその時点で判断する）を
+      `view.rs` の当該コメントと新しい検知器の doc の両方に残した
+- [x] **AC4 を測れる形にした（計画外の追加）**: `activation_uses_the_frame_indexing_value_not_a_live_read`
+      ——`on_enter` / `activate_or_execute` / `shift_activate` の本体に `self.indexing()` が無いことを
+      ソーステキストで固定する。**TDD の Red で exit 101 を実測**（`fn on_enter( が indexing を自分で
+      読み直している`）。独立導出レビューが「目標 2 は構造でしか示せない」と書いたとおりだが、
+      **その構造は測れる**
+- [x] 検知器 2 本の本体切り出しを `method_body` ヘルパーへ束ねた（母集団カナリアの assert も内側へ）
 
 ### フェーズ 3 — 文書と検証
 
-- [ ] `SPEC.md` §4.7 末尾へ 1 行足す（内容と根拠は下記「`SPEC.md`・関連文書の更新要否」）
-- [ ] `mod.rs` の `plain_results_hidden` re-export コメントの消費者を直す
-- [ ] `docs/build-commands.md` カテゴリ A 全件（fmt / check / clippy / test / **`cargo doc`**）を、編集のたびに実行する
-- [ ] `npm run governance:check`（カテゴリ F）を実行する
+- [x] `SPEC.md` §4.7 へ 1 行足した（表示ゲートの規則の直後。内容と根拠は下記「`SPEC.md`・関連文書の更新要否」）。
+      **草案の「（次項）」という参照は誤りだった**——「データと選択は保持」は SPEC に無く
+      （`grep -n "データと選択は保持\|クリアしない" SPEC.md` が 0 件）、実装コメントと SU6 spec にしかない。
+      前提を同じ行に書き切る形へ直した
+- [x] `mod.rs` の `plain_results_hidden` re-export コメントの消費者を直した
+- [x] `search_state.rs` の `plain_results_hidden` doc / 既存テストの doc、`layout.rs` の
+      `present_results` doc、`launcher_controller.rs` の `instant_rows_query` doc、
+      `docs/architecture.md` を更新した
+- [x] `docs/build-commands.md` カテゴリ A 全件（fmt / check / clippy / test 274 passed / **`cargo doc`**）— exit 0。
+      **`cargo doc` が 1 度赤くなった**（`crate::egui_shell::LauncherController::on_enter` が解決不能。
+      正しくは `crate::egui_shell::launcher_controller::LauncherController::on_enter`）——
+      hook は `cargo doc` を発火しないため、手で走らせなければ CI まで漏れていた
+- [x] `npm run governance:check`（カテゴリ F）— 全検査 passed（19 件）
 - [ ] **`/race-check` をここで実行する**——同スキルは「**計画段階では起動しない**」（#784）と定めており、
       母集団は `npm run race:boundaries` が差分から決める。計画レビューでは起動していない
 - [ ] **`/dry-check` を実行する**（`AGENTS.md`「関数・型を新規定義／改名／導入」——フェーズ 2 で

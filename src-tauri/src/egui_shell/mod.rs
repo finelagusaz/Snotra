@@ -81,7 +81,9 @@ pub(crate) use search_state::{SlashCmd, find_slash_command};
 // view.rs（表示ゲート）と launcher_controller.rs（起動ガード・#1077）が消費する
 // （#532 SU6 Task 1・#666 段 3 で消費者が割れた）。**表示と起動が同じ述語を通ることが
 // #1077 の受け入れ条件そのものである**——同義の別式を足さないこと。
-pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
+// FrameIndexing は view.rs が 1 フレーム 1 回の読みを包み、launcher_controller.rs の
+// 起動判定がそれを受け取る（#1077）。
+pub(crate) use search_state::{FrameIndexing, needs_index_refresh, plain_results_hidden};
 // launcher_controller.rs が検索 debounce（leading + trailing）で消費する。
 pub(crate) use layout::Debouncer;
 // view.rs が `update()` のフレーム所要と間隔の計器として消費する（#1004 PR 1）。

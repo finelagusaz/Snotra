@@ -78,7 +78,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 
 - 検索ウィンドウ（`main`）と結果ウィンドウ（`results`）は起動時のセットアップで作成し `visible: false`、ホットキーで表示/非表示を切替（#646 PR2 で 2 窓構成へ）
 - 検索バーは `main`、検索結果は `results`（`egui_shell/view.rs` / `egui_shell/results_view.rs`）に分離して描画する。`results` は `focusable(false)` でフォーカスを取らない従属窓
-- 結果の表示/非表示は `search_state.rs` の純粋核（view 種別 = tool>folder>results の優先度射影 + indexing 表示ゲート）で制御
+- 結果の表示/非表示は `search_state.rs` の純粋核（view 種別 = tool>folder>results の優先度射影 + indexing 表示ゲート）で制御。**同じ表示ゲート（`plain_results_hidden`）が起動の可否も決める**——隠れている行を Enter / クリック / Shift+Enter が起動しないよう `launcher_controller.rs` の起動の入口が同じ述語を呼ぶ（#1077。別式を書くと表示と起動が片方だけ変わる）。`indexing` の値は `view.rs` が 1 フレーム 1 回読み、`FrameIndexing` として起動側へ渡す
 - `main` の高さは結果表示による伸縮はしない。`main` の高さは `egui_shell/view.rs` の毎フレーム処理が算出し自窓へ直接 `set_size` する。`results` の高さは `egui_shell/window_coordinator.rs` の driver が算出し `ResultsWindow::set_size` で適用する（旧 compute_window_height は撤去済み）。式は `src-tauri/src/egui_shell/layout.rs`（`main_window_height` / `results_window_height`）が正本、ユーザー観測面は `SPEC.md` §4.7「4.7 結果表示制御（2 窓構成）」（main）・`SPEC.md` §4.5「4.5 最大列挙数」（results）が正本。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットする
 - `results` の位置・可視性は `main` の毎フレーム更新（`drive_results_window`）が駆動する（`main` 直下 + `window_gap`・既定 4px）。両窓に DWM 角丸を適用（Windows 11 best-effort・Win10 は角丸なし）
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換

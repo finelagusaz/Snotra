@@ -728,6 +728,30 @@ pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: b
     indexing && matches!(view_kind, ViewKind::Results) && !instant_rows
 }
 
+/// そのフレームで 1 度だけ読んだ `AppState.indexing`（#1077）。
+///
+/// **素の `bool` で配らないのは、隣り合う `bool` の取り違えに検出手段が無いからである。**
+/// 受け取る側の [`crate::egui_shell::launcher_controller::LauncherController::on_enter`] は
+/// `shift_held: bool` を
+/// 先に取るため、`on_enter(post.shift, indexing_raw, ..)` の 2 引数を入れ替えても**コンパイルが
+/// 通り、テストも通る**（この型にはテスト席が無く、`view.rs` の kittest が駆動できるのは
+/// `search_input_ui` だけである）。newtype はその一手を型で塞ぐ——`shift` と `indexing` は
+/// **別の式から来る**ので、包む時点で既に区別が付いている（`src-tauri/CLAUDE.md`
+/// 「同型ペアの取り違え」が警告する「起点が同型」の形には当たらない）。
+///
+/// **`bool` を包むだけで、意味は `AppState.indexing` そのものである。** 凍結してよいのは
+/// この値だけで、`view_kind` / `instant_rows` / `result_count` は `on_enter` の前後で正当に
+/// 変わる（#752 F2 の読み点の非対称）——それらを同じように凍結してはならない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameIndexing(pub bool);
+
+impl FrameIndexing {
+    /// [`plain_results_hidden`] などの述語へ渡すための取り出し。
+    pub fn get(self) -> bool {
+        self.0
+    }
+}
+
 /// #633 世代トリガ（SU6 spec 決定 3）: index build 完了で bump される世代が last-seen と
 /// 異なれば再検索。bool エッジ検出と違い、started/complete の repaint が 1 フレームに合流して
 /// パルスが見えなくても累積カウンタは差分が残るため取りこぼさない。

@@ -30,6 +30,8 @@ public static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder te
 public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 [DllImport("user32.dll")]
 public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")]
+public static extern uint GetDpiForWindow(IntPtr hWnd);
 [DllImport("dwmapi.dll")]
 public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out RECT value, int size);
 [DllImport("wtsapi32.dll", SetLastError = true)]
@@ -168,6 +170,31 @@ function Initialize-SnotraDpiAwareness {
         [void][SnotraSmokeInterop.Native]::SetProcessDPIAware()
     }
     $script:dpiAwarenessInitialized = $true
+}
+
+<#
+.SYNOPSIS
+窓が載っているモニタの実効 DPI を返す（96 が 100%）。
+
+.DESCRIPTION
+**awareness を通さずに DPI を読むと 96 が返る。** DPI 非対応のプロセスには Win32 が仮想化した
+値を見せるためで、**エラーにならず「100% である」と読める値**が返る。2026-08-16 に実測した
+125% の機体では、`GetDeviceCaps(LOGPIXELSX)` が 96 を、`System.Windows.Forms.Screen` が
+物理 1920x1080 を 1536x864 と報告した——どちらも真っ当な見た目で、倍率を 1 段読み違えさせる。
+ゆえに `Initialize-SnotraDpiAwareness` を先に通す。
+
+**プライマリモニタではなく窓の載るモニタを見る。** 本体は PER_MONITOR_AWARE_V2 で動くため、
+多画面では窓ごとに倍率が違いうる。ピクセルを数える検査は窓の倍率でしか意味を持たない。
+#>
+function Get-SnotraWindowDpi {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [IntPtr]$Handle
+    )
+
+    Initialize-SnotraDpiAwareness
+    [int][SnotraSmokeInterop.Native]::GetDpiForWindow($Handle)
 }
 
 # **検証プロファイルに config.toml を置く共通の理由はここが正本である**（3 本の呼び出し側は
@@ -922,6 +949,7 @@ Export-ModuleMember -Function @(
     'Get-SnotraForegroundWindow'
     'Set-SnotraForegroundWindow'
     'Get-SnotraWindowCapture'
+    'Get-SnotraWindowDpi'
     'ConvertFrom-SnotraWtsInfoEx'
     'Get-SnotraSessionLockState'
     'Assert-SnotraSessionUnlocked'

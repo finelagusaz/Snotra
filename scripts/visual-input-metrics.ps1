@@ -11,14 +11,24 @@
   **合否を出さない。** 出力は「欄の内側 / 中身の高さ / 上下余白 / Skew」の表であり、読むのは
   人間である。前後で撮って突き合わせる使い方を想定している（例: egui を上げる前後）。
 
+  **突き合わせが成り立つのは実効 DPI が同じときだけである。** ゆえに `Dpi` を表の列に持たせて
+  ある——見出しではなく列なのは、**表を抜粋して貼ると見出しが落ちる**からである（#1049 の
+  PR 本文が 8 行のうち 4 行だけを貼っており、そこには倍率が残っていない）。
+
 .EXAMPLE
   npm run check:input-metrics
   npm run check:input-metrics -- -Fonts 'Yu Gothic UI','Segoe UI'
 #>
 [CmdletBinding()]
 param(
-    # 測るフォント。既定は日本語 4 種 + 英語 4 種で、**行高の偶奇が割れる代表**を選んである
-    # （2026-08-11 実測: 前 2 種は上下がずれ、後ろ 2 種は揃う）。
+    # 測るフォント。既定は日本語 4 種 + 英語 4 種で、**DPI 96（100%）で行高の偶奇が割れる代表**
+    # として選んである（2026-08-11 実測: Segoe UI と Yu Gothic UI がずれ、Arial と
+    # HackGen Console は揃う）。
+    #
+    # **この割れ方は表示倍率に依存する。** 2026-08-16 に DPI 120（125%）で測ると、同じ本体・
+    # 同じ 8 フォントで内側が 32 行（偶数）・キャレットが 8 種とも偶数になり、**割れる代表が
+    # 1 つも無くなった**（Skew は全 8 種で 0）。ゆえにこの既定集合が名前どおり働くかは倍率次第
+    # であり、**全種が対称に出たことを「非対称が直った」と読んではならない**。
     [string[]]$Fonts = @(
         'Yu Gothic UI', 'Meiryo UI', 'Noto Sans JP', 'HackGen Console',
         'Segoe UI', 'Arial', 'Consolas', 'Verdana'
@@ -162,11 +172,14 @@ font_family = "$font"
 
     $proc = $null
     $capture = $null
-    $row = [ordered]@{ Font = $font; Inner = '-'; Caret = '-'; Top = '-'; Bottom = '-'; Skew = '-' }
+    $row = [ordered]@{ Font = $font; Dpi = '-'; Inner = '-'; Caret = '-'; Top = '-'; Bottom = '-'; Skew = '-' }
     try {
         $proc = Start-SnotraProcess -ConfigDir $profile.FullPath -FilePath $exe `
             -StandardErrorPath $stderr -NoNewWindow
         $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 120000 -PollMs 500
+        # **窓が出た時点で読む。** 幾何の測定が失敗した行にも倍率は残したい——「測れなかった」と
+        # 「別の倍率で測った」を後から区別できるようにするため。
+        $row.Dpi = Get-SnotraWindowDpi -Handle $hwnd
         # 最初の present を跨ぐ（未描画の窓を撮ると塗りが 1 行も見つからない）。
         Start-Sleep -Seconds 2
         if (Set-SnotraForegroundWindow -Handle $hwnd) {
@@ -220,7 +233,7 @@ font_family = "$font"
 }
 
 Write-Host ''
-Write-Host '入力欄の縦の幾何（Skew = 上余白 − 下余白。符号が寄った向きを表す）'
+Write-Host '入力欄の縦の幾何（Dpi = 窓の載るモニタの実効 DPI・96 が 100%。Skew = 上余白 − 下余白で符号が寄った向きを表す）'
 $rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 Write-Host '判定は出さない。値の意味と読み方は scripts/lib/SnotraInputMetrics.psm1 の doc を参照。'
 if ($KeepShots) { Write-Host "スクリーンショット: $outDir" }

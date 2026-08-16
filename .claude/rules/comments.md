@@ -19,4 +19,4 @@ paths:
 
 ## トリガー → 検査
 
-- doc コメント（`///` / `//!`）を追加・変更したら `cargo doc --workspace --no-deps --document-private-items` を手で走らせる（intra-doc link 切れは **CI でのみ発火し PostToolUse hook は沈黙する**・`docs/build-commands.md`「変更後の検証チェックリスト」）
+- doc コメント（`///` / `//!`）を追加・変更したら `docs/build-commands.md`「変更後の検証チェックリスト」カテゴリ A の `cargo doc` 行を手で走らせる（intra-doc link 切れは **CI でのみ発火し PostToolUse hook は沈黙する**。コマンド本体を写さないのは、フラグが SSOT 側で変わったとき**古い形を走らせて「済んだ」と読む**経路を作らないため）

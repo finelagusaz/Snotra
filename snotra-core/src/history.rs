@@ -423,11 +423,30 @@ mod tests {
     use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
     use crate::query::normalize_query;
 
+    /// テスト用の作業ディレクトリを作り直して返す。
+    ///
+    /// 名前に `std::process::id()` を含める理由は `indexer.rs` の `temp_dir` の doc を正本とする（#978 / #985）。
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("snotra_hist_test_{}", tag));
+        let dir =
+            std::env::temp_dir().join(format!("snotra_hist_test_{}-{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn temp_dir_name_contains_process_id() {
+        let dir = temp_dir("process_unique");
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("temp dir name");
+        assert_eq!(
+            name,
+            format!("snotra_hist_test_process_unique-{}", std::process::id()),
+            "作業ディレクトリ名に自プロセスの pid が入っていない（#985）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn fresh_store() -> HistoryStore {

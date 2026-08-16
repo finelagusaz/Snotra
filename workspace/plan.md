@@ -31,6 +31,7 @@
 | `snotra-core/src/binfmt.rs` | `tests::temp_dir_name_contains_process_id`（新規） | 検知器 |
 | `snotra-core/src/config.rs` | `tests::temp_dir` | 名前を `snotra_config_test_{tag}-{pid}` へ／doc 1 行追加 |
 | `snotra-core/src/config.rs` | `tests::temp_dir_name_contains_process_id`（新規） | 検知器 |
+| `snotra-core/src/config.rs` | `tests::dedup_load_does_not_rewrite_config_file` | 手書きの `snotra-dedup-{pid}` を `temp_dir("dedup")` へ置換（**Phase 3b・実装中に `/dry-check` が発見**） |
 | `snotra-core/src/folder.rs` | `tests::temp_dir_with_contents` | 名前を `snotra_folder_test_{tag}-{pid}` へ（**prefix も揃える**）／doc 1 行追加 |
 | `snotra-core/src/folder.rs` | `tests::list_folder_nonexistent_dir_returns_empty` | 直書き名へ pid を付す |
 | `snotra-core/src/folder.rs` | `tests::temp_dir_name_contains_process_id`（新規） | 検知器 |
@@ -39,7 +40,9 @@
 | `snotra-core/src/window_data.rs` | `tests::temp_dir` | 名前を `snotra_window_test_{tag}-{pid}` へ／doc 1 行追加 |
 | `snotra-core/src/window_data.rs` | `tests::temp_dir_name_contains_process_id`（新規） | 検知器 |
 
-**触らない**: `snotra-core/src/indexer.rs`（#982 で修正済み・形の正本）、`snotra-core/src/config.rs:3824`（`snotra-dedup-{pid}`・既に pid あり）、`snotra-core/tests/search_frame_cost.rs`、`src-tauri/src/icon.rs`（別 crate・既に pid あり・区切りは `_`）。
+**触らない**: `snotra-core/src/indexer.rs`（#982 で修正済み・形の正本）、`snotra-core/tests/search_frame_cost.rs`、`src-tauri/src/icon.rs`（別 crate・既に pid あり・区切りは `_`）。
+
+> **当初この一覧に `config.rs` の `snotra-dedup-{pid}`（既に pid あり）を入れていたが、Phase 3b で触ることにしたので外した**（`/dry-check` の所見。本変更がその手書き重複の存在理由を消したため）。**後から足した節が、先に書いた列挙を黙って偽にする**——`AGENTS.md`「数え上げも同じ強さである」の同型で、code-reviewer の Medium 3 が捕まえた。
 
 ## 実装順序
 
@@ -59,11 +62,11 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 }
 ```
 
-- [ ] `binfmt.rs::temp_dir` → `snotra_binfmt_test_{tag}-{pid}`
-- [ ] `config.rs::temp_dir` → `snotra_config_test_{tag}-{pid}`
-- [ ] `folder.rs::temp_dir_with_contents` → `snotra_folder_test_{tag}-{pid}`（**prefix も `snotra_test_` から改める**。他 5 モジュールの `snotra_<module>_test_` 形へ合わせる）
-- [ ] `history.rs::temp_dir` → `snotra_hist_test_{tag}-{pid}`
-- [ ] `window_data.rs::temp_dir` → `snotra_window_test_{tag}-{pid}`
+- [x] `binfmt.rs::temp_dir` → `snotra_binfmt_test_{tag}-{pid}`
+- [x] `config.rs::temp_dir` → `snotra_config_test_{tag}-{pid}`
+- [x] `folder.rs::temp_dir_with_contents` → `snotra_folder_test_{tag}-{pid}`（**prefix も `snotra_test_` から改める**。他 5 モジュールの `snotra_<module>_test_` 形へ合わせる）
+- [x] `history.rs::temp_dir` → `snotra_hist_test_{tag}-{pid}`
+- [x] `window_data.rs::temp_dir` → `snotra_window_test_{tag}-{pid}`
 
 ### Phase 2 — 検知器を 5 本置く
 
@@ -88,11 +91,11 @@ fn temp_dir_name_contains_process_id() {
 
 タグ `process_unique` は 5 モジュールとも既存タグと衝突しない（`research.md` のタグ全列挙で確認済み）。
 
-- [ ] `binfmt.rs` に検知器を追加
-- [ ] `config.rs` に検知器を追加
-- [ ] `folder.rs` に検知器を追加（呼ぶのは `temp_dir_with_contents`・期待値は `snotra_folder_test_process_unique-{pid}`）
-- [ ] `history.rs` に検知器を追加
-- [ ] `window_data.rs` に検知器を追加
+- [x] `binfmt.rs` に検知器を追加
+- [x] `config.rs` に検知器を追加
+- [x] `folder.rs` に検知器を追加（呼ぶのは `temp_dir_with_contents`・期待値は `snotra_folder_test_process_unique-{pid}`）
+- [x] `history.rs` に検知器を追加
+- [x] `window_data.rs` に検知器を追加
 
 ### Phase 3 — `folder.rs` の直書き固定名（**issue 表の外・人間レビューで外せる**）
 
@@ -100,15 +103,23 @@ fn temp_dir_name_contains_process_id() {
 
 **根拠を Step 2b の指摘で訂正した**: これは #985 の欠陥クラス（`remove_dir_all` が `create_dir_all` に割り込む）**ではない**——このテストは `create_dir_all` も `remove_dir_all` も呼ばない読み取り専用である。実際の危険は別で、**「存在しない」ことを共有 `%TEMP%` 上の固定名に期待している**点にある（誰かが同名を作れば落ちる）。pid を入れるとその可能性を構造的に潰せる。
 
-- [ ] `list_folder_nonexistent_dir_returns_empty` の直書き名へ pid を付す（行番号は動くのでシンボル名で探す）
+- [x] `list_folder_nonexistent_dir_returns_empty` の直書き名へ pid を付す（行番号は動くのでシンボル名で探す）
+
+### Phase 3b — 実装中に判明（/dry-check の所見・2026-08-16）
+
+- [x] `config.rs::dedup_load_does_not_rewrite_config_file` の手書き `snotra-dedup-{pid}` を `temp_dir("dedup")` へ置換する — **本変更が重複の存在理由を消したため**。手書き版は同モジュールの `temp_dir` が pid を持たなかった時代に一意性を自前で取っていたもので、Phase 1 で `temp_dir` が pid を得た今は冗長。置換で先頭の `remove_dir_all`（残骸の掃除）も付く
 
 ### Phase 4 — 検証
 
-- [ ] `cargo test -p snotra-core` が green
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` が green
-- [ ] `cargo fmt --all -- --check` が green
-- [ ] **変異注入で検知器が発火することを確かめる**: 1 モジュール（`binfmt.rs`）で `format!` から `-{pid}` を一時的に外し、`cargo test -p snotra-core` が**そのモジュールの検知器で赤になる**ことを実測してから戻す（`AGENTS.md`「検知器を置き、呼び忘れを再現する変異で落ちることまで確かめる」）。**「変異なし＝緑」だけを証拠にしない**
-- [ ] 全数の再照合: `git grep -n "env::temp_dir" -- '*.rs'`（除外句なし）を実行し、`snotra-core` 側の hit がすべて `std::process::id()` を含むことを目視で 1 行ずつ確認する
+- [x] `cargo test -p snotra-core` が green
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` が green
+- [x] `cargo fmt --all -- --check` が green
+- [x] **変異注入で検知器が発火することを確かめる**（`AGENTS.md`「検知器を置き、呼び忘れを再現する変異で落ちることまで確かめる」）。**「変異なし＝緑」だけを証拠にしない**
+  - **実施形**（書式文字列と引数の**両方**を外す。`-{}` だけ外すと `argument never used` のコンパイルエラーになり、テストが 1 件も走らないので証拠にならない）:
+    `format!("snotra_binfmt_test_{}-{}", tag, std::process::id())` → `format!("snotra_binfmt_test_{}", tag)`
+  - **結果（逐語）**: `failures: binfmt::tests::temp_dir_name_contains_process_id` / `test result: FAILED. 585 passed; 1 failed; 11 ignored`
+  - **対照の差が証拠である**: 変異ありで赤 1 本、変異を戻して 586 passed。**赤になったのは検知器 1 本だけで、他 585 本は緑のまま**——つまり検知器が無ければ pid の脱落は沈黙する
+- [x] 全数の再照合: `git grep -n "env::temp_dir" -- '*.rs'`（除外句なし）を実行し、`snotra-core` 側の hit がすべて `std::process::id()` を含むことを目視で 1 行ずつ確認する
 
 ## 不変条件と異常系
 
@@ -141,7 +152,7 @@ cargo fmt --all -- --check
 |---|---|---|
 | 対称ペア | ✗ | `remove_dir_all` / `create_dir_all` の対は既存のまま。ペアの構造を変えない |
 | 永続形式・識別子/キー形式を変更 | ✗ | `%TEMP%` の作業ディレクトリ名はディスク上の**永続**形式ではない（毎回作り直す使い捨て）。`index.bin` / `config.toml` / history キーのいずれにも触れない |
-| 関数・型を新規定義／改名／導入 | △ | 新規は `#[cfg(test)]` の `#[test]` 関数 5 本のみ。呼び出し元は存在しない（test harness が呼ぶ）。改名・削除は無し。→ `/dry-check` は不要（5 本は prefix が異なり圧縮不能） |
+| 関数・型を新規定義／改名／導入 | ✓ | 新規は `#[cfg(test)]` の `#[test]` 関数 5 本のみ。呼び出し元は存在しない（test harness が呼ぶ）。改名・削除は無し。**計画段階では「`/dry-check` は不要（5 本は prefix が異なり圧縮不能）」と判定したが、これは誤りだった**——`/dry-check` が見るのは新設した 5 本の圧縮可能性だけではなく、**変更したヘルパーの手書き重複**でもあり、実際に Phase 3b の 1 件を見つけた |
 | 並行性（worker・channel・listener 等） | ✗ | スレッド・チャネル・async を追加しない |
 | 網羅性が要件 | ✓ | **5 件すべて**が要件。→ `research.md` で母集団を除外句なしの 2 経路 grep で確定済み＋ Phase 4 で再照合。3b の敵対的調査が独立再導出に当たる |
 | セーフティネットを新設/変更 | ✗ | hook・CI・`.githooks/`・rules・skills・規範のいずれも触らない。検知器はテストであってセーフティネット機構ではない |
@@ -151,19 +162,46 @@ cargo fmt --all -- --check
 
 → 該当する check スキルは無し。「網羅性が要件」に対する `/plan-review`「Step 2b」（独立再導出）は **Step 3b の敵対的調査 1 体**が担う。
 
+## code-reviewer の所見と対応（ラウンド 1・2・2026-08-16）
+
+詳細は `workspace/review-985.txt`（ラウンド 1）と `workspace/review-985-round2.txt`（ラウンド 2・修正差分の検算）。**両ラウンドとも Critical / High は 0 件。** 下表はラウンドを問わず所見単位で並べる（**件数を見出しに書かない**——ラウンドを足すたびに腐る）。
+
+**ラウンド 2 は「修正差分そのもの」を対象にした。** `AGENTS.md`「レビュー指摘へ修正（fix-forward）を当てた」が求めるとおりで、実際に**新しい所見が 6 件出た**（Medium 4・Low 4〜8）。うち Medium 4 と Low 4 は**訂正差分に残った同じ形の穴**であり、修正が新しい誤りを生むという前提が正しかったことの実測になっている。
+
+> **「意図的な構造 4 点が誤検出されなかった」とは書けない。** レビュアは「4 点は指摘対象から外し、その外側だけを見た」と明示しており、誤検出 0 は**構成上そうなるだけ**で、渡さなければどうだったかの証拠にならない。#872 の「4 枠とも 1 件も誤検出しなかった」は枠が指摘しうる状態での観測なので、こちらとは別種である。言えるのは「申し送りにより 4 点へレビュー費用が掛からなかった」までである。
+
+| 区分 | 所見 | 対応 |
+|---|---|---|
+| Medium 1 | 新規 doc 7 段落が `docs/comment-guidelines.md`「日本語の折返し」に違反（文途中で物理改行）。実害 2 つを実測——(a) 「`indexer.rs` の `temp_dir` の doc」という句が行をまたいで **grep 0 件**、(b) `static Mutex` の言及が**それを持たない 4 モジュール**（binfmt/config/folder/window_data）へ複写されていた | **修正**。計画の 1 行テンプレートへ戻した。**解消は指摘を見つけた道具（grep）で自分で測った**——句 grep 0 → 5/5、`static Mutex` の言及 5 → 0 |
+| Medium 2 ⚠️ | 変異注入の記録が曖昧で、「`-{pid}` だけ外す」と読むとコンパイルエラーになり「検知器の赤」の証拠にならない | **記録を修正**（Phase 4）。実際は書式と引数の両方を外しており、逐語の結果（`585 passed; 1 failed`）を残した。**所見は記録の欠陥として正しい**——指摘どおりの読み方では証拠が成立しない |
+| Medium 3 | Phase 3b を後から足したとき、先に書いた列挙 3 か所（「触らない」表・変更ファイル表・トリガー判定表）が偽のまま | **修正**（3 か所とも）。`AGENTS.md`「数え上げも同じ強さである」の同型 |
+| Low 1 ⚠️ | Phase 3b（fix-forward）に、指摘元の枠組み（`/dry-check`）を再実行した記録が無い | **再実行して記録**。修正差分に対し主要操作 3 経路を grep し直し、**手書き重複の残存 0 件**を確認（`folder.rs:378` と `search_frame_cost.rs:75` はディレクトリを作らないため置換不可、`indexer.rs` の `create_dir_all(&sub)` はヘルパーで得た dir 配下、`icon.rs` は別 crate、残り 2 件は製品コード） |
+| Low 2 | `folder.rs:378-381` は prefix リテラル `snotra_folder_test_` の 3 つ目の写しで、検知器 6 本の射程外。将来また prefix を変えるとここだけ黙って外れる | **受容する残余**（修正要求ではないと明示された）。issue の撤去条件に含まれず、source を走査する検知器は brittle さに見合わない |
+| Low 3 ⚠️ | 5 か所の正本参照が機械検査を 1 つも持たない（`indexer.rs::tests::temp_dir` が改名・削除されると黙って腐る） | **受容する残余**。Medium 1 の修正で「句 grep で辿れる」ところまでは回復した。**リンク化できない理由は下記のとおり訂正済み** |
+| Low 6 ⚠️ | **ラウンド 1 の Low 3 に添えられていた機序が誤りで、私はそれを計画へ写していた。** 「参照元も参照先も `#[cfg(test)]` の**私的関数**だから」は 2 つの理由を混ぜており、**ブロッカーは `#[cfg(test)]` だけで可視性は関係ない** | **修正**（一次証拠を自分で確認）。`snotra-core/src/lib.rs:12` が `#![allow(rustdoc::private_intra_doc_links)]` を置いており private へのリンクは**許可されている**。落ちるのは `#[cfg(test)]` ゆえ非 test ビルドの rustdoc に存在せず `broken_intra_doc_links = "deny"`（`Cargo.toml:22`）に当たるため。**同 crate に先例があり**、`history.rs:90-91` が「`Self::empty` を intra-doc link にしないのは `#[cfg(test)]` ゆえ」と doc に書いている——その `empty` は `#[cfg(test)] pub(crate)` で、**`pub(crate)` でもリンクできない**ことがブロッカーが可視性でない直接の証拠。→ CLAUDE.md「所見が正しくても、そこに添えられた機序の説明は独立に誤りうる」の実例が、**自分の差分の中で**起きた |
+
+| Medium 4 | 「レビュー後に入った差分」節の理由 1「**どちらも変わらない**」が Phase 3b で偽（シンボル集合が 1 つ増えた）。Medium 3 の 4 か所目だが、**レビュー工程を省く判断の根拠そのもの**なので性質が重い | **修正**。結論（Step 2b を再実行しない）は維持——Step 2b の射程は「5 ヘルパーの網羅性」で、Phase 3b はその母集団を動かさない（むしろ 1 件減らす向き）。**変えたのは根拠の書き方であって結論ではない** |
+| Low 4 ⚠️ | 数え上げの stale が 2 か所（母集団「11 hit」は現在 10、タグ数は検知器 5 本で各 +1） | **修正**。母集団は「調査時点の観測」と明示し HEAD 11 / 作業ツリー 10 を併記。タグは**数を落として結論だけ残した** |
+| Low 5 ⚠️ | **承認された版で「触らない」と明記されていた箇所を Phase 3b が触っている。** 変更自体は安全と検証済みだが、承認の記録が更新されていない | **ユーザーへ差し戻す**（下記「承認後にスコープが動いた点」）。エージェントの判断で承認済みとして扱わない |
+| Low 6 ⚠️ | （上記）| （上記） |
+| Low 7 | 変更ファイル表の新しい行がファイル別のまとまりから外れている | **修正**（`config.rs` の行を config のブロックへ移した） |
+| Low 8 ⚠️ | 「ヘルパー名を逐語で持つファイルは 0 件」に前提条件が書かれていない（`workspace/` の作業文書には在る） | **修正**（射程を「ソース・規範文書」と明示） |
+
+**レビュアが独立に実測した検証**: `cargo test -p snotra-core` 586 passed / 検知器 6 本 passed / `config::` 148 passed / fmt・clippy exit 0。母集団の独立再導出でも漏れ 0。`dedup_load_does_not_rewrite_config_file` の不変条件は 4 根拠で健全と判定（Phase 3b の根拠自体も `git show 3059b0fa` で裏取りされた）。
+
 ## レビューへの申し送り（`/implement` の code-reviewer へ渡す）
 
 **「重複に見えるが意図的に分けた構造」を先に渡す**（ルート `CLAUDE.md`「サブエージェント委譲と worktree」・#872）。渡さないと DRY 違反として必ず挙がり、採否の判断に毎回コストが乗る。
 
 1. **検知器 5 本はほぼ同型だが圧縮できない。** 各モジュールの prefix（`snotra_binfmt_test_` / `snotra_config_test_` / `snotra_folder_test_` / `snotra_hist_test_` / `snotra_window_test_`）が異なり、ヘルパー自体が `#[cfg(test)] mod tests` のモジュール私的関数なので、共通化には `pub(crate)` の新設が要る。**意図的な分離である。**
-2. **各ヘルパーの doc 1 行は写しではなく参照である。** 機序の全文は `indexer.rs::tests::temp_dir` の rustdoc が正本で、5 か所はそこを指すだけ（`AGENTS.md`「文書に事実の写しを増やす変更」に従った形）。「説明が薄い」は指摘として成立しない。
+2. **各ヘルパーの doc が短いのは写しを避けたからである。** 機序の全文は `indexer.rs::tests::temp_dir` の rustdoc が正本で、5 か所はそこを指す 1 文だけを持つ（`AGENTS.md`「文書に事実の写しを増やす変更」に従った形。`folder.rs` だけ prefix 改名の理由をもう 1 文持つ）。「説明が薄い」は指摘として成立しない。
 3. **`folder.rs` の prefix 変更（`snotra_test_` → `snotra_folder_test_`）は意図的である。** 他 5 モジュールの `snotra_<module>_test_` 形へ揃えるためで、`snotra_test_` が意図的な区別でないことは導入コミット `65d34e39` が規約確立の `ca9a0f72`（#74）より古いことで裏取り済み。ユーザーが明示的に採否を決めた（2026-08-16）。「issue に無い改名」としての指摘は不要。
 4. **Phase 3（`folder.rs` の直書き固定名）は issue の表の外である。** 同一パターン全コードパス検索の結果を差分へ反映したもので、人間レビューで承認された意図的なスコープ。「issue に無い変更」としての指摘は不要。
 
 ## 未確定（実装前に潰す）
 
-- [x] 母集団（`research.md` の 11 hit）が `.rs` 全数か — **潰した**。3b が独立に 2 grep を取り直し、加えて `TempDir` 型 / `CARGO_TARGET_TMPDIR` / `env::var("TEMP"|"TMP"|"TMPDIR")` / `GetTempPath` / `dirs::` を個別検索して 0 hit。**壊れなかった**
-- [x] タグがモジュール内で相異なるか — **潰した（訂正あり）**。`config` は 9 ではなく **12**（`load_from_dir_repairs_and_saves_invalid_hotkey` のループが動的に 3 タグを作る・`config.rs:3349` を自分で読んで確認）。12 個は相異なるので結論は変わらず、検知器タグ `process_unique` とも衝突しない
+- [x] 母集団が `.rs` 全数か — **潰した**。3b が独立に 2 grep を取り直し、加えて `TempDir` 型 / `CARGO_TARGET_TMPDIR` / `env::var("TEMP"|"TMP"|"TMPDIR")` / `GetTempPath` / `dirs::` を個別検索して 0 hit。**壊れなかった**（`research.md` の「11 hit」は**調査時点の観測**である。実測で HEAD は 11、実装後の作業ツリーは 10——Phase 3b が手書き 1 件をヘルパー経由へ寄せたぶん減る。**現在形として読まない**）
+- [x] タグがモジュール内で相異なるか — **潰した（訂正あり）**。リテラル一致の grep が動的生成タグを落としていた（`config` はループで 3 タグ・`config.rs:3349`、`folder` は bench の `format!` で 9 タグ・自分で読んで確認）。**結論「モジュール内で相異なる」だけが成果であり、数は書かない**——検知器を足した時点で各モジュール +1 になり、数え上げた散文は足すたびに腐る（`AGENTS.md`「数え上げも同じ強さである——数ではなく正本を指す」）。根拠は数ではなく**ヘルパーが 1 か所であること**
 - [x] 欠陥が実在するか（理論だけでないか） — **潰した**。テストバイナリを 2 プロセス同時に起動し、pid なしの `binfmt::` で赤（`exit=101` / `20 passed; 1 failed`）を**自分で直接観測**した。pid ありの `indexer::` は同条件 13 ラウンドで赤なし。詳細と 3b との数の食い違いは `research.md`「欠陥の実測」
 - [x] `folder.rs` の直書き固定名（issue 表の外）を射程に入れるか — **入れる**と決定。同一ファイル・同一欠陥クラスで 1 行、`AGENTS.md`「バグ発見時は同一パターン全コードパス検索を行う」の列挙結果を差分へ反映する。**issue の撤去条件には含まれない**ので、人間レビューで外す判断があれば Phase 3 ごと削除する（判定で分岐する作業を作業項目に残さないため、既定は「入れる」に固定してある）
 
@@ -172,6 +210,13 @@ cargo fmt --all -- --check
 - [x] 承認済み — 2026-08-16 / 問い: "この内容で承認いただけますか。承認後に `workspace/` をコミット・push し、実装は `/implement` へ渡せます。" / 回答: "承認。Phase 3 も入れて進めて"
 
 **注釈として反映した判断**（同日・逐語: "folder.rs の prefix もそろえたほうがいいと思う。あとから見たときにprefix の違いに何か意味があるかも、と考える人もいそうだから。どう思う？"）: `folder.rs` の prefix を `snotra_folder_test_` へ揃える（「実装判断」表・「レビュー後に入った差分」節）。
+
+### 承認後にスコープが動いた点（**未再確認・ユーザーの裁定待ち**）
+
+**Phase 3b は、承認された版で「触らない」と明記されていた箇所を触っている。** 承認時点の「変更ファイルと対象シンボル」節は `config.rs` の `snotra-dedup-{pid}` を**触らない**と列挙しており、Phase 3b（`/dry-check` の所見）がそれを覆した。code-reviewer の Low 5 が**記録の穴**として指摘したもので、変更自体はラウンド 1・2 で安全と検証済みである（証明対象の assert は 1 文字も不変・`config::` 148 テスト green・置換の根拠も `git show 3059b0fa` で裏取り）。
+
+- **経緯**: `/implement`「4a」が「発見事項があれば修正してから 4b に進む」を求めており、その手順に従って当てた。だが**承認を得たときの計画は「触らない」と言っていた**ので、承認がこの 1 件を覆っているとは言えない。
+- **裁定の選択肢**: (a) このまま残す（既定）、(b) Phase 3b を戻して `snotra-dedup-{pid}` を手書きのまま残す。**どちらでも issue #985 は閉じる**（撤去条件は 5 ヘルパーであり、この 1 件を含まない）。
 
 ## plan-review 結果
 
@@ -190,7 +235,7 @@ cargo fmt --all -- --check
 | 4 | `SPEC.md` と関連文書の更新要否が正しい | ✅ 更新不要。Step 2b が独立に 8 母集団を当てて同結論（最強の一次証拠: PR #982 の同型修正は `indexer.rs` 1 ファイルのみ・文書 0 枚） |
 | 5 | 未確定欄に未チェック項目が残っていない | ✅ 4 件すべて `- [x]` |
 | 6 | タスク分割の境界がトリガーを跨いでいない | ✅ 新 API の導入・移行を伴わないため `dead_code` の中間状態は生じない。Phase 1 と Phase 2 の間で `-D warnings` が壊れる経路は無い |
-| 7 | 変更で偽になる散文を含むファイルが一覧に載っている | ✅ ヘルパー名 5 種を逐語で持つファイルは対象 5 ファイル以外に 0 件。概念ラベル「一時ディレクトリ / 作業ディレクトリ」の hit は `.claude/rules/safety-nets.md`（hook の変異テストの話・無関係）と `indexer.rs`（正本・変更しない）のみ |
+| 7 | 変更で偽になる散文を含むファイルが一覧に載っている | ✅ ヘルパー名 5 種を逐語で持つ**ソース・規範文書**は対象 5 ファイル以外に 0 件（`workspace/` の本サイクルの作業文書と `docs/superpowers/plans/` の履歴は除く。**この前提を書かずに「0 件」と書いていたのを code-reviewer の Low 8 が捕まえた**）。概念ラベル「一時ディレクトリ / 作業ディレクトリ」の hit は `.claude/rules/safety-nets.md`（hook の変異テストの話・無関係）と `indexer.rs`（正本・変更しない）のみ |
 
 ### 要対処
 
@@ -203,7 +248,7 @@ cargo fmt --all -- --check
 - ~~**`folder.rs` の prefix `snotra_test_` だけがモジュール名を含まない**（Step 2b の B2）~~ → **要対処へ昇格・採用**（2026-08-16 ユーザー判断）。判断の根拠と導入コミットの裏取りは「実装判断」表を参照
 - **`snotra-core/CLAUDE.md` へ規約を書き足す案**（B4）。正本は `indexer.rs::tests::temp_dir` の rustdoc であり、書くと写しが増える（`AGENTS.md`「文書に事実の写しを増やす変更」）。→ 書かない
 - **共有ヘルパーへ寄せる案**（B5）。Step 2b は「片付け作法は 5 件とも均一で技術的には可能」と報告したが、issue が「寄せずに閉じる」と明記し、置き場所の新設を要する。→ 寄せない（「実装判断」表のとおり）
-- **`binfmt.rs` が固定 tmp 名（`data.bin.tmp`）での tmp→rename を直接叩くテストを 14 本持ち、5 件中で最も危険**（A7）。作業内容は変わらないが、**自分の A/B 実測で赤が出たのが実際に `binfmt` だった**ことと整合する。→ Phase 4 の変異注入の対象を `binfmt.rs` にしてあるのはこの理由でもある
+- **`binfmt.rs` は固定 tmp 名（`BinFile::save_bytes` の `data.bin.tmp`）での tmp→rename を直接叩くテスト群を持ち、5 件中で最も危険**（A7。**本数を書かない**——検知器を足した時点で変わる数であり、危険の根拠は本数ではなく「固定 tmp 名を共有ディレクトリで叩く」構造のほうである）。作業内容は変わらないが、**自分の A/B 実測で赤が出たのが実際に `binfmt` だった**ことと整合する。→ Phase 4 の変異注入の対象を `binfmt.rs` にしてあるのはこの理由でもある
 
 ### 未検証（受容する残余）
 
@@ -215,7 +260,8 @@ cargo fmt --all -- --check
 
 `folder.rs` の prefix を `snotra_test_` → `snotra_folder_test_` へ揃える変更をユーザー判断で採用した。**追加の `/plan-review` は実行しない。** 理由:
 
-1. Step 2b の再実行条件は「issue の要件、または変更対象のファイル・シンボル集合が変わった場合」（`/plan-review`「Step 2b — 独立導出による網羅性レビュー」）。**どちらも変わらない**——同じ `temp_dir_with_contents`、同じ新規検知器、変更ファイル 5 枚も不変。変わるのは `format!` の文字列リテラル 1 つと、それを写す新規検知器の期待値だけである。
+1. Step 2b の再実行条件は「issue の要件、または変更対象のファイル・シンボル集合が変わった場合」（`/plan-review`「Step 2b — 独立導出による網羅性レビュー」）。issue の要件は変わらない。**シンボル集合はその後 Phase 3b で 1 つ増えた**（`tests::dedup_load_does_not_rewrite_config_file`）が、Step 2b の射程は「5 ヘルパーの網羅性」であり、Phase 3b はその母集団を動かさない（動かす向きはむしろ手書き 1 件をヘルパーへ寄せる＝母集団が 1 件減る側）。よって再実行しない。
+   - **当初ここには「どちらも変わらない」と書いていた。Phase 3b の追記で偽になったのを code-reviewer の Medium 4 が捕まえた**——他の 3 か所（Medium 3）が列挙の食い違いだったのに対し、これは**レビュー工程を省く判断の根拠そのもの**だったので性質が重い。
 2. **この案は Step 2b 自身が B2 として挙げた所見である。** 未レビューの新規差分ではなく、レビューが出した所見の採用であり、再レビューは同じ枠組みの再実行になる（`AGENTS.md`「レビュー指摘へ修正を当てた」が求める再実行は**修正差分に対する別枠組みの検算**であり、それは Phase 4 の変異注入と `cargo test` が担う）。
 3. 意図の裏取りは主エージェントが一次証拠で実施済み（導入コミット `65d34e39` が規約確立の `ca9a0f72`（#74）より古いこと・`folder.rs` の `//!` に言及が無いこと）。
 

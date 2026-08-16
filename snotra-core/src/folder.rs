@@ -239,11 +239,32 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    /// テスト用の作業ディレクトリを作り直して返す。
+    ///
+    /// 名前に `std::process::id()` を含める理由は `indexer.rs` の `temp_dir` の doc を正本とする（#978 / #985）。
+    ///
+    /// prefix は他モジュールと同じ `snotra_<module>_test_` 形に揃えてある——かつての `snotra_test_` はこの形が定まる前の名残であり、意図的な区別ではない（#985）。
     fn temp_dir_with_contents(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("snotra_test_{}", tag));
+        let dir =
+            std::env::temp_dir().join(format!("snotra_folder_test_{}-{}", tag, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn temp_dir_name_contains_process_id() {
+        let dir = temp_dir_with_contents("process_unique");
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("temp dir name");
+        assert_eq!(
+            name,
+            format!("snotra_folder_test_process_unique-{}", std::process::id()),
+            "作業ディレクトリ名に自プロセスの pid が入っていない（#985）"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn empty_history() -> HistoryStore {
@@ -353,7 +374,11 @@ mod tests {
 
     #[test]
     fn list_folder_nonexistent_dir_returns_empty() {
-        let dir = std::env::temp_dir().join("snotra_test_nonexistent_zzz");
+        // 名前へ pid を含めるのは、このテストが「存在しないこと」を共有 `%TEMP%` 上の固定名に期待しているからである（誰かが同名を作れば落ちる・#985）。
+        let dir = std::env::temp_dir().join(format!(
+            "snotra_folder_test_nonexistent_zzz-{}",
+            std::process::id()
+        ));
         let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         assert_eq!(results.len(), 1);
         assert!(results[0].is_error);

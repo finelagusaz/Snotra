@@ -4,6 +4,11 @@
 //! `layout::present_results`（純粋核・#752）、results の raw 操作の所有点は
 //! `results_window::ResultsWindow`（#671 PR A′）である。
 //!
+//! **例外的に 1 つだけ値型を持つ**: [`FrameIndexing`]（#1077）。`AppState.indexing` を読む
+//! `read_indexing` がここに在り、その返り値型を**同じ場所に置くことで構築子を読み点へ閉じる**
+//! ——別の `bool` を `indexing` のつもりで配る書き方がコンパイル不能になる。判定は持たない
+//! （述語は `search_state::plain_results_hidden`）という上の性格は変わらない。
+//!
 //! **wake は primitive として公開する**（#711）——「いつ起こすか」を本モジュールが決めた
 //! 瞬間に「armed 期限は保持者が毎フレーム再要求する」契約が壊れる。期限の所有者
 //! （`LauncherController`）が呼び、ここは実行するだけにする。
@@ -87,13 +92,42 @@ pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
     )
 }
 
+/// `AppState.indexing` を**実際に読んだ**という証拠つきの値（#1077）。
+///
+/// **フィールドは private で、構築子は [`read_indexing`] ただ 1 つである。** ゆえに
+/// 「別の `bool` を `indexing` のつもりで渡す」書き方が**構築できない**。素の `bool` で
+/// 配っていた頃は、受け取る側の
+/// [`crate::egui_shell::launcher_controller::LauncherController::on_enter`] が
+/// `shift_held: bool` を先に取るため、2 引数を入れ替えてもコンパイルもテストも通った
+/// （この型にはテスト席が無く、取り違えを区別できる観測が無い）。**newtype を被せるだけでは
+/// 閉じない**——タプル構築子が公開されていれば呼び出し点で任意の `bool` を包めるので、
+/// `/symmetric-check` の Step 2c が言う「起点が同型なら型は守っていない」のままだった。
+///
+/// **フレームに閉じた値である。** `AppState.indexing` は `AtomicBool` の live-read で同一
+/// フレーム内でも変わりうるため、`view.rs` の `update()` は 1 回だけ読み、この型のまま
+/// status 行・表示ゲート・起動判定へ配る。**`self.` へ保持してはならない**——フレームを跨いで
+/// 持つと index build の開始・完了が反映されなくなる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrameIndexing(bool);
+
+impl FrameIndexing {
+    /// 述語（[`crate::egui_shell::plain_results_hidden`] など）へ渡すための取り出し。
+    pub(crate) fn get(self) -> bool {
+        self.0
+    }
+}
+
 /// index 構築中か（show 経路が status 行の有無を導くために読む）。正本は `AppState.indexing`。
 /// 毎フレーム側は `launcher_controller::LauncherController::indexing` がこの実装へ委譲する
 /// （両者がバイト単位で同一実装を独立に持っていた重複の解消・レビュー是正 3）。
-pub(super) fn read_indexing(app: &tauri::AppHandle) -> bool {
-    app.try_state::<crate::AppState>()
-        .map(|s| s.indexing.load(Ordering::Relaxed))
-        .unwrap_or(false)
+///
+/// **[`FrameIndexing`] を作れる唯一の場所である**（#1077）——返り値の型がその証拠を担う。
+pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
+    FrameIndexing(
+        app.try_state::<crate::AppState>()
+            .map(|s| s.indexing.load(Ordering::Relaxed))
+            .unwrap_or(false),
+    )
 }
 
 /// updater toast の行が出るか（show 経路が高さを導くために読む）。正本は `UpdaterUiState`。
@@ -298,7 +332,7 @@ pub(crate) fn show_egui_main(
         // 同じフレームの動的高さ算出が直す（固着はしない・修正前より悪化もしない）。
         // 前提が変わったら `status_row_present` の呼び出し点を grep すればここへ来る。
         let status = crate::egui_shell::status_row_present(
-            indexing_now,
+            indexing_now.get(),
             /* results_view */ true,
             /* launching    */ false,
             /* has_notice   */ false,
@@ -322,7 +356,8 @@ pub(crate) fn show_egui_main(
         // **述語へ渡したリテラル（上の `launching`/`has_notice` の `false`）ではなく、読んだ値
         // そのものを残す**——将来 show 側が「読んだが渡さない」形へ退行しても拾えるようにする。
         if let Some(sh) = app.try_state::<EguiShellState>() {
-            sh.show_read_indexing.store(indexing_now, Ordering::SeqCst);
+            sh.show_read_indexing
+                .store(indexing_now.get(), Ordering::SeqCst);
             sh.show_read_toast.store(toast_now, Ordering::SeqCst);
             sh.show_applied_height_bits
                 .store(height.to_bits(), Ordering::SeqCst);

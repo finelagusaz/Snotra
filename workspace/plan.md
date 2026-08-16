@@ -186,7 +186,28 @@ SolidJS 非 parity・instant carve-out 破壊・bool エッジのパルス見逃
       正しくは `crate::egui_shell::launcher_controller::LauncherController::on_enter`）——
       hook は `cargo doc` を発火しないため、手で走らせなければ CI まで漏れていた
 - [x] `npm run governance:check`（カテゴリ F）— 全検査 passed（19 件）
-- [ ] **`/race-check` をここで実行する**——同スキルは「**計画段階では起動しない**」（#784）と定めており、
+- [x] **`/race-check` を実行した**（`npm run race:boundaries -- --base main` は 8 種別すべて 0 件。
+      **0 件は「無い」ではない**ので、差分が触る `AppState.indexing` の live-read を境界として自分で立て、
+      2 境界とも a〜e に答えて **[安全]**。読みが `window_coordinator::read_indexing` に閉じているため
+      差分行に `Atomic` / `.lock(` が現れず、ツールのパターンに当たらなかった）
+- [x] **`/symmetric-check` で計画の緩和策が不完全だと分かり、fix-forward した（要対処 1 件）** —
+      Step 2c: `FrameIndexing(pub bool)` のタプル構築子は任意の `bool` を受けるため、
+      `on_enter` の呼び出し点（`post.shift` が同じスコープに在る）で `FrameIndexing(post.shift)` と
+      書ける。**型が守っていたのは引数順だけで、起点は同型のままだった**——同スキルが名指しする
+      「起点が同型なら型は守っていない」そのもの。
+      **是正**: 型を `search_state.rs` から `window_coordinator.rs`（`read_indexing` の隣）へ移し、
+      **フィールドを private にして構築子を読み点ただ 1 つに閉じた**。`LauncherController::indexing()`
+      の返り値型も `FrameIndexing` にしたので、**別の `bool` を包む書き方はコンパイルが通らない**
+      （移行中に `cannot initialize a tuple struct which contains private fields` を実測）
+- [x] **`view.rs` の 1 回読みを検知器にした（計画外の追加）**: `indexing_is_read_exactly_once_per_frame`。
+      構築子を閉じても「**本物をもう 1 回読む**」一手は残るため、production 側の
+      `.controller.indexing()` の出現数が 1 であることを固定する。**変異注入で発火を実測**——
+      表示ゲートを `self.controller.indexing().get()` へ戻すと exit 101、戻すと green。
+      **最初に書いた版は自分自身を数えて落ちた**（テスト内のリテラルも母集団に入る）ので、
+      母集団を `#[cfg(test)]` より前へ絞った
+- [x] **`governance:check` が偽の参照を捕まえた** — `src-tauri/CLAUDE.md`「同型ペアの取り違え」と
+      書いたが、その見出しは `/symmetric-check` にしか無い。`/symmetric-check` の Step 2c への参照へ直した
+- [ ] **`/race-check` / `/symmetric-check` を fix-forward 差分にも再実行する**——同スキルは「**計画段階では起動しない**」（#784）と定めており、
       母集団は `npm run race:boundaries` が差分から決める。計画レビューでは起動していない
 - [ ] **`/dry-check` を実行する**（`AGENTS.md`「関数・型を新規定義／改名／導入」——フェーズ 2 で
       `FrameIndexing` を新規定義するため。呼び出し元の列挙は LSP の findReferences で行う）

@@ -716,7 +716,13 @@ impl LauncherController {
     /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。実装は
     /// `window_coordinator::read_indexing` へ委譲する——show 経路とバイト単位で同一の
     /// 独立実装を持っていた重複の解消（レビュー是正 3）。
-    pub(super) fn indexing(&self) -> bool {
+    ///
+    /// **返すのは [`FrameIndexing`] であって `bool` ではない**（#1077）——「実際に読んだ」
+    /// 証拠を型で運び、別の `bool` を `indexing` のつもりで渡す書き方を構築不能にする。
+    /// **`view.rs` はこれを 1 フレーム 1 回だけ呼ぶ**。ここが `pub(super)` のままなのは
+    /// `run_search_with` が自分の時点で読むためで（用途が違う——行をクリアするか）、
+    /// そこは意図的に live-read を残してある。
+    pub(super) fn indexing(&self) -> FrameIndexing {
         super::window_coordinator::read_indexing(&self.app_handle)
     }
 
@@ -816,7 +822,7 @@ impl LauncherController {
             ViewKind::Results => {
                 match self.state.interp(prefix) {
                     QueryIntent::Plain => {
-                        if self.state.query().trim().is_empty() || self.indexing() {
+                        if self.state.query().trim().is_empty() || self.indexing().get() {
                             // 空クエリと構築中は**同期でクリアする**（worker を経由させると消した文字が 1 フレーム残る）。同期で差し替える以上 in-flight は失効するが、それは `SearchState` の内側で起きる（#1039）。
                             self.state.set_results(Vec::new());
                             return;

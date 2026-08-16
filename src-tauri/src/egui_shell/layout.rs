@@ -141,11 +141,28 @@ pub fn main_window_height(
 /// **これは論理 px であり、これだけでは足りない。** 物理 px へ落とす段で切り捨てが起きると
 /// 最終行が再び切れる——変換は `results_height_phys` が担う（同関数の doc）。
 pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
-    if max_results == 0 {
+    if results_area_collapsed(max_results) {
         return 0.0; // hide の契約値。**丸めより前に返す**（`ceil` 側も 0 を保つ）
     }
     let drawn_row = f64::from((row_height as f32).round_ui());
     f64::from(max_results) * drawn_row
+}
+
+/// 連言④（`SPEC.md`「4.5 最大列挙数」）が偽になる条件——`results` が行を描く高さを持たないか。
+///
+/// **起動側のゲートもこの述語を見る**（#1106）。中身は [`results_window_height`] が `0.0`
+/// （= hide の契約値。正本は同関数の doc）を返す条件そのもので、同関数がこれを呼ぶ
+/// ——**判定が 1 つしかないので、片方だけ変わる将来が無い**。#1077 が連言③で「表示側と
+/// 同じ述語を呼ぶ（同義の別式を作らない）」としたのと同じ形である。
+///
+/// **`row_height` を引数に持たない。** [`results_window_height`] の第 2 引数へ production で
+/// 届く値は `Metrics::row_height` だけであり、そこには下限 24.0 の床がある。**この 2 つは
+/// 測られ方が違う**——床は `metrics_row_floor_is_24` が測るが、**「届く値がそれだけである」
+/// のは規範であって、どのテストも測っていない**（`ResultsInputs` を組み立てる箇所を増やせば
+/// 破れる）。同値そのものは `results_area_collapsed_matches_the_zero_height_contract` が
+/// 代表的な行高について測る。
+pub fn results_area_collapsed(max_results: u32) -> bool {
+    max_results == 0
 }
 
 /// `icon_prefetch_range` が可視ぶんの上下へ何画面ぶん先読みするか。
@@ -351,6 +368,12 @@ pub struct ResultsInputs {
     /// 連言④を②から独立させる唯一の入力（`appearance.effective_visible_rows()`）。
     /// **0 は到達可能である**——本体の config 適用経路は `Config::validate()` を通らず、
     /// 設定 UI の `1..=50` clamp は `config.toml` の手編集を止めない。
+    ///
+    /// **`plain_hidden` / `result_count` と同じく読み点の制約を持つ**（#1106）——ただし理由は
+    /// フレーム内の前後ではなく、**起動側のゲートと同じ 1 回の読みでなければならない**こと
+    /// である。正本は [`crate::egui_shell::window_coordinator::DriveResultsInputs`] の doc
+    /// （**あちらでの名前は `visible_rows`**、型は `FrameVisibleRows` である——この struct は
+    /// 生の `u32` を受け取るので、フィールド名も型も一致しない）。
     pub max_results: u32,
     pub row_height: f64,
 }
@@ -678,6 +701,28 @@ mod tests {
         assert_eq!(m.bar_height, 43.0);
         // path_size = max(15*0.78, 9) = 11.7 → 15 + 11.7 + 6 + 4 = 36.7
         assert!((m.row_height - 36.7).abs() < 1e-9, "row={}", m.row_height);
+    }
+
+    /// 連言④の述語が、`results_window_height` の「`0.0` を返す条件」と**同値である**ことを測る（#1106）。
+    ///
+    /// **この同値が、述語から `row_height` を落とせる根拠である。** production で高さの第 2 引数へ
+    /// 届く値は `Metrics::row_height` だけで、そこには床 24.0 がある（`metrics_row_floor_is_24`）。
+    ///
+    /// **これが崩れると失うもの**: 起動側のゲート（`launcher_controller` の
+    /// `activate_or_execute` / `shift_activate`）はこの述語を見るので、表示と起動の判定が割れる。
+    /// 実害は 2026-08-16 に実機で測った——`visible_rows = 0` の使い捨てプロファイルで
+    /// `egui_results:show` が 0 件・results 窓が OS 実測でも不可視のまま `egui_launch` が出た
+    /// （対照の `visible_rows = 8` では show → launch が正常に並ぶ）。
+    #[test]
+    fn results_area_collapsed_matches_the_zero_height_contract() {
+        let row = Metrics::from_config(15, 6, 28).row_height;
+        assert!(results_area_collapsed(0));
+        assert_eq!(results_window_height(0, row), 0.0);
+        // 設定 UI が許す範囲（1..=50）の全件で、述語と高さが同じ向きを向く
+        for n in 1u32..=50 {
+            assert!(!results_area_collapsed(n), "max_results={n}");
+            assert!(results_window_height(n, row) > 0.0, "max_results={n}");
+        }
     }
 
     /// #646 決定 2: 下限 24(アイコン 16px + 余白)。8 + 9 + 0 + 4 = 21 → 24 へ床上げ。

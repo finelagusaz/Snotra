@@ -36,8 +36,9 @@ use snotra_core::ui_types::SearchResult;
 use tauri::{Emitter, Manager};
 
 use crate::egui_shell::{
-    Debouncer, EscapeOutcome, FrameIndexing, QueryIntent, SearchState, SlashCmd, ViewKind,
-    compute_parent_dir, find_slash_command, folder_load_pending, plain_results_hidden,
+    Debouncer, EscapeOutcome, FrameIndexing, FrameVisibleRows, QueryIntent, SearchState, SlashCmd,
+    ViewKind, compute_parent_dir, find_slash_command, folder_load_pending, plain_results_hidden,
+    results_area_collapsed,
 };
 
 /// ナビゲーションスレッド → driver のメッセージ（#532 SU3 M2）。token（= folder_gen）で
@@ -536,8 +537,42 @@ impl LauncherController {
         &mut self,
         index: usize,
         indexing: FrameIndexing,
+        visible_rows: FrameVisibleRows,
         ctx: &egui::Context,
     ) {
+        // §4.5 の連言④で results 窓が 1 行も描いていないなら起動しない（#1106）。
+        //
+        // **③（下の `plain_results_hidden`）とは独立した規則であり、carve-out を持たない。**
+        // ③が隠すのは Results ビューの通常結果だけだが、④は最大表示件数そのものが 0 なので
+        // tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**が 1 行も出ない
+        // （`SPEC.md`「4.5 最大列挙数」の「すべてのビューへ一様に適用される」）。ゆえに
+        // **`view_kind` による dispatch より前**に置く——下の③のガードの位置では覆えない。
+        //
+        // **判定は表示側と同じ述語である**——`results_area_collapsed` は
+        // `layout::results_window_height` が `0.0`（= hide の契約値）を返す条件そのもので、
+        // 同関数がこの述語を呼ぶ。別式を書けば表示と起動が片方だけ変わる将来が生まれる。
+        //
+        // **`visible_rows` は引数で受け取る**（`indexing` と同じ理由）——`view.rs` が 1 フレーム
+        // 1 回読んだ値をそのまま使う。自分で読み直すと、同じフレームの表示ゲートと食い違う。
+        //
+        // **止めるのは操作だけである。** 行データと選択は消さず、→ / ← のフォルダ突入も
+        // 止めない。**#1077（③）の「突入すれば行は可視へ戻る」という理由はここでは成り立たない**
+        // ——窓高は 0 のままである。それでも止めないのは、突入が**行の起動ではなく現在地の移動**
+        // であり可逆だからで、③と射程を揃えることを優先した。
+        //
+        // **詰みは作らない。** `/o`（設定を開く）は完全一致した時点で Enter を経ずに走るため
+        // （`SPEC.md`「15.1 概要」）このゲートを通らない。設定画面の `1..=50` clamp で戻せる。
+        //
+        // **`start_launch`（起動の合流点）へ寄せない理由は、③のときと同じではない。**
+        // `ADR-activation-gate-placement` 却下 1 は 2 つの独立した理由を挙げるが、
+        // **④に当たるのは (b) だけである**——「却下しても数は減らない」（`tools >= 2` の枝が
+        // `start_launch` を通らないので `shift_activate` には個別のガードが要る）。(a)
+        // （「ガードの意味は行の選択の性質であり、`start_launch` へ届く時点で行はもう無い」）は、
+        // **④の述語が行の情報を一切取らないので当たらない**。同じ結論を同じ理由で支えていると
+        // 読むと、将来「行を見ない述語」を足す人が誤る。
+        if results_area_collapsed(visible_rows.get()) {
+            return;
+        }
         // §4.7 の表示ゲートで隠れている行は起動しない（#1077）。index 再構築中の通常結果は
         // results 窓から消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
         // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 枝を
@@ -573,10 +608,24 @@ impl LauncherController {
     /// Shift+Enter（§18.3）: 選択行の tools ≥ 2 ならツール選択メニューへ、それ以外
     /// （≤1・instant 行・tool ビュー中）は通常 Enter と同一（hide も同様）。folder ロード
     /// 未確定窓は activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
-    fn shift_activate(&mut self, index: usize, indexing: FrameIndexing, ctx: &egui::Context) {
+    fn shift_activate(
+        &mut self,
+        index: usize,
+        indexing: FrameIndexing,
+        visible_rows: FrameVisibleRows,
+        ctx: &egui::Context,
+    ) {
         if self.instant_rows_query.is_some() || self.state.view_kind() == ViewKind::Tool {
             // instant 行は §19.6「Shift+Enter=Enter」。tool ビュー中の Shift+Enter も Enter と同一。
-            self.activate_or_execute(index, indexing, ctx);
+            // **④のガードはここに要らない**——委譲先の冒頭が同じ述語を見る。
+            self.activate_or_execute(index, indexing, visible_rows, ctx);
+            return;
+        }
+        // §4.5 の連言④（#1106）。**`activate_or_execute` の同じガードでは覆えない**——
+        // `tools >= 2` の枝はそちらを通らず `SearchState::enter_tool` を直接呼ぶ（③と同じ理由）。
+        // ツール選択への入場も、1 行も出ていない行を対象に始まる点で起動と同じ性質を持つ。
+        // 理由の全文は `activate_or_execute` のガードのコメントが正本である。
+        if results_area_collapsed(visible_rows.get()) {
             return;
         }
         // §4.7 の表示ゲート（#1077）。**`activate_or_execute` の同じガードでは覆えない**——
@@ -619,7 +668,7 @@ impl LauncherController {
                 );
             }
         } else {
-            self.activate_or_execute(index, indexing, ctx); // §18.3: 1 件以下は通常 Enter と同じ動作
+            self.activate_or_execute(index, indexing, visible_rows, ctx); // §18.3: 1 件以下は通常 Enter と同じ動作
         }
     }
 
@@ -1381,6 +1430,7 @@ impl LauncherController {
         &mut self,
         shift_held: bool,
         indexing: FrameIndexing,
+        visible_rows: FrameVisibleRows,
         ctx: &egui::Context,
     ) {
         // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
@@ -1413,9 +1463,9 @@ impl LauncherController {
         }
         if !self.state.results().is_empty() {
             if shift_held {
-                self.shift_activate(self.state.selected(), indexing, ctx);
+                self.shift_activate(self.state.selected(), indexing, visible_rows, ctx);
             } else {
-                self.activate_or_execute(self.state.selected(), indexing, ctx);
+                self.activate_or_execute(self.state.selected(), indexing, visible_rows, ctx);
             }
         }
     }
@@ -1481,21 +1531,23 @@ mod tests {
         }
     }
 
-    /// Enter の判定と表示ゲートが**同一フレームの同じ `indexing` の値**を見ることを固定する（#1077）。
+    /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
     ///
-    /// `AppState.indexing` は `AtomicBool` の live-read で、**同一フレーム内でも変わりうる**。
-    /// 起動の入口が自分で読み直すと、`view.rs` が表示ゲートへ渡す値と食い違いうる——
-    /// 「画面には出ていないが Enter は起動する」あるいはその逆が構築可能になる。
-    /// 値は `view.rs` が status 行のために 1 回だけ読み、[`FrameIndexing`] として配る。
+    /// 対象は表示ゲートの入力 2 つである。`AppState.indexing` は `AtomicBool` の live-read で
+    /// **同一フレーム内でも変わりうる**。`visible_rows` は config の live-read で、
+    /// `config_watcher` の適用が同じフレームへ割り込みうる。**どちらも、起動の入口が自分で
+    /// 読み直すと `view.rs` が表示ゲートへ渡す値と食い違う**——「画面には出ていないが Enter は
+    /// 起動する」あるいはその逆が構築可能になる。値は `view.rs` が 1 回だけ読み、
+    /// [`FrameIndexing`] / [`FrameVisibleRows`] として配る。
     ///
-    /// **測れるのは構造だけである。** この型にはテスト席が無く、食い違いの発生は
+    /// **測れるのは構造だけである。** どちらの型にもテスト席が無く、食い違いの発生は
     /// タイミング依存ゆえ決定的に再現できない。ゆえに「渡された値を使っていること」を
-    /// ソーステキストで固定する——`self.indexing()` が本体に無いことがその形である。
+    /// ソーステキストで固定する——読み直しの形が本体に無いことがその形である。
     ///
     /// **`run_search_with` は対象外である**（意図的）。あちらの読みは用途が違い
     /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。
     #[test]
-    fn activation_uses_the_frame_indexing_value_not_a_live_read() {
+    fn activation_uses_frame_values_not_live_reads() {
         let src = include_str!("launcher_controller.rs");
         let targets = [
             ("fn on_enter(", "should_flush_on_enter("),
@@ -1509,6 +1561,21 @@ mod tests {
                 "{anchor} が `indexing` を自分で読み直している——`view.rs` が表示ゲートへ渡す値と\
                  同一フレーム内で食い違いうる（#1077）。引数で受けた FrameIndexing を使うこと"
             );
+            // 連言④も同じ形で守る（#1106）。**構築子が private なので偽の値は作れない**——
+            // 残る一手が「本物をもう 1 回読む」ことであり、それをここで塞ぐ。読み直す形は
+            // `read_visible_rows` の直呼びと、`read_config` から `effective_visible_rows` を
+            // 引く形の 2 つである（後者は `lang()` が同じ関数を正当に使うので、母集団を
+            // 起動の入口に限っているこの検査でしか禁止にできない）。
+            for forbidden in ["read_visible_rows(", "read_config("] {
+                assert!(
+                    !body.contains(forbidden),
+                    "{anchor} が `{forbidden}` を呼んでいる——**起動の入口での config 読みは\
+                     `visible_rows` の読み直しと区別できない**（無関係な読みでもここは落ちる。\
+                     それでよい: 読み直しなら `view.rs` が表示ゲートへ渡す値と同一フレーム内で\
+                     食い違い、#1106 の症状が再発する）。連言④は引数で受けた FrameVisibleRows で\
+                     判定し、他の config 値が要るならこの入口の外で読むこと"
+                );
+            }
         }
     }
 
@@ -1527,6 +1594,12 @@ mod tests {
     /// **画面に 1 行も出ていない状態の Enter / クリック / Shift+Enter が古い行を起動する**。
     /// 2026-08-16 に実機で再現済みで、行は正しく出るため挙動テストでは捕まらない。
     ///
+    /// **見るべきゲートは 2 つあり、独立である**（#1106 で④を足した）。③（`plain_results_hidden`）は
+    /// index 再構築中の Results ビューの通常結果だけを隠すが、④（`results_area_collapsed`）は
+    /// 最大表示件数そのものが 0 なので tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**が
+    /// 1 行も出ない。**片方を見ているだけでは足りない**——④の症状も 2026-08-16 に実機で再現した
+    /// （`visible_rows = 0` で `egui_results:show` が 0 件のまま `egui_launch` が出た）。
+    ///
     /// **残る死角**: 母集団は当該メソッドのソーステキストだけであり、呼び出しグラフは辿らない。
     /// ゲートをこのメソッドの外のヘルパーへ移すと、母集団の外なので捕まらない。
     #[test]
@@ -1541,8 +1614,14 @@ mod tests {
             let body = method_body(src, anchor, canary);
             assert!(
                 body.contains("plain_results_hidden("),
-                "{anchor} が §4.7 の表示ゲートを見ていない——画面に出ていない行を\
-                 Enter / クリック / Shift+Enter が起動する（#1077 で実機再現済み）"
+                "{anchor} が §4.7 の表示ゲート（連言③）を見ていない——index 再構築中に\
+                 画面から消えた行を Enter / クリック / Shift+Enter が起動する（#1077 で実機再現済み）"
+            );
+            assert!(
+                body.contains("results_area_collapsed("),
+                "{anchor} が §4.5 の表示ゲート（連言④）を見ていない——最大表示件数が 0 で\
+                 1 行も描かれていない状態を Enter / クリック / Shift+Enter が起動する\
+                 （#1106 で実機再現済み）"
             );
         }
     }

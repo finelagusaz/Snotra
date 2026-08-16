@@ -4,10 +4,11 @@
 //! `layout::present_results`（純粋核・#752）、results の raw 操作の所有点は
 //! `results_window::ResultsWindow`（#671 PR A′）である。
 //!
-//! **例外的に 1 つだけ値型を持つ**: [`FrameIndexing`]（#1077）。`AppState.indexing` を読む
-//! `read_indexing` がここに在り、その返り値型を**同じ場所に置くことで構築子を読み点へ閉じる**
-//! ——別の `bool` を `indexing` のつもりで配る書き方がコンパイル不能になる。判定は持たない
-//! （述語は `search_state::plain_results_hidden`）という上の性格は変わらない。
+//! **例外的にフレームへ閉じた値型を持つ**: [`FrameIndexing`]（#1077）と [`FrameVisibleRows`]
+//! （#1106）。読む関数（`read_indexing` / `read_visible_rows`）がここに在り、その返り値型を
+//! **同じ場所に置くことで構築子を読み点へ閉じる**——別の値をそのつもりで配る書き方が
+//! コンパイル不能になる。判定は持たない（述語は `search_state::plain_results_hidden` と
+//! `layout::results_area_collapsed`）という上の性格は変わらない。
 //!
 //! **wake は primitive として公開する**（#711）——「いつ起こすか」を本モジュールが決めた
 //! 瞬間に「armed 期限は保持者が毎フレーム再要求する」契約が壊れる。期限の所有者
@@ -739,11 +740,38 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     results.set_position(pos.x, top);
 }
 
+/// 表示ゲートの連言④（`SPEC.md`「4.5 最大列挙数」）の 1 フレーム分の読み（#1106）。
+///
+/// **フィールドが private なので、このモジュールの外ではこの型を構築できない**
+/// （[`FrameIndexing`] と同じ形）。
+///
+/// **フレームに閉じた値である。** `view.rs` の `update()` が 1 回だけ読み、この型のまま
+/// 表示側と起動側へ配る。**この 2 つの役割が同じ値を見ることが、この型の存在理由そのもの
+/// である**（配り先の数ではなく、役割が 2 つあることを名指している）。**`self.` へ保持しては
+/// ならない**——フレームを跨いで持つと `config.toml` の変更が反映されなくなる。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FrameVisibleRows(u32);
+
+impl FrameVisibleRows {
+    /// 述語（[`crate::egui_shell::layout::results_area_collapsed`] / `present_results`）へ
+    /// 渡すための取り出し。
+    pub(crate) fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// [`FrameVisibleRows`] の唯一の構築点（#1106）——型がその証拠を担う。
+pub(super) fn read_visible_rows(app: &tauri::AppHandle) -> FrameVisibleRows {
+    FrameVisibleRows(max_results(app))
+}
+
 /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は `Option<usize>` のため
 /// effective_visible_rows() で既定補完する（config.rs:327）。
 ///
-/// **読み点の制約を持たない**ため `DriveResultsInputs` へは載せず、driver の内側で読む
-/// （#749）——引数を増やすほど、呼び出し側で読み点の違う値を並べて書きたくなる。
+/// **呼び出し点は `read_visible_rows` ただ 1 つである**（#1106 で `drive_results_window` の
+/// 内側からの直読みを撤去した）。#749 は「読み点の制約を持たない」ことを理由にここで読んで
+/// いたが、**起動側のゲートが同じ値を見るようになった時点で制約が生まれた**——読みが 2 つ
+/// あると、同一フレームで表示は隠し起動は通す並びが構築できる。
 fn max_results(app: &tauri::AppHandle) -> u32 {
     super::read_config(
         app,
@@ -769,15 +797,22 @@ fn read_main_visible(app: &tauri::AppHandle) -> bool {
 /// **この構造体を作る式を `plain_hidden` の算出の隣へ動かしてはならない**——行クリック起動
 /// フレームで古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
 ///
-/// `width` と `row_height` は**別種の制約**を持つ（混同しないこと）。`row_height` はフレーム
-/// 冒頭の `VisualSnapshot` 由来でなければならず（#673 決定 4: テーマ値は 1 フレーム 1 回）、
-/// `width` は view が main へ適用するのと**同一フレームの同一値**でなければならない
-/// （両窓の唯一の size writer が main である前提）。ゆえに内側で読み直さない。
+/// `width` と `row_height` と `visible_rows` は**それぞれ別種の制約**を持つ（混同しないこと）。
+/// `row_height` はフレーム冒頭の `VisualSnapshot` 由来でなければならず（#673 決定 4: テーマ値は
+/// 1 フレーム 1 回）、`width` は view が main へ適用するのと**同一フレームの同一値**でなければ
+/// ならない（両窓の唯一の size writer が main である前提）。ゆえに内側で読み直さない。
+///
+/// **`visible_rows` の理由は上の 2 つのどちらでもない**（#1106）——**起動側のゲートと同じ
+/// 1 回の読みでなければならない**。`launcher_controller` の `activate_or_execute` /
+/// `shift_activate` が同じ値から連言④を導くので、読みが 2 つあると「表示は隠し、起動は通す」
+/// 並びが同一フレーム内に構築できる。それは #1106 が実機で測った症状そのものである。
+/// 理由を書かずに制約だけ書くと、次に読む人が上の 2 種のどちらかへ誤って分類する。
 pub(crate) struct DriveResultsInputs {
     pub(crate) plain_hidden: bool,
     pub(crate) result_count: usize,
     pub(crate) width: f64,
     pub(crate) row_height: f64,
+    pub(crate) visible_rows: FrameVisibleRows,
     /// results の下地（ネイティブ背景ブラシ）に使う背景色。**フレーム冒頭の `VisualSnapshot`
     /// 由来でなければならない**——ここで別に読むと `row_height` と別の lock になり、同じ
     /// フレームで新旧が混ざる（#673 決定 4・`row_height` と同じ理由）。
@@ -822,7 +857,9 @@ pub(crate) fn drive_results_window(
         main_visible,
         plain_hidden: i.plain_hidden,
         result_count: count,
-        max_results: max_results(app),
+        // **`view.rs` が 1 回だけ読んだ値である**（#1106）——起動側のゲートと同じ 1 回に載せる
+        // ため、ここで `max_results(app)` を読み直さない（同フィールドの doc）。
+        max_results: i.visible_rows.get(),
         row_height: i.row_height,
     }) {
         layout::ResultsPresentation::Hidden => {

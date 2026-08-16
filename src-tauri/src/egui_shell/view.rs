@@ -921,12 +921,24 @@ impl EguiView for SearchWindowView {
         // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
         // 射程が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
         // 腐る。正本は `indexing_raw` の参照そのもの（`launcher_controller.rs` の
-        // `activation_uses_the_frame_indexing_value_not_a_live_read` が、起動側で読み直しが
+        // `activation_uses_frame_values_not_live_reads` が、起動側で読み直しが
         // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
         // `indexing` 読みは用途が違い（行をクリアするか）、到達経路ごとにその時点で判断するのが
         // 正しいので live のまま残してある。
         let indexing = self.controller.indexing();
         let indexing_raw = indexing.get();
+        // **連言④（`SPEC.md`「4.5 最大列挙数」）の値もこのフレームで 1 回だけ読む**（#1106）。
+        // `indexing` と理由は同じだが機構が違う——こちらは `AtomicBool` ではなく config の
+        // live-read で、変わる契機は `config_watcher` の適用である。読みが 2 つあると
+        // 「表示は隠し、起動は通す」並びが同一フレーム内に構築できる（実機で測った症状）。
+        // **配り先は数えない**（`indexing` と同じ理由——上の行）。要点は表示側と起動側が
+        // 同じこの値を見ることであって、いま何か所へ渡っているかではない。
+        //
+        // **受容する残余**（`indexing` の (1) と同型）: 凍結ゆえ、`config_watcher` がこの
+        // フレームの途中で適用した新しい値は次フレームまで効かない（最大 1 フレーム古い）。
+        // **表示と起動が同じ値を見ること**がこの凍結の目的であり、遅れは `config-applied` の
+        // wake が起こす次フレームが回復する（`SPEC.md`「4.7 結果表示制御（2 窓構成）」の反映機構）。
+        let visible_rows = super::window_coordinator::read_visible_rows(&app);
         let is_results = self.controller.state().view_kind() == ViewKind::Results;
         let launching_now = self.controller.is_launching();
         let notice_now = self.controller.notice_message().map(|m| m.to_string());
@@ -1094,7 +1106,8 @@ impl EguiView for SearchWindowView {
         if post.enter {
             // `indexing` は上で 1 回だけ読んだ `indexing_raw` を渡す（#1077）——起動の判定と
             // 下の表示ゲートが**同一フレームで同じ値**を見ることが受け入れ条件である。
-            self.controller.on_enter(post.shift, indexing, &ctx);
+            self.controller
+                .on_enter(post.shift, indexing, visible_rows, &ctx);
         }
 
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
@@ -1169,10 +1182,12 @@ impl EguiView for SearchWindowView {
             // 「積んだ後・消費する前に総入れ替えが起きた」窓を塞げない。
             match shared.take_clicked_for(self.controller.state().rows_generation()) {
                 crate::egui_shell::ClickTake::Current(i) => {
-                    // クリックも Enter と同じ `indexing_raw` を見る（#1077）——`rows_generation` の
-                    // 照合は「行が差し替わったか」だけを見ており、**その行が画面に出ているか**は
-                    // 見ない。判定は `activate_or_execute` の中の表示ゲートが持つ。
-                    self.controller.activate_or_execute(i, indexing, &ctx)
+                    // クリックも Enter と同じ `indexing` / `visible_rows` を見る（#1077 / #1106）
+                    // ——`rows_generation` の照合は「行が差し替わったか」だけを見ており、
+                    // **その行が画面に出ているか**は見ない。判定は `activate_or_execute` の中の
+                    // 2 つの表示ゲート（連言③と④）が持つ。
+                    self.controller
+                        .activate_or_execute(i, indexing, visible_rows, &ctx)
                 }
                 // 破棄は目に見えず手で再現もできないので観測点を残す。**診断用であって
                 // 不変条件の担保ではない**（担保は search_state / results_view のユニットテスト）。
@@ -1283,6 +1298,8 @@ impl EguiView for SearchWindowView {
                 result_count: self.controller.state().results().len(),
                 width,
                 row_height: metrics.row_height,
+                // 起動の入口へ配ったのと**同じ 1 回の読み**である（#1106・同フィールドの doc）
+                visible_rows,
                 // `row_height` と同じフレーム冒頭の snapshot から取る（別 lock にしない）
                 background: visual.background,
             },
@@ -1319,10 +1336,42 @@ mod tests {
     ///
     /// **残る死角**: 母集団はこのファイルのソーステキストだけである。読みを別のヘルパーへ
     /// 移すと母集団の外になる。
-    /// **母集団は production 側だけである**——この検査自身がソース中に読みの形を書くため、
-    /// ファイル全体を数えると自分を勘定に入れて必ず 2 になる（実測して気づいた）。
     #[test]
     fn indexing_is_read_exactly_once_per_frame() {
+        assert_read_once_in_production(
+            ".controller.indexing()",
+            "1 回だけ読み、FrameIndexing のまま配ること（#752 F2 / #1077）",
+        );
+    }
+
+    /// 連言④の値（`visible_rows`）をこのファイルが読むのは**フレームで 1 回だけ**である
+    /// ことを固定する（#1106）。上の `indexing` の検査と**別に置く**——射程が違うものを
+    /// 1 つの名前へ束ねると、名前と実体がずれる。
+    ///
+    /// **こちらは唯一性が構造でも支えられている**——`window_coordinator::drive_results_window`
+    /// の内側にあった直読み（`max_results(app)`）を撤去し、`read_visible_rows` の呼び出し点を
+    /// このファイルの 1 か所にした。ゆえにこの検査が塞ぐのは「**view.rs の中で**もう 1 回読む」
+    /// 形だけであり、他モジュールに読みが復活する形は母集団の外である（`fn max_results` の doc が
+    /// 呼び出し点の唯一性を規範として持つ）。
+    #[test]
+    fn visible_rows_is_read_exactly_once_per_frame() {
+        assert_read_once_in_production(
+            "read_visible_rows(",
+            "1 回だけ読み、FrameVisibleRows のまま表示側と起動側の両方へ配ること（#1106）",
+        );
+    }
+
+    /// 上の 2 検査が共有する骨格——production 側で `needle` がちょうど 1 回現れることを測る。
+    ///
+    /// **母集団の切り出しをここ 1 か所へ閉じるのが要点である。** `split_once` の形と
+    /// 「母集団が空でない」のカナリアを検査ごとに書き写すと、**片方だけ壊れても両方が緑で
+    /// 通りうる**——母集団を持つ検査は広すぎる方向で沈黙する（#1077 サイクルで実測し、
+    /// `docs/development-principles.md`「検証の層と、層と層の隙間」へ括り付けた形）。
+    ///
+    /// **母集団を production 側に限るのは意図である**——呼び出し側の検査は `needle` の
+    /// リテラルを自分のソースへ書くため、ファイル全体を数えると自分を勘定に入れて必ず 2 になる
+    /// （実測して気づいた）。
+    fn assert_read_once_in_production(needle: &str, lost: &str) {
         let src = include_str!("view.rs");
         let (production, _) = src
             .split_once("#[cfg(test)]")
@@ -1332,11 +1381,10 @@ mod tests {
             production.contains("fn update("),
             "母集団が update() を含まない——切り出しがずれた"
         );
-        let reads = production.matches(".controller.indexing()").count();
+        let reads = production.matches(needle).count();
         assert_eq!(
             reads, 1,
-            "view.rs が `indexing` を {reads} 回読んでいる。1 回だけ読み、\
-             FrameIndexing のまま配ること（#752 F2 / #1077）"
+            "view.rs が `{needle}` を {reads} 回書いている。{lost}"
         );
     }
 

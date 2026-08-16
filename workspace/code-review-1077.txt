@@ -1,0 +1,449 @@
+# code-review #1077 — chore/indexing-enter-gate-1077
+
+レビュア: code-reviewer サブエージェント / 2026-08-16
+対象: git diff main...HEAD（workspace/ 配下を除く 8 ファイル）
+既実施として申し送りのあった検査（カテゴリ A/F・race/state/symmetric/dry）は再実行していない。
+ただし AC5（変異注入で検知器が落ちること）だけは自分で測り直した（下記 V5）。
+
+## 結論
+
+Critical: 0 件 / High: 0 件 / Medium: 3 件 / Low: 4 件 / 確信の持てない所見（⚠️）: 2 件
+実装の正しさ（ガードの位置・引数の対応・起動の入口の網羅）に欠陥は見つからなかった。
+Medium はすべて SPEC.md の文言と、#1077 の射程外にある同族の欠陥 1 件である。
+
+## 検証できたこと（肯定の記録）
+
+V1. plain_results_hidden の引数の対応は 3 呼び出し点すべてで正しい。
+    - view.rs:1122 表示ゲート = (controller.state().view_kind(), controller.instant_rows_query().is_some(), indexing_raw)
+    - launcher_controller.rs:557 activate_or_execute = (self.state.view_kind(), self.instant_rows_query.is_some(), indexing.get())
+    - launcher_controller.rs:586 shift_activate = 同上
+    3 者は同じフィールド・同じ順序を渡しており、第 3 引数はいずれも view.rs:928 の 1 回読みに由来する。
+
+V2. 起動の入口はガードの後ろに全数がある（LSP の findReferences ではなく grep で再確認）。
+    start_launch の呼び出しは activate:249 / execute_instant_selected:517 / execute_tool_selected:639 の 3 つ。
+    その 3 つを呼ぶのは activate_or_execute:565/567/569 だけ。SearchState::enter_tool の production 呼び出しは
+    shift_activate:611 だけ。ゆえに 2 か所のガードで起動の入口を覆えている。
+
+V3. スラッシュコマンド（/s /q）は影響を受けない。execute_slash の dispatch 点は on_input_changed:1346 で
+    あって Enter ではない。ガードは Enter・クリック・Shift+Enter の経路にしか無いので /s /q は構築中も従来どおり。
+
+V4. instant 行・folder ビュー・tool ビューの起動は構造的に阻害されない（AC6）。
+    plain_results_hidden = indexing && view_kind==Results && !instant_rows。folder/tool は第 2 連言で偽、
+    instant 行は第 3 連言で偽になる。
+
+V5. AC5（検知器が変異で落ちること）を独立に測り直した。実ソースを読んで method_body の切り出しを
+    node で再現し、次を実測した:
+    - 切り出しの健全性: on_enter=41 行 / activate_or_execute=36 行 / shift_activate=48 行、母集団カナリアは 3 本とも真
+    - 変異 1（activate_or_execute のガードを削る）: ゲートの出現が 2 → 1 になり、activate_or_execute の母集団から
+      plain_results_hidden( が消える一方 shift_activate 側は残る（＝アンカーの取り違えが無い）
+    - 変異 2（on_enter の indexing.get() を self.indexing() へ戻す）: on_enter の母集団に self.indexing() が現れる
+    - view.rs の production 側（最初の #[cfg(test)] より前）の .controller.indexing() は 1 件、fn update( を含む
+    ゆえに検知器 3 本はいずれも「沈黙する検知器」ではない。
+
+V6. 性能は厳密に安くなっている。view.rs は AtomicBool の読みが 1 フレームあたり 2 回から 1 回へ減り、
+    起動側に増えたのは 3 つのフィールド読みと 2 つの比較だけ（Enter/クリックのフレームのみ）。
+    ホットパス（毎フレーム描画・検索）に新しい確保もロックも入っていない。
+
+V7. 新規・変更コメントに、行をまたぐコードスパン（バッククォートの奇数個）は 0 件（差分の追加行を機械で数えた）。
+
+## 受け入れ条件（AC1〜AC9）の照合
+
+AC1 満たす — activate_or_execute:557 の early return。settled/非空でも到達前に返る。
+AC2 満たす — shift_activate:586。instant/Tool の委譲より後、folder_load_pending より前に置かれており、
+     tools >= 2 の枝（enter_tool 直呼び）も覆う。
+AC3 満たす — view.rs:1174 のクリック逆流が同じ indexing を渡し、判定は activate_or_execute の中。
+AC4 満たす — indexing の読みは view.rs:928 のただ 1 点。on_enter:1399 の flush 枝も表示ゲート:1122 も
+     その値を使う。構造は検知器 2 本（activation_uses_the_frame_indexing_value_not_a_live_read /
+     indexing_is_read_exactly_once_per_frame）が固定し、V5 で発火を実測した。
+AC5 満たす — V5。
+AC6 満たす — V4。
+AC7 満たす — run_search_with:808 が instant_rows_query を None に落とし、Instant 枝（:875）だけが立て直す。
+     Command 枝（:878）は None のままなので /r 履歴行の plain_results_hidden は indexing と同値になる。
+     文言についてのみ W1 を参照。
+AC8 満たす — on_nav_keys は差分に無い（git diff で確認）。
+AC9 未達（現時点では未達で正しい） — gh pr list --head chore/indexing-enter-gate-1077 は空で PR が未作成。
+     PR 作成時に plan.md フェーズ 0 の測定表（hide の 1.404 秒後に egui_launch）を本文へ入れること。
+
+## 申し送りとの食い違い（1 件・情報）
+
+ブリーフは「SPEC.md §4.7 に足した 1 行と §8.6 の遷移ルール要約に足した 1 行」と書いているが、
+差分の SPEC.md の変更は §4.7（:204）の 1 行だけで、§8.6 には 1 行も足されていない。
+これは plan.md「SPEC.md・関連文書の更新要否」の決定（§8.6 へ書けば写しになるので §4.7 だけにする）と
+一致しており、差分の側が正しい。存在しない行をレビューしたことにしないため明記する。
+
+## Medium
+
+### M1. SPEC.md §4.7 の新しい 1 行が自己矛盾している（SPEC.md:204）
+
+根本原因: 「Enter・Shift+Enter・クリックは、起動もツール選択への遷移も行わない」と書いた直後に
+「止めるのは不可逆な起動だけであり」と書いている。ツール選択への遷移は Escape で戻れる可逆な操作
+（shift_activate:611 の enter_tool → on_escape_pressed で復帰）であり、後半の文が前半の文を否定する。
+実装コメント側の「不可逆な起動だけを止める」は「行データを消さない」という意味であって
+「可逆な操作は止めない」ではない。SPEC へ写す途中で射程が変わった。
+
+修正例（1 語だけ変える）:
+  止めるのは操作だけであり、行データと選択は消さない。構築が終われば……
+
+この所見を偽にする手順: shift_activate の tools >= 2 枝で入ったツール選択ビューから Escape で
+戻れないことを示す（on_escape_pressed の EscapeOutcome を読む）。戻れないなら不可逆であり矛盾は消える。
+
+### M2. SPEC.md の「構築が終われば同じ行がそのまま使える」が実装より強い（SPEC.md:204）
+
+根本原因: index build の完了は consume_external_pending（launcher_controller.rs:1076）の
+needs_index_refresh で検知され、その場で run_search() が走る。Plain 枝は新しい索引に対する検索を
+worker へ投げ、結果が届いた時点で set_results が行を差し替える（run_search_with:830-846）。
+ゆえに構築後に残るのは「同じ行」ではなく「作り直された行」で、内容は変わりうるし選択は clamp される。
+保証できるのは「構築中の Enter が行を壊さない・構築後にもう一度操作できる」までである。
+
+修正例:
+  構築が終われば行は作り直され、そのまま操作を続けられる
+
+この所見を偽にする手順: needs_index_refresh が真になったフレームで run_search が呼ばれないこと、
+または Plain 枝が set_results を通らずに前の行を恒久的に保つことを示す。
+
+### M3. 同じ欠陥が表示ゲートの連言④に残っている（#1077 の射程外・follow-up issue 相当）
+
+この差分がそろえたのは present_results の連言③（plain_hidden）だけである。連言④
+（desired_height > 0）を偽にできる入力 visible_rows = 0 は config.toml の手編集で到達可能で
+（effective_visible_rows に clamp が無い・snotra-core/src/config.rs:364、layout.rs:751 の
+テストコメント自身も「到達可能」と記す）、そのとき:
+  - present_results は Hidden を返す（results 窓は出ない）
+  - state.results() は非空のまま（件数の上限は result_limit であって visible_rows ではない）
+  - view.rs:1129 の show_results は真なので snapshot には行が載る
+  - Enter は plain_results_hidden が偽ゆえ通り、画面に 1 行も出ていない行を起動する
+つまり #1077 が閉じたのと同じ族の欠陥が、別の連言から入る経路として残っている。
+
+これは #1077 の受け入れ条件の外であり、この PR で直すべきとは考えない。SPEC.md:204 の主語も
+「この規則で隠れている行」＝ indexing の表示ゲートに限定されているので、SPEC の記述は今のところ正しい。
+follow-up issue として記録することを薦める（連言①は「hidden 中は update() が走らない」、
+連言②は on_enter:1414 の !results().is_empty() と activate:235 / shift_activate:600 の
+results().get(index) が起動側の対応物になっており、対応物が無いのは④だけである）。
+
+この所見を偽にする手順: visible_rows = 0 の config で行を出し（state.results() 非空）Enter を押して
+egui_launch が trace に出ないことを実機で測る。出なければ別のどこかが止めている。
+
+## Low
+
+### L1. 件数・全称で書いた doc が 3 か所（機構が守っていない主張）
+
+- layout.rs:390 「この述語の全消費者（表示ゲートと起動ガード）へ配る」
+- window_coordinator.rs:97 「構築子は [read_indexing] ただ 1 つである」
+- search_state.rs:722 「消費者は表示と起動の 2 つである」
+
+根本原因: どれも現在の件数の記述であって不変条件ではない。消費者を足しても検知器は落ちない
+（activation_entry_points_consult_the_display_gate が見るのはアンカー 2 つの本体だけ）。
+FrameIndexing( も window_coordinator.rs の中でなら何度でも書けてコンパイルは通る。
+AGENTS.md「検証の作法」の「数え上げも全称と同じ強さである」に当たる。
+
+修正例: 件数ではなく機構を指す。window_coordinator の主張は「window_coordinator の外からは
+構築できない（フィールドが private）」と書けば、それはコンパイラが実際に守っている強い主張になる。
+消費者側は「消費者の正本は plain_results_hidden の findReferences」と書く。
+
+この所見を偽にする手順: window_coordinator.rs へ 2 つ目の FrameIndexing( を書いてコンパイルが
+落ちることを示す（落ちないなら件数は機構が守っていない）。
+
+### L2. view.rs の残余(2)が run_search_with の live-read の呼び出し元を 1 つしか挙げていない（view.rs:1118-1121）
+
+run_search_with は poll_search_debounce（view.rs:1089・凍結の後）だけでなく on_input_changed
+（view.rs:874・凍結の前）からも来る。後者の live-read は凍結値より古いだけなので害は無く
+（帰結は「行が空で何も起きない」に吸収される）、結論は変わらない。名指しが 1 経路だけなのが問題。
+
+修正例: 呼び出し元を数えず「run_search_with の読みは live のまま」とだけ書く。
+この所見を偽にする手順: on_input_changed:874 が run_search_with を呼ばないことを示す。
+
+### L3. FrameIndexing::get() の命名（window_coordinator.rs:99）
+
+呼び出し点は plain_results_hidden(view_kind, instant, indexing.get()) の形になる。is_indexing() に
+すれば引数位置で意味が読める。Copy newtype ゆえ費用は同じ。改名するなら検知器の文字列も追随が要る。
+
+### L4. PartialEq / Eq の derive が未使用（window_coordinator.rs:92）
+
+現時点で FrameIndexing を比較する呼び出し点は無い。害は無いので「消せ」ではなく記録のみ。
+
+## ⚠️ 確信の持てない所見
+
+### W1. 「通常結果」が /r 履歴行を含むと読めるか（SPEC.md:204）
+
+実装は計画どおりで、疑っているのは文言だけである。QueryIntent::Command（/r）の行は
+run_search_with:878 で set_results されるが instant_rows_query は :808 の None のままなので
+plain_results_hidden が真になり、構築中は表示も起動も止まる。表示側は以前からそう振る舞っており、
+この差分は起動側をそれへ合わせただけである（AC7 の意図どおり）。
+⚠️ なのは、履歴の起動が索引に依存しないため、読者が「通常結果」に §15.2 の履歴行を含めないと
+読みうる点。含むことを 1 語で示すか、含まないなら実装の方を carve-out する判断が要る。
+この所見を偽にする手順: run_search_with の Command 枝が instant_rows_query を Some にすることを
+示す（実測では None のまま）。
+
+### W2. flush 枝が instant_rows_query をクリアしない（到達可能性は未確立・差分由来ではない）
+
+on_enter:1408 の flush は set_results で行を差し替えるが self.instant_rows_query はクリアしない。
+仮に「行は instant 由来・現クエリの interp は Plain・leading 未発火」の状態を構成できると、
+flush 後の plain 行へ instant 経路（execute_instant_selected）が当たる。新ガードはこの状態で
+発火しない（instant_rows が真ゆえ）。
+ただし到達性は測っていない: Plain 入力は on_input_changed で leading 発火時に run_search_with:808 が
+instant_rows_query = None を置くため、leading 未発火のまま Enter に至る並びを構成できるかが未確認。
+また構築中は flush が searched=None → 空行 → 何も起きないので、#1077 の射程では無害である。
+この所見を偽にする手順: should_flush_on_enter が真かつ instant_rows_query.is_some() の状態を
+ユニットテストで構成しようとし、構成できないことを示す。
+
+## 検知器についての注記（欠陥ではない・死角の確認）
+
+3 本の検知器の死角は doc に書かれているとおりだが、次の 2 点は明示されていないので記録する。
+- activation_entry_points_consult_the_display_gate は「本体に plain_results_hidden( の文字列が在る」
+  ことしか見ない。否定を付ける・条件の内側へ入れるといった変異は通る。
+- indexing_is_read_exactly_once_per_frame の母集団は .controller.indexing() という綴りだけである。
+  view.rs から window_coordinator::read_indexing(&app) を直接呼ぶ書き方（read_indexing は pub(super)）は
+  数えられない。現時点でその呼び出し点は無い（grep 実測）。
+いずれも #1077 の受け入れ条件を損なわない。
+
+
+========================================================================
+# 2 巡目（fix-forward の検算 + 是正差分の周辺）
+========================================================================
+
+対象 HEAD: 2b376425（1 巡目の対象は d4124eb9。以降 600d4182 / 49ccf0d2 / 2b376425 の 3 コミットが増えた）
+
+## プロセス上の注意（所見ではない）
+
+レビュー中にブランチが動いた。2 巡目の開始時に取った git diff は 49ccf0d2 の内容で、
+その後 2b376425（SPEC の 2 行を弱める是正）が着地している。
+下記はすべて 2b376425 を対象に取り直した結果である。
+
+## 1 巡目の指摘の解消（検算）
+
+M1 解消 — SPEC.md:204 は「止めるのは操作だけで、行データと選択は消さない」へ。
+   ツール選択への入場を止めることと矛盾しなくなった。新しい誤りは入っていない。
+
+M2 解消 — 2b376425 後の最終形「構築が完了すれば通常どおり操作できる——行はそのとき取り直されるので、
+   隠れていた行がそのまま戻るとは限らない」は実装と一致する。49ccf0d2 の中間形
+   （「新しい索引で作り直され」）は、空クエリでは行がクリアされるだけ・Tool ビューでは §18.5 で
+   no-op という 2 経路を覆えていなかったが、最終形は「取り直される」という弱い言い方に落ちており
+   それらを偽にしない。逆向きに強くなってもいない。
+
+L1 解消（3 か所とも。いずれもコンパイラが実際に守る主張になった）
+   - layout.rs 「この型は window_coordinator の外では構築できない」
+   - window_coordinator.rs 「フィールドが private なので、このモジュールの外ではこの型を構築できない」
+   - search_state.rs 「表示だけでなく起動もこの述語で決める」（件数が消えた）
+
+L2 解消 — view.rs の残余(2) から呼び出し元の名指しが消え「到達経路は数えない——凍結より前に走るものも
+   後に走るものも在り」へ。実装（on_input_changed が前・poll_search_debounce が後）とも一致する。
+
+L4 解消 — #[derive(Debug, Clone, Copy)]。比較を要する呼び出し点が無いことは cargo test で接地した。
+
+L3 却下 — 反論しない。受け手が indexing / indexing_now と名付けられている以上 indexing.is_indexing() は
+   重言であり、改名は検知器の文字列にも波及する。費用に見合わない。判断に同意する。
+
+W1 却下 — 反論しない。SPEC.md:204 の「この規則で」が §4.7 の直前行（:203 の「通常結果ビュー」）を
+   指し戻しており、射程の継承は成立する。1 巡目の ⚠️ は記述の真偽ではなく読みやすさの懸念だった。
+
+## W2（flush 枝の stale instant_rows_query）— 測れた。到達不能。保留を取り下げる
+
+should_flush_on_enter = Results ∧ is_plain ∧ unsettled（search_state.rs:663）、
+is_unsettled = armed ∨ pending_seq != 0 ∨ restored_rows_stale（search_state.rs:642）。
+3 つの disjunct すべてについて instant_rows_query.is_some() と同時に成立しないことを追えた。
+
+- armed: Instant 枝は search_debounce.cancel() で disarm する。armed へ戻す唯一の経路は
+  on_input_changed の Plain 枝の on_input() で、production の Debouncer は 2 か所とも leading = true
+  （launcher_controller.rs:147 / :1040）。ゆえに disarm 直後の on_input() は必ず true を返して
+  run_search_with が走り、その最初の文（:808）が instant_rows_query = None を置く
+- pending_seq != 0: 立てるのは run_search_with の Plain 枝の issue_search だけで、これも :808 の後ろ。
+  Instant 枝の set_results → put_rows が in-flight を失効させることは search_state.rs:662 の doc が明記
+- restored_rows_stale: folder 往復でしか立たない（#1079）。instant 行は run_search_with:869 で
+  is_folder: false を固定して作られるため、instant 行から folder へ突入する経路が無い
+
+この所見を偽にする手順: production の Debouncer を leading = false で作る、または instant 行に
+is_folder: true を持たせる。どちらも現行コードには無い。
+
+## 2 巡目の新規発見（是正差分の周辺・1 巡目の母集団外）
+
+### High — H1. SPEC.md §8.6 の新しい 1 行が事実に反する（SPEC.md:560）
+
+該当箇所（末尾の括弧内）:
+  /o /s /q は完全一致した時点で Enter を経ずに実行される〔§15.1〕ためこのゲートを通らず、
+  /s は構築中も打てる
+
+前半は正しい（execute_slash の dispatch 点は on_input_changed であって Enter ではない。1 巡目 V3 で確認済み）。
+誤っているのは末尾の「/s は構築中も打てる」である。
+
+根拠（一次証拠）:
+- /s は設定ではなく索引の再構築である。search_state.rs:find_slash_command は
+  /r=History, /o=OpenSettings, /s=RebuildIndex, /q=Quit を返す
+- /s → commands::rebuild_index → ensure_not_indexing（src-tauri/src/commands/system.rs:12-30）で
+  構築中は Err(ERR_INDEXING_IN_PROGRESS)。しかも execute_slash は「indexing 中の Err は意図的無音」と
+  書いて trace だけ残す。つまり構築中の /s は無音の no-op である
+- /o も同じ定数で弾かれる（commands/window.rs:open_settings:180）
+- ユニットテスト ensure_not_indexing_rejects_while_indexing_in_progress が既にこの事実を固定している
+- 同じ §8.6 の 3 行上に「/o 実行時に indexing == true の場合、設定オープンは no-op」がある。
+  そこへ /o /s /q を 1 列に並べたうえで /s だけを「構築中も打てる」と書くと、読者は
+  「/o は駄目だが /s は通る」と読む。実際は両方 no-op で、構築中に完全に働くのは /q だけである
+  （/r は実行されるが、注入した履歴行は §4.7 のゲートで隠れ、本 PR 以降は起動もできない）
+
+根本原因: §4.7 のゲートの射程（Enter を経る起動）と、各コマンドが個別に持つ indexing ガードは
+別の機構なのに、1 文で「このゲートを通らない ＝ 構築中も効く」と繋いだ。
+
+修正例:
+  （規則の正本は §4.7。/o /s /q は完全一致した時点で Enter を経ずに実行される〔§15.1〕ため
+  このゲートを通らない——構築中に効くかは各コマンド側の indexing ガードが別に決める。
+  /o と /s は ERR_INDEXING_IN_PROGRESS で無音の no-op である）
+
+この所見を偽にする手順: 構築中に /s を打って start_index_build が走る（＝再構築が始まる）ことを
+実機の trace で示す。ensure_not_indexing が Err を返す限り走らない。
+
+補足（同じ行の別論点・修正時に一緒に見るとよい）: 括弧内の /o /s /q は散文の数え上げである。
+コマンド集合の正本は §15.2 なので、増減したときにこの行だけが腐る。
+
+### Medium — M4. ADR に M1 の是正が届いていない（docs/adr/ADR-activation-gate-placement.md:16）
+
+「決定」節に「止めるのは不可逆な起動だけである。」が残っている。これは M1 で SPEC.md から
+消した当の文言であり、同じ ADR の §6（「§8.6 の図が Shift+Enter [tools >= 2] を持ち、この変更は
+その文書化された遷移にガードを足す」）が可逆な遷移を止めることを前提に書かれているので、
+ADR の内部でも整合しない。
+
+根本原因: ADR は 600d4182、是正は 49ccf0d2 と別コミットで、是正の母集団に同じ PR で新設した ADR が
+入っていなかった。AGENTS.md「文書に事実の写しを増やす変更」が言う「取りこぼすのは写しを直す当の
+コミット」そのものである。
+
+ただし .claude/rules/governance-docs.md（ADR-adr-frozen-history）は ADR を凍結された歴史とするので、
+腐るに任せる判断もありうる。それでもこれは腐った参照ではなく、同じ PR の中で誤りと判定済みの記述で
+あるため、直すのが筋だと考える。修正例: SPEC と同じ「止めるのは操作だけで、行データと選択は消さない」。
+
+この所見を偽にする手順: shift_activate の tools >= 2 枝で入ったツール選択ビューから Escape で
+戻れないことを示す（戻れるなら可逆であり、「不可逆な起動だけ」は当該 ADR の決定内容と食い違う）。
+
+### Low — L5. ADR:15 に L1 で消した数え上げが残っている（同ファイル）
+
+「FrameIndexing（window_coordinator.rs・フィールド private・構築子は read_indexing ただ 1 つ）」。
+L1 で 3 ファイルから外した表現で、M4 と同じ母集団の取りこぼしである。ADR 凍結の慣行に照らせば
+許容範囲なので Low。直すなら「フィールド private ゆえモジュール外では構築不能」。
+
+### Low — L6. ADR:54 の「§8.6 へは参照の 1 行だけを足した（写しを置かない）」が実物とずれる
+
+実際に足した行（SPEC.md:560）は参照に加えて「インデックス構築中に隠れている通常結果からは入場しない」
+という規則の要約と、§4.7 に無いスラッシュコマンドについての新しい主張（H1 の当該箇所）を含む。
+「参照の 1 行だけ」は実物より弱い記述である。H1 を直すと自然に近づく。
+
+### ⚠️ W3（確信は低い）— window_coordinator.rs:124「FrameIndexing はこの返り値としてしか外へ出ない」
+
+値の出所としては真である（すべての FrameIndexing は read_indexing の返り値に由来する）。ただし
+型が外へ出る経路としては LauncherController::indexing() -> FrameIndexing もあるため、読者が
+「型の露出は 1 か所」と読むとずれる。「この型の値は必ずこの関数の返り値に由来する」と書けば曖昧さが消える。
+前の版（「作れる唯一の場所」）より弱くなっているので実害は無く、⚠️ 止まり。
+この所見を偽にする手順: LauncherController::indexing() の返り値型が FrameIndexing でないことを示す。
+
+## 2 巡目の接地（このセッションで自分が走らせたもの）
+
+- cargo test -p snotra — 275 passed / 0 failed（derive 削除後もビルドは緑。検知器 3 本も現ソースに対して通る）
+- npm run governance:check — 全検査 passed（19 件。新設 ADR は G-adr-file-names と ADR 短縮引用 254 件の照合を通過）
+- 1 巡目 M3（visible_rows = 0 で連言④が偽になる同族欠陥）は本 PR の射程外という判断に同意する。
+  issue 化の際は「連言①②には起動側の対応物が在り、対応物が無いのは④だけである」を本文へ入れると
+  母集団が閉じる。
+
+## 2 巡目・送付前の自己訂正 2 件（上記本文を上書きする）
+
+### 訂正 1 — H1 の「無音の no-op」は言い過ぎだった。実際はもっと悪い
+
+execute_slash（launcher_controller.rs:439）はどのコマンドでも先に clear_search() を呼び
+（:429-433: クエリ空・行クリア・debounce cancel・instant_rows_query クリア）、RebuildIndex 枝は
+その後 emit_hide() を撃ってから rebuild_index を呼ぶ。ゆえに構築中の /s は:
+  - 副作用（クエリのクリア・行のクリア・ウィンドウの hide）は成功時とまったく同じに走る
+  - 拒否されるのは再構築の起動だけで、trace 以外に痕跡が残らない
+つまりユーザーからは成功と区別が付かない。「no-op」ではなく「見た目は成功、再構築だけ始まらない」が正しい。
+これは H1 を弱めるのではなく強める——SPEC の「/s は構築中も打てる」は、まさにこの
+「打てたように見えるが効かない」挙動を「効く」と読ませる。
+
+H1 の修正例（差し替え）:
+  /o と /s は ERR_INDEXING_IN_PROGRESS で拒否される（クエリのクリアと hide は走るため、
+  見た目は成功時と区別が付かない）
+この所見を偽にする手順は変更なし: 構築中に /s を打って start_index_build が走ることを trace で示す。
+
+### 訂正 2 — W2「到達不能」に未検証の前提が 1 つ残っていたので、埋めた
+
+2 巡目本文の disjunct 3 の議論は「instant 行から folder へ突入できない」しか押さえておらず、
+逆順（folder 往復で restored_rows_stale を立てる → その後 instant 入力で instant_rows_query を立てる
+→ prefix hot-change で interp が Plain になる〔#637 の想定シナリオ〕）を潰していなかった。
+
+埋めた: SearchState::put_rows（search_state.rs:272-280）は :279 で restored_rows_stale = false を置く。
+Instant 枝の set_results は put_rows を通るので、instant_rows_query を Some にするその同じ操作が
+restored_rows_stale を必ず落とす。ゆえに逆順も成立せず、W2 は到達不能のままである。
+
+この所見を偽にする手順（更新）: put_rows を通らずに instant_rows_query を Some にする経路、
+または put_rows の後に restored_rows_stale を立て直す経路（現在は on_escape の folder 枝:511 だけで、
+そこは instant 行を作らない）を示す。
+
+
+========================================================================
+# 3 巡目（2 巡目の指摘への是正の検算）
+========================================================================
+
+対象: 作業ツリー（HEAD は 2b376425 のまま・SPEC.md / ADR / window_coordinator.rs の 3 ファイルが未コミット）
+
+## 解消の検算 — H1 / M4 / L5 / L6 / W3 の 5 件すべて解消
+
+H1 解消 — SPEC.md:560 から「/s は構築中も打てる」が消えた。新しい文は次の 3 点に分かれており、
+   いずれも実装と一致する:
+   - 「スラッシュコマンドはこのゲートを通らない——完全一致した時点で Enter を経ずに実行される」
+     → execute_slash の dispatch 点は on_input_changed:1346（1 巡目 V3 で確認済み）
+   - 「設定オープンも索引再構築も同じ ERR_INDEXING_IN_PROGRESS で拒否される」
+     → commands/window.rs:180（open_settings）と commands/system.rs:12-30（ensure_not_indexing）
+   - 「拒否されてもクエリのクリアは走り、索引再構築ではさらに非表示も走る」
+     → execute_slash:445 の clear_search() が全コマンド共通、emit_hide() は RebuildIndex 枝だけ。
+       この非対称の書き分けは正確である
+   さらに /s /o というリテラルを「索引再構築」「設定オープン」へ置き換えたことで、
+   /s を設定と読み違える余地そのものが消えた。
+
+M4 解消 — ADR:16 が「止めるのは操作だけである。行データと選択は消さず、フォルダ展開も止めない」へ。
+   SPEC.md:204 と同じ言い方になり、ADR §6 が前提とする「可逆な遷移も止める」と矛盾しなくなった。
+
+L5 解消 — ADR:15 が「フィールドが private ゆえそのモジュールの外では構築できない」へ。数え上げが消えた。
+
+L6 解消 — ADR:54 が「規則の本体を書かず、§4.7 を指す形に留めた（写しを置かない。同じ行に、Enter を
+   経ないスラッシュコマンドがこのゲートを通らないことと、構築中に効くかは各コマンド側の indexing
+   ガードが別に決めることを併記する）」へ。実物（SPEC.md:560）の内容と一致する。
+
+W3 解消 — window_coordinator.rs:124 が「FrameIndexing の値は必ずこの関数の返り値に由来する」へ。
+   型の露出と値の出所を混同する余地が消えた。
+
+## 3 巡目の新規発見（H1 の是正が持ち込んだもの）
+
+### Medium — M5. SPEC.md:560 の「見た目は成功時と区別が付かない」が設定オープンには当たらない
+
+該当箇所: 「拒否されてもクエリのクリアは走り、索引再構築ではさらに非表示も走るので、
+見た目は成功時と区別が付かない（意図的無音・#434）」
+
+索引再構築（/s）については正しい——成功でも拒否でも clear_search + emit_hide が走り、窓が消える。
+しかし設定オープン（/o）は区別が付く:
+- EGUI_HIDE_REQUESTED を emit するのは launcher_controller.rs:216 の emit_hide ただ 1 つで、
+  スラッシュコマンドの中でそれを呼ぶのは RebuildIndex 枝だけである（grep 実測）
+- launch_settings_process（commands/window.rs:36-）は主窓を隠さない。always_on_top を一時解除するだけ
+- ゆえに /o 成功時は設定ウィンドウが現れ、拒否時は現れない。主窓はどちらでも可視のまま残る
+- さらに execute_slash の OpenSettings 枝のコメント自身が「クエリクリア後は検索バーの indexing hint が
+  可視＝degraded な理由提示」と書いており、実装は「区別が付く」ことを意図している。
+  SPEC の新しい文はその意図と食い違う
+
+根本原因: H1 の是正で 2 コマンドを 1 文へまとめた結果、索引再構築にだけ当たる帰結が
+両方に掛かる形になった。修正は指摘箇所へ注意が集中して周辺に新しい誤りを生む、の実例である。
+
+修正例:
+  拒否されてもクエリのクリアは走る。索引再構築ではさらに非表示も走るため、見た目は成功時と
+  区別が付かない。設定オープンでは設定ウィンドウが現れないことと status 行の構築中案内が
+  唯一の手がかりになる（意図的無音・#434）
+
+この所見を偽にする手順: 構築中でない状態で /o を打ち、設定ウィンドウが現れないことを示す
+（現れるなら成功と拒否は区別が付く）。あるいは OpenSettings 枝が emit_hide を呼ぶことを示す。
+
+### ⚠️ W4（確信は低い）— 「スラッシュコマンドはこのゲートを通らない」と /r の関係
+
+命題はコマンドの実行について真である（/r も Enter を経ずに処理される）。ただし /r が注入する
+履歴行は instant_rows_query = None のまま Results ビューに載るため、行そのものは §4.7 のゲートの
+対象であり、本 PR 以降は起動もできない（AC7 の意図どおり）。「コマンドの実行はゲートを通らないが、
+/r が出した行はゲートの対象である」を読み手が取り違えないか、という懸念に留まる。
+1 巡目 W1（却下済み）と同じ論点の裏面なので、却下でも整合する。
+この所見を偽にする手順: run_search_with の Command 枝が instant_rows_query を Some にすることを示す。
+
+## 3 巡目の接地
+
+- cargo test -p snotra — 275 passed / 0 failed
+- cargo doc --workspace --no-deps — exit 0（window_coordinator.rs の doc を変えたため。
+  intra-doc link は PostToolUse hook が見ない・.claude/rules/comments.md）
+- npm run governance:check — 全検査 passed（19 件。SPEC と ADR を変えたため再実行）
+- 3 ファイルとも未コミットである（git status で M）。コミットが要る。
+

@@ -121,7 +121,7 @@ impl FrameIndexing {
 /// 毎フレーム側は `launcher_controller::LauncherController::indexing` がこの実装へ委譲する
 /// （両者がバイト単位で同一実装を独立に持っていた重複の解消・レビュー是正 3）。
 ///
-/// **[`FrameIndexing`] はこの返り値としてしか外へ出ない**（#1077）——型がその証拠を担う。
+/// **[`FrameIndexing`] の値は必ずこの関数の返り値に由来する**（#1077）——型がその証拠を担う。
 pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
     FrameIndexing(
         app.try_state::<crate::AppState>()

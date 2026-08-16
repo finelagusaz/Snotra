@@ -718,7 +718,12 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
 /// instant/folder/tool は表示継続、データと選択は保持する（クリアしない・選択リセットしない）。
 /// `instant_rows` は表示中行の来歴 snapshot（`instant_rows_query.is_some()`）——live interp でなく
 /// 来歴で判定するのは prefix hot-change の stale 行対策（#637 finding 0）と同じ理由。
-/// driver（view.rs）は Task 4 で表示分岐に組み込む（#532 SU6 Task 1）。
+///
+/// **消費者は表示と起動の 2 つである**（#1077）。`view.rs` の表示ゲート（`present_results` の
+/// 連言③）と、`launcher_controller.rs` の `activate_or_execute` / `shift_activate` の起動ガードが
+/// **同じ述語を共有する**——別式を書けば「画面に出ていない行を Enter が起動する」が再び生まれる
+/// （2026-08-16 に実機再現済み）。**行を消すのはこの述語の仕事ではない**: §4.7 は
+/// 「データと選択は保持——クリアしない」と定めており、起動側は不可逆な起動だけを止める。
 pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: bool) -> bool {
     indexing && matches!(view_kind, ViewKind::Results) && !instant_rows
 }
@@ -1829,6 +1834,11 @@ mod tests {
         assert_eq!(s.view_kind(), ViewKind::Folder);
     }
 
+    /// **この表は表示と起動の両方を決める**（#1077）。`view.rs` の表示ゲートに加えて
+    /// `launcher_controller.rs` の `activate_or_execute` / `shift_activate` が同じ述語を呼ぶため、
+    /// ここで偽になる組（instant 行・folder・tool・非 indexing）は**起動できることの固定**でもある。
+    /// 呼び出し点が在ることは `launcher_controller.rs` の
+    /// `activation_entry_points_consult_the_display_gate` が別に測る——この表だけでは測れない。
     #[test]
     fn plain_results_hidden_only_for_plain_results_view() {
         // §4.7: indexing 中は plain results のみ隠す（SolidJS shouldShowResults 鏡写し）

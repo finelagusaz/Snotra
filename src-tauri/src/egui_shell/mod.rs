@@ -78,7 +78,9 @@ pub(crate) use search_state::{
 // SlashCmd/find_slash_command は launcher_controller.rs が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
 pub(crate) use search_state::{SlashCmd, find_slash_command};
 // needs_index_refresh は launcher_controller.rs（世代検知 → 再検索）が、plain_results_hidden は
-// view.rs（表示ゲート）が消費する（#532 SU6 Task 1・#666 段 3 で消費者が割れた）。
+// view.rs（表示ゲート）と launcher_controller.rs（起動ガード・#1077）が消費する
+// （#532 SU6 Task 1・#666 段 3 で消費者が割れた）。**表示と起動が同じ述語を通ることが
+// #1077 の受け入れ条件そのものである**——同義の別式を足さないこと。
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
 // launcher_controller.rs が検索 debounce（leading + trailing）で消費する。
 pub(crate) use layout::Debouncer;

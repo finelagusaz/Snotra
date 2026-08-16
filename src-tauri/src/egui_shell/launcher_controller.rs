@@ -37,7 +37,7 @@ use tauri::{Emitter, Manager};
 
 use crate::egui_shell::{
     Debouncer, EscapeOutcome, QueryIntent, SearchState, SlashCmd, ViewKind, compute_parent_dir,
-    find_slash_command, folder_load_pending,
+    find_slash_command, folder_load_pending, plain_results_hidden,
 };
 
 /// ナビゲーションスレッド → driver のメッセージ（#532 SU3 M2）。token（= folder_gen）で
@@ -531,6 +531,26 @@ impl LauncherController {
     /// 使わない・ui ルール踏襲）。tool ビュー中は Shift の有無に依らず `execute_tool_selected` へ
     /// 振る（`shift_activate` が Tool ビューではここへ委譲するため到達点が一致する）。
     pub(super) fn activate_or_execute(&mut self, index: usize, ctx: &egui::Context) {
+        // §4.7 の表示ゲートで隠れている行は起動しない（#1077）。index 再構築中の通常結果は
+        // results 窓から消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
+        // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 枝を
+        // 通らず、**画面に 1 行も出ていないまま古い行を起動する**（2026-08-16 に実機再現）。
+        // #1072 が塞いだのは同じ族の unsettled 側の切片だけだった。
+        //
+        // **判定は表示側と同じ述語を使う**——別式を書けば真実が 2 つになり、片方だけ変わる
+        // 将来が生まれる。ゲートが真になるのは `Results ∧ !instant_rows` のときだけなので、
+        // 下の tool / instant の枝は構造的に阻害されない（§19.7 の carve-out は不変）。
+        //
+        // **止めるのは不可逆な起動だけである**——行を消さないのは `folder_load_pending` と
+        // 同じ方針で、前フレーム結果の保持は意図的設計ゆえ温存する。→ / ← のフォルダ突入も
+        // 止めない（`on_nav_keys`。突入すれば Folder ビューになり行は可視へ戻る）。
+        if plain_results_hidden(
+            self.state.view_kind(),
+            self.instant_rows_query.is_some(),
+            self.indexing(),
+        ) {
+            return;
+        }
         if self.state.view_kind() == ViewKind::Tool {
             self.execute_tool_selected(index, ctx); // §18.4 Enter/クリック＝選択ツールで起動
         } else if let Some(iq) = self.instant_rows_query.clone() {
@@ -547,6 +567,17 @@ impl LauncherController {
         if self.instant_rows_query.is_some() || self.state.view_kind() == ViewKind::Tool {
             // instant 行は §19.6「Shift+Enter=Enter」。tool ビュー中の Shift+Enter も Enter と同一。
             self.activate_or_execute(index, ctx);
+            return;
+        }
+        // §4.7 の表示ゲート（#1077）。**`activate_or_execute` の同じガードでは覆えない**——
+        // `tools >= 2` の枝はそちらを通らず `SearchState::enter_tool` を直接呼ぶ。ツール選択への
+        // 入場も、ユーザーが見ていない行を対象に始まる点で起動と同じ性質を持つ。理由の全文は
+        // `activate_or_execute` のガードのコメントが正本である。
+        if plain_results_hidden(
+            self.state.view_kind(),
+            self.instant_rows_query.is_some(),
+            self.indexing(),
+        ) {
             return;
         }
         if folder_load_pending(
@@ -1358,6 +1389,58 @@ impl LauncherController {
             } else {
                 self.activate_or_execute(self.state.selected(), ctx);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// 起動の入口が §4.7 の表示ゲートを見ていることを、**ソーステキストで**固定する（#1077）。
+    ///
+    /// **述語のテストでは呼び出し点の脱落を捕まえられない。** `plain_results_hidden` 自身は
+    /// [`crate::egui_shell::search_state`] の `mod tests` が固定しているが、それは
+    /// 「述語がどんな値を返すか」しか測らず、**入口がその述語を呼んでいるか**は測らない。
+    /// この型にはテスト席が無い——本ファイルに `mod tests` が無かったのは
+    /// [`LauncherController`] の構築が `AppHandle` と engine lock を要求するためで、
+    /// **ソーステキスト検査はそのどちらも要らない**（`indexing.rs` の
+    /// `start_index_build_invalidates_the_icon_cache` と同じ形）。
+    ///
+    /// **これが落ちたとき失うもの**: index 再構築中は §4.7 の表示ゲートが通常結果を隠すが、
+    /// 行データは保持される（「データと選択は保持——クリアしない」）。入口がゲートを見なくなると、
+    /// **画面に 1 行も出ていない状態の Enter / クリック / Shift+Enter が古い行を起動する**。
+    /// 2026-08-16 に実機で再現済みで、行は正しく出るため挙動テストでは捕まらない。
+    ///
+    /// **残る死角**: 母集団は当該メソッドのソーステキストだけであり、呼び出しグラフは辿らない。
+    /// ゲートをこのメソッドの外のヘルパーへ移すと、母集団の外なので捕まらない。
+    #[test]
+    fn activation_entry_points_consult_the_display_gate() {
+        let src = include_str!("launcher_controller.rs");
+        // (アンカー, 母集団が空でないことを示す目印)
+        let targets = [
+            ("fn activate_or_execute(", "execute_tool_selected("),
+            ("fn shift_activate(", "folder_load_pending("),
+        ];
+        for (anchor, canary) in targets {
+            let after = src
+                .split_once(anchor)
+                .unwrap_or_else(|| panic!("{anchor} が見つからない（改名したらこの検査も直す）"))
+                .1;
+            // メソッドの終端は 4 スペース字下げの閉じ括弧。内側のブロックはより深いので当たらない。
+            let body = match after.find("\n    }\n") {
+                Some(idx) => &after[..idx],
+                None => after,
+            };
+            // **母集団が黙って空にならないことを、まずそれ自体で確かめる。**
+            assert!(
+                body.contains(canary),
+                "母集団が {anchor} の本体を含まない——終端の切り出しがずれた。\
+                 沈黙する検知器は検知器ではない"
+            );
+            assert!(
+                body.contains("plain_results_hidden("),
+                "{anchor} が §4.7 の表示ゲートを見ていない——画面に出ていない行を\
+                 Enter / クリック / Shift+Enter が起動する（#1077 で実機再現済み）"
+            );
         }
     }
 }

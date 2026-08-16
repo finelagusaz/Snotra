@@ -123,22 +123,32 @@ SolidJS 非 parity・instant carve-out 破壊・bool エッジのパルス見逃
 
 ### フェーズ 1 — 起動ガード（事実 3 を閉じる）
 
-- [ ] `activate_or_execute` 冒頭に `plain_results_hidden(self.state.view_kind(), self.instant_rows_query.is_some(), self.indexing())` の early return を足す
-- [ ] `shift_activate` の `folder_load_pending` チェックの隣に同じガードを足す
-- [ ] 両方の doc に**理由**を書く（`folder_load_pending` の doc と同じ形式——「行は残っているが画面に出ていない」「不可逆な起動だけを止める」）
-- [ ] **`on_enter` の flush 枝は 1 行も変えない。** 冒頭での早期 return も採らない——unsettled な Enter が行を
+- [x] `activate_or_execute` 冒頭に `plain_results_hidden(self.state.view_kind(), self.instant_rows_query.is_some(), self.indexing())` の early return を足す
+- [x] `shift_activate` の `folder_load_pending` チェックの隣に同じガードを足す
+- [x] 両方の doc に**理由**を書く（`folder_load_pending` の doc と同じ形式——「行は残っているが画面に出ていない」「不可逆な起動だけを止める」）
+- [x] **`on_enter` の flush 枝は 1 行も変えない。** 冒頭での早期 return も採らない——unsettled な Enter が行を
       クリアするのは #1072 の意図した処置であり、settled な Enter が行を保つのは §4.7「データと選択は保持」と
       整合する。ガードは**起動だけ**を止める
-- [ ] 呼び出し元の列挙を **LSP の findReferences** で取り直す（`activate_or_execute` / `shift_activate` /
-      `enter_tool` / クリック逆流）——独立導出レビューは LSP を持たない環境で走り `git grep` に落ちていた
-- [ ] `search_state.rs` の `mod tests` に、`plain_results_hidden` が真になる 1 組と偽になる各組を
-      **起動ガードの視点で**固定するテストを足す（既存 `plain_results_hidden_only_for_plain_results_view` は表示側の名前ゆえ別に置く）
-- [ ] **呼び出し点の検知器**を `launcher_controller.rs` の新規 `#[cfg(test)] mod` へ足す
-      （`indexing.rs:201` `start_index_build_invalidates_the_icon_cache` の形・自己参照 `include_str!`）:
-      `activate` / `shift_activate` の本体を切り出し（切り出しの錨は `fn activate(` と `fn shift_activate(`。
-      **`fn activate_or_execute(` とは衝突しない**——`(` が直後に続く形で切るため）、
-      **2 つとも母集団が空でないことを先に assert してから** `plain_results_hidden(` の実在を assert する
-- [ ] **変異注入**: ガード 1 行を削って `cargo test -p snotra` が exit 101 になることを実測し、結果を本ファイルへ記録する（AC5）
+- [x] 呼び出し元の列挙を **LSP の findReferences** で取り直した（独立導出レビューは LSP を持たない環境で
+      走り `git grep` に落ちていた）。結果——`activate_or_execute` は **4 呼び出し点**（`view.rs:1146` の
+      クリック逆流、`shift_activate` の instant/tool 委譲と `tools <= 1` 委譲、`on_enter`）、
+      `shift_activate` は **1 呼び出し点**（`on_enter`）、`SearchState::enter_tool` は
+      **production では `shift_activate` の `tools >= 2` 枝ただ 1 つ**（残り 11 件は `search_state.rs` の
+      `mod tests`）。**2 か所のガードで起動の入口を覆えている**ことが LSP で確認できた（grep と一致）
+- [x] ~~`search_state.rs` の `mod tests` へ起動ガード視点のテストを足す~~ → **足さない方へ変えた**（実装中の判断）。
+      既存 `plain_results_hidden_only_for_plain_results_view` が 5 行で真理値表を**網羅している**
+      （真 1 組・偽 4 組）ため、同じ表をもう 1 本書けば写しになる（`AGENTS.md`「文書に事実の写しを増やす変更」）。
+      代わりに**同テストの doc へ「この表は表示と起動の両方を決める」ことと、呼び出し点は別の検査が測ることを書いた**。
+      AC7（Command 行）も述語の入力は `instant_rows=false` で第 1 行と同一ゆえ、新しい組は存在しない
+- [x] **呼び出し点の検知器**を `launcher_controller.rs` の新規 `#[cfg(test)] mod` へ足した
+      （`indexing.rs` `start_index_build_invalidates_the_icon_cache` の形・自己参照 `include_str!`）。
+      アンカーは `fn activate_or_execute(` と `fn shift_activate(`（**置き場所の変更に伴い `fn activate(` から変更**）、
+      終端は 4 スペース字下げの `\n    }\n`、母集団カナリアは `execute_tool_selected(` と `folder_load_pending(`
+- [x] **変異注入（AC5）** — TDD の Red がそのまま変異の実測になった。**2 つのアンカーそれぞれで独立に観測した**:
+      (1) 両方のガードが無い状態 → `cargo test -p snotra` が **exit 101**・
+      `fn activate_or_execute( が §4.7 の表示ゲートを見ていない` で失敗（**母集団カナリアは通過**＝切り出しは正しく、
+      沈黙ではなく検知）。(2) `activate_or_execute` だけ足した状態 → 同じく **exit 101**・
+      `fn shift_activate( が …` で失敗。両方足して Green（272 → 273 passed）
 
 ### フェーズ 2 — フレーム内で 1 つの `indexing`（AC4）
 

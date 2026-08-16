@@ -1523,21 +1523,23 @@ mod tests {
         }
     }
 
-    /// Enter の判定と表示ゲートが**同一フレームの同じ `indexing` の値**を見ることを固定する（#1077）。
+    /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
     ///
-    /// `AppState.indexing` は `AtomicBool` の live-read で、**同一フレーム内でも変わりうる**。
-    /// 起動の入口が自分で読み直すと、`view.rs` が表示ゲートへ渡す値と食い違いうる——
-    /// 「画面には出ていないが Enter は起動する」あるいはその逆が構築可能になる。
-    /// 値は `view.rs` が status 行のために 1 回だけ読み、[`FrameIndexing`] として配る。
+    /// 対象は表示ゲートの入力 2 つである。`AppState.indexing` は `AtomicBool` の live-read で
+    /// **同一フレーム内でも変わりうる**。`visible_rows` は config の live-read で、
+    /// `config_watcher` の適用が同じフレームへ割り込みうる。**どちらも、起動の入口が自分で
+    /// 読み直すと `view.rs` が表示ゲートへ渡す値と食い違う**——「画面には出ていないが Enter は
+    /// 起動する」あるいはその逆が構築可能になる。値は `view.rs` が 1 回だけ読み、
+    /// [`FrameIndexing`] / [`FrameVisibleRows`] として配る。
     ///
-    /// **測れるのは構造だけである。** この型にはテスト席が無く、食い違いの発生は
+    /// **測れるのは構造だけである。** どちらの型にもテスト席が無く、食い違いの発生は
     /// タイミング依存ゆえ決定的に再現できない。ゆえに「渡された値を使っていること」を
-    /// ソーステキストで固定する——`self.indexing()` が本体に無いことがその形である。
+    /// ソーステキストで固定する——読み直しの形が本体に無いことがその形である。
     ///
     /// **`run_search_with` は対象外である**（意図的）。あちらの読みは用途が違い
     /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。
     #[test]
-    fn activation_uses_the_frame_indexing_value_not_a_live_read() {
+    fn activation_uses_frame_values_not_live_reads() {
         let src = include_str!("launcher_controller.rs");
         let targets = [
             ("fn on_enter(", "should_flush_on_enter("),
@@ -1551,6 +1553,19 @@ mod tests {
                 "{anchor} が `indexing` を自分で読み直している——`view.rs` が表示ゲートへ渡す値と\
                  同一フレーム内で食い違いうる（#1077）。引数で受けた FrameIndexing を使うこと"
             );
+            // 連言④も同じ形で守る（#1106）。**構築子が private なので偽の値は作れない**——
+            // 残る一手が「本物をもう 1 回読む」ことであり、それをここで塞ぐ。読み直す形は
+            // `read_visible_rows` の直呼びと、`read_config` から `effective_visible_rows` を
+            // 引く形の 2 つである（後者は `lang()` が同じ関数を正当に使うので、母集団を
+            // 起動の入口に限っているこの検査でしか禁止にできない）。
+            for forbidden in ["read_visible_rows(", "read_config("] {
+                assert!(
+                    !body.contains(forbidden),
+                    "{anchor} が `{forbidden}` で `visible_rows` を読み直しうる——`view.rs` が\
+                     表示ゲートへ渡す値と同一フレーム内で食い違いうる（#1106）。\
+                     引数で受けた FrameVisibleRows を使うこと"
+                );
+            }
         }
     }
 
@@ -1569,6 +1584,12 @@ mod tests {
     /// **画面に 1 行も出ていない状態の Enter / クリック / Shift+Enter が古い行を起動する**。
     /// 2026-08-16 に実機で再現済みで、行は正しく出るため挙動テストでは捕まらない。
     ///
+    /// **見るべきゲートは 2 つあり、独立である**（#1106 で④を足した）。③（`plain_results_hidden`）は
+    /// index 再構築中の Results ビューの通常結果だけを隠すが、④（`results_area_collapsed`）は
+    /// 最大表示件数そのものが 0 なので tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**が
+    /// 1 行も出ない。**片方を見ているだけでは足りない**——④の症状も 2026-08-16 に実機で再現した
+    /// （`visible_rows = 0` で `egui_results:show` が 0 件のまま `egui_launch` が出た）。
+    ///
     /// **残る死角**: 母集団は当該メソッドのソーステキストだけであり、呼び出しグラフは辿らない。
     /// ゲートをこのメソッドの外のヘルパーへ移すと、母集団の外なので捕まらない。
     #[test]
@@ -1583,8 +1604,14 @@ mod tests {
             let body = method_body(src, anchor, canary);
             assert!(
                 body.contains("plain_results_hidden("),
-                "{anchor} が §4.7 の表示ゲートを見ていない——画面に出ていない行を\
-                 Enter / クリック / Shift+Enter が起動する（#1077 で実機再現済み）"
+                "{anchor} が §4.7 の表示ゲート（連言③）を見ていない——index 再構築中に\
+                 画面から消えた行を Enter / クリック / Shift+Enter が起動する（#1077 で実機再現済み）"
+            );
+            assert!(
+                body.contains("results_area_collapsed("),
+                "{anchor} が §4.5 の表示ゲート（連言④）を見ていない——最大表示件数が 0 で\
+                 1 行も描かれていない状態を Enter / クリック / Shift+Enter が起動する\
+                 （#1106 で実機再現済み）"
             );
         }
     }

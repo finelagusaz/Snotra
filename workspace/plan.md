@@ -169,13 +169,23 @@ tool ビュー・instant 行・folder 展開の行も同時に見えなくなる
 
 ### フェーズ 4 — 検知器
 
-- [ ] `activation_entry_points_consult_the_display_gate` の母集団（`activate_or_execute` / `shift_activate`）へ
+- [x] `activation_entry_points_consult_the_display_gate` の母集団（`activate_or_execute` / `shift_activate`）へ
       `results_area_collapsed(` の要求を足す
-- [ ] `activation_uses_the_frame_indexing_value_not_a_live_read` と同型で、起動の入口が `visible_rows` を
+- [x] `activation_uses_the_frame_indexing_value_not_a_live_read` と同型で、起動の入口が `visible_rows` を
       自分で読み直していないこと（`read_config(` が本体に無いこと）を足す
-- [ ] `view.rs` の `indexing_is_read_exactly_once_per_frame` と同型で、`visible_rows` の読みが 1 回だけであることを固定する
-- [ ] **上記 3 本それぞれについて、呼び忘れ・読み直しを再現する変異を入れて実際に落ちることを確かめ、戻す**
-      （AGENTS.md「`Option` / フラグ / enum variant …」行）
+- [x] `view.rs` の `indexing_is_read_exactly_once_per_frame` と同型で、`visible_rows` の読みが 1 回だけであることを固定する
+- [x] **上記 3 本それぞれについて、呼び忘れ・読み直しを再現する変異を入れて実際に落ちることを確かめ、戻す**
+      （AGENTS.md「`Option` / フラグ / enum variant …」行）。**3 本とも実測で落ちた**:
+      (1) ゲートを `let _ = visible_rows;` へ置換 → `activation_entry_points_consult_the_display_gate`
+      （277 passed / 1 failed）、(2) 引数を無視して `read_visible_rows` を直呼び →
+      `activation_uses_frame_values_not_live_reads`、(3) driver 側でもう 1 回読む →
+      `visible_rows_is_read_exactly_once_per_frame`。いずれも戻したうえで `MUTATION` の残留 0 件を grep で確認
+- [x] **検査 1 本を改名した**: `activation_uses_the_frame_indexing_value_not_a_live_read` →
+      `activation_uses_frame_values_not_live_reads`（射程が `indexing` の 1 値から 2 値へ広がったため。
+      参照は `view.rs` のコメント 1 か所だけで、同じ差分で直した——`grep` で外部参照を確認済み）。
+      **`view.rs` の `indexing_is_read_exactly_once_per_frame` は改名しなかった**——
+      `ADR-activation-gate-placement` 却下 5 が名前で参照しており、ADR は凍結された歴史ゆえ直せない。
+      連言④は別テスト `visible_rows_is_read_exactly_once_per_frame` として分けた
 
 ### フェーズ 5 — 検証
 

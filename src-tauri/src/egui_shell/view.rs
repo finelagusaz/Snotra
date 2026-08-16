@@ -921,7 +921,7 @@ impl EguiView for SearchWindowView {
         // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
         // 射程が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
         // 腐る。正本は `indexing_raw` の参照そのもの（`launcher_controller.rs` の
-        // `activation_uses_the_frame_indexing_value_not_a_live_read` が、起動側で読み直しが
+        // `activation_uses_frame_values_not_live_reads` が、起動側で読み直しが
         // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
         // `indexing` 読みは用途が違い（行をクリアするか）、到達経路ごとにその時点で判断するのが
         // 正しいので live のまま残してある。
@@ -1349,6 +1349,36 @@ mod tests {
             reads, 1,
             "view.rs が `indexing` を {reads} 回読んでいる。1 回だけ読み、\
              FrameIndexing のまま配ること（#752 F2 / #1077）"
+        );
+    }
+
+    /// 連言④の値（`visible_rows`）をこのファイルが読むのは**フレームで 1 回だけ**である
+    /// ことを固定する（#1106）。上の `indexing` の検査と**別に置く**——射程が違うものを
+    /// 1 つの名前へ束ねると、名前と実体がずれる。
+    ///
+    /// **こちらは唯一性が構造でも支えられている**——`window_coordinator::drive_results_window`
+    /// の内側にあった直読み（`max_results(app)`）を撤去し、`read_visible_rows` の呼び出し点を
+    /// このファイルの 1 か所にした。ゆえにこの検査が塞ぐのは「**view.rs の中で**もう 1 回読む」
+    /// 形だけであり、他モジュールに読みが復活する形は母集団の外である（`fn max_results` の doc が
+    /// 呼び出し点の唯一性を規範として持つ）。
+    ///
+    /// **母集団は production 側だけである**（上の検査と同じ理由——この検査自身が読みの形を
+    /// ソース中に書くため、ファイル全体を数えると自分を勘定に入れる）。
+    #[test]
+    fn visible_rows_is_read_exactly_once_per_frame() {
+        let src = include_str!("view.rs");
+        let (production, _) = src
+            .split_once("#[cfg(test)]")
+            .expect("view.rs に #[cfg(test)] が無い——母集団の切り出しがずれた");
+        assert!(
+            production.contains("fn update("),
+            "母集団が update() を含まない——切り出しがずれた"
+        );
+        let reads = production.matches("read_visible_rows(").count();
+        assert_eq!(
+            reads, 1,
+            "view.rs が `visible_rows` を {reads} 回読んでいる。1 回だけ読み、\
+             FrameVisibleRows のまま表示側と起動側の両方へ配ること（#1106）"
         );
     }
 

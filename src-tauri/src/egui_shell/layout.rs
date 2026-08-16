@@ -140,26 +140,29 @@ pub fn main_window_height(
 ///
 /// **これは論理 px であり、これだけでは足りない。** 物理 px へ落とす段で切り捨てが起きると
 /// 最終行が再び切れる——変換は `results_height_phys` が担う（同関数の doc）。
-/// 連言④（`SPEC.md`「4.5 最大列挙数」）が偽になる条件——`results` が行を描く高さを持たないか。
-///
-/// **起動側のゲートもこの述語を見る**（#1106）。中身は `results_window_height` が `0.0` を返す
-/// 条件そのもので、同関数がこれを呼ぶ——**判定が 1 つしかないので、片方だけ変わる将来が無い**。
-/// #1077 が連言③で「表示側と同じ述語を呼ぶ（同義の別式を作らない）」としたのと同じ形である。
-///
-/// **`row_height` を引数に持たない。** production で `results_window_height` の第 2 引数へ届く値は
-/// `Metrics::row_height` だけであり、そこには下限 24.0 の床がある（`metrics_row_floor_is_24`）。
-/// ゆえに高さが `0.0` になるのは `max_results == 0` のときに限られる。**この同値は
-/// `results_area_collapsed_matches_the_zero_height_contract` が測る**。
-pub fn results_area_collapsed(max_results: u32) -> bool {
-    max_results == 0
-}
-
 pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
     if results_area_collapsed(max_results) {
         return 0.0; // hide の契約値。**丸めより前に返す**（`ceil` 側も 0 を保つ）
     }
     let drawn_row = f64::from((row_height as f32).round_ui());
     f64::from(max_results) * drawn_row
+}
+
+/// 連言④（`SPEC.md`「4.5 最大列挙数」）が偽になる条件——`results` が行を描く高さを持たないか。
+///
+/// **起動側のゲートもこの述語を見る**（#1106）。中身は [`results_window_height`] が `0.0`
+/// （= hide の契約値。正本は同関数の doc）を返す条件そのもので、同関数がこれを呼ぶ
+/// ——**判定が 1 つしかないので、片方だけ変わる将来が無い**。#1077 が連言③で「表示側と
+/// 同じ述語を呼ぶ（同義の別式を作らない）」としたのと同じ形である。
+///
+/// **`row_height` を引数に持たない。** [`results_window_height`] の第 2 引数へ production で
+/// 届く値は `Metrics::row_height` だけであり、そこには下限 24.0 の床がある。**この 2 つは
+/// 測られ方が違う**——床は `metrics_row_floor_is_24` が測るが、**「届く値がそれだけである」
+/// のは規範であって、どのテストも測っていない**（`ResultsInputs` を組み立てる箇所を増やせば
+/// 破れる）。同値そのものは `results_area_collapsed_matches_the_zero_height_contract` が
+/// 代表的な行高について測る。
+pub fn results_area_collapsed(max_results: u32) -> bool {
+    max_results == 0
 }
 
 /// `icon_prefetch_range` が可視ぶんの上下へ何画面ぶん先読みするか。
@@ -365,6 +368,10 @@ pub struct ResultsInputs {
     /// 連言④を②から独立させる唯一の入力（`appearance.effective_visible_rows()`）。
     /// **0 は到達可能である**——本体の config 適用経路は `Config::validate()` を通らず、
     /// 設定 UI の `1..=50` clamp は `config.toml` の手編集を止めない。
+    ///
+    /// **`plain_hidden` / `result_count` と同じく読み点の制約を持つ**（#1106）——ただし理由は
+    /// フレーム内の前後ではなく、**起動側のゲートと同じ 1 回の読みでなければならない**こと
+    /// である（`window_coordinator::DriveResultsInputs` の同名フィールドの doc が正本）。
     pub max_results: u32,
     pub row_height: f64,
 }

@@ -931,8 +931,8 @@ impl EguiView for SearchWindowView {
         // `indexing` と理由は同じだが機構が違う——こちらは `AtomicBool` ではなく config の
         // live-read で、変わる契機は `config_watcher` の適用である。読みが 2 つあると
         // 「表示は隠し、起動は通す」並びが同一フレーム内に構築できる（実機で測った症状）。
-        // 配り先は results の driver（`DriveResultsInputs`）と起動の入口（`on_enter` /
-        // クリック逆流）で、**どちらも同じこの値を見る**。
+        // **配り先は数えない**（`indexing` と同じ理由——上の行）。要点は表示側と起動側が
+        // 同じこの値を見ることであって、いま何か所へ渡っているかではない。
         //
         // **受容する残余**（`indexing` の (1) と同型）: 凍結ゆえ、`config_watcher` がこの
         // フレームの途中で適用した新しい値は次フレームまで効かない（最大 1 フレーム古い）。

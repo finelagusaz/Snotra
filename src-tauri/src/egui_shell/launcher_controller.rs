@@ -1561,9 +1561,11 @@ mod tests {
             for forbidden in ["read_visible_rows(", "read_config("] {
                 assert!(
                     !body.contains(forbidden),
-                    "{anchor} が `{forbidden}` で `visible_rows` を読み直しうる——`view.rs` が\
-                     表示ゲートへ渡す値と同一フレーム内で食い違いうる（#1106）。\
-                     引数で受けた FrameVisibleRows を使うこと"
+                    "{anchor} が `{forbidden}` を呼んでいる——**起動の入口での config 読みは\
+                     `visible_rows` の読み直しと区別できない**（無関係な読みでもここは落ちる。\
+                     それでよい: 読み直しなら `view.rs` が表示ゲートへ渡す値と同一フレーム内で\
+                     食い違い、#1106 の症状が再発する）。連言④は引数で受けた FrameVisibleRows で\
+                     判定し、他の config 値が要るならこの入口の外で読むこと"
                 );
             }
         }

@@ -189,16 +189,33 @@ tool ビュー・instant 行・folder 展開の行も同時に見えなくなる
 
 ### フェーズ 5 — 検証
 
-- [ ] `/race-check` を実行する（**計画段階では起動しない設計ゆえここへ置く**・#784）。該当トリガーは
+- [x] `/race-check` を実行する（**計画段階では起動しない設計ゆえここへ置く**・#784）。該当トリガーは
       「フレーム内 live-read を追加/変更」——`visible_rows` の読み点を driver から view.rs へ移す
-- [ ] `/dry-check` を実行する（該当トリガーは「関数・型を新規定義」——`results_area_collapsed` /
+- [x] `/dry-check` を実行する（該当トリガーは「関数・型を新規定義」——`results_area_collapsed` /
       `FrameVisibleRows` / `read_visible_rows`）
-- [ ] `docs/build-commands.md`「変更後の検証チェックリスト」カテゴリ A（fmt / clippy / test）
-- [ ] `cargo doc`（doc コメントを触るため・`.claude/rules/comments.md`）
-- [ ] カテゴリ C（`smoke:startup` / `smoke:egui`）——表示経路を触るため
-- [ ] **修正後の実機確認**: フェーズ 0（未確定 U1）と同じプロファイルで、`egui_launch` が**出ないこと**を測る
+- [x] `docs/build-commands.md`「変更後の検証チェックリスト」カテゴリ A（fmt / clippy / test）
+- [x] `cargo doc`（doc コメントを触るため・`.claude/rules/comments.md`）
+- [x] カテゴリ C（`smoke:startup` / `smoke:egui`）——表示経路を触るため
+- [x] **修正後の実機確認**: フェーズ 0（未確定 U1）と同じプロファイルで、`egui_launch` が**出ないこと**を測る
       （trace の不在で書く。`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）
-- [ ] `visible_rows = 8` のプロファイルで通常の起動が**変わらず動く**ことを測る（受け入れ条件 4 の接地）
+- [x] `visible_rows = 8` のプロファイルで通常の起動が**変わらず動く**ことを測る（受け入れ条件 4 の接地）
+
+#### 検証フェーズの実測
+
+| 検査 | 結果 |
+|---|---|
+| カテゴリ A（fmt / check / clippy / `cargo test -p snotra`） | 緑（278 passed / 0 failed / 4 ignored） |
+| `cargo doc --workspace --no-deps --document-private-items` | 緑（intra-doc link 切れなし） |
+| カテゴリ C（`npm test` / `test:powershell` / `smoke:startup` / `smoke:egui`） | 緑（Vitest 721・Pester 128・startup 5 run・egui は **results show/hide も観測**） |
+| `/race-check`（`npm run race:boundaries -- --base main`） | 種別①〜⑧すべて 0 件。ただし 0 件は「この手がかりで見つからなかった」であって「無い」ではないので、`visible_rows` の凍結を境界として 5 問に当てた → **受容残余の明記漏れを 1 件発見し、`view.rs` へ追記**（凍結値は最大 1 フレーム古く、回復は `config-applied` の wake） |
+| `/dry-check` | 手書き重複なし。候補 2 件はどちらも [維持]——`snotra-core/src/search.rs:319` の `max_results == 0` は**別概念**（検索の `result_limit` 由来。「片方だけが変わる将来」＝`visible_rows = 0` でも検索は `result_limit` 件返す、が挙がる）、`results_view.rs:852,879` は kittest 内の正しい利用 |
+
+**修正前後の実機 A/B**（同一プロファイル・同一打鍵列・索引 1 件）:
+
+| | A（`visible_rows = 8`） | B（`visible_rows = 0`） |
+|---|---|---|
+| 修正前 | `egui_results:show`（rows:1）→ **`egui_launch`** | show **0 件**・窓は OS 実測でも不可視 → **`egui_launch`（欠陥）** |
+| 修正後 | `egui_results:show`（rows:1）→ **`egui_launch`**（変化なし） | show **0 件**・窓は不可視 → **`egui_launch` なし**（8.16 秒待って不成立） |
 
 ## 不変条件と異常系
 

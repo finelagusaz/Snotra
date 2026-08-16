@@ -933,6 +933,11 @@ impl EguiView for SearchWindowView {
         // 「表示は隠し、起動は通す」並びが同一フレーム内に構築できる（実機で測った症状）。
         // 配り先は results の driver（`DriveResultsInputs`）と起動の入口（`on_enter` /
         // クリック逆流）で、**どちらも同じこの値を見る**。
+        //
+        // **受容する残余**（`indexing` の (1) と同型）: 凍結ゆえ、`config_watcher` がこの
+        // フレームの途中で適用した新しい値は次フレームまで効かない（最大 1 フレーム古い）。
+        // **表示と起動が同じ値を見ること**がこの凍結の目的であり、遅れは `config-applied` の
+        // wake が起こす次フレームが回復する（`SPEC.md`「4.7 結果表示制御（2 窓構成）」の反映機構）。
         let visible_rows = crate::egui_shell::window_coordinator::read_visible_rows(&app);
         let is_results = self.controller.state().view_kind() == ViewKind::Results;
         let launching_now = self.controller.is_launching();

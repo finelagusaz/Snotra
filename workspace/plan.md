@@ -80,17 +80,46 @@ SolidJS 非 parity・instant carve-out 破壊・bool エッジのパルス見逃
 
 ### フェーズ 0 — 修正前の挙動を実機で 1 回測る（コードを 1 行も変えない）
 
-**修正が入ると測れなくなる**ため、必ずフェーズ 1 より前に行う。ユーザーの同意済み（2026-08-16）。
+**修正が入ると測れなくなる**ため、必ずフェーズ 1 より前に行う。
 
-- [ ] `%APPDATA%\Snotra\config.toml` をバックアップする（復元できることを先に確かめる）
-- [ ] `SNOTRA_TRACE` を有効にしてアプリを起動し、検索して plain 行を出す（settled にする＝打鍵後に少し待つ）
-- [ ] 別プロセスから `config.toml` の `[[paths.scan]]` を書き換えて `IndexInputs` 差分を立てる
-      （`auto_hide_on_focus_lost = false` は実値なので main は可視のまま残る）
-- [ ] results 窓が消えることを目視し、その状態で Enter を押して**起動するか**を見る
-- [ ] 観測結果（起動した / しなかった・trace の `egui_launch` の有無）を本ファイルへ記録する
-- [ ] `config.toml` を復元し、復元できたことを内容の照合で確かめる
-- [ ] **再現しなかったら実装へ進まない**——コード上の裏取り 2 系統と矛盾する。
-      行が消えている／ガードが既に効いている経路を先に特定する
+**手順を変更した（実装中の発見）。** 承認時の手順はユーザーの実 `config.toml` をバックアップして
+書き換えるものだったが、`docs/build-commands.md`「別プロファイルで起動するための env ハッチ
+（`SNOTRA_CONFIG_DIR`）」に**使い捨てプロファイルの経路**が在る。`config.toml` / `history.bin` /
+`index.bin` / `icons.bin` / `window.bin` のすべてがその 1 点から導かれるため、**実ユーザーのデータに
+一切触れずに同じ測定ができる**。測るのはコードの挙動であって特定のファイルではなく、
+`auto_hide_on_focus_lost = false` は使い捨て側にも書けるので、測定の忠実さは落ちない。
+承認された手順より**厳密に安全な側へ**寄せる変更ゆえ、再承認は求めない。
+
+- [x] 治具を作る: `C:/tmp/snotra-1077-fixture` に `.txt` を 3 枚。使い捨てプロファイルは
+      `scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile`（`auto_hide_on_focus_lost = false`・
+      初期 scan は治具ディレクトリのみ＝初回ビルドが速い）
+- [x] `Start-SnotraProcess -Trace` で起動し、`hotkey:registered` を待ってからホットキーで show、
+      クエリ `zqx` を打って plain 行を出す。**settled にする**。`egui_results:show` を確認
+- [x] 別プロセスから使い捨て `config.toml` へ `C:\Windows` の `.exe` scan を足して `IndexInputs` 差分を立てた
+- [x] `egui_results:hide` を確認し、その状態で Enter を注入して `egui_launch` が現れるかを見た
+- [x] 観測結果を記録した（下記）
+- [x] プロセスを止め、治具と使い捨てプロファイルを片付ける（実 `%APPDATA%\Snotra` は触っていない）
+- [x] **再現した**——実装へ進んでよい
+
+### 測定結果（2026-08-16・release ビルド `target/release/snotra.exe` を現行 `main` 相当で再ビルド・exit 0）
+
+再現スクリプトは `docs/build-commands.md` の `SNOTRA_CONFIG_DIR` ハッチと `SnotraSmoke.psm1` の
+公開関数だけで組んだ。trace（`SNOTRA_TRACE=1`・stderr）の抜粋:
+
+| ts_ms | 事象 | 意味 |
+|---|---|---|
+| 1786869451720 | `egui_results:show` | 行が出た |
+| 1786869452048 | `egui_search:settled` | **settled**（in-flight なし・`is_unsettled` が偽） |
+| 1786869454302 | `egui_results:hide` | config 書き換え → index 再構築開始 → §4.7 の表示ゲートで results 窓が消えた |
+| — | OS 実測 | `Wait-SnotraWindow -Title 'Snotra Results'` が不成立＝**窓は実際に不可視**（trace の presence だけに頼らない） |
+| **1786869455706** | **`egui_launch`** | **hide の 1.404 秒後、Enter が隠れたままの行を起動した** |
+| 1786869455914 | `egui_launch_done` | 起動が完了した（`egui_hide:done` が続く＝成功時の自動 hide） |
+
+**hide と launch のあいだに `egui_results:show` も `egui_input:changed` も無い**——行は隠れ続けており、
+クエリも変わっていない。**事実 3 は競合を要さずに再現する**ことが実測で確定した。
+
+**副産物**: `egui_search:settled` / `egui_frame` という trace 事象が在り、settled であることを
+外から観測できる（調査時には知らなかった）。以降の検証で使える。
 
 ### フェーズ 1 — 起動ガード（事実 3 を閉じる）
 

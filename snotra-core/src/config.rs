@@ -3218,11 +3218,30 @@ extensions = ['.exe']
 
     // -- backup_invalid: parse 失敗時の .bak 退避（issue #338） --
 
+    /// テスト用の作業ディレクトリを作り直して返す。
+    ///
+    /// 名前に `std::process::id()` を含める理由は `indexer.rs` の `temp_dir` の doc を正本とする（#978 / #985）。
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("snotra_config_test_{}", tag));
+        let dir =
+            std::env::temp_dir().join(format!("snotra_config_test_{}-{}", tag, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn temp_dir_name_contains_process_id() {
+        let dir = temp_dir("process_unique");
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("temp dir name");
+        assert_eq!(
+            name,
+            format!("snotra_config_test_process_unique-{}", std::process::id()),
+            "作業ディレクトリ名に自プロセスの pid が入っていない（#985）"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3821,8 +3840,7 @@ foo = 42
     fn dedup_load_does_not_rewrite_config_file() {
         // 決定 2 の直接検証: 重複入り TOML を load してもメモリ上のみ dedup され、
         // config.toml のバイト列は不変(ユーザーの手編集行を消さない)。
-        let dir = std::env::temp_dir().join(format!("snotra-dedup-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = temp_dir("dedup");
         let path = dir.join("config.toml");
         let toml_str = r#"
 [hotkey]

@@ -36,8 +36,9 @@ use snotra_core::ui_types::SearchResult;
 use tauri::{Emitter, Manager};
 
 use crate::egui_shell::{
-    Debouncer, EscapeOutcome, FrameIndexing, QueryIntent, SearchState, SlashCmd, ViewKind,
-    compute_parent_dir, find_slash_command, folder_load_pending, plain_results_hidden,
+    Debouncer, EscapeOutcome, FrameIndexing, FrameVisibleRows, QueryIntent, SearchState, SlashCmd,
+    ViewKind, compute_parent_dir, find_slash_command, folder_load_pending, plain_results_hidden,
+    results_area_collapsed,
 };
 
 /// ナビゲーションスレッド → driver のメッセージ（#532 SU3 M2）。token（= folder_gen）で
@@ -536,8 +537,34 @@ impl LauncherController {
         &mut self,
         index: usize,
         indexing: FrameIndexing,
+        visible_rows: FrameVisibleRows,
         ctx: &egui::Context,
     ) {
+        // §4.5 の連言④で results 窓が 1 行も描いていないなら起動しない（#1106）。
+        //
+        // **③（下の `plain_results_hidden`）とは独立した規則であり、carve-out を持たない。**
+        // ③が隠すのは Results ビューの通常結果だけだが、④は最大表示件数そのものが 0 なので
+        // tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**が 1 行も出ない
+        // （`SPEC.md`「4.5 最大列挙数」の「すべてのビューへ一様に適用される」）。ゆえに
+        // **`view_kind` による dispatch より前**に置く——下の③のガードの位置では覆えない。
+        //
+        // **判定は表示側と同じ述語である**——`results_area_collapsed` は
+        // `layout::results_window_height` が `0.0`（= hide の契約値）を返す条件そのもので、
+        // 同関数がこの述語を呼ぶ。別式を書けば表示と起動が片方だけ変わる将来が生まれる。
+        //
+        // **`visible_rows` は引数で受け取る**（`indexing` と同じ理由）——`view.rs` が 1 フレーム
+        // 1 回読んだ値をそのまま使う。自分で読み直すと、同じフレームの表示ゲートと食い違う。
+        //
+        // **止めるのは操作だけである。** 行データと選択は消さず、→ / ← のフォルダ突入も
+        // 止めない。**#1077（③）の「突入すれば行は可視へ戻る」という理由はここでは成り立たない**
+        // ——窓高は 0 のままである。それでも止めないのは、突入が**行の起動ではなく現在地の移動**
+        // であり可逆だからで、③と射程を揃えることを優先した。
+        //
+        // **詰みは作らない。** `/o`（設定を開く）は完全一致した時点で Enter を経ずに走るため
+        // （`SPEC.md`「15.1 概要」）このゲートを通らない。設定画面の `1..=50` clamp で戻せる。
+        if results_area_collapsed(visible_rows.get()) {
+            return;
+        }
         // §4.7 の表示ゲートで隠れている行は起動しない（#1077）。index 再構築中の通常結果は
         // results 窓から消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
         // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 枝を
@@ -573,10 +600,24 @@ impl LauncherController {
     /// Shift+Enter（§18.3）: 選択行の tools ≥ 2 ならツール選択メニューへ、それ以外
     /// （≤1・instant 行・tool ビュー中）は通常 Enter と同一（hide も同様）。folder ロード
     /// 未確定窓は activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
-    fn shift_activate(&mut self, index: usize, indexing: FrameIndexing, ctx: &egui::Context) {
+    fn shift_activate(
+        &mut self,
+        index: usize,
+        indexing: FrameIndexing,
+        visible_rows: FrameVisibleRows,
+        ctx: &egui::Context,
+    ) {
         if self.instant_rows_query.is_some() || self.state.view_kind() == ViewKind::Tool {
             // instant 行は §19.6「Shift+Enter=Enter」。tool ビュー中の Shift+Enter も Enter と同一。
-            self.activate_or_execute(index, indexing, ctx);
+            // **④のガードはここに要らない**——委譲先の冒頭が同じ述語を見る。
+            self.activate_or_execute(index, indexing, visible_rows, ctx);
+            return;
+        }
+        // §4.5 の連言④（#1106）。**`activate_or_execute` の同じガードでは覆えない**——
+        // `tools >= 2` の枝はそちらを通らず `SearchState::enter_tool` を直接呼ぶ（③と同じ理由）。
+        // ツール選択への入場も、1 行も出ていない行を対象に始まる点で起動と同じ性質を持つ。
+        // 理由の全文は `activate_or_execute` のガードのコメントが正本である。
+        if results_area_collapsed(visible_rows.get()) {
             return;
         }
         // §4.7 の表示ゲート（#1077）。**`activate_or_execute` の同じガードでは覆えない**——
@@ -619,7 +660,7 @@ impl LauncherController {
                 );
             }
         } else {
-            self.activate_or_execute(index, indexing, ctx); // §18.3: 1 件以下は通常 Enter と同じ動作
+            self.activate_or_execute(index, indexing, visible_rows, ctx); // §18.3: 1 件以下は通常 Enter と同じ動作
         }
     }
 
@@ -1381,6 +1422,7 @@ impl LauncherController {
         &mut self,
         shift_held: bool,
         indexing: FrameIndexing,
+        visible_rows: FrameVisibleRows,
         ctx: &egui::Context,
     ) {
         // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
@@ -1413,9 +1455,9 @@ impl LauncherController {
         }
         if !self.state.results().is_empty() {
             if shift_held {
-                self.shift_activate(self.state.selected(), indexing, ctx);
+                self.shift_activate(self.state.selected(), indexing, visible_rows, ctx);
             } else {
-                self.activate_or_execute(self.state.selected(), indexing, ctx);
+                self.activate_or_execute(self.state.selected(), indexing, visible_rows, ctx);
             }
         }
     }

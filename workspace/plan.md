@@ -141,30 +141,30 @@ tool ビュー・instant 行・folder 展開の行も同時に見えなくなる
 コンパイルエラーになり、`on_enter` のシグネチャ変更は `view.rs` の呼び出しと同時でなければ通らない。
 
 `window_coordinator.rs`:
-- [ ] `FrameVisibleRows`（private フィールド・`Copy`・`get()`）と唯一の構築点 `read_visible_rows` を
+- [x] `FrameVisibleRows`（private フィールド・`Copy`・`get()`）と唯一の構築点 `read_visible_rows` を
       `FrameIndexing` / `read_indexing` の隣へ置く
-- [ ] `DriveResultsInputs` に `max_results: u32` を足し、`drive_results_window` 内の `max_results(app)` 呼び出しを撤去
-- [ ] `fn max_results` の doc（#749「読み点の制約を持たない」）と `DriveResultsInputs` の doc を、
+- [x] `DriveResultsInputs` に `max_results: u32` を足し、`drive_results_window` 内の `max_results(app)` 呼び出しを撤去
+- [x] `fn max_results` の doc（#749「読み点の制約を持たない」）と `DriveResultsInputs` の doc を、
       制約が生まれたことへ改める。**制約の理由を名指すこと**——`DriveResultsInputs` の doc が既に語る
       2 種（`width` は main へ適用するのと同一フレームの同一値・`row_height` は `VisualSnapshot` 由来）の
       **どちらでもない第三の理由**である: **起動側のゲートと同じ 1 回の読みでなければ #1106 の症状が再発する**。
       理由を書かずに制約だけ書くと、次に読む人が既存 2 種のどちらかへ誤って分類する（#749 / #752 F2 で
       繰り返した欠陥クラス）
-- [ ] `mod.rs` の re-export を `FrameIndexing` と同じ形で足す
+- [x] `mod.rs` の re-export を `FrameIndexing` と同じ形で足す
 
 `view.rs`:
-- [ ] `update()` の冒頭（`indexing` の読みの隣・`:928` 付近）で `read_visible_rows` を 1 回呼ぶ
-- [ ] `on_enter`（`:1097`）・クリック逆流（`:1175`）へ渡す
-- [ ] `DriveResultsInputs` の構築（`:1285` 付近）へ同じ値を載せる
+- [x] `update()` の冒頭（`indexing` の読みの隣・`:928` 付近）で `read_visible_rows` を 1 回呼ぶ
+- [x] `on_enter`（`:1097`）・クリック逆流（`:1175`）へ渡す
+- [x] `DriveResultsInputs` の構築（`:1285` 付近）へ同じ値を載せる
 
 `launcher_controller.rs`:
-- [ ] `on_enter` / `activate_or_execute` / `shift_activate` のシグネチャへ `FrameVisibleRows` を足す
-- [ ] `activate_or_execute` の**冒頭**（`plain_results_hidden` の手前・`view_kind` の dispatch より前）へ
+- [x] `on_enter` / `activate_or_execute` / `shift_activate` のシグネチャへ `FrameVisibleRows` を足す
+- [x] `activate_or_execute` の**冒頭**（`plain_results_hidden` の手前・`view_kind` の dispatch より前）へ
       `if results_area_collapsed(visible_rows.get()) { return; }`
-- [ ] `shift_activate` へ同じゲート。**位置は既存の `plain_results_hidden` ガードの直前**
+- [x] `shift_activate` へ同じゲート。**位置は既存の `plain_results_hidden` ガードの直前**
       （instant / Tool ビューを `activate_or_execute` へ委譲する冒頭の分岐より**後**でよい——
       委譲先の冒頭ゲートが効くため。`folder_load_pending` より前）
-- [ ] 両方の doc に、③との射程の違い（carve-out が無い）と D5（→ / ← を止めない理由）、
+- [x] 両方の doc に、③との射程の違い（carve-out が無い）と D5（→ / ← を止めない理由）、
       および**復帰経路**（`/o` は Enter を経ないためこのゲートを通らない）を書く
 
 ### フェーズ 4 — 検知器

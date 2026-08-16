@@ -82,10 +82,20 @@ pub(crate) use search_state::{SlashCmd, find_slash_command};
 // （#532 SU6 Task 1・#666 段 3 で消費者が割れた）。**表示と起動が同じ述語を通ることが
 // #1077 の受け入れ条件そのものである**——同義の別式を足さないこと。
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
+// 連言④も同じ理由で表示側と起動側が共有する（#1106）。③（`plain_results_hidden`）とは
+// **独立した規則**で、carve-out を持たない——③は Results ビューの通常結果だけを隠すが、
+// ④は tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**を隠す（`SPEC.md`
+// 「4.5 最大列挙数」）。
+pub(crate) use layout::results_area_collapsed;
 // FrameIndexing は `window_coordinator::read_indexing` の返り値型で、view.rs が 1 フレーム
 // 1 回だけ読み、launcher_controller.rs の起動判定がそれを受け取る（#1077）。**構築子を
 // 読み点の側に置いてあるのが要点である**——別の `bool` を包む書き方をコンパイル不能にする。
 pub(crate) use window_coordinator::FrameIndexing;
+// FrameVisibleRows も同じ形である（#1106）——`window_coordinator::read_visible_rows` が唯一の
+// 構築点で、view.rs が 1 フレーム 1 回読み、表示側（driver）と起動側の両方へ同じ値を配る。
+// 連言③（`plain_results_hidden`）と連言④（`layout::results_area_collapsed`）は独立した規則で、
+// **どちらか一方でも隠していれば起動しない**。
+pub(crate) use window_coordinator::FrameVisibleRows;
 // launcher_controller.rs が検索 debounce（leading + trailing）で消費する。
 pub(crate) use layout::Debouncer;
 // view.rs が `update()` のフレーム所要と間隔の計器として消費する（#1004 PR 1）。

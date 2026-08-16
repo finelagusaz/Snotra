@@ -927,6 +927,13 @@ impl EguiView for SearchWindowView {
         // 正しいので live のまま残してある。
         let indexing = self.controller.indexing();
         let indexing_raw = indexing.get();
+        // **連言④（`SPEC.md`「4.5 最大列挙数」）の値もこのフレームで 1 回だけ読む**（#1106）。
+        // `indexing` と理由は同じだが機構が違う——こちらは `AtomicBool` ではなく config の
+        // live-read で、変わる契機は `config_watcher` の適用である。読みが 2 つあると
+        // 「表示は隠し、起動は通す」並びが同一フレーム内に構築できる（実機で測った症状）。
+        // 配り先は results の driver（`DriveResultsInputs`）と起動の入口（`on_enter` /
+        // クリック逆流）で、**どちらも同じこの値を見る**。
+        let visible_rows = crate::egui_shell::window_coordinator::read_visible_rows(&app);
         let is_results = self.controller.state().view_kind() == ViewKind::Results;
         let launching_now = self.controller.is_launching();
         let notice_now = self.controller.notice_message().map(|m| m.to_string());
@@ -1094,7 +1101,8 @@ impl EguiView for SearchWindowView {
         if post.enter {
             // `indexing` は上で 1 回だけ読んだ `indexing_raw` を渡す（#1077）——起動の判定と
             // 下の表示ゲートが**同一フレームで同じ値**を見ることが受け入れ条件である。
-            self.controller.on_enter(post.shift, indexing, &ctx);
+            self.controller
+                .on_enter(post.shift, indexing, visible_rows, &ctx);
         }
 
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
@@ -1169,10 +1177,12 @@ impl EguiView for SearchWindowView {
             // 「積んだ後・消費する前に総入れ替えが起きた」窓を塞げない。
             match shared.take_clicked_for(self.controller.state().rows_generation()) {
                 crate::egui_shell::ClickTake::Current(i) => {
-                    // クリックも Enter と同じ `indexing_raw` を見る（#1077）——`rows_generation` の
-                    // 照合は「行が差し替わったか」だけを見ており、**その行が画面に出ているか**は
-                    // 見ない。判定は `activate_or_execute` の中の表示ゲートが持つ。
-                    self.controller.activate_or_execute(i, indexing, &ctx)
+                    // クリックも Enter と同じ `indexing` / `visible_rows` を見る（#1077 / #1106）
+                    // ——`rows_generation` の照合は「行が差し替わったか」だけを見ており、
+                    // **その行が画面に出ているか**は見ない。判定は `activate_or_execute` の中の
+                    // 2 つの表示ゲート（連言③と④）が持つ。
+                    self.controller
+                        .activate_or_execute(i, indexing, visible_rows, &ctx)
                 }
                 // 破棄は目に見えず手で再現もできないので観測点を残す。**診断用であって
                 // 不変条件の担保ではない**（担保は search_state / results_view のユニットテスト）。
@@ -1283,6 +1293,8 @@ impl EguiView for SearchWindowView {
                 result_count: self.controller.state().results().len(),
                 width,
                 row_height: metrics.row_height,
+                // 起動の入口へ配ったのと**同じ 1 回の読み**である（#1106・同フィールドの doc）
+                visible_rows,
                 // `row_height` と同じフレーム冒頭の snapshot から取る（別 lock にしない）
                 background: visual.background,
             },

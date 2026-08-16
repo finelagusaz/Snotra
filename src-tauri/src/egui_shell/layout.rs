@@ -371,7 +371,9 @@ pub struct ResultsInputs {
     ///
     /// **`plain_hidden` / `result_count` と同じく読み点の制約を持つ**（#1106）——ただし理由は
     /// フレーム内の前後ではなく、**起動側のゲートと同じ 1 回の読みでなければならない**こと
-    /// である（`window_coordinator::DriveResultsInputs` の同名フィールドの doc が正本）。
+    /// である。正本は [`crate::egui_shell::window_coordinator::DriveResultsInputs`] の doc
+    /// （**あちらでの名前は `visible_rows`**、型は `FrameVisibleRows` である——この struct は
+    /// 生の `u32` を受け取るので、フィールド名も型も一致しない）。
     pub max_results: u32,
     pub row_height: f64,
 }

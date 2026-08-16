@@ -746,7 +746,8 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
 /// （[`FrameIndexing`] と同じ形）。
 ///
 /// **フレームに閉じた値である。** `view.rs` の `update()` が 1 回だけ読み、この型のまま
-/// 表示側（driver）と起動側（`launcher_controller` のゲート）へ配る。**`self.` へ保持しては
+/// 表示側と起動側へ配る。**この 2 つの役割が同じ値を見ることが、この型の存在理由そのもの
+/// である**（配り先の数ではなく、役割が 2 つあることを名指している）。**`self.` へ保持しては
 /// ならない**——フレームを跨いで持つと `config.toml` の変更が反映されなくなる。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FrameVisibleRows(u32);

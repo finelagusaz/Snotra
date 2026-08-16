@@ -55,6 +55,8 @@ squash マージでは常にこの順で行う。`<PR>` は PR 番号、`<issue>
 
 ⚠ **closing keyword を書いてはならない。** 散文の "partially fixes #N" も効く。書くと手順 1 の一覧に現れないまま閉じる。
 
+⚠ **conventional commit の型名も keyword になる。** `fix: #985 …` のように `fix` / `close` / `resolve` 系の型の直後へ issue 番号を置くと閉じる——GitHub は `Closes: #10` のようにコロンを挟む形も認識し、**commit message 経由の close は PR を linked pull request に載せない**ので手順 1 の一覧にも現れない（GitHub docs「Linking a pull request to an issue」）。番号は末尾へ回すか括弧で包む。**`chore:` / `refactor:` の前例を根拠にしてはならない**——それらが安全なのは型名が keyword でないからであって、形が安全だからではない。
+
 省けば squash 本文は **PR 説明文そのもの**になる（表・チェックリスト込みで冗長）。
 
 ### 4. マージ後に 3 点を確認する

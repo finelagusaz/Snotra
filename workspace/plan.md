@@ -207,11 +207,29 @@ SolidJS 非 parity・instant carve-out 破壊・bool エッジのパルス見逃
       母集団を `#[cfg(test)]` より前へ絞った
 - [x] **`governance:check` が偽の参照を捕まえた** — `src-tauri/CLAUDE.md`「同型ペアの取り違え」と
       書いたが、その見出しは `/symmetric-check` にしか無い。`/symmetric-check` の Step 2c への参照へ直した
-- [ ] **`/race-check` / `/symmetric-check` を fix-forward 差分にも再実行する**——同スキルは「**計画段階では起動しない**」（#784）と定めており、
+- [x] **`/race-check` / `/symmetric-check` を fix-forward 差分にも再実行した**（`AGENTS.md`
+      「レビュー指摘へ修正（fix-forward）を当てた」）。**母集団は `--base main` のまま縮めていない**。
+      `/race-check`: 今回はツールが境界を 1 件表示した（`read_indexing` の本体が差分に入ったため）——
+      **手で立てた境界と同一**で、差分は `Ordering::Relaxed` も `.unwrap_or(false)` も呼び出し点の位置も
+      変えていない（返り値型と字下げのみ・`git diff` で実測）→ **[安全]**。
+      `/symmetric-check`: Step 2c の指摘は**閉じた**——`FrameIndexing` の構築点は
+      `window_coordinator.rs` の `read_indexing` 内**ただ 1 か所**（grep 実測）で、show 経路と
+      毎フレーム経路はどちらも `read_indexing` を通る対称のまま——同スキルは「**計画段階では起動しない**」（#784）と定めており、
       母集団は `npm run race:boundaries` が差分から決める。計画レビューでは起動していない
-- [ ] **`/dry-check` を実行する**（`AGENTS.md`「関数・型を新規定義／改名／導入」——フェーズ 2 で
-      `FrameIndexing` を新規定義するため。呼び出し元の列挙は LSP の findReferences で行う）
-- [ ] `/state-check` / `/symmetric-check` を**実装差分にも再実行する**（`AGENTS.md`「レビュー指摘へ
+- [x] **`/dry-check` を実行した**（`FrameIndexing` の新規定義に伴う）。候補 4 件——
+      `plain_results_hidden` の同形 2 呼び出しは **[維持]**（先例 `folder_load_pending` も同ファイルの
+      `:228` / `:593` で同じ 5 行・実測。「片方だけ変わる将来」を挙げられる＝別概念。ヘルパー化すると
+      検知器の母集団から述語名が消える）、述語を経ない手書きの同等式は**定義本体 1 行のみで重複なし**、
+      `indexing` の読みは `read_indexing` 1 実装のまま、検知器の本体切り出しは `method_body` へ **[置換済み]**
+- [x] `/state-check` を実装差分に実行した。直交性マトリクス 5 組すべて整合（Command 行は
+      **直交・ガードが勝つ**——表示ゲートと同じ射程）。**リセット経路は [非該当]**（新しい状態を
+      1 つも増やしていない）。入力分岐は 6 件すべて明示済みで、**スラッシュコマンドは阻害されない**
+      （`find_slash_command` → `execute_slash` は `on_input_changed` の changed エッジから走り
+      `activate_or_execute` を通らない・`launcher_controller.rs:1344-1346`。構築中も `/s` が打てる）。
+      **AC8 を実測で裏取り**——`on_nav_keys` は差分中でコメントに現れるだけで**変更行 0**。
+      **Step 5 で乖離 1 件を検出し是正**: §4.7 に規範を置いただけでは §8.6 の読者に届かないため、
+      遷移ルール要約へ 1 行の**参照**（写しではない）を追加した
+- [x] ~~`/state-check` / `/symmetric-check` を実装差分にも再実行する~~（上記で実施）（`AGENTS.md`「レビュー指摘へ
       修正（fix-forward）を当てた」——修正は指摘箇所へ注意が集中し周辺に新しい誤りを生む）
 
 ## 不変条件と異常系

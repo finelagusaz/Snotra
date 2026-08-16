@@ -557,6 +557,7 @@ stateDiagram-v2
 - `SearchVisible -> Standby` の focus_lost は `auto_hide_on_focus_lost` 有効時のみ成立
 - `/q` または `exit-requested` は `Standby` / `SearchVisible` のいずれからでも `LauncherStopped` へ遷移
 - `/o` 実行時に `indexing == true` の場合、設定オープンは no-op
+- `NormalMode -> ToolSelectionMode` の `Shift+Enter` は **§4.7 の表示ゲートにも従う**——インデックス構築中に隠れている通常結果からは入場しない（規則の正本は §4.7。スラッシュコマンドは Enter を経ずに実行されるためこのゲートを通らず、`/s` は構築中も打てる）
 - 初回起動では `snotra-settings` を子プロセスとして直接起動する（indexing ガードをバイパス）
 - `snotra-settings` 起動中のホットキー入力は無視する（ホットキー再設定中の誤動作防止）
 - **`indexing`（インデックス構築中）・`launching`（起動 in-flight）・一時通知・updater トーストは

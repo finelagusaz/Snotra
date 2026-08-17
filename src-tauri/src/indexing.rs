@@ -186,6 +186,107 @@ fn notify_indexing_complete(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    /// トップレベル関数の本体を切り出す（**終端は列 0 の閉じ括弧**・内側のブロックは字下げされている）。
+    ///
+    /// 母集団は狭すぎても広すぎても壊れ、**広すぎる側は沈黙する**——探す文字列はこの `mod tests` に
+    /// assert のリテラルとして実在するため、EOF まで伸びた母集団では `contains` が必ず真になる。
+    /// ゆえに終端が見つかったことと `canary` が在ることの**両方**を assert する。行の走査を
+    /// `str::lines` で行うのは改行コード非依存にするためである——`include_str!` が読むのは checkout
+    /// された実ファイルであり、**手元（`core.autocrlf=input`）と Windows の CI（git-for-windows の
+    /// system 既定 `core.autocrlf=true`）で改行が食い違う**。**原則の正本は
+    /// `docs/development-principles.md`「検証の層と、層と層の隙間」**（ここに写しを置かない）。
+    ///
+    /// `launcher_controller.rs` の `method_body` とは**終端の形が違う**（あちらはメソッドゆえ
+    /// 4 スペース字下げの `}`）。共通化を却下した判断と反転条件は
+    /// `docs/adr/ADR-source-text-probe-helper-locality.md`。
+    ///
+    /// **`anchor` は列 0 から始まる宣言を指すこと。** 字下げされたアンカー（メソッドや `mod tests`
+    /// 内の関数）を渡すと、終端の `}` はその外側の閉じ括弧になり、母集団が意図より広く伸びる——
+    /// **#1108 の欠陥がそのまま再生する**。下の assert がそれを塞ぐ。
+    fn top_level_fn_body(src: &str, anchor: &str, canary: &str) -> String {
+        let (before, after) = src
+            .split_once(anchor)
+            .unwrap_or_else(|| panic!("{anchor} が見つからない（改名したらこの検査も直す）"));
+        assert!(
+            before.is_empty() || before.ends_with('\n'),
+            "{anchor} が列 0 から始まっていない——終端の `}}` が外側の閉じ括弧になり、母集団が\
+             意図より広く伸びる（doc 中にアンカー文字列が先行出現した場合もここで落ちる）"
+        );
+        let mut body = String::new();
+        let mut terminated = false;
+        for line in after.lines() {
+            if line == "}" {
+                terminated = true;
+                break;
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+        assert!(
+            terminated,
+            "{anchor} の終端（列 0 の `}}`）が見つからない——母集団が EOF まで伸びており、\
+             この検査は空虚である"
+        );
+        assert!(
+            body.contains(canary),
+            "母集団が {anchor} の本体を含まない——終端の切り出しがずれた。\
+             沈黙する検知器は検知器ではない"
+        );
+        body
+    }
+
+    /// [`top_level_fn_body`] が改行コードに依存しないことを、**この作業ツリーの改行コードによらず**
+    /// 固定する（#1108）。`include_str!` は checkout された実ファイルを読むため、LF の環境で
+    /// `cargo test` が緑でも CRLF の環境で母集団が壊れうる——#1077 で実際に CI がそうなった。
+    #[test]
+    fn top_level_fn_body_is_line_ending_agnostic() {
+        let lf = "pub fn target() {\n    marker();\n}\npub fn next() {\n";
+        let crlf = lf.replace('\n', "\r\n");
+        for (label, src) in [("LF", lf), ("CRLF", crlf.as_str())] {
+            let body = top_level_fn_body(src, "pub fn target(", "marker(");
+            assert!(
+                !body.contains("fn next("),
+                "{label}: 終端を取り逃して次の関数まで飲み込んでいる"
+            );
+        }
+    }
+
+    /// 終端を持たない母集団を [`top_level_fn_body`] が**拒む**ことを固定する。
+    ///
+    /// **この 3 本（終端・アンカーの列・canary）が無いと、対応する `assert!` の行を消しても
+    /// すべて緑のままになる**——母集団を守る assert 自身は、実ファイルを読む検査
+    /// （`start_index_build_invalidates_the_icon_cache`）の正常系では一度も発火しないためである。
+    #[test]
+    #[should_panic(expected = "母集団が EOF まで伸びており")]
+    fn top_level_fn_body_rejects_a_population_without_a_terminator() {
+        top_level_fn_body(
+            "pub fn target() {\n    marker();\n",
+            "pub fn target(",
+            "marker(",
+        );
+    }
+
+    /// 字下げされたアンカーを [`top_level_fn_body`] が**拒む**ことを固定する。
+    ///
+    /// helper 化で新しく生まれた誤用経路である——メソッドや `mod tests` 内の関数を指すと、
+    /// 終端の `}` が外側の閉じ括弧になって母集団が広く伸び、**#1108 の欠陥がそのまま再生する**。
+    #[test]
+    #[should_panic(expected = "列 0 から始まっていない")]
+    fn top_level_fn_body_rejects_an_indented_anchor() {
+        top_level_fn_body(
+            "impl C {\n    fn target(&self) {\n        marker();\n    }\n}\n",
+            "fn target(",
+            "marker(",
+        );
+    }
+
+    /// canary を含まない母集団を [`top_level_fn_body`] が**拒む**ことを固定する。
+    #[test]
+    #[should_panic(expected = "本体を含まない")]
+    fn top_level_fn_body_rejects_a_population_without_the_canary() {
+        top_level_fn_body("pub fn target() {\n}\n", "pub fn target(", "marker(");
+    }
+
     /// **アイコンキャッシュの無効化の担い手は現在ここ 1 つだけである。** 背景再スキャンの
     /// spawn と結果適用（`RescanOutcome::Changed` を契機とした無効化）は #1001 で
     /// 撤去済み。#996 が再構築時の索引照合剪定を撤去して以来、**メモリ内
@@ -195,25 +296,27 @@ mod tests {
     /// する無効化を丸ごと失う**——アイコンが古いまま FIFO 上限まで残る。
     /// 検索結果は正しいままなので挙動テストでは捕まらない。
     ///
-    /// **残る死角**: 母集団は `start_index_build` のソーステキストだけであり、
-    /// 呼び出しグラフは辿らない。この関数の外のヘルパー経由で無効化する形へ
-    /// 変えると、母集団の外なので捕まらない。
+    /// **残る死角**: 母集団は `start_index_build` のソーステキストだけであり、呼び出しグラフは
+    /// 辿らない。**無効化をこの関数の外のヘルパーへ移すこと自体は、この検査が赤にする**——本体から
+    /// 綴りが消えるためである（#1108 で実測）。**ただし測っているのは本体テキストへの部分文字列
+    /// 一致であって呼び出しではない**——移設後も本体に `invalidate_icon_cache(` の綴りが残れば
+    /// 緑のまま通る（移し先の名前がそれを含む場合だけでなく、**説明コメントへ書き残した場合も
+    /// 同じである**。この関数は無効化の理由を説明する長いコメントを実際に抱えている）。
+    /// 捕まらないのは、**移した先で無効化が落ちる**退行の方である。なお呼び出しの単純な削除は
+    /// `-D warnings` の `dead_code` が先に捕まえる——2026-08-17 時点で `invalidate_icon_cache` を
+    /// 呼ぶのはここだけだからであり、呼び出し点が増えればその二重の守りは消えてこの検査だけが残る。
+    ///
+    /// **母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ**（何をどう塞ぐかは同関数の doc と
+    /// `top_level_fn_body_rejects_*` の回帰テストが正本。ここで数え上げない）。
+    ///
+    /// **この安全性は「存在形の assert」に依る**——`!contains` の否定形なら canary が真のまま
+    /// 対象だけ切り捨てられて沈黙する（#1112）。
     #[test]
     fn start_index_build_invalidates_the_icon_cache() {
-        let src = include_str!("indexing.rs");
-        let after = src
-            .split_once("pub fn start_index_build(")
-            .expect("start_index_build が見つからない（改名したらこの検査も直す）")
-            .1;
-        let body = match after.find("\npub(crate) fn ") {
-            Some(idx) => &after[..idx],
-            None => after,
-        };
-        // **母集団が黙って空にならないことを、まずそれ自体で確かめる。**
-        assert!(
-            body.contains("try_begin_index_build("),
-            "母集団が start_index_build の本体を含まない——終端の切り出しがずれた。\
-             沈黙する検知器は検知器ではない"
+        let body = top_level_fn_body(
+            include_str!("indexing.rs"),
+            "pub fn start_index_build(",
+            "try_begin_index_build(",
         );
         assert!(
             body.contains("invalidate_icon_cache("),

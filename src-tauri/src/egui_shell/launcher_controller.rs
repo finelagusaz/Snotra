@@ -1488,10 +1488,23 @@ mod tests {
     /// 既定 `core.autocrlf=true`）でだけ落ちた**。同じ非対称は `.gitattributes` の冒頭コメントが
     /// `.githooks/**` について記録している。`str::lines` は `\n` で分割し末尾の `\r` を落とす。
     fn method_body(src: &str, anchor: &str, canary: &str) -> String {
-        let after = src
+        let (before, after) = src
             .split_once(anchor)
-            .unwrap_or_else(|| panic!("{anchor} が見つからない（改名したらこの検査も直す）"))
-            .1;
+            .unwrap_or_else(|| panic!("{anchor} が見つからない（改名したらこの検査も直す）"));
+        // **アンカーの字下げは終端の字下げと組である。** ずれると既存の 2 assert は
+        // どちらも発火しないまま母集団が壊れる——#1108 で両方向を実測した（列 0 のアンカーは
+        // 内側ブロックの `    }` で黙って狭まり、8 スペースのアンカーは自分の終端を通り越して
+        // 隣のメソッドを黙って飲み込む）。**見るのは字下げ幅だけである**——アンカーと行頭の
+        // あいだには可視性修飾が挟まりうる（現に `pub(super) ` が挟まる呼び出しが在る）。
+        // ゆえに**同じ字下げの doc コメント行にアンカー文字列が先行出現した場合は通る**——
+        // そこは下流の canary が捕まえる（`top_level_fn_body` 側はアンカーを行頭に密着させる
+        // 形なので、あちらでは doc の先行出現もこの assert が落とす。非対称は意図である）。
+        let head = before.rsplit('\n').next().unwrap_or("");
+        assert!(
+            head.len() - head.trim_start().len() == 4,
+            "{anchor} を含む行が 4 スペース字下げで始まっていない——終端の `    }}` が内側ブロックか\
+             外側の閉じ括弧に一致し、母集団が黙って狭まる／広がる"
+        );
         let mut body = String::new();
         let mut terminated = false;
         for line in after.lines() {
@@ -1529,6 +1542,37 @@ mod tests {
                 "{label}: 終端を取り逃して次の関数まで飲み込んでいる"
             );
         }
+    }
+
+    /// [`method_body`] が**アンカーの字下げ違反を拒む**ことを固定する（#1108）。
+    ///
+    /// 終端が「4 スペース字下げの `}`」なので、アンカーの字下げがずれると母集団は黙って狭まる
+    /// （列 0 のアンカーは内側ブロックの `    }` で切れる）か、黙って広がる（8 スペースの
+    /// アンカーは自分の終端を通り越して隣のメソッドを飲み込む）。**両方向とも既存の 2 assert
+    /// （終端・canary）は 1 つも発火しない**——#1108 で実測した。
+    #[test]
+    #[should_panic(expected = "4 スペース字下げで始まっていない")]
+    fn method_body_rejects_an_anchor_at_the_wrong_indent() {
+        method_body(
+            "pub fn target() {\n    marker();\n    if c {\n    }\n}\n",
+            "pub fn target(",
+            "marker(",
+        );
+    }
+
+    /// [`method_body`] が**深すぎる字下げのアンカーも拒む**ことを固定する（#1108）。
+    ///
+    /// 上のテストと**別に置く**——浅い側（列 0）の fixture だけでは、述語を `== 4` から `>= 4` へ
+    /// 弱める変異が捕まらない（どちらの述語でも赤になるため）。**広がる方向こそ #1077 / #1108 の
+    /// 沈黙そのものである**——自分の終端を通り越して隣のメソッドを飲み込む。
+    #[test]
+    #[should_panic(expected = "4 スペース字下げで始まっていない")]
+    fn method_body_rejects_an_anchor_indented_too_deeply() {
+        method_body(
+            "mod outer {\n    impl C {\n        fn target(&self) {\n            marker();\n        }\n        fn other(&self) {\n            secret();\n        }\n    }\n}\n",
+            "fn target(",
+            "marker(",
+        );
     }
 
     /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
@@ -1601,7 +1645,12 @@ mod tests {
     /// （`visible_rows = 0` で `egui_results:show` が 0 件のまま `egui_launch` が出た）。
     ///
     /// **残る死角**: 母集団は当該メソッドのソーステキストだけであり、呼び出しグラフは辿らない。
-    /// ゲートをこのメソッドの外のヘルパーへ移すと、母集団の外なので捕まらない。
+    /// **ゲートをこのメソッドの外のヘルパーへ移すこと自体は、この検査が赤にする**——本体から
+    /// `plain_results_hidden(` / `results_area_collapsed(` の綴りが消えるためである（同じ機序を
+    /// #1108 で実測した）。**ただし測っているのは本体テキストへの部分文字列一致であって呼び出しでは
+    /// ない**——移設後も本体にその綴りが残れば緑のまま通る（移し先の名前がそれを含む場合も、
+    /// 説明コメントへ書き残した場合も同じ）。捕まらないのは、**移した先でゲートが落ちる**退行の
+    /// 方である。
     #[test]
     fn activation_entry_points_consult_the_display_gate() {
         let src = include_str!("launcher_controller.rs");

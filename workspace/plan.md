@@ -290,12 +290,21 @@ activation_uses_frame_values` で実測・復元済み）。
 
 ### Phase 3 — `commands/instant.rs` の 1 件
 
-- [ ] `get_instant_commands`（10-12）を `read_config` へ移す（fallback は
+- [x] `get_instant_commands`（10-12）を `read_config` へ移す（fallback は
       `Config::default().instant_commands`）
-- [ ] doc を足す——**この関数は `commands/` に居るが UI フレームの中で毎打鍵走る**こと、
+- [x] doc を足す——**この関数は `commands/` に居るが UI フレームの中で毎打鍵走る**こと、
       および `app.state()` → `try_state` で panic が消える方向であること
-- [ ] カテゴリ A が green + `cargo doc` green
-- [ ] Phase 3 をコミット
+- [x] **（実装中に判明）** 実装形が「純粋なフィールド取り出し + `clone`」に収まらなかった——
+      `filter_instant_commands` が返すのは `Vec<&InstantCommand>` で config を借りたままの参照ゆえ、
+      **DTO 化まで読みの中で終える**必要がある。絞り込みと DTO 化を `matching_dtos` へ 1 つに束ね、
+      正常系と fallback の両方がそれを通る形にした（所有へ移す一手と DTO 変換が同じ仕事なので、
+      余分な確保は増えない）。行うのは文字列の確保までで I/O も錠も無い
+- [x] カテゴリ A が green + `cargo doc` green — fmt / check / clippy / `cargo test -p snotra -q`
+      （**292 passed**）/ `cargo doc` すべて exit 0
+- [x] **受け入れ条件 1 を実測** — multiline grep で `egui_shell/` の `engine.lock().config()` が
+      **0 件**。残余は `config_watcher.rs:87`（適用側）・`commands/icon.rs:17`（icon worker）・
+      `commands/launch.rs:107,158`（tray スレッド）の 4 件で、**新しい規範文の例外と一致する**
+- [x] Phase 3 をコミット
 
 ### Phase 4 — 規範と文書
 

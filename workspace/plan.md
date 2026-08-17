@@ -351,6 +351,32 @@ activation_uses_frame_values` で実測・復元済み）。
       再実行してから閉じる**・`AGENTS.md` 条件別チェック）— `code-reviewer` ラウンド 1 で
       **Critical 0 / High 0 / Medium 2 / Low 5**。全 7 件を一次証拠で裁定し、**7 件とも採用して修正**。
       修正差分に対しラウンド 2 を同じエージェントへ `SendMessage` で継続（新規起動しない）
+- [x] **レビュー ラウンド 2**（`9d2653a` の検算）— **High 1 / Medium 2 / Low 4**。**コードの指摘は
+      2 巡とも 0 件**で、全件が散文である。全件を一次証拠で裁定し採用:
+  - **High 1（母集団の漏れ）**: 「新たに偽になる doc 2 件」の数え上げが不完全で、実際は
+    `launcher_controller.rs:71`（`LaunchWork::Instant`）・`:852`（`run_search`）・`:1381`
+    （`on_input_changed`）が古いまま、加えて `window_coordinator.rs:475` が **#1036 由来**で既に偽だった。
+    **原因は Step 1 の点 7 で `*.md` だけを概念 grep し `.rs` の doc コメントを見なかったこと。**
+    4 件とも修正し、**`.rs` 全体への概念 grep（`engine lock|engine ロック|engine\.lock`）を実施して
+    残る言及を 1 行ずつ裁定した**（残余はすべて真——`commands/` の 2 ファイルは例外側で錠を保持し続け、
+    `view.rs:1129` の同期 `engine.search` も真）
+  - **Medium 2（弁別子が自分の例外を排除できない）**: 「ユーザーが待つか」は**動機**であって判定基準に
+    ならない——ユーザーはアイコンもフォルダ一覧も待っている。判定を**走るスレッド**（イベントループを
+    止めるか）へ移し、動機と判定を分けて書いた。11 事例すべてが矛盾なく落ちることを確認
+  - **Medium 3（例外から外す 3 つの根拠が 3 つとも外れる）**: 一次証拠で確認——(1) `register_hide_listener`
+    の doc 自身が「emit 元は view の `update()` の中ゆえ `on_event_loop` はインライン実行へ倒れる」と
+    書いており「hide 経路はフレームの外」は偽 (2) emit 元が platform スレッドのとき `on_event_loop` は
+    **post** になる（`mod.rs:531-537`）ので「listener から show が走る」並びは構築できない
+    (3) `config-applied` listener の中身は `wake_main` だけ。**根拠を差し替え、先例（`main.rs:459-464` の
+    `hotkey_toggle` が `on_event_loop` の中で既に `read_config` から読む）を示す形にした**
+  - **Low 4**: `config-applied` listener の二重帰属を解消（射程外をスレッドでなく手続きで限定）
+  - **⚠️ Low 5**: Medium 1 の修正に新しい数え上げと条件式の逐語写しが入っていた → 両方外した
+    （**この形は本サイクルで 3 度目**）
+  - **⚠️ Low 6**: 経路列挙が 3 分の 2 だった（`shift_activate` は `:662` で `resolve_tools` を直接呼ぶ）
+    → 列挙をやめ形だけ書く形へ
+  - **⚠️ Low 7**: 「だけが負う」の第 3 の形（`try_state` が `None`）は到達不能——**修正不要と裁定**
+  - ラウンド 1 の ⚠️ 4 件は**4 件とも決着**（レビュアが確認）
+- [x] 修正後にカテゴリ A 全件（**292 passed**）と `governance:check`（**19 検査 passed**）を再実行
 
 ## 規範差分（逐語案・Step 5c で承認を求める対象）
 

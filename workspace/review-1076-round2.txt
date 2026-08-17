@@ -1,0 +1,248 @@
+code-reviewer / #1076 ラウンド 2（fix-forward 差分 `9d2653a` の検算）
+対象: `git show 9d2653a` の `docs/` と `src-tauri/`。作業ツリー clean。
+=====================================================================
+
+## 結論
+
+**High 1 / Medium 2 / Low 4（うち ⚠️ 3）。**
+
+ラウンド 1 の 7 件は**すべて正しく当たっており、4 件は決着した**（Low 4・5・6・7 → 下の「⚠️ の決着」）。
+ただし **High 1 で、この PR が偽にした散文の列挙に 3 件の漏れがある**ことが分かりました
+——これは**私がラウンド 1 で見落としたもの**で、fix-forward 差分ではなく最初の 3 コミットが
+偽にしたものです。逆向きの監査（「この差分が消した不変条件を名指し、再確立地点を探す」）を
+修正差分だけでなくファイル全体へ当て直して見つけました。
+
+Medium 2 件はどちらも **Medium 2 の書き直し（`src-tauri/CLAUDE.md:57`）に新しく入った主張**です。
+指摘した自己反証の構造は消えていますが、**新しい弁別子は自分が挙げる例外を排除できず**、
+**例外から外す 3 つに与えた根拠は事実として誤っています**。結論（3 つを例外から外す）は
+正しいので、直すのは根拠だけです。
+
+---
+
+## High 1 — この変更が偽にした散文の列挙に 3 件の漏れがある（+ 1 件は #1036 由来）
+
+**場所**（現在の行）:
+- `src-tauri/src/egui_shell/launcher_controller.rs:71`（`LaunchWork::Instant` の doc）
+- `src-tauri/src/egui_shell/launcher_controller.rs:850-852`（`run_search` の doc）
+- `src-tauri/src/egui_shell/launcher_controller.rs:1379-1381`（`on_input_changed` のインライン）
+- `src-tauri/src/egui_shell/window_coordinator.rs:474-475`（`hide_egui_main` のインライン・**#1036 由来**）
+
+**根本原因**: `workspace/plan.md`「Q1 改訂で新たに偽になる doc 2 件（自分で実測して見つけた）」の
+母集団が不完全でした。壊れている不変条件は「**移行で偽になる散文をすべて数え上げてから直す**」
+（`AGENTS.md`「照合は SSOT に対して行う／列挙の完全性」）。実際には 2 件ではなく 5 件あり、
+直したのは `execute_instant_selected`（484-494）と `resolve_tools`（728-732）の 2 件だけです。
+
+1. **`:71`** — `/// （engine ロック内の action 抽出だけ UI スレッド・spec C 節）。`
+   その action 抽出は `execute_instant_selected` であり、#1076 で `read_config` へ移りました。
+   **同じファイルの中で対の記述と矛盾しています**——この差分は 489-494 に
+   「**分けている境界は錠の内外ではなくフレームの内外である**」と書いた一方、enum 側は
+   「engine ロック内／worker」という**古い対比のまま**です。片方だけ直した形です
+
+2. **`:850-852`** — `/// changed エッジは取得済み prefix を `run_search_with` へ渡し、毎打鍵の
+   engine lock 回数を減らす（/code-review #637 finding 9）。`
+   prefix の取得は `instant_prefix()` で、もう engine lock を取りません。**最適化そのものは
+   有効**（読みの回数は減る）ですが、理由づけが名指す錠が存在しません
+
+3. **`:1379-1381`** — `//（interp と合わせ engine lock の毎打鍵多重取得を避ける・finding 9）。`
+   2 と同じ。**この 2 つは対で書かれており、両方とも残っています**
+
+4. **`window_coordinator.rs:474-475`**（**#1036 由来・この PR が作ったものではない**）——
+   `// `read_metrics` は engine lock をクロージャ内で取り切って返すため、ここで保持は残らない。`
+   `read_metrics`（同ファイル 52-53）は #1036 で `read_config` へ移っており engine lock を
+   取りません。**結論（保持が残らない）は真のまま**ですが、根拠が指す錠が別物です。
+   スコープ判断は team-lead に委ねます（同じ条項の掃除に含めるのが自然だとは思います）
+
+**修正例**:
+- `:71` → 「（action 抽出だけ UI スレッド——**config は `read_config` から読む**・spec C 節）」
+- `:852` / `:1381` → 「engine lock 回数」→「**config の読みの回数**」（`read_config` は
+  `config.read()` を取るので、回数を減らす動機は今も有効である）
+- `window_coordinator.rs:474` → 「`read_metrics` は**読みをクロージャ内で取り切って返す**ため」
+
+**この 3 件は私のラウンド 1 の見落としです。** 私は移行**先**（`read_config` を呼ぶ側の doc）
+だけを読み、移行**元**の説明が別の場所に散っていることを確かめていませんでした。
+
+---
+
+## Medium 2 — 新しい弁別子「ユーザーが待つか」は、自分が挙げる例外 3 つを排除できない
+
+**場所**: `src-tauri/CLAUDE.md:57`（「**例外は「その読みの完了をユーザーが待たない場所」である**」
+「**弁別子は…待っている人が居るかである**」）
+
+**根本原因**: 弁別子の**名前**が、そのすぐ後のコロン節が与える**操作的定義**より広く、
+名前だけを当てると例外側の 3 つが全部「待っている人が居る」に落ちます。
+
+依頼どおり全 11 事例へ当て直しました。
+
+| # | 位置 | 実行文脈 | 名前だけを当てると | コロン節の定義（フレームの復帰／窓の表示）を当てると |
+|---|---|---|---|---|
+| 1 | `launcher_controller.rs:503`（instant action） | フレーム内 | 待つ → 非例外 ✅ | フレームの復帰 → 非例外 ✅ |
+| 2 | `launcher_controller.rs:736`（resolve_tools） | フレーム内 | 待つ → 非例外 ✅ | 同上 ✅ |
+| 3 | `launcher_controller.rs:750`（auto_hide） | フレーム内 | 待つ → 非例外 ✅ | 同上 ✅ |
+| 4 | `launcher_controller.rs:766`（instant_prefix） | フレーム内 | 待つ → 非例外 ✅ | 同上 ✅ |
+| 5 | `commands/instant.rs:37` | フレーム内 | 待つ → 非例外 ✅ | 同上 ✅ |
+| 6 | `window_coordinator.rs:193`（read_background） | show 経路 | 待つ → 非例外 ✅ | 窓の表示 → 非例外 ✅ |
+| 7 | `window_coordinator.rs:224`（follow_cursor） | show 経路 | 待つ → 非例外 ✅ | 同上 ✅ |
+| 8 | `commands/icon.rs:16-18` | icon worker | **待つ（アイコンの出現を待っている）→ 例外に落ちない ❌** | どちらも止めない → 例外 ✅ |
+| 9 | `launcher_controller.rs:827,837`（folder worker） | folder worker | **待つ（→ を押した先の一覧が出るのを待っている）→ 例外に落ちない ❌** | どちらも止めない → 例外 ✅ |
+| 10 | `commands/launch.rs:105,156` | tray スレッド | **待つ（クリックした起動が始まるのを待っている）→ 例外に落ちない ❌** | どちらも止めない → 例外 ✅ |
+| 11 | `config_watcher.rs:87` | watcher スレッド | 射程外（明記あり）✅ | 射程外 ✅ |
+
+**8・9・10 の 3 つが、名前だけでは例外側に落ちません。** とくに 9（folder worker）は鋭い
+——ユーザーは `→` を押して**その読みの先にある一覧を待っています**。それでも例外なのは、
+待たされるのが「フレームの復帰」でも「窓の表示」でもなく、**イベントループが回り続けるから**です。
+
+つまり実際に効いている弁別子はコロン節の 2 つ組（フレームの復帰・窓の表示）であり、
+「ユーザーが待つか」はその**動機**であって判定基準ではありません。判定基準として読むと、
+folder worker を `read_config` へ移すべきだと結論できてしまいます（規範が自分の例外を否定する）。
+
+**修正例**（動機と判定基準を分ける）:
+
+> **弁別子は、その読みが**イベントループスレッド**を止めるかである**（動機は「ユーザーが待って
+> いるか」だが、判定は走るスレッドで行う）——フレームの中・show / hide・`on_event_loop` へ
+> marshalling される listener の本体はどれもそこで走り、止めればフレームの復帰か窓の表示が遅れる。
+> **spawn した worker（icon / folder）と platform スレッド（tray）の読みは engine lock のままでよい**
+> ——止めてもイベントループは回り続け、遅れるのはその worker の産物だけである。
+
+この形なら 11 事例すべてが矛盾なく落ち、**下の Medium 3 の但し書きも要らなくなります**
+（hide 経路・hotkey listener はどちらもイベントループスレッドで走るので自動的に非例外側です）。
+ただし `config-applied` listener は watcher スレッドなので例外側へ落ちます——それを非例外に
+留めたいなら別の理由が要ります（→ Low 4）。
+
+---
+
+## Medium 3 — 例外から外す 3 つに与えた根拠が、3 つのどれにも当たらない
+
+**場所**: `src-tauri/CLAUDE.md:57`（「**「フレームの外だから例外」と読んではならない**——hide 経路・
+hotkey listener・`config-applied` listener はどれもフレームの外だが例外ではない（listener は
+emit 元スレッドで同期実行される〔…〕ため、**そこから show / hide が走れば**ユーザーはその完了を
+待っている）」）
+
+**結論（3 つを例外から外す）は正しい**と考えます。誤っているのは根拠で、3 つそれぞれについて
+別々に外れます。
+
+1. **「hide 経路はフレームの外」が偽である。** view 由来の hide は
+   `emit_hide`（`launcher_controller.rs:208-218`・フレームの中）→ `EGUI_HIDE_REQUESTED` →
+   `register_hide_listener`（`egui_shell/mod.rs:468-476`）で、そこの doc 自身が
+   「**emit 元は view の `update()` の中（イベントループスレッド）ゆえ `on_event_loop` は
+   インライン実行へ倒れる——今日と同じフレーム内順序が保たれる**」と書いています。
+   つまり主要な hide 経路は**フレームの中**で走ります
+
+2. **「listener から show / hide が走る」並びは構築できない。** `show_egui_main` /
+   `hide_egui_main` は `&EventLoopProof` を要求し、この証人は `!Send + !Sync` で
+   `on_event_loop` の中でしか作れません（`src-tauri/CLAUDE.md`「可視性を変える操作は
+   イベントループスレッドに閉じてある」）。emit 元が platform スレッドのときは
+   `on_event_loop` が**post** になります（`egui_shell/mod.rs:531-537` が
+   「`on_event_loop` はインラインに倒れず **post** になる」と明記）。ゆえに show / hide は
+   **必ずイベントループスレッドで走り、emit 元スレッドでは走りません**。
+   「listener は emit 元スレッドで同期実行される」自体は真ですが、そこから
+   「show / hide が走れば」を導く推論が成立しません
+   （**緩い読みの余地は認めます**——「そこから show / hide が走れば」を「そこを起点に
+   show / hide が始まれば」と読めば結論は生き残ります。ただしそのとき
+   「emit 元スレッドで同期実行される」という前提は推論の中で何の働きもしていません
+   ——だからこそ機序を差し替えるべきだ、というのがこの指摘です）
+
+3. **`config-applied` listener は show も hide も走らせません。** 中身は `wake_main` だけです
+   （`egui_shell/mod.rs:483-492`）。この listener を非例外に留める理由は、示された根拠には
+   含まれていません
+
+**実測できる支えが 1 つあります**（根拠を差し替えるならここを引くのが強い）:
+**hotkey 経路には既に config の読みがあり、既に `read_config` を通っています**
+——`main.rs:460-465` の `hotkey_toggle` で、隣のコメントが
+「**読みは engine ロックを経ない**（#1032）」と書いています。しかもその読みは
+`on_event_loop` の**中**（＝イベントループスレッド）にあります。ゆえに
+「hotkey listener を例外から外す」は仮定の話ではなく**既存の実装と一致する**判断です。
+
+**修正例**: 根拠を「listener は emit 元スレッドで同期実行される」から
+「**show / hide は証人型によりイベントループスレッドでしか走らず、そこへ marshalling される
+本体の読みは窓の表示・フレームの復帰を止める**（実例: `main.rs` の `hotkey_toggle` は既に
+`read_config` を通る）」へ差し替える。hide 経路については「フレームの外」を外す
+（view 由来の hide はフレームの中でインライン実行される）。
+
+---
+
+## Low 4 — `config-applied` listener が「例外ではない」と「射程外」の二重帰属になっている
+
+**場所**: `src-tauri/CLAUDE.md:57`。同じ条項が、`config-applied` listener を
+「フレームの外だが**例外ではない**」と書き、その 2 文あとで
+「**`config_watcher` が適用の前に読む旧 config は射程外である**」と書いています。
+`config-applied` を emit するのは `config_watcher.rs:169` であり、listener はその
+watcher スレッド上で走ります（同ファイル「Win32 メッセージ配送の注意」の規則）。
+
+**帰結**: その listener へ新しい config の読みを足す人は、どちらの規則に従えばよいか
+決められません（例外ではない＝`read_config` を通す／射程外＝この条項は適用しない）。
+現時点でその listener は config を読まないので**実害はありません**。
+
+**修正例**: 「射程外」を**スレッドではなく手続きで**限定する
+（「`update_config` と同じ錠の内側で取る**適用手続きの中の読み**だけが射程外である。
+同じスレッドで走る listener の読みは射程外ではない」）。
+
+## ⚠️ Low 5 — Medium 1 の修正に、新しい数え上げと条件式の逐語写しが入った
+
+**場所**: `docs/architecture.md:228`（「**残る 2 つは行を同期でクリアするだけで engine の錠を
+取らない**（`on_enter` の `query.trim().is_empty() || indexing.get()` の枝。…）」）
+
+ラウンド 1 の Low 5 で外したのと同じ形（数え上げ）が、Medium 1 の修正で入りました
+（メモリ `universal-claim-fix-regenerates-itself` の型）。加えて条件式を逐語で写しているため、
+枝を 1 本足すと**数と写しの両方**が同時に腐ります。
+
+**ただし緩和要因があります**——「残る 2 つ」は同じ文の前半で名指した 2 つ（空クエリ・`indexing`）
+への後方参照であり、独立した数え上げではありません。**採らない判断も妥当です。**
+
+**修正例（採るなら）**: 「残りは行を同期でクリアするだけで engine の錠を取らない
+（`on_enter` の flush 枝が `None` へ倒れる側が正本）」。
+
+## ⚠️ Low 6 — Low 7 の doc が挙げる経路に `shift_activate` → `resolve_tools` が無い
+
+**場所**: `src-tauri/src/egui_shell/launcher_controller.rs:1861-1863`
+（「（`on_enter` → `instant_prefix`、`activate_or_execute` → `activate` → `resolve_tools`）」）
+
+同じ形はもう 1 つあり、しかもそれが**最短**です——`shift_activate`（起動の入口の 1 つ）は
+`:662` で `resolve_tools` を**直接**呼びます。列挙は 3 分の 2 です。
+
+**修正例**: 3 つ目を足すか、列挙をやめて形だけを書く（「起動の入口がヘルパーを呼び、その
+ヘルパーが `read_config` を呼ぶ形はすべて緑のまま通る」）。**後者を勧めます**——同じ doc が
+すぐ上で「件数を書くと…黙って腐る」と書いており、経路の列挙も同じ性質だからです。
+
+## ⚠️ Low 7 — 「だけが…負う」に、到達不能な第 3 の形がある
+
+**場所**: `docs/architecture.md:228`／`launcher_controller.rs:1460-1464`
+
+flush 枝でクエリが非空かつ `indexing` でなくても、`try_state::<AppState>()` が `None` なら
+`map` が走らず錠を取りません。**排他の主張（「だけが」）としては真**なので直す必要は無く、
+到達不能（`.manage` は `.setup` より前）でもあります。**⚠️ 列挙の作法として残すだけ**です。
+
+---
+
+## ラウンド 1 の ⚠️ 4 件の決着
+
+| ラウンド 1 | 決着 |
+|---|---|
+| ⚠️ Low 4「錠を一切待たない」 | **決着（真）**——「engine の錠を待たない（config は `read_config` から読む）」は、flush へ倒れない Enter の全経路（`execute_tool_selected` / `execute_instant_selected` / `activate` / `shift_activate` の `tools >= 2` 枝）で成立する |
+| ⚠️ Low 5「残るのは上の 1 つである」 | **決着（削除された）**——`search_state.rs:493-494` は数え上げを持たない形になった。ただし同型が `docs/architecture.md` へ新しく入った（→ ⚠️ Low 5） |
+| ⚠️ Low 6「trace がその区別を残す」 | **決着（真）**——「黙って消えたのではないことを残す（payload は両者を区別しない）」は `launcher_controller.rs:518-521` の payload と一致する |
+| ⚠️ Low 7「検知器の射程」 | **決着（読み方が固定された）**——「帰属は 1 段の間接で抜ける」「インライン展開しないこと」が doc に入り、`plan.md` にしか無かった申し送りがコード側へ移った。残るのは列挙の 1 件漏れ（→ ⚠️ Low 6） |
+
+## 依頼された 4 つの問いへの回答
+
+1. **修正で新しく偽になった主張はないか** → **ある**（Medium 3 の 1・2・3、Low 4）。
+   新しい弁別子の全事例への当て直しは Medium 2 の表が結果である
+2. **hide 経路・hotkey listener・`config-applied` listener を例外から外した判断** →
+   **方向は正しい**。hotkey については `main.rs:460-465` に**既に `read_config` を通る読みが
+   在り**、判断は実装と一致している。誤っているのは根拠だけ（Medium 3）
+3. **Medium 1 の限定条件が狭すぎないか** → **狭すぎない。** flush 枝で錠を取らない形は
+   到達可能なものが 2 つ（空クエリ・`indexing`）で全部であり、第 3 の形（AppState 不在）は
+   到達不能（⚠️ Low 7）。逆に取りこぼす経路は見つからなかった
+4. **ラウンド 1 の ⚠️ 4 件** → **4 件とも決着**（上の表）
+
+## 検証状態について
+
+`/race-check`・カテゴリ C・カテゴリ D・カテゴリ A・`governance:check` の実行報告は受領しました
+（ラウンド 1 の「実行していない検証」は解消）。**この差分は `.md` と doc コメントだけを触るので、
+High 1 を当てるならカテゴリ A の `cargo doc` の再実行だけで足ります**（`:71` / `:852` は
+`///`、`:1381` / `window_coordinator.rs:474` は `//` ゆえ intra-doc link を増やさない限り
+リンク検査には掛かりません）。
+
+**訂正を当てるときの注意**（`plan.md` の申し送りをそのまま繰り返します）: `launcher_controller.rs`
+の訂正文の中に**字下げ 4 の `fn ` で始まる行を書かないこと**——同ファイルのソーステキスト検査が
+メソッドヘッダとして掴みます。上の修正例はどれも該当しませんが、書き換えるのは team-lead 側なので
+念のため。

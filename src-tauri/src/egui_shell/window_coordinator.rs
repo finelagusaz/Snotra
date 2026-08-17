@@ -471,8 +471,8 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // placement は「読み」だけを窓の hide より前に置く。**書き込みはこの下**——
     // ディスク I/O はポンプを止めた区間に置かない。
     // バー高は保存の**基準モニターを決めるため**に要る（#738。理由は
-    // `read_placement_relative` の doc）。`read_metrics` は engine lock をクロージャ内で
-    // 取り切って返すため、ここで保持は残らない。
+    // `read_placement_relative` の doc）。`read_metrics` は読みをクロージャ内で取り切って
+    // 返すため、ここで保持は残らない（#1036 までは engine lock だった）。
     let bar_height = read_metrics(app).bar_height;
     let placement = app
         .get_window("main")

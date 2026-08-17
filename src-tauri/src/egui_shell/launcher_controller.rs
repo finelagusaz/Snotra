@@ -68,7 +68,7 @@ enum LaunchWork {
         args: String,
     },
     /// instant 実行（§19.6）。clipboard 読み + 展開 + 実行の全体を worker で行う
-    /// （engine ロック内の action 抽出だけ UI スレッド・spec C 節）。
+    /// （action 抽出だけ UI スレッド・spec C 節。抽出が読む config は `read_config` から取る・#1076）。
     Instant {
         name: String,
         action: snotra_core::config::InstantAction,
@@ -849,8 +849,8 @@ impl LauncherController {
     /// view_kind 先の同期 dispatch（#532 SU3 M2）。folder は cache/error を同期フィルタ、
     /// results は M1 の interp 分岐（plain 検索）。folder 打鍵が engine.search へ漏れない。
     /// prefix を内部で取得する薄いラッパー（trailing poll・folder drain 用）。changed エッジは
-    /// 取得済み prefix を `run_search_with` へ渡し、毎打鍵の engine lock 回数を減らす
-    /// （/code-review #637 finding 9）。
+    /// 取得済み prefix を `run_search_with` へ渡し、毎打鍵の config の読みの回数を減らす
+    /// （/code-review #637 finding 9。当時は engine lock の回数だった・#1076 で読み口が移った）。
     fn run_search(&mut self) {
         let prefix = self.instant_prefix();
         self.run_search_with(&prefix);
@@ -1378,7 +1378,7 @@ impl LauncherController {
             // `selected = 0`）。
             self.state.reset_selection(); // SolidJS parity: 毎打鍵 selected=0（M1 gap 是正）
             // prefix はこの changed エッジで 1 回だけ取得し run_search_with へ渡す
-            //（interp と合わせ engine lock の毎打鍵多重取得を避ける・finding 9）。
+            //（interp と合わせ config の毎打鍵多重読みを避ける・finding 9）。
             let prefix = self.instant_prefix();
             match self.state.interp(&prefix) {
                 QueryIntent::Plain => {
@@ -1858,10 +1858,10 @@ mod tests {
     /// ——件数を書くと、正当な読みを 1 つ足すたびにこの散文だけが黙って腐る
     /// （#1076 で `read_config` を使うヘルパーが増えたときに実際に腐った）。
     ///
-    /// **帰属は 1 段の間接で抜ける。** 起動の入口がヘルパーを呼び、そのヘルパーが `read_config`
-    /// を呼ぶ形（`on_enter` → `instant_prefix`、`activate_or_execute` → `activate` →
-    /// `resolve_tools`）は緑のまま通る。**現時点で欠陥ではない**——どちらも `visible_rows` を
-    /// 読み直しておらず、読み自体は #1076 の移行より前から在ったものである。**この検査が塞ぐのは
+    /// **帰属は間接で抜ける。** 起動の入口がヘルパーを呼び、そのヘルパーが `read_config` を
+    /// 呼ぶ形は、何段挟まっていても緑のまま通る（`instant_prefix` や `resolve_tools` を経る形が
+    /// 実在する）。**現時点で欠陥ではない**——どれも `visible_rows` を読み直しておらず、読み自体は
+    /// #1076 の移行より前から在ったものである。**この検査が塞ぐのは
     /// 「起動の入口が自分の中で読み直す」形だけだと読むこと**、そして**ヘルパーの本体を入口へ
     /// インライン展開しないこと**（展開した瞬間に帰属が入口へ移り、この検査は赤になる）。
     ///

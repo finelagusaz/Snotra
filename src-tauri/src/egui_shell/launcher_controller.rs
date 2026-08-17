@@ -1667,6 +1667,100 @@ mod tests {
         owners
     }
 
+    /// [`method_header`] が**字下げ 4 ちょうど**を要求することを固定する（#1112）。
+    ///
+    /// **コーパスからは測れない。** `include_str!` が読むこのファイルには字下げ 0 / 8 の
+    /// `fn ` 行が 1 本も無く、述語を `>= 4` へ緩めても字下げを見なくしても、認識される
+    /// ヘッダの集合が変わらない——2026-08-17 に鏡の実装で 3 通りを実測し、いずれも
+    /// ヘッダ数が同数で [`activation_uses_frame_values_not_live_reads`] は緑のままだった。
+    /// ゆえに合成 fixture でしか固定できない。
+    ///
+    /// **`>= 4` への緩みを落とすのは字下げ 8 の行が `None` である assert だけではない**——
+    /// 帰属の側から [`owners_of_attributes_a_nested_fn_to_the_outer_method`] が独立に
+    /// もう 1 本持つ。字下げ 0 の行はその変異では落ちないが、字下げを見なくする変異を落とす。
+    #[test]
+    fn method_header_requires_exactly_four_spaces_of_indent() {
+        assert_eq!(
+            method_header("    fn target(&self) {"),
+            Some("fn target(&self) {")
+        );
+        // 入れ子の `fn`——`>= 4` へ緩めるとここが偽のヘッダになり、その中の禁止語は
+        // 外側のメソッドではなく偽ヘッダへ帰属して緑へ落ちる。
+        assert_eq!(method_header("        fn nested() {"), None);
+        // トップレベルの `fn`——字下げを見なくする変異をここが落とす。
+        assert_eq!(method_header("fn top_level() {"), None);
+        assert_eq!(method_header("  fn odd() {"), None);
+        assert_eq!(method_header("    let counted = fn_like();"), None);
+    }
+
+    /// [`method_header`] が **`fn` の前の可視性修飾と `async` を読み飛ばす**ことを固定する
+    /// （#1112）。現に `pub(super) ` が挟まる定義が起動の入口に在り、読み飛ばしが壊れると
+    /// [`activation_uses_frame_values_not_live_reads`] の入口が 1 本認識されなくなる。
+    #[test]
+    fn method_header_accepts_visibility_and_async_before_fn() {
+        for line in [
+            "    pub fn a(&self) {",
+            "    pub(crate) fn b(&self) {",
+            "    pub(super) fn c(&self) {",
+            "    async fn d(&self) {",
+            "    pub(crate) async fn e(&self) {",
+            "    pub(super) async fn f(&self) {",
+        ] {
+            assert_eq!(method_header(line), Some(line.trim_start()), "{line}");
+        }
+    }
+
+    /// [`owners_of`] が**入れ子の `fn` の中の出現を外側のメソッドへ帰属させる**ことを固定する
+    /// （#1112）。[`owners_of`] の doc が「境界の倒れ方」の 1 つ目として主張している挙動で、
+    /// それを成立させている実装事実は [`method_header`] の字下げ 4 ちょうどである。
+    ///
+    /// 帰属先を**完全一致で**測る——`contains` で測ると、偽ヘッダへ横取りされた帰属が
+    /// 綴りの部分一致で通ってしまう形を作りやすい。
+    #[test]
+    fn owners_of_attributes_a_nested_fn_to_the_outer_method() {
+        let src = "impl C {\n    fn outer(&self) {\n        fn nested() {\n            forbidden();\n        }\n        forbidden();\n    }\n    fn other(&self) {\n    }\n}\n";
+        assert_eq!(
+            owners_of(src, "forbidden("),
+            vec![
+                "fn outer(&self) {".to_string(),
+                "fn outer(&self) {".to_string(),
+            ]
+        );
+    }
+
+    /// [`owners_of`] が**字下げ 4 のヘッダを持たない出現を落とす**ことを固定する（#1112）。
+    ///
+    /// [`owners_of`] の doc が「最初のヘッダより前の出現は誰にも帰属せず無視される」と書く
+    /// 側の挙動である。トップレベル（字下げ 0）の `fn ` がヘッダに数えられないことも同時に
+    /// 固定する——数えられると、この fixture の 1 件目が帰属先を持って列挙へ現れる。
+    #[test]
+    fn owners_of_drops_occurrences_without_an_indent_four_owner() {
+        let src = "fn top_level() {\n    forbidden();\n}\nimpl C {\n    fn outer(&self) {\n        forbidden();\n    }\n}\n";
+        assert_eq!(
+            owners_of(src, "forbidden("),
+            vec!["fn outer(&self) {".to_string()]
+        );
+    }
+
+    /// [`owners_of`] が改行コードに依存しないことを固定する（#1112）。
+    ///
+    /// [`method_body`] と同じ処方である（`docs/development-principles.md`「検証の層と、層と層の
+    /// 隙間」——切り出しの helper 自身を LF / CRLF 両方の fixture で測る。#1077 の CI 実害から
+    /// 生えた条項で、あちらは終端の探索が CRLF の作業ツリーに一致せず母集団が壊れた）。
+    ///
+    /// **帰属先を完全一致で測るのが要点である**——`contains` で測ると、`src.lines()` を
+    /// `src.split('\n')` へ替える変異が捕まらない。`trim_start` は行頭しか見ないので末尾の
+    /// `\r` はヘッダ文字列の中に残り、部分一致はそれでも通る（2026-08-17 に対照つきで実測）。
+    #[test]
+    fn owners_of_is_line_ending_agnostic() {
+        let lf = "impl C {\n    fn outer(&self) {\n        forbidden();\n    }\n}\n";
+        let crlf = lf.replace('\n', "\r\n");
+        let expected = vec!["fn outer(&self) {".to_string()];
+        for (label, src) in [("LF", lf), ("CRLF", crlf.as_str())] {
+            assert_eq!(owners_of(src, "forbidden("), expected, "{label}");
+        }
+    }
+
     /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
     ///
     /// 対象は表示ゲートの入力 2 つである。`AppState.indexing` は `AtomicBool` の live-read で
@@ -1690,6 +1784,13 @@ mod tests {
     /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。同様に
     /// `lang()` は `read_config` を正当に使う——どちらも帰属先が起動の入口ではないので
     /// 対象外へ落ちる。**この 2 つが対象外のままであることが、この設計の受け入れ条件である。**
+    ///
+    /// **この検査は禁止語と needle を自分のソースへリテラルで綴る。** 母集団がファイル全体
+    /// なので、その行も列挙に入る。緑であるのは**帰属の副作用**である——それらの行は自分の
+    /// テスト関数のヘッダへ帰属し、そのヘッダは起動の入口ではないので assert を通る
+    /// （母集団を切り出していた頃は、テスト側が母集団の外に在ることが構造でそれを保証して
+    /// いた）。帰結として、禁止語のリテラルを起動の入口のいずれかの中へ書けばこの検査は
+    /// 自分で自分を赤にする——そう書く理由が無いので**受容する残余**とする。
     #[test]
     fn activation_uses_frame_values_not_live_reads() {
         let src = include_str!("launcher_controller.rs");
@@ -1791,5 +1892,35 @@ mod tests {
                  （#1106 で実機再現済み）"
             );
         }
+    }
+
+    /// `on_enter` が flush 判定を**述語へ委ねている**ことを、ソーステキストで固定する（#1112）。
+    ///
+    /// **述語のテストでは呼び出し点の脱落を捕まえられない**（この規範の正本は上の
+    /// [`activation_entry_points_consult_the_display_gate`] の doc）。`should_flush_on_enter`
+    /// を綴る production はこの呼び出しの 1 行だけで、述語自身のテストは
+    /// [`crate::egui_shell::search_state`] の `mod tests` に在る——呼び出しを外しても
+    /// あちらは緑のままである（2026-08-17 に対照つきで実測）。
+    ///
+    /// **`on_enter` を上の `targets` へ足す形は採らない。** あちらが当てる 2 つのゲート
+    /// （`plain_results_hidden` / `results_area_collapsed`）を `on_enter` の本体は持たず、
+    /// 持つ場所でもない——ゲートを見るのは委譲先の `activate_or_execute` / `shift_activate`
+    /// で、両方とも既に `targets` に在る。固定したい不変条件が別物なのでテストを分ける。
+    ///
+    /// **これは存在形の assert である**——母集団が途中で切れれば綴りごと消えて赤になるので、
+    /// [`owners_of`] が塞いだ否定形の沈黙はここには当たらない。**測っているのは本体テキストへの
+    /// 部分文字列一致であって呼び出しではない**（上の検査と同じ死角——説明コメントへ綴りを
+    /// 書き残せば緑のまま通る）。
+    #[test]
+    fn on_enter_delegates_the_flush_decision_to_the_predicate() {
+        let src = include_str!("launcher_controller.rs");
+        let body = method_body(src, "fn on_enter(", "self.activate_or_execute(");
+        assert!(
+            body.contains("should_flush_on_enter("),
+            "on_enter が `should_flush_on_enter` を呼んでいない——#631 の flush-on-Enter が\
+             判定ごと落ちたか、判定の写しが本体へ書き下ろされている。どちらも述語側の\
+             テストは緑のまま通る（最終クエリの結果が行へ反映される前の Enter が、\
+             leading 時点の結果や連打前のクエリの結果で起動しうる）"
+        );
     }
 }

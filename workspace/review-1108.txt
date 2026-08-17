@@ -1,0 +1,740 @@
+# code-reviewer レビュー — #1108 検知器の終端（fix/1108-detector-terminator・未コミット作業ツリー）
+
+対象: git diff（引数なし）= src-tauri/src/indexing.rs（#[cfg(test)] mod tests 内のみ）+ workspace/plan.md
+レビュー日: 2026-08-17
+
+総評: 修正の方向は正しく、母集団は実測で意図どおり狭まっている（下の独立実測）。ただし
+(1) 今回「偽である」と確定した文の写しが対称位置に生き残っており、(2) 新しい intra-doc link は
+着地しておらず、しかも cfg(test) 内ゆえ cargo doc がそれを永久に報せない。(3) helper 化で
+新設された誤用経路（字下げアンカー）は #1108 の欠陥そのものを沈黙で再生する。
+
+--------------------------------------------------------------------------
+## 0. 独立実測（plan.md の記録を逐語追認せず、レビュア側で測り直したもの）
+--------------------------------------------------------------------------
+
+作業ツリーは未コミットの成果物ゆえ一切触らず、scratchpad へ複製して測った。
+（治具: scratchpad/mut/{clean,m1a,m4}.rs + probe.rs、scratchpad/anchorprobe.rs、
+  scratchpad/docprobe{,2} — いずれも rustc -O で直接実行）
+
+  M3 clean : GREEN（母集団 5060 bytes）
+  M1a move : RED  -> assert(invalidate_icon_cache) 発火（母集団 4928 bytes）
+  M4 forge : RED  -> assert(invalidate_icon_cache) 発火（母集団 792 bytes）
+
+plan.md の M1a / M3 / M4 の判定と一致した。加えて母集団が 12117 bytes（EOF まで）から
+5060 bytes（22〜102 行）へ狭まったことを実測した — 受け入れ条件 1 の直接証拠である。
+M1b / M2 は錨（build_index_from_material の可視性）に依存する変異であり、新実装では
+錨を一切参照しないため独立実測を省いた（構造上 M1a と同一の判定に落ちる）。
+
+--------------------------------------------------------------------------
+## 1. 逆向きの監査 — この差分が消した行の不変条件と、その再確立地点
+--------------------------------------------------------------------------
+
+消した行は 3 群。すべて再確立地点を差分の中に特定できた（喪失なし）。ただし群 C は
+「訂正」であって再確立ではなく、その写しが対称位置に残る（発見事項 H-1）。
+
+A) 母集団の切り出し（旧 split_once + find("\npub(crate) fn ") + match）
+   守っていた不変条件: 母集団は start_index_build の本体である（終端は次のトップレベル項目）
+   再確立地点: indexing.rs:200-226 top_level_fn_body（終端 = 列 0 の }）
+   判定: 再確立されており、かつ厳密に強い。旧終端は 114 行の pub(crate) fn だったので
+         母集団は 22-113 行（build_index_from_material の doc を含む）。新終端は 102 行の
+         列 0 の } で 22-102 行。canary（28 行 try_begin_index_build）と対象（45 行
+         invalidate_icon_cache）はどちらも新母集団の内側にあり、狭まったことによる喪失は無い。
+         旧 None => after（EOF フォールバック）は assert(terminated) へ置換された。
+
+B) try_begin_index_build( の canary assert と「母集団が黙って空にならないことを、
+   まずそれ自体で確かめる」のインラインコメント
+   守っていた不変条件: 母集団が空／ずれていたら赤にする
+   再確立地点: indexing.rs:220-224（メッセージ「沈黙する検知器は検知器ではない」も逐語で保存）。
+         canary は呼び出し側 268-271 が引数で渡す。
+   判定: 再確立されている。
+
+C) 旧 doc 段落「この関数の外のヘルパー経由で無効化する形へ変えると、母集団の外なので捕まらない」
+   守っていた不変条件: 読者に対する死角の申告（＝規範ではなく事実の記述）
+   再確立地点: indexing.rs:253-258（M1a の実測に合わせた訂正）
+   判定: 訂正の向きは実測と一致する（M1a を独立に再現した）。ただし
+         **同一の文が launcher_controller.rs:1603-1604 に残っている**（→ H-1）。
+         また訂正後の文が無条件の全称になっている（→ L-1）。
+
+D) 「新しく生きた組み合わせ」の点検（AGENTS.md「どの分岐が選ばれるかを決める値」）
+   production コードは 1 バイトも変わっていないことを diff のハンク境界で確認
+   （@@ -186,6 +186,61 @@ / @@ -195,25 +250,24 @@ — どちらも 186 行以降）。
+   受け入れ条件 5 は満たされている。
+
+--------------------------------------------------------------------------
+## 2. 発見事項
+--------------------------------------------------------------------------
+
+=== H-1 [High] 対称修正の漏れ — 偽と確定した文の写しが launcher_controller.rs に残る ===
+
+場所: src-tauri/src/egui_shell/launcher_controller.rs:1603-1604
+  /// **残る死角**: 母集団は当該メソッドのソーステキストだけであり、呼び出しグラフは辿らない。
+  /// ゲートをこのメソッドの外のヘルパーへ移すと、母集団の外なので捕まらない。
+
+根本原因（壊れた不変条件）: 本差分は indexing.rs で「ヘルパーへ移すと捕まらない」が偽である
+ことを M1a で確定させたが、同じ機序で同じく偽になる写しが対称位置に残り、規範文書ではなく
+コードの doc が誤った死角の地図を持ち続ける。
+
+なぜ同じく偽か: 当該検査 activation_entry_points_consult_the_display_gate は
+body.contains("plain_results_hidden(") の存在形 assert である。ゲートを
+activate_or_execute の外のヘルパーへ移せば本体から綴りが消え、indexing.rs と同一の理由で
+**赤になる**。捕まらないのは「移した先でゲートが落ちる」方であり、訂正文の構造まで同型である。
+
+AGENTS.md「文書に事実の写しを増やす変更」が名指す #977 型（写しを直す当のコミットが
+6 枚目を落とす）。既存の follow-up 3 件は覆わない: #1112 は同ファイルの別検査
+（activation_uses_frame_values_not_live_reads・否定形 assert）、#1113 は規範 176 行、
+#1114 は scripts の sectionOf。
+
+なお写しの母集団は掃いた。grep 「母集団の外なので捕まらない」の .rs ヒットは 2 件
+（indexing.rs:255 = 訂正済み / launcher_controller.rs:1604 = 未訂正）。view.rs:1337 の
+同型文は**訂正不要**である — あちらの母集団はファイルの production 部全体なので、
+別ヘルパーへ移しても同ファイル内なら needle は数えられ、他ファイルへ出れば本当に母集団の外。
+機序が違うので同じ訂正を当ててはならない。
+
+修正例（どちらでも可・採否はチーム判断）:
+  (a) 本 PR で 1604 行を訂正する — 「ゲートをこのメソッドの外のヘルパーへ移すこと自体は
+      この検査が赤にする（本体から綴りが消えるため）。捕まらないのは移した先でゲートが
+      落ちる退行の方である。」
+  (b) follow-up issue を切る（#1112-1114 と同じ扱い）。ただし本 PR 本文にその旨を書くこと。
+
+偽にする手順: launcher_controller.rs の activate_or_execute から plain_results_hidden(
+の呼び出しをヘルパーへ移し（呼び出し行は残す）、cargo test -p snotra
+activation_entry_points_consult_the_display_gate が**緑のまま**なら私の指摘は誤り。
+
+=== M-1 [Medium] intra-doc link が着地していない。しかも cargo doc は永久に沈黙する ===
+
+場所: src-tauri/src/indexing.rs:198
+  /// [`crate::egui_shell::launcher_controller`] の `method_body` とは...
+
+根本原因: launcher_controller は egui_shell/mod.rs:28 で `mod launcher_controller;`
+（可視性修飾なしの private mod）として宣言され、re-export も無い。private mod の名前は
+egui_shell とその子孫からしか辿れないため、indexing.rs（crate root 直下の兄弟モジュール）
+からの crate::egui_shell::launcher_controller は解決しない。
+
+実測（scratchpad/docprobe2 — 同じモジュール構造を再現した probe crate）:
+  mod launcher_controller;            -> error: unresolved link to
+                                         `crate::egui_shell::launcher_controller`
+                                         no item named `launcher_controller` in module `egui_shell`
+                                         EXIT=101（--document-private-items の有無を問わず）
+  pub(crate) mod launcher_controller; -> EXIT=0（解決する）
+
+かつ、これは cargo doc では**永久に**発覚しない。rustdoc は --cfg test を持たないので
+#[cfg(test)] mod tests ごと落とす。実測（scratchpad/docprobe）:
+  cfg(test) 内に故意の壊れリンク 2 本 -> EXIT=0（診断ゼロ）
+  対照: 同じ壊れリンクを cfg(test) の外に置く -> EXIT=101
+  ※ [lints.rustdoc] broken_intra_doc_links = "deny" を明示した probe での実測。
+  ※ 実 crate で RUSTDOCFLAGS="--cfg test" を試したが dev-dependency egui_kittest を
+     rustdoc が解決できず E0433 で止まる（この経路では確かめられない）。
+
+ゆえに「cargo doc が exit 0 だった」は本件のリンク 2 本について何の証拠でもない。
+docs/comment-guidelines.md「第一原則」が「リンクにできるものはリンクにする（cargo doc の
+intra-doc link 検査が着地を確かめる）」と書き、同じ箇条が // のインラインコメントについて
+「括弧が『検査されている』という誤った安心だけを与える」と警告している状態が、
+#[cfg(test)] 内の /// でもそのまま起きている。
+
+較正（過剰一般化を避けるため）: 同差分の [`top_level_fn_body`] は同一 mod 内の兄弟ゆえ
+可視なら解決する（docprobe2 で確認）。既存の [`method_body`]（launcher_controller.rs 内）
+と [`crate::egui_shell::FrameIndexing`]（view.rs:1333・mod.rs:93 で pub(crate) use 済み）も
+解決する。着地しないのは「別モジュールから private mod を指す」この 1 本だけである。
+
+修正例: 可視性を上げるのは production の変更になり受け入れ条件 5 に反するため採らない。
+素のバッククォートへ落とす:
+  /// `launcher_controller.rs` の `method_body` とは**終端の形が違う**（...
+
+偽にする手順: egui_shell/mod.rs:28 を pub(crate) mod へ変えずに、indexing.rs:198 の
+リンクを #[cfg(test)] の外の任意のアイテムへ移して cargo doc --workspace --no-deps
+--document-private-items を走らせ、exit 0 なら私の指摘は誤り。
+
+=== M-2 [Medium] helper 化で新設された誤用経路 — 字下げアンカーが #1108 の欠陥を沈黙で再生する ===
+
+場所: src-tauri/src/indexing.rs:200-226（top_level_fn_body）
+
+根本原因: 終端を「列 0 の }」に定めたのに、**アンカーが列 0 で始まることを誰も検査しない**。
+字下げされたアンカー（たとえば mod tests 内の関数）を渡すと、最初に見つかる列 0 の } は
+mod tests 自身の閉じ括弧（EOF 直前）になり、母集団が assert リテラルを飲み込む。
+terminated は true になるので assert(terminated) は発火しない。
+
+実測（scratchpad/anchorprobe.rs — 実ファイル src-tauri/src/indexing.rs を include_str!）:
+  anchor = "fn top_level_fn_body_is_line_ending_agnostic("（字下げ・mod tests 内）
+  -> terminated=true で通過。母集団 = 3225 bytes
+  -> 母集団は mod tests の assert リテラルを飲み込んだか:
+       try_begin_index_build( = true / invalidate_icon_cache( = true
+つまり #1108 が塞いだはずの「探す 2 文字列が必ず真になる」状態が、helper の引数経由で
+そのまま構築できる。旧インライン実装にはこの affordance が無かった（母集団の切り出しが
+呼び出し側に無かったため）。helper 化が新たに開けた面である。
+
+同じ節に束ねる: **assert(terminated) 自身に恒久的な検知器が無い。** 受け入れ条件 2
+（終端が見つからなければ赤くなる）を測る回帰テストが差分に無い。plan.md Phase 2 の
+TDD は使い捨ての find("\n}\n") 実装に対して 1 回発火させただけで、**今この行を消しても
+すべて緑である**（M1a/M3/M4 のどれも terminated 側を通らない — 私の probe でも
+発火したのは canary と invalidate_icon_cache の assert だけだった）。
+なお indexing.rs 単体では terminated=false は実質到達不能である（mod tests の閉じ括弧が
+必ず列 0 にあるため）。だからこそ fixture で測るしかない。
+
+修正例（どちらも #[cfg(test)] 内で閉じる。production は触らない）:
+  (1) アンカーの列を検査する
+      let (before, after) = src
+          .split_once(anchor)
+          .unwrap_or_else(|| panic!("{anchor} が見つからない（改名したらこの検査も直す）"));
+      assert!(
+          before.is_empty() || before.ends_with(0xA as char),
+          "{anchor} が列 0 で始まっていない——この helper の終端（列 0 の `}}`）は
+           トップレベル関数を前提とする"
+      );
+      副産物: アンカー文字列が doc コメント等でより手前に現れた場合も赤になる。
+  (2) #[should_panic(expected = ...)] の fixture を 2 本足す
+      - 終端なし: "pub fn target() {\n    marker();\n"      -> assert(terminated) が発火
+      - 字下げアンカー: "mod m {\n    fn target() {\n        marker();\n    }\n}\n"
+        + anchor "fn target(" -> (1) を入れれば発火
+
+偽にする手順: top_level_fn_body に anchor = "fn top_level_fn_body_is_line_ending_agnostic("
+（字下げされたアンカー）と canary = "let lf =" を与えて実ファイル src-tauri/src/indexing.rs を
+食わせ、terminated=false で落ちるか、あるいは返った母集団が "try_begin_index_build(" と
+"invalidate_icon_cache(" のどちらも含まないなら、私の指摘は誤り。
+
+=== M-3 [Medium・確信度中 / ⚠️] 「#1108 の PR 本文に記録した」が、まだ存在しない成果物を指す ===
+
+場所: src-tauri/src/indexing.rs:199
+  /// 共通化しない判断は #1108 の PR 本文に記録した。
+
+根本原因: (a) PR は未作成であり（作業ツリーは未コミット）、この doc は書かれた時点で偽である。
+(b) 却下理由の実体は workspace/plan.md「(B) 共通化を却下した理由」にしか無いが、
+workspace/plan.md はサイクル末に撤去される（git log -- workspace/plan.md が実際に
+「#1056 サイクルの終了処理（…plan.md 撤去…）」を記録している）。(c) PR 本文は squash で
+main の commit message になるが、ファイルを grep する母集団には入らない
+（AGENTS.md「数え上げの母集団に PR 本文を含める」が #1056 で実際に踏んだ形）。
+
+先例の非対称: .rs のコメントが ADR を指す件数は 23、PR 本文を指す件数はこの 1 件だけ
+（grep 実測）。AGENTS.md「ドキュメント参照」は否定の知識（なぜ B を却下したか）の置き場を
+docs/adr/ADR-<slug>.md と定めており、本件は反転条件つきの却下判断＝まさにその型である。
+
+⚠️ 反対材料も置く: CLAUDE.md「意図的なリファクタリングの結果を元に戻さない」は意図の確認先に
+「導入コミット」を挙げており、squash 後の commit message ＝ PR 本文はその導入コミットである。
+ゆえに「PR 本文に記録する」こと自体は規範違反ではない。問題は、記録がまだ無いのに
+完了形で書かれていること（＝読者が確かめる先が空である可能性）である。
+
+修正例（いずれか）:
+  (a) マージ前チェックとして、plan.md の (B) 節を PR 本文へ逐語で載せたことを確認する
+      （/merge-pr の手順に 1 項目足す）。doc の文言はそのままでよい。
+  (b) docs/adr/ADR-source-text-body-extractors.md を切り、doc からはそれを指す。
+      反転条件（4 つ目のソーステキスト検査が生まれたら再検討）が ADR の要件を満たす。
+
+偽にする手順: gh pr view <PR> --json body で (B) 節の逐語が本文に在ることを示せば (a) は解消。
+
+=== L-1 [Low] 訂正後の死角の記述が無条件の全称になっている ===
+
+場所: src-tauri/src/indexing.rs:254-255
+  /// **無効化をこの関数の外のヘルパーへ移すこと自体は、この検査が赤にする**
+
+根本原因: 判定は body.contains("invalidate_icon_cache(") の部分文字列一致なので、
+「移す」先のラッパー名が invalidate_icon_cache で終わる場合は綴りが残って緑になる。
+例: crate::icon::try_invalidate_icon_cache(&icons) は "invalidate_icon_cache(" を含む。
+AGENTS.md「全称表現は前提条件とセットで書く。書けないなら書かない」に当たる。
+
+修正例: 「移して本体から `invalidate_icon_cache(` の綴りが消えれば、この検査が赤にする」
+と、判定の実体（綴りの消失）を条件として明示する。
+
+偽にする手順: 呼び出しを fn try_invalidate_icon_cache(app) へ移した木で
+cargo test -p snotra start_index_build_invalidates が赤になれば私の指摘は誤り。
+
+=== L-2 [Low] 「呼び出し点は現在ここが唯一」は腐る型の写しである ===
+
+場所: src-tauri/src/indexing.rs:256-258
+  /// （`invalidate_icon_cache` の呼び出し点は現在ここが唯一であるため。呼び出し点が増えれば
+  ///  その二重の守りは消え、この検査だけが残る）
+
+根本原因: docs/comment-guidelines.md「第一原則」の書かないもの — 「コードが決めている
+構造の事実 = 呼び出し元・数」。同節は「一意性の宣言（崩れたら事故になる不変条件）」を
+例外にしているが、本文は自ら「呼び出し点が増えれば…消え」と数の変化を許容しており、
+不変条件ではなく数え上げである。誰も検査せず、増えた瞬間に散文だけが腐る。
+（内容自体は 2026-08-17 時点で正しい。grep 実測: production の呼び出しは indexing.rs:45 の
+ 1 件のみ。icon.rs のテストが呼ぶのは invalidate_icon_cache_with で別関数。）
+
+修正例: 同節が示す「過去の観測（日付つきの実測）」へ倒す —
+  「2026-08-17 の実測では呼び出しの単純な削除は dead_code が先に発火した」
+
+偽にする手順: 「呼び出し点が唯一」を機械が検査している箇所を示せば私の指摘は誤り。
+
+=== L-3 [Low] CRLF の根拠から機序が落ちており、写しが初日から乖離している ===
+
+場所: src-tauri/src/indexing.rs:194-195
+  /// （`include_str!` が読むのは checkout された実ファイルであり、手元が LF でも CI は CRLF になる）
+
+根本原因: 元となった launcher_controller.rs:1487-1490 の doc は機序まで書いている —
+「手元の `core.autocrlf=input` では再現せず、CI（git-for-windows の system 既定
+`core.autocrlf=true`）でだけ落ちた」。写した側は機序を落として「CI は CRLF になる」という
+無条件の全称に圧縮した。ci.yml は ubuntu-latest の job を 2 つ持ち（node-check /
+governance-check）、そちらは LF である。cargo test を走らせる rust-check は
+windows-latest なので実害は無いが、主張は実装より強い。
+（実測: .gitattributes は .githooks/** だけを eol=lf に固定し .rs は対象外。
+ 手元は core.autocrlf=input。ci.yml:135 rust-check = windows-latest。）
+
+修正例: 「rust-check（windows-latest）の checkout は CRLF になる」と job を名指すか、
+元の doc と同じく core.autocrlf の非対称を書く。
+
+偽にする手順: ci.yml で cargo test を走らせる job が ubuntu にも在ることを示せば
+（＝「CI」が単一でないことがそもそも問題にならないなら）指摘は不要。
+
+=== L-4 [Low] 折返しが「存在形の assert」という語を分断し、grep が 0 件を返す ===
+
+場所: src-tauri/src/indexing.rs:262-263
+  /// ...**この安全性は「存在形の
+  /// assert」に依る**——...
+
+根本原因: docs/comment-guidelines.md「日本語の折返し」の第一根拠（折返しは grep を壊す）。
+実測: grep -rn "存在形の assert" --include=*.rs は **0 件**。同じ語を
+workspace/plan.md:104 が逐語で使っており、plan から コードへ辿る経路が切れている。
+
+較正: **コードスパン（バッククォート）の行またぎは 0 件で、そこは合格である。** 新規の
+doc コメントを全走査したが `include_str!` `str::lines` `-D warnings` `dead_code`
+`invalidate_icon_cache` 等はすべて 1 行に収まっている。分断されているのは
+「存在形の assert」（262-263）と「原則の正本は `docs/development-principles.md`…」
+（195-196）の 2 か所で、いずれも太字/鉤括弧の span。
+
+修正例: 「存在形の assert」を 263 行の先頭へ寄せて 1 行に収める。
+
+偽にする手順: grep -rn "存在形の assert" --include=*.rs . が indexing.rs を返せば誤り。
+
+--------------------------------------------------------------------------
+## 3. 前段の裁定 3 件への判定
+--------------------------------------------------------------------------
+
+### 争点 1 — method_body との共通化を却下したこと
+
+結論は支持する。ただし却下理由 1 の論証には反対する（DRY 違反としては挙げない。
+申し送りのとおり /dry-check の [維持] を尊重する）。
+
+⚠️ 却下理由 1「crate 全域で 1 つに閉じるはそもそも達成不能であり、B を採っても実装は
+3 つ残る」は、候補でないものを数えている。view.rs の assert_read_once_in_production は
+split_once("#[cfg(test)]") で production 部を切る別概念、startup.rs は enum 宣言の走査で、
+どちらも元より method_body と統合しうる形ではない。実際に統合しうるのは
+top_level_fn_body と method_body の 2 本で、両者の差は終端リテラル "}" と "    }" の
+**1 文字列**のみ（構造・assert・メッセージまで逐語一致）。ゆえに達成可能な削減は 2 -> 1 で、
+これは規範 183 行が名指す対象そのものである。「3 つ残る」は削減の不可能性を示さない。
+
+かつ、規範が予告した乖離が**この差分で既に起きている**（L-3）。method_body の doc が持つ
+core.autocrlf の機序が、写した側で「CI は CRLF になる」へ縮んだ。#1077 の「2 本が別々の
+状態になった」と同じ形が、初日に doc の層で発生している。
+
+それでも結論を支持するのは、却下理由 2（稼働中の 2 検査への変異注入の再実測義務）と
+理由 3（#[cfg(test)] の共有 helper は新ファイル＋mod 宣言＋モジュール索引＋
+G-module-linkage の統治コストを持つ）が独立に成立し、issue #1108 が合意を求めた射程が
+indexing.rs であることも動かないため。反転条件（4 つ目が生まれたら再検討）も妥当である。
+提案は 1 点だけ: 却下理由 1 の「3 つ残る」を落とし、「達成可能な削減は 2 -> 1 だが
+理由 2・3 が上回る」と書き直せば、ADR/PR 本文としてより強い記録になる。
+
+### 争点 2 — M1 を「削除」から「別関数への移動」へ組み替えたこと
+
+支持する。dead_code が検査より手前で発火するという判断は、呼び出し点が indexing.rs:45 の
+1 件のみであること（grep 実測・icon.rs のテストが呼ぶのは invalidate_icon_cache_with で別関数）
+から裏付けられる。.claude/rules/safety-nets.md「注入したことと、注入が正しい強さであることは
+別である」の適用として正しい。M1a を独立に再現し、赤になることを確認した（§0）。
+
+### 争点 3 — 「残る死角」の記述の訂正
+
+訂正の**向き**は支持する（M1a を独立に再現した。移すこと自体は赤になる）。
+ただし 2 点で実装より強い/取りこぼしがある: 無条件の全称になっている（L-1）、
+および同じ文の写しが launcher_controller.rs:1604 に残っている（H-1）。
+
+--------------------------------------------------------------------------
+## 4. 各フェーズの通過記録（発見事項に至らなかったもの）
+--------------------------------------------------------------------------
+
+Phase 1 実装検証
+  シークレット露出: 無し。境界の入力バリデーション: 該当なし（純粋関数・#[cfg(test)]）。
+  テストカバレッジ: 独立に見た結果 M-2（terminated の検知器欠落）を挙げた。
+  コメントが「構造の事実の写し」になっていないか: L-2 を挙げた。他は「なぜ」型で適切。
+  可読性・命名・エラーハンドリング・性能: 指摘なし。
+    - unwrap_or_else(|| panic!(...)) は expect と違いアンカー名を補間できるので妥当。
+    - String を返す（旧実装は &str）ことでアロケーションが増えるが #[cfg(test)] ゆえ無害。
+    - top_level_fn_body_is_line_ending_agnostic は LF/CRLF の結果を相互に比較していない
+      （名前は agnostic を主張する）。assert_eq!(lf_body, crlf_body) の方が直接的だが、
+      method_body_is_line_ending_agnostic と同形であり、既存の様式に揃えた判断として妥当。
+      指摘には上げない。
+
+Phase 2a plan.md 不変条件との照合
+  不変条件「母集団は pub fn start_index_build( から列 0 の } まで／他の関数の名前・位置・
+    可視性に依存しない」 -> indexing.rs:200-226。守られている（M2 が構造上不要になる形）。
+  不変条件「錨が変われば panic! で赤」 -> indexing.rs:201-204。守られている。
+  不変条件「列 0 の } が本体内に現れれば狭くなるが、どこで切れても赤」 -> M4 を独立に再現。
+    守られている（母集団 792 bytes で invalidate_icon_cache の assert が発火）。
+  受け入れ条件 2「終端が見つからなければ赤」 -> コードには在るが**回帰テストが無い**（M-2）。
+  受け入れ条件 5「挙動は 1 バイトも変わらない」 -> 守られている（逆向きの監査 D）。
+
+Phase 2b 対称コードパスチェック
+  対称チェック: top_level_fn_body の 2 方向の壊れ方 <-> method_body
+    判定: 同じ修正は不要 — method_body は #1077/#1106 で既に lines() + terminated assert +
+    canary assert を持つ（launcher_controller.rs:1490-1516 を実読）。
+  対称チェック: 同型のソーステキスト検査（include_str! の全 5 箇所を grep で列挙）
+    - launcher_controller.rs:1551 / 1607 -> method_body 経由。修正済み。
+    - view.rs:1375 assert_read_once_in_production -> split_once("#[cfg(test)]").expect(...)
+      ＋ canary。EOF フォールバック無し。不要。
+    - startup.rs:600 count_matches_the_enum_declaration -> split_once(...).expect() ×2。
+      EOF フォールバック無し。不要。
+    - scripts/governance/checks/G-check-skill-enumeration.mjs の sectionOf は EOF
+      フォールバックを持つが #1114 として切り出し済み（意図的な射程外・妥当）。
+    判定: .rs の母集団は掃けている。
+  対称チェック: 「母集団の外なので捕まらない」の doc の写し -> **H-1（漏れあり）**。
+
+Phase 2c DRY / 関数カバレッジ
+  top_level_fn_body の呼び出し元は indexing.rs:236 と :267 の 2 件（同 mod 内）。
+  母集団の切り出しを手書きしている箇所は上記 grep のとおり無し。
+  method_body との重複は申し送りに従い DRY 違反として挙げない（論証のみ §3 争点 1）。
+  イベント定数（events.rs）に触れる変更は無し。
+
+Phase 2d リソースライフサイクル
+  新規のリソース・状態フラグ・spawn・listener は無し（純粋関数 1 つと fixture テスト 1 本）。
+  該当なし。
+
+Phase 2e SPEC.md 同期
+  SPEC 同期: 差分が変える挙動 -> **無し**（#[cfg(test)] のみ・production は 1 バイト不変）。
+  SPEC 該当節: 記述なし（grep -c "invalidate_icon_cache\|start_index_build" SPEC.md = 0 を追試）。
+  判定: SPEC 対象外。
+  src-tauri/CLAUDE.md も更新不要（ファイルの追加・削除が無く、indexing.rs 節の不変条件は不変）。
+
+Phase 2f 「変更不要」判断の再評価
+  再評価: view.rs:1337 の同型 doc（「読みを別のヘルパーへ移すと母集団の外になる」）
+    ケース A: 同ファイル内の別ヘルパーへ移す -> 母集団は production 部全体なので needle は
+      なお 1 回数えられ緑 -> 不変条件（フレームで 1 回だけ読む）は実際に保たれている -> OK
+    ケース B: 他ファイルへ移す -> 本当に母集団の外 -> 記述どおり -> OK
+    結論: 変更不要を確認（indexing.rs と機序が違うので同じ訂正を当ててはならない）。
+  再評価: startup.rs / view.rs の検査へ terminated 相当の assert が要るか
+    ケース A: view.rs は split_once("#[cfg(test)]") が失敗すれば expect で赤 -> OK
+    ケース B: startup.rs は split_once("}") が失敗すれば expect で赤 -> OK
+    結論: 変更不要を確認。
+  再評価: production を触らない判断
+    ケース A: M-1 の修正に pub(crate) mod が要るか -> 素のバッククォートで足りる -> OK
+    結論: 変更不要を確認。
+
+Phase 3 パフォーマンス検証
+  スキップ。search.rs / folder.rs / 検索結果レンダリング / アイコンキャッシュのいずれにも
+  触れず、変更は #[cfg(test)] に閉じており毎フレーム経路に一切現れない。
+
+過去パターン再発の疑い: H-1 が AGENTS.md「文書に事実の写しを増やす変更」の #977 型
+（写しを直す当のコミットが取りこぼす）に該当する。
+
+--------------------------------------------------------------------------
+## 5. まとめ（優先度順）
+--------------------------------------------------------------------------
+
+Critical: 0 件
+High:     H-1 launcher_controller.rs:1604 に偽の死角記述が残る（対称修正の漏れ）
+Medium:   M-1 intra-doc link が着地せず、cargo doc は cfg(test) を見ないので永久に沈黙
+          M-2 字下げアンカーで #1108 の欠陥が沈黙で再生する＋terminated assert に検知器が無い
+          M-3 ⚠️ 「PR 本文に記録した」がまだ存在しない成果物を指す
+Low:      L-1 訂正後の死角記述が無条件の全称
+          L-2 「呼び出し点は唯一」が腐る型の写し
+          L-3 CRLF の根拠から機序が落ち、写しが初日に乖離
+          L-4 折返しが「存在形の assert」を分断し grep が 0 件
+
+マージ可否の私見: H-1 と M-1 は本 PR 内で片づく分量（doc の 2 行）。M-2 は (1) の 4 行で
+閉じるが follow-up でも筋は通る。M-3 はマージ前の確認項目。いずれも production には
+触れないので受け入れ条件 5 は保たれる。
+
+
+==========================================================================
+# ラウンド 2 — 修正差分の検算（2026-08-17）
+==========================================================================
+
+対象: git diff（引数なし）= indexing.rs / launcher_controller.rs / plan.md
+      ＋ 未追跡の docs/adr/ADR-source-text-probe-helper-locality.md
+枠組み: ラウンド 1 で所見を見つけたのと同じ 3 枠を修正差分へ再実行した —
+  (i) 逆向きの監査（消した行の不変条件と再確立地点）
+  (ii) 対称パス（同型の相手に同じ修正が要るか）
+  (iii) doc の主張が実装より強い／弱いか（全称・数え上げ・写し）
+
+--------------------------------------------------------------------------
+## R2-1 [Medium] 対称修正の漏れ — method_body に同じアンカー検査が無い
+--------------------------------------------------------------------------
+
+場所: src-tauri/src/egui_shell/launcher_controller.rs:1490-1494（method_body）
+
+根本原因: M-2 の是正（アンカーが列 0 から始まることの assert）は top_level_fn_body
+だけに入り、**同一の危険を持つ method_body には入らなかった**。method_body の終端は
+「4 スペース字下げの }」であり、アンカーがその字下げで始まることを誰も検査しない。
+今ラウンドで launcher_controller.rs を編集しているので、対称位置は射程内だった。
+
+実測（scratchpad/mb/p.rs — method_body を複製して両方向を測った）:
+  (a) 列 0 のアンカー（トップレベル関数）を渡す -> **通過**。母集団 314 bytes
+      （最初の 4 スペース `}` ＝ 内側ブロックの閉じ括弧で切れる）
+      invalidate_icon_cache( を含むか = false ＝ 母集団が黙って狭まった
+  (b) 8 スペース字下げのアンカー（入れ子 impl のメソッド）-> **通過**。母集団 99 bytes
+      隣の other() の中身 secret( を飲み込んだか = **true** ＝ 母集団が黙って広がった
+  どちらも terminated=true・canary 成立で、既存の 2 assert は 1 つも発火しない。
+
+重みづけ: method_body が守るのは #1077 / #1106 で実機再現した表示ゲート 2 本であり、
+top_level_fn_body（1 本）より稼働中の価値が高い。硬化が価値の低い側にだけ入った形になる。
+
+修正例: method_body にも鏡像の assert を置く（before は split_once の左側）—
+  assert!(
+      before.ends_with("\n    "),
+      "{anchor} が 4 スペース字下げで始まっていない——終端の `}}` が外側の閉じ括弧になり、
+       母集団が意図より広く／狭く伸びる"
+  );
+  ＋ #[should_panic] の fixture 1 本（列 0 のアンカー）。
+  ADR の却下理由 1（稼働中のガードへ爆風）に照らすと、これは一般化ではなく assert の追加
+  なので再実測の義務は cargo test -p snotra の 1 回で足りる。follow-up issue でも筋は通るが、
+  **その場合は本 PR 本文にその旨を書くこと**（ADR にも「残余」として 1 行）。
+
+偽にする手順: 上の (a)(b) と同じ入力を method_body へ与えて terminated=false か
+canary 不成立で落ちるなら、私の指摘は誤り。
+
+--------------------------------------------------------------------------
+## R2-2 [Medium] ADR の中心的な主張が、それを書いた当の差分で偽になっている
+--------------------------------------------------------------------------
+
+場所: docs/adr/ADR-source-text-probe-helper-locality.md:21
+  「統合しうるのは…2 つで、両者の差は**終端のリテラルだけ**である
+   （構造・assert・メッセージまで一致する）」
+
+根本原因: 同じ差分が top_level_fn_body にだけ 3 つ目の assert（アンカーの列）と
+#[should_panic] の回帰テスト 3 本を足したため、両者はもはや終端リテラルだけでは違わない。
+実測（両ファイルを読み比べ）:
+  top_level_fn_body : split_once の (before, after) を受ける／assert 3 本／回帰テスト 4 本
+  method_body       : .1 だけを受ける／assert 2 本／回帰テスト 1 本
+
+これは私が MEMORY へ記録している「own-measurement-refutes-adjacent-prose」型
+（同じ差分で自分がやったことが、隣に書いた散文を反証している）であり、かつ ADR は
+`ADR-adr-frozen-history` により**本文内の参照が機械照合されない**（governance:check は
+この文を見ていない）。凍結されるからこそ、書いた時点で真である必要がある。
+
+なお「達成可能な削減は 2 -> 1」という結論そのものは今も成り立つ（引数 2 つで統合できる）。
+偽になったのは「差は終端リテラルだけ」という**強さ**の部分だけである。
+
+修正例: R2-1 を当てるなら文はそのまま真に戻る。当てないなら —
+  「統合しうるのは 2 つで、差は終端のリテラルに帰着する（2026-08-17 時点では
+   `top_level_fn_body` だけがアンカーの列の assert を持つ——R2-1 の残余）」
+
+偽にする手順: method_body に before.ends_with("\n    ") 相当の assert が在ることを
+示せば、私の指摘は誤り。
+
+--------------------------------------------------------------------------
+## R2-3 [Low・⚠️] H-1 / L-1 で足した条件節は、実装より**弱い**（機序より狭い）
+--------------------------------------------------------------------------
+
+場所: indexing.rs:301-302 ／ launcher_controller.rs:1606
+  「**ただし移し先の名前が `invalidate_icon_cache(` を部分文字列として含むなら…緑のまま通る**」
+  「**ただし移し先の名前がこれらを部分文字列として含むなら緑のまま通る**」
+
+ご質問 1 への回答: **強くはなっていない（正しい）。ただし狭い。** 判定は
+body.contains(...) ＝ **本体のテキスト**に対する部分文字列一致であり、「名前」は
+その一例にすぎない。名前以外でも綴りは残る:
+  - 移したあとに説明コメントを残す（「無効化は `invalidate_icon_cache(&icons)` へ移した」）
+    -> 本体テキストに綴りが在るので緑。**現に start_index_build の本体は 32-43 行に
+    12 行の説明コメントを抱えており、移設時にそこを書き足す動機が実在する。**
+  - 型注釈・関数ポインタ・マクロ引数として綴りが残る形
+ゆえに、名前という一例を挙げるより機序を書くほうが腐らない
+（docs/comment-guidelines.md「第一原則」の「列挙が正本の代わりなら書かない」）。
+
+修正例: 「ただし**本体のテキストにその綴りが残るなら**（移し先の名前が
+`try_invalidate_icon_cache(` のように部分文字列として含む場合や、説明コメントに
+綴りが残る場合）緑のまま通る」
+
+偽にする手順: 呼び出しをヘルパーへ移し、本体に `// 無効化は invalidate_icon_cache( へ移した`
+とだけ書き残した木で cargo test -p snotra start_index_build_invalidates が赤になれば、
+私の指摘は誤り。
+
+--------------------------------------------------------------------------
+## R2-4 [Low・回答] before.ends_with(LF) は意図した集合を過不足なく切るか（ご質問 2）
+--------------------------------------------------------------------------
+
+結論: **現行の呼び出しに対しては過不足ない。** 実装上の残余が 2 方向あり、どちらも
+今日は無害だが、性格が違うので分けて書く。
+
+(A) 誤って落ちる側 — BOM。**実測した。**
+  scratchpad/bom で測ったところ `include_str!` は BOM を**保持する**
+  （先頭 4 バイト = [239, 187, 191, 112]）。アンカーがファイル先頭にある BOM 付きファイルでは
+  before = "\u{feff}" となり、is_empty=false / ends_with(LF)=false で**誤発火する**。
+  ただし現状は無害である: (1) 追跡下の *.rs 全件を走査して BOM は **0 件**、
+  (2) 実ファイルを読む唯一の呼び出しはアンカーが 22 行目にあり、ファイル先頭ではない。
+  belt-and-braces を望むなら before.trim_start_matches("\u{feff}").is_empty() で覆える。
+  **今の差分の欠陥ではないので修正を求めない**（記録として置く）。
+
+(B) 誤って通る側 — assert が切るのは「行頭か」であって「宣言か」ではない。
+  列 0 から始まる行なら、それが /* */ ブロックコメントの中でも raw string の中でも通る。
+  例:
+    /*
+    pub fn start_index_build(app) — 旧実装のメモ
+    */
+  この場合 before は LF で終わるので assert は黙り、母集団がコメントから始まる。
+  ただし下流の terminated / canary が残っており、母集団が広がる方向でも
+  「最初の列 0 の }」で切れるため #1108 の EOF 伸長は再生しない。**受容してよい残余**。
+
+doc の主張の検算: 「（doc 中にアンカー文字列が先行出現した場合もここで落ちる）」は
+**真である** —— /// ・//! ・// のいずれもスラッシュが行頭を占めるので、アンカーが
+列 0 に来ることはありえない。上の (B) はブロックコメントと raw string の話であって
+doc コメントの話ではないので、この括弧書きは実装より強くない。
+
+--------------------------------------------------------------------------
+## R2-5 [Low] 消費者側 doc の「壊れ方」の列挙が 2/3 のまま
+--------------------------------------------------------------------------
+
+場所: indexing.rs:306-308
+  「**母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ。** 終端が見つからなければ赤になり、
+   本体に列 0 の `}` が現れて母集団が狭まった場合も…赤になる。」
+
+根本原因: helper のガードは 3 つ（アンカーの列・終端・canary）になったのに、
+ここの列挙は 2 つのまま。start_index_build_invalidates_the_icon_cache だけを読む読者は
+2/3 の地図を受け取る。AGENTS.md「数え上げも同じ強さである——数ではなく正本を指す」。
+
+修正例: 列挙をやめて正本を指す —
+  「**母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ**（塞ぎ方の正本は同 helper の doc と
+   `top_level_fn_body_rejects_*` の 3 本）。」
+
+偽にする手順: 当該段落がアンカーの列にも触れていることを示せば、私の指摘は誤り。
+
+--------------------------------------------------------------------------
+## R2-6 [Low] 新設 ADR が未追跡である（governance:check の緑はそれを見ていない）
+--------------------------------------------------------------------------
+
+場所: docs/adr/ADR-source-text-probe-helper-locality.md（git status = ??）
+
+根本原因: governance の snapshot はファイルシステムを歩いて作られる
+（scripts/governance/lib.mjs — 「列挙は fs 自身に問う」・readdirSync）。ゆえに
+**未追跡のファイルも実在として数える**。「governance:check 全検査 passed・ADR 53 本」は
+「この ADR がコミットに入る」の証拠ではない。git commit -a や パス指定のコミットでは
+未追跡ファイルは入らず、indexing.rs:201 の参照だけが残る。
+
+安全網はある: G-references は .rs を走査対象に含む（REF_EXTENSIONS = md|rs|ts|…）ので、
+ADR を欠いたままコミットすれば **PR CI の governance-check job が赤になる**。
+ゆえに沈黙では壊れない。コミット前に git add docs/adr/… を確認するだけでよい。
+
+偽にする手順: git ls-files docs/adr/ADR-source-text-probe-helper-locality.md が
+出力を返せば、私の指摘は既に解消している。
+
+--------------------------------------------------------------------------
+## ラウンド 1 の 8 件の解消判定（指摘を見つけた道具で自分で測った）
+--------------------------------------------------------------------------
+
+H-1 解消 ✅ — launcher_controller.rs:1603-1607 の訂正内容は機序として正しい
+      （body.contains の存在形 assert なので、移せば綴りが消えて赤）。
+      写しの母集団は**私も独立に掃いた**: grep "母集団の外なので捕まらない|外のヘルパーへ移す|
+      母集団の外になる" --include=*.rs の 3 ヒットは launcher_controller.rs:1604（訂正済）/
+      view.rs:1338（機序が違い訂正不要・ラウンド 1 の判定どおり）/ indexing.rs:300（訂正済）。
+      残存 0 で、チームの掃きと一致した。ただし条件節の狭さが残る（R2-3）。
+
+M-1 解消 ✅ — リンクを素のバッククォートへ。機序をご自身で対照つきに測り直した点も
+      私の probe と一致する（cfg(test) 内 exit 0 / production 側 exit 101）。
+      **残っている [`top_level_fn_body`] のリンク 4 本は着地する**ので放置でよい
+      （同一 mod 内の兄弟。ラウンド 1 の docprobe2 で確認済み）。
+
+M-2 解消 ✅（片側のみ） — assert とテスト 3 本を確認した。**3 本とも真の検知器である**:
+      対応する assert を消すと、それぞれ「終端なし fixture が Ok を返す」「字下げアンカー
+      fixture が Ok を返す」「canary なし fixture が Ok を返す」で should_panic が満たされず
+      赤になる。テスト数 279 -> 282 も 3 本と整合する。expected 文字列も互いに排他。
+      -> ただし対称位置が未処置（R2-1）。
+
+M-3 解消 ✅（ご質問 4 への回答） — 判断が ADR へ移り、参照は G-references が .rs を
+      走査対象に含むので**機械照合に載った**（PR 本文を指していた状態からの実質的な改善）。
+      ADR の様式（ADR-<slug>.md・連番なし・末尾の status / 関連）も既存 3 本と一致する。
+      残余 2 点: 未追跡（R2-6）と、ADR 本文内の参照は ADR-adr-frozen-history により
+      機械照合されないこと（＝ R2-2 のような本文の誤りは誰も検知しない）。
+
+L-1 解消 △ — 反映されたが機序より狭い（R2-3）。
+L-2 解消 ✅ — 「2026-08-17 時点で〜だからであり」の日付つき実測へ倒された。
+      comment-guidelines「過去の観測へ移す」の形に合致する。
+L-3 解消 ✅ — core.autocrlf の非対称が書き戻された。ci.yml の job 分岐を名指してはいないが、
+      機序が入ったので「CI は CRLF になる」という無条件の全称ではなくなった。十分。
+L-4 解消 ✅ — 追試した。grep -c "存在形の assert" src-tauri/src/indexing.rs = **1**。
+      段落分けによりコードスパンの行またぎも引き続き 0 件。
+
+争点 1 の訂正 ✅ — plan.md は取り消し線で旧論証を残したうえで訂正、ADR は
+      「却下理由として使わなかったもの」節に同内容を記録。結論（却下）は理由 2・3 で維持。
+      **規範が予告した乖離を ADR の「受容した残余」に書いた判断は適切**だが、
+      その残余がラウンド 2 で doc から挙動へ広がった（R2-1 / R2-2）ことは未反映である。
+
+--------------------------------------------------------------------------
+## ラウンド 2 まとめ
+--------------------------------------------------------------------------
+
+Critical: 0 件
+High:     0 件
+Medium:   R2-1 method_body に同じアンカー検査が無い（対称修正の漏れ・両方向を実測）
+          R2-2 ADR の「差は終端リテラルだけ」が同じ差分で偽になった
+Low:      R2-3 ⚠️ 「移し先の名前が…」の条件節が機序より狭い（弱い主張）
+          R2-4 ⚠️ ends_with(LF) の残余 2 方向（BOM は実測・現状無害／行頭 != 宣言）
+          R2-5 消費者側 doc の壊れ方の列挙が 2/3 のまま
+          R2-6 新設 ADR が未追跡（CI は捕捉する。governance:check の緑は追跡を見ない）
+
+production は 3 ファイルとも 1 バイトも変わっておらず、受け入れ条件 5 は保たれている
+（launcher_controller.rs の差分も doc コメント 1 行 -> 4 行の置換のみ）。
+R2-1 だけが「稼働中のガードの穴」で、残りは doc の精度である。
+
+
+==========================================================================
+# ラウンド 3 — R2-1 の修正（実装変更）だけを検算（2026-08-17）
+==========================================================================
+
+射程: `method_body` のアンカー字下げ assert・追加した should_panic 1 本・ADR の当該文。
+      ご指定の 4 点に限る（残り 5 件の doc 精度は対象外）。
+治具: scratchpad/r3/p.rs（実ファイル走査）・scratchpad/r3/q.rs（述語の対照）。いずれも rustc -O。
+所見: Medium 1 件 / Low 4 件（ゼロではない）。
+
+--------------------------------------------------------------------------
+## ご質問 2 への回答 — 既存 3 アンカーの字下げ: **合格**（実ファイルで実測）
+--------------------------------------------------------------------------
+
+`method_body` が実ファイルへ当てるアンカーは 3 つ。**初出の字下げはすべて 4** である。
+
+  anchor=fn on_enter(            初出 1429 行 / indent=4 / head="    pub(super) "
+  anchor=fn activate_or_execute( 初出  536 行 / indent=4 / head="    pub(super) "
+  anchor=fn shift_activate(      初出  611 行 / indent=4 / head="    "
+
+**全出現も列挙した**（`split_once` が最初を取ることとの相互作用を潰すため）:
+  fn on_enter(            -> [(1429,4), (1579,12)]
+  fn activate_or_execute( -> [(536,4), (1580,12), (1641,12)]
+  fn shift_activate(      -> [(611,4), (1581,12), (1642,12)]
+indent=12 の側は `mod tests` の `targets` 配列に置いたリテラルで、初出ではないので選ばれない。
+**かつ、定義が改名・撤去されて 12 段のリテラルが初出に繰り上がった場合、新しい assert が
+12 != 4 で赤にする** —— この修正は副産物としてそこも塞いでいる（緑の根拠として記録に足る）。
+
+--------------------------------------------------------------------------
+## ご質問 3 への回答 — should_panic は削除に対しては真の検知器。**弱化は捕まえない**
+--------------------------------------------------------------------------
+
+削除に対して: **合格。** fixture は
+  "pub fn target() {\n    marker();\n    if c {\n    }\n}\n" / anchor "pub fn target(" / canary "marker("
+で、assert を消すと after は `") {…"`、行走査は `"    }"`（if の閉じ）で terminated=true、
+body = `") {\n    marker();\n    if c {\n"` が canary を含むので **Ok を返して panic しない**
+-> should_panic が満たされず赤。検知器として成立している。
+
+弱化に対して: **穴がある**（→ R3-2）。
+
+--------------------------------------------------------------------------
+## R3-1 [Medium] ご質問 4 への回答 — R2-2 は**完全には真へ戻っていない**
+--------------------------------------------------------------------------
+
+場所: docs/adr/ADR-source-text-probe-helper-locality.md（「却下理由として使わなかったもの」）
+  「切り出しの構造と assert の並びは一致し、**差は終端のリテラルと期待する字下げ幅の 2 値である**」
+
+真へ戻った部分: assert の**本数と並び**は一致した（アンカー -> 終端 -> canary の 3 本ずつ）。
+ラウンド 2 で指摘した「assert 3 本 対 2 本」の食い違いは解消している。
+
+残っている強さ: **2 つのアンカー述語は互いの一般化ではない。** 片方の形をもう片方へ
+代入すると、その現場が受理する集合が変わる。実測（scratchpad/r3/q.rs）:
+
+  before の形                top_level の述語   width(want=0)   width(want=4)
+  「列 0・直前が改行」            true             true           false
+  「doc コメント中(列 0 段)」      **false**        **true**        false
+  「4 空白 + 可視性修飾」          false            false          true
+  「4 空白 + doc コメント」        false            false          **true**
+
+2 行目が要点である。`top_level_fn_body` の `before.is_empty() || before.ends_with(LF)` は
+**行頭に何も無いこと**を要求するので `/// pub fn start_index_build(` を拒む。字下げ幅の式で
+want=0 と書くと**同じ入力を受理する**——つまり「期待する字下げ幅」というパラメタ 1 つでは
+両者を表現できず、統合すれば `top_level_fn_body` 側が弱くなる。
+4 行目も同じ非対称の裏返しで、`method_body` は「4 空白 + doc コメント」を受理する
+（`top_level_fn_body` はどんな前置も拒む）。**2 値の差ではなく、述語の意味が違う。**
+
+ADR は「（回帰テストの構成はサイトごとの必要に応じて異なる）」と括弧で逃がしているが、
+それが覆うのはテストであって assert の述語ではない。`ADR-adr-frozen-history` により
+ADR 本文は機械照合されないので、書いた時点で真である必要がある。
+
+修正例（実装は変えなくてよい・ADR の文言だけ）:
+  「切り出しの構造と assert の並び（アンカー -> 終端 -> canary）は一致する。差は終端のリテラル、
+   期待する字下げ、そして**アンカー述語の形**である——列 0 側は「行頭に何も無いこと」を、
+   4 空白側は「行頭の空白幅」を見ており、後者は前者より弱い（4 空白の doc コメントを受理する）。
+   統合するならこの非対称を引数ではなく述語として渡すことになる。」
+
+偽にする手順: `before.is_empty() || before.ends_with(LF)` と「字下げ幅 == 0」が
+`"…\n/// "` に対して同じ真理値を返すことを示せば、私の指摘は誤り。
+

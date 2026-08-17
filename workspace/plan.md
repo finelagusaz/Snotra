@@ -111,10 +111,15 @@ fixture テスト（**文字列リテラルで書く**——`include_str!` を�
 
 | # | 変異 | 現行の検査 | 修正後の検査 |
 |---|---|---|---|
-| M1 | `build_index_from_material` の `pub(crate)` → `pub`（錨を消す）**かつ** `invalidate_icon_cache(&icons);` の行を削除 | **緑（＝欠陥の実証）** | **赤**（`invalidate_icon_cache` の assert） |
-| M2 | 錨だけ消す（`pub(crate)` → `pub`） | 緑 | **緑**（母集団が錨に依存しなくなった証拠。`expect(錨)` 案なら赤くなり、無関係変更でノイズを出す） |
+| M1a | `invalidate_icon_cache` の呼び出しを `notify_indexing_started` へ**移す**（錨は健在） | **赤**（＝この回帰は本来捕まる） | 赤 |
+| M1b | M1a に加えて錨を消す（`build_index_from_material` の `pub(crate)` → `pub`） | **緑（＝空虚さの実証）** | **赤** |
+| M2 | 錨だけ消す | 緑 | **緑**（母集団が錨に依存しなくなった証拠。`expect(錨)` 案なら赤くなり、無関係変更でノイズを出す） |
 | M3 | 変異なし（クリーンツリー） | 緑 | 緑 |
 | M4 | 本体へ列 0 の `}` を含む raw string を仕込む（**終端の偽装**・3b の指摘） | — | **赤**（母集団が狭まり、切れた位置に応じて canary か `invalidate_icon_cache` の assert が発火する。**沈黙しないことの実測**） |
+
+**M1 の変異を「呼び出しの削除」から「別関数への移動」へ組み替えた**（実装中の発見・2026-08-17）。削除では `invalidate_icon_cache` が never used になり、**`-D warnings` の `dead_code` が検査より手前で発火する**——`.claude/rules/safety-nets.md`「注入したことと、注入が正しい強さであることは別である」に当たる強すぎる変異だった。移動なら関数は使われ続けるので `dead_code` は黙り、**壊れるのは「`start_index_build` の本体で無効化する」という不変条件だけ**になる。
+
+**副産物**: `invalidate_icon_cache` の呼び出し点は現在ここが**唯一**であり、単純な削除は clippy が二重に守っている（`cargo clippy` が `icon.rs:191` を name で指す）。この検査が単独で守るのは「呼び出しが他所へ移る」形である。
 
 コマンド: `cargo test -p snotra start_index_build_invalidates` / `cargo test -p snotra top_level_fn_body`（`src-tauri` は `[lib]` を持たないため `--lib` は使えない・`src-tauri/CLAUDE.md`）。
 
@@ -134,14 +139,16 @@ fixture テスト（**文字列リテラルで書く**——`include_str!` を�
 
 **採らなかった理由**:
 
-1. **終端が別概念である。** `indexing.rs` はトップレベル関数（列 0 の `}`）、`method_body` はメソッド（4 スペースの `}`）、`view.rs` は `#[cfg(test)]` 分割の出現回数、`startup.rs` は enum 宣言。crate 全域で「1 つに閉じる」は**そもそも達成不能**であり、B を採っても実装は 3 つ残る
+1. ~~**終端が別概念である。** crate 全域で「1 つに閉じる」は達成不能であり、B を採っても実装は 3 つ残る~~ — **この論証は誤りであり、レビューで覆した（2026-08-17）。** `view.rs`（production 部を切る）と `startup.rs`（enum 宣言の走査）は**元より統合の候補ではなく、候補でないものを数えて「減らない」と言っていた**。統合しうるのは 2 本で、差は終端リテラルだけである（構造・assert・メッセージまで一致）。**達成可能な削減は 2 → 1 であり、規範が対象とするのはまさにその 2 本である**
 2. **稼働中のガードへ爆風が及ぶ。** `method_body` を一般化すれば、それに依存する 2 検査の変異注入を再実測する義務が生じる（`AGENTS.md`「レビュー指摘へ修正を当てた」の再実行則）。issue #1108 が合意を求めた射程は `indexing.rs` である
 3. **新ファイルは統治コストを持つ**（`mod` 宣言 + `CLAUDE.md` のモジュール索引 + `G-module-linkage`）
 4. issue 本文は `method_body` を「**実装例**」と呼び、抽出・共有を求めていない
 
 **緊張の逐語記録**: `docs/development-principles.md` 183 行は「**ゆえに切り出しの helper は 1 つに閉じる。** 検査ごとに書き写すと、上の 2 方向の壊れ方が**検査ごとに独立に起きる**」と書く。本計画はこれに反して 3 つ目の実装を作る。**ただしこの規範の実証はファイル内の写しである**——由来は `db7f77df`（#1106 サイクルの振り返り・#1111）で、続く文が名指すのは「#1077 で 2 本が別々の状態になった」（同 PR #1107 の変更ファイルに `indexing.rs` は無く、2 本とも `launcher_controller.rs` の中）と「#1106 は 2 本目を書くときに写し、`/simplify` の指摘で 1 つへ畳んだ」（`view.rs` の中）である。本計画は「1 ファイル内では 1 つに閉じる」（`indexing.rs` の検査 2 本が同じ helper を通る）を満たす。
 
-**反転条件**: 次にソーステキスト検査を**新設する** issue が立ったら（＝4 つ目の実装が生まれるなら）、そこで共通化を再検討する。
+**反転条件**: 次にソーステキスト検査を**新設する** issue が立ったら（＝3 つ目の局所実装が生まれるなら）、そこで共通化を再検討する。
+
+**この判断は `docs/adr/ADR-source-text-probe-helper-locality.md` へ回収した**（2026-08-17）——`plan.md` はサイクル末に撤去されるため、却下理由と反転条件がここにしか無い状態を残さない。
 
 **レビュー委譲時の申し送り**（`/dry-check`・`code-reviewer` へ先渡しする）: `top_level_fn_body` と `method_body` の重複は**根拠つきで意図的に分けた構造**である。根拠の所在は本節と、両 helper の doc コメント。DRY 違反として挙げないこと。
 
@@ -149,29 +156,47 @@ fixture テスト（**文字列リテラルで書く**——`include_str!` を�
 
 ### Phase 1 — 欠陥の実証（Red）
 
-- [ ] M1（二段変異）を当て、`cargo test -p snotra start_index_build_invalidates` が**緑のまま**であることを実測し、出力をこの計画へ追記する
-- [ ] **緑になった理由まで一致を確認する** — EOF まで伸びた母集団が飲み込む偽陽性の源は `mod tests` 内の assert メッセージのリテラル（現行 214 行の `try_begin_index_build(` と 219 行の `invalidate_icon_cache(`）である。母集団を `println!` 等で切り出して、その 2 行が実際に含まれることを見る（「緑だった」ではなく「なぜ緑かまで一致した」を Red の証拠にする）
-- [ ] 変異を戻し、`git status --short` が空であることを確認する
+- [x] M1b（移動 + 錨消し）で `cargo test -p snotra start_index_build_invalidates` が**緑のまま**であることを実測 — `test indexing::tests::start_index_build_invalidates_the_icon_cache ... ok` / `1 passed` / exit 0
+- [x] **緑になった理由まで一致を確認した** — `scratchpad/population_probe.rs` を `rustc -O` で実ファイルへ当てた実測:
+  - 母集団 = **12117 バイト / after 全体 = 12117 バイト**（`終端を取り逃した（EOF まで伸びた）= true`）
+  - 偽陽性の源は予告どおり `mod tests` の assert リテラル（**215 行 `body.contains("try_begin_index_build(")` / 220 行 `body.contains("invalidate_icon_cache(")`**）。加えて、伸びた母集団が**移動先の実コード（165 行）まで飲み込んでいた**
+- [x] **対照（M1a）で赤になることを実測** — 錨だけ戻すと同じ回帰が捕まる: `start_index_build がアイコンキャッシュを無効化していない……` / `1 failed`。**「錨が消えると同じ回帰を見逃す」が対照つきで確定した**
+- [x] 変異を戻し、`git status --short` と `git diff --stat` がともに空であることを確認
 
 ### Phase 2 — 修正
 
-- [ ] `top_level_fn_body` を `indexing.rs` の `mod tests` へ追加する
-- [ ] `start_index_build_invalidates_the_icon_cache` の母集団取得を helper 経由へ差し替える
-- [ ] `top_level_fn_body_is_line_ending_agnostic`（LF / CRLF の文字列リテラル fixture）を追加する
-- [ ] 既存テストの doc に、母集団の新しい壊れ方を書き足す（終端が見つからなければ赤／列 0 の `}` が本体に現れれば狭くなり、canary より前で切れれば canary が・後で切れれば `invalidate_icon_cache` の assert が赤。**この安全性は存在形の assert に依る**——否定形なら沈黙する〔#1112〕）
+- [x] **TDD: fixture テストの検知力を先に実証した** — 素朴な `find("\n}\n")` 実装へ fixture を当て、**CRLF ケースが `pub fn target( の終端が見つからない` で落ちる**ことを実測（`1 failed`）。そのうえで `lines()` 版へ直して緑にした
+- [x] `top_level_fn_body` を追加（`src-tauri/src/indexing.rs:200`）
+- [x] `start_index_build_invalidates_the_icon_cache` の母集団取得を helper 経由へ差し替え（同 `:267`）
+- [x] `top_level_fn_body_is_line_ending_agnostic` を追加（同 `:232`）
+- [x] 既存テストの doc に母集団の壊れ方を書き足した。**加えて「残る死角」の記述を Phase 1 の実測に合わせて訂正した**——旧文は「この関数の外のヘルパー経由で無効化する形へ変えると、母集団の外なので捕まらない」だったが、M1a の実測では**移すこと自体は赤になる**（本体から綴りが消えるため）。捕まらないのは「**移した先で**無効化が落ちる」退行の方である。単純な削除は `dead_code` が先に捕まえることも併記した
 
 ### Phase 3 — 検知の実測
 
-- [ ] M1 で**赤**になることを実測する（メッセージが `invalidate_icon_cache` の欠落を名指すことも見る）
-- [ ] M2 で**緑**のままであることを実測する（母集団が錨に依存しない証拠）
-- [ ] M3（クリーンツリー）で緑を実測する
-- [ ] M4（raw string による終端の偽装）で**赤**になることを実測する
-- [ ] 各変異の後に `git status --short` が空であることを確認する
+- [x] M1a（移動のみ・錨健在）: **赤** ／ M1b（移動 + 錨消し）: **赤** — **修正前は緑だった同じ変異である**（本件の成果）
+- [x] M2（錨だけ消す）: **緑**（`2 passed`）— 母集団が錨に依存しなくなった証拠。`expect(錨)` 案ならここが赤くなる
+- [x] M3（クリーンツリー）: **緑**（`2 passed`）
+- [x] M4（raw string で列 0 の `}` を偽装）: **赤**（`invalidate_icon_cache` の assert が発火）— 狭まる方向でも沈黙しないことの実測
+- [x] 各変異の後に差分を確認。最終状態の `git diff` のハンクは `@@ -186,6 +186,61 @@` と `@@ -195,25 +250,24 @@` の 2 つだけで、**production コード（1〜186 行）は 1 バイトも変わっていない**（受け入れ条件 5）
 
 ### Phase 4 — 検証
 
-- [ ] `docs/build-commands.md` カテゴリ A 全件（fmt / check / clippy / test / doc）を exit 0 まで走らせる
-- [ ] `npm run governance:check` を 1 回走らせる
+- [x] カテゴリ A 全件 exit 0 — `cargo fmt --check` ／ `cargo check --workspace` ／ `cargo clippy --workspace --all-targets -- -D warnings` ／ `cargo test -p snotra`（**279 passed / 0 failed**）／ `cargo doc --workspace --no-deps --document-private-items`（intra-doc link 切れなし）
+- [x] `npm run governance:check` — **全検査 passed**（検査 19 件 / 見出し参照 219 件）
+
+### Phase 5 — レビュー対応（実装中に追加したフェーズ）
+
+- [x] `/dry-check` — 手書き重複 **0 件**（4 候補すべて [維持]。`method_body` は別ファイルの `mod tests` 内 private 関数どうしで相互に呼べず、共通化は新モジュールを要する設計判断＝置換ではない）
+- [x] `code-reviewer` ラウンド 1（Critical 0 / High 1 / Medium 3 / Low 4）— **全 8 件へ修正**。うち機序を自分で測り直したもの 2 件:
+  - **M-1**: `cargo doc` は `#[cfg(test)] mod tests` を丸ごと見ない。対照で実測（production 側の壊れリンク → **exit 101** ／ `cfg(test)` 内 → **exit 0**）。**Phase 4 の「`cargo doc` もリンク切れなし」は当該 2 本について無効だった**
+  - **H-1**: 対称修正の漏れ（`launcher_controller.rs:1604` に同じ偽の文が残存）。写しの母集団は自分でも grep で掃き、`.rs` 全体で残存 0 を確認
+- [x] `code-reviewer` ラウンド 2（Medium 2 / Low 4）— **全 6 件へ対応**。最重要は **R2-1**（硬化が `top_level_fn_body` 側にだけ入り、鏡像の `method_body` に同型の穴が残った）。機序を `scratchpad/anchor_probe.rs` で両方向とも実測（列 0 → 黙って狭まる／8 スペース → 黙って広がる。既存 2 assert は 1 つも発火しない）
+  - **この修正で私自身が新しい誤りを 1 つ作った** — `before.ends_with("\n    ")` ではアンカーに可視性修飾が挟まる呼び出し（`pub(super) fn on_enter(` 等）で誤発火し 3 本が赤になった。**字下げ幅**を見る形へ直した
+  - R2-4（BOM・追跡下の `*.rs` に 0 件）は受容、R2-6（ADR の未追跡）はコミット時に確認
+- [x] ラウンド 3 の 4 点は**自分の道具で測った**（「解消した」の判定は再実行の結論を受け取らない・`AGENTS.md`）:
+  - `method_body` の全アンカー 3 つが 4 スペース字下げであることを実ファイルで確認（`536:    pub(super) fn activate_or_execute(` / `611:    fn shift_activate(` / `1429:    pub(super) fn on_enter(`）
+  - 追加した `should_panic` が**真の検知器**であることを変異で確認（assert を `true` にすると `test did not panic as expected` で赤。clippy も `this assertion is always true` で二重に捕捉）
+  - 定式化の残余（同じ字下げの doc 行にアンカーが先行出現すると通る）を doc へ明記し、両 helper の非対称が意図であることを書いた
 
 ## 未確定（実装前に潰す）
 

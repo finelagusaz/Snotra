@@ -784,7 +784,7 @@ impl LauncherController {
         super::window_coordinator::read_indexing(&self.app_handle)
     }
 
-    /// UI 文言の言語（config general.language・起動時一回でなく都度読み——lock 1 回/フレームの
+    /// UI 文言の言語（config general.language・起動時一回でなく都度読み——読み 1 回/フレームの
     /// 既存ヘルパー群と同型。SU6 の hot-reload 拡張時もこの読み口のまま動く）。
     pub(super) fn lang(&self) -> snotra_core::config::Language {
         crate::egui_shell::read_config(

@@ -534,7 +534,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
     }
 
     fn update(&mut self, ui: &mut egui::Ui, frame: &mut snotra_egui_runtime::RuntimeFrame) {
-        // テーマ値は 1 フレーム 1 lock（#673 spec 決定 4）。**早期 return より前**で取る——
+        // テーマ値は 1 フレーム 1 読み（#673 spec 決定 4）。**早期 return より前**で取る——
         // 背景（clear color）は rows が空でも塗られるからである。旧実装はここが空 rows の
         // early return より後にあり「描かないフレームで lock を取らない」ことを理由にしていたが、
         // clear color を view が決めるようになって「空 rows でも描く」へ変わった。

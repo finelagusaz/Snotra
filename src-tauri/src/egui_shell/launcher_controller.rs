@@ -482,10 +482,16 @@ impl LauncherController {
     }
 
     /// 選択中の instant コマンドの action を抽出し worker へ投げる（§19.6・#631 async 化）。
-    /// action 抽出はここ（UI スレッド・engine ロック内）で行い、clipboard 読み + 実行は
-    /// `start_launch` の worker スレッド側（action 抽出をロック内・clipboard 読みをロック外
-    /// ——`execute_instant_action_core` の契約）。instant は履歴を記録しない（§19.6）。
-    /// 成功/失敗の後処理は `finish_launch` へ合流。
+    /// action 抽出はここ（UI スレッド）で行い、clipboard 読み + 実行は `start_launch` の
+    /// worker スレッド側（`execute_instant_action_core` の契約）。instant は履歴を記録しない
+    /// （§19.6）。成功/失敗の後処理は `finish_launch` へ合流。
+    ///
+    /// **抽出が engine lock を経ないのは #1076 の移行による**（それ以前はここで `engine.lock()`
+    /// を取っていた）——ここは egui フレームの中であり、検索 worker が `engine.search` で
+    /// `Mutex<Engine>` を握っている間フレームが返らなくなる。**分けている境界は錠の内外ではなく
+    /// フレームの内外である**: config の読みは [`crate::egui_shell::read_config`] でフレームの中に
+    /// 置き、Win32 clipboard と `ShellExecuteW` は worker へ出す（射程と例外は
+    /// `src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項が正本）。
     fn execute_instant_selected(&mut self, index: usize, instant_query: &str, ctx: &egui::Context) {
         let Some(sel) = self.state.results().get(index) else {
             return;
@@ -494,18 +500,18 @@ impl LauncherController {
             return;
         }
         let name = sel.name.clone();
-        let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
-            return;
-        };
-        let Some(action) = ({
-            let engine = state.engine.lock().unwrap();
-            engine
-                .config()
-                .instant_commands
-                .iter()
-                .find(|c| c.name == name)
-                .map(|c| c.action.clone())
-        }) else {
+        let Some(action) = crate::egui_shell::read_config(
+            &self.app_handle,
+            |cfg| {
+                cfg.instant_commands
+                    .iter()
+                    .find(|cmd| cmd.name == name)
+                    .map(|cmd| cmd.action.clone())
+            },
+            // AppState 不在（`.manage` は `.setup` より前ゆえ理論経路のみ）は「見つからない」と
+            // 同じ処置へ落とす。**silent no-op にはならない**——下の trace がその区別を残す。
+            || None,
+        ) else {
             // config hot-reload で行が stale 化（改名/削除）した場合。IPC 経路の
             // Err("instant command not found") に相当する痕跡を trace へ残す——silent no-op に
             // すると Enter が死んで見えても診断不能（/code-review #637 finding 1）。
@@ -717,49 +723,51 @@ impl LauncherController {
     /// 選択行のオープナー解決（§18.3 最具体ルール 1 件の tools）。IPC/トレイと同じ core
     /// `find_matching_tools` を共有（drift 防止）。is_folder は行（index の真実）から渡し、
     /// `resolve_all_openers` の `Path::is_dir` 再判定（fs touch・dead UNC で滞留しうる）を
-    /// egui 経路では踏まない。lock は解決の間だけ保持（ロック内純 CPU → clone）。
+    /// egui 経路では踏まない。
+    ///
+    /// **解決は config の読みの中で行う**（#1076 で `engine.lock()` から
+    /// [`crate::egui_shell::read_config`] へ移した）。`find_matching_tools` は錠も I/O も取らない
+    /// 純 CPU なので、[`crate::egui_shell::read_config`] の「`read` の中で lock を取る操作を
+    /// 書かないこと」に反しない——**その純粋性がこの形の前提である**（`snotra_core::opener` 側で
+    /// fs に触れるようになったら、解決を読みの外へ出すこと）。
     fn resolve_tools(&self, path: &str, is_folder: bool) -> Vec<OpenerTool> {
-        let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
-            return Vec::new();
-        };
-        let engine = state.engine.lock().unwrap();
-        find_matching_tools(path, is_folder, &engine.config().openers).to_vec()
+        crate::egui_shell::read_config(
+            &self.app_handle,
+            |cfg| find_matching_tools(path, is_folder, &cfg.openers).to_vec(),
+            Vec::new,
+        )
     }
 
     /// auto_hide_on_focus_lost を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
+    ///
+    /// **毎フレーム無条件に読むのは意図的である**（`ADR-blur-grace-single-field-state-machine` が
+    /// 遅延評価を却下して値渡しを採った）。**ただしその却下理由が置いた費用の前提は #1036 で
+    /// 変わった**——当時は `read_visual` と `lang()` も engine lock を取っていたので「1 回増える
+    /// だけ」と評価できたが、両者が [`crate::egui_shell::read_config`] へ移ったあとは**ここが
+    /// 毎フレーム engine lock を取る唯一の箇所**になっていた。#1076 で読み口だけを移し、
+    /// 毎フレーム無条件という決定はそのまま保っている。
     fn auto_hide_enabled(&self) -> bool {
-        self.app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| {
-                s.engine
-                    .lock()
-                    .unwrap()
-                    .config()
-                    .general
-                    .auto_hide_on_focus_lost
-            })
-            .unwrap_or_else(|| GeneralConfig::default().auto_hide_on_focus_lost)
+        crate::egui_shell::read_config(
+            &self.app_handle,
+            |c| c.general.auto_hide_on_focus_lost,
+            || GeneralConfig::default().auto_hide_on_focus_lost,
+        )
     }
 
     /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     /// フィールドは `SearchConfig::instant_command_prefix`（既定は同 struct の `Default` 実装）。
     ///
-    /// **この読みは `engine.lock()` 越しであり、#1032 の規範（config の live-read は [`crate::egui_shell::read_config`] を通す）の未移行の残余である**——#1036 の移設に入らなかった。射程と例外の定義は `src-tauri/CLAUDE.md` の当該条項が正本で、**「エッジ駆動だから対象外」ではない**（同型の未移行は `egui_shell` にほかにもあり、ここだけが例外なのではない）。**新しい読みを足すなら [`crate::egui_shell::read_config`] へ寄せること。**
-    ///
-    /// **この関数を移設するときは `docs/architecture.md`「検索フロー（入力 → 結果表示）」の Enter の補足も直すこと**——そこが「Enter の費用は #1038 の前後で変わらない」の根拠に、判定より前でここが払う錠待ちを使っている。
+    /// **この読みは #1076 で `engine.lock()` から [`crate::egui_shell::read_config`] へ移した。**
+    /// 呼び出し点（`run_search` / 打鍵の changed エッジ / `on_enter`）はどれも毎フレームではないが、
+    /// **どれも egui フレームの中にあり、ユーザーが待っている**——#1032 の規範が挙げる害は
+    /// 「フレームが走査の完了まで返らない」ことであって頻度ではない（射程と例外の定義は
+    /// `src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項が正本）。
     fn instant_prefix(&self) -> String {
-        self.app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| {
-                s.engine
-                    .lock()
-                    .unwrap()
-                    .config()
-                    .search
-                    .instant_command_prefix
-                    .clone()
-            })
-            .unwrap_or_else(|| SearchConfig::default().instant_command_prefix)
+        crate::egui_shell::read_config(
+            &self.app_handle,
+            |c| c.search.instant_command_prefix.clone(),
+            || SearchConfig::default().instant_command_prefix,
+        )
     }
 
     /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。実装は
@@ -1843,9 +1851,11 @@ mod tests {
     /// 1 つも無いことを測る。
     ///
     /// **`run_search_with` は対象外である**（意図的）。あちらの読みは用途が違い
-    /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。同様に
-    /// `lang()` は `read_config` を正当に使う——どちらも帰属先が起動の入口ではないので
-    /// 対象外へ落ちる。**この 2 つが対象外のままであることが、この設計の受け入れ条件である。**
+    /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。`read_config` を
+    /// 正当に使うヘルパー（`lang()` など）も同様で、**帰属先が起動の入口ではないので対象外へ
+    /// 落ちる**。**受け入れ条件はこの帰属の規則そのものであって、対象外の件数ではない**
+    /// ——件数を書くと、正当な読みを 1 つ足すたびにこの散文だけが黙って腐る
+    /// （#1076 で `read_config` を使うヘルパーが増えたときに実際に腐った）。
     ///
     /// **この検査は禁止語と needle を自分のソースへリテラルで綴る。** 母集団がファイル全体
     /// なので、その行も列挙に入る。緑であるのは**帰属の副作用**である——それらの行は自分の

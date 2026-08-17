@@ -186,8 +186,14 @@ activation_uses_frame_values` で実測・復元済み）。
    引き回す形（#637 finding 9）。複数値の同時一貫性（#673 決定 4）は掛かっていない
 4. **`get_instant_commands` の異常系が変わる（意図的・挙動不変の唯一の破れ）。**
    現状は `app.state::<AppState>()` で AppState 不在なら **panic** する。`read_config` は
-   `try_state` ゆえ fallback へ落ちる。**移行対象のうちここだけが非対称である**——ほかは
-   現行も `try_state` なので fallback の有無が変わらない。
+   `try_state` ゆえ fallback へ落ちる。
+
+   **実装中に、同型の非対称がもう 1 件あることが判明した**（計画外・Phase 1 で発見）:
+   `execute_instant_selected` は移行前、`try_state` が `None` を返すと**その場で黙って
+   return** していた（497-499 のガード）。`read_config` の fallback `|| None` へ移ったことで、
+   「見つからない」と同じ処置——`egui_instant_error` の trace を残して return——へ合流する。
+   **どちらも到達不能な経路であり、変化の向きは診断可能性が上がる側である。**
+   残る移行対象は現行も `try_state` なので fallback の有無が変わらない。
 
    **`AGENTS.md` 条件別チェックの「どの分岐が選ばれるかを決める値の出所を変更」に当たるため、
    「この値で初めて走る行」を列挙する**（差分に現れない下流を 1 段辿る・#977）:
@@ -246,23 +252,28 @@ activation_uses_frame_values` で実測・復元済み）。
 
 ### Phase 1 — `launcher_controller.rs` の 4 件
 
-- [ ] `execute_instant_selected` 内の読み（500-508）を `read_config` へ移す
-- [ ] `execute_instant_selected` の doc 484 を訂正する（ロック内/外の対比を立て直す）
-- [ ] `resolve_tools`（721-727）を `read_config` へ移す
-- [ ] `resolve_tools` の doc 717-720 を訂正する（「engine lock」の部分のみ。純 CPU の記述は真のまま）
-- [ ] `auto_hide_enabled`（730-742）を `read_config` へ移す
-- [ ] `auto_hide_enabled` の doc に、毎フレーム無条件の読みが意図的であること
+- [x] `execute_instant_selected` 内の読み（500-508）を `read_config` へ移す
+- [x] `execute_instant_selected` の doc 484 を訂正する（ロック内/外の対比を立て直す）
+- [x] `resolve_tools`（721-727）を `read_config` へ移す
+- [x] `resolve_tools` の doc 717-720 を訂正する（「engine lock」の部分のみ。純 CPU の記述は真のまま）
+- [x] `auto_hide_enabled`（730-742）を `read_config` へ移す
+- [x] `auto_hide_enabled` の doc に、毎フレーム無条件の読みが意図的であること
       （`ADR-blur-grace-single-field-state-machine`）と、その費用評価の前提が #1036 で変わったことを
       1 文で置く（**ADR 本文は直さない**——凍結された歴史）
-- [ ] `instant_prefix`（750-763）を `read_config` へ移す
-- [ ] `instant_prefix` の doc 747 を書き直す（「未移行の残余である」→ 移行済みの事実と、
+- [x] `instant_prefix`（750-763）を `read_config` へ移す
+- [x] `instant_prefix` の doc 747 を書き直す（「未移行の残余である」→ 移行済みの事実と、
       **なぜここが `read_config` を通すのか**（フレーム内・エッジ駆動でも worker と重なる））
-- [ ] `instant_prefix` の doc 749（`docs/architecture.md` への連動予約）を、Phase 4 で果たす前提の
-      記述へ改める（予約が果たされたら文自体を落とす）
-- [ ] `activation_uses_frame_values_not_live_reads` の doc 1845-1848 の**数え上げを外す**
+- [x] `instant_prefix` の doc 749（`docs/architecture.md` への連動予約）を、Phase 4 で果たす前提の
+      記述へ改める（予約が果たされたら文自体を落とす） — **予約は Phase 4 で果たすため文ごと落とした**
+- [x] `activation_uses_frame_values_not_live_reads` の doc 1845-1848 の**数え上げを外す**
       （「この 2 つが対象外のままであることが受け入れ条件」→ 件数を持たない形。上記専用節）
-- [ ] カテゴリ A が green（hook の沈黙で確認）+ `cargo doc` を手で走らせて green
-- [ ] Phase 1 をコミット
+- [x] カテゴリ A が green（hook の沈黙で確認）+ `cargo doc` を手で走らせて green —
+      fmt / check / clippy `-D warnings` / `cargo test -p snotra -q`（**292 passed**）/ `cargo doc` すべて exit 0
+- [x] **（実装中に判明）** `execute_instant_selected` の AppState 不在時の挙動が変わったことを
+      不変条件へ追記する——現状は 497-499 の `try_state` ガードで**黙って return** していたが、
+      `read_config` の fallback `|| None` へ移ったため `egui_instant_error` の trace が残るようになった。
+      到達不能な経路（`.manage` は `.setup` より前）だが、`get_instant_commands` と同型の非対称である
+- [x] Phase 1 をコミット
 
 ### Phase 2 — `window_coordinator.rs` の 2 件（show 経路）
 

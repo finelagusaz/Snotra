@@ -329,11 +329,28 @@ activation_uses_frame_values` で実測・復元済み）。
 
 ### Phase 5 — 検証
 
-- [ ] `/race-check` を実行し所見なしを確認
-- [ ] カテゴリ C（`smoke:startup` / `smoke:egui`）を実行し passed を確認
-- [ ] `docs/build-commands.md` カテゴリ A を通しで再実行し green を確認
-- [ ] 実装差分を確定させる（レビュー指摘があれば当て、**指摘を出した枠組みを修正差分にも
-      再実行してから閉じる**・`AGENTS.md` 条件別チェック）
+- [x] `/race-check` を実行し所見なしを確認 — **[安全]**。`npm run race:boundaries -- --base main` は
+      全種別 0 件だが、**#1036 と同じく本変更の中核は手がかりの外**（`read_config` は `Mutex` も
+      `.lock(` も含まず、削除行は判定対象外）。境界を自分で立てて a〜e に回答した。
+      要点: 書き手は `update_config` の 1 本（`engine.rs:241` の `config.write()` で丸ごと差し替え）
+      ゆえ旧新の混在は起きない／逆順ロックの新設 0 件（クロージャは全て純文字列処理・実測）／
+      wake 経路は不変／副次的に `resolve_tools`・`execute_instant_selected` の窓で worker が
+      走査を始められるようになったが、どちらも索引・履歴に触れないので依存なし
+- [x] カテゴリ C（`smoke:startup` / `smoke:egui`）を実行し passed を確認 —
+      `smoke:startup` **passed (5 runs)**、`smoke:egui` **passed**（show/hide + results show/hide 観測・
+      webview delta 0）。実行前に `cargo build -p snotra` 済み
+- [x] **（計画外・実施）カテゴリ D の色の実測** — `read_background` は `[visual]` の色に効く経路で、
+      `docs/build-commands.md` が「CI が緑でも未検証」「既定色での確認はこの検証にならない」と
+      明記する。ユーザーの同意を得て `npm run check:colors` を実行し **exit 0**:
+      main background `#4A2B5C` 33.3%（下限 15%）/ main input_bg `#7A1F1F` 37.5%（下限 15%）/
+      results background `#4A2B5C` 76.1%（下限 50%）。`SNOTRA_CONFIG_DIR` が効いたことも
+      プロファイル配下の `index.bin` 生成で肯定的に確認。**残る 2 点（show の一瞬のフラッシュ・
+      results リサイズ時のちらつき）は原理的に単一キャプチャで判定できず、人間へ引き渡す**
+- [x] `docs/build-commands.md` カテゴリ A を通しで再実行し green を確認
+- [x] 実装差分を確定させる（レビュー指摘があれば当て、**指摘を出した枠組みを修正差分にも
+      再実行してから閉じる**・`AGENTS.md` 条件別チェック）— `code-reviewer` ラウンド 1 で
+      **Critical 0 / High 0 / Medium 2 / Low 5**。全 7 件を一次証拠で裁定し、**7 件とも採用して修正**。
+      修正差分に対しラウンド 2 を同じエージェントへ `SendMessage` で継続（新規起動しない）
 
 ## 規範差分（逐語案・Step 5c で承認を求める対象）
 

@@ -1,0 +1,368 @@
+code-reviewer / #1076 `chore/instant-prefix-lock-scope` ラウンド 1
+対象: `git diff main`（作業ツリー込み・実装 4 コミット）。`workspace/` はレビュー対象外。
+=====================================================================
+
+## 結論
+
+Critical 0 / High 0 / Medium 2 / Low 5（うち ⚠️ 4）。
+
+**コードには問題を見つけられなかった。** 挙動不変（観点 1）・`read_config` の契約（観点 2）は
+どちらも自分で辿って成立を確認した。指摘はすべて散文の主張（観点 3・4）であり、
+どれも fix-forward で閉じる。**マージを止める所見は無い。**
+
+Enter の費用の再導出（観点 4）は、**骨格は正しい**——「#1076 以前は `instant_prefix` が
+判定より前に無条件で `engine.lock()` を取っていた／それが消えたので flush の有無で分かれる／
+#1038 が広げたのは flush へ倒れる窓だから、その差は #1076 以降はじめて費用になる」を
+`launcher_controller.rs:1446-1471` と `view.rs:1105-1111` から独立に再導出して一致した。
+Medium 1 はその**限定条件の欠落**であって、勘定そのものの否定ではない。
+
+---
+
+## Phase 1: 実装検証
+
+- **シークレット・API キー**: 露出なし（新規の文字列リテラルは trace の key のみ）
+- **システム境界の入力**: 新規の境界なし。IPC・Win32・ファイル入力の経路は 1 つも変えていない
+- **テストカバレッジ（実装者とは独立に判断した）**: 新規テストを足さない判断に**同意する**。
+  受け入れ条件 2（読む値が同一）は `state.rs` の
+  `app_state_config_is_the_same_arc_the_engine_holds` と
+  `ui_reads_config_while_the_engine_lock_is_held` が既に固定しており、移行が値を変えないことは
+  「同じ `Arc`」から構造的に出る。同じ事実を測るテストを足せば写しになる。
+  **ただし後述 Low 7 のとおり、ソーステキスト検査の射程が 1 段の間接で抜ける形は残る**
+- **コメント（`docs/comment-guidelines.md` 第一原則）**: 新規 doc に「経路の数・分岐の列挙」型の
+  写しは**無い**。`instant.rs:23-24` の「唯一の呼び出し元は…」は数え上げではなく
+  **一意性の宣言**（同ガイドライン「一意性の宣言はこの項の対象ではない」）であり、
+  しかも `src-tauri/CLAUDE.md` の条項が「呼び出し元を辿って判定すること／両方から呼ばれる
+  ようになれば分類は変わる」と書いた不変条件そのものなので、残すのが正しい。
+  実測でも呼び出し点は `launcher_controller.rs:912` の 1 つだけである
+- **折返し**: 新規・変更した段落にコードスパンの行またぎは無い（`grep` を壊す形は見当たらない）
+
+### 観点 1 — 挙動不変が本当に成り立つか
+
+読む値:
+- `AppState.config` は `Engine` と同じ `Arc<RwLock<Config>>`（`state.rs` の `engine.config_handle()`
+  ／`snotra-core/src/engine.rs:254`）。**production に `Engine` を丸ごと差し替える経路は無い**
+  ——`= Engine::new(` の出現は `state.rs:77`（`AppState::new`）と `#[cfg(test)]` だけで
+  （grep 実測）、索引の更新は `apply_prebuilt_index` が `search_engine` を差し替えるだけである。
+  ゆえに「移行した読みだけが古い `Arc` を見る」形は構築できない
+
+読むタイミング:
+- 移行前の `engine.config()` は**すでに同じ `RwLock` の read guard を返していた**
+  （`snotra-core/src/engine.rs:233`。`commands/launch.rs:106` のコメントが #1032 でそうなったと記す）。
+  ゆえに鮮度・hot-reload の反映点は移行前後で同一。`instant_prefix` と `get_instant_commands` が
+  別々に読むことによる非原子性も、移行前に 2 回 `engine.lock()` を取っていたのと同じである
+- 書き手は `update_config` の 1 本（`engine.rs:240-242`）で、**write guard の保持は move 代入だけ**。
+  `config_watcher` はその前に engine lock を待つが、待っている間 write guard は握らない
+  ——**UI の `config.read()` が検索 worker の走査に間接的に巻き込まれる経路は無い**。
+  この差分の前提はここで成立している
+
+`commands/instant.rs` の切り出し（`matching_dtos`）:
+- `filter_instant_commands(commands, prefix_input).into_iter().map(InstantCommandDto::from).collect()`
+  は旧 `get_instant_commands` の式と**逐語で同型**（旧 77-80 行 → 現 15-18 行）。絞り込みの述語
+  （`snotra-core/src/instant.rs:310-322`）も DTO 化（`commands/launch.rs:235-254`）も 1 文字も
+  変えていない。**意味は変わっていない**
+- `Vec<&InstantCommand>` が config を借りたままなので DTO 化を読みの中で終える、という doc の
+  説明は借用の事実と合っている
+
+異常系（意図的な 2 件・plan 不変条件 4）:
+- `get_instant_commands`: AppState 不在で **panic → fallback**（`Config::default().instant_commands`
+  の g / gh 2 件で絞り込みが走る）。`.manage` は `.setup` より前ゆえ到達しない
+- `execute_instant_selected`: AppState 不在で **黙って return → 「見つからない」と同じ処置**
+  （`egui_instant_error` の trace を残して return・`launcher_controller.rs:511-522`）。同じく到達しない
+- どちらも**発見事項ではない**——計画が明示的に判定し、変化の向きは診断可能性が上がる側である
+
+### 観点 2 — `read_config` の契約違反（自分で辿った）
+
+`read_config`（`egui_shell/mod.rs:423-433`）は `read` を `s.config.read().unwrap()` の guard の中で
+呼ぶ。ゆえにクロージャの中で錠・I/O を取ってはならない。移行した 7 か所のクロージャが呼ぶ関数:
+
+| 関数 | 場所 | 中身 | 判定 |
+|---|---|---|---|
+| `find_matching_tools` | `snotra-core/src/opener.rs:59-131` | `to_lowercase` / `replace` / `rfind` / `starts_with` / `split` / `format!` と `extract_path_condition`・`extract_ext_part`・`split_ext_and_path`（いずれも純文字列） | 錠・I/O 無し |
+| `filter_instant_commands` | `snotra-core/src/instant.rs:310-322` | `is_empty` / `to_lowercase` / `starts_with` / `collect` | 錠・I/O 無し |
+| `InstantCommandDto::from` | `src-tauri/src/commands/launch.rs:235-254` | `clone` と `format!` のみ | 錠・I/O 無し |
+| 無名クロージャ（instant action 抽出） | `launcher_controller.rs:505-510` | `iter().find().map(clone)` | 錠・I/O 無し |
+| 単値の取り出し（`instant_prefix` / `auto_hide_enabled` / `read_background` / `follow_cursor`） | 4 か所 | フィールド + `clone` / `Copy` | 錠・I/O 無し |
+
+→ **逆順ロック（config の read guard を保持したまま `engine.lock()` を要求する形）は 0 件。**
+fallback（`Config::default()` を建てる `get_instant_commands` の側）は `None` 腕で呼ばれるので
+guard の外であり、`default_scan_paths()` の環境変数読みも guard に乗らない。
+
+---
+
+## Phase 2: 計画判断の検証
+
+### 2a. `workspace/plan.md` 不変条件との照合
+
+不変条件 1: 読む値は移行前後で同一（同じ Arc・書き手は update_config の 1 本）
+  実装箇所: state.rs（AppState::new）／snotra-core/src/engine.rs:240,254
+  判定: 守られている（Engine 丸ごと差し替えの経路が無いことまで grep で確認）
+
+不変条件 2: 逆順ロックを新設しない
+  実装箇所: 移行 7 か所のクロージャ全数（上表）
+  判定: 守られている
+
+不変条件 3: 一貫性の要件は無い（prefix は 1 回読んで引き回す）
+  実装箇所: launcher_controller.rs:853-856（run_search）／1446（on_enter）／1381
+  判定: 守られている（移行で読みの回数も位置も変えていない）
+
+不変条件 4: get_instant_commands の異常系が変わる（+ execute_instant_selected の同型 1 件）
+  実装箇所: commands/instant.rs:37-46／launcher_controller.rs:503-522
+  判定: 守られている（どちらも到達不能・doc に記載あり）
+
+不変条件 5: read_background は show 経路（フレーム外）だが移す
+  実装箇所: window_coordinator.rs:192-198
+  判定: 守られている（ただし規範文の弁別子が追随していない → Medium 2）
+
+受け入れ条件 1「egui_shell/ に engine.lock().config() は 0 件」
+  判定: 独立に実測して 0 件。`.config()` の残存は commands/icon.rs:17・commands/launch.rs:107,158・
+        config_watcher.rs:87 の 4 つだけである
+
+### 2b. 対称コードパスチェック
+
+対称チェック: show 経路の config 読み（window_coordinator.rs:193,224） ↔ hide 経路
+  判定: 不要 — 理由: hide 側（hide_egui_main / read_placement_relative / read_bar_anchor /
+        clamp_main_into_work_area）に config を engine lock 越しに読む箇所が 1 つも無い。
+        window_coordinator.rs 全体で `engine.lock()` は 0 件（grep 実測）。
+        「show だけ直して hide が残る」形にはなっていない
+
+対称チェック: egui 経路の opener 解決（resolve_tools） ↔ tray 経路（resolve_opener /
+        resolve_all_openers・commands/launch.rs:105,156）
+  判定: 同じ修正を適用しない — 理由: brief で意図的分離として渡された 2 件であり、かつ
+        呼び出し元を実測して tray 専用であることを確認した（launch_item_with_state /
+        launch_with_tool_with_state / launch_default_with_state / resolve_all_openers の
+        呼び出しは platform/tray.rs:67,69,76,441 のみ）。フレームの外＝例外に当たる
+
+対称チェック: instant 候補の絞り込み（commands/instant.rs） ↔ instant action の抽出
+        （launcher_controller.rs:503）
+  判定: 同じ修正を適用した — 両方 read_config へ移っており、片方だけ残る形は無い
+
+### 2c. DRY / 関数カバレッジ
+
+- `matching_dtos` の切り出しは、本体と fallback の 2 呼び出し点を 1 本にまとめる**正しい向き**。
+  手書きの複製は生まれていない
+- `read_config` を通さず `engine.lock().config()` を手書きしている egui フレーム内の箇所は 0 件
+  （受け入れ条件 1 の独立実測）
+- `get_instant_commands` は egui の Instant 枝と共有する唯一の実装のままで、二重実装は増えていない
+- イベント（`events.rs` の定数）に関わる変更は無い
+
+### 2d. リソースライフサイクル
+
+生成/破棄の対を作る変更は無い（spawn・channel・listener・`AtomicBool` のいずれも触っていない）。
+`read_config` の guard はクロージャの返り値が所有へ移った時点で落ちる。**欠落なし。**
+
+### 2e. SPEC.md 同期チェック
+
+SPEC 同期: config の読み口（engine lock → read_config）
+  SPEC 該当節: 記述なし（§7 の live-read は「いつ反映されるか」を規定し「どう読むか」ではない。
+               #1036 の commit 本文が同じ判断を明記している）
+  判定: SPEC 対象外
+
+SPEC 同期: get_instant_commands / execute_instant_selected の AppState 不在時の挙動
+  SPEC 該当節: §19.5 / §19.7（instant の絞り込みと carve-out）
+  判定: SPEC 対象外 — 到達不能な経路（`.manage` は `.setup` より前）の内部処置であり、
+        §19.5/§19.7 が記述する挙動（前方一致・indexing 非依存）は 1 つも変わらない
+
+### 2f. 「変更不要」判断の再評価（据え置いた 4 か所）
+
+再評価: commands/icon.rs:16-18（ensure_icon_cache_loaded_if_enabled）
+  ケース A: results_view.rs:207 の spawn した icon worker から load_icon_pngs 経由 → フレーム外 → OK
+  ケース B: 他の呼び出し元 → 実測で存在しない（load_icon_pngs の呼び出しは results_view.rs:214 のみ）
+  結論: 変更不要を確認
+
+再評価: commands/launch.rs:105,156（resolve_opener / resolve_all_openers）
+  ケース A: platform/tray.rs:67,69,76,441 から → tray スレッド → フレーム外 → OK
+  ケース B: egui 経路から → 通らない（egui は resolve_tools を使う・意図的な非対称）
+  結論: 変更不要を確認
+
+再評価: config_watcher.rs:87（old_config の読み）
+  ケース A: 適用手続きの一部として update_config と同じ錠の内側で取る → 射程外 → OK
+  結論: 変更不要を確認
+
+再評価: launcher_controller.rs:947（/r の recent_history）
+  ケース A: egui フレームの中で engine.lock() を取る **が config の読みではない** → #1032 条項の
+            射程外。エッジ駆動（`/r` の完全一致時のみ）で、この差分の対象ではない
+  結論: 変更不要を確認（**見落としではなく、意図して対象外と判定した**ことを明記しておく）
+
+---
+
+## Phase 3: パフォーマンス検証
+
+instant 経路（毎打鍵）で行う仕事は移行前と同一である——`to_lowercase` の確保も DTO の `clone` も
+移行前は engine lock の内側で払っていたものがそのまま read guard の内側へ移っただけで、
+ループ内に新しい確保も `clone` も増えていない。フレームあたりの読みの回数も変えていない
+（`auto_hide_enabled` は毎フレーム 1 回のまま）。**性能主張は差分のどこにも書かれておらず、
+「測っていないので速いと書かない」という plan の決定はコード・doc の両方で守られている。**
+
+---
+
+## 発見事項
+
+### Medium 1 — `docs/architecture.md:228` の flush 枝の主張に、実装が持つ 2 つの例外が無い
+
+**場所**: `docs/architecture.md:228`（「**flush へ倒れる Enter は同期 `engine.search` の錠待ちと
+走査を負う**」）／根拠は `src-tauri/src/egui_shell/launcher_controller.rs:1457-1464`
+
+**根本原因**: flush 枝は無条件に `engine.search` を呼ばない。壊れている不変条件は
+「flush へ倒れること ⇒ 錠待ちと走査を払うこと」であり、実装は
+
+    let searched = if query.trim().is_empty() || indexing.get() {
+        None
+    } else {
+        self.app_handle.try_state::<crate::AppState>().map(|state| {
+            let mut engine = state.engine.lock().unwrap();
+            engine.search(&query)
+        })
+    };
+
+と 2 つの carve-out を持つ。どちらも到達する:
+- **空クエリ**: 全消しの直後は `Debouncer::on_input` が `armed` を立てるので
+  `is_unsettled` は真（`search_state.rs:643-645`）、`interp("")` は `Plain`。
+  ゆえに `should_flush_on_enter` は真になり、flush 枝へ入って `None` で抜ける
+- **`indexing` 中**: 索引再構築中の打鍵 → Enter が同じ並びを通る
+
+帰結として、次の一文「**#1038 が広げたぶんの Enter は #1076 以降、走査待ちを新たに負う**」も
+索引再構築中には成り立たない（#1038 が広げた窓に入った Enter でも、`indexing` なら錠を取らない）。
+
+**修正例**: flush の肢へ限定条件を足す。
+「**flush へ倒れる Enter は同期 `engine.search` の錠待ちと走査を負う**」→
+「**flush へ倒れる Enter のうち、クエリが空でも `indexing` 中でもないものが、同期 `engine.search` の
+錠待ちと走査を負う**（残り 2 つは行の同期クリアだけで、錠を取らない・`on_enter` の該当分岐が正本）」。
+次文も「その広がったぶんの Enter は #1076 以降、**同じ限定のもとで**走査待ちを新たに負う」とする。
+
+### Medium 2 — 弁別子が 3 通りに書かれ、少なくとも 1 つは実装と矛盾する
+
+**場所**: `src-tauri/CLAUDE.md:57`（#1032 条項）と `docs/architecture.md:231`
+
+**根本原因**: 同じ差分の中で、同じ規則の弁別子が別々の言葉で書かれている。
+
+1. `src-tauri/CLAUDE.md:57`: 「**例外は「egui フレームの外で行う読み」である**」
+   「**弁別子はディレクトリでも頻度でもなく、フレームを止めるかである**」
+   → その 2 文あと: 「**show 経路（`window_coordinator.rs`）もフレームの外だが、窓が出るまでを
+   止めるので `read_config` を通す**」。**例外の定義文が、同じ条項の中で反証されている**
+2. `docs/architecture.md:231`: 「弁別子は「**egui フレームの外か中か**」であり」
+   → show 経路は**外**なのに移行済み。こちらは but-clause も持たないので端的に偽である
+
+壊れている不変条件は「規範文は既存の全事例に当てて検算してから書く」（`AGENTS.md`「検証の作法」）。
+**退行の向きが具体的にある**——「フレームの外の読みは engine lock のままでよい」を字面どおり
+読んだ将来の実装者は、hide 経路・hotkey listener・`config-applied` listener に
+`engine.lock().config()` を足してよいと判断できる。それはこの差分が show 経路について
+消したのと同じ待ちである（listener は emit 元スレッドで同期実行される・`src-tauri/CLAUDE.md`
+「Win32 メッセージ配送の注意」）。
+
+**修正例**:
+- `src-tauri/CLAUDE.md:57` — 弁別子を「**その読みの完了をユーザーが待つか**（フレームの復帰・
+  窓の表示）」へ改め、例外は**スレッドで名指す**（icon worker・folder worker・tray スレッド）。
+  こうすると show の but-clause が要らなくなり、定義文と例外が同じ向きを向く
+- `docs/architecture.md:231` — 弁別子の**言い換えを置かない**（写しであり、SSOT と別々に腐る）。
+  「射程と例外は `src-tauri/CLAUDE.md`「モジュール構成」の当該条項が正本」だけを残す
+
+### Low 3 — `docs/architecture.md:231` の #1032 / #1076 の分担が一次証拠と食い違う
+
+**場所**: `docs/architecture.md:231`（「**#1032 が移したのは実測で名指した読みまでで、残りは
+#1076 が寄せた**」）
+
+**根本原因**: #1032 の実装（`d23c062f` / PR #1036）は「実測で名指した読み」（`read_window_width`・
+`max_results`）**より広く**移している。commit 本文が自ら射程を書いている:
+
+  > 移した読みの正本は `read_config` の呼び出し点である。射程は「毎フレーム、または
+  > 表示・ホットキーの経路で走る読み」で、`commands/` の操作時の読みは engine lock の
+  > ままにした
+
+実際 `read_visual` と `lang()` も同 commit で移っており（この差分自身の `auto_hide_enabled` の
+doc が「両者が `read_config` へ移ったあとは」と #1036 に帰属させている）、「実測で名指した読みまで」
+とは両立しない。
+
+**修正例**: **分担の性格づけを書かない**——「#1032 の残余を #1076 が寄せた（内訳は各 commit と
+`workspace/plan.md` の移行表が正本）」で足りる。**射程で切る形も採らない**——#1036 が自ら書いた
+射程は「毎フレーム、または表示・ホットキーの経路で走る読み」だが、#1076 が移した
+`auto_hide_enabled` は**毎フレーム**であり、その射程の内側にありながら #1036 が取りこぼした
+ものである（plan の移行表 8 行目が「UI フレーム内・毎フレーム」と記す）。ゆえに
+「#1036 は射程を果たし、#1076 は射程外を拾った」と書くと、それも `auto_hide_enabled` 1 件で
+反証される。
+
+### ⚠️ Low 4 — 「錠を**一切**待たない」は engine の錠に限れば真、字面としては偽
+
+**場所**: `docs/architecture.md:228`（「**flush へ倒れない Enter は錠を一切待たない**」）
+
+flush へ倒れない Enter の全経路（`activate_or_execute` → `execute_tool_selected` /
+`execute_instant_selected` / `activate`、および `shift_activate` の `tools >= 2` 枝）を辿り、
+**engine lock を取る箇所が 1 つも無いこと**は確認した。ただしどの経路も `read_config` を通り、
+`config.read()` という錠は取る（`instant_prefix`・`resolve_tools`・`execute_instant_selected`）。
+「一切」は全称ゆえ、字面では偽になる。
+
+⚠️ を付けるのは、文脈上「錠」が直前の `engine.lock()` を指していると読める余地があるためである。
+
+**修正例**: 「**flush へ倒れない Enter は engine の錠を待たない**」。
+
+### ⚠️ Low 5 — `search_state.rs:494` の「（残るのは上の 1 つである）」は、この差分が他所で消した形
+
+**場所**: `src-tauri/src/egui_shell/search_state.rs:492-494`
+
+同じ差分が `launcher_controller.rs:1853-1858` で「**受け入れ条件はこの帰属の規則そのものであって、
+対象外の件数ではない——件数を書くと、正当な読みを 1 つ足すたびにこの散文だけが黙って腐る**」と
+数え上げを外している。その隣で「残るのは上の 1 つである」という新しい数え上げを足している。
+内容は現時点で正しい（Plain 腕の `indexing()` 中クリアだけが残る）が、費用を 1 つ足せば黙って腐る。
+
+**修正例**: 「（`instant_prefix` の側は消え、残るのは Plain 腕の方だけである）」のように
+**数ではなく対象を名指す**形にする。
+
+### ⚠️ Low 6 — 「下の trace がその区別を残す」が、実際に残す区別と一致していない
+
+**場所**: `src-tauri/src/egui_shell/launcher_controller.rs:511-513`
+
+コメントは「AppState 不在は『見つからない』と同じ処置へ落とす。**silent no-op にはならない**
+——下の trace がその区別を残す」と書くが、下の trace（518-521）は
+`{"name": name, "error": "not found"}` を出すだけで、**AppState 不在と「見つからない」を
+区別しない**（payload が同一）。trace が残すのは「黙って消えたのではない」ことであって、
+2 つの原因の区別ではない。前段の「silent no-op にはならない」は真なので、実害は無い。
+
+**修正例**: 「**silent no-op にはならない**——下の trace が「Enter が黙って消えた」ことを防ぐ
+（原因 2 種は payload で区別しない。到達不能な側を分ける価値が無いため）」。
+
+### ⚠️ Low 7 — 検知器 `activation_uses_frame_values_not_live_reads` の射程が 1 段の間接で抜ける形が、この差分で 0 → 2 になった
+
+**場所**: `src-tauri/src/egui_shell/launcher_controller.rs:1901-1914`（検査）／
+`launcher_controller.rs:1446`（`on_enter` → `instant_prefix`）・`:245,662`（`activate` /
+`shift_activate` → `resolve_tools`）
+
+検査は `read_config(` の出現を**直前のメソッドヘッダへ帰属**させ、起動の入口 3 本に帰属する
+ものが 0 件であることを測る。理由として「無関係な読みでもここは落ちる。それでよい」と書いている。
+この差分の後、起動の入口は**1 段の間接**で config を読むようになった（`on_enter` →
+`instant_prefix` → `read_config`、`activate_or_execute` → `activate` → `resolve_tools` →
+`read_config`）。検査は帰属先が違うので緑のままである。
+
+**現時点で欠陥ではない**——どちらも `visible_rows` を読み直しておらず、#1106 の症状は再現しない。
+また移行前も同じ値を `engine.lock()` 経由で読んでいたので、**読みの存在自体は新しくない**
+（新しいのは、検査が名指す綴りで書かれるようになったこと）。`workspace/plan.md:141-145` は
+「ヘルパーの本体を呼び出し元へインライン展開しない」と判断しているが、**その申し送りは
+コード側に残っていない**——将来インライン展開すれば検査が赤になり、そのとき理由を再導出する
+ことになる。
+
+**修正例（任意）**: `instant_prefix` / `resolve_tools` の doc へ 1 文——「**この関数を呼び出し元へ
+インライン展開しないこと**——起動の入口に `read_config(` の綴りが現れると
+`activation_uses_frame_values_not_live_reads` が赤になる（読み直しではないので理由は
+ここに残す）」。
+
+---
+
+## 過去パターン再発の疑い
+
+**該当なし。** `src-tauri/CLAUDE.md`「モジュール構成」の既知パターン（イベント駆動 wake・
+1 フレーム 1 回の live-read・visuals の適用位置・raw/tao の混在）に触れる変更は無い。
+#673 決定 4（同じ値を後段で読み直さない）にも抵触しない——移行した 7 か所はいずれも別々の値で、
+1 フレームに複数回読む形を新設していない。
+
+## brief で渡された意図的分離について
+
+4 件（`read_config` と `read_visual`/`read_metrics`/`read_background` の非統合、
+`instant_commands` の 2 用途、`resolve_tools`/`resolve_opener` の 2 経路、
+`commands/launch.rs`・`commands/icon.rs` の engine lock 据え置き）はいずれも
+**DRY 違反として挙げていない**。うち後ろ 2 件は呼び出し元まで辿って据え置きの妥当性を
+独立に確認した（Phase 2f）。
+
+## 実行していない検証
+
+- カテゴリ A / `cargo doc` / `governance:check` は再実行していない（`workspace/plan.md` の
+  Phase 1-4 が各 green を記録している。ソースを変更しない指示のため再走もしていない）
+- `/race-check`・カテゴリ C（`smoke:startup` / `smoke:egui`）は plan の Phase 5 で未チェックのまま
+  ——**show 経路に触る差分なのでカテゴリ C は残っている**

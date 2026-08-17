@@ -491,7 +491,7 @@ impl SearchState {
     /// `set_results` のいずれかである）。同期 `engine.search` が残るのは `on_enter` の flush だけである。
     /// 実際の費用は Plain 腕が `indexing()` 中に復帰行を空にすることであって、doc が名指して
     /// いたものではない。**`run_search` 入口の `instant_prefix` が `engine.lock()` を取ることも
-    /// 費用に数えていたが、#1076 でその読みが `read_config` へ移り消えた**（残るのは上の 1 つである）。
+    /// 費用に数えていたが、#1076 でその読みが `read_config` へ移り消えた。**
     pub fn on_escape(&mut self) -> EscapeOutcome {
         if let Some(t) = self.tool.take() {
             // query は復元しない（tool 中は入力無効で不変・ToolFrame doc 参照）

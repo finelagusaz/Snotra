@@ -154,6 +154,16 @@ indexed_key_enum! {
     /// 「次に variant を足したときテストが落ちる」から「その区間が payload から
     /// 黙って落ちる」へ移る（欠けたキーは `null` ではなく不在として読める）。
     ///
+    /// **黙るのは「新しく足した variant が落ちる」形だけである**（実測）。`COUNT` を
+    /// 小さいリテラルへ書き換える形は**末尾から落ちる**ため終端区間が消え、
+    /// telescoping sum の検算（`sum_of_phase_ns_equals_the_last_mark` と
+    /// `unmarked_tail_is_zero_on_the_normal_path`）が赤にする——足したばかりの variant は
+    /// まだ `mark` を呼ぶ製品コードを持たないので、そちらは和を動かさない。
+    /// **カテゴリ C はどちらの形も見ない**: `smoke-startup.ps1` は payload のキー集合を
+    /// 検めず（改竄した本体で exit 0 を実測）、キーの過不足を見る
+    /// `Test-SnotraStartupPayload` は `bench-startup.ps1` からしか走らないうえ、その母集団は
+    /// **ハーネス自身が持つ一覧**であってペイロード側のキー集合ではない。
+    ///
     /// **数のずれとは別の弱さが 1 つ残る**: 同じ key を 2 つ書くことはこの形でも止まらない。
     /// **狙って止めるのは `keys_are_unique` である**——重複を作る変異では
     /// `rounding_happens_only_at_the_display_boundary` も巻き添えで赤くなるが、

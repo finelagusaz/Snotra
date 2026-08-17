@@ -154,8 +154,10 @@ indexed_key_enum! {
     /// 「次に variant を足したときテストが落ちる」から「その区間が payload から
     /// 黙って落ちる」へ移る（欠けたキーは `null` ではなく不在として読める）。
     ///
-    /// **数のずれとは別の弱さが 1 つ残る**: 同じ key を 2 つ書くことはこの形でも止まらず、
-    /// 止めるのは `keys_are_unique` だけである。
+    /// **数のずれとは別の弱さが 1 つ残る**: 同じ key を 2 つ書くことはこの形でも止まらない。
+    /// **狙って止めるのは `keys_are_unique` である**——重複を作る変異では
+    /// `rounding_happens_only_at_the_display_boundary` も巻き添えで赤くなるが、
+    /// あちらが測るのは丸めであって一意性ではない（実測）。
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Phase {
         ConfigLoad     => "config_load",
@@ -583,8 +585,10 @@ mod tests {
         // **数のずれを捕まえるのは型である**（`ALL` の長さが `COUNT` で型づけてある）。
         // ここが測るのは数ではなく**並び**——`ALL` の並び順と判別子の割り当て順が
         // 同じ引数列から来る、という 1 段の推論である。マクロ本体が `ALL` を宣言順とは
-        // 別の順で読むようになれば型は何も言わないので、**この推論を測る検査はここだけ**
-        // である（`from_index` を逆順読みへ変える変異で赤くなることを実測した）。
+        // 別の順で読むようになれば型は何も言わないので、**この推論を狙って測る検査は
+        // ここである**（`from_index` を逆順読みへ変える変異で赤くなることを実測した。
+        // その変異では `reached_phase_names_the_last_marked_interval` も巻き添えで
+        // 赤くなるが、あちらが測るのは並びではなく「最後に刻んだ区間を指すこと」である）。
         for i in 0..Phase::COUNT {
             let p = Phase::from_index(i).expect("COUNT の範囲は from_index が Some を返す");
             assert_eq!(p.index(), i, "添字 {i} で往復しない");
@@ -621,9 +625,12 @@ mod tests {
 
     #[test]
     fn keys_are_unique() {
-        // **key の衝突を止めるのはここだけである。** `indexed_key_enum!` は引数列から
+        // **key の衝突を狙って止めるのはここである。** `indexed_key_enum!` は引数列から
         // 数と並びを導くが、同じ key を 2 つ書くことは止めない（`match` の腕は
-        // variant で分かれるので重複リテラルは合法である）。
+        // variant で分かれるので重複リテラルは合法である）。**重複を作る変異では
+        // `rounding_happens_only_at_the_display_boundary` も赤くなった**（潰された側の
+        // `*_ms` が payload から消えるため）が、あちらは丸めの検査であって、
+        // 一意性を測っているわけではない。
         let mut keys: Vec<&str> = Phase::all().map(|p| p.key()).collect();
         keys.sort_unstable();
         let before = keys.len();

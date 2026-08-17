@@ -83,6 +83,18 @@ describe("検査 ID の形（#812 — 序数を引用の語彙から外す）", 
   });
 });
 
+describe("evidence の配線カナリア（#1098）", () => {
+  // 単体は `governance/evidence.test.mjs` が見る。ここが見るのは**配線**——`runAll` が
+  // 生の袋ではなく view 越しに evidence を組んでいること。view を外す変異は、
+  // 供給が揃っている今日のリポジトリでは単体テストでは捕まらない
+  it("実リポジトリの evidence 行は `undefined` も `?` も含まない", () => {
+    const { evidence, findings } = runAll(makeSnapshot(fileURLToPath(new URL("..", import.meta.url))));
+    expect(evidence).not.toContain("undefined");
+    expect(evidence, "未記録の読みが `?` に化けている（供給側の ctx.record が消えた）").not.toContain("?");
+    expect(findings.filter((f) => f.message.includes("が未記録である"))).toEqual([]);
+  });
+});
+
 describe("実リポジトリ スモーク（dogfood）", () => {
   it("現在のリポジトリで全検査が緑", async () => {
     const { makeSnapshot } = await import("./governance-check.mjs");

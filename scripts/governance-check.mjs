@@ -19,9 +19,12 @@
 // - 検査の登録は `scripts/governance/checks/` の走査から導出される（`registry.mjs`）——ファイルを
 //   置けばそのまま検査になり、忘れうる登録行が無い。ファイル名と export した `id` の食い違いは
 //   `registry.mjs` が throw で拒む（#1088 が問うた「検査が沈黙で 1 本落ちる」構造の解消）
-// - `checks/` の外に置いたものは検査ではない——合否を持たない計器（恒久規範の面積など）は
-//   `governance/instrument.mjs` に置き、登録走査の対象外であることで「検査 N 件」に数えられない
-// - facade（本ファイル）が持つのは母集団の算出・0 件検知・evidence の組み立て・CLI 起動であり、
+// - `checks/` の外に置いたものは検査ではない——`governance/instrument.mjs`（合否を持たない計器）も
+//   `governance/evidence.mjs`（evidence の組み立てと、その入力の読み取りガード・#1098）も
+//   登録走査の対象外であり、「検査 N 件」に数えられない。**findings を出すかどうかとは別の軸である**
+//   ——計器も evidence も入力の健全性については findings を出す（下の `checkNormativeAreaInstrument` と
+//   `evidenceView` がそれで、どちらも検査配列の外に置いてある）
+// - facade（本ファイル）が持つのは母集団の算出・0 件検知・evidence への入力の供給・CLI 起動であり、
 //   各検査の判定ロジックそのものは `checks/` 側にある
 // - 各検査はスナップショット注入の純関数が既定であり、それぞれ隣の `*.test.mjs` が
 //   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する
@@ -57,6 +60,7 @@ import {
   workspaceMembers,
 } from "./governance/lib.mjs";
 import { checkNormativeAreaInstrument, normativeArea } from "./governance/instrument.mjs";
+import { assembleEvidence, evidenceView } from "./governance/evidence.mjs";
 
 // `lib.mjs` の 2 名を、facade 経由で読む消費者のために再輸出する（`buildChecks` / `runAll` は
 // 下で `export function` として定義するのでここに要らない）。**`export *` にしない**——公開する
@@ -135,7 +139,25 @@ export function runAll(snapshot) {
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
-  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always} 字・rules ${area.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を md ${ctx.refDocs.length} 件 + .rs ${ctx.refSourceDocs.length} 件から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / clippy 禁止 ${clippyDisallowedCount(snapshot)} 件 / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
+  // evidence の入力は**必ず view 越しに読む**（#1098）。検査が `ctx.record` を呼ばなくなると
+  // 値が `undefined` のまま印字され、誰も赤くしないまま exit 0 になっていた（実測）。
+  // 袋は `...ctx` のスプレッドで組む——必須キーの一覧を手で持つと、それ自体が腐る写しになる。
+  // 供給が消えれば読みが `undefined` になり、`evidenceView` が findings へ積む
+  const evidence = assembleEvidence(
+    evidenceView(
+      {
+        ...ctx,
+        checkCount: checks.length,
+        rules,
+        skills,
+        area,
+        workspaceMembers: workspaceMembers(snapshot).members.length,
+        clippyDisallowed: clippyDisallowedCount(snapshot),
+        adrFiles: adrFiles(snapshot).length,
+      },
+      findings,
+    ),
+  );
   return { findings, evidence };
 }
 

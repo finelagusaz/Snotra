@@ -1499,9 +1499,13 @@ mod tests {
         // ゆえに**同じ字下げの doc コメント行にアンカー文字列が先行出現した場合は通る**——
         // そこは下流の canary が捕まえる（`top_level_fn_body` 側はアンカーを行頭に密着させる
         // 形なので、あちらでは doc の先行出現もこの assert が落とす。非対称は意図である）。
+        // **空白文字の種類まで見る**——`trim_start` はタブも落とすので、バイト差だけで数えると
+        // `\t\t\t\t` 字下げのアンカーが字下げ 4 として通る（終端は `    }` なので母集団は壊れる）。
+        // [`method_header`] と同じ形の欠陥であり、同じ形で塞ぐ（2026-08-17 の反証レビューが
+        // `method_header` 側で実測し、同一パターンの走査でこちらを見つけた）。
         let head = before.rsplit('\n').next().unwrap_or("");
         assert!(
-            head.len() - head.trim_start().len() == 4,
+            head.len() - head.trim_start().len() == 4 && head.starts_with("    "),
             "{anchor} を含む行が 4 スペース字下げで始まっていない——終端の `    }}` が内側ブロックか\
              外側の閉じ括弧に一致し、母集団が黙って狭まる／広がる"
         );
@@ -1575,6 +1579,250 @@ mod tests {
         );
     }
 
+    /// [`method_body`] が**タブ字下げのアンカーを拒む**ことを固定する（#1112）。
+    ///
+    /// 上の 2 本と**別に置く**——どちらも字下げの「幅」がずれる fixture なので、`trim_start` の
+    /// バイト差だけで数える形をどちらも落とさない。終端は `    }`（スペース 4）に固定なので、
+    /// タブ 4 個のアンカーを受理すると母集団は隣のメソッドまで伸びる。
+    #[test]
+    #[should_panic(expected = "4 スペース字下げで始まっていない")]
+    fn method_body_rejects_a_tab_indented_anchor() {
+        method_body(
+            "impl C {\n\t\t\t\tfn target(&self) {\n\t\t\t\t\tmarker();\n\t\t\t\t}\n    fn other(&self) {\n    }\n}\n",
+            "fn target(",
+            "marker(",
+        );
+    }
+
+    /// [`method_body`] が**終端の無い母集団を拒む**ことを固定する（#1112）。
+    ///
+    /// `top_level_fn_body`（`indexing.rs`）は同じ内容の回帰を 3 本持つのに、こちらは字下げの
+    /// 2 本しか持っていなかった——**assert は在るが、それを消しても全部緑のままだった**
+    /// （#1108 の PR 本文が形 B 側について記した状態が、形 A 側に残っていた）。
+    #[test]
+    #[should_panic(expected = "母集団が EOF まで伸びており")]
+    fn method_body_rejects_a_population_without_a_terminator() {
+        method_body(
+            "    fn target(&self) {\n        marker();\n",
+            "fn target(",
+            "marker(",
+        );
+    }
+
+    /// [`method_body`] が**canary を含まない母集団を拒む**ことを固定する（#1112）。
+    ///
+    /// 上のテストと**別に置く**——終端の fixture は canary を含むので、canary の assert を
+    /// 消す変異はあちらでは捕まらない。
+    #[test]
+    #[should_panic(expected = "の本体を含まない")]
+    fn method_body_rejects_a_population_without_the_canary() {
+        method_body("    fn target(&self) {\n    }\n", "fn target(", "marker(");
+    }
+
+    /// 字下げ 4 のメソッドヘッダ行なら、その行を trim したものを返す。
+    ///
+    /// 受理する形は `fn` の前に可視性修飾（`pub` / `pub(super)` 等）と `async` が挟まるもの
+    /// までである——[`method_body`] が字下げ幅だけを見ているのと同じ理由で、現に
+    /// `pub(super) ` が挟まる定義が在る。`///` の doc 行は `fn` へ辿り着かないのでヘッダに
+    /// ならない（doc はヘッダの**上**に在るため、[`owners_of`] では 1 つ前のメソッドへ
+    /// 帰属する——コードではないので取りこぼしてよい方向である）。
+    ///
+    /// **字下げは幅だけでなく空白文字の種類まで見る。** `trim_start` はタブも落とすので
+    /// バイト差だけで数えると `\t\t\t\tfn …` が字下げ 4 として通り、[`owners_of`] では偽の
+    /// ヘッダとして帰属を横取りしうる（2026-08-17 の反証レビューが実測。当時このファイルに
+    /// タブ字下げの行は 1 件も無く、`rustfmt.toml` が無いので `hard_tabs=false` が効いていた
+    /// ——**露出は無かったが、露出が無いことは述語が正しいことを意味しない**）。
+    fn method_header(line: &str) -> Option<&str> {
+        let trimmed = line.trim_start();
+        if line.len() - trimmed.len() != 4 || !line.starts_with("    ") {
+            return None;
+        }
+        let mut rest = trimmed;
+        if let Some(after) = rest.strip_prefix("pub") {
+            // `pub` / `pub(crate)` / `pub(super)` …——`(` から `)` までを読み飛ばす
+            rest = match after.strip_prefix('(') {
+                Some(scoped) => scoped.split_once(')').map_or(after, |(_, r)| r),
+                None => after,
+            };
+        }
+        rest = rest.trim_start();
+        rest = rest.strip_prefix("async ").unwrap_or(rest).trim_start();
+        rest.starts_with("fn ").then_some(trimmed)
+    }
+
+    /// `needle` の出現を**ファイル全体から**列挙し、各出現を直前の [`method_header`] へ
+    /// 帰属させる（出現行ごとに 1 要素・要素は帰属先のヘッダ行）。
+    ///
+    /// **否定形の検査のための道具である。** 切り出した母集団 `P` に対する
+    /// `assert!(!P.contains(x))` は `P ⊇ B`（本体を取りこぼさないこと）を要求するのに、
+    /// [`method_body`] の 2 assert（終端・canary）が縛るのは `P ⊆ B` の側だけである——
+    /// **canary より後・禁止語より前で母集団が切れると、canary は通り禁止語は切り捨てられ、
+    /// 検査は緑のまま沈黙する**（#1112 で rustc 実測。存在形ならこの切れ方で赤になるので、
+    /// 沈黙は否定形に固有である）。ここでは**終端を求めない**ので切り詰めが起こりえず、
+    /// 下界は「ファイル全体は常に本体の上位集合」から構成で満たされる。
+    ///
+    /// **境界の倒れ方**（網羅の主張はしない——下の残余がその実例である）:
+    /// - 本体内の入れ子 `fn`（字下げ 8）はヘッダに一致しないので、その中の出現は**外側の
+    ///   メソッドへ帰属する**＝過剰発火＝赤
+    /// - 複数行文字列・コメントの中の**出現**も帰属して過剰発火する＝赤
+    /// - 最初のヘッダより前の出現（`use` 節・モジュール doc）は誰にも帰属せず無視される。
+    ///   起動の入口の外なので赤にする理由が無い
+    ///
+    /// # 受容する残余（緑へ倒れる形）
+    ///
+    /// **少なくとも次の 2 つが在る**（尽くしてはいない）。どちらも**文字列の状態追跡や複数行の
+    /// 正規化では直さない**——検査の道具立てが検査対象より複雑になる。
+    ///
+    /// **(1) 偽ヘッダによる帰属の横取り。** 複数行文字列やブロックコメントの中に**字下げ 4 で
+    /// `fn ` から始まる行**が在ると、それが偽のヘッダとして帰属先を横取りし、同じメソッドの
+    /// 後続の禁止語はその偽ヘッダへ帰属して**緑になる**（2026-08-17 に対照つきで実測——偽ヘッダ
+    /// 有りで緑・無しで赤）。**#1112 の穴より狭い**: 旧設計は文字列中の `    }` 1 行で切れたのに
+    /// 対し、こちらは起動の入口のいずれかの中で、禁止語より前に、ヘッダの形をした行が文字列／
+    /// コメントへ入ることを要する（実測時点でこのファイルに偽ヘッダは 1 件も無く、認識された
+    /// ヘッダはすべて実定義だった）。**タブ字下げも偽ヘッダの形だった**——`\t\t\t\tfn …` が
+    /// バイト差 4 で通っていた分は [`method_header`] の空白文字判定で塞いだが、**スペース
+    /// 字下げ 4 の偽ヘッダは残る**。
+    ///
+    /// **(2) 整形器が出現そのものを消す形。** 照合は `line.contains(needle)` で**行内に閉じて
+    /// いる**ため、綴りが行をまたぐと出現が消える。`self.indexing()` を根とするメソッドチェーンが
+    /// 十分長いと rustfmt は `self` を単独の行へ落とし、次の行を `.indexing()` から始める——
+    /// 2026-08-17 に rustfmt へ直接与えて実測した（`&&` での折り返しや 2 連鎖では `self.indexing()`
+    /// は 1 行に保たれる。パス呼び出しの `read_config(` はチェーンではないのでこの形を取らない）。
+    /// **これは #1112 が入れた回帰ではない**——旧実装の `body.contains("self.indexing()")` も、
+    /// `body` が改行を含む文字列である以上まったく同じ折り返しで偽になる。
+    ///
+    /// **列挙した 2 つのうち、人間の意図を要さないのは (2) である**——(1) はヘッダの形をした行を
+    /// 文字列やコメントへ書く人間を要するのに対し、(2) は整形器が勝手に作る（尽くしていない残余の
+    /// 側にも同じ性格のものが在りうる）。**その意味でこの検査は `cargo fmt` が実際に走ることに
+    /// 暗黙に依存している**——PostToolUse hook と PR CI の両方が現行の設定（`rustfmt.toml` を
+    /// 置いていないので `hard_tabs=false` を含む既定値）で走ることが、ここで扱う行の形を
+    /// 保っている。整形の設定を変えるときはこの検査の当たり方も一緒に見ること。
+    fn owners_of(src: &str, needle: &str) -> Vec<String> {
+        let mut owners = Vec::new();
+        let mut current: Option<&str> = None;
+        for line in src.lines() {
+            // 帰属先の更新を needle の照合より**先**に行う——ヘッダ行自身に出現がある場合は
+            // そのメソッドへ帰属する（過剰発火＝赤側）。
+            if let Some(header) = method_header(line) {
+                current = Some(header);
+            }
+            if line.contains(needle) {
+                owners.extend(current.map(str::to_string));
+            }
+        }
+        owners
+    }
+
+    /// [`method_header`] が**字下げ 4 ちょうど**を要求することを固定する（#1112）。
+    ///
+    /// **コーパスからは測れない。** `include_str!` が読むこのファイルには字下げ 0 / 8 の
+    /// `fn ` 行が 1 本も無く、述語を `>= 4` へ緩めても字下げを見なくしても、認識される
+    /// ヘッダの集合が変わらない——2026-08-17 に鏡の実装で 3 通りを実測し、いずれも
+    /// ヘッダ数が同数で [`activation_uses_frame_values_not_live_reads`] は緑のままだった。
+    /// ゆえに合成 fixture でしか固定できない。
+    ///
+    /// **`>= 4` への緩みを落とすのは字下げ 8 の行が `None` である assert だけではない**——
+    /// 帰属の側から [`owners_of_attributes_a_nested_fn_to_the_outer_method`] が独立に
+    /// もう 1 本持つ。字下げ 0 の行はその変異では落ちないが、字下げを見なくする変異を落とす。
+    ///
+    /// **fixture の形は「幅」だけでは足りない。** 2026-08-17 の反証レビューが、字下げ幅の
+    /// 変異（`>= 4` へ緩める・見なくする）は落ちるのに、**受理する幅の集合を `{4, 12}` へ
+    /// 広げる**・**スペースの個数を数える形へ替える**・**先頭 4 スペースの prefix 判定へ
+    /// 替える**の 3 つが素通りすることを実測した。ゆえに下の 3 fixture を足してある——
+    /// 字下げ 12・タブ 4 個・スペース 4 + タブ 1 個。**どれが何を落とすかは各行のコメント**。
+    #[test]
+    fn method_header_requires_exactly_four_spaces_of_indent() {
+        assert_eq!(
+            method_header("    fn target(&self) {"),
+            Some("fn target(&self) {")
+        );
+        // 入れ子の `fn`——`>= 4` へ緩めるとここが偽のヘッダになり、その中の禁止語は
+        // 外側のメソッドではなく偽ヘッダへ帰属して緑へ落ちる。prefix 判定への変異も落とす。
+        assert_eq!(method_header("        fn nested() {"), None);
+        // トップレベルの `fn`——字下げを見なくする変異をここが落とす。
+        assert_eq!(method_header("fn top_level() {"), None);
+        assert_eq!(method_header("  fn odd() {"), None);
+        // 字下げ 12——受理する幅の集合を `{4, 12}` へ広げる変異をここが落とす。字下げ 8 の
+        // 行だけでは、8 を除いたまま 12 を足す形が通ってしまう。
+        assert_eq!(method_header("            fn deep() {"), None);
+        // タブ 4 個——`trim_start` のバイト差だけで数える形をここが落とす（タブもバイト 1 個
+        // ずつ落ちるので差は 4 になる）。**スペースを数える変異はここでは落ちない**（数えると
+        // 0 個なので、その変異も `None` を返す）。
+        assert_eq!(method_header("\t\t\t\tfn tabbed() {"), None);
+        // スペース 4 + タブ 1 個——スペースを数える変異をここが落とす（数えると 4 個なので
+        // 受理へ倒れる）。現行の実装はバイト差が 5 になるので拒む。
+        assert_eq!(method_header("    \tfn mixed() {"), None);
+        assert_eq!(method_header("    let counted = fn_like();"), None);
+    }
+
+    /// [`method_header`] が **`fn` の前の可視性修飾と `async` を読み飛ばす**ことを固定する
+    /// （#1112）。現に `pub(super) ` が挟まる定義が起動の入口に在り、読み飛ばしが壊れると
+    /// [`activation_uses_frame_values_not_live_reads`] の入口が 1 本認識されなくなる。
+    #[test]
+    fn method_header_accepts_visibility_and_async_before_fn() {
+        for line in [
+            "    pub fn a(&self) {",
+            "    pub(crate) fn b(&self) {",
+            "    pub(super) fn c(&self) {",
+            "    async fn d(&self) {",
+            "    pub(crate) async fn e(&self) {",
+            "    pub(super) async fn f(&self) {",
+        ] {
+            assert_eq!(method_header(line), Some(line.trim_start()), "{line}");
+        }
+    }
+
+    /// [`owners_of`] が**入れ子の `fn` の中の出現を外側のメソッドへ帰属させる**ことを固定する
+    /// （#1112）。[`owners_of`] の doc が「境界の倒れ方」の 1 つ目として主張している挙動で、
+    /// それを成立させている実装事実は [`method_header`] の字下げ 4 ちょうどである。
+    ///
+    /// 帰属先を**完全一致で**測る——`contains` で測ると、偽ヘッダへ横取りされた帰属が
+    /// 綴りの部分一致で通ってしまう形を作りやすい。
+    #[test]
+    fn owners_of_attributes_a_nested_fn_to_the_outer_method() {
+        let src = "impl C {\n    fn outer(&self) {\n        fn nested() {\n            forbidden();\n        }\n        forbidden();\n    }\n    fn other(&self) {\n    }\n}\n";
+        assert_eq!(
+            owners_of(src, "forbidden("),
+            vec![
+                "fn outer(&self) {".to_string(),
+                "fn outer(&self) {".to_string(),
+            ]
+        );
+    }
+
+    /// [`owners_of`] が**字下げ 4 のヘッダを持たない出現を落とす**ことを固定する（#1112）。
+    ///
+    /// [`owners_of`] の doc が「最初のヘッダより前の出現は誰にも帰属せず無視される」と書く
+    /// 側の挙動である。トップレベル（字下げ 0）の `fn ` がヘッダに数えられないことも同時に
+    /// 固定する——数えられると、この fixture の 1 件目が帰属先を持って列挙へ現れる。
+    #[test]
+    fn owners_of_drops_occurrences_without_an_indent_four_owner() {
+        let src = "fn top_level() {\n    forbidden();\n}\nimpl C {\n    fn outer(&self) {\n        forbidden();\n    }\n}\n";
+        assert_eq!(
+            owners_of(src, "forbidden("),
+            vec!["fn outer(&self) {".to_string()]
+        );
+    }
+
+    /// [`owners_of`] が改行コードに依存しないことを固定する（#1112）。
+    ///
+    /// [`method_body`] と同じ処方である（`docs/development-principles.md`「検証の層と、層と層の
+    /// 隙間」——切り出しの helper 自身を LF / CRLF 両方の fixture で測る。#1077 の CI 実害から
+    /// 生えた条項で、あちらは終端の探索が CRLF の作業ツリーに一致せず母集団が壊れた）。
+    ///
+    /// **帰属先を完全一致で測るのが要点である**——`contains` で測ると、`src.lines()` を
+    /// `src.split('\n')` へ替える変異が捕まらない。`trim_start` は行頭しか見ないので末尾の
+    /// `\r` はヘッダ文字列の中に残り、部分一致はそれでも通る（2026-08-17 に対照つきで実測）。
+    #[test]
+    fn owners_of_is_line_ending_agnostic() {
+        let lf = "impl C {\n    fn outer(&self) {\n        forbidden();\n    }\n}\n";
+        let crlf = lf.replace('\n', "\r\n");
+        let expected = vec!["fn outer(&self) {".to_string()];
+        for (label, src) in [("LF", lf), ("CRLF", crlf.as_str())] {
+            assert_eq!(owners_of(src, "forbidden("), expected, "{label}");
+        }
+    }
+
     /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
     ///
     /// 対象は表示ゲートの入力 2 つである。`AppState.indexing` は `AtomicBool` の live-read で
@@ -1588,37 +1836,70 @@ mod tests {
     /// タイミング依存ゆえ決定的に再現できない。ゆえに「渡された値を使っていること」を
     /// ソーステキストで固定する——読み直しの形が本体に無いことがその形である。
     ///
+    /// **この検査は母集団を切り出さない**（#1112）。禁止語の不在を測る否定形ゆえ、
+    /// [`method_body`] で切り出すと**canary より後・禁止語より前で切れたときに沈黙する**
+    /// （機序と境界規則は [`owners_of`] が正本）。代わりにファイル全体から出現を列挙し、
+    /// 各出現を直前のメソッドヘッダへ**帰属**させて、起動の入口 3 本に帰属するものが
+    /// 1 つも無いことを測る。
+    ///
     /// **`run_search_with` は対象外である**（意図的）。あちらの読みは用途が違い
-    /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。
+    /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。同様に
+    /// `lang()` は `read_config` を正当に使う——どちらも帰属先が起動の入口ではないので
+    /// 対象外へ落ちる。**この 2 つが対象外のままであることが、この設計の受け入れ条件である。**
+    ///
+    /// **この検査は禁止語と needle を自分のソースへリテラルで綴る。** 母集団がファイル全体
+    /// なので、その行も列挙に入る。緑であるのは**帰属の副作用**である——それらの行は自分の
+    /// テスト関数のヘッダへ帰属し、そのヘッダは起動の入口ではないので assert を通る
+    /// （母集団を切り出していた頃は、テスト側が母集団の外に在ることが構造でそれを保証して
+    /// いた）。帰結として、禁止語のリテラルを起動の入口のいずれかの中へ書けばこの検査は
+    /// 自分で自分を赤にする——そう書く理由が無いので**受容する残余**とする。
     #[test]
     fn activation_uses_frame_values_not_live_reads() {
         let src = include_str!("launcher_controller.rs");
-        let targets = [
-            ("fn on_enter(", "should_flush_on_enter("),
-            ("fn activate_or_execute(", "execute_tool_selected("),
-            ("fn shift_activate(", "folder_load_pending("),
+        let entry_points = [
+            "fn on_enter(",
+            "fn activate_or_execute(",
+            "fn shift_activate(",
         ];
-        for (anchor, canary) in targets {
-            let body = method_body(src, anchor, canary);
+        // **canary の代役はここである。** 切り出しを無くしたので「母集団が空」は起こりえないが、
+        // 「対象が 1 つも認識されていない」なら検査は同じように沈黙する。3 本のアンカーは
+        // 可視性修飾の有無で 2 形（`pub(super) fn` / 素の `fn`）に分かれるので、この assert は
+        // 改名だけでなく [`method_header`] の修飾読み飛ばしが壊れた場合にも赤になる。
+        // **消さないこと**——これが沈黙を塞いでいる唯一の assert である。
+        let headers: Vec<&str> = src.lines().filter_map(method_header).collect();
+        for anchor in entry_points {
             assert!(
-                !body.contains("self.indexing()"),
-                "{anchor} が `indexing` を自分で読み直している——`view.rs` が表示ゲートへ渡す値と\
-                 同一フレーム内で食い違いうる（#1077）。引数で受けた FrameIndexing を使うこと"
+                headers.iter().any(|header| header.contains(anchor)),
+                "{anchor} が字下げ 4 のメソッドヘッダとして見つからない——改名したかヘッダの\
+                 認識が壊れており、以下の検査は 1 つも発火しない（沈黙する検知器は検知器ではない）"
             );
-            // 連言④も同じ形で守る（#1106）。**構築子が private なので偽の値は作れない**——
-            // 残る一手が「本物をもう 1 回読む」ことであり、それをここで塞ぐ。読み直す形は
-            // `read_visible_rows` の直呼びと、`read_config` から `effective_visible_rows` を
-            // 引く形の 2 つである（後者は `lang()` が同じ関数を正当に使うので、母集団を
-            // 起動の入口に限っているこの検査でしか禁止にできない）。
-            for forbidden in ["read_visible_rows(", "read_config("] {
+        }
+        for owner in owners_of(src, "self.indexing()") {
+            for anchor in entry_points {
                 assert!(
-                    !body.contains(forbidden),
-                    "{anchor} が `{forbidden}` を呼んでいる——**起動の入口での config 読みは\
-                     `visible_rows` の読み直しと区別できない**（無関係な読みでもここは落ちる。\
-                     それでよい: 読み直しなら `view.rs` が表示ゲートへ渡す値と同一フレーム内で\
-                     食い違い、#1106 の症状が再発する）。連言④は引数で受けた FrameVisibleRows で\
-                     判定し、他の config 値が要るならこの入口の外で読むこと"
+                    !owner.contains(anchor),
+                    "{anchor} が `indexing` を自分で読み直している——`view.rs` が表示ゲートへ渡す値と\
+                     同一フレーム内で食い違いうる（#1077）。引数で受けた FrameIndexing を使うこと"
                 );
+            }
+        }
+        // 連言④も同じ形で守る（#1106）。**構築子が private なので偽の値は作れない**——
+        // 残る一手が「本物をもう 1 回読む」ことであり、それをここで塞ぐ。読み直す形は
+        // `read_visible_rows` の直呼びと、`read_config` から `effective_visible_rows` を
+        // 引く形の 2 つである（後者は `lang()` が同じ関数を正当に使うので、起動の入口へ
+        // 帰属する出現だけを見るこの検査でしか禁止にできない）。
+        for forbidden in ["read_visible_rows(", "read_config("] {
+            for owner in owners_of(src, forbidden) {
+                for anchor in entry_points {
+                    assert!(
+                        !owner.contains(anchor),
+                        "{anchor} が `{forbidden}` を呼んでいる——**起動の入口での config 読みは\
+                         `visible_rows` の読み直しと区別できない**（無関係な読みでもここは落ちる。\
+                         それでよい: 読み直しなら `view.rs` が表示ゲートへ渡す値と同一フレーム内で\
+                         食い違い、#1106 の症状が再発する）。連言④は引数で受けた FrameVisibleRows で\
+                         判定し、他の config 値が要るならこの入口の外で読むこと"
+                    );
+                }
             }
         }
     }
@@ -1673,5 +1954,66 @@ mod tests {
                  （#1106 で実機再現済み）"
             );
         }
+    }
+
+    /// `on_enter` が flush 判定を**述語へ委ねている**ことを、ソーステキストで固定する（#1112）。
+    ///
+    /// **述語のテストでは呼び出し点の脱落を捕まえられない**（この規範の正本は上の
+    /// [`activation_entry_points_consult_the_display_gate`] の doc）。`should_flush_on_enter`
+    /// を綴る production はこの呼び出しの 1 行だけで、述語自身のテストは
+    /// [`crate::egui_shell::search_state`] の `mod tests` に在る——呼び出しを外しても
+    /// あちらは緑のままである（2026-08-17 に対照つきで実測）。
+    ///
+    /// **`on_enter` を上の `targets` へ足す形は採らない。** あちらが当てる 2 つのゲート
+    /// （`plain_results_hidden` / `results_area_collapsed`）を `on_enter` の本体は持たず、
+    /// 持つ場所でもない——ゲートを見るのは委譲先の `activate_or_execute` / `shift_activate`
+    /// で、両方とも既に `targets` に在る。固定したい不変条件が別物なのでテストを分ける。
+    ///
+    /// **これは存在形の assert である**——母集団が途中で切れれば綴りごと消えて赤になるので、
+    /// [`owners_of`] が塞いだ否定形の沈黙はここには当たらない。**ただし赤になるのは、探す綴りが
+    /// canary（`self.activate_or_execute(`）より前に在る現在の並びにおいてである**——切り詰めが
+    /// 綴りより後・canary より前で起きれば canary が落ちるが、綴りより前で起きれば綴りが落ちる。
+    /// **綴りを canary より後ろへ動かすと、その間で切れた母集団は canary を通しつつ綴りを
+    /// 捨てる**（否定形の沈黙と同じ機序が、極性を変えて存在形に当たる形）。並びを変えるなら
+    /// canary も動かすこと。
+    ///
+    /// # 何を保証し、何を保証しないか
+    ///
+    /// **保証するのは 1 つだけである**——`if crate::egui_shell::should_flush_on_enter(` という
+    /// 綴りが `on_enter` の本体テキストに現れること。#631 の flush 判定が丸ごと落ちる形（当該の
+    /// 行が消える）はこれで赤になる。
+    ///
+    /// **保証しないもの**（2026-08-17 の反証レビューが実測した経路。**少なくとも次を含む**
+    /// ——尽くしてはいない）:
+    /// - **テキストであって呼び出しではない。** 同じ綴りを説明コメントや文字列リテラルへ
+    ///   書き残せば緑で通る。パスまで含む長い綴りなので偶然そう書く形ではないが、機構としては
+    ///   何も止めていない
+    /// - **呼び出しが在ることは委譲が在ることを意味しない。** これは上の「部分文字列一致」の
+    ///   特殊例ではなく**別種の欠落**である——`let _ = crate::egui_shell::should_flush_on_enter(…);`
+    ///   と書けば**本物の述語への本物の呼び出しが残ったまま**判定は本体の書き下ろしへ移る。
+    ///   `rustc -D warnings` も `clippy -D warnings -W pedantic` も exit 0 で通る（実測）
+    ///
+    /// **綴りを長くして塞いだもの**: 同名のクロージャで影を作る形・別レシーバの同名メソッドへ
+    /// 差し替える形・上の `let _ =` の形は、`if ` と `crate::egui_shell::` を綴りへ含めたことで
+    /// 落ちるようになった（対照つきで実測——短い綴り `should_flush_on_enter(` では 3 つとも緑）。
+    /// **述語の道具立ては増やしていない**——増えたのは探す文字列の長さだけである。
+    ///
+    /// **代償は整形と書き方への脆さで、向きは赤側である**: `let should = crate::egui_shell::…;
+    /// if should {` のような分解や、rustfmt が `if` とパスのあいだで折り返す形はここを赤にする。
+    /// 偽陽性であって沈黙ではないので受容する（直すなら綴りを短くするのではなく、当該の並びへ
+    /// 合わせて綴りを更新すること）。
+    #[test]
+    fn on_enter_delegates_the_flush_decision_to_the_predicate() {
+        let src = include_str!("launcher_controller.rs");
+        let body = method_body(src, "fn on_enter(", "self.activate_or_execute(");
+        assert!(
+            body.contains("if crate::egui_shell::should_flush_on_enter("),
+            "on_enter が `should_flush_on_enter` を分岐の条件式として呼んでいない——#631 の\
+             flush-on-Enter が判定ごと落ちたか、判定の写しが本体へ書き下ろされている（呼び出し\
+             だけ残して判定から外す形も含む）。どちらも述語側のテストは緑のまま通る（最終クエリの\
+             結果が行へ反映される前の Enter が、leading 時点の結果や連打前のクエリの結果で\
+             起動しうる）。**整形や分解でこの綴りが崩れただけの偽陽性もありうる**——その場合は\
+             綴りを短くせず、現在の並びへ合わせて更新すること"
+        );
     }
 }

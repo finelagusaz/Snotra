@@ -277,12 +277,16 @@ activation_uses_frame_values` で実測・復元済み）。
 
 ### Phase 2 — `window_coordinator.rs` の 2 件（show 経路）
 
-- [ ] `read_background`（187-201）を `read_config` へ移す
-- [ ] `position_on_target_monitor` 内の `follow_cursor` 読み（226-236）を `read_config` へ移す
-- [ ] `read_background` の doc 183-186 を訂正する（**`ime_off_on_show` はもう `read_config` 側に
-      居る**ため「同じ層である」が偽。`read_visual` と統合しない理由は保つ）
-- [ ] カテゴリ A が green + `cargo doc` green
-- [ ] Phase 2 をコミット
+- [x] `read_background`（187-201）を `read_config` へ移す
+- [x] `position_on_target_monitor` 内の `follow_cursor` 読み（226-236）を `read_config` へ移す
+- [x] `read_background` の doc 183-186 を訂正する（**`ime_off_on_show` はもう `read_config` 側に
+      居る**ため「同じ層である」が偽。`read_visual` と統合しない理由は保つ）——
+      **「同じ層である」は移行で真になった**ので消さず、層が engine lock を持たなくなったことを
+      書き足す形にした。併せて「1 フレーム 1 lock の規律」を「1 フレーム 1 読みの規律」へ直した
+      （層に lock が無くなったため字面が腐る）
+- [x] カテゴリ A が green + `cargo doc` green — fmt / check / clippy / `cargo test -p snotra -q`
+      （**292 passed**）/ `cargo doc` すべて exit 0
+- [x] Phase 2 をコミット
 
 ### Phase 3 — `commands/instant.rs` の 1 件
 

@@ -182,21 +182,19 @@ pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color
 ///
 /// **`read_visual` と統合しない**: こちらは show 経路（**フレーム外**——同じイベントループ
 /// スレッドではあるが `update()` の中ではない）の
-/// 読みで、**1 フレーム 1 lock の規律（#673 決定 4）が掛かる面には居ない**——同じ関数内の
+/// 読みで、**1 フレーム 1 読みの規律（#673 決定 4）が掛かる面には居ない**——同じ関数内の
 /// `read_metrics` や `follow_cursor_monitor` / `ime_off_on_show` の読みと同じ層である。
+///
+/// **その層は #1076 で `engine.lock()` を持たなくなった。** show はフレームの外だが、
+/// **窓が出るまでを止める**——検索 worker が `engine.search` で `Mutex<Engine>` を握っている
+/// 間に hotkey が来ると、そこで待つのは表示そのものである（`src-tauri/CLAUDE.md`
+/// 「モジュール構成」の #1032 条項）。
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
-    let hex = app
-        .try_state::<crate::AppState>()
-        .map(|s| {
-            s.engine
-                .lock()
-                .unwrap()
-                .config()
-                .visual
-                .background_color
-                .clone()
-        })
-        .unwrap_or_else(|| super::visual::default_visual().background_color.clone());
+    let hex = super::read_config(
+        app,
+        |c| c.visual.background_color.clone(),
+        || super::visual::default_visual().background_color.clone(),
+    );
     super::visual::background_color(&hex)
 }
 
@@ -222,18 +220,12 @@ fn position_on_target_monitor(
 ) {
     use snotra_core::window_data;
 
-    // Read follow_cursor_monitor from Engine config (refreshed on every show).
-    let follow_cursor = app_handle
-        .try_state::<crate::AppState>()
-        .map(|s| {
-            s.engine
-                .lock()
-                .unwrap()
-                .config()
-                .general
-                .follow_cursor_monitor
-        })
-        .unwrap_or_else(|| GeneralConfig::default().follow_cursor_monitor);
+    // show のたびに読み直す（#1076 で engine lock から read_config へ・read_background と同じ層）。
+    let follow_cursor = super::read_config(
+        app_handle,
+        |c| c.general.follow_cursor_monitor,
+        || GeneralConfig::default().follow_cursor_monitor,
+    );
 
     // Determine target monitor work area.
     let target_wa = if follow_cursor {

@@ -83,14 +83,19 @@ describe("検査 ID の形（#812 — 序数を引用の語彙から外す）", 
   });
 });
 
-describe("evidence の配線カナリア（#1098）", () => {
-  // 単体は `governance/evidence.test.mjs` が見る。ここが見るのは**配線**——`runAll` が
-  // 生の袋ではなく view 越しに evidence を組んでいること。view を外す変異は、
-  // 供給が揃っている今日のリポジトリでは単体テストでは捕まらない
+describe("evidence の供給カナリア（#1098）", () => {
+  // **名前は「供給」であって「配線」ではない。** ここが見るのは、実リポジトリで evidence の
+  // 読みがすべて供給されていること——検査が `ctx.record` を呼ばなくなる／facade の導出が消える、
+  // という欠落を捕まえる。
+  //
+  // **配線（view を通ること）はここでは見えない**——view を外す変異を当てても、供給が揃っていれば
+  // 下の 3 条件はすべて満たされたまま緑になる（2026-08-17 実測: `governance:check` exit 0・
+  // `npm test` 745 件全緑）。配線は `governance/evidence.mjs` の brand が構造で拒み、
+  // その効きは `governance/evidence.test.mjs`「配線:」の 3 件が測る。
   it("実リポジトリの evidence 行は `undefined` も `?` も含まない", () => {
     const { evidence, findings } = runAll(makeSnapshot(fileURLToPath(new URL("..", import.meta.url))));
     expect(evidence).not.toContain("undefined");
-    expect(evidence, "未記録の読みが `?` に化けている（供給側の ctx.record が消えた）").not.toContain("?");
+    expect(evidence, "未記録の読みが `?` に化けている（供給側が消えた）").not.toContain("?");
     expect(findings.filter((f) => f.message.includes("が未記録である"))).toEqual([]);
   });
 });

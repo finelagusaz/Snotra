@@ -139,10 +139,15 @@ export function runAll(snapshot) {
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
-  // evidence の入力は**必ず view 越しに読む**（#1098）。検査が `ctx.record` を呼ばなくなると
+  // evidence の入力は view 越しに読む（#1098）。検査が `ctx.record` を呼ばなくなると
   // 値が `undefined` のまま印字され、誰も赤くしないまま exit 0 になっていた（実測）。
+  // view を外す形は `assembleEvidence` が brand で throw して拒む。
   // 袋は `...ctx` のスプレッドで組む——必須キーの一覧を手で持つと、それ自体が腐る写しになる。
   // 供給が消えれば読みが `undefined` になり、`evidenceView` が findings へ積む
+  //
+  // **袋へ入れるのは平坦な値にする**——`area` をそのまま入れると evidence 側の読みが
+  // `ev.area.always`＝2 段目になり、2 段目は生のオブジェクトからの読みなのでガードを通らない
+  // （`always` を落とすと findings 0 件のまま `undefined` を印字して exit 0 だった・2026-08-17 実測）
   const evidence = assembleEvidence(
     evidenceView(
       {
@@ -150,7 +155,8 @@ export function runAll(snapshot) {
         checkCount: checks.length,
         rules,
         skills,
-        area,
+        areaAlways: area.always,
+        areaRules: area.rules,
         workspaceMembers: workspaceMembers(snapshot).members.length,
         clippyDisallowed: clippyDisallowedCount(snapshot),
         adrFiles: adrFiles(snapshot).length,

@@ -10,7 +10,8 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     docs: ["a.md"],
     rules: 8,
     skills: 12,
-    area: { always: 15000, rules: 12000 },
+    areaAlways: 15000,
+    areaRules: 12000,
     headingRefs: 219,
     refDocs: ["a.md"],
     refSourceDocs: ["a.rs"],
@@ -65,6 +66,34 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     expect(() => {
       evidenceView(complete(), []).headingRefs = 0;
     }).toThrow(/読み取り専用/);
+  });
+
+  // ここが「配線」の検査である——view を外す変異を落とすのはこの 3 件で、
+  // 実リポジトリを走らせるカナリア（`governance-check.test.mjs`）ではない
+  // （供給が揃っていればカナリアの 3 条件は view の有無に関わらず満たされる・2026-08-17 実測）
+  it("配線: 生の袋を渡すと throw する（view を外す変異が落ちる）", () => {
+    expect(() => assembleEvidence(complete())).toThrow(/view でなければならない/);
+  });
+
+  it("配線: brand は複製できない（スプレッドで view の見た目だけ作っても通らない）", () => {
+    const view = evidenceView(complete(), []);
+    expect(() => assembleEvidence({ ...view })).toThrow(/view でなければならない/);
+  });
+
+  it("配線: 引数無し・null でも throw する（optional chaining が undefined を素通ししない）", () => {
+    expect(() => assembleEvidence()).toThrow(/view でなければならない/);
+    expect(() => assembleEvidence(null)).toThrow(/view でなければならない/);
+  });
+
+  it("入れ子を持たない: 面積は平坦なキーで読む（2 段目の読みはガードを通らない）", () => {
+    const findings = [];
+    const src = complete();
+    delete src.areaAlways;
+    const line = assembleEvidence(evidenceView(src, findings));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain("areaAlways");
+    expect(line).toContain("常時ロード ? 字");
+    expect(line).not.toContain("undefined");
   });
 
   it("Symbol の読み取りは finding にしない（テンプレート展開の内部読みで誤爆させない）", () => {

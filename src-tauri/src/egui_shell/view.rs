@@ -1338,8 +1338,11 @@ mod tests {
     /// 移すと母集団の外になる。
     #[test]
     fn indexing_is_read_exactly_once_per_frame() {
-        assert_read_once_in_production(
-            ".controller.indexing()",
+        assert_read_once_in_this_file(
+            // **リテラルを割って組み立てる**——このソースに綴りが逐語で現れないようにするため
+            // であり、それが母集団をファイル全体にできる理由である（#1112。理由の正本は
+            // [`assert_read_once_in_this_file`]）。
+            concat!(".controller.", "indexing()"),
             "1 回だけ読み、FrameIndexing のまま配ること（#752 F2 / #1077）",
         );
     }
@@ -1355,33 +1358,38 @@ mod tests {
     /// 呼び出し点の唯一性を規範として持つ）。
     #[test]
     fn visible_rows_is_read_exactly_once_per_frame() {
-        assert_read_once_in_production(
-            "read_visible_rows(",
+        assert_read_once_in_this_file(
+            // 上と同じ理由で割る（#1112）。
+            concat!("read_visible", "_rows("),
             "1 回だけ読み、FrameVisibleRows のまま表示側と起動側の両方へ配ること（#1106）",
         );
     }
 
-    /// 上の 2 検査が共有する骨格——production 側で `needle` がちょうど 1 回現れることを測る。
+    /// 上の 2 検査が共有する骨格——**このファイル全体で** `needle` がちょうど 1 回現れる
+    /// ことを測る。
     ///
-    /// **母集団の切り出しをここ 1 か所へ閉じるのが要点である。** `split_once` の形と
-    /// 「母集団が空でない」のカナリアを検査ごとに書き写すと、**片方だけ壊れても両方が緑で
-    /// 通りうる**——母集団を持つ検査は広すぎる方向で沈黙する（#1077 サイクルで実測し、
-    /// `docs/development-principles.md`「検証の層と、層と層の隙間」へ括り付けた形）。
+    /// **母集団を切り出さないのが要点である**（#1112）。`assert_eq!(reads, 1)` は
+    /// 「≧ 1」と「≦ 1」の連言であり、後半は否定形——**禁止語の不在を測る形**である。
+    /// 否定形の検査は母集団が本体を取りこぼすと**緑のまま沈黙する**（canary は「母集団が
+    /// 空でない」しか塞がず、「途中で切れる」を塞がない）。かつてはここが
+    /// `split_once("#[cfg(test)]")` で production 側を切り出しており、その切れ目が前へ
+    /// 動けば 2 回目の読みが母集団の外へ落ちて黙って通った。ファイル全体を数えれば
+    /// 切り詰めが起こりえない。
     ///
-    /// **母集団を production 側に限るのは意図である**——呼び出し側の検査は `needle` の
-    /// リテラルを自分のソースへ書くため、ファイル全体を数えると自分を勘定に入れて必ず 2 になる
-    /// （実測して気づいた）。
-    fn assert_read_once_in_production(needle: &str, lost: &str) {
+    /// **切り出していた理由は呼び出し側で解いた**——検査は `needle` のリテラルを自分の
+    /// ソースへ書くため、ファイル全体を数えると自分を勘定に入れて必ず 2 になっていた。
+    /// 呼び出し側が `concat!` でリテラルを割って組み立てるので、綴りはこのファイルに
+    /// 逐語で現れず、production の 1 回だけが数えられる。
+    ///
+    /// **これは `literal-grep-misses-constructed-strings` の失敗類型へ意図して踏み込んで
+    /// いる**——「リテラルを狙った探索は組み立てられた値を落とす」形そのものである。
+    /// 根拠は**生成点が 1 か所であること**: `needle` を組むのは上の 2 つの呼び出しだけで、
+    /// どちらもこの関数へ直に渡す。ゆえに「綴りが現れない」ことを保つ責任は同じ画面の
+    /// 中に閉じている。失敗方向は安全側で、doc コメント等に綴りが現れれば過剰計数で
+    /// **赤**になる（沈黙しない）。
+    fn assert_read_once_in_this_file(needle: &str, lost: &str) {
         let src = include_str!("view.rs");
-        let (production, _) = src
-            .split_once("#[cfg(test)]")
-            .expect("view.rs に #[cfg(test)] が無い——母集団の切り出しがずれた");
-        // 母集団が空でないことを、まずそれ自体で確かめる（沈黙する検知器は検知器ではない）。
-        assert!(
-            production.contains("fn update("),
-            "母集団が update() を含まない——切り出しがずれた"
-        );
-        let reads = production.matches(needle).count();
+        let reads = src.matches(needle).count();
         assert_eq!(
             reads, 1,
             "view.rs が `{needle}` を {reads} 回書いている。{lost}"

@@ -1575,6 +1575,88 @@ mod tests {
         );
     }
 
+    /// [`method_body`] が**終端の無い母集団を拒む**ことを固定する（#1112）。
+    ///
+    /// `top_level_fn_body`（`indexing.rs`）は同じ内容の回帰を 3 本持つのに、こちらは字下げの
+    /// 2 本しか持っていなかった——**assert は在るが、それを消しても全部緑のままだった**
+    /// （#1108 の PR 本文が形 B 側について記した状態が、形 A 側に残っていた）。
+    #[test]
+    #[should_panic(expected = "母集団が EOF まで伸びており")]
+    fn method_body_rejects_a_population_without_a_terminator() {
+        method_body(
+            "    fn target(&self) {\n        marker();\n",
+            "fn target(",
+            "marker(",
+        );
+    }
+
+    /// [`method_body`] が**canary を含まない母集団を拒む**ことを固定する（#1112）。
+    ///
+    /// 上のテストと**別に置く**——終端の fixture は canary を含むので、canary の assert を
+    /// 消す変異はあちらでは捕まらない。
+    #[test]
+    #[should_panic(expected = "の本体を含まない")]
+    fn method_body_rejects_a_population_without_the_canary() {
+        method_body("    fn target(&self) {\n    }\n", "fn target(", "marker(");
+    }
+
+    /// 字下げ 4 のメソッドヘッダ行なら、その行を trim したものを返す。
+    ///
+    /// 受理する形は `fn` の前に可視性修飾（`pub` / `pub(super)` 等）と `async` が挟まるもの
+    /// までである——[`method_body`] が字下げ幅だけを見ているのと同じ理由で、現に
+    /// `pub(super) ` が挟まる定義が在る。`///` の doc 行は `fn` へ辿り着かないのでヘッダに
+    /// ならない（doc はヘッダの**上**に在るため、[`owners_of`] では 1 つ前のメソッドへ
+    /// 帰属する——コードではないので取りこぼしてよい方向である）。
+    fn method_header(line: &str) -> Option<&str> {
+        let trimmed = line.trim_start();
+        if line.len() - trimmed.len() != 4 {
+            return None;
+        }
+        let mut rest = trimmed;
+        if let Some(after) = rest.strip_prefix("pub") {
+            // `pub` / `pub(crate)` / `pub(super)` …——`(` から `)` までを読み飛ばす
+            rest = match after.strip_prefix('(') {
+                Some(scoped) => scoped.split_once(')').map_or(after, |(_, r)| r),
+                None => after,
+            };
+        }
+        rest = rest.trim_start();
+        rest = rest.strip_prefix("async ").unwrap_or(rest).trim_start();
+        rest.starts_with("fn ").then_some(trimmed)
+    }
+
+    /// `needle` の出現を**ファイル全体から**列挙し、各出現を直前の [`method_header`] へ
+    /// 帰属させる（出現行ごとに 1 要素・要素は帰属先のヘッダ行）。
+    ///
+    /// **否定形の検査のための道具である。** 切り出した母集団 `P` に対する
+    /// `assert!(!P.contains(x))` は `P ⊇ B`（本体を取りこぼさないこと）を要求するのに、
+    /// [`method_body`] の 2 assert（終端・canary）が縛るのは `P ⊆ B` の側だけである——
+    /// **canary より後・禁止語より前で母集団が切れると、canary は通り禁止語は切り捨てられ、
+    /// 検査は緑のまま沈黙する**（#1112 で rustc 実測。存在形ならこの切れ方で赤になるので、
+    /// 沈黙は否定形に固有である）。ここでは**終端を求めない**ので切り詰めが起こりえず、
+    /// 下界は「ファイル全体は常に本体の上位集合」から構成で満たされる。
+    ///
+    /// **境界はすべて赤側へ倒れる**:
+    /// - 最初のヘッダより前の出現（`use` 節・モジュール doc）は誰にも帰属せず、無視される
+    /// - 本体内の入れ子 `fn`（字下げ 8）はヘッダに一致しないので、その中の出現は**外側の
+    ///   メソッドへ帰属する**＝過剰発火
+    /// - 複数行文字列・コメントの中の出現も帰属して過剰発火する
+    fn owners_of(src: &str, needle: &str) -> Vec<String> {
+        let mut owners = Vec::new();
+        let mut current: Option<&str> = None;
+        for line in src.lines() {
+            // 帰属先の更新を needle の照合より**先**に行う——ヘッダ行自身に出現がある場合は
+            // そのメソッドへ帰属する（過剰発火＝赤側）。
+            if let Some(header) = method_header(line) {
+                current = Some(header);
+            }
+            if line.contains(needle) {
+                owners.extend(current.map(str::to_string));
+            }
+        }
+        owners
+    }
+
     /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
     ///
     /// 対象は表示ゲートの入力 2 つである。`AppState.indexing` は `AtomicBool` の live-read で
@@ -1588,37 +1670,63 @@ mod tests {
     /// タイミング依存ゆえ決定的に再現できない。ゆえに「渡された値を使っていること」を
     /// ソーステキストで固定する——読み直しの形が本体に無いことがその形である。
     ///
+    /// **この検査は母集団を切り出さない**（#1112）。禁止語の不在を測る否定形ゆえ、
+    /// [`method_body`] で切り出すと**canary より後・禁止語より前で切れたときに沈黙する**
+    /// （機序と境界規則は [`owners_of`] が正本）。代わりにファイル全体から出現を列挙し、
+    /// 各出現を直前のメソッドヘッダへ**帰属**させて、起動の入口 3 本に帰属するものが
+    /// 1 つも無いことを測る。
+    ///
     /// **`run_search_with` は対象外である**（意図的）。あちらの読みは用途が違い
-    /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。
+    /// （行をクリアするか）、到達経路ごとにその時点で判断するのが正しい。同様に
+    /// `lang()` は `read_config` を正当に使う——どちらも帰属先が起動の入口ではないので
+    /// 対象外へ落ちる。**この 2 つが対象外のままであることが、この設計の受け入れ条件である。**
     #[test]
     fn activation_uses_frame_values_not_live_reads() {
         let src = include_str!("launcher_controller.rs");
-        let targets = [
-            ("fn on_enter(", "should_flush_on_enter("),
-            ("fn activate_or_execute(", "execute_tool_selected("),
-            ("fn shift_activate(", "folder_load_pending("),
+        let entry_points = [
+            "fn on_enter(",
+            "fn activate_or_execute(",
+            "fn shift_activate(",
         ];
-        for (anchor, canary) in targets {
-            let body = method_body(src, anchor, canary);
+        // **canary の代役はここである。** 切り出しを無くしたので「母集団が空」は起こりえないが、
+        // 「対象が 1 つも認識されていない」なら検査は同じように沈黙する。3 本のアンカーは
+        // 可視性修飾の有無で 2 形（`pub(super) fn` / 素の `fn`）に分かれるので、この assert は
+        // 改名だけでなく [`method_header`] の修飾読み飛ばしが壊れた場合にも赤になる。
+        // **消さないこと**——これが沈黙を塞いでいる唯一の assert である。
+        let headers: Vec<&str> = src.lines().filter_map(method_header).collect();
+        for anchor in entry_points {
             assert!(
-                !body.contains("self.indexing()"),
-                "{anchor} が `indexing` を自分で読み直している——`view.rs` が表示ゲートへ渡す値と\
-                 同一フレーム内で食い違いうる（#1077）。引数で受けた FrameIndexing を使うこと"
+                headers.iter().any(|header| header.contains(anchor)),
+                "{anchor} が字下げ 4 のメソッドヘッダとして見つからない——改名したかヘッダの\
+                 認識が壊れており、以下の検査は 1 つも発火しない（沈黙する検知器は検知器ではない）"
             );
-            // 連言④も同じ形で守る（#1106）。**構築子が private なので偽の値は作れない**——
-            // 残る一手が「本物をもう 1 回読む」ことであり、それをここで塞ぐ。読み直す形は
-            // `read_visible_rows` の直呼びと、`read_config` から `effective_visible_rows` を
-            // 引く形の 2 つである（後者は `lang()` が同じ関数を正当に使うので、母集団を
-            // 起動の入口に限っているこの検査でしか禁止にできない）。
-            for forbidden in ["read_visible_rows(", "read_config("] {
+        }
+        for owner in owners_of(src, "self.indexing()") {
+            for anchor in entry_points {
                 assert!(
-                    !body.contains(forbidden),
-                    "{anchor} が `{forbidden}` を呼んでいる——**起動の入口での config 読みは\
-                     `visible_rows` の読み直しと区別できない**（無関係な読みでもここは落ちる。\
-                     それでよい: 読み直しなら `view.rs` が表示ゲートへ渡す値と同一フレーム内で\
-                     食い違い、#1106 の症状が再発する）。連言④は引数で受けた FrameVisibleRows で\
-                     判定し、他の config 値が要るならこの入口の外で読むこと"
+                    !owner.contains(anchor),
+                    "{anchor} が `indexing` を自分で読み直している——`view.rs` が表示ゲートへ渡す値と\
+                     同一フレーム内で食い違いうる（#1077）。引数で受けた FrameIndexing を使うこと"
                 );
+            }
+        }
+        // 連言④も同じ形で守る（#1106）。**構築子が private なので偽の値は作れない**——
+        // 残る一手が「本物をもう 1 回読む」ことであり、それをここで塞ぐ。読み直す形は
+        // `read_visible_rows` の直呼びと、`read_config` から `effective_visible_rows` を
+        // 引く形の 2 つである（後者は `lang()` が同じ関数を正当に使うので、起動の入口へ
+        // 帰属する出現だけを見るこの検査でしか禁止にできない）。
+        for forbidden in ["read_visible_rows(", "read_config("] {
+            for owner in owners_of(src, forbidden) {
+                for anchor in entry_points {
+                    assert!(
+                        !owner.contains(anchor),
+                        "{anchor} が `{forbidden}` を呼んでいる——**起動の入口での config 読みは\
+                         `visible_rows` の読み直しと区別できない**（無関係な読みでもここは落ちる。\
+                         それでよい: 読み直しなら `view.rs` が表示ゲートへ渡す値と同一フレーム内で\
+                         食い違い、#1106 の症状が再発する）。連言④は引数で受けた FrameVisibleRows で\
+                         判定し、他の config 値が要るならこの入口の外で読むこと"
+                    );
+                }
             }
         }
     }

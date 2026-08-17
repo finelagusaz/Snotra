@@ -241,6 +241,56 @@ describe("linesOutsideFences — マスクと、釣り合わないフェンス�
     expect(linesOutsideFences(doc, F, []).map(([, l]) => l)).toEqual(["外1"]);
   });
 
+  // ここから下は「パリティを数える形」が壊れていた地点である。パリティは「対になる行の文字も
+  // 長さも同じ」という前提の上でしか成り立たず、4 連バッククォート（3 連を含む例を書くための記法・
+  // このリポジトリで既に使われている）と `~~~` でその前提が崩れる。**修正前はいずれも
+  // findings 0 件のままマスクが壊れていた**（下の it ごとに旧挙動を注記する）
+  const B3 = "```";
+  const B4 = "````";
+  const T3 = "~~~";
+
+  it("4 連バッククォートの中の 3 連は閉じない（閉じフェンスは開いた長さ以上でなければならない）", () => {
+    // 旧: 3 連 2 本がパリティを反転させ、findings 0 件のまま「外2」が内側に落ちていた
+    const findings = [];
+    const doc = ["外1", B4, B3, "内", B3, B4, "外2", ""].join("\n");
+    const lines = linesOutsideFences(doc, F, findings);
+    expect(findings).toEqual([]);
+    expect(lines.map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+  });
+
+  it("`~~~` もフェンスとして扱う（旧: `~~~` は 1 行もフェンスに数えられなかった）", () => {
+    const findings = [];
+    const doc = ["外1", T3, "内", T3, "外2", ""].join("\n");
+    expect(linesOutsideFences(doc, F, findings).map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(findings).toEqual([]);
+  });
+
+  it("開き文字の種類が違えば閉じない（`` ` `` と `~` は互いを閉じない）", () => {
+    // 旧: `~~~` の中の 3 連がフェンスを 1 つ開いたことになり、**釣り合いの finding まで偽で出ていた**
+    // （閉じないフェンスとして赤くなる形。今日の露出は 0 なので誰も踏んでいない）
+    const findings = [];
+    const doc = ["外1", T3, B3, "内", T3, "外2", ""].join("\n");
+    expect(linesOutsideFences(doc, F, findings).map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(findings, "旧実装はここで偽の「閉じていない」finding を 1 件出していた").toEqual([]);
+  });
+
+  it("閉じフェンスは開いた長さ以上ならよい（4 連を 5 連で閉じられる）", () => {
+    const findings = [];
+    const doc = ["外1", B4, "内", B4 + "`", "外2", ""].join("\n");
+    expect(linesOutsideFences(doc, F, findings).map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(findings).toEqual([]);
+  });
+
+  it("情報文字列を持つ行は閉じない（この修正が作った残余——赤側へ落ちる）", () => {
+    // パリティの下では ```bash で開いて ```bash で閉じる書き方が通っていた。今は開いたままになり
+    // 釣り合わない finding で赤くなる。走査中の 201 文書ではこの書き方は 1 件も無い（実測）
+    const findings = [];
+    const doc = ["外1", B3 + "bash", "内", B3 + "bash", "外2", ""].join("\n");
+    linesOutsideFences(doc, F, findings);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain("開いたまま閉じていない");
+  });
+
   it("file / findings は必須（呼び出し側の契約違反は throw・文書の欠陥とは別扱い）", () => {
     expect(() => linesOutsideFences("a", undefined, [])).toThrow(/file/);
     expect(() => linesOutsideFences("a", "", [])).toThrow(/file/);
@@ -355,6 +405,23 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
       expect(r.findings).toHaveLength(1);
       expect(r.findings[0].message).toContain("開いたまま閉じていない");
       expect(r.findings[0].line, "フェンスを開いた行を名指しする").toBe(4);
+    }
+  });
+
+  it("4 連バッククォート・`~~~` の中の見出しも終端にならずアンカーにもならない", () => {
+    // **パリティを数えていた頃、この 2 記法では 43e0c216 が塞いだ症状がそのまま再現していた**
+    // ——`## にせ終端` が終端に採られて body が黙って縮み（4 連版は "本文1\n````\n```" だった）、
+    // かつ `## にせ終端` 自身がアンカーとして採用された（2026-08-17 実測）
+    const F3 = "```";
+    for (const [name, fence] of [["4 連バッククォート", "````"], ["~~~", "~~~"]]) {
+      const inner = fence === "````" ? [F3, "## にせ終端", F3] : ["## にせ終端"];
+      const doc = ["# t", "## A", "本文1", fence, ...inner, fence, "本文2", "## B", "x", ""].join("\n");
+      const r = sectionOf(doc, /^## A$/, opts("heading"));
+      expect(r.findings, name).toEqual([]);
+      expect(r.body, `${name}: 節がフェンスの途中で縮まない`).toBe([("本文1"), fence, ...inner, fence, "本文2"].join("\n"));
+      const r2 = sectionOf(doc, /^## にせ終端$/, opts("heading"));
+      expect(r2.body, `${name}: フェンス内の見出しはアンカーに採らない`).toBeNull();
+      expect(r2.findings[0].message).toContain("見出しが見つからない");
     }
   });
 

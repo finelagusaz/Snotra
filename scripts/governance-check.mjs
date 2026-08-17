@@ -141,7 +141,7 @@ export function runAll(snapshot) {
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
   // evidence の入力は view 越しに読む（#1098）。検査が `ctx.record` を呼ばなくなると
   // 値が `undefined` のまま印字され、誰も赤くしないまま exit 0 になっていた（実測）。
-  // view を外す形は `assembleEvidence` が brand で throw して拒む。
+  // view を外す形も、別の Proxy へ差し替える形も、`assembleEvidence` が参照の照合で throw して拒む。
   // 袋は `...ctx` のスプレッドで組む——必須キーの一覧を手で持つと、それ自体が腐る写しになる。
   // 供給が消えれば読みが `undefined` になり、`evidenceView` が findings へ積む
   //

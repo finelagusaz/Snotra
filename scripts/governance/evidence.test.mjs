@@ -75,14 +75,32 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     expect(() => assembleEvidence(complete())).toThrow(/view でなければならない/);
   });
 
-  it("配線: brand は複製できない（スプレッドで view の見た目だけ作っても通らない）", () => {
+  it("配線: brand は複製できない（スプレッド・Object.assign で view の見た目だけ作っても通らない）", () => {
     const view = evidenceView(complete(), []);
     expect(() => assembleEvidence({ ...view })).toThrow(/view でなければならない/);
+    expect(() => assembleEvidence(Object.assign({}, view))).toThrow(/view でなければならない/);
   });
 
-  it("配線: 引数無し・null でも throw する（optional chaining が undefined を素通ししない）", () => {
+  it("配線: 引数無し・null でも throw する（`WeakSet.has` は primitive に対して false を返す）", () => {
     expect(() => assembleEvidence()).toThrow(/view でなければならない/);
     expect(() => assembleEvidence(null)).toThrow(/view でなければならない/);
+    expect(() => assembleEvidence(42)).toThrow(/view でなければならない/);
+  });
+
+  // **判定が「トラップの返り値」だったときに素通りした形。** 未記録のキーへ truthy を返す
+  // `get` トラップを持つ Proxy はどれも truthy 判定の brand を満たす——`?? "—"` は欠けた値を
+  // ダッシュで印字する自然なリファクタで、`String(t[k])` は文字列化を前へ出しただけである。
+  // どちらも供給を 1 つ外した袋に対し **findings 0 件**で行を印字していた（2026-08-17 実測）。
+  it("配線: 未記録のキーへ truthy を返す別の Proxy は通らない（値ではなく参照で照合する）", () => {
+    const src = complete();
+    delete src.areaAlways;
+    for (const [name, make] of [
+      ["ダッシュで埋める", (t) => new Proxy(t, { get: (o, k) => o[k] ?? "—" })],
+      ["文字列化を前へ出す", (t) => new Proxy(t, { get: (o, k) => String(o[k]) })],
+      ["本物の view を包み直す", (t) => new Proxy(evidenceView(t, []), { get: (o, k) => o[k] })],
+    ]) {
+      expect(() => assembleEvidence(make(src)), name).toThrow(/view でなければならない/);
+    }
   });
 
   it("入れ子を持たない: 面積は平坦なキーで読む（2 段目の読みはガードを通らない）", () => {

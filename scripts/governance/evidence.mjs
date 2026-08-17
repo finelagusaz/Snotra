@@ -4,10 +4,16 @@
 //! 出すのは 1 種類だけで、「evidence が読もうとしたキーが未記録だった」である。
 import { finding } from "./lib.mjs";
 
-/** view の brand。**export しない**——`assembleEvidence` が「view 越しか」を判定する唯一の手掛かりで、
- *  外へ出せば呼び出し側が偽造できてしまう。実体のプロパティではなく `get` トラップが合成するので、
- *  `{...view}` のスプレッド（own な文字列キーだけを写す）でも複製されない。 */
-const VIEW = Symbol("evidenceView");
+/** `evidenceView` が返した Proxy そのものの登録簿。**export しない**——`assembleEvidence` が
+ *  「view 越しか」を判定する唯一の手掛かりである。
+ *
+ *  **照合するのは参照の同一性であって、トラップの返り値ではない。** かつてここは Symbol の brand で、
+ *  `assembleEvidence` は `!ev?.[VIEW]` という truthy 判定だった。それは**未知のキーへ truthy を返す
+ *  `get` トラップを持つ Proxy をすべて通す**——`new Proxy(bag, { get: (t, k) => t[k] ?? "—" })`
+ *  （欠けた値をダッシュで印字する形）と `new Proxy(bag, { get: (t, k) => String(t[k]) })` が
+ *  どちらも通過し、供給を 1 つ外した袋に対し **findings 0 件**で行を印字した（正しい view なら 1 件。
+ *  2026-08-17 実測）。値を問う判定は、値を作れる相手には効かない。 */
+const VIEWS = new WeakSet();
 
 /**
  * evidence を組むための**読み取り専用ビュー**。`undefined` の読み取り自体を finding にして
@@ -25,7 +31,7 @@ const VIEW = Symbol("evidenceView");
  * **ガードが覆うのは view からの 1 段目の読みである。** 覆われない形は 2 つ在り、どちらも
  * 「ここへ渡していない」だけが理由ではない:
  *   - **渡していない値**——evidence 行へ view の外から差し込む形。`assembleEvidence` が
- *     brand 無しの引数を throw で拒むので、袋ごと外す形は表現できない
+ *     登録簿に無い引数を throw で拒むので、袋ごと外す形は表現できない
  *   - **渡してあるのに覆われない読み**——view が返した値の**中**をさらに読む形。2 段目は
  *     生のオブジェクトからの読みなので、欠けても finding にならない。**入れ子のキーを
  *     テンプレートへ書かないこと**（`ev.area.always` を平坦な `ev.areaAlways` へ倒した理由が
@@ -40,12 +46,11 @@ const VIEW = Symbol("evidenceView");
  * @param {object[]} findings 未記録の読みを積む先（`runAll` の findings と同一の配列）
  */
 export function evidenceView(source, findings) {
-  return new Proxy(source, {
+  const view = new Proxy(source, {
     get(target, key) {
-      // brand は target に実体を持たない——**Symbol の素通しより先に返す**（後ろに置くと
-      // 生の袋へ抜けて undefined になり、判定が常に throw 側へ倒れる）
-      if (key === VIEW) return true;
-      // 残る Symbol はテンプレート展開の内部読み（`Symbol.toPrimitive` 等）ゆえ素通しする
+      // Symbol はテンプレート展開の内部読み（`Symbol.toPrimitive` 等）ゆえ素通しする。
+      // **brand のための分岐はここに無い**——判定は VIEWS の参照照合であって、
+      // トラップが合成する値ではない
       if (typeof key !== "string") return target[key];
       if (target[key] === undefined) {
         findings.push(
@@ -63,23 +68,36 @@ export function evidenceView(source, findings) {
       throw new Error("evidence の view は読み取り専用である（組み立ての途中で入力を書き換えない）");
     },
   });
+  VIEWS.add(view);
+  return view;
 }
 
-/** evidence 行を組む口。**brand の無い引数は throw で拒む**——brand は上の `VIEW` で、
- *  `get` トラップが合成するので実体を持たず、export もしていない。ゆえに「view を外して
- *  生の袋を渡す」形はここで落ちる。
+/** evidence 行を組む口。**この関数が作った view そのものでなければ throw で拒む**——判定は
+ *  上の `VIEWS`（`evidenceView` が返した Proxy を登録した WeakSet）への参照照合である。
+ *  ゆえに「view を外して生の袋を渡す」形も、「別の Proxy を自分で作る」形もここで落ちる。
+ *  `WeakSet.has` は primitive・`null`・`undefined` に対して例外を投げず `false` を返すので、
+ *  引数無しの呼び出しも同じ 1 行が拒む。
  *
- *  **受容する残余**: brand が拒めるのは view でないものだけであり、**findings の届き先までは見ない**
- *  ——`evidenceView(bag, [])` のように捨てられる配列を渡して作った view は brand を持つので通る
- *  （未記録の読みは finding になるが、どこへも届かない）。今日の呼び出し点は `runAll` 1 つで、
- *  そこは `findings` を渡している。
+ *  **受容する残余**は少なくとも 2 つ在る:
+ *   - **findings の届き先までは見ない**——`evidenceView(bag, [])` のように捨てられる配列を渡して
+ *     作った view は登録簿に載るので通る（未記録の読みは finding になるが、どこへも届かない）。
+ *     今日の呼び出し点は `runAll` 1 つで、そこは `findings` を渡している
+ *   - **view を包み直す形は赤側へ落ちる**——`new Proxy(view, { get: (t, k) => t[k] })` は
+ *     参照が違うので throw する。Symbol の brand なら素通ししていた形であり、**この修正が
+ *     向きを変えた地点である**（値は正しく届くのに拒むので、正当な用途があれば偽陽性になる。
+ *     今日そういう呼び出し点は無い）
  *
- *  **かつてこれは散文の規約だった**（「引数を view だけにしてあるので構造で保たれる」）。
- *  それは偽で、view を外しても throw せず、供給が揃った状態では `governance-check.test.mjs` の
- *  カナリアも `npm test` も緑のままだった（2026-08-17 実測: `governance:check` exit 0 /
- *  745 件全緑）。今この 1 行が落とすので、同じ変異は `runAll` を呼ぶ検査すべてを赤にする。 */
+ *  **かつてこれは 2 度、実測で偽になった主張を持っていた。**
+ *   - 最初は散文の規約だった（「引数を view だけにしてあるので構造で保たれる」）。それは偽で、
+ *     view を外しても throw せず、供給が揃った状態では `governance-check.test.mjs` のカナリアも
+ *     `npm test` も緑のままだった（2026-08-17 実測: `governance:check` exit 0 / 745 件全緑）
+ *   - 次は Symbol の brand を truthy で判定していた。それも偽で、未知のキーへ truthy を返す
+ *     `get` トラップを持つ Proxy が通り、供給を 1 つ外した袋に対し **findings 0 件**で
+ *     行を印字した（2026-08-17 実測。詳細は `VIEWS` の doc）
+ *
+ *  今の判定はトラップの返り値に依存しない。 */
 export function assembleEvidence(ev) {
-  if (!ev?.[VIEW]) {
+  if (!VIEWS.has(ev)) {
     throw new Error("assembleEvidence: 引数は `evidenceView` が返した view でなければならない（生の袋を渡すと未記録の読みが finding にならない）");
   }
   return (

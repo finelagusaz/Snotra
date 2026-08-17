@@ -489,8 +489,9 @@ impl SearchState {
     /// 乗せる」は現在のコードに当たらない**——`run_search_with` の Plain 腕は #1004 の worker 化以降
     /// **同期 `engine.search` を含まない**（`search_tx.send` か、空クエリ・`indexing()`・送信失敗での
     /// `set_results` のいずれかである）。同期 `engine.search` が残るのは `on_enter` の flush だけである。
-    /// 実際の費用は `run_search` 入口の `instant_prefix` が `engine.lock()` を取ること（#1032）と、
-    /// Plain 腕が `indexing()` 中に復帰行を空にすることであって、doc が名指していたものではない。
+    /// 実際の費用は Plain 腕が `indexing()` 中に復帰行を空にすることであって、doc が名指して
+    /// いたものではない。**`run_search` 入口の `instant_prefix` が `engine.lock()` を取ることも
+    /// 費用に数えていたが、#1076 でその読みが `read_config` へ移り消えた。**
     pub fn on_escape(&mut self) -> EscapeOutcome {
         if let Some(t) = self.tool.take() {
             // query は復元しない（tool 中は入力無効で不変・ToolFrame doc 参照）

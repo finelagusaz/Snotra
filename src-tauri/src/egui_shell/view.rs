@@ -557,7 +557,7 @@ impl EguiView for SearchWindowView {
             frame.drag_window();
         }
 
-        // テーマ値（色・font・Metrics・show_icons）は 1 フレーム 1 lock で読み切る
+        // テーマ値（色・font・Metrics・show_icons）は 1 フレーム 1 読みで読み切る
         //(#673 spec 決定 4)。live-read 契約はフレーム間の話で不変——**`self.` へ保持しないこと**。
         // 導出は純粋核 visual::visual_snapshot、行高の正本は layout::Metrics::from_config。
         // **ここで読むのは値だけである**——**適用**は別の位置に散る: 3 値は `search_input_ui` の
@@ -633,7 +633,7 @@ impl EguiView for SearchWindowView {
         // 機序と順序不変条件の正本はその doc）。**唯一の消費者はその関数が描く `TextEdit` である**
         // ——この view の egui ウィジェットは他に無く、status 行と toast は raw painter へ色を
         // 明示渡しする。results 窓は別 Context ゆえ影響外。
-        // font_family のエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
+        // font_family のエッジ検出も同一の読みで取る（SU6 spec 決定 2・読み 1 回/フレーム）。
         // 値はフレーム冒頭の `visual` から取る（#673）。
 
         // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。

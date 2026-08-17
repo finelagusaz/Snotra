@@ -455,7 +455,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
             // 表示中でも hotkey_toggle=false なら hide せず show 側（再フォーカス/再配置）へ回る。
             //
             // **読みは engine ロックを経ない**（#1032）。この短絡はかつて「show 経路で engine
-            // ロックを取らない」ための対策でもあったが、`read_config` が錠そのものを避ける
+            // ロックを取らない」ための対策でもあったが、`read_config` が engine の錠を避ける
             // ようになったので、いまは無駄な読みを省くだけの意味になった。
             let hotkey_toggle = visible
                 && egui_shell::read_config(

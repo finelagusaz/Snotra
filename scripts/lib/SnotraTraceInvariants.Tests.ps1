@@ -50,8 +50,9 @@ Describe 'Get-SnotraTraceInvariantNames' {
         # は 0 を返し、**スモークが exit 0 で終わって製品の回帰を素通りさせる**。
         # ソースを読めば、判定本体だけが H6 を知っている状態が左右の食い違いとして現れる。
         #
-        # **この検査が守らないもの**（`startup.rs` の `count_matches_the_enum_declaration` が
-        # 「改名したらこの検査も直す」と自分の脆さを書くのと同じ性質のものを、ここへ列挙する）:
+        # **この検査が守らないもの**（`indexing.rs` の
+        # `start_index_build_invalidates_the_icon_cache` が「残る死角」として自分の脆さを
+        # 書くのと同じ性質のものを、ここへ列挙する）:
         #
         # - **単一引用符のリテラルで書かれた名前しか見えない。** `Invariant = $invariant` の
         #   ように変数から組む箇所は素通りする（degrade の分岐が現にその形である）。

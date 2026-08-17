@@ -143,9 +143,16 @@ indexed_key_enum! {
     /// 書き換える経路は残る**（両方向とも実測した）。
     ///
     /// **ここは 2 度書き換わっている。** 最初は「`COUNT` の据え置きは原理的に守れない」と
-    /// 書いてあり、それは誤りだった。次に置いたソーステキスト検査は**正しく、現に
-    /// 働いていた**（変異で FAILED を実測）——この変更はその検知器を型づけへ置き換えた
-    /// のであって、誤りの訂正ではない。
+    /// 書いてあり、それは誤りだった。次に置いたソーステキスト検査
+    /// （`count_matches_the_enum_declaration`・この変更で退役）は**正しく、現に働いていた**（変異で
+    /// FAILED を実測）——この変更はその検知器を型づけへ置き換えたのであって、誤りの
+    /// 訂正ではない。
+    ///
+    /// **退役で失うものを狭く名指す。** あの検査は**マクロ本体が既に書き換わっている
+    /// 世界でだけ**働く遅れた仕掛けだった（本体が素なら、同じ状況はそもそも
+    /// コンパイルエラーになる）。ゆえに変わるのはその世界での壊れ方だけで、
+    /// 「次に variant を足したときテストが落ちる」から「その区間が payload から
+    /// 黙って落ちる」へ移る（欠けたキーは `null` ではなく不在として読める）。
     ///
     /// **数のずれとは別の弱さが 1 つ残る**: 同じ key を 2 つ書くことはこの形でも止まらず、
     /// 止めるのは `keys_are_unique` だけである。
@@ -277,9 +284,9 @@ impl Timeline {
         // 単調でない入力（時計の巻き戻り・呼び出し順の誤り）は 0 幅として記録する。
         // **負にはしない**——符号なしで持つ以上、飽和させるほうが panic より読める。
         let delta = elapsed_since_anchor.saturating_sub(self.last);
-        // **添字が範囲外でも panic しない。** `Phase` に variant を足して `COUNT` を
-        // 上げ忘れた状態がそれに当たる——**検査では守れない**（一覧が母集団なので、
-        // `index()`/`key()` へ arm を足せばテストは通ってしまう。実測済み）。
+        // **添字が範囲外でも panic しない。** `Phase` の引数列を編集する限りその状態は
+        // 作れない（`durations` の長さは `COUNT` から取り、`COUNT` は同じ引数列が決める）
+        // ——**残るのは `indexed_key_enum!` の本体を書き換える経路である**。
         // release は `panic = "abort"` ゆえ、**計器の欠陥で製品プロセスを落とすより
         // その区間を黙って捨てるほうが害が小さい**（欠けは出力の `null` で読める）。
         if let Some(slot) = self.durations.get_mut(phase.index()) {
@@ -335,7 +342,7 @@ impl Timeline {
 
         put("pre_main".to_string(), self.pre_main);
         for p in Phase::all() {
-            // **範囲外でも panic しない**（`mark` と同じ理由——`COUNT` の doc）。
+            // **範囲外でも panic しない**（理由は [`Timeline::mark`] の当該コメント）。
             // 添字を持つ 3 か所すべてを揃えること: ここ・`mark`・下の `index_load`。
             put(
                 p.key().to_string(),
@@ -573,14 +580,11 @@ mod tests {
 
     #[test]
     fn index_and_from_index_are_inverse_over_the_whole_enum() {
-        // **variant の足し忘れを捕まえるのはコンパイラである。** `index()` が網羅 match
-        // ゆえ variant を足すとコンパイルが通らず、`COUNT` だけ増やすと `from_index` の
-        // `unreachable!()` へ落ちてこのテストが落ちる。
-        //
-        // **この検査は往復だけを見る。** 足し忘れそのものは
-        // `count_matches_the_enum_declaration` が別に捕まえる——手書きの一覧を走査する形
-        // （かつての `const ALL`・その後の `index()`/`key()` の match）は、**一覧自身が
-        // 母集団なので足し忘れを検出できない**（両方とも変異で実測した）。
+        // **数のずれを捕まえるのは型である**（`ALL` の長さが `COUNT` で型づけてある）。
+        // ここが測るのは数ではなく**並び**——`ALL` の並び順と判別子の割り当て順が
+        // 同じ引数列から来る、という 1 段の推論である。マクロ本体が `ALL` を宣言順とは
+        // 別の順で読むようになれば型は何も言わないので、**この推論を測る検査はここだけ**
+        // である（`from_index` を逆順読みへ変える変異で赤くなることを実測した）。
         for i in 0..Phase::COUNT {
             let p = Phase::from_index(i).expect("COUNT の範囲は from_index が Some を返す");
             assert_eq!(p.index(), i, "添字 {i} で往復しない");
@@ -594,39 +598,11 @@ mod tests {
     }
 
     #[test]
-    fn count_matches_the_enum_declaration() {
-        // **母集団はこのファイルのソーステキストそのものである。** 手書きの一覧
-        // （`const ALL`・`index()` / `key()` の match）を走査する形では、一覧自身が
-        // 母集団になるので足し忘れを検出できない——**両方とも変異で実測した**。
-        // ソースを読めば `COUNT` の据え置きが左右の食い違いとして現れる。
-        //
-        // `std::mem::variant_count` は nightly だが、**検知手段が無いことは意味しない**
-        // （かつてこの doc は「原理的に守れない」と断定していた。誤りだった）。
-        let src = include_str!("startup.rs");
-        let decl = src
-            .split_once("pub(crate) enum Phase {")
-            .expect("enum Phase の宣言が見つからない（改名したらこの検査も直す）")
-            .1
-            .split_once('}')
-            .expect("enum Phase の宣言が閉じていない")
-            .0;
-        let declared = decl
-            .lines()
-            .map(str::trim)
-            .filter(|l| l.ends_with(',') && !l.starts_with("//") && !l.starts_with("/*"))
-            .count();
-        assert_eq!(
-            declared,
-            Phase::COUNT,
-            "enum Phase の variant 数と COUNT がずれている（variant を足したら COUNT も上げる）"
-        );
-    }
-
-    #[test]
     fn out_of_range_index_is_dropped_instead_of_panicking() {
-        // **`COUNT` を上げ忘れた variant を `mark` / `to_json` へ渡した状況**を、
-        // 配列側を縮めて再現する（`Phase` の値では範囲外を作れないため）。release は
-        // `panic = "abort"` ゆえ、ここで panic すると計器の欠陥が製品を落とす。
+        // **`durations` が `COUNT` より短い状況**を、配列側を縮めて再現する
+        // （`Phase` の値では範囲外を作れないため）。引数列を編集する限りこの状況は
+        // 作れないが、マクロ本体を書き換えれば作れる。release は `panic = "abort"`
+        // ゆえ、ここで panic すると計器の欠陥が製品を落とす。
         //
         // 前版はこの検査を `[T; 9].get_mut(9) == None` という std の恒真式で書いており、
         // **`mark` も `to_json` も一度も呼んでいなかった**（code-reviewer が指摘）。
@@ -645,6 +621,9 @@ mod tests {
 
     #[test]
     fn keys_are_unique() {
+        // **key の衝突を止めるのはここだけである。** `indexed_key_enum!` は引数列から
+        // 数と並びを導くが、同じ key を 2 つ書くことは止めない（`match` の腕は
+        // variant で分かれるので重複リテラルは合法である）。
         let mut keys: Vec<&str> = Phase::all().map(|p| p.key()).collect();
         keys.sort_unstable();
         let before = keys.len();
@@ -843,9 +822,9 @@ mod tests {
 
     #[test]
     fn failure_reasons_are_stable_and_unique() {
-        // **手書きの列挙である**（`Phase` と同じ弱さを持つ——variant を足してここへ
-        // 書き足さなくても落ちない）。`StartupFailure` は添字を持たないので `Phase` の
-        // `COUNT`/`from_index` に当たる仕掛けが無く、`reason()` の網羅 match だけが
+        // **手書きの列挙である**——variant を足してここへ書き足さなくても落ちない。
+        // `StartupFailure` は添字を持たないので `Phase` の `COUNT`/`ALL` に当たる
+        // 仕掛けが無く（ゆえに `indexed_key_enum!` にも載せていない）、`reason()` の網羅 match だけが
         // 足し忘れを止める。**その match は `todo!()` を書けば通ってしまう**ので、
         // ここは網羅の証明ではなく「既存の `reason` が衝突せず固定である」ことの検査である。
         let all = [

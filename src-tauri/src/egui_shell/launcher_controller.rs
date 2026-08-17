@@ -1560,6 +1560,21 @@ mod tests {
         );
     }
 
+    /// [`method_body`] が**深すぎる字下げのアンカーも拒む**ことを固定する（#1108）。
+    ///
+    /// 上のテストと**別に置く**——浅い側（列 0）の fixture だけでは、述語を `== 4` から `>= 4` へ
+    /// 弱める変異が捕まらない（どちらの述語でも赤になるため）。**広がる方向こそ #1077 / #1108 の
+    /// 沈黙そのものである**——自分の終端を通り越して隣のメソッドを飲み込む。
+    #[test]
+    #[should_panic(expected = "4 スペース字下げで始まっていない")]
+    fn method_body_rejects_an_anchor_indented_too_deeply() {
+        method_body(
+            "mod outer {\n    impl C {\n        fn target(&self) {\n            marker();\n        }\n        fn other(&self) {\n            secret();\n        }\n    }\n}\n",
+            "fn target(",
+            "marker(",
+        );
+    }
+
     /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
     ///
     /// 対象は表示ゲートの入力 2 つである。`AppState.indexing` は `AtomicBool` の live-read で

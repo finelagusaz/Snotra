@@ -46,12 +46,14 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
     // **`ending` の宣言は 4 文書で共有される**——どれか 1 つで「モジュール構成」が最終節になれば
     // `sectionOf` が④で赤くする。そのとき直すのは文書か、この宣言を crate ごとに分けるかであり、
     // どちらにせよ気づかれる（受容する残余: 宣言が 1 つゆえ、分ける改修は 4 文書を巻き込む）
-    const sec = sectionOf(text, /^## モジュール構成$/, { file: mdPath, ending: "heading" });
+    const sec = sectionOf(text, /^## モジュール構成$/, { file: mdPath, ending: "heading", by: id });
     if (sec.body == null) {
       findings.push(...sec.findings);
       continue;
     }
-    // 本文が空の節は有効（`""` を「節が無い」と読まない）——逆方向の照合が実ファイル全件を赤にする
+    // 本文が空の節は有効（`""` を「節が無い」と読まない）——逆方向の照合が実ファイルの側を赤にする。
+    // **「全件」ではない**——逆方向が見るのは `section` ではなく `text` 全体なので、節を空にしても
+    // 本文の他所でバッククォート付きで言及されているファイルは緑のまま残る（2026-08-17 実測）
     const section = sec.body;
     // 順方向: 節内のバッククォート付きソースファイル名 → basename がリポジトリに実在。
     // **見るのは直下の正規表現が挙げる拡張子だけである**——`` `foo.mjs` `` のような他種の

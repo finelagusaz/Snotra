@@ -21,8 +21,14 @@ import { spawnSync } from "node:child_process";
  *  消えていた——`G-module-index` の逆方向も `G-module-linkage` も見ないまま緑になる形で、
  *  **向きは沈黙である**。ネストした同名ディレクトリは今日 0 件（2026-08-17 実測。4 crate 配下に
  *  `target/` は不在）ゆえ露出は 0 で、塞いだのは将来その形が現れたときの沈黙である。
- *  **失うもの**: 2 つ目の npm パッケージを置くと `ui/node_modules` が走査に入り、遅く・赤くなる
- *  ——向きはノイズ＝安全側であり、気づかれる（沈黙は気づかれない）。そのときは PATHS へ 1 行足す。
+ *  **失うもの**: 2 つ目の npm パッケージを置くと `ui/node_modules` が走査に入る。**そのときの向きを
+ *  決めるのは走査器ではなく呼び出し点の述語である**（#1089 が `sectionOf` について確立したのと同じ原理が、
+ *  走査の側にも当たる）。**「ノイズ＝安全側」だけではない**——`G-module-index` の順方向は
+ *  「索引に書かれた basename が `snapshot.files` のどれかに在るか」＝所属で判定するので、走査が広がるほど
+ *  照合先が育ち、**索引に書かれた実在しないファイル名が偶然一致して緑になる＝沈黙側**である
+ *  （順方向が受け付ける拡張子には `ts` と `html` が含まれ、`node_modules` はどちらも大量に持つ）。
+ *  そのときは PATHS へ 1 行足す。述語の側で塞ぐ案（`allBasenames` を crate の src 配下へ絞る）は
+ *  この時点では入れていない。
  *
  *  **`.claude/hooks/lsp-config.mjs` の同型（`ADR-claude-code-ra-lsp-plugin-delivery.md`「受容する残余」）
  *  とは足並みを揃えない。** 理由は 3 つ: (1) 今日すでに非対称である——あちらは `worktrees` を名前一致で
@@ -76,7 +82,9 @@ export function linesOutsideFences(text) {
 export const finding = (file, line, message) => ({ file, line, message });
 
 /**
- * 見出しで節を切り出す共有の口。**節を母集団にする検査はここを通る**——
+ * 見出しで節を切り出す共有の口。**「見出しで」節を切る検査はここを通る**——節を母集団にする検査は
+ * ほかにもあり、そちらは通らない（`G-clippy-disallowed` は TOML の `[dependencies]` 節を、
+ * `G-ci-table` は表の区間を、それぞれ独自に切る）。
  * かつては 3 つの実装形（同レベル以上で終端 / `## ` だけで終端 / `### ` だけで終端）が
  * 並んでいた。下位の実装形は、上位の見出しが 1 本消えるだけで節が次の節へ流れ込む。
  *
@@ -102,48 +110,67 @@ export const finding = (file, line, message) => ({ file, line, message });
  * 固定しているのは `.githooks/**` だけなので、`core.autocrlf=true` の機体で
  * `npm run governance:check` を打った場合の話である（今日の露出は 0）。
  *
+ * **アンカーと終端はコードフェンスの外だけで探す**（`linesOutsideFences` を行番号の遮蔽として使う）。
+ * 字面だけを見ると、フェンス内の列 0 の `#` 行が終端になったり 2 本目のアンカーに数えられたりする——
+ * `docs/build-commands.md` の §A のフェンスへ `# 整形` を 1 行足すと、findings 0 件のまま body が
+ * 8 文字へ縮み、G-hook-commands の母集団が 8 行から 0 行になった（2026-08-17 実測）。**向きは
+ * 呼び出し点ごとに違う**——許可集合への所属で判定する側は縮んでも赤くならない。
+ * **body の切り出しは生の行で行う**（フェンスの中身を落とさない）——落とすと、まさに上の
+ * cargo 行のようなフェンス内が母集団である検査を、この関数自身が空にしてしまう。
+ * **受容する残余**: 閉じていないフェンスがあると以降の全行が「内側」になり、アンカーが消えて①が赤くなる
+ * （露出は今日 0 件）。
+ *
  * @param {string} text 文書全文
  * @param {RegExp} headingRe アンカー行にだけ当たる正規表現。**行単位で当てる**ので `^`/`$` は行頭・行末を指す。
  *   `g` / `y` は `lastIndex` の持ち越しで行ごとの判定がずれるため throw する（呼び出し側の契約違反であり、
  *   文書の欠陥ではない——`registry.mjs` が id 不一致を throw で拒むのと同じ扱い）
- * @param {{file: string, ending: "heading"|"eof"}} opts file は finding の帰属先
+ * @param {{file: string, ending: "heading"|"eof", by: string}} opts file は finding の帰属先（＝対象文書）、
+ *   by は `ending` を宣言している検査の id。**by は必須である**——finding の `file` が指すのは文書であって
+ *   宣言の在り処ではないので、名乗らないと文書を直した人が「直す先はこの検査の `ending`」へ辿り着けない
  * @returns {{ body: string|null, findings: object[] }} body が null なら findings が非空
  */
-export function sectionOf(text, headingRe, { file, ending }) {
+export function sectionOf(text, headingRe, { file, ending, by }) {
   if (headingRe.global || headingRe.sticky) {
     throw new Error(`sectionOf: headingRe に g / y フラグは渡せない（lastIndex の持ち越しで行ごとの判定がずれる）: ${headingRe}`);
   }
   if (ending !== "heading" && ending !== "eof") {
     throw new Error(`sectionOf: ending は "heading" か "eof" のいずれか（受け取った値: ${ending}）`);
   }
+  if (typeof by !== "string" || by === "") {
+    throw new Error(`sectionOf: by（宣言している検査の id）は必須（受け取った値: ${by}）`);
+  }
+  const at = ` — 宣言元: ${by}`;
   const lines = text.split(/\r?\n/);
-  const anchors = lines.map((l, i) => (headingRe.test(l) ? i : -1)).filter((i) => i >= 0);
+  // フェンスの外の行番号（1 起点）。**遮蔽としてだけ使い、body はこの集合から組まない**
+  const outside = new Set(linesOutsideFences(text).map(([n]) => n));
+  const anchors = lines.map((l, i) => (headingRe.test(l) && outside.has(i + 1) ? i : -1)).filter((i) => i >= 0);
   if (anchors.length === 0) {
-    return { body: null, findings: [finding(file, 1, `節の見出しが見つからない（アンカー: ${headingRe}）——見出しの改題・消滅で母集団が空になる`)] };
+    return { body: null, findings: [finding(file, 1, `節の見出しが見つからない（アンカー: ${headingRe}）——見出しの改題・消滅で母集団が空になる${at}`)] };
   }
   if (anchors.length > 1) {
     return {
       body: null,
-      findings: [finding(file, anchors[1] + 1, `節の見出し ${headingRe} が ${anchors.length} 本ある（どれが本物か決まらない・母集団の曖昧化）`)],
+      findings: [finding(file, anchors[1] + 1, `節の見出し ${headingRe} が ${anchors.length} 本ある（どれが本物か決まらない・母集団の曖昧化）${at}`)],
     };
   }
   const start = anchors[0];
   const level = lines[start].match(/^(#{1,6})\s/)?.[1].length;
   if (level == null) {
-    return { body: null, findings: [finding(file, start + 1, `アンカー ${headingRe} が当たった行が ATX 見出しでない（節のレベルが決まらない）: ${lines[start]}`)] };
+    return { body: null, findings: [finding(file, start + 1, `アンカー ${headingRe} が当たった行が ATX 見出しでない（節のレベルが決まらない）: ${lines[start]}${at}`)] };
   }
   const rest = lines.slice(start + 1);
-  const end = rest.findIndex((l) => /^#{1,6}\s/.test(l) && l.match(/^#+/)[0].length <= level);
+  // rest[i] は lines[start + 1 + i] ＝ 1 起点で start + i + 2 行目
+  const end = rest.findIndex((l, i) => /^#{1,6}\s/.test(l) && l.match(/^#+/)[0].length <= level && outside.has(start + i + 2));
   if (ending === "heading" && end < 0) {
     return {
       body: null,
-      findings: [finding(file, start + 1, `\`ending: "heading"\` の宣言に対し、同レベル以上の見出しが後方に無い（節が EOF まで伸び、母集団が広がる）: ${lines[start]}`)],
+      findings: [finding(file, start + 1, `\`ending: "heading"\` の宣言に対し、同レベル以上の見出しが後方に無い（節が EOF まで伸び、母集団が広がる）: ${lines[start]}${at}`)],
     };
   }
   if (ending === "eof" && end >= 0) {
     return {
       body: null,
-      findings: [finding(file, start + end + 2, `\`ending: "eof"\` の宣言に対し、同レベル以上の見出しが後方に在る（宣言が腐った。節はこの行で終端している）: ${rest[end]}`)],
+      findings: [finding(file, start + end + 2, `\`ending: "eof"\` の宣言に対し、同レベル以上の見出しが後方に在る（宣言が腐った。節はこの行で終端している）: ${rest[end]}${at}`)],
     };
   }
   return { body: rest.slice(0, end < 0 ? rest.length : end).join("\n"), findings: [] };

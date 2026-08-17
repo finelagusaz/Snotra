@@ -40,8 +40,8 @@ export function checkCheckSkillEnumeration(snapshot) {
   }
   // どちらの節も文書の途中にある（後方に同レベル以上の見出しが在る）——`ending` の宣言と
   // 実際の文書構造の食い違いは `sectionOf` が双方向に赤くする
-  const table = sectionOf(agents, /^##\s+条件別チェック/, { file: "AGENTS.md", ending: "heading" });
-  const step4a = sectionOf(impl, /^###\s+4a\./, { file: IMPL_SKILL, ending: "heading" });
+  const table = sectionOf(agents, /^##\s+条件別チェック/, { file: "AGENTS.md", ending: "heading", by: id });
+  const step4a = sectionOf(impl, /^###\s+4a\./, { file: IMPL_SKILL, ending: "heading", by: id });
   findings.push(...table.findings, ...step4a.findings);
   if (findings.length > 0) return findings;
 

@@ -203,7 +203,7 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
   // 向きを決めるのは切り出し器ではなく**切り出した結果を食う述語**である
   // （許可集合への所属なら広がりは沈黙、集合の一致なら誤報）。ゆえにここでは
   // 「宣言と実際の文書構造の食い違い」だけを機構で縛る。
-  const opts = (ending) => ({ file: "doc.md", ending });
+  const opts = (ending) => ({ file: "doc.md", ending, by: "G-fixture" });
   const DOC = ["# t", "## A", "本文1", "### A1", "本文2", "## B", "本文3", ""].join("\n");
 
   it("緑: ending:\"heading\" は同レベル以上の見出しで終端する（下位見出しは終端しない）", () => {
@@ -269,5 +269,46 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
     const r = sectionOf(["# t", "本文 ## A", ""].join("\n"), /^本文/, opts("heading"));
     expect(r.body).toBeNull();
     expect(r.findings[0].message).toContain("見出しでない");
+  });
+
+  it("コードフェンス内の列 0 の `#` 行は終端にならない（body がフェンスの途中で切れない）", () => {
+    // 字面だけを見る実装は `# 整形` を終端に取り、body を 0 行へ縮めたまま findings 0 件で返す
+    const doc = ["# t", "## A", "```bash", "# 整形", "cargo fmt", "```", "本文", "## B", "x", ""].join("\n");
+    const r = sectionOf(doc, /^## A$/, opts("heading"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("```bash\n# 整形\ncargo fmt\n```\n本文");
+  });
+
+  it("コードフェンス内の見出し様の行はアンカーに数えない（②の誤爆と、偽のアンカーの掴み違いを防ぐ）", () => {
+    const doc = ["# t", "```", "## A", "```", "## A", "本文", "## B", "x", ""].join("\n");
+    const r = sectionOf(doc, /^## A$/, opts("heading"));
+    expect(r.findings, "フェンス内の 1 本を数えると②（2 本ある）で誤爆する").toEqual([]);
+    expect(r.body).toBe("本文");
+  });
+
+  it("`ending: \"eof\"` の④はフェンス内の見出し様の行では発火しない", () => {
+    const doc = ["# t", "## A", "本文", "```", "## B", "```", ""].join("\n");
+    const r = sectionOf(doc, /^## A$/, opts("eof"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("本文\n```\n## B\n```\n");
+  });
+
+  it("by は必須（finding が対象文書しか名指さないと、直す先の `ending` へ辿り着けない）", () => {
+    expect(() => sectionOf(DOC, /^## A$/, { file: "doc.md", ending: "heading" })).toThrow(/by/);
+    expect(() => sectionOf(DOC, /^## A$/, { file: "doc.md", ending: "heading", by: "" })).toThrow(/by/);
+  });
+
+  it("finding は宣言元の検査 id を名乗る（①〜④のすべて）", () => {
+    const dup = ["# t", "## A", "x", "## A", "y", "## C", ""].join("\n");
+    const msgs = [
+      sectionOf(DOC, /^## Z$/, opts("heading")), // ①
+      sectionOf(dup, /^## A$/, opts("heading")), // ②
+      sectionOf(DOC, /^## B$/, opts("heading")), // ③
+      sectionOf(DOC, /^## A$/, opts("eof")), // ④
+    ];
+    for (const r of msgs) {
+      expect(r.body).toBeNull();
+      expect(r.findings[0].message).toContain("宣言元: G-fixture");
+    }
   });
 });

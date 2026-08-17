@@ -39,7 +39,7 @@ export function checkHookCommands(snapshot) {
   // 壊れ方は「沈黙」である**（hook のコマンドが乖離しても、広がった許可集合に偶然当たれば緑）。
   // 旧実装は `### ` だけで終端したので、`### B.` の見出しが 1 本失われるだけで母集団が数倍に広がった。
   // `sectionOf` は同レベル以上（`#`・`##`・`###`）で終端し、終端が無ければ赤にする
-  const secA = sectionOf(docsText, /^### A\. /, { file: docsPath, ending: "heading" });
+  const secA = sectionOf(docsText, /^### A\. /, { file: docsPath, ending: "heading", by: id });
   if (secA.body == null) return secA.findings;
   // 行分割は \r?\n — CRLF checkout（Windows CI・autocrlf=true）では `.` が \r に
   // マッチしないため、\r を残すと行末コメント除去 `#.*$` が発火しない（PR #595 で実測）

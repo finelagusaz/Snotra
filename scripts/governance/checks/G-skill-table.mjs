@@ -53,7 +53,7 @@ export function checkSkillTable(snapshot) {
   // 旧実装の `?? ""` は「節が無い」も「節が空」も空文字へ潰していた（表が丸ごと消えても、
   // 隠しスキルが 0 件なら緑になりうる形）。`sectionOf` は①（アンカー消滅）と
   // ④（節の後ろに `##` が現れて宣言が腐った）の両方を赤にする
-  const sec = sectionOf(text, /^## 利用できるスキル$/, { file: "CLAUDE.md", ending: "eof" });
+  const sec = sectionOf(text, /^## 利用できるスキル$/, { file: "CLAUDE.md", ending: "eof", by: id });
   if (sec.body == null) return sec.findings;
   const inTable = new Set([...sec.body.matchAll(/^\|\s*`\/([a-z0-9-]+)`/gm)].map((m) => m[1]));
   const inDirs = new Set(skillFiles(snapshot).map((f) => f.split("/")[2]));

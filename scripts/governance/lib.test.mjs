@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { snap } from "./test-helpers.mjs";
-import { gitIgnoredPaths, makeSnapshot, headingRefSourceDocs, headingRefDocs, governanceDocs } from "./lib.mjs";
+import { gitIgnoredPaths, makeSnapshot, headingRefSourceDocs, headingRefDocs, governanceDocs, sectionOf, linesOutsideFences } from "./lib.mjs";
 import { scanHeadingRefs, checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkReferences } from "./checks/G-references.mjs";
@@ -165,6 +165,282 @@ describe("makeSnapshot の走査除外（#722）", () => {
       expect(s.files.filter((f) => f.startsWith(".superpowers/"))).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("生成物の除外はルート錨止めである（任意の深さの同名ディレクトリを落とさない・#1089）", () => {
+    // 守りたい対象 = ネストしたソースディレクトリ。名前一致・全階層で落とすと、
+    // `demo/src/target/orphan.rs` のような `.rs` が**どの深さでも**母集団から消え、
+    // `mod` 宣言を持たない孤児でも findings 0（緑）になる——向きは沈黙である。
+    // 今日のリポジトリにネストした target/dist/node_modules は 0 件（2026-08-17 実測）ゆえ
+    // 露出は 0 で、塞いだのは将来この形が現れたときの沈黙である。
+    const root = mkdtempSync(path.join(tmpdir(), "gov-walk-nested-"));
+    try {
+      for (const d of ["demo/src/target", "target", "node_modules", "dist", "ui/node_modules"]) {
+        mkdirSync(path.join(root, d), { recursive: true });
+      }
+      writeFileSync(path.join(root, "demo/src/target/orphan.rs"), "fn f() {}\n");
+      writeFileSync(path.join(root, "target/build.rs"), "");
+      writeFileSync(path.join(root, "node_modules/pkg.js"), "");
+      writeFileSync(path.join(root, "dist/bundle.js"), "");
+      writeFileSync(path.join(root, "ui/node_modules/dep.js"), "");
+      const files = makeSnapshot(root).files;
+      expect(files, "ネストした target/ 配下が沈黙で母集団から消えている").toContain("demo/src/target/orphan.rs");
+      // ルート直下の生成物は従来どおり落ちる
+      expect(files.filter((f) => f.startsWith("target/"))).toEqual([]);
+      expect(files.filter((f) => f.startsWith("node_modules/"))).toEqual([]);
+      expect(files.filter((f) => f.startsWith("dist/"))).toEqual([]);
+      // 失うもの: 2 つ目の npm パッケージを置くと走査に入る。向きはノイズ（安全側）
+      expect(files).toContain("ui/node_modules/dep.js");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("linesOutsideFences — マスクと、釣り合わないフェンスの検知", () => {
+  // 守りたい対象 = この関数を通す検査の母集団。閉じないフェンスは以降の全行を「内側」にするので、
+  // 検知を**この関数の中**へ置く（外の検査にすると、その文書一覧が消費側の写しになって腐る）
+  const F = "doc.md";
+
+  it("緑: 釣り合っていればフェンスの内側だけを落とし、finding は出ない", () => {
+    const findings = [];
+    const doc = ["外1", "```bash", "内1", "```", "外2", ""].join("\n");
+    const lines = linesOutsideFences(doc, F, findings);
+    expect(findings).toEqual([]);
+    expect(lines.map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(lines.map(([n]) => n), "行番号は元の文書の 1 起点").toEqual([1, 5, 6]);
+  });
+
+  it("緑: フェンスが 1 つも無ければ全行が返る", () => {
+    const findings = [];
+    expect(linesOutsideFences("a\nb\n", F, findings)).toHaveLength(3);
+    expect(findings).toEqual([]);
+  });
+
+  it("赤: 開いたまま閉じないフェンスは finding になり、開いた行を名指しする", () => {
+    const findings = [];
+    const doc = ["外1", "```bash", "内1", "内2", ""].join("\n");
+    linesOutsideFences(doc, F, findings);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].file).toBe(F);
+    expect(findings[0].line, "開いた行（2 行目）を名指しする").toBe(2);
+    expect(findings[0].message).toContain("開いたまま閉じていない");
+  });
+
+  it("赤: 2 つ目のフェンスが閉じないときは、その開いた行を名指しする（1 つ目ではない）", () => {
+    const findings = [];
+    const doc = ["```", "a", "```", "b", "```", "c", ""].join("\n");
+    linesOutsideFences(doc, F, findings);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(5);
+  });
+
+  it("finding を積むだけで、返す行は変えない（マスクの意味論を静かに変えない）", () => {
+    const doc = ["外1", "```bash", "内1", ""].join("\n");
+    expect(linesOutsideFences(doc, F, []).map(([, l]) => l)).toEqual(["外1"]);
+  });
+
+  // ここから下は「パリティを数える形」が壊れていた地点である。パリティは「対になる行の文字も
+  // 長さも同じ」という前提の上でしか成り立たず、4 連バッククォート（3 連を含む例を書くための記法・
+  // このリポジトリで既に使われている）と `~~~` でその前提が崩れる。**修正前はいずれも
+  // findings 0 件のままマスクが壊れていた**（下の it ごとに旧挙動を注記する）
+  const B3 = "```";
+  const B4 = "````";
+  const T3 = "~~~";
+
+  it("4 連バッククォートの中の 3 連は閉じない（閉じフェンスは開いた長さ以上でなければならない）", () => {
+    // 旧: 3 連 2 本がパリティを反転させ、findings 0 件のまま「外2」が内側に落ちていた
+    const findings = [];
+    const doc = ["外1", B4, B3, "内", B3, B4, "外2", ""].join("\n");
+    const lines = linesOutsideFences(doc, F, findings);
+    expect(findings).toEqual([]);
+    expect(lines.map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+  });
+
+  it("`~~~` もフェンスとして扱う（旧: `~~~` は 1 行もフェンスに数えられなかった）", () => {
+    const findings = [];
+    const doc = ["外1", T3, "内", T3, "外2", ""].join("\n");
+    expect(linesOutsideFences(doc, F, findings).map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(findings).toEqual([]);
+  });
+
+  it("開き文字の種類が違えば閉じない（`` ` `` と `~` は互いを閉じない）", () => {
+    // 旧: `~~~` の中の 3 連がフェンスを 1 つ開いたことになり、**釣り合いの finding まで偽で出ていた**
+    // （閉じないフェンスとして赤くなる形。今日の露出は 0 なので誰も踏んでいない）
+    const findings = [];
+    const doc = ["外1", T3, B3, "内", T3, "外2", ""].join("\n");
+    expect(linesOutsideFences(doc, F, findings).map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(findings, "旧実装はここで偽の「閉じていない」finding を 1 件出していた").toEqual([]);
+  });
+
+  it("閉じフェンスは開いた長さ以上ならよい（4 連を 5 連で閉じられる）", () => {
+    const findings = [];
+    const doc = ["外1", B4, "内", B4 + "`", "外2", ""].join("\n");
+    expect(linesOutsideFences(doc, F, findings).map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(findings).toEqual([]);
+  });
+
+  it("情報文字列を持つ行は閉じない（この修正が作った残余——赤側へ落ちる）", () => {
+    // パリティの下では ```bash で開いて ```bash で閉じる書き方が通っていた。今は開いたままになり
+    // 釣り合わない finding で赤くなる。走査中の 201 文書ではこの書き方は 1 件も無い（実測）
+    const findings = [];
+    const doc = ["外1", B3 + "bash", "内", B3 + "bash", "外2", ""].join("\n");
+    linesOutsideFences(doc, F, findings);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain("開いたまま閉じていない");
+  });
+
+  it("file / findings は必須（呼び出し側の契約違反は throw・文書の欠陥とは別扱い）", () => {
+    expect(() => linesOutsideFences("a", undefined, [])).toThrow(/file/);
+    expect(() => linesOutsideFences("a", "", [])).toThrow(/file/);
+    expect(() => linesOutsideFences("a", F)).toThrow(/findings/);
+    expect(() => linesOutsideFences("a", F, null)).toThrow(/findings/);
+  });
+});
+
+describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊れ方を赤にする）", () => {
+  // 守りたい対象 = 節を食う検査の母集団。切り出し器は狭すぎ／広すぎの 2 方向に壊れ、
+  // 向きを決めるのは切り出し器ではなく**切り出した結果を食う述語**である
+  // （許可集合への所属なら広がりは沈黙、集合の一致なら誤報）。ゆえにここでは
+  // 「宣言と実際の文書構造の食い違い」だけを機構で縛る。
+  const opts = (ending) => ({ file: "doc.md", ending, by: "G-fixture" });
+  const DOC = ["# t", "## A", "本文1", "### A1", "本文2", "## B", "本文3", ""].join("\n");
+
+  it("緑: ending:\"heading\" は同レベル以上の見出しで終端する（下位見出しは終端しない）", () => {
+    const r = sectionOf(DOC, /^## A$/, opts("heading"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("本文1\n### A1\n本文2");
+  });
+
+  it("緑: ending:\"eof\" は終端が無いときだけ通り、body は EOF まで伸びる", () => {
+    const r = sectionOf(DOC, /^## B$/, opts("eof"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("本文3\n");
+  });
+
+  it("赤①: アンカーが 0 件（見出しの改題・消滅で母集団が空になる）", () => {
+    const r = sectionOf(DOC, /^## Z$/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0].message).toContain("見出しが見つからない");
+  });
+
+  it("赤②: アンカーが 2 件以上（どれが本物か決まらない・母集団の曖昧化）", () => {
+    // findIndex 系の実装は先に現れた方を掴み、本物の節が照合されないまま緑になる
+    // （G-hook-fires が表のヘッダ多重度に対して置いた検知と同型）
+    const dup = ["# t", "## A", "x", "## B", "y", "## A", "z", "## C", ""].join("\n");
+    const r = sectionOf(dup, /^## A$/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0].message).toContain("2 本ある");
+    expect(r.findings[0].line, "2 本目を名指しする（1 本目は正しいかもしれない）").toBe(6);
+  });
+
+  it("赤③: ending:\"heading\" なのに終端が無い（節が EOF まで伸びる＝母集団が広がる）", () => {
+    const r = sectionOf(DOC, /^## B$/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings[0].message).toContain('ending: "heading"');
+  });
+
+  it("赤④: ending:\"eof\" なのに終端が在る（宣言が腐った——片側だけ検算すると宣言が写しとして腐る）", () => {
+    // ④ が無いと `ending` の宣言そのものが「誰も検算しない散文」になり、次に読む人はそれを信じる
+    const r = sectionOf(DOC, /^## A$/, opts("eof"));
+    expect(r.body).toBeNull();
+    expect(r.findings[0].message).toContain('ending: "eof"');
+    expect(r.findings[0].line, "終端が現れた行を名指しする").toBe(6);
+  });
+
+  it("緑: 本文が空の節（アンカーの直後が終端）は有効——空文字列を「節が無い」と読まない", () => {
+    const r = sectionOf(["## A", "## B", "x", ""].join("\n"), /^## A$/, opts("heading"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("");
+  });
+
+  it("CRLF チェックアウトでも LF と同じ body を返す（`$` は `\\r` の手前に当たらない）", () => {
+    expect(sectionOf(DOC.replace(/\n/g, "\r\n"), /^## A$/, opts("heading")).body).toBe("本文1\n### A1\n本文2");
+  });
+
+  it("g / y フラグ付きの正規表現は throw（lastIndex の持ち越しで行ごとの判定がずれる）", () => {
+    expect(() => sectionOf(DOC, /^## A$/g, opts("heading"))).toThrow(/g \/ y/);
+    expect(() => sectionOf(DOC, /^## A$/y, opts("heading"))).toThrow(/g \/ y/);
+  });
+
+  it("アンカーが ATX 見出しでない行に当たったら赤（レベルを推測しない）", () => {
+    const r = sectionOf(["# t", "本文 ## A", ""].join("\n"), /^本文/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings[0].message).toContain("見出しでない");
+  });
+
+  it("コードフェンス内の列 0 の `#` 行は終端にならない（body がフェンスの途中で切れない）", () => {
+    // 字面だけを見る実装は `# 整形` を終端に取り、body を 0 行へ縮めたまま findings 0 件で返す
+    const doc = ["# t", "## A", "```bash", "# 整形", "cargo fmt", "```", "本文", "## B", "x", ""].join("\n");
+    const r = sectionOf(doc, /^## A$/, opts("heading"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("```bash\n# 整形\ncargo fmt\n```\n本文");
+  });
+
+  it("コードフェンス内の見出し様の行はアンカーに数えない（②の誤爆と、偽のアンカーの掴み違いを防ぐ）", () => {
+    const doc = ["# t", "```", "## A", "```", "## A", "本文", "## B", "x", ""].join("\n");
+    const r = sectionOf(doc, /^## A$/, opts("heading"));
+    expect(r.findings, "フェンス内の 1 本を数えると②（2 本ある）で誤爆する").toEqual([]);
+    expect(r.body).toBe("本文");
+  });
+
+  it("`ending: \"eof\"` の④はフェンス内の見出し様の行では発火しない", () => {
+    const doc = ["# t", "## A", "本文", "```", "## B", "```", ""].join("\n");
+    const r = sectionOf(doc, /^## A$/, opts("eof"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("本文\n```\n## B\n```\n");
+  });
+
+  it("閉じていないフェンスは ending の両側で赤くなる（`eof` 側の沈黙を塞いだ地点）", () => {
+    // **この検査は一度、逆の主張を固定していた。** マスクを入れた直後は `ending: "eof"` が
+    // findings 0 件・body が EOF まで伸びる形で沈黙し（マスク以前は④で赤かった）、その姿を
+    // 残余として固定していた。`linesOutsideFences` が釣り合いを検算するようになって塞がっている。
+    const doc = ["# t", "## A", "本文", "```bash", "## X", "後続本文", ""].join("\n");
+    for (const ending of ["heading", "eof"]) {
+      const r = sectionOf(doc, /^## A$/, opts(ending));
+      expect(r.body, `${ending}: マスクが信用できないので body を返さない`).toBeNull();
+      expect(r.findings).toHaveLength(1);
+      expect(r.findings[0].message).toContain("開いたまま閉じていない");
+      expect(r.findings[0].line, "フェンスを開いた行を名指しする").toBe(4);
+    }
+  });
+
+  it("4 連バッククォート・`~~~` の中の見出しも終端にならずアンカーにもならない", () => {
+    // **パリティを数えていた頃、この 2 記法では 43e0c216 が塞いだ症状がそのまま再現していた**
+    // ——`## にせ終端` が終端に採られて body が黙って縮み（4 連版は "本文1\n````\n```" だった）、
+    // かつ `## にせ終端` 自身がアンカーとして採用された（2026-08-17 実測）
+    const F3 = "```";
+    for (const [name, fence] of [["4 連バッククォート", "````"], ["~~~", "~~~"]]) {
+      const inner = fence === "````" ? [F3, "## にせ終端", F3] : ["## にせ終端"];
+      const doc = ["# t", "## A", "本文1", fence, ...inner, fence, "本文2", "## B", "x", ""].join("\n");
+      const r = sectionOf(doc, /^## A$/, opts("heading"));
+      expect(r.findings, name).toEqual([]);
+      expect(r.body, `${name}: 節がフェンスの途中で縮まない`).toBe([("本文1"), fence, ...inner, fence, "本文2"].join("\n"));
+      const r2 = sectionOf(doc, /^## にせ終端$/, opts("heading"));
+      expect(r2.body, `${name}: フェンス内の見出しはアンカーに採らない`).toBeNull();
+      expect(r2.findings[0].message).toContain("見出しが見つからない");
+    }
+  });
+
+  it("by は必須（finding が対象文書しか名指さないと、直す先の `ending` へ辿り着けない）", () => {
+    expect(() => sectionOf(DOC, /^## A$/, { file: "doc.md", ending: "heading" })).toThrow(/by/);
+    expect(() => sectionOf(DOC, /^## A$/, { file: "doc.md", ending: "heading", by: "" })).toThrow(/by/);
+  });
+
+  it("finding は宣言元の検査 id を名乗る（①〜④のすべて）", () => {
+    const dup = ["# t", "## A", "x", "## A", "y", "## C", ""].join("\n");
+    const msgs = [
+      sectionOf(DOC, /^## Z$/, opts("heading")), // ①
+      sectionOf(dup, /^## A$/, opts("heading")), // ②
+      sectionOf(DOC, /^## B$/, opts("heading")), // ③
+      sectionOf(DOC, /^## A$/, opts("eof")), // ④
+    ];
+    for (const r of msgs) {
+      expect(r.body).toBeNull();
+      expect(r.findings[0].message).toContain("宣言元: G-fixture");
     }
   });
 });

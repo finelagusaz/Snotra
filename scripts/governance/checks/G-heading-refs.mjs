@@ -43,7 +43,7 @@ export function scanHeadingRefs(snapshot, docs) {
       findings.push(finding(doc, 1, "対象文書が読めない（G-heading-refs 母集団の欠落）"));
       continue;
     }
-    for (const [lineNo, line] of linesOutsideFences(text)) {
+    for (const [lineNo, line] of linesOutsideFences(text, doc, findings)) {
       for (const m of line.matchAll(HEADING_REF)) {
         const [, target, label] = m;
         if (!target.endsWith(".md") && !/^\/[a-z0-9-]+$/.test(target)) continue;

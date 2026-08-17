@@ -51,7 +51,8 @@ export function scanAdrCitations(snapshot, docs) {
     const text = snapshot.read(doc);
     if (text == null) continue;
     const isMd = doc.endsWith(".md");
-    const lines = isMd ? linesOutsideFences(text) : text.split("\n").map((l, i) => [i + 1, l]);
+    // 非 md の腕はフェンスのマスクを掛けないので、釣り合いの検算も要らない（落ちる行が無い）
+    const lines = isMd ? linesOutsideFences(text, doc, findings) : text.split("\n").map((l, i) => [i + 1, l]);
     for (const [lineNo, line] of lines) {
       for (const m of line.matchAll(ADR_CITATION)) {
         checked += 1;

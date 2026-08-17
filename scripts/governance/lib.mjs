@@ -9,15 +9,34 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-/** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対パス
- *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
- *  落とさないため、PATHS 側はルート錨止めにする
- *  **PATHS の照合は `rel` の完全一致である**——一致したディレクトリへ降りないので配下ごと落ちる。
- *  `docs/.superpowers` も `.superpowers-extra` も `rel` が一致しないので巻き込まない（#728）
- *  `.superpowers/` は SDD（subagent-driven-development）の作業バッファで、gitignore 済みゆえ CI の
- *  チェックアウトには存在しない——走査に含めると同じコマンドが手元と CI で別の母集団を見る（#722）。 */
-const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
-const WALK_EXCLUDE_PATHS = ["workspace", ".claude/worktrees", ".superpowers"];
+/** 走査から除外するディレクトリ。
+ *  **PATHS の照合は `rel` の完全一致＝ルート錨止めである**——一致したディレクトリへ降りないので
+ *  配下ごと落ちる。`docs/.superpowers` も `.superpowers-extra` も `rel` が一致しないので
+ *  巻き込まない（#728）。`.superpowers/` は SDD（subagent-driven-development）の作業バッファで、
+ *  gitignore 済みゆえ CI のチェックアウトには存在しない——走査に含めると同じコマンドが手元と CI で
+ *  別の母集団を見る（#722）。
+ *
+ *  **生成物（`node_modules` / `target` / `dist`）も PATHS 側に置く**（#1089）。かつては名前一致・
+ *  全階層で落としており、`demo/src/target/orphan.rs` のような `.rs` が**どの深さでも**母集団から
+ *  消えていた——`G-module-index` の逆方向も `G-module-linkage` も見ないまま緑になる形で、
+ *  **向きは沈黙である**。ネストした同名ディレクトリは今日 0 件（2026-08-17 実測。4 crate 配下に
+ *  `target/` は不在）ゆえ露出は 0 で、塞いだのは将来その形が現れたときの沈黙である。
+ *  **失うもの**: 2 つ目の npm パッケージを置くと `ui/node_modules` が走査に入る。**そのときの向きを
+ *  決めるのは走査器ではなく呼び出し点の述語である**（#1089 が `sectionOf` について確立したのと同じ原理が、
+ *  走査の側にも当たる）。**「ノイズ＝安全側」だけではない**——`G-module-index` の順方向は
+ *  「索引に書かれた basename が `snapshot.files` のどれかに在るか」＝所属で判定するので、走査が広がるほど
+ *  照合先が育ち、**索引に書かれた実在しないファイル名が偶然一致して緑になる＝沈黙側**である
+ *  （順方向が受け付ける拡張子には `ts` と `html` が含まれ、`node_modules` はどちらも大量に持つ）。
+ *  そのときは PATHS へ 1 行足す。述語の側で塞ぐ案（`allBasenames` を crate の src 配下へ絞る）は
+ *  この時点では入れていない。
+ *
+ *  **`.claude/hooks/lsp-config.mjs` の同型（`ADR-claude-code-ra-lsp-plugin-delivery.md`「受容する残余」）
+ *  とは足並みを揃えない。** 理由は 3 つ: (1) 今日すでに非対称である——あちらは `worktrees` を名前一致で
+ *  落とし、こちらは `.claude/worktrees` をルート錨止めで落とす（#728）。「両方直す」は対称性の回復では
+ *  なく**新規の創出**になる (2) 母集団の意味が違う——こちらは検査の入力、あちらは ratoml の探索である
+ *  (3) ADR は凍結された歴史ゆえ書き換えない（`ADR-adr-frozen-history`）。 */
+const WALK_EXCLUDE_NAMES = new Set([".git"]);
+const WALK_EXCLUDE_PATHS = ["workspace", ".claude/worktrees", ".superpowers", "node_modules", "target", "dist"];
 
 /** リポジトリを歩いて snapshot（files: "/" 区切り相対パス一覧, read(rel)）を作る。
  *  列挙は fs 自身に問う（`git ls-files` の pathspec `**` 意味論の罠を避ける・health-check Check 1 注記） */
@@ -46,21 +65,202 @@ export function makeSnapshot(root) {
   };
 }
 
-/** コードフェンス（``` 行）の内側を落として [lineNo, text] を返す（誤検出源: SPEC.md の TOML コメント等） */
-export function linesOutsideFences(text) {
+/**
+ * コードフェンスの内側を落として `[lineNo, text]` を返す（誤検出源: SPEC.md の TOML コメント等）。
+ *
+ * **開いたフェンスを閉じられるのは、同じ文字の・開いた長さ以上の・情報文字列を持たない行だけである。**
+ * かつてここは `` /^\s*```/ `` に当たる行の**パリティ**を数えていた。パリティは「対になる行の文字も
+ * 長さも同じ」という前提の上でしか成り立たず、その前提は少なくとも 2 つの記法で崩れる:
+ *   - **4 連バッククォート**（3 連を含む例を書くための記法。このリポジトリで既に使われている）
+ *     ——内側の 3 連 2 本がパリティを反転させ、findings 0 件のままマスクが壊れる
+ *   - **`~~~` フェンス**——同上
+ *
+ * どちらも `sectionOf` 越しでは**フェンス内の `## にせ終端` が終端に採られて節が黙って縮み**、
+ * **フェンス内の見出しがアンカーとして採用された**（2026-08-17 実測）。**今日の露出は 0 である**
+ * ——`linesOutsideFences` / `sectionOf` の消費者（`governance-check.mjs` 経由の 19 検査）が実際に
+ * 走査する 201 文書に、4 連も `~~~` も 1 行も無い。4 連は追跡 `.md` 177 件中 6 行あるが、
+ * いずれも `docs/superpowers/plans/` にあって走査に現れない（2026-08-17 に走査を全件記録して実測）。
+ *
+ * **ここが CommonMark から採ったのは上の 1 文である。「準拠」ではない**——準拠は全称の主張であり、
+ * 測れない。実装していない規則が少なくとも次のとおり在る: 開きフェンスのインデントを 0〜3 桁に限る規則（ここは `^\s*` ＝
+ * 任意桁を許す。**今日の挙動を保つための選択**で、リスト内の深くインデントされたフェンスも従来どおり
+ * フェンスとして扱う）・バッククォートの情報文字列にバッククォートを含められない規則・リスト項目や
+ * 引用の内側でのフェンスの相対的な扱い・インデントコードブロック。
+ *
+ * **釣り合っていないフェンス（開いたまま閉じない）を finding にする。** 閉じないフェンスは
+ * 以降の全行を「内側」にするので、この関数を通す検査はその範囲を丸ごと見なくなる。**向きは
+ * 呼び出し点で決まり、赤くなる側だけではない**——`sectionOf` の `ending: "eof"` は、本来の終端見出しが
+ * マスクされて findings 0 件のまま body が EOF まで伸びる（2026-08-17 実測）。
+ *
+ * **検知をこの関数の中に置くのは、母集団を一致させるためである。** 別の検査として外に置くと、
+ * その検査が持つ文書一覧は消費側の母集団の写しになり、新しい消費者が現れたときに黙って射程から外れる。
+ * 中に在れば「マスクされる入力」と「検算される入力」は構造上つねに同じものになる。
+ *
+ * **向きの使い分け**（`sectionOf` と同じ区別）:
+ *   - `file` / `findings` の欠落は **throw**——呼び出し側の契約違反であって文書の欠陥ではない
+ *   - 釣り合わないフェンスは **finding**——文書の欠陥である。throw にすると registry 経由の検査が
+ *     スタックトレースで落ち、どの文書が原因かも `file:line` の形で出ない
+ *
+ * **受容する残余**は少なくとも 2 つ在る:
+ *   - 同じ文書を複数の検査が走査するので、1 つの欠陥から重複した finding が出る
+ *     （既に赤い状態でのみ起こる）
+ *   - **情報文字列を持つ行が閉じフェンスにならなくなった**——パリティの下では
+ *     `` ```bash `` で開いて `` ```bash `` で閉じる書き方が通っていた。今はそれが「開いたまま」に
+ *     なり、文書は釣り合わない finding で赤くなる。走査中の 201 文書ではマスクの出力が
+ *     1 行も変わらないことを実測済みだが（下の対照）、**将来その書き方が現れれば赤くなる側である**
+ *
+ * **対照**（2026-08-17・使い捨ての複製に対して測定）:
+ *   - 4 連の中に 3 連と `## にせ終端` を置いた入力: 修正前は findings 0 件・body が
+ *     `本文1` とフェンス 2 行だけへ縮み、`## にせ終端` がアンカーに採用された。修正後は body が
+ *     `本文2` まで伸び、`## にせ終端` はアンカー 0 件（①赤）になる
+ *   - `~~~` 版も同じ
+ *   - 走査中の 201 文書に対するマスク（`[lineNo]` の列）は修正前後で全件一致
+ *   - `sectionOf` の 8 呼び出し点の body は SHA-256 で 8/8 一致
+ *
+ * @param {string} text 文書全文
+ * @param {string} file finding の帰属先（対象文書のパス）。**必須**
+ * @param {object[]} findings 釣り合わないフェンスを積む先。**必須**
+ */
+export function linesOutsideFences(text, file, findings) {
+  if (typeof file !== "string" || file === "") {
+    throw new Error(`linesOutsideFences: file（finding の帰属先）は必須（受け取った値: ${file}）`);
+  }
+  if (!Array.isArray(findings)) {
+    throw new Error(`linesOutsideFences: findings（finding を積む配列）は必須（受け取った値: ${findings}）`);
+  }
   const out = [];
-  let inFence = false;
+  /** 開いているフェンス。`null` ならフェンスの外。**パリティ（真偽 1 つ）では表せない**
+   *  ——閉じられるかどうかは開いた側の文字と長さで決まるので、その 2 つを持ち歩く必要がある */
+  let open = null;
   text.split("\n").forEach((line, i) => {
-    if (/^\s*```/.test(line)) {
-      inFence = !inFence;
+    if (open === null) {
+      const m = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (m) {
+        open = { char: m[1][0], len: m[1].length, at: i + 1 };
+        return;
+      }
+      out.push([i + 1, line]);
       return;
     }
-    if (!inFence) out.push([i + 1, line]);
+    // 閉じフェンス: 同じ文字・開いた長さ以上・情報文字列を持たない（`$` まで空白だけ）。
+    // この 3 条件が「4 連の中に 3 連を書ける」理由であり、`` ` `` と `~` が互いを閉じない理由である
+    // （`` ` `` も `~` も正規表現のメタ文字ではないのでエスケープは要らない）
+    if (new RegExp(`^\\s*${open.char}{${open.len},}\\s*$`).test(line)) open = null;
+    // フェンスの内側（閉じた行そのものを含む）は落とす
   });
+  if (open !== null) {
+    findings.push(
+      finding(file, open.at, "コードフェンスが開いたまま閉じていない——以降の全行がフェンスの内側と判定され、この文書を走査する検査の母集団から落ちる"),
+    );
+  }
   return out;
 }
 
 export const finding = (file, line, message) => ({ file, line, message });
+
+/**
+ * 見出しで節を切り出す共有の口。**「見出しで」節を切る検査はここを通る**——節を母集団にする検査は
+ * ほかにもあり、そちらは通らない（`G-clippy-disallowed` は TOML の `[dependencies]` 節を、
+ * `G-ci-table` は表の区間を、それぞれ独自に切る）。
+ * かつては 3 つの実装形（同レベル以上で終端 / `## ` だけで終端 / `### ` だけで終端）が
+ * 並んでいた。下位の実装形は、上位の見出しが 1 本消えるだけで節が次の節へ流れ込む。
+ *
+ * **切り出しを 1 本にしても、向きの分析は呼び出し点ごとに残る。**
+ * 母集団の広がりが沈黙になるか誤報になるかを決めるのは切り出し器ではなく、
+ * **切り出した結果を食う述語**である——許可集合への所属（`docsLines.includes(cmd)`）なら
+ * 広がりは沈黙、集合の一致・実在の主張なら広がりは誤報になる。ここが縛るのは
+ * 「宣言（`ending`）と実際の文書構造の食い違い」だけであり、それ以上ではない。
+ *
+ * `ending` は節の位置の宣言で、**双方向に検算する**——`"heading"` は終端が無ければ赤、
+ * `"eof"` は終端が在れば赤。片側だけにすると、宣言そのものが誰も検算しない写しとして腐り、
+ * 次に読む人はそれを信じる。
+ *
+ * 赤にするのは 4 条件（いずれも `body: null` を返す）:
+ *   ① アンカーが 0 件——見出しの改題・消滅で母集団が空になる
+ *   ② アンカーが 2 件以上——先に現れた方を掴み、本物の節が照合されないまま緑になる
+ *      （`G-hook-fires` が表のヘッダ多重度に対して置いた検知と同型）
+ *   ③ `ending: "heading"` なのに終端が無い——節が EOF まで伸びる
+ *   ④ `ending: "eof"` なのに終端が在る——宣言が腐った
+ *
+ * 行分割は `\r?\n` である。文書全文へ `^…$` を当てる形（旧 2 形）は CRLF チェックアウトで
+ * `$` が `\r` の手前に当たらず節を見失う——CI は ubuntu ＝ LF、このリポジトリの `.gitattributes` が
+ * 固定しているのは `.githooks/**` だけなので、`core.autocrlf=true` の機体で
+ * `npm run governance:check` を打った場合の話である（今日の露出は 0）。
+ *
+ * **アンカーと終端はコードフェンスの外だけで探す**（`linesOutsideFences` を行番号のマスクとして使う）。
+ * 字面だけを見ると、フェンス内の列 0 の `#` 行が終端になったり 2 本目のアンカーに数えられたりする——
+ * `docs/build-commands.md` の §A のフェンスへ `# 整形` を 1 行足すと、findings 0 件のまま body が
+ * 8 文字へ縮み、G-hook-commands の母集団が 8 行から 0 行になった（2026-08-17 実測）。**向きは
+ * 呼び出し点ごとに違う**——許可集合への所属で判定する側は縮んでも赤くならない。
+ * **body の切り出しは生の行で行う**（フェンスの中身を落とさない）——落とすと、まさに上の
+ * cargo 行のようなフェンス内が母集団である検査を、この関数自身が空にしてしまう。
+ *
+ * **閉じていないフェンスは `linesOutsideFences` が finding にする**（そちらの doc が正本）。
+ * マスクを導入した当初はここに残余が在った——フェンスがアンカーより前で開けばアンカーが消えて①が赤いが、
+ * アンカーの後で開いた場合、`ending: "heading"` は③で赤くなる一方 **`ending: "eof"` は沈黙した**
+ * （本来の終端見出しがマスクされて `end` が -1 のままになり、findings 0 件で body が EOF まで伸びる。
+ * 2026-08-17 実測）。マスク以前はこの形が④で赤くなっていたので、沈黙はマスクが作った側だった。
+ * ゆえに切り出しへ入る前にフェンスの釣り合いを検算し、崩れていれば `body: null` を返す。
+ *
+ * @param {string} text 文書全文
+ * @param {RegExp} headingRe アンカー行にだけ当たる正規表現。**行単位で当てる**ので `^`/`$` は行頭・行末を指す。
+ *   `g` / `y` は `lastIndex` の持ち越しで行ごとの判定がずれるため throw する（呼び出し側の契約違反であり、
+ *   文書の欠陥ではない——`registry.mjs` が id 不一致を throw で拒むのと同じ扱い）
+ * @param {{file: string, ending: "heading"|"eof", by: string}} opts file は finding の帰属先（＝対象文書）、
+ *   by は `ending` を宣言している検査の id。**by は必須である**——finding の `file` が指すのは文書であって
+ *   宣言の在り処ではないので、名乗らないと文書を直した人が「直す先はこの検査の `ending`」へ辿り着けない
+ * @returns {{ body: string|null, findings: object[] }} body が null なら findings が非空
+ */
+export function sectionOf(text, headingRe, { file, ending, by }) {
+  if (headingRe.global || headingRe.sticky) {
+    throw new Error(`sectionOf: headingRe に g / y フラグは渡せない（lastIndex の持ち越しで行ごとの判定がずれる）: ${headingRe}`);
+  }
+  if (ending !== "heading" && ending !== "eof") {
+    throw new Error(`sectionOf: ending は "heading" か "eof" のいずれか（受け取った値: ${ending}）`);
+  }
+  if (typeof by !== "string" || by === "") {
+    throw new Error(`sectionOf: by（宣言している検査の id）は必須（受け取った値: ${by}）`);
+  }
+  const at = ` — 宣言元: ${by}`;
+  const lines = text.split(/\r?\n/);
+  // フェンスの外の行番号（1 起点）。**マスクとしてだけ使い、body はこの集合から組まない**
+  const fenceFindings = [];
+  const outside = new Set(linesOutsideFences(text, file, fenceFindings).map(([n]) => n));
+  // 釣り合わないフェンスの下でマスクは信用できない——④が沈黙する形がここに在る。
+  // `body: null` を返すことで「body が null なら findings が非空」の契約も保たれる
+  if (fenceFindings.length > 0) return { body: null, findings: fenceFindings };
+  const anchors = lines.map((l, i) => (headingRe.test(l) && outside.has(i + 1) ? i : -1)).filter((i) => i >= 0);
+  if (anchors.length === 0) {
+    return { body: null, findings: [finding(file, 1, `節の見出しが見つからない（アンカー: ${headingRe}）——見出しの改題・消滅で母集団が空になる${at}`)] };
+  }
+  if (anchors.length > 1) {
+    return {
+      body: null,
+      findings: [finding(file, anchors[1] + 1, `節の見出し ${headingRe} が ${anchors.length} 本ある（どれが本物か決まらない・母集団の曖昧化）${at}`)],
+    };
+  }
+  const start = anchors[0];
+  const level = lines[start].match(/^(#{1,6})\s/)?.[1].length;
+  if (level == null) {
+    return { body: null, findings: [finding(file, start + 1, `アンカー ${headingRe} が当たった行が ATX 見出しでない（節のレベルが決まらない）: ${lines[start]}${at}`)] };
+  }
+  const rest = lines.slice(start + 1);
+  // rest[i] は lines[start + 1 + i] ＝ 1 起点で start + i + 2 行目
+  const end = rest.findIndex((l, i) => /^#{1,6}\s/.test(l) && l.match(/^#+/)[0].length <= level && outside.has(start + i + 2));
+  if (ending === "heading" && end < 0) {
+    return {
+      body: null,
+      findings: [finding(file, start + 1, `\`ending: "heading"\` の宣言に対し、同レベル以上の見出しが後方に無い（節が EOF まで伸び、母集団が広がる）: ${lines[start]}${at}`)],
+    };
+  }
+  if (ending === "eof" && end >= 0) {
+    return {
+      body: null,
+      findings: [finding(file, start + end + 2, `\`ending: "eof"\` の宣言に対し、同レベル以上の見出しが後方に在る（宣言が腐った。節はこの行で終端している）: ${rest[end]}${at}`)],
+    };
+  }
+  return { body: rest.slice(0, end < 0 ? rest.length : end).join("\n"), findings: [] };
+}
 
 /** `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測: 不在の
  *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）——これが

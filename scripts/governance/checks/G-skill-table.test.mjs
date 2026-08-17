@@ -3,7 +3,9 @@ import { snap } from "../test-helpers.mjs";
 import { checkSkillTable } from "./G-skill-table.mjs";
 
 describe("G-skill-table checkSkillTable（表の対象は roster に載らない skill だけ）", () => {
-  const claude = (rows) => `# x\n## 利用できるスキル\n\n| スキル | 使うとき |\n|---|---|\n${rows}\n\n## 次節\n`;
+  // **フィクスチャは実文書と同じ形を持つ**——「利用できるスキル」はルート CLAUDE.md の最終節であり、
+  // 検査は `ending: "eof"` を宣言している。終端の見出しを足すと `sectionOf` の④が赤にする（下の it が測る）
+  const claude = (rows) => `# x\n## 前節\n\n本文\n\n## 利用できるスキル\n\n| スキル | 使うとき |\n|---|---|\n${rows}\n`;
   /** roster に載る skill（harness が description ごと注入する） */
   const shown = (name) => ({ [`.claude/skills/${name}/SKILL.md`]: `---\nname: ${name}\ndescription: "d"\n---\n本文\n` });
   /** roster に載らない skill（user 起動専用） */
@@ -38,5 +40,17 @@ describe("G-skill-table checkSkillTable（表の対象は roster に載らない
       ".claude/skills/broken/SKILL.md": "disable-model-invocation: true\n本文だけで frontmatter の区切りが無い\n",
     });
     expect(checkSkillTable(s)).toEqual([]);
+  });
+  it("赤: 節の後ろに `##` 見出しが現れた（`ending: \"eof\"` の宣言が腐った）", () => {
+    // ④ が無いと `ending` の宣言が誰も検算しない写しになり、次に読む人はそれを信じる。
+    // 表の下へ新しい節を足した瞬間、宣言と文書構造が食い違ったことをここで名指しする
+    const s = snap({ "CLAUDE.md": claude("| `/health-check` | 定期 |") + "\n## 新しい節\n", ...hidden("health-check") });
+    const f = checkSkillTable(s);
+    expect(f.some((x) => x.message.includes('ending: "eof"'))).toBe(true);
+  });
+  it("赤: 節の見出しが消えた（旧実装の `?? \"\"` は空表として黙って通した）", () => {
+    const s = snap({ "CLAUDE.md": "# x\n## 別の見出し\n", ...hidden("health-check") });
+    const f = checkSkillTable(s);
+    expect(f.some((x) => x.message.includes("見出しが見つからない"))).toBe(true);
   });
 });

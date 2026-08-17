@@ -110,15 +110,21 @@ export const finding = (file, line, message) => ({ file, line, message });
  * 固定しているのは `.githooks/**` だけなので、`core.autocrlf=true` の機体で
  * `npm run governance:check` を打った場合の話である（今日の露出は 0）。
  *
- * **アンカーと終端はコードフェンスの外だけで探す**（`linesOutsideFences` を行番号の遮蔽として使う）。
+ * **アンカーと終端はコードフェンスの外だけで探す**（`linesOutsideFences` を行番号のマスクとして使う）。
  * 字面だけを見ると、フェンス内の列 0 の `#` 行が終端になったり 2 本目のアンカーに数えられたりする——
  * `docs/build-commands.md` の §A のフェンスへ `# 整形` を 1 行足すと、findings 0 件のまま body が
  * 8 文字へ縮み、G-hook-commands の母集団が 8 行から 0 行になった（2026-08-17 実測）。**向きは
  * 呼び出し点ごとに違う**——許可集合への所属で判定する側は縮んでも赤くならない。
  * **body の切り出しは生の行で行う**（フェンスの中身を落とさない）——落とすと、まさに上の
  * cargo 行のようなフェンス内が母集団である検査を、この関数自身が空にしてしまう。
- * **受容する残余**: 閉じていないフェンスがあると以降の全行が「内側」になり、アンカーが消えて①が赤くなる
- * （露出は今日 0 件）。
+ *
+ * **受容する残余**: 閉じていないフェンスがあると以降の全行が「内側」になる。**その向きも呼び出し点で
+ * 決まる**（上と同じ原理がここにも当たる）——フェンスがアンカーより前で開けばアンカーが消えて①が赤く、
+ * アンカーの後で開いた場合は `ending: "heading"` なら③が赤くなるが、**`ending: "eof"` は沈黙する**
+ * （本来の終端見出しがマスクされて `end` が -1 のままになり、findings 0 件で body が EOF まで伸びる。
+ * 2026-08-17 実測）。この形は修正前には④で赤くなっていたので、**沈黙は新しく作られた側である**。
+ * 露出は今日 0 件（`sectionOf` が読む 8 文書のフェンスはすべて閉じている）。塞ぐには
+ * `linesOutsideFences`（7 検査が共有する）へフェンスの釣り合いの検知を足すことになり、ここでは行わない。
  *
  * @param {string} text 文書全文
  * @param {RegExp} headingRe アンカー行にだけ当たる正規表現。**行単位で当てる**ので `^`/`$` は行頭・行末を指す。
@@ -141,7 +147,7 @@ export function sectionOf(text, headingRe, { file, ending, by }) {
   }
   const at = ` — 宣言元: ${by}`;
   const lines = text.split(/\r?\n/);
-  // フェンスの外の行番号（1 起点）。**遮蔽としてだけ使い、body はこの集合から組まない**
+  // フェンスの外の行番号（1 起点）。**マスクとしてだけ使い、body はこの集合から組まない**
   const outside = new Set(linesOutsideFences(text).map(([n]) => n));
   const anchors = lines.map((l, i) => (headingRe.test(l) && outside.has(i + 1) ? i : -1)).filter((i) => i >= 0);
   if (anchors.length === 0) {

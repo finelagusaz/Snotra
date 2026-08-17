@@ -293,6 +293,19 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
     expect(r.body).toBe("本文\n```\n## B\n```\n");
   });
 
+  it("受容する残余: 閉じていないフェンスの向きは ending ごとに違う（`eof` 側は沈黙する）", () => {
+    // 露出は今日 0 件だが、**沈黙する側は修正で新しく作られた**ので、その姿を実行可能な形で残す
+    // （散文だけだと、次に読む人が「向きは赤側」と読み違える。実際にこの doc が一度そう書いていた）
+    const doc = ["# t", "## A", "本文", "```bash", "## X", "後続本文", ""].join("\n");
+    const heading = sectionOf(doc, /^## A$/, opts("heading"));
+    expect(heading.body, "heading 側は③で赤くなる").toBeNull();
+    expect(heading.findings[0].message).toContain('ending: "heading"');
+
+    const eof = sectionOf(doc, /^## A$/, opts("eof"));
+    expect(eof.findings, "eof 側は④が発火せず沈黙する").toEqual([]);
+    expect(eof.body, "本来の終端 `## X` を飲み込んだまま EOF まで伸びる").toContain("## X");
+  });
+
   it("by は必須（finding が対象文書しか名指さないと、直す先の `ending` へ辿り着けない）", () => {
     expect(() => sectionOf(DOC, /^## A$/, { file: "doc.md", ending: "heading" })).toThrow(/by/);
     expect(() => sectionOf(DOC, /^## A$/, { file: "doc.md", ending: "heading", by: "" })).toThrow(/by/);

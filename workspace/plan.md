@@ -308,21 +308,24 @@ activation_uses_frame_values` で実測・復元済み）。
 
 ### Phase 4 — 規範と文書
 
-- [ ] `src-tauri/CLAUDE.md` の #1032 条項の例外文を書き直す（下記「規範差分（逐語案）」）
-- [ ] 同条項に**据え置き 2 件（`launcher_controller.rs:503` / `:726`）を受容残余として名指す**
-      （名指しと理由。全称で書かない）
-- [ ] `docs/architecture.md:231` の #1032 の bullet を見る——「UI は `egui_shell::read_config` から
-      読む」が全称に読めるが、移行後も受容残余 2 件が engine lock 側に残る。**触る節の隣の主張が
-      今も真かを見る**（`.claude/rules/governance-docs.md` の書く約束 (3)「古い情報を残さない」）
-- [ ] `docs/architecture.md:228` の Enter の補足を**再導出する**——「判定より前に `instant_prefix` が
-      `engine.lock()` を取る」が偽になる。**字面の訂正では足りない**: 移行後は flush しない Enter が
-      UI スレッドで錠を一切待たなくなるため、「#1038 が足すのは同期 `engine.search` 1 回ぶんだけ」
-      という勘定の前提そのものが変わる。**「費用不変」という着地を先取りせず、勘定をやり直して
-      出た結論を書く**（反転しうる・独立導出レビュー要対処 1）。文だけ消さない
-- [ ] `src-tauri/src/egui_shell/search_state.rs:492-493` の doc を現況へ直す
-- [ ] `npm run governance:check` が全検査 passed
-- [ ] `cargo doc` green
-- [ ] Phase 4 をコミット
+- [x] `src-tauri/CLAUDE.md` の #1032 条項の例外文を書き直す（下記「規範差分（逐語案）」）
+- [x] ~~同条項に据え置き 2 件を受容残余として名指す~~ — **Q1 の改訂（6 件すべて移行）により不要**。
+      移行後 `egui_shell/` の `engine.lock().config()` は 0 件で、規範文は全称のまま真である
+- [x] `docs/architecture.md:231` の #1032 の bullet を見る——「UI は `egui_shell::read_config` から
+      読む」が全称に読める。**#1032 が移したのは実測で名指した読みまでで残りは #1076 が寄せた**旨と、
+      射程の正本の所在を書き足した
+- [x] `docs/architecture.md:228` の Enter の補足を**再導出する** —
+      **勘定は反転した。** 独立導出レビュー要対処 1 の警告どおりで、「1 回あたりの費用は変わらない」は
+      #1076 以降成り立たない。無条件の走査待ち（`instant_prefix`）が消えたため、いまは flush の
+      有無で分かれる: **flush へ倒れない Enter は錠を一切待たず、flush へ倒れる Enter だけが同期
+      `engine.search` の錠待ちと走査を負う**。#1038 が広げたのは flush へ倒れる窓であるから、
+      **その広がったぶんの Enter は #1076 以降、走査待ちを新たに負う**（以前はどちらでも払って
+      いたので差が出なかった）。旧記述が何を根拠にしていたかも併記した
+- [x] `src-tauri/src/egui_shell/search_state.rs:492-493` の doc を現況へ直す（消さず縮めた——
+      #1079 の費用訂正の根拠は「Plain 腕が `indexing()` 中に復帰行を空にすること」として残る）
+- [x] `npm run governance:check` が全検査 passed — **19 検査 passed**（見出し参照 221 件・ADR 短縮引用 274 件）
+- [x] `cargo doc` green
+- [x] Phase 4 をコミット
 
 ### Phase 5 — 検証
 

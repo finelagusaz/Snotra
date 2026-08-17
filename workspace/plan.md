@@ -13,7 +13,7 @@
 分かった。害はフレームに結びついており、頻度（毎フレームか）にもディレクトリ（`commands/` か）にも
 結びついていない。ゆえに:
 
-- **egui フレームの中で錠を待つ読みを `read_config` へ移す**（5 か所）
+- **egui フレームの中で錠を待つ読みを `read_config` へ移す**（対象の正本は下の「規範の検算」の表）
 - **例外文を「egui フレームの外の読み」へ書き直す**（規範文書＝合意済み）
 
 ## ユーザーの裁定（2026-08-17・Step 1 の要求判断）
@@ -121,7 +121,7 @@ engine lock を取る唯一の箇所**になっている。ADR が「安い」�
    `auto_hide_enabled` の doc に「毎フレーム無条件で読むのは意図的（`ADR-blur-grace-single-field-state-machine`）
    であり、その費用評価の前提は #1036 で変わったため `read_config` を通す」を 1 文で置く
 
-## 実装形（全 5 か所で共通）
+## 実装形（移行対象すべてで共通）
 
 `lang()`（`launcher_controller.rs:780`）と同型にする。`ADR-config-default-fallback-references`
 の規律に従い、既定値は**型から導く**（リテラルを置かない）。
@@ -135,8 +135,8 @@ crate::egui_shell::read_config(
 ```
 
 **`read` クロージャの中は純粋なフィールド取り出し（+ `clone`）に留める**——`read_config` の doc が
-「`read` の中で lock を取る操作を書かないこと」を要求する。5 か所とも現状が既にその形であり、
-条件を満たす。
+「`read` の中で lock を取る操作を書かないこと」を要求する。移行対象はどれも現状が既にその形で
+あり、条件を満たす（`resolve_tools` が呼ぶ `find_matching_tools` の純粋性は下の専用節で実測済み）。
 
 **`instant_prefix` / `auto_hide_enabled` の本体を呼び出し元へインライン展開しない**——
 `activation_uses_frame_values_not_live_reads`（`launcher_controller.rs:1856`）が起動の入口 3 本へ
@@ -181,12 +181,12 @@ activation_uses_frame_values` で実測・復元済み）。
    （`state.rs:79` の `engine.config_handle()`）。書き手は `engine.lock().update_config(..)` の
    1 本だけ（`state.rs:22-23`）
 2. **逆順ロックを新設しない。** `read_config` の guard を保持したまま `engine.lock()` を要求する
-   形を書かない。5 か所とも読み切って `clone` / `Copy` で返す
+   形を書かない。移行対象はどれも読み切って `clone` / `Copy` / `to_vec` で返す
 3. **一貫性の要件は無い。** `instant_prefix` の 3 呼び出し点はいずれも prefix を 1 回読んで
    引き回す形（#637 finding 9）。複数値の同時一貫性（#673 決定 4）は掛かっていない
 4. **`get_instant_commands` の異常系が変わる（意図的・挙動不変の唯一の破れ）。**
    現状は `app.state::<AppState>()` で AppState 不在なら **panic** する。`read_config` は
-   `try_state` ゆえ fallback へ落ちる。**移行 5 件のうちここだけが非対称である**——他 4 件は
+   `try_state` ゆえ fallback へ落ちる。**移行対象のうちここだけが非対称である**——ほかは
    現行も `try_state` なので fallback の有無が変わらない。
 
    **`AGENTS.md` 条件別チェックの「どの分岐が選ばれるかを決める値の出所を変更」に当たるため、
@@ -199,7 +199,7 @@ activation_uses_frame_values` で実測・復元済み）。
 
    **新しく生きるのは下段だけであり、そこは production から到達しない。**
    fallback は `Config::default().instant_commands`（型から導く・`ADR-config-default-fallback-references`
-   準拠。他 4 件および `lang()` と同じ流儀）。**`Vec::new()` にしない**——既定値を型から導く規律を
+   準拠。ほかの移行対象および `lang()` と同じ流儀）。**`Vec::new()` にしない**——既定値を型から導く規律を
    ここだけ破ると、既定の出所が 2 つになる。**panic が消える方向の変更である**ことを doc に書く
 5. **`read_background` は show 経路（フレーム外）だが移す。** 理由は「窓が出るまでを止める」ことと、
    **同じ関数の中で `read_metrics`（52 行）と `ime_off_on_show`（430 行）が既に `read_config` 側に
@@ -384,7 +384,7 @@ grep した結果、`workspace/plan.md` の移行対象表・`research.md` の�
   根拠: 当該 doc を再読して確認（帰属先が `fn instant_prefix(` / `fn auto_hide_enabled(` になり
   `entry_points` に一致しない）
 - **`get_instant_commands` の fallback 非対称**——「この値で初めて走る行」の列挙を不変条件 4 へ追加 —
-  根拠: `commands/instant.rs:10` が `app.state()`（panic）、他 4 件は `try_state`
+  根拠: `commands/instant.rs:10` が `app.state()`（panic）、ほかの移行対象はすべて `try_state`
 - **`search_state.rs:492` は消さず縮める**（#1079 の費用訂正の根拠）——変更ファイル表へ明記 —
   根拠: 当該 doc の文脈を再読
 - **`docs/architecture.md:228` は字面訂正でなく再導出が要る**——Phase 4 に既載（強調を追加）

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { snap } from "./test-helpers.mjs";
-import { gitIgnoredPaths, makeSnapshot, headingRefSourceDocs, headingRefDocs, governanceDocs } from "./lib.mjs";
+import { gitIgnoredPaths, makeSnapshot, headingRefSourceDocs, headingRefDocs, governanceDocs, sectionOf } from "./lib.mjs";
 import { scanHeadingRefs, checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkReferences } from "./checks/G-references.mjs";
@@ -166,5 +166,79 @@ describe("makeSnapshot の走査除外（#722）", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊れ方を赤にする）", () => {
+  // 守りたい対象 = 節を食う検査の母集団。切り出し器は狭すぎ／広すぎの 2 方向に壊れ、
+  // 向きを決めるのは切り出し器ではなく**切り出した結果を食う述語**である
+  // （許可集合への所属なら広がりは沈黙、集合の一致なら誤報）。ゆえにここでは
+  // 「宣言と実際の文書構造の食い違い」だけを機構で縛る。
+  const opts = (ending) => ({ file: "doc.md", ending });
+  const DOC = ["# t", "## A", "本文1", "### A1", "本文2", "## B", "本文3", ""].join("\n");
+
+  it("緑: ending:\"heading\" は同レベル以上の見出しで終端する（下位見出しは終端しない）", () => {
+    const r = sectionOf(DOC, /^## A$/, opts("heading"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("本文1\n### A1\n本文2");
+  });
+
+  it("緑: ending:\"eof\" は終端が無いときだけ通り、body は EOF まで伸びる", () => {
+    const r = sectionOf(DOC, /^## B$/, opts("eof"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("本文3\n");
+  });
+
+  it("赤①: アンカーが 0 件（見出しの改題・消滅で母集団が空になる）", () => {
+    const r = sectionOf(DOC, /^## Z$/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0].message).toContain("見出しが見つからない");
+  });
+
+  it("赤②: アンカーが 2 件以上（どれが本物か決まらない・母集団の曖昧化）", () => {
+    // findIndex 系の実装は先に現れた方を掴み、本物の節が照合されないまま緑になる
+    // （G-hook-fires が表のヘッダ多重度に対して置いた検知と同型）
+    const dup = ["# t", "## A", "x", "## B", "y", "## A", "z", "## C", ""].join("\n");
+    const r = sectionOf(dup, /^## A$/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0].message).toContain("2 本ある");
+    expect(r.findings[0].line, "2 本目を名指しする（1 本目は正しいかもしれない）").toBe(6);
+  });
+
+  it("赤③: ending:\"heading\" なのに終端が無い（節が EOF まで伸びる＝母集団が広がる）", () => {
+    const r = sectionOf(DOC, /^## B$/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings[0].message).toContain('ending: "heading"');
+  });
+
+  it("赤④: ending:\"eof\" なのに終端が在る（宣言が腐った——片側だけ検算すると宣言が写しとして腐る）", () => {
+    // ④ が無いと `ending` の宣言そのものが「誰も検算しない散文」になり、次に読む人はそれを信じる
+    const r = sectionOf(DOC, /^## A$/, opts("eof"));
+    expect(r.body).toBeNull();
+    expect(r.findings[0].message).toContain('ending: "eof"');
+    expect(r.findings[0].line, "終端が現れた行を名指しする").toBe(6);
+  });
+
+  it("緑: 本文が空の節（アンカーの直後が終端）は有効——空文字列を「節が無い」と読まない", () => {
+    const r = sectionOf(["## A", "## B", "x", ""].join("\n"), /^## A$/, opts("heading"));
+    expect(r.findings).toEqual([]);
+    expect(r.body).toBe("");
+  });
+
+  it("CRLF チェックアウトでも LF と同じ body を返す（`$` は `\\r` の手前に当たらない）", () => {
+    expect(sectionOf(DOC.replace(/\n/g, "\r\n"), /^## A$/, opts("heading")).body).toBe("本文1\n### A1\n本文2");
+  });
+
+  it("g / y フラグ付きの正規表現は throw（lastIndex の持ち越しで行ごとの判定がずれる）", () => {
+    expect(() => sectionOf(DOC, /^## A$/g, opts("heading"))).toThrow(/g \/ y/);
+    expect(() => sectionOf(DOC, /^## A$/y, opts("heading"))).toThrow(/g \/ y/);
+  });
+
+  it("アンカーが ATX 見出しでない行に当たったら赤（レベルを推測しない）", () => {
+    const r = sectionOf(["# t", "本文 ## A", ""].join("\n"), /^本文/, opts("heading"));
+    expect(r.body).toBeNull();
+    expect(r.findings[0].message).toContain("見出しでない");
   });
 });

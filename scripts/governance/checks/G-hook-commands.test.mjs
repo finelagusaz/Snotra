@@ -56,6 +56,19 @@ describe("G-hook-commands checkHookCommands", () => {
     });
     expect(checkHookCommands(s)).toEqual([]);
   });
+  it("赤: カテゴリ A の終端見出しが失われた（母集団が後続の節へ流れ込む＝この検査では沈黙の向き）", () => {
+    // 述語は `docsLines.includes(cmd)` ＝許可集合への所属なので、母集団が広がっても赤くならない。
+    // 実測（2026-08-17・実 docs/build-commands.md）: `### B.` を落とすと cargo 行が 8 → 23 行へ広がる。
+    // 広がりそのものは沈黙するので、**広がりの原因である「終端の不在」を赤にする**
+    const s = snap({ ...base, "docs/build-commands.md": docsA.replace("### B. 次節", "普通の段落") });
+    const f = checkHookCommands(s);
+    expect(f.some((x) => x.message.includes('ending: "heading"'))).toBe(true);
+  });
+  it("赤: カテゴリ A のアンカーが 2 本ある（先に現れた方だけが照合され、本物の節が緑のまま素通りする）", () => {
+    const s = snap({ ...base, "docs/build-commands.md": `${docsA}\n### A. 二本目\n\n\`\`\`bash\ncargo x\n\`\`\`\n` });
+    const f = checkHookCommands(s);
+    expect(f.some((x) => x.message.includes("2 本ある"))).toBe(true);
+  });
   it("不混入: nodeSpec / vitest 系のコマンドは照合対象にしない", () => {
     // hookSrc の typecheck（nodeSpec）が docs に無くても緑のまま（対象は cargo 系のみ）
     expect(checkHookCommands(snap(base))).toEqual([]);

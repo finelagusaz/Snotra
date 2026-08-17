@@ -1,5 +1,5 @@
 //! G-hook-commands — PostToolUse hook の cargo コマンド ↔ docs/build-commands.md カテゴリ A の照合（#589）。
-import { finding } from "../lib.mjs";
+import { finding, sectionOf } from "../lib.mjs";
 
 export const id = "G-hook-commands";
 
@@ -34,11 +34,16 @@ export function checkHookCommands(snapshot) {
   const docsPath = "docs/build-commands.md";
   const docsText = snapshot.read(docsPath);
   if (docsText == null) return [finding(docsPath, 1, "docs/build-commands.md が読めない（G-hook-commands）")];
-  // カテゴリ A 節の bash フェンス内 cargo 行を母集団にする（行末 # コメントを除去）
-  const sectionA = docsText.split(/^### A\. /m)[1]?.split(/^### /m)[0] ?? "";
+  // カテゴリ A 節の bash フェンス内 cargo 行を母集団にする（行末 # コメントを除去）。
+  // **この検査の述語は `docsLines.includes(cmd)` ＝許可集合への所属であり、母集団が広がる向きの
+  // 壊れ方は「沈黙」である**（hook のコマンドが乖離しても、広がった許可集合に偶然当たれば緑）。
+  // 旧実装は `### ` だけで終端したので、`### B.` の見出しが 1 本失われるだけで母集団が数倍に広がった。
+  // `sectionOf` は同レベル以上（`#`・`##`・`###`）で終端し、終端が無ければ赤にする
+  const secA = sectionOf(docsText, /^### A\. /, { file: docsPath, ending: "heading" });
+  if (secA.body == null) return secA.findings;
   // 行分割は \r?\n — CRLF checkout（Windows CI・autocrlf=true）では `.` が \r に
   // マッチしないため、\r を残すと行末コメント除去 `#.*$` が発火しない（PR #595 で実測）
-  const docsLines = sectionA
+  const docsLines = secA.body
     .split(/\r?\n/)
     .filter((l) => l.trim().startsWith("cargo "))
     .map((l) => l.replace(/\s+#.*$/, "").trim().split(/\s+/).join(" "));

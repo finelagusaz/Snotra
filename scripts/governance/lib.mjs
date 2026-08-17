@@ -62,6 +62,80 @@ export function linesOutsideFences(text) {
 
 export const finding = (file, line, message) => ({ file, line, message });
 
+/**
+ * 見出しで節を切り出す共有の口。**節を母集団にする検査はここを通る**——
+ * かつては 3 つの実装形（同レベル以上で終端 / `## ` だけで終端 / `### ` だけで終端）が
+ * 並んでいた。下位の実装形は、上位の見出しが 1 本消えるだけで節が次の節へ流れ込む。
+ *
+ * **切り出しを 1 本にしても、向きの分析は呼び出し点ごとに残る。**
+ * 母集団の広がりが沈黙になるか誤報になるかを決めるのは切り出し器ではなく、
+ * **切り出した結果を食う述語**である——許可集合への所属（`docsLines.includes(cmd)`）なら
+ * 広がりは沈黙、集合の一致・実在の主張なら広がりは誤報になる。ここが縛るのは
+ * 「宣言（`ending`）と実際の文書構造の食い違い」だけであり、それ以上ではない。
+ *
+ * `ending` は節の位置の宣言で、**双方向に検算する**——`"heading"` は終端が無ければ赤、
+ * `"eof"` は終端が在れば赤。片側だけにすると、宣言そのものが誰も検算しない写しとして腐り、
+ * 次に読む人はそれを信じる。
+ *
+ * 赤にするのは 4 条件（いずれも `body: null` を返す）:
+ *   ① アンカーが 0 件——見出しの改題・消滅で母集団が空になる
+ *   ② アンカーが 2 件以上——先に現れた方を掴み、本物の節が照合されないまま緑になる
+ *      （`G-hook-fires` が表のヘッダ多重度に対して置いた検知と同型）
+ *   ③ `ending: "heading"` なのに終端が無い——節が EOF まで伸びる
+ *   ④ `ending: "eof"` なのに終端が在る——宣言が腐った
+ *
+ * 行分割は `\r?\n` である。文書全文へ `^…$` を当てる形（旧 2 形）は CRLF チェックアウトで
+ * `$` が `\r` の手前に当たらず節を見失う——CI は ubuntu ＝ LF、このリポジトリの `.gitattributes` が
+ * 固定しているのは `.githooks/**` だけなので、`core.autocrlf=true` の機体で
+ * `npm run governance:check` を打った場合の話である（今日の露出は 0）。
+ *
+ * @param {string} text 文書全文
+ * @param {RegExp} headingRe アンカー行にだけ当たる正規表現。**行単位で当てる**ので `^`/`$` は行頭・行末を指す。
+ *   `g` / `y` は `lastIndex` の持ち越しで行ごとの判定がずれるため throw する（呼び出し側の契約違反であり、
+ *   文書の欠陥ではない——`registry.mjs` が id 不一致を throw で拒むのと同じ扱い）
+ * @param {{file: string, ending: "heading"|"eof"}} opts file は finding の帰属先
+ * @returns {{ body: string|null, findings: object[] }} body が null なら findings が非空
+ */
+export function sectionOf(text, headingRe, { file, ending }) {
+  if (headingRe.global || headingRe.sticky) {
+    throw new Error(`sectionOf: headingRe に g / y フラグは渡せない（lastIndex の持ち越しで行ごとの判定がずれる）: ${headingRe}`);
+  }
+  if (ending !== "heading" && ending !== "eof") {
+    throw new Error(`sectionOf: ending は "heading" か "eof" のいずれか（受け取った値: ${ending}）`);
+  }
+  const lines = text.split(/\r?\n/);
+  const anchors = lines.map((l, i) => (headingRe.test(l) ? i : -1)).filter((i) => i >= 0);
+  if (anchors.length === 0) {
+    return { body: null, findings: [finding(file, 1, `節の見出しが見つからない（アンカー: ${headingRe}）——見出しの改題・消滅で母集団が空になる`)] };
+  }
+  if (anchors.length > 1) {
+    return {
+      body: null,
+      findings: [finding(file, anchors[1] + 1, `節の見出し ${headingRe} が ${anchors.length} 本ある（どれが本物か決まらない・母集団の曖昧化）`)],
+    };
+  }
+  const start = anchors[0];
+  const level = lines[start].match(/^(#{1,6})\s/)?.[1].length;
+  if (level == null) {
+    return { body: null, findings: [finding(file, start + 1, `アンカー ${headingRe} が当たった行が ATX 見出しでない（節のレベルが決まらない）: ${lines[start]}`)] };
+  }
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^#{1,6}\s/.test(l) && l.match(/^#+/)[0].length <= level);
+  if (ending === "heading" && end < 0) {
+    return {
+      body: null,
+      findings: [finding(file, start + 1, `\`ending: "heading"\` の宣言に対し、同レベル以上の見出しが後方に無い（節が EOF まで伸び、母集団が広がる）: ${lines[start]}`)],
+    };
+  }
+  if (ending === "eof" && end >= 0) {
+    return {
+      body: null,
+      findings: [finding(file, start + end + 2, `\`ending: "eof"\` の宣言に対し、同レベル以上の見出しが後方に在る（宣言が腐った。節はこの行で終端している）: ${rest[end]}`)],
+    };
+  }
+  return { body: rest.slice(0, end < 0 ? rest.length : end).join("\n"), findings: [] };
+}
+
 /** `git check-ignore` は**ファイルの存在に依らずパス名だけで判定する**（2026-08-14 実測: 不在の
  *  `test-results/never-created.json` が当たり、`docs/nonexistent-typo.md` は当たらない）——これが
  *  「CI に存在しない生成物の名前を散文へバッククォートで書けない」という表記の歪みを解く（#1088）。

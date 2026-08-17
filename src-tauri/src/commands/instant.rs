@@ -18,7 +18,10 @@ fn matching_dtos(
         .collect()
 }
 
-/// instant 候補の絞り込み（`egui_shell` の Instant 枝と共有する唯一の実装）。
+/// instant 候補の絞り込み。**呼び出し元は `egui_shell` の Instant 枝 1 つだけである**——
+/// 共有相手だった IPC コマンドは #532 SU7 のフロント撤去で消滅した（同ファイルの
+/// `execute_instant_action_core` の doc がその撤去を記す）。**「drift 防止のために `commands/` に
+/// 在る」と読まないこと**——いま `commands/` に在るのは撤去の残りであって、共有の要請ではない。
 ///
 /// **この関数は `commands/` に在るが egui フレームの中で毎打鍵走る**——唯一の呼び出し元は
 /// `egui_shell::launcher_controller` の `run_search_with` の Instant 枝である。ゆえに config は
@@ -30,6 +33,11 @@ fn matching_dtos(
 /// **AppState 不在時に panic しなくなった**（#1076）: 以前は `app.state::<AppState>()` が
 /// panic していた。`.manage` は `.setup` より前ゆえ到達しない経路だが、そこでは既定の
 /// instant コマンドで絞り込みが走る（既定は型から導く・`ADR-config-default-fallback-references`）。
+/// **この fallback だけが `Config` 全体を建てる**——`instant_commands` は `Config` 直下の
+/// フィールドで狭い `Default` を持たないためで、`Config::default()` は走査パスの `exists()` と
+/// OS ロケールの読みを伴う。**到達しない経路ゆえ承知で払っている**（同 ADR が `LazyLock<Config>`
+/// を却下した理由はまさにこの I/O である）。**他の fallback へこの形を写さないこと**——
+/// あちらは狭い `Default` で足りる。
 pub fn get_instant_commands(
     prefix_input: String,
     app: tauri::AppHandle,

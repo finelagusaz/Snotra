@@ -909,7 +909,8 @@ impl LauncherController {
                     } => {
                         // §19.5: 前方一致フィルタ。毎打鍵同期（30ms debounce 撤廃・spec M3 実装確定）。
                         // indexing を見ない（§19.7: instant はインデックス非依存ゆえ構築中でも使用可）。
-                        // 候補取得は IPC コマンドと同一 fn を共有（二重実装の drift 防止・finding 5）。
+                        // 候補取得は `commands::instant` の 1 本を呼ぶ（かつては IPC コマンドと
+                        // 共有していたが、その相手は #532 SU7 で消滅した・同関数の doc が正本）。
                         let rows = crate::commands::instant::get_instant_commands(
                             filter_name,
                             self.app_handle.clone(),

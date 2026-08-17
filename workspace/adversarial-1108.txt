@@ -1,0 +1,157 @@
+## 壊せた項目
+
+- [命題3 / research.md 28-30行「start_index_build の本体に、列 0 の } は終端の 1 つしか現れない」]
+  現在は真だが、**将来偽になる形を実際に構成し、rustc でコンパイル・実行して確認した**。
+  一次証拠: scratchpad の `terminator_probe.rs`（`multiline_string_probe.rs` で raw string 単体の
+  コンパイル可否も別途確認済み・警告のみで成功）。
+
+  ```rust
+  pub fn start_index_build(flag: bool) -> bool {
+      let s = r#"foo
+  }
+  bar"#;
+      try_begin_index_build();
+      if flag { invalidate_icon_cache(); }
+      true
+  }
+  ```
+  この関数は実際にコンパイルが通る（`rustc` 実測）。提案されている「`lines()` で
+  `line == "}"` を終端にする」ロジックに通すと:
+  ```
+  terminated = true   ← 見つかる。だが raw string の中の "}" 行であり、本物の終端ではない
+  body2.contains("try_begin_index_build") = false
+  body2.contains("invalidate_icon_cache")  = false
+  ```
+  **「終端が見つかったこと」は「正しい終端が見つかったこと」を意味しない。** raw string /
+  複数行文字列は、`lines()` ベースの単純な `line == "}"` 判定を出し抜いて**列 0 の "}" を偽装**できる。
+
+  ただし severity には限定が要る: このケースでは truncate された結果、
+  `try_begin_index_build(` と `invalidate_icon_cache(` の**両方**が母集団から欠落し、
+  実際の `assert!(body.contains(...))` は 2 本とも**大声で失敗する**（indexing.rs の現行実装が
+  2 つの `contains` を canary 兼必須項目として使っているため）。つまりこの具体的な壊れ方は
+  **沈黙して緑にはならず、無関係な変更（文字列リテラルの追加)でテストが壊れるノイズ方向**に出る。
+  #1108 が問題にしている「沈黙して緑」という一次被害ではなく、「lines() 終端判定は
+  raw string / 複数行文字列の内容に脆弱である」という**設計上の脆さ**として報告する。
+
+  この所見を偽にする手順: `terminator_probe.rs` を書き換え、raw string の代わりに
+  通常の複数行文字列（`"foo\n}\nbar"` をソース中で改行を含めて記述する形）でも同じ結果になるかを
+  確認する。あるいは提案実装が `blankRustNonCode`（`G-module-linkage.mjs` のような文字列/コメント
+  除去の前処理）を経由するよう変更されていれば、この構成は無効化される——**実装案が
+  前処理を入れるなら、この所見は解消する**。
+
+## 壊せなかった項目
+
+- [命題1 / research.md 44-58行の表「他 3 サイトでは広すぎる方向で沈黙する変異が構成できない」]
+  3 サイトのソースを実際に読み、母集団切り出しロジックが「終端が見つからない」場合に
+  取る分岐を確認した:
+  - `launcher_controller.rs:1490` `method_body` — ループが `break` せず終わっても
+    `terminated` は `false` のままで、直後の `assert!(terminated, ...)` が無条件に発火する。
+    `indexing.rs` の `None => after`（黙って EOF を採用する）に相当する分岐が**存在しない**。
+  - `startup.rs:600` `count_matches_the_enum_declaration` — `split_once('}').expect(...)`。
+    `Option::expect` は `None` で無条件 panic。Rust の構文規則上 `enum Phase { ... }` は
+    かならず対応する `}` を持つ（さもなくばコンパイル不能）ため、探索対象の文字列は
+    ファイル中に必ず存在し、`None` に到達する経路自体が構造的に無い。
+  - `view.rs:1374` `assert_read_once_in_production` — `split_once("#[cfg(test)]").expect(...)`。
+    こちらは「アンカーより**前**を取る」形であり、EOF まで**伸びる**方向の脆弱性はそもそも
+    構造的に当てはまらない（伸びるとしたら逆に production 側が縮む＝狭すぎる方向で、
+    これは research.md 自身が「残る死角」として別に記録済み・現在 0 件と確認）。
+
+  実際に変異を構成しようとした（3 サイトそれぞれについて、アンカー文字列を偽の位置に
+  再配置する fixture を頭の中と `terminator_probe.rs` の骨格で試した）が、いずれも
+  「見つからない」場合の分岐が `.expect()` / `assert!` による無条件 panic であるため、
+  **どう変異させても「沈黙して緑」ではなく「大声で落ちる」にしかならない**。
+  これは `indexing.rs` の現行実装が持つ `None => after`（フォールバックして黙って進む）という
+  **分岐の形そのものが特殊**であることの裏返しであり、research.md の主張を追認する。
+
+  この所見を偽にする手順: 上記 3 関数のいずれかで `.expect()` / `assert!(terminated, ...)` を
+  `unwrap_or` や無条件 `Ok` 相当の値へ書き換える変異を実際にソースへ当て、`cargo test` が
+  緑のまま通るかを確認する（現状のコードのままでは構成不能、というのが本所見の主張である）。
+
+- [命題2 / research.md「ソーステキスト検査のシグネチャは include_str! の grep で完全」]
+  `include_str!` / `fs::read_to_string` / `include_bytes!` / `CARGO_MANIFEST_DIR` を
+  `*.rs` 全体で grep した。`include_str!` は 4 ファイル・5 箇所（indexing.rs 1・
+  startup.rs 1・launcher_controller.rs 2・view.rs 1）で research.md の主張と一致。
+  `fs::read_to_string` の残り全ヒットは `snotra-core/src/config.rs`（実際の config.toml /
+  バックアップファイルを読むテストであり自己ソース検査ではない）と
+  `snotra-settings/src/tabs/backup.rs`（同種）のみで、いずれも「自分のソーステキストを
+  読んで母集団を切り出す」形ではない。`include_bytes!` の唯一のヒットは PNG アイコンで
+  無関係。PowerShell 側（`*.psm1`）を `Get-Content.*$PSCommandPath` / `$MyInvocation` で
+  grep したが自己ソース読み取りの検査は 0 件。
+
+  この所見を偽にする手順: `env!("CARGO_MANIFEST_DIR")` と `fs::read_to_string` を
+  組み合わせて自分のソースファイルパスを構築するテストがどこかに無いかを、
+  変数を介した間接呼び出し（定数化されたファイル名など）まで含めて全文パターンで
+  再検索する。**ただし今回の grep は基本パターンのみで、変数経由の間接呼び出しは
+  探索していない**（⚠️ 参照）。
+
+- [命題4 / research.md「G-check-skill-enumeration.mjs の sectionOf は主に騒がしい向き」]
+  `scripts/governance/checks/G-check-skill-enumeration.mjs:41` の実装を読んだ:
+  `rest.slice(0, end < 0 ? rest.length : end)` — research.md の記述どおり EOF フォールバックが
+  実在する。`AGENTS.md` を読むと「## 条件別チェック」の後に「## 検証の作法」
+  「## RETROSPECTIVE.md の運用」という同レベル（`##`）見出しが実在し、現状では
+  `end` が正しく見つかる（EOF まで伸びない）。
+
+  さらに、`AGENTS.md` 全体を `/[a-z][a-z0-9-]*-check\b` で grep し、`/…-check` 参照が
+  どこに現れるかを確認した。ヒットは「## 条件別チェック」節の中（表の行）と、それより
+  **前**（「開発ワークフロー」節の `/symmetric-check` 言及）だけで、「検証の作法」
+  「RETROSPECTIVE.md の運用」の**どちらにも 1 件も無い**。ゆえに、たとえ将来
+  見出しレベルの変更で「条件別チェック」節の境界検出が EOF まで伸びたとしても、
+  **現状のテキストでは新たに拾われる `/…-check` 参照が 0 件であり、誤報も逆向きマスクも
+  発火しない**——research.md の「現状の欠陥ではない」という評価（示唆されている残余の
+  記述含め）を追認する。
+
+  この所見を偽にする手順: `AGENTS.md` の「検証の作法」または「RETROSPECTIVE.md の運用」
+  節の見出しレベルを `###` へ落とす（または `##` 見出し自体を削る）editを実際に当て、
+  `node scripts/governance/checks/G-check-skill-enumeration.mjs` 相当のロジックを
+  その変更後のテキストに対して走らせ、`inTable` が変化するかを確認する。
+
+- [命題5 / research.md「#1077 の事故は同一ファイル内の写しであり、crate 横断の写しが
+  事故を起こした実証は無い」]
+  `git show 3cf75a15 --stat` を実行した。変更ファイルは
+  `SPEC.md` / `docs/adr/ADR-activation-gate-placement.md` / `docs/architecture.md` /
+  `src-tauri/src/egui_shell/{launcher_controller.rs,layout.rs,mod.rs,search_state.rs,
+  view.rs,window_coordinator.rs}` のみで、**`indexing.rs` は含まれていない**。
+  `git log -S "fn method_body"` の唯一のヒットもこのコミットであり、research.md の
+  一次証拠と一致した。#1077 で壊れた 2 本の検知器は両方とも `launcher_controller.rs`
+  内（`mod tests`）にあり、`method_body` という同一ヘルパーの**同一ファイル内**の
+  写しである。crate 横断（例: `indexing.rs` と `launcher_controller.rs` の間で
+  切り出しコードそのものを書き写した)事故の実証は、このコミットにも他のどこにも
+  見当たらなかった。**この命題は壊せなかった。**
+
+  ただし research.md 自身が同時に指摘している「形の伝播」（`launcher_controller.rs:1589` の
+  doc が着想を `indexing.rs` の関数から引用している）も実際に該当箇所を読んで確認した:
+  `1589行`「ソーステキスト検査はそのどちらも要らない（`indexing.rs` の
+  `start_index_build_invalidates_the_icon_cache` と同じ形）」——research.md の引用は正確。
+
+## ⚠️ 確信の持てない所見
+
+- **G-module-linkage.mjs の raw string blank-to-EOF (`end < 0 ? n`, 127行) を「閉じない raw
+  string はそもそもコンパイルできないので無害」とする research.md の評価は、governance:check
+  が cargo build/check の後段でしか走らない前提に立っている。** その実行順序（governance:check
+  が構文的に壊れた Rust に対しても走りうるか、CI 上で cargo check が先に fail-fast するか）を
+  自分では未確認。もし governance:check が cargo チェックと独立に走る経路（pre-commit hook 等）
+  があるなら、一時的に構文が壊れた commit に対してこの EOF フォールバックが発火し、
+  孤児 mod を隠す窓が理論上開く。可能性は低いと考えるが実測していない。
+
+- **`method_body`（launcher_controller.rs の site 2）に対して、命題3で indexing.rs 向けに
+  構成した「raw string で終端記号を偽装する」変異を直接は試していない。** `method_body` は
+  `assert!(terminated, ...)` を持つため EOF までの widening は防がれるが、
+  「正しくない位置で `line == "    }"` が先に一致し、かつ forbidden 文字列
+  （`self.indexing()` 等）がその**後ろ**にある」形の複数行文字列を `on_enter` /
+  `activate_or_execute` / `shift_activate` の実装内に将来加えると、
+  `body.contains(canary)` は真のまま・`!body.contains(forbidden)` も（forbidden が
+  切り捨てられた領域にあるため）真のまま通り、**沈黙して緑になる**構成が理論上ある。
+  実装済みコードには該当する複数行文字列は現在存在しないため実害は無いが、
+  この経路を実際にコンパイル・実行して確認するところまではやっていない。
+
+- **命題2（`include_str!` grep の完全性）は、直接の `fs::read_to_string(env!(...) + "…")` の
+  ような変数構築されたパス経由の自己ソース読み取りまでは検索していない。** 文字列連結や
+  定数を介した間接呼び出しがあれば、単純な grep パターンでは見落とす
+  （`.claude/CLAUDE.md`「訳語」節とは別だが、`AGENTS.md`「列挙の完全性」節が警告する
+  「検索パターンは概念でなく綴りを列挙する」の典型的な死角と同型）。
+
+- **scripts/ 側の population-cut 検査の探索は網羅的ではない。** `indexOf('}')` /
+  `split('}')` / `.slice(0,` / `substring(0,` という限られたパターンで `scripts/` を
+  grep しただけであり、`while` ループでの手動カウンタ走査や正規表現ベースの別形は
+  この grep では拾えない。research.md の「follow-up issue の要否は人間判断へ回す」という
+  結論自体は変わらないが、「これで全部」という強い主張はできない。

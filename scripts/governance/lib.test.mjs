@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { snap } from "./test-helpers.mjs";
-import { gitIgnoredPaths, makeSnapshot, headingRefSourceDocs, headingRefDocs, governanceDocs, sectionOf } from "./lib.mjs";
+import { gitIgnoredPaths, makeSnapshot, headingRefSourceDocs, headingRefDocs, governanceDocs, sectionOf, linesOutsideFences } from "./lib.mjs";
 import { scanHeadingRefs, checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkReferences } from "./checks/G-references.mjs";
@@ -198,6 +198,57 @@ describe("makeSnapshot の走査除外（#722）", () => {
   });
 });
 
+describe("linesOutsideFences — マスクと、釣り合わないフェンスの検知", () => {
+  // 守りたい対象 = この関数を通す検査の母集団。閉じないフェンスは以降の全行を「内側」にするので、
+  // 検知を**この関数の中**へ置く（外の検査にすると、その文書一覧が消費側の写しになって腐る）
+  const F = "doc.md";
+
+  it("緑: 釣り合っていればフェンスの内側だけを落とし、finding は出ない", () => {
+    const findings = [];
+    const doc = ["外1", "```bash", "内1", "```", "外2", ""].join("\n");
+    const lines = linesOutsideFences(doc, F, findings);
+    expect(findings).toEqual([]);
+    expect(lines.map(([, l]) => l)).toEqual(["外1", "外2", ""]);
+    expect(lines.map(([n]) => n), "行番号は元の文書の 1 起点").toEqual([1, 5, 6]);
+  });
+
+  it("緑: フェンスが 1 つも無ければ全行が返る", () => {
+    const findings = [];
+    expect(linesOutsideFences("a\nb\n", F, findings)).toHaveLength(3);
+    expect(findings).toEqual([]);
+  });
+
+  it("赤: 開いたまま閉じないフェンスは finding になり、開いた行を名指しする", () => {
+    const findings = [];
+    const doc = ["外1", "```bash", "内1", "内2", ""].join("\n");
+    linesOutsideFences(doc, F, findings);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].file).toBe(F);
+    expect(findings[0].line, "開いた行（2 行目）を名指しする").toBe(2);
+    expect(findings[0].message).toContain("開いたまま閉じていない");
+  });
+
+  it("赤: 2 つ目のフェンスが閉じないときは、その開いた行を名指しする（1 つ目ではない）", () => {
+    const findings = [];
+    const doc = ["```", "a", "```", "b", "```", "c", ""].join("\n");
+    linesOutsideFences(doc, F, findings);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(5);
+  });
+
+  it("finding を積むだけで、返す行は変えない（マスクの意味論を静かに変えない）", () => {
+    const doc = ["外1", "```bash", "内1", ""].join("\n");
+    expect(linesOutsideFences(doc, F, []).map(([, l]) => l)).toEqual(["外1"]);
+  });
+
+  it("file / findings は必須（呼び出し側の契約違反は throw・文書の欠陥とは別扱い）", () => {
+    expect(() => linesOutsideFences("a", undefined, [])).toThrow(/file/);
+    expect(() => linesOutsideFences("a", "", [])).toThrow(/file/);
+    expect(() => linesOutsideFences("a", F)).toThrow(/findings/);
+    expect(() => linesOutsideFences("a", F, null)).toThrow(/findings/);
+  });
+});
+
 describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊れ方を赤にする）", () => {
   // 守りたい対象 = 節を食う検査の母集団。切り出し器は狭すぎ／広すぎの 2 方向に壊れ、
   // 向きを決めるのは切り出し器ではなく**切り出した結果を食う述語**である
@@ -293,17 +344,18 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
     expect(r.body).toBe("本文\n```\n## B\n```\n");
   });
 
-  it("受容する残余: 閉じていないフェンスの向きは ending ごとに違う（`eof` 側は沈黙する）", () => {
-    // 露出は今日 0 件だが、**沈黙する側は修正で新しく作られた**ので、その姿を実行可能な形で残す
-    // （散文だけだと、次に読む人が「向きは赤側」と読み違える。実際にこの doc が一度そう書いていた）
+  it("閉じていないフェンスは ending の両側で赤くなる（`eof` 側の沈黙を塞いだ地点）", () => {
+    // **この検査は一度、逆の主張を固定していた。** マスクを入れた直後は `ending: "eof"` が
+    // findings 0 件・body が EOF まで伸びる形で沈黙し（マスク以前は④で赤かった）、その姿を
+    // 残余として固定していた。`linesOutsideFences` が釣り合いを検算するようになって塞がっている。
     const doc = ["# t", "## A", "本文", "```bash", "## X", "後続本文", ""].join("\n");
-    const heading = sectionOf(doc, /^## A$/, opts("heading"));
-    expect(heading.body, "heading 側は③で赤くなる").toBeNull();
-    expect(heading.findings[0].message).toContain('ending: "heading"');
-
-    const eof = sectionOf(doc, /^## A$/, opts("eof"));
-    expect(eof.findings, "eof 側は④が発火せず沈黙する").toEqual([]);
-    expect(eof.body, "本来の終端 `## X` を飲み込んだまま EOF まで伸びる").toContain("## X");
+    for (const ending of ["heading", "eof"]) {
+      const r = sectionOf(doc, /^## A$/, opts(ending));
+      expect(r.body, `${ending}: マスクが信用できないので body を返さない`).toBeNull();
+      expect(r.findings).toHaveLength(1);
+      expect(r.findings[0].message).toContain("開いたまま閉じていない");
+      expect(r.findings[0].line, "フェンスを開いた行を名指しする").toBe(4);
+    }
   });
 
   it("by は必須（finding が対象文書しか名指さないと、直す先の `ending` へ辿り着けない）", () => {

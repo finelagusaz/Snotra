@@ -19,7 +19,7 @@ export function checkSpecSections(snapshot, docs) {
   const sections = new Set();
   let prevTop = null;
   let prevSub = null;
-  for (const [lineNo, line] of linesOutsideFences(spec)) {
+  for (const [lineNo, line] of linesOutsideFences(spec, "SPEC.md", findings)) {
     const top = line.match(/^## (\d+)\. /);
     if (top) {
       const n = Number(top[1]);
@@ -47,7 +47,7 @@ export function checkSpecSections(snapshot, docs) {
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) continue; // 母集団欠落は G-references が報告する
-    for (const [lineNo, line] of linesOutsideFences(text)) {
+    for (const [lineNo, line] of linesOutsideFences(text, doc, findings)) {
       for (const m of line.matchAll(/SPEC(?:\.md)?`?(?: の)? ?§(\d+(?:\.\d+)?)/g)) {
         if (!sections.has(m[1])) {
           findings.push(finding(doc, lineNo, `SPEC §${m[1]} が SPEC.md に実在しない`));

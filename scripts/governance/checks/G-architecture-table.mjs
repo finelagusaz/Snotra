@@ -16,7 +16,7 @@ export function checkArchitectureTable(snapshot) {
   const p = "docs/architecture.md";
   const text = snapshot.read(p);
   if (text == null) return [finding(p, 1, "docs/architecture.md が読めない")];
-  for (const [lineNo, line] of linesOutsideFences(text)) {
+  for (const [lineNo, line] of linesOutsideFences(text, p, findings)) {
     if (/^\|\s*`[^`]+\.(rs|ts|tsx|mts|mjs)`\s*\|/.test(line)) {
       findings.push(finding(p, lineNo, `ファイル単位のモジュール表行が再導入されている: ${line.trim().slice(0, 60)}（責務の正本は //! / TSDoc・#562）`));
     }

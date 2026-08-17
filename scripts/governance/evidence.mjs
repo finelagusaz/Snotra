@@ -69,6 +69,11 @@ export function evidenceView(source, findings) {
  *  `get` トラップが合成するので実体を持たず、export もしていない。ゆえに「view を外して
  *  生の袋を渡す」形はここで落ちる。
  *
+ *  **受容する残余**: brand が拒めるのは view でないものだけであり、**findings の届き先までは見ない**
+ *  ——`evidenceView(bag, [])` のように捨てられる配列を渡して作った view は brand を持つので通る
+ *  （未記録の読みは finding になるが、どこへも届かない）。今日の呼び出し点は `runAll` 1 つで、
+ *  そこは `findings` を渡している。
+ *
  *  **かつてこれは散文の規約だった**（「引数を view だけにしてあるので構造で保たれる」）。
  *  それは偽で、view を外しても throw せず、供給が揃った状態では `governance-check.test.mjs` の
  *  カナリアも `npm test` も緑のままだった（2026-08-17 実測: `governance:check` exit 0 /

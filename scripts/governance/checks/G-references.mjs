@@ -50,7 +50,7 @@ export function checkReferences(snapshot, docs, filterIgnored = () => new Set())
       findings.push(finding(doc, 1, "対象文書が読めない（G-references 母集団の欠落）"));
       continue;
     }
-    for (const [lineNo, line] of linesOutsideFences(text)) {
+    for (const [lineNo, line] of linesOutsideFences(text, doc, findings)) {
       // (i) Markdown リンク
       for (const m of line.matchAll(/\[[^\]]*\]\(([^()\s]+)\)/g)) {
         let target = m[1];

@@ -172,7 +172,7 @@ export function scanStaleIdentifiers(snapshot, docs) {
       findings.push(finding(doc, 1, "対象文書が読めない（G-stale-identifiers 母集団の欠落）"));
       continue;
     }
-    for (const [lineNo, line] of linesOutsideFences(text)) {
+    for (const [lineNo, line] of linesOutsideFences(text, doc, findings)) {
       for (const m of line.matchAll(/`([^`\n]+)`/g)) {
         const raw = m[1];
         if (raw.includes("/") || raw.includes(" ")) continue;

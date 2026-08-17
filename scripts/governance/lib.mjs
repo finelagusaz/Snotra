@@ -65,17 +65,53 @@ export function makeSnapshot(root) {
   };
 }
 
-/** コードフェンス（``` 行）の内側を落として [lineNo, text] を返す（誤検出源: SPEC.md の TOML コメント等） */
-export function linesOutsideFences(text) {
+/**
+ * コードフェンス（``` 行）の内側を落として `[lineNo, text]` を返す（誤検出源: SPEC.md の TOML コメント等）。
+ *
+ * **釣り合っていないフェンス（開いたまま閉じない）を finding にする。** 閉じないフェンスは
+ * 以降の全行を「内側」にするので、この関数を通す検査はその範囲を丸ごと見なくなる。**向きは
+ * 呼び出し点で決まり、赤くなる側だけではない**——`sectionOf` の `ending: "eof"` は、本来の終端見出しが
+ * マスクされて findings 0 件のまま body が EOF まで伸びる（2026-08-17 実測）。
+ *
+ * **検知をこの関数の中に置くのは、母集団を一致させるためである。** 別の検査として外に置くと、
+ * その検査が持つ文書一覧は消費側の母集団の写しになり、新しい消費者が現れたときに黙って射程から外れる。
+ * 中に在れば「マスクされる入力」と「検算される入力」は構造上つねに同じものになる。
+ *
+ * **向きの使い分け**（`sectionOf` と同じ区別）:
+ *   - `file` / `findings` の欠落は **throw**——呼び出し側の契約違反であって文書の欠陥ではない
+ *   - 釣り合わないフェンスは **finding**——文書の欠陥である。throw にすると registry 経由の検査が
+ *     スタックトレースで落ち、どの文書が原因かも `file:line` の形で出ない
+ *
+ * **受容する残余**: 同じ文書を複数の検査が走査するので、1 つの欠陥から重複した finding が出る
+ * （既に赤い状態でのみ起こるので受容する）。
+ *
+ * @param {string} text 文書全文
+ * @param {string} file finding の帰属先（対象文書のパス）。**必須**
+ * @param {object[]} findings 釣り合わないフェンスを積む先。**必須**
+ */
+export function linesOutsideFences(text, file, findings) {
+  if (typeof file !== "string" || file === "") {
+    throw new Error(`linesOutsideFences: file（finding の帰属先）は必須（受け取った値: ${file}）`);
+  }
+  if (!Array.isArray(findings)) {
+    throw new Error(`linesOutsideFences: findings（finding を積む配列）は必須（受け取った値: ${findings}）`);
+  }
   const out = [];
   let inFence = false;
+  let openedAt = 0;
   text.split("\n").forEach((line, i) => {
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
+      if (inFence) openedAt = i + 1;
       return;
     }
     if (!inFence) out.push([i + 1, line]);
   });
+  if (inFence) {
+    findings.push(
+      finding(file, openedAt, "コードフェンスが開いたまま閉じていない——以降の全行がフェンスの内側と判定され、この文書を走査する検査の母集団から落ちる"),
+    );
+  }
   return out;
 }
 
@@ -118,13 +154,12 @@ export const finding = (file, line, message) => ({ file, line, message });
  * **body の切り出しは生の行で行う**（フェンスの中身を落とさない）——落とすと、まさに上の
  * cargo 行のようなフェンス内が母集団である検査を、この関数自身が空にしてしまう。
  *
- * **受容する残余**: 閉じていないフェンスがあると以降の全行が「内側」になる。**その向きも呼び出し点で
- * 決まる**（上と同じ原理がここにも当たる）——フェンスがアンカーより前で開けばアンカーが消えて①が赤く、
- * アンカーの後で開いた場合は `ending: "heading"` なら③が赤くなるが、**`ending: "eof"` は沈黙する**
+ * **閉じていないフェンスは `linesOutsideFences` が finding にする**（そちらの doc が正本）。
+ * マスクを導入した当初はここに残余が在った——フェンスがアンカーより前で開けばアンカーが消えて①が赤いが、
+ * アンカーの後で開いた場合、`ending: "heading"` は③で赤くなる一方 **`ending: "eof"` は沈黙した**
  * （本来の終端見出しがマスクされて `end` が -1 のままになり、findings 0 件で body が EOF まで伸びる。
- * 2026-08-17 実測）。この形は修正前には④で赤くなっていたので、**沈黙は新しく作られた側である**。
- * 露出は今日 0 件（`sectionOf` が読む 8 文書のフェンスはすべて閉じている）。塞ぐには
- * `linesOutsideFences`（7 検査が共有する）へフェンスの釣り合いの検知を足すことになり、ここでは行わない。
+ * 2026-08-17 実測）。マスク以前はこの形が④で赤くなっていたので、沈黙はマスクが作った側だった。
+ * ゆえに切り出しへ入る前にフェンスの釣り合いを検算し、崩れていれば `body: null` を返す。
  *
  * @param {string} text 文書全文
  * @param {RegExp} headingRe アンカー行にだけ当たる正規表現。**行単位で当てる**ので `^`/`$` は行頭・行末を指す。
@@ -148,7 +183,11 @@ export function sectionOf(text, headingRe, { file, ending, by }) {
   const at = ` — 宣言元: ${by}`;
   const lines = text.split(/\r?\n/);
   // フェンスの外の行番号（1 起点）。**マスクとしてだけ使い、body はこの集合から組まない**
-  const outside = new Set(linesOutsideFences(text).map(([n]) => n));
+  const fenceFindings = [];
+  const outside = new Set(linesOutsideFences(text, file, fenceFindings).map(([n]) => n));
+  // 釣り合わないフェンスの下でマスクは信用できない——④が沈黙する形がここに在る。
+  // `body: null` を返すことで「body が null なら findings が非空」の契約も保たれる
+  if (fenceFindings.length > 0) return { body: null, findings: fenceFindings };
   const anchors = lines.map((l, i) => (headingRe.test(l) && outside.has(i + 1) ? i : -1)).filter((i) => i >= 0);
   if (anchors.length === 0) {
     return { body: null, findings: [finding(file, 1, `節の見出しが見つからない（アンカー: ${headingRe}）——見出しの改題・消滅で母集団が空になる${at}`)] };

@@ -9,15 +9,28 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-/** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対パス
- *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
- *  落とさないため、PATHS 側はルート錨止めにする
- *  **PATHS の照合は `rel` の完全一致である**——一致したディレクトリへ降りないので配下ごと落ちる。
- *  `docs/.superpowers` も `.superpowers-extra` も `rel` が一致しないので巻き込まない（#728）
- *  `.superpowers/` は SDD（subagent-driven-development）の作業バッファで、gitignore 済みゆえ CI の
- *  チェックアウトには存在しない——走査に含めると同じコマンドが手元と CI で別の母集団を見る（#722）。 */
-const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
-const WALK_EXCLUDE_PATHS = ["workspace", ".claude/worktrees", ".superpowers"];
+/** 走査から除外するディレクトリ。
+ *  **PATHS の照合は `rel` の完全一致＝ルート錨止めである**——一致したディレクトリへ降りないので
+ *  配下ごと落ちる。`docs/.superpowers` も `.superpowers-extra` も `rel` が一致しないので
+ *  巻き込まない（#728）。`.superpowers/` は SDD（subagent-driven-development）の作業バッファで、
+ *  gitignore 済みゆえ CI のチェックアウトには存在しない——走査に含めると同じコマンドが手元と CI で
+ *  別の母集団を見る（#722）。
+ *
+ *  **生成物（`node_modules` / `target` / `dist`）も PATHS 側に置く**（#1089）。かつては名前一致・
+ *  全階層で落としており、`demo/src/target/orphan.rs` のような `.rs` が**どの深さでも**母集団から
+ *  消えていた——`G-module-index` の逆方向も `G-module-linkage` も見ないまま緑になる形で、
+ *  **向きは沈黙である**。ネストした同名ディレクトリは今日 0 件（2026-08-17 実測。4 crate 配下に
+ *  `target/` は不在）ゆえ露出は 0 で、塞いだのは将来その形が現れたときの沈黙である。
+ *  **失うもの**: 2 つ目の npm パッケージを置くと `ui/node_modules` が走査に入り、遅く・赤くなる
+ *  ——向きはノイズ＝安全側であり、気づかれる（沈黙は気づかれない）。そのときは PATHS へ 1 行足す。
+ *
+ *  **`.claude/hooks/lsp-config.mjs` の同型（`ADR-claude-code-ra-lsp-plugin-delivery.md`「受容する残余」）
+ *  とは足並みを揃えない。** 理由は 3 つ: (1) 今日すでに非対称である——あちらは `worktrees` を名前一致で
+ *  落とし、こちらは `.claude/worktrees` をルート錨止めで落とす（#728）。「両方直す」は対称性の回復では
+ *  なく**新規の創出**になる (2) 母集団の意味が違う——こちらは検査の入力、あちらは ratoml の探索である
+ *  (3) ADR は凍結された歴史ゆえ書き換えない（`ADR-adr-frozen-history`）。 */
+const WALK_EXCLUDE_NAMES = new Set([".git"]);
+const WALK_EXCLUDE_PATHS = ["workspace", ".claude/worktrees", ".superpowers", "node_modules", "target", "dist"];
 
 /** リポジトリを歩いて snapshot（files: "/" 区切り相対パス一覧, read(rel)）を作る。
  *  列挙は fs 自身に問う（`git ls-files` の pathspec `**` 意味論の罠を避ける・health-check Check 1 注記） */

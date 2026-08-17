@@ -167,6 +167,35 @@ describe("makeSnapshot の走査除外（#722）", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("生成物の除外はルート錨止めである（任意の深さの同名ディレクトリを落とさない・#1089）", () => {
+    // 守りたい対象 = ネストしたソースディレクトリ。名前一致・全階層で落とすと、
+    // `demo/src/target/orphan.rs` のような `.rs` が**どの深さでも**母集団から消え、
+    // `mod` 宣言を持たない孤児でも findings 0（緑）になる——向きは沈黙である。
+    // 今日のリポジトリにネストした target/dist/node_modules は 0 件（2026-08-17 実測）ゆえ
+    // 露出は 0 で、塞いだのは将来この形が現れたときの沈黙である。
+    const root = mkdtempSync(path.join(tmpdir(), "gov-walk-nested-"));
+    try {
+      for (const d of ["demo/src/target", "target", "node_modules", "dist", "ui/node_modules"]) {
+        mkdirSync(path.join(root, d), { recursive: true });
+      }
+      writeFileSync(path.join(root, "demo/src/target/orphan.rs"), "fn f() {}\n");
+      writeFileSync(path.join(root, "target/build.rs"), "");
+      writeFileSync(path.join(root, "node_modules/pkg.js"), "");
+      writeFileSync(path.join(root, "dist/bundle.js"), "");
+      writeFileSync(path.join(root, "ui/node_modules/dep.js"), "");
+      const files = makeSnapshot(root).files;
+      expect(files, "ネストした target/ 配下が沈黙で母集団から消えている").toContain("demo/src/target/orphan.rs");
+      // ルート直下の生成物は従来どおり落ちる
+      expect(files.filter((f) => f.startsWith("target/"))).toEqual([]);
+      expect(files.filter((f) => f.startsWith("node_modules/"))).toEqual([]);
+      expect(files.filter((f) => f.startsWith("dist/"))).toEqual([]);
+      // 失うもの: 2 つ目の npm パッケージを置くと走査に入る。向きはノイズ（安全側）
+      expect(files).toContain("ui/node_modules/dep.js");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊れ方を赤にする）", () => {

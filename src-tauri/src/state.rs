@@ -21,7 +21,10 @@ pub struct AppState {
     ///
     /// **書き手はここには居ない。** 設定を変えるのは `engine.lock().update_config(..)` の
     /// 1 本だけで、そちらは `&mut Engine` を要求する（`Engine` の `config` フィールドの doc）。
-    pub config: Arc<RwLock<Config>>,
+    ///
+    /// **このフィールドは private である**（#1129）——読む口は [`AppState::read_config`]、
+    /// 建てる口は [`AppState::new`] で、どちらもこのモジュールの中にある。射程は前者の doc。
+    config: Arc<RwLock<Config>>,
     pub indexing: AtomicBool,
     pub index_build_started: AtomicBool,
     /// Tracks main window visibility to avoid costly Win32 `is_visible()` IPC on hotkey toggle.
@@ -43,10 +46,38 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// config を読む（`engine` の `Mutex` を経ない）。**この crate で read guard を取る唯一の地点である**
-    /// ——**ただし表現不能化ではない**。`config` フィールドは `pub` ゆえ `state.config.read()` は今も
-    /// コンパイルを通る（正しい経路を 1 つに定めただけであり、製品の呼び出し点が 0 であることは
-    /// grep で測った事実にすぎない）。
+    /// `engine` を預かって managed state を建てる。
+    ///
+    /// **このモジュールの外から `AppState` を建てる道はこれだけである**（#1129）——`config` が
+    /// private ゆえ、外で構造体リテラルを書くと **E0451** で落ちる。`state.rs` の中では今も書ける。
+    ///
+    /// **`config` は engine が持つのと同じ `Arc` である——写しではない**（#1032・契約は
+    /// [`Engine::config_handle`] の doc）。別々に持って両方へ書く形にすると、書き手が片方を忘れた
+    /// 瞬間に UI と検索が違う設定で動く。**この一致を守る地点は 1 つになった**（#1129）——かつては
+    /// 構築点 3 か所がそれぞれ `engine.config_handle()` と書く規律だった。**規律が消えたのではない**
+    /// ——この関数の本体がそれであり、`app_state_config_is_the_same_arc_the_engine_holds` がそこを測る。
+    pub(crate) fn new(engine: Engine, initial_indexing: bool) -> Self {
+        // `Mutex::new(engine)` が engine をムーブするので、ハンドルを先に取る。
+        let config = engine.config_handle();
+        Self {
+            config,
+            engine: Mutex::new(engine),
+            indexing: AtomicBool::new(initial_indexing),
+            index_build_started: AtomicBool::new(false),
+            main_visible: AtomicBool::new(false),
+            index_generation: AtomicU64::new(0),
+        }
+    }
+
+    /// config を読む（`engine` の `Mutex` を経ない）。**この crate で read guard を取る唯一の地点である。**
+    ///
+    /// **閉じたのは外から届く綴りである**（#1129）——`config` は private ゆえ、このモジュールの外に
+    /// `state.config.read()` と書くと **E0616** で落ちる（回帰の形を注入して 2026-08-18 に実測）。
+    /// **`state.rs` の中（`#[cfg(test)] mod tests` を含む）では今も綴れる**——現にフィールドを綴って
+    /// いるのは、読む側が下の 1 行、書く側が [`AppState::new`] の初期化である。
+    ///
+    /// **迂回は塞がっていない**——`engine.lock().unwrap().config_handle().read()` は今も通る（同じ場で
+    /// 測った。#1123 が記録した残余であり、フィールドの可視性はそこへ届かない）。
     ///
     /// **`read` へ渡すのは純 CPU だけにする——錠も I/O も取らない。** 読みの間じゅう
     /// `update_config` の書き込みは進めないので、**中で不定時間ブロックしうるものはすべて禁じる**。
@@ -107,14 +138,7 @@ mod tests {
 
     fn test_state() -> AppState {
         let engine = Engine::new(Vec::new(), HistoryStore::load(), Config::default());
-        AppState {
-            config: engine.config_handle(),
-            engine: Mutex::new(engine),
-            indexing: AtomicBool::new(false),
-            index_build_started: AtomicBool::new(false),
-            main_visible: AtomicBool::new(false),
-            index_generation: AtomicU64::new(0),
-        }
+        AppState::new(engine, false)
     }
 
     /// **UI の live-read は engine lock の外で完了する**（#1032）。
@@ -151,6 +175,9 @@ mod tests {
     ///
     /// 別々に持って両方へ書く形にすると、同じ事実を 2 か所へ書く誤りになる——書き手が片方を
     /// 忘れた瞬間に、UI と検索が違う config で動く。
+    ///
+    /// **測る対象は [`AppState::new`] である**（#1129）——構築がそこへ集約されたので、この性質を
+    /// 破りうる地点は 1 つしかない。
     #[test]
     fn app_state_config_is_the_same_arc_the_engine_holds() {
         let state = test_state();

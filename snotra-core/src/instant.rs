@@ -1047,7 +1047,7 @@ mod tests {
     /// 2 つの旗はどちらも UI 側の分岐を通す条件である（`src-tauri` の
     /// `launcher_controller` を読んで確かめた）。
     /// `is_folder` が true だと→キーが `path`（URL や `exe args`）をディレクトリとして
-    /// 展開しにいく（ガードの連言は `execute_instant_selected` の直前にある）。
+    /// 展開しにいく。
     /// `is_error` が true だと `execute_instant_selected` が入口で return するので、
     /// `is_error: false` は**instant 行が実行可能であることの条件**である。
     #[test]

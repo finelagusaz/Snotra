@@ -230,6 +230,12 @@ impl Engine {
     /// **保持したまま `update_config` を呼ばないこと**——同じ `RwLock` を読みと書きで
     /// 二重に取ることになり、同一スレッドで自己デッドロックする。値を使い終えたら落とすか、
     /// 必要な値をコピーしてから手放す。
+    ///
+    /// **製品 crate（`src-tauri`）ではこの綴りを `clippy.toml` が禁じている**（#1122）——外側の
+    /// `Mutex<Engine>` 越しに読むとフレームが検索の完了まで返らないためで、UI は
+    /// `egui_shell::read_config` を通す。**改名・削除するなら、その禁止パスも同じ変更で直すこと**
+    /// ——解決しなくなっても型エラーにならず、`governance:check` も緑のままである（例外地点の
+    /// `#[expect]` が鳴りうるが、それが成り立つ条件は同ファイルの群 3 が正本）。
     pub fn config(&self) -> RwLockReadGuard<'_, Config> {
         self.config.read().unwrap()
     }

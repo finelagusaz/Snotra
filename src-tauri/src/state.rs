@@ -48,16 +48,20 @@ impl AppState {
     /// コンパイルを通る（正しい経路を 1 つに定めただけであり、製品の呼び出し点が 0 であることは
     /// grep で測った事実にすぎない）。
     ///
-    /// **`read` の中で `engine.lock()` を呼んではならない——遅くなるのではなく、両者が永久に待つ。**
-    /// 製品には `engine Mutex → config の write` という順序が実在する: `config_watcher` は
+    /// **`read` へ渡すのは純 CPU だけにする——錠も I/O も取らない。** 読みの間じゅう
+    /// `update_config` の書き込みは進めないので、**中で不定時間ブロックしうるものはすべて禁じる**。
+    /// 禁止は列挙ではない——`src-tauri` には engine 以外にも `IconCacheState` /
+    /// `SettingsProcessState` / updater の状態など多数の `Mutex` があり、どれを取っても同じ害が出る。
+    ///
+    /// **とくに `engine.lock()` は、遅くなるのではなく両者が永久に待つ。** 製品には
+    /// `engine Mutex → config の write` という順序が実在する: `config_watcher` は
     /// `state.engine.lock().unwrap().update_config(..)` と書き、`MutexGuard` が文の間じゅう生きた
     /// ままその内側で `config.write()` を取る。read guard を保持して `engine.lock()` を要求すれば
     /// **その逆順**になり、両者が互いを待つ。
     ///
-    /// **`read` の中で I/O も取らないこと。** ファイル I/O（`Path::is_dir` は死んだ UNC で最大
-    /// 21 秒塞がる・#524）を挟めば、その間 `update_config` の書き込みが進めず設定の適用が止まる。
-    /// **guard の中で最も重いのは `config_watcher` が読む `Config` 全体の clone である**——確保
-    /// だけで錠も I/O も取らず、移設前も engine 錠の内側で同じ複製をしていた。
+    /// **ファイル I/O も同じ理由で禁じる**（`Path::is_dir` は死んだ UNC で最大 21 秒塞がる・#524）。
+    /// **確保を伴う読みの実例として、`config_watcher` は `Config` 全体を clone する**——錠も I/O も
+    /// 取らないので規則に反しない（移設前も engine 錠の内側で同じ複製をしていた）。
     ///
     /// **クロージャ形が保証するのは guard を外へ持ち出せないことだけである**——中で錠や I/O を
     /// 書く形は構造では止まらない（**受容する残余**）。

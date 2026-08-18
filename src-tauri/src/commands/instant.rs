@@ -6,8 +6,8 @@ use snotra_core::instant::{expand_instant_command, filter_instant_commands};
 /// **DTO 化まで config の読みの中で終える必要がある**——`filter_instant_commands` が返すのは
 /// `Vec<&InstantCommand>` で、config を借りたままの参照だからである。読みの外へ出すには所有へ
 /// 移す一手が要り、それが `InstantCommandDto` への変換とちょうど同じ仕事になる。
-/// 行うのは文字列の確保までで、I/O も錠も無い（[`crate::AppState::read_config`] の
-/// 「`read` の中で `engine.lock()` も I/O も取らないこと」を満たす）。
+/// 行うのは文字列の確保までで、I/O も錠も無い
+/// （[`crate::AppState::read_config`] が読みの中に許す範囲に収まる）。
 fn matching_dtos(
     commands: &[InstantCommand],
     prefix_input: &str,

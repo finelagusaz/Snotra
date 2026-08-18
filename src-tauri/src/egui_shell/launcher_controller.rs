@@ -728,8 +728,7 @@ impl LauncherController {
     ///
     /// **解決は config の読みの中で行う**（#1076 で `engine.lock()` から
     /// [`crate::egui_shell::read_config`] へ移した）。`find_matching_tools` は錠も I/O も取らない
-    /// 純 CPU なので、[`crate::AppState::read_config`] の「`read` の中で `engine.lock()` も
-    /// I/O も取らないこと」に反しない——**その純粋性がこの形の前提である**（`snotra_core::opener` 側で
+    /// 純 CPU なので、[`crate::AppState::read_config`] が読みの中に許す範囲に収まる——**その純粋性がこの形の前提である**（`snotra_core::opener` 側で
     /// fs に触れるようになったら、解決を読みの外へ出すこと）。
     fn resolve_tools(&self, path: &str, is_folder: bool) -> Vec<OpenerTool> {
         crate::egui_shell::read_config(

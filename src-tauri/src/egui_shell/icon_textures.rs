@@ -146,4 +146,52 @@ mod tests {
             "可視集合外は drop される"
         );
     }
+
+    /// アイコン抽出ゲートが [`crate::egui_shell::results_view::RowsSnapshot::input_idle`] の
+    /// **意味論のまま**立っていることを、**ソーステキストで**固定する（#1133）。
+    ///
+    /// **述語のテストでは呼び出し点の脱落を捕まえられない**（この規範の正本は
+    /// `launcher_controller.rs` の `activation_entry_points_consult_the_display_gate` の doc）。
+    /// `input_idle` が運ぶのは「main の `search_debounce` が予約を持っていないか」だけで、
+    /// `ResultsView` にはテスト席が無い（構築が `AppHandle` を要求する）——ソーステキスト検査は
+    /// そのどちらも要らない。
+    ///
+    /// **この検査が `view.rs` にも `results_view.rs` にも住めない理由**（移設してはならない）:
+    /// 探す綴りは assert 自身の文字列リテラルとして**この検査のソースに書かれている**。検査を
+    /// 被検査ファイルへ置くと `include_str!` の母集団に needle が混入し、**本物のゲートを消しても
+    /// 自分自身のリテラルが見つかって緑のまま通る**——永久に落ちない不動点になる。#1133 の
+    /// Phase 0a で、実際に `results_view.rs` へ置いた版が変異 7（ゲートの削除）を素通りした。
+    /// **両方のファイルから独立した第三の場所に置くことが、この検査の成立条件である。**
+    ///
+    /// **これが落ちたとき失うもの**: instant 行のアイコンを出さない仕様（`SPEC.md` §3.4 / §19.5）を
+    /// **キー側ではなくこのゲート側で**表現すると、`input_idle` は「打鍵が止まった」より広い述語
+    /// なので、**worker 走査中のアイコン取得まで一緒に遅れる**退行が入る（`RowsSnapshot::input_idle`
+    /// の doc が `is_unsettled` について「同じ修正を当ててはならない」と名指ししている・#1074）。
+    /// しかも**絵は正しく見える**ため、挙動テストでは捕まらない。
+    ///
+    /// **残る死角は 2 つある。**
+    /// 1. 測っているのは部分文字列一致であって呼び出しではない。ゲートを別ヘルパーへ移しても、
+    ///    本体にこの綴りが残れば緑のまま通る。
+    /// 2. **より踏みやすい迂回がある**——`view.rs` が呼ぶ `is_search_armed()` の**中身**へ instant の
+    ///    条件を足せば、同じ害を、ここが見ている `view.rs` の 1 行を 1 文字も変えずに達成できる。
+    ///    **そこまで綴りで縛る形は採らない**——正当なリファクタリングまで赤にする検知器は無視される
+    ///    ようになる（#1133 のユーザー裁定「必要な分だけ縛る」）。
+    ///
+    /// **存在形の assert だけで書く**（否定形は母集団が消えたときに沈黙する）。`include_str!` の
+    /// 母集団は実ファイル全体なので空になりえない。
+    #[test]
+    fn icon_gate_keeps_input_idle_semantics() {
+        let view = include_str!("view.rs");
+        assert!(
+            view.contains("let input_idle = !self.controller.is_search_armed();"),
+            "view.rs の input_idle が search_debounce の armed 以外を材料にしている——\
+             instant のスキップをこのゲートで表現すると worker 走査中のアイコン取得まで遅れる（#1074 / #1133）"
+        );
+        let results_view = include_str!("results_view.rs");
+        assert!(
+            results_view.contains("if snapshot.input_idle {"),
+            "アイコン抽出要求が input_idle ゲートの内側に無い——連打中に icon worker を積む\
+             perf 退行が戻る（#532 SU4 の系譜）"
+        );
+    }
 }

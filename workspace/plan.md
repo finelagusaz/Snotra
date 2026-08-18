@@ -197,10 +197,18 @@ fn icon_gate_keeps_input_idle_semantics() {
 
 ### Phase 0（実装より前・1 コミット）
 
-- [ ] `results_view.rs` の `mod tests` に `icon_gate_keeps_input_idle_semantics` を追加する
-- [ ] 現状のコードでその検査が**緑**であることを確かめる
-- [ ] 変異 6（`input_idle` の導出へ instant の条件を足す）を当て、検査が赤になることを確かめて戻す
-- [ ] 変異 7（`if snapshot.input_idle` を外す）を当て、検査が赤になることを確かめて戻す
+- [x] ~~`results_view.rs` の `mod tests` に~~ **`icon_textures.rs` の `mod tests` に** `icon_gate_keeps_input_idle_semantics` を追加する（置き場を変更・下記「Phase 0a の発見」）
+- [x] 現状のコードでその検査が**緑**であることを確かめる
+- [x] 変異 6（`input_idle` の導出へ instant の条件を足す）を当て、検査が赤になることを確かめて戻す（移設の前後で 2 回とも赤）
+- [x] 変異 7（`if snapshot.input_idle` を外す）を当て、検査が赤になることを確かめて戻す（**移設前は緑のまま素通り**・移設後に赤）
+
+#### Phase 0a の発見 — 検知器が不動点になっていた
+
+**当初の置き場（`results_view.rs` の `mod tests`）では、変異 7 を当てても緑のまま通った。** `include_str!("results_view.rs")` が**自分自身**を読み、探している綴り `if snapshot.input_idle {` が**その assert 自身の文字列リテラルとして同じファイルに書かれている**ため、本物のゲートを消しても needle が必ず見つかる——**原理的に落ちない検査**だった。
+
+- **差分を読んでも気づけない**（テストは正しく書かれて見え、緑で、変異を当てて初めて分かる）
+- 対処は**第三のファイルへ移すこと**（`icon_textures.rs`）。needle が母集団に混入しない場所であることが、この検査の成立条件である。移設してはならない理由を検査自身の doc に書いた
+- **これは計画の「検知器を実装より前に置き、変異で落ちることまで測る」が捕まえた欠陥である。** 実装と同時に置いていれば、不動点は実装差分と一緒にコミットされていた
 - [ ] 実機ベースライン A 側を採る（`snotra.exe` の不在確認 → 隔離プロファイル → `@` 1 打鍵 → 番兵が `icon:extract_failed` に現れることの確認とレイテンシ L）
 
 ### Phase 1〜3（1 コミット）

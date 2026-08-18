@@ -901,7 +901,7 @@ command = "https://www.google.com/search?q={query}"
 
 - `name`: コマンド名（プレフィックス後に入力する文字列）。一意でなければならない
 - `description`: コマンドの説明（任意）。省略可
-- `display`: 結果リスト副テキストの表現（URL 種別は url、exec 種別は `exe args`）。ユーザーが設定する config フィールドではなく、バックエンドが DTO 生成時に常に算出する派生値。UI では `description` があればそれを優先表示し、無ければ `display` を表示する（§19.5 参照）
+- `display`: 結果リスト副テキストの表現（URL 種別は url、exec 種別は `exe args`）。ユーザーが設定する config フィールドではなく、`action` から算出する派生値。UI では `description` があればそれを優先表示し、無ければ `display` を表示する（§19.5 参照）
 - デフォルト登録済みコマンド（既定設定に含まれる）:
   - `g`: URL 種別 `https://www.google.com/search?q={query}`（Google 検索）
   - `gh`: URL 種別 `https://github.com/search?q={query}`（GitHub 検索）
@@ -1028,7 +1028,7 @@ query = "%SYSTEMROOT%"
 
 - プレフィックス（`@`）だけの入力: 登録済みコマンド名を全件表示
 - プレフィックス + 文字入力: コマンド名を前方一致で絞り込み（大文字小文字を区別しない）
-- 結果リストの副テキスト（`display` フィールド）:
+- 結果リストの副テキスト（§19.2 の `display`）:
   - URL 種別: URL テンプレート（例: `https://www.google.com/search?q={query}`）
   - exec 種別: `exe args` の組み合わせ（例: `C:\everything.exe -s {query}`）
   - `description` が設定されている場合、これを優先表示（`display` は表示されない）

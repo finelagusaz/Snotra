@@ -1,17 +1,19 @@
 //! インスタントコマンド（プレフィックス起動する URL/コマンドテンプレート）の展開処理。
 //!
 //! 変数プレースホルダ `{name | mod | ...}`（name = query/clip/date/uuid、修飾子パイプ）の
-//! 解析・展開と、シェル風の引数分割を提供する。各公開関数の契約は `///` を正とする
-//! （`split_args` / `expand_instant_command` / `expand_exec_args` / `collect_unknown_modifiers`
-//! / `filter_instant_commands`）。変数展開の中核（エンコードはシンクの責務・`{{X}}` エスケープ・
-//! date/uuid の実行時解決）は private の `expand_template` / `walk_template` / `parse_placeholder`
-//! / `format_date` の `///` を参照。
+//! 解析・展開と、シェル風の引数分割、および候補行の組み立てを提供する。各公開関数の契約は
+//! `///` を正とする（`split_args` / `expand_instant_command` / `expand_exec_args` /
+//! `collect_unknown_modifiers` / `matching_results`）。変数展開の中核（エンコードはシンクの
+//! 責務・`{{X}}` エスケープ・date/uuid の実行時解決）は private の `expand_template` /
+//! `walk_template` / `parse_placeholder` / `format_date` の `///` を、候補の絞り込みと副テキストの
+//! 導出は private の `filter_instant_commands` / `display_text` の `///` を参照。
 
 use chrono::{DateTime, Local};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use uuid::Uuid;
 
-use crate::config::InstantCommand;
+use crate::config::{InstantAction, InstantCommand};
+use crate::ui_types::SearchResult;
 
 /// `{date}`（書式省略時）の既定 strftime 書式。
 const DEFAULT_DATE_FMT: &str = "%Y-%m-%d";
@@ -305,9 +307,66 @@ pub fn expand_exec_args(
         .collect()
 }
 
+/// 結果リストの副テキスト（`SPEC.md`「19.2 設定構造」の `display`）を `action` から導く。
+///
+/// **`Legacy` の枝は実運用では到達しない防御である**——`apply_migrations()` が `Url` へ移すため
+/// load を通った config には残らない。`match` の網羅性のために置く（`InstantAction` に variant が
+/// 在る以上、挙動は決まっていなければならない）。
+///
+/// **設定画面（`snotra-settings` の instant タブ）が同じ導出を手書きで持っているが、寄せない**
+/// （#1124 で検討して却下した）。理由は 3 つで、(1) あちらは `description` と副テキストを**両方**
+/// 出すのに対しこちらは優先で片方だけ、(2) 寄せるにはこの関数を `pub` にする必要があり、
+/// **lib crate の `pub` 項目に `dead_code` は出ない**ので到達性の検出器を 1 つ失う
+/// （`docs/development-principles.md`「config の値は到達性の検出器を持たない」の括弧書き）、
+/// (3) あちらは移行を促す判定と 1 つの `match` に融合している。
+fn display_text(action: &InstantAction) -> String {
+    match action {
+        InstantAction::Url { url } => url.clone(),
+        InstantAction::Exec { exe, args } => {
+            if args.is_empty() {
+                exe.clone()
+            } else {
+                format!("{exe} {args}")
+            }
+        }
+        InstantAction::Legacy { command } => command.clone(),
+    }
+}
+
+/// instant 候補を前方一致で絞り、結果行へ組む（`SPEC.md`「19.5 マッチングと結果表示」）。
+///
+/// **owned な `SearchResult` を返すことが契約である。** 絞り込みが返すのは config を借りたままの
+/// 参照であり、読みの外へは出せない——所有への移しをこの関数の中で終えることで、呼び出し元は
+/// 戻り値をそのまま read guard の外へ持ち出せる。
+///
+/// **呼び出し元は config の読みの中からこれを呼ぶ。** 行うのは文字列の確保までで、I/O も錠も
+/// 取らない（読みの中で何をしてよいかの契約は `snotra` の `AppState::read_config` の doc が正本）。
+///
+/// [`display_text`] の算出を `description` 空の枝に置いてあるのは、**非空なら出来上がった
+/// 文字列をその場で捨てることになる**からである（#1124 以前はそうしていた）。
+pub fn matching_results(commands: &[InstantCommand], prefix_input: &str) -> Vec<SearchResult> {
+    filter_instant_commands(commands, prefix_input)
+        .into_iter()
+        .map(|c| SearchResult {
+            name: c.name.clone(),
+            path: if c.description.is_empty() {
+                display_text(&c.action)
+            } else {
+                c.description.clone()
+            },
+            is_folder: false,
+            is_error: false,
+        })
+        .collect()
+}
+
 /// Filter instant commands by prefix-matching `input` against command names.
 /// An empty `input` returns all commands.
-pub fn filter_instant_commands<'a>(
+///
+/// **crate の外へは出さない**——#1124 で `commands/instant.rs` の DTO 化が消え、絞り込みだけを
+/// 借用のまま受け取っていた crate 外の呼び出し元がそこで無くなったため、[`matching_results`] の
+/// 内側へ畳んだ。
+fn filter_instant_commands<'a>(
     commands: &'a [InstantCommand],
     input: &str,
 ) -> Vec<&'a InstantCommand> {
@@ -893,5 +952,109 @@ mod tests {
             !r[0].contains("{date}"),
             "second brace opened a placeholder: {r:?}"
         );
+    }
+
+    // ---- matching_results tests ----
+    //
+    // `SPEC.md`「19.5 マッチングと結果表示」の表示規則を直接固定する。**旧経路（DTO を経て
+    // 呼び出し元が組み直す形）の写しは書かない**——写しは実装を変えると一緒に動いてしまい、
+    // 規則を証明しなくなる。
+
+    fn url_cmd(name: &str, description: &str, url: &str) -> InstantCommand {
+        InstantCommand {
+            name: name.into(),
+            description: description.into(),
+            action: InstantAction::Url { url: url.into() },
+        }
+    }
+
+    #[test]
+    fn matching_results_prefers_description_over_display() {
+        let cmds = vec![url_cmd("g", "Google検索", "https://x")];
+        let r = matching_results(&cmds, "");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "g");
+        assert_eq!(r[0].path, "Google検索");
+    }
+
+    #[test]
+    fn matching_results_falls_back_to_url_when_description_empty() {
+        let cmds = vec![url_cmd("g", "", "https://x")];
+        assert_eq!(matching_results(&cmds, "")[0].path, "https://x");
+    }
+
+    #[test]
+    fn matching_results_display_exec_with_args() {
+        let cmds = vec![InstantCommand {
+            name: "ev".into(),
+            description: String::new(),
+            action: InstantAction::Exec {
+                exe: "everything.exe".into(),
+                args: "-s {query}".into(),
+            },
+        }];
+        assert_eq!(
+            matching_results(&cmds, "")[0].path,
+            "everything.exe -s {query}"
+        );
+    }
+
+    #[test]
+    fn matching_results_display_exec_no_args_has_no_trailing_space() {
+        let cmds = vec![InstantCommand {
+            name: "n".into(),
+            description: String::new(),
+            action: InstantAction::Exec {
+                exe: "notepad.exe".into(),
+                args: String::new(),
+            },
+        }];
+        assert_eq!(matching_results(&cmds, "")[0].path, "notepad.exe");
+    }
+
+    /// **実運用では到達しない防御的分岐である**——`Legacy` は `apply_migrations()` が `Url` へ
+    /// 移すため、load を通った config には残らない（`Config::load` の正常系・default 落ち・
+    /// 設定 GUI の保存・backup import のいずれもそうである）。`match` の網羅性のために枝が
+    /// 在る以上、その挙動は固定しておく。
+    #[test]
+    fn matching_results_display_legacy_is_defensive() {
+        let cmds = vec![InstantCommand {
+            name: "old".into(),
+            description: String::new(),
+            action: InstantAction::Legacy {
+                command: "https://legacy".into(),
+            },
+        }];
+        assert_eq!(matching_results(&cmds, "")[0].path, "https://legacy");
+    }
+
+    #[test]
+    fn matching_results_empty_input_returns_all() {
+        let cmds = vec![
+            url_cmd("g", "", "https://g"),
+            url_cmd("gh", "", "https://h"),
+        ];
+        assert_eq!(matching_results(&cmds, "").len(), 2);
+    }
+
+    /// §19.5: マッチが 0 件なら「該当なし」の行を出さず、結果を空にする。
+    #[test]
+    fn matching_results_no_match_is_empty() {
+        let cmds = vec![url_cmd("g", "", "https://g")];
+        assert!(matching_results(&cmds, "xyz").is_empty());
+    }
+
+    /// 2 つの旗はどちらも UI 側の分岐を通す条件である（`src-tauri` の
+    /// `launcher_controller` を読んで確かめた）。
+    /// `is_folder` が true だと→キーが `path`（URL や `exe args`）をディレクトリとして
+    /// 展開しにいく。
+    /// `is_error` が true だと `execute_instant_selected` が入口で return するので、
+    /// `is_error: false` は**instant 行が実行可能であることの条件**である。
+    #[test]
+    fn matching_results_rows_are_neither_folder_nor_error() {
+        let cmds = vec![url_cmd("g", "d", "https://g")];
+        let r = matching_results(&cmds, "");
+        assert!(!r[0].is_folder);
+        assert!(!r[0].is_error);
     }
 }

@@ -1,4 +1,4 @@
-use snotra_core::config::{InstantAction, InstantCommand, find_matching_tools};
+use snotra_core::config::find_matching_tools;
 use snotra_core::instant::{expand_exec_args, split_args};
 use std::process::Stdio;
 
@@ -222,36 +222,6 @@ pub(crate) fn launch_item_core(path: &str) -> LaunchResult {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// フロントへ返すインスタントコマンド情報（種別の内部構造を隠す）
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct InstantCommandDto {
-    pub name: String,
-    pub description: String,
-    pub display: String,
-}
-
-impl From<&InstantCommand> for InstantCommandDto {
-    fn from(c: &InstantCommand) -> Self {
-        let display = match &c.action {
-            InstantAction::Url { url } => url.clone(),
-            InstantAction::Exec { exe, args } => {
-                if args.is_empty() {
-                    exe.clone()
-                } else {
-                    format!("{exe} {args}")
-                }
-            }
-            InstantAction::Legacy { command } => command.clone(),
-        };
-        Self {
-            name: c.name.clone(),
-            description: c.description.clone(),
-            display,
-        }
-    }
-}
-
 /// 環境変数 `%VAR%` を展開する（Win32 ExpandEnvironmentStringsW）。非 Windows は素通し。
 pub(crate) fn expand_env(input: &str) -> String {
     #[cfg(windows)]
@@ -308,48 +278,7 @@ pub(crate) fn launch_exec_core(
 
 #[cfg(test)]
 mod tests {
-    use super::InstantCommandDto;
     use super::build_launch_args;
-    use snotra_core::config::{InstantAction, InstantCommand};
-
-    #[test]
-    fn instant_dto_display_url() {
-        let c = InstantCommand {
-            name: "g".into(),
-            description: "d".into(),
-            action: InstantAction::Url {
-                url: "https://x".into(),
-            },
-        };
-        assert_eq!(InstantCommandDto::from(&c).display, "https://x");
-    }
-    #[test]
-    fn instant_dto_display_exec_with_args() {
-        let c = InstantCommand {
-            name: "ev".into(),
-            description: String::new(),
-            action: InstantAction::Exec {
-                exe: "everything.exe".into(),
-                args: "-s {query}".into(),
-            },
-        };
-        assert_eq!(
-            InstantCommandDto::from(&c).display,
-            "everything.exe -s {query}"
-        );
-    }
-    #[test]
-    fn instant_dto_display_exec_no_args_has_no_trailing_space() {
-        let c = InstantCommand {
-            name: "n".into(),
-            description: String::new(),
-            action: InstantAction::Exec {
-                exe: "notepad.exe".into(),
-                args: String::new(),
-            },
-        };
-        assert_eq!(InstantCommandDto::from(&c).display, "notepad.exe");
-    }
 
     #[test]
     fn build_launch_args_appends_path_when_args_empty() {

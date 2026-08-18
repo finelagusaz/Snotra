@@ -151,9 +151,9 @@ fn apply_config_change(app: &AppHandle) {
 
     // アイコン表示を切ったらメモリ内キャッシュを手放す（`icons.bin` は残す）。**判定は old/new
     // で上に済ませ、破棄はここ——`update_config` より後——で撃つ。順序が correctness の条件で
-    // ある**: 先に撃つと、engine がまだ `show_icons=true` を返す隙に icon worker
+    // ある**: 先に撃つと、config がまだ `show_icons=true` を返す隙に icon worker
     // （`ensure_icon_cache_loaded_if_enabled` → `IconCache::load`）がキャッシュを建て直し、
-    // **無効なのに常駐したまま次のトグルか終了まで残る**。後に撃てば、engine を読む worker は
+    // **無効なのに常駐したまま次のトグルか終了まで残る**。後に撃てば、config を読む worker は
     // 偽を見て自分で `None` にする。**それでも窓は閉じない**——`update_config` の直前に真を
     // 読んだ worker は、この破棄の後に挿入しうる（`ensure_…` は config 読みと icon lock を
     // 別々に取る）。**これは受容する残余で、drain 上で撃っていた頃から在る**。

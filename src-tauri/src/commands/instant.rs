@@ -24,11 +24,12 @@ fn matching_dtos(
 /// 在る」と読まないこと**——いま `commands/` に在るのは撤去の残りであって、共有の要請ではない。
 ///
 /// **この関数は `commands/` に在るが egui フレームの中で毎打鍵走る**——唯一の呼び出し元は
-/// `egui_shell::launcher_controller` の `run_search_with` の Instant 枝である。ゆえに config は
-/// [`crate::egui_shell::read_config`] から読む（#1076）。#1032 条項の例外が名指すのは
-/// **egui フレームの外で行う読み**（icon worker・folder worker・tray スレッド）であって
-/// `commands/` というディレクトリではない——**弁別子はフレームを止めるかである**（正本は
-/// `src-tauri/CLAUDE.md`「モジュール構成」の当該条項）。
+/// `egui_shell::launcher_controller` の `run_search_with` の Instant 枝である。config は
+/// [`crate::egui_shell::read_config`] から読む（#1076 で `engine.lock()` から移した）。
+/// **どこで走るかは、いまはこの読み口の選択に効かない**——#1123 が条項から例外を無くし、
+/// config の読みは走る場所によらず `read_config` を通すようになった（正本は
+/// `src-tauri/CLAUDE.md`「モジュール構成」の当該条項）。**フレームの中であることが効くのは
+/// 別の規律である**: この関数が `read` の中で行うのは文字列の確保までで、I/O も錠も無い。
 ///
 /// **AppState 不在時に panic しなくなった**（#1076）: 以前は `app.state::<AppState>()` が
 /// panic していた。`.manage` は `.setup` より前ゆえ到達しない経路だが、そこでは既定の

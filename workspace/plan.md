@@ -128,22 +128,40 @@ config の読みを 4 か所すべて engine 錠の外へ出し、`Engine::confi
 
 ### Phase 2 — 条項の書き換えと散文の追随（**1 コミット**）
 
-- [ ] `src-tauri/CLAUDE.md` の条項を書き換える（例外・射程外・弁別子を全削除。残すのは `research.md` §0.5 の全項目）
-- [ ] `src-tauri/CLAUDE.md:24` と `config_watcher.rs:148-152`（**写しの対**）を同じ変更で直す
-- [ ] `src-tauri/src/commands/instant.rs` の doc の言い換えを書き換える
-- [ ] `src-tauri/src/egui_shell/launcher_controller.rs` の doc 2 か所の語を追随させる
-- [ ] `docs/architecture.md:231` の語を追随させる
-- [ ] `docs/build-commands.md:30` の群 3 への言及の要否を実読して判定し、必要なら直す
-- [ ] **書き換え後の条項を `**…**` で機械分割し、`research.md` §0.5 の全項目と 1 対 1 で突き合わせる**（3b の P4 が破った当の検算を、今度は書いた側で行う）
-- [ ] **`ADR-config-read-exception-discriminator` への生きた層からの引用が 1 件以上残っていることを確かめる**（`grep -rn "ADR-config-read-exception-discriminator" --include=*.md --include=*.rs --include=*.toml .`）。`G-adr-citations` は孤立を検知しない
-- [ ] **`grep -rn "弁別子|条項の例外|射程外" --include=*.rs --include=*.md --include=*.toml --include=*.mjs .` を打ち、残存が意図したものだけであることを確かめる**（`.md` 限定の grep で偽の全称を書いた失敗の再発防止）
-- [ ] `npm run governance:check` が緑
-- [ ] `cargo doc --workspace --no-deps --document-private-items` が緑
+- [x] `src-tauri/CLAUDE.md` の条項を書き換える（例外・射程外・弁別子を全削除。残すのは `research.md` §0.5 の全項目）
+- [x] `src-tauri/CLAUDE.md:24` と `config_watcher.rs:148-152`（**写しの対**）を同じ変更で直す
+- [x] `src-tauri/src/commands/instant.rs` の doc の言い換えを書き換える
+- [x] `src-tauri/src/egui_shell/launcher_controller.rs` の doc 2 か所の語を追随させる
+- [x] `docs/architecture.md:231` の語を追随させる
+- [x] `docs/build-commands.md:30` の群 3 への言及の要否を実読して判定し、必要なら直す
+- [x] **書き換え後の条項を `**…**` で機械分割し、`research.md` §0.5 の全項目と 1 対 1 で突き合わせる**（3b の P4 が破った当の検算を、今度は書いた側で行う）
+- [x] **`ADR-config-read-exception-discriminator` への生きた層からの引用が 1 件以上残っていることを確かめる**（`grep -rn "ADR-config-read-exception-discriminator" --include=*.md --include=*.rs --include=*.toml .`）。`G-adr-citations` は孤立を検知しない
+- [x] **`grep -rn "弁別子|条項の例外|射程外" --include=*.rs --include=*.md --include=*.toml --include=*.mjs .` を打ち、残存が意図したものだけであることを確かめる**（`.md` 限定の grep で偽の全称を書いた失敗の再発防止）
+- [x] `npm run governance:check` が緑
+- [x] `cargo doc --workspace --no-deps --document-private-items` が緑
 
 ### Phase 3 — ADR（**1 コミット**）
 
-- [ ] `docs/adr/ADR-config-read-without-exception.md` を書く（決定・却下した 4 点・帰結・受容する残余）
-- [ ] `npm run governance:check` が緑（G-adr-file-names / G-adr-citations）
+- [x] `docs/adr/ADR-config-read-without-exception.md` を書く（決定・却下した 4 点・帰結・受容する残余）
+- [x] `npm run governance:check` が緑（G-adr-file-names / G-adr-citations）
+
+### Phase 2 / 3 の実測ログ（2026-08-18）
+
+- **計画からの逸脱**: Phase 2 と Phase 3 を **1 コミットにまとめた**。条項が新 ADR を短縮引用
+  するため、**Phase 2 単独のコミットでは `G-adr-citations` が赤になる**（計画のフェーズ分割が
+  依存の向きを見落としていた）。
+- **条項の圧縮**: 太字節 **25 → 13**、1874 字。`research.md` §0.5 の全項目が着地
+  （機械分割 `re.findall(r'\*\*(.+?)\*\*')` で照合）。
+- **受け入れ条件 4 は最初の稿で立っていなかった**——歴史の説明として「例外」「弁別子」
+  「射程外」を残していた。末尾の ADR ポインタと役割が重複するので削り、**条項内の残存を
+  ゼロにした**（条項はさらに短くなった）。
+- **生きた層全体の残存**: `grep -rn "条項の例外|弁別子|群 3" --include=*.rs --include=*.md
+  --include=*.toml --include=*.mjs --include=*.ps1`（`workspace/` / `docs/adr/` /
+  `.superpowers/` / `docs/superpowers/` を除く）で **0 件**。
+- **G-adr-citations が効くことを測った**（無料の故障注入）: ADR を書く前に `governance:check`
+  が `src-tauri/CLAUDE.md:57 ADR の短縮引用が実在しない` で **exit 1**、ADR を置いて **exit 0**。
+- 再検証: `cargo fmt` / `clippy -D warnings` / `cargo doc` / `cargo test -p snotra`（292 passed）/
+  `governance:check`（**ADR 56 本・短縮引用 282 件**）すべて緑。
 
 ## テスト方針と検証コマンド
 

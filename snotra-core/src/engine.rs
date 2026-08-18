@@ -242,10 +242,6 @@ impl Engine {
     /// **`pub(crate)` では足りない**——製品の読み手が居なくなると `dead_code` が立ち、
     /// `-D warnings` の下で赤くなる。**公開面を減らすほうが、禁止を 1 つ足すより強い**
     /// （同じ判断の先例は `search.rs` の `sorted_prefix_len`）。
-    ///
-    /// **保持したまま `update_config` を呼ばないこと**——同じ `RwLock` を読みと書きで
-    /// 二重に取ることになり、同一スレッドで自己デッドロックする。値を使い終えたら落とすか、
-    /// 必要な値をコピーしてから手放す。
     #[cfg(test)]
     pub(crate) fn config(&self) -> std::sync::RwLockReadGuard<'_, Config> {
         self.config.read().unwrap()

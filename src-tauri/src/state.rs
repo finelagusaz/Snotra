@@ -43,21 +43,29 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// config を読む（`engine` の `Mutex` を経ない）。**この crate で read guard を取る唯一の地点である。**
+    /// config を読む（`engine` の `Mutex` を経ない）。**この crate で read guard を取る唯一の地点である**
+    /// ——**ただし表現不能化ではない**。`config` フィールドは `pub` ゆえ `state.config.read()` は今も
+    /// コンパイルを通る（正しい経路を 1 つに定めただけであり、製品の呼び出し点が 0 であることは
+    /// grep で測った事実にすぎない）。
     ///
-    /// **`read` の中で lock も I/O も取らないこと。** read guard を保持したまま `engine.lock()` を
-    /// 要求すれば錠を分けた意味が消え、待ちが両方に乗る。ファイル I/O
-    /// （`Path::is_dir` は死んだ UNC で最大 21 秒塞がる・#524）を挟めば、その間 `update_config` の
-    /// 書き込みが進めず、設定の適用がそこで止まる。**`read` へ渡すのは純 CPU だけにする。**
+    /// **`read` の中で `engine.lock()` を呼んではならない——遅くなるのではなく、両者が永久に待つ。**
+    /// 製品には `engine Mutex → config の write` という順序が実在する: `config_watcher` は
+    /// `state.engine.lock().unwrap().update_config(..)` と書き、`MutexGuard` が文の間じゅう生きた
+    /// ままその内側で `config.write()` を取る。read guard を保持して `engine.lock()` を要求すれば
+    /// **その逆順**になり、両者が互いを待つ。
     ///
-    /// **クロージャ形が保証するのは guard を外へ持ち出せないことだけである**——中で I/O を
+    /// **`read` の中で I/O も取らないこと。** ファイル I/O（`Path::is_dir` は死んだ UNC で最大
+    /// 21 秒塞がる・#524）を挟めば、その間 `update_config` の書き込みが進めず設定の適用が止まる。
+    /// **guard の中で最も重いのは `config_watcher` が読む `Config` 全体の clone である**——確保
+    /// だけで錠も I/O も取らず、移設前も engine 錠の内側で同じ複製をしていた。
+    ///
+    /// **クロージャ形が保証するのは guard を外へ持ち出せないことだけである**——中で錠や I/O を
     /// 書く形は構造では止まらない（**受容する残余**）。
     ///
     /// **`&AppHandle` しか持たない呼び出し元は [`crate::egui_shell::read_config`] を使う**
-    /// （あちらは `AppState` 不在の面倒を見てからここへ委譲する）。**口は 2 つだが、guard を
-    /// 取る地点はここ 1 つである。**
+    /// （あちらは `AppState` 不在の面倒を見てからここへ委譲する）。
     ///
-    /// 規範の全文と害は `src-tauri/CLAUDE.md`「モジュール構成」の config live-read 条項が正本。
+    /// 規範の全文と害は `src-tauri/CLAUDE.md`「モジュール構成」の当該条項が正本。
     pub fn read_config<T>(&self, read: impl FnOnce(&Config) -> T) -> T {
         read(&self.config.read().unwrap())
     }

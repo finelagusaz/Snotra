@@ -6,8 +6,8 @@
 use snotra_core::ui_types::SearchResult;
 use std::collections::{HashMap, HashSet};
 
-/// worker → driver のメッセージ。token は載せない——アイコンの staleness は path キー付けで
-/// 構造的に無害（遅延到着 texture は現行行の path でしか引かれない・SU4 決定 2）。
+/// worker → driver のメッセージ。token は載せない——アイコンの staleness はアイコンキー付けで
+/// 構造的に無害（遅延到着 texture は現行行のキーでしか引かれない・SU4 決定 2）。
 /// driver（view.rs の worker spawn / load_texture）が消費する（#532 SU4 Task 5）。
 pub(crate) enum IconMsg {
     Loaded(String, egui::ColorImage),

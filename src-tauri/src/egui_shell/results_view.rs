@@ -194,7 +194,7 @@ impl ResultsView {
     }
 
     /// 現結果集合の未取得アイコンを別スレッドで抽出し IconMsg を channel へ送る（SU4）。folder の
-    /// per-nav thread パターン踏襲。token は載せない（staleness は path キーで無害）。
+    /// per-nav thread パターン踏襲。token は載せない（staleness はアイコンキーで無害）。
     /// show_icons=false 時は呼ばない（呼び出し側でガード）。Task 5 で view.rs から移設
     /// （worker の wake は clone した results の ctx の `request_repaint()`・形は不変）。
     fn spawn_icon_load(&self, paths: Vec<String>, egui_ctx: egui::Context) {
@@ -566,7 +566,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let theme = &visual.row;
         let metrics = &visual.metrics;
         let show_icons = visual.show_icons;
-        // アイコン drain（token 無し・path キーで適用）。到着したら load_texture して map へ。
+        // アイコン drain（token 無し・アイコンキーで適用）。到着したら load_texture して map へ。
         // load_texture は egui context 必須ゆえ、ここ（results の update()・自窓 ctx）でのみ呼ぶ
         // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。Task 5 で
         // main（view.rs）から本 view へ移設: TextureHandle は窓の Context 従属のため、行描画と

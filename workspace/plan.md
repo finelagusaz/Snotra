@@ -246,11 +246,11 @@ fn icon_gate_keeps_input_idle_semantics() {
 
 ### Phase 4（1 コミット）
 
-- [ ] `SPEC.md` §3.4 に規則の正本を追加する
-- [ ] `SPEC.md` §19.5 の当該行を写像＋参照へ置換する
-- [ ] `docs/architecture.md` の「path キーで stale 無害」の行を更新する
-- [ ] 「path キー」と書いている**生きた** doc / コメント 3 か所を実装へ合わせる — `results_view.rs:570`（drain）・`results_view.rs:198`（`spawn_icon_load`）・`icon_textures.rs:8`（`IconMsg`）。**主張（staleness が構造的に無害）は変わらない**ので、変えるのは「path キー」→「アイコンキー」の語だけ
-- [ ] `docs/adr/ADR-instant-row-icon-key.md` を書く（案 A・案 B の却下理由）
+- [x] `SPEC.md` §3.4 に規則の正本を追加する
+- [x] `SPEC.md` §19.5 の当該行を写像＋参照へ置換する
+- [x] `docs/architecture.md` の「path キーで stale 無害」の行を更新する
+- [x] 「path キー」と書いている**生きた** doc / コメント 3 か所を実装へ合わせる — `results_view.rs:570`（drain）・`results_view.rs:198`（`spawn_icon_load`）・`icon_textures.rs:8`（`IconMsg`）。**主張（staleness が構造的に無害）は変わらない**ので、変えるのは「path キー」→「アイコンキー」の語だけ
+- [x] `docs/adr/ADR-instant-row-icon-key.md` を書く（案 A・案 B の却下理由）
 
 ### Phase 5
 

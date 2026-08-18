@@ -11,7 +11,7 @@ use crate::history::HistoryStore;
 use crate::indexer::is_hidden_or_system;
 use crate::query::to_lower_folded;
 use crate::search::SearchMode;
-use crate::ui_types::SearchResult;
+use crate::ui_types::{IconSource, SearchResult};
 
 #[derive(Debug, Clone)]
 pub struct DirEntryData {
@@ -133,6 +133,7 @@ fn collect_by_keyed(
                     path: String::new(),
                     is_folder: false,
                     is_error: false,
+                    icon: IconSource::FromPath,
                 },
             )
         })
@@ -152,6 +153,7 @@ pub fn sort_entries_unlimited(
             path: e.path,
             is_folder: e.is_folder,
             is_error: false,
+            icon: IconSource::FromPath,
         })
         .collect();
     let mut keyed = build_sort_keys(&entries, history);
@@ -171,6 +173,7 @@ pub(crate) fn score_entries(
             path: e.path,
             is_folder: e.is_folder,
             is_error: false,
+            icon: IconSource::FromPath,
         })
         .collect();
     let k = max_results.min(entries.len());
@@ -214,6 +217,7 @@ pub fn error_result(dir: &Path) -> Vec<SearchResult> {
         path: dir.to_string_lossy().to_string(),
         is_folder: false,
         is_error: true,
+        icon: IconSource::FromPath,
     }]
 }
 
@@ -780,6 +784,7 @@ mod tests {
             path: "C:\\zzz\\report".into(),
             is_folder: false,
             is_error: false,
+            icon: IconSource::FromPath,
         }];
         let out = filter_sorted(&cached, "zzz", SearchMode::Substring, 8);
         assert!(out.is_empty());
@@ -793,6 +798,7 @@ mod tests {
             path: format!("C:\\d\\{name}"),
             is_folder: false,
             is_error: false,
+            icon: IconSource::FromPath,
         }
     }
 

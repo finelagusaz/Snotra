@@ -924,9 +924,16 @@ impl LauncherController {
                         let rows = crate::egui_shell::read_config(
                             &self.app_handle,
                             |c| {
+                                // **アイコンキーの env 展開は起動側と同じ関数を通す**（#1133）
+                                // ——`launch_exec_core` が `expand_env(exe)` を実行するので、
+                                // ここで別の展開（あるいは無展開）にすると、`%VAR%` を含む exe が
+                                // **起動できるのにアイコンだけ出ない**。`ExpandEnvironmentStringsW`
+                                // 1 発ぶんが read guard の中に入るが、錠も I/O も取らず不定時間
+                                // ブロックしないので `AppState::read_config` の契約に反しない。
                                 snotra_core::instant::matching_results(
                                     &c.instant_commands,
                                     &filter_name,
+                                    crate::commands::launch::expand_env,
                                 )
                             },
                             Vec::new,

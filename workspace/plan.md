@@ -233,16 +233,16 @@ fn icon_gate_keeps_input_idle_semantics() {
 
 ### Phase 1〜3（1 コミット）
 
-- [ ] `snotra-core/src/ui_types.rs` に `IconSource` と `SearchResult.icon` と `icon_key()` を追加する
-- [ ] `snotra-core` 内の `SearchResult` 構築点を移行する（compile-fail が尽きるまで）
-- [ ] `snotra-core/src/instant.rs` の `matching_results` に `env_expand` を足し、種別 → `IconSource` を決める
-- [ ] snotra-core の単体テストを追加する（上記「追加するテスト」の snotra-core 分）
-- [ ] `src-tauri/src/egui_shell/icon_textures.rs` に `wanted_icon_keys` / `visible_icon_keys` / `icon_for_row` を新設する
-- [ ] `results_view.rs` の 3 か所を新設した純関数へ寄せる
-- [ ] `src-tauri` 内の `SearchResult` 構築点を移行する
-- [ ] `launcher_controller.rs` の `matching_results` 呼び出しへ `expand_env` を渡す
-- [ ] src-tauri の単体テストを追加する
-- [ ] 変異 1〜5 を順に当て、対応するテストが落ちることを確かめて戻す
+- [x] `snotra-core/src/ui_types.rs` に `IconSource` と `SearchResult.icon` と `icon_key()` を追加する
+- [x] `snotra-core` 内の `SearchResult` 構築点を移行する（compile-fail が尽きるまで）
+- [x] `snotra-core/src/instant.rs` の `matching_results` に `env_expand` を足し、種別 → `IconSource` を決める
+- [x] snotra-core の単体テストを追加する（上記「追加するテスト」の snotra-core 分）
+- [x] `src-tauri/src/egui_shell/icon_textures.rs` に `wanted_icon_keys` / `visible_icon_keys` / `icon_for_row` を新設する
+- [x] `results_view.rs` の 3 か所を新設した純関数へ寄せる
+- [x] `src-tauri` 内の `SearchResult` 構築点を移行する
+- [x] `launcher_controller.rs` の `matching_results` 呼び出しへ `expand_env` を渡す
+- [x] src-tauri の単体テストを追加する
+- [x] 変異 1〜5 を順に当て、対応するテストが落ちることを確かめて戻す
 
 ### Phase 4（1 コミット）
 

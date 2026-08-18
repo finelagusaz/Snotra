@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use snotra_core::config::OpenerTool;
-use snotra_core::ui_types::SearchResult;
+use snotra_core::ui_types::{IconSource, SearchResult};
 
 use crate::egui_shell::search_dispatch::{SearchDispatch, Settled};
 
@@ -432,6 +432,7 @@ impl SearchState {
                 path: t.exe.clone(),
                 is_folder: false,
                 is_error: false,
+                icon: IconSource::FromPath,
             })
             .collect();
         self.tool = Some(ToolFrame {
@@ -833,6 +834,7 @@ mod tests {
             path: format!("C:/{name}.exe"),
             is_folder: false,
             is_error: false,
+            icon: IconSource::FromPath,
         }
     }
 
@@ -1710,6 +1712,7 @@ mod tests {
             path: "C:\\proj".into(),
             is_folder: true,
             is_error: false,
+            icon: IconSource::FromPath,
         }]);
         s.enter_tool("C:\\proj".into(), true, make_tools());
         assert_eq!(s.view_kind(), ViewKind::Tool);
@@ -1734,6 +1737,7 @@ mod tests {
             path: "C:\\proj".into(),
             is_folder: true,
             is_error: false,
+            icon: IconSource::FromPath,
         }]);
         s.enter_tool("C:\\proj".into(), true, make_tools());
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);
@@ -1752,6 +1756,7 @@ mod tests {
             path: "C:\\dir".into(),
             is_folder: true,
             is_error: false,
+            icon: IconSource::FromPath,
         }]);
         s.enter_folder("C:\\dir".into(), false);
         s.set_folder_filter("fil".into());
@@ -1760,6 +1765,7 @@ mod tests {
             path: "C:\\dir\\child".into(),
             is_folder: false,
             is_error: false,
+            icon: IconSource::FromPath,
         }]);
         s.enter_tool("C:\\dir\\child".into(), false, make_tools());
         assert_eq!(s.view_kind(), ViewKind::Tool);
@@ -1784,6 +1790,7 @@ mod tests {
             path: "C:\\f".into(),
             is_folder: false,
             is_error: false,
+            icon: IconSource::FromPath,
         }]);
         s.enter_tool("C:\\f".into(), false, make_tools());
         s.reset(); // §18.5: ホットキー再表示（resetForShow）でツール選択はリセット
@@ -1800,6 +1807,7 @@ mod tests {
             path: "C:\\f".into(),
             is_folder: false,
             is_error: false,
+            icon: IconSource::FromPath,
         }]);
         s.enter_tool("C:\\f".into(), false, make_tools());
         s.set_query("@gh".into());

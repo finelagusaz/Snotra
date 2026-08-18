@@ -30,10 +30,13 @@
 #
 # **この禁止は crate 全体に掛かるので、欠陥を持たない地点も塞ぐ。** `EguiView::setup` は
 # `EguiWindow::new` から run_ui の**外**で呼ばれるため、そこでの global style 書き込みは第 1 pass から
-# 効く（＝ #751 の欠陥を持たない）。歴史上そこに style 書き込みは一度も無いので塞ぐ判断を採ったが、
-# 必要になったら `#[allow(clippy::disallowed_methods)]` + 理由コメントで開けること——
-# **それがこの群で sanctioned な解消手段である**（`view.rs` の `apply_exact_hit_test_style` が唯一の
-# 実使用）。**群ごとに違う**——群 3 は `#[expect]` を要求する（理由は同群のコメント）。
+# 効く（＝ #751 の欠陥を持たない）。**#900 の時点では**そこに style 書き込みが一度も無かったので塞ぐ
+# 判断を採ったが、必要になったら `#[allow(clippy::disallowed_methods)]` + 理由コメントで開けること——
+# **それがこの群で sanctioned な解消手段である**（実例は `view.rs` の `apply_exact_hit_test_style`。
+# `setup` から呼ばれるので上の「歴史上無い」はもう成り立たない）。
+# **群ごとに違う**——群 3 は `#[expect]` を要求する（理由は同群のコメント）。
+# **群 2 には解消手段を定めていない**——製品に正当な使用が生じない設計だからであり（下の群 2 の
+# コメント）、必要になった時点でそれ自体を設計判断として扱う。
 #
 # **この設定が死ぬ経路と、いま誰が見ているか**（いずれも 2026-08-06 に実測）:
 #   0. この lint は **warn 既定**である（`clippy-driver -W help` で実測）。**ルート `Cargo.toml` の
@@ -78,6 +81,8 @@
 # 巻き込む——crate ごとに分けたいという要件そのものが workspace lints と反対を向いている。
 # **一方でレベル（deny）は移した**（#950）: 禁止集合を持たない 3 crate では集合が空で無害であり
 # （`-D warnings` 無しで exit 0・診断なしを実測）、上の経路 0 が消えるからである。
+# **この段は全群に掛かる**（群 2 固有の話ではない）。
+#
 # ## 群 3: engine 錠越しの config の live-read（#1032 / #1076 / #1122）
 #
 # **守る命題**: この群が実効なら、`engine.lock().config()` の形の live-read は src-tauri の clippy で
@@ -100,14 +105,16 @@
 # （パスごとに 1 つしか書けず、呼び出し点ごとの分類を運べない）。
 #
 # 含めなかったもの:
-#   - `Engine::config_handle` — 返すのは `Arc` であって値ではなく、製品の呼び出し点は `main.rs` の
-#     `AppState` 構築だけである（他は `#[cfg(test)]` のヘルパー）。禁止すると構築そのものが不能に
-#     なる。**ただし `engine.lock()` 越しに取り直せば同じだけ待つ**——それは下の残余である。
+#   - `Engine::config_handle` — 返すのは `Arc` であって値ではなく、`AppState` の構築がこれを通る。
+#     禁止すると構築そのものが不能になる。**ただし `engine.lock()` 越しに取り直せば同じだけ待つ**
+#     ——それは下の残余である。
 #   - `AppState.config` 経由の読み（`egui_shell::read_config`）— engine の錠を経ないので、そもそも
 #     規範が**求めている**形である。
 #
 # **規範は機構より広い**（受容する残余）:
-#   - 機構が見るのは `Engine::config` という**綴り**であって害ではない。`Engine` の内側で config を
+#   - 機構が見るのは `Engine::config` という**綴りへの参照**であって害ではない（メソッド呼びの形に
+#     限らない——`let f = Engine::config;` のパス式も捕まることを 2026-08-17 に実測した）。
+#     `Engine` の内側で config を
 #     読む他のメソッド（`search` / `recent_history` / `begin_index_drain` 等）をイベントループから
 #     `engine.lock()` 越しに呼べば同じ待ちが同じだけ乗るのに、診断は出ない。
 #   - **記録した分類は黙って腐る。** 条項は「同じ関数が両方から呼ばれるようになれば分類は変わる」と
@@ -125,7 +132,10 @@
 # 付けると exit 0 / **禁止行を消すと注釈側が unfulfilled で赤** / **パスを書き損じても同じく赤**——
 # `does not refer to a reachable function` はそれ自体 exit 0（上の経路 1）だが、注釈がそれを赤へ
 # 変える。**G-clippy-disallowed が「緑は含意しない」と自ら宣言する前提（名指したパスが解決し
-# 続けること）は、この群についてはここで閉じている。** `cargo check` / `cargo test` / `cargo doc` /
+# 続けること）は、この群についてはここで閉じている。ただし閉じているのは、注釈を持つ地点が
+# 1 つ以上残る間だけである**——例外がすべて `read_config` へ移れば注釈も（不履行に追われて）
+# 消えるので、この群は群 1・2 と同じ沈黙へ戻る。**規範が成功した瞬間に計器が黙る形であり、
+# 改善の向きにだけ嘘をつく。** `cargo check` / `cargo test` / `cargo doc` /
 # `cargo fmt --check` はいずれも壊れない。
 disallowed-methods = [
     { path = "egui::Context::set_visuals", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },

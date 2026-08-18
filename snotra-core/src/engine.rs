@@ -234,7 +234,9 @@ impl Engine {
     /// **製品 crate（`src-tauri`）ではこの綴りを `clippy.toml` が禁じている**（#1122）——外側の
     /// `Mutex<Engine>` 越しに読むとフレームが検索の完了まで返らないためで、UI は
     /// `egui_shell::read_config` を通す。**改名・削除するなら、その禁止パスも同じ変更で直すこと**
-    /// ——解決しなくなっても型エラーにならず、`governance:check` も緑のままである。
+    /// ——解決しなくなっても型エラーにならず、`governance:check` も緑のままである（例外地点の
+    /// `#[expect]` が残っていれば clippy が不履行で鳴るが、それは `-D warnings` の下でだけであり、
+    /// 例外が 1 つも無くなれば黙る）。
     pub fn config(&self) -> RwLockReadGuard<'_, Config> {
         self.config.read().unwrap()
     }

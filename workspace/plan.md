@@ -142,10 +142,46 @@ npm run governance:check
 
 ### Phase 4 — 注入で実測
 
-- [ ] 「テスト方針と検証コマンド」の表の**全 7 足**を注入して赤を確認し、結果を本ファイルへ追記（コマンド・診断・exit code）。ガードを弱める向きの変異は複製 + `CLIPPY_CONF_DIR` で行う
-- [ ] 全注入の撤去後に `git status --short` が clean であることを確認
-- [ ] カテゴリ A + E + F を全実行して緑を確認（**`clippy.toml` の編集後は hook が沈黙するので clippy は手で走らせる**）
+- [x] 「テスト方針と検証コマンド」の表の**全 7 足**を注入して赤を確認し、結果を本ファイルへ追記（コマンド・診断・exit code）。ガードを弱める向きの変異は複製 + `CLIPPY_CONF_DIR` で行う
+- [x] 全注入の撤去後に `git status --short` が clean であることを確認
+- [x] カテゴリ A + E + F を全実行して緑を確認（**`clippy.toml` の編集後は hook が沈黙するので clippy は手で走らせる**）
 - [ ] 実装差分を確定させる（上記が全緑であること）
+
+## 注入の実測（Phase 4・2026-08-17 / rustc 1.97.1 / clippy 0.1.97）
+
+正準形は `cargo clippy -p snotra --all-targets --message-format short -- -D warnings`。**`-p snotra` に絞るのは計器の要件である**——下記の「計器の欠陥」を参照。
+
+| 足 | 注入 | 観測 |
+|---|---|---|
+| 1. 本来防ぎたい回帰 | `egui_shell/mod.rs` の `read_config` の中を `s.engine.lock().unwrap().config()` へ書き換える | `egui_shell\mod.rs:430:51: error: use of a disallowed method` |
+| 2. 分類の記録 | `#[expect]` を **1 件ずつ**外す（4 回） | 外した 1 件だけが error（`icon.rs:17:26` / `launch.rs:107:22` / `launch.rs:162:22` / `config_watcher.rs:87:51`）。各回とも復元を `git status --porcelain` が空であることで確認 |
+| 3. 禁止の消失 | 複製 + `CLIPPY_CONF_DIR` で禁止行を削除 | `error: this lint expectation is unfulfilled` × 4・`could not compile` |
+| 4. パスの腐り | 複製 + `CLIPPY_CONF_DIR` でパスを `Engine::confgi` へ | `warning: … does not refer to a reachable function`（それ自体は exit 0 の既知経路）**＋ unfulfilled × 4** |
+| 5. カナリアの消失 | メモリ複製で `clippy.toml` から当該エントリを削除し `checkClippyDisallowed` を直接呼ぶ | `disallowed-methods に snotra_core::engine::Engine::config が無い` |
+| 6. コメントアウト | 同上・当該行を `#` で潰す | 同上 |
+| 7. fixture の据え置き | 定数へ 9 件目を足し `CLIPPY_OK` を据え置いて `npx vitest run` | `Tests 19 failed | 15 passed`（`expected 8 to be 9`） |
+
+**計器の欠陥を 1 つ見つけた**（足 3 の初回で発覚）: `CLIPPY_CONF_DIR` は **workspace 全 crate に効く**ため、通常は `clippy.toml` を持たない `snotra-core` / `snotra-settings` が群 1・群 2 の禁止に当たって先に落ち、`snotra` の診断まで到達しない（`unfulfilled` が 0 件に見えた）。**測る枝と変更が触る枝が違った**形であり、`-p snotra` に絞って測り直した。**複製 + `CLIPPY_CONF_DIR` で注入するときは必ずパッケージを絞ること。**
+
+**事故を 1 件起こした**（記録として残す）: 足 2 の初回で、**未コミットの実装が載るファイルへ注入し、撤去に `git checkout -- <path>` を使って `#[expect]` 4 件を全損した**。`checkout` は HEAD へ戻すので、注入だけでなく実装ごと消える。テキストが会話に残っていたため再適用で回復したが、**注入は実装をコミットしてから行うこと**（リポジトリの記録にある #934 と同じ型）。
+
+## code-reviewer（4b・ラウンド 1）
+
+Critical / High **0 件**。Medium 2 / Low 4 / ⚠️ 5。**製品の挙動に関する指摘は 0 件で、全件が散文の精度**である。
+
+| # | 指摘 | 対応 |
+|---|---|---|
+| M1 | 「群 3 だけは前提が閉じている」に前提が 1 つ足りない——**注釈を持つ地点が 1 つ以上残る間だけ**であり、全例外が移行すれば注釈ごと消えて群 1・2 と同じ沈黙へ戻る | 採用。`clippy.toml` 群 3 と `G-clippy-disallowed.mjs` の両方へ前提を追記。**規範が成功した瞬間に計器が黙る形**（`instrument-breaks-when-the-fix-lands` と同型）であることも書いた |
+| M2 | 全称を縮めた結果、**群 2 の解消手段が無指定**になった | 採用。「群 2 には解消手段を定めていない——製品に正当な使用が生じない設計だから」を明記 |
+| L1 | 追記した実例（`apply_exact_hit_test_style`）が、同じ段落の「歴史上そこに style 書き込みは一度も無い」を反証している | 採用（`view.rs:527` で一次確認）。「#900 の時点では」と時点を明示し、成り立たなくなったことを書いた |
+| L2 | 「唯一の実使用」は無監視の数え上げ | 採用。数え上げを落として名指しの例示へ |
+| L3 | `engine.rs` の rustdoc が「誰も捕まえない」と読める | 採用。注釈が残る間は clippy が鳴ること・その条件を併記 |
+| L4 | 群 2 → 群 3 の境界に区切りが無く、全群に掛かる段が群 2 固有に読める | 採用。区切りを入れ、当該段に「全群に掛かる」と明記 |
+| ⚠️4 | `docs/build-commands.md:30` の「`-D warnings` のおかげではない」を読者が群 3 全体へ一般化しうる | 採用。1 節追加。**その追記で `unfulfilled_lint_expectations` を綴ったところ `governance:check` が赤になった**（この repo のソースに存在しない識別子＝ deny 化しない裁定の帰結）ので、識別子を外した表現へ直した |
+| ⚠️5 | `config_handle` の除外理由に**呼び出し元の数え上げ**が入っている（`docs/comment-guidelines.md`「書かないもの」） | 採用。構造的理由（禁止すると構築が不能）だけに縮めた |
+| ⚠️2 | エイリアス経由の呼び（`let f = Engine::config;`）が未測定 | **測った**。`launch.rs` へ注入したところ当該行が error になる＝**捕まる**。散文の「直呼びだけ」は狭すぎたので、`clippy.toml` と `src-tauri/CLAUDE.md` の両方を「綴りへの参照（パス式も含む）」へ直した |
+| ⚠️1 | トレイのスレッド分類は #1076 / #1125 の裁定に依拠しており本レビューで再測していない | 対応不要（分類の軸そのものは本 issue の対象外。呼び出し元の一意性は再測済みと明記されている） |
+| ⚠️3 | `plan.md` の最後の `- [ ]` が未チェックだと `gh pr create` が #749 のガードで止まる | 実装差分の確定後に閉じる（この行がその項目である） |
 
 ## plan-review 結果
 

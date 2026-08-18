@@ -3,10 +3,11 @@
 //! 抽出要否述語）をここに置き、worker spawn / load_texture の driver は results_view.rs が持つ
 //! （#646 PR2 で view.rs から移管——テクスチャは egui Context〔= 窓の renderer〕従属のため）。
 
+use snotra_core::ui_types::SearchResult;
 use std::collections::{HashMap, HashSet};
 
-/// worker → driver のメッセージ。token は載せない——アイコンの staleness は path キー付けで
-/// 構造的に無害（遅延到着 texture は現行行の path でしか引かれない・SU4 決定 2）。
+/// worker → driver のメッセージ。token は載せない——アイコンの staleness はアイコンキー付けで
+/// 構造的に無害（遅延到着 texture は現行行のキーでしか引かれない・SU4 決定 2）。
 /// driver（view.rs の worker spawn / load_texture）が消費する（#532 SU4 Task 5）。
 pub(crate) enum IconMsg {
     Loaded(String, egui::ColorImage),
@@ -66,6 +67,73 @@ pub(crate) fn needs_extraction<V>(
 /// driver（view.rs）が消費する（#532 SU4 Task 5）。
 pub(crate) fn retain_visible<V>(textures: &mut HashMap<String, V>, visible: &HashSet<String>) {
     textures.retain(|k, _| visible.contains(k));
+}
+
+// ---- 行 → アイコンキーの読み（#1133）--------------------------------------------------
+//
+// **キーを導くのは `SearchResult::icon_key` ただ 1 つである。** 要求・引き・剪定が別々に導くと、
+// 片方だけが `path` を見た瞬間に「抽出したのに引けない」「抽出した直後に剪定で捨てる」が起きる。
+// drain（`results_view.rs` の `icon_rx`）は導出点ではない——worker へ渡したキーが返ってくる
+// だけで、構造的に `wanted_icon_keys` と一致する。
+
+/// このフレームで抽出 worker に積むべきキー（重複排除済み）。
+///
+/// **`is_error` 行を要求から除くのはここの責務である。** 描画側（`draw_result_row`）の
+/// `Some(tex)` 枝に `is_error` ガードは無いので、ここが要求を積めばエラー行に本物のアイコンが
+/// 描かれる。しかも [`snotra_core::folder::error_result`] は `path` に**実在ディレクトリの
+/// 絶対パス**を入れ、発火点は `read_dir` の失敗——権限不足ならディレクトリは実在するので
+/// `SHGetFileInfoW` は成功する。
+///
+/// **ただし要求を止めても絵が出ない保証にはならない。**
+/// 同じ `path` が**前の世代で通常行として**抽出されていると、[`visible_icon_keys`] が
+/// `is_error` を見ないため [`retain_visible`] がそのテクスチャを残し、[`icon_for_row`] が引く。
+/// 成立するのは、フォルダ行で右カーソルキーを押して展開し（`SPEC.md`「6.5 フォルダのEnter操作」
+/// ——**Enter ではない。あれはエクスプローラーで開く**）、`read_dir` が失敗する遷移である。
+/// [`crate::egui_shell::search_state::SearchState::enter_folder`] は `results` に触れず行の世代を
+/// 進めないので、フォルダ行のテクスチャが生きたまま同じ `path` のエラー行に置き換わる
+/// （#1133 のレビューで一次証拠を辿って確認。**#1133 より前から在る挙動であり、そこでは
+/// 直していない**——追跡は #1134。**閉じたらこの段落も更新すること**）。
+pub(crate) fn wanted_icon_keys<V>(
+    rows: &[SearchResult],
+    have: &HashMap<String, V>,
+    attempts: &HashMap<String, u8>,
+    pending: &HashSet<String>,
+) -> Vec<String> {
+    let mut wanted: Vec<String> = Vec::new();
+    for r in rows {
+        if r.is_error {
+            continue;
+        }
+        let Some(key) = r.icon_key() else { continue };
+        if needs_extraction(key, have, attempts)
+            && !pending.contains(key)
+            && !wanted.iter().any(|w| w == key)
+        {
+            wanted.push(key.to_string());
+        }
+    }
+    wanted
+}
+
+/// 世代交代フレームで保持してよいキーの集合（`retain_visible` の入力）。
+///
+/// **`is_error` で絞らない。** 狭いと、抽出した直後の世代交代でテクスチャを落として積み直す
+/// 往復になる。**広い側の代償は机上で確認してある**——前の世代で入ったキーが残るため、同じ
+/// `path` がエラー行として戻ってくるとその行に絵が出る（正本は [`wanted_icon_keys`] の doc）。
+pub(crate) fn visible_icon_keys(rows: &[SearchResult]) -> HashSet<String> {
+    rows.iter()
+        .filter_map(|r| r.icon_key())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// 行に対応するテクスチャを引く（描画側）。**`path` で引いてはならない**——
+/// [`snotra_core::ui_types::IconSource::Explicit`] の行は表示文字列とキーが別物である。
+pub(crate) fn icon_for_row<'a, V>(
+    icons: &'a HashMap<String, V>,
+    row: &SearchResult,
+) -> Option<&'a V> {
+    icons.get(row.icon_key()?)
 }
 
 #[cfg(test)]
@@ -144,6 +212,181 @@ mod tests {
         assert!(
             !textures.contains_key("drop.exe"),
             "可視集合外は drop される"
+        );
+    }
+
+    // ---- 行 → アイコンキーの読み（#1133）--------------------------------------------
+
+    fn row(path: &str, icon: snotra_core::ui_types::IconSource) -> SearchResult {
+        SearchResult {
+            name: "n".into(),
+            path: path.into(),
+            is_folder: false,
+            is_error: false,
+            icon,
+        }
+    }
+
+    #[test]
+    fn wanted_icon_keys_skips_rows_that_take_no_icon() {
+        use snotra_core::ui_types::IconSource;
+        let rows = vec![
+            row("https://example.com/?q={query}", IconSource::Skip),
+            row(r"C:\a.exe", IconSource::FromPath),
+        ];
+        let have: HashMap<String, u32> = HashMap::new();
+        let wanted = super::wanted_icon_keys(&rows, &have, &HashMap::new(), &HashSet::new());
+        assert_eq!(
+            wanted,
+            vec![r"C:\a.exe".to_string()],
+            "Skip の行は 1 件も載らない（URL 文字列をシェルへ問い合わせない）"
+        );
+    }
+
+    #[test]
+    fn wanted_icon_keys_uses_the_explicit_key_not_the_path() {
+        use snotra_core::ui_types::IconSource;
+        let rows = vec![row(
+            r"C:\Windows\notepad.exe {query}",
+            IconSource::Explicit(r"C:\Windows\notepad.exe".into()),
+        )];
+        let have: HashMap<String, u32> = HashMap::new();
+        let wanted = super::wanted_icon_keys(&rows, &have, &HashMap::new(), &HashSet::new());
+        assert_eq!(wanted, vec![r"C:\Windows\notepad.exe".to_string()]);
+    }
+
+    #[test]
+    fn wanted_icon_keys_never_loads_icons_for_error_rows() {
+        // **`path` が実在ディレクトリでも載らないことを、その形の行で測る**（#1133 plan-review B-1）。
+        // `folder::error_result` は read_dir 失敗時に**実在するディレクトリの絶対パス**を入れる。
+        // 描画側の `Some(tex)` 枝に `is_error` ガードは無いので、ここで落とすとエラー行に
+        // 本物のフォルダアイコンが描かれる。
+        use snotra_core::ui_types::IconSource;
+        let err = SearchResult {
+            name: String::new(),
+            path: r"C:\Windows".into(),
+            is_folder: false,
+            is_error: true,
+            icon: IconSource::FromPath,
+        };
+        let explicit_err = SearchResult {
+            is_error: true,
+            icon: IconSource::Explicit(r"C:\Windows\notepad.exe".into()),
+            ..row("x", IconSource::FromPath)
+        };
+        let have: HashMap<String, u32> = HashMap::new();
+        let wanted = super::wanted_icon_keys(
+            &[err, explicit_err],
+            &have,
+            &HashMap::new(),
+            &HashSet::new(),
+        );
+        assert!(
+            wanted.is_empty(),
+            "エラー行は FromPath でも Explicit でも抽出要求に載らない（実際に得た: {wanted:?}）"
+        );
+    }
+
+    #[test]
+    fn wanted_icon_keys_excludes_present_capped_pending_and_duplicates() {
+        use snotra_core::ui_types::IconSource;
+        let rows = vec![
+            row("present.exe", IconSource::FromPath),
+            row("capped.exe", IconSource::FromPath),
+            row("pending.exe", IconSource::FromPath),
+            row("new.exe", IconSource::FromPath),
+            row("new.exe", IconSource::FromPath), // 重複
+        ];
+        let mut have: HashMap<String, u32> = HashMap::new();
+        have.insert("present.exe".into(), 1);
+        let mut attempts: HashMap<String, u8> = HashMap::new();
+        attempts.insert("capped.exe".into(), ICON_MAX_ATTEMPTS);
+        let mut pending: HashSet<String> = HashSet::new();
+        pending.insert("pending.exe".into());
+
+        let wanted = super::wanted_icon_keys(&rows, &have, &attempts, &pending);
+
+        assert_eq!(wanted, vec!["new.exe".to_string()]);
+    }
+
+    #[test]
+    fn visible_icon_keys_omits_rows_that_take_no_icon() {
+        use snotra_core::ui_types::IconSource;
+        let rows = vec![
+            row("https://example.com", IconSource::Skip),
+            row(r"C:\a.exe", IconSource::FromPath),
+            row("b args", IconSource::Explicit(r"C:\b.exe".into())),
+        ];
+        let visible = super::visible_icon_keys(&rows);
+        assert!(!visible.contains("https://example.com"));
+        assert!(visible.contains(r"C:\a.exe"));
+        assert!(
+            visible.contains(r"C:\b.exe"),
+            "Explicit の行は **キー** で保持集合に入る（path で入れると抽出直後に drop される）"
+        );
+    }
+
+    #[test]
+    fn icon_for_row_looks_up_by_key_not_by_path() {
+        use snotra_core::ui_types::IconSource;
+        let mut icons: HashMap<String, u32> = HashMap::new();
+        icons.insert(r"C:\Windows\notepad.exe".into(), 7);
+        let r = row(
+            r"C:\Windows\notepad.exe {query}",
+            IconSource::Explicit(r"C:\Windows\notepad.exe".into()),
+        );
+        assert_eq!(super::icon_for_row(&icons, &r), Some(&7));
+        // Skip の行は、たとえ `path` に一致するキーが在っても引かない。
+        icons.insert("https://example.com".into(), 9);
+        let s = row("https://example.com", IconSource::Skip);
+        assert_eq!(super::icon_for_row(&icons, &s), None);
+    }
+
+    /// アイコン抽出ゲートが [`crate::egui_shell::results_view::RowsSnapshot::input_idle`] の
+    /// **意味論のまま**立っていることを、**ソーステキストで**固定する（#1133）。
+    ///
+    /// **述語のテストでは呼び出し点の脱落を捕まえられない**（この規範の正本は
+    /// `launcher_controller.rs` の `activation_entry_points_consult_the_display_gate` の doc）。
+    /// `input_idle` が運ぶのは「main の `search_debounce` が予約を持っていないか」だけで、
+    /// `ResultsView` にはテスト席が無い（構築が `AppHandle` を要求する）——ソーステキスト検査は
+    /// そのどちらも要らない。
+    ///
+    /// **この検査が `view.rs` にも `results_view.rs` にも住めない理由**（移設してはならない）:
+    /// 探す綴りは assert 自身の文字列リテラルとして**この検査のソースに書かれている**。検査を
+    /// 被検査ファイルへ置くと `include_str!` の母集団に needle が混入し、**本物のゲートを消しても
+    /// 自分自身のリテラルが見つかって緑のまま通る**——永久に落ちない不動点になる。#1133 の
+    /// Phase 0a で、実際に `results_view.rs` へ置いた版が変異 7（ゲートの削除）を素通りした。
+    /// **両方のファイルから独立した第三の場所に置くことが、この検査の成立条件である。**
+    ///
+    /// **これが落ちたとき失うもの**: instant 行のアイコンを出さない仕様（`SPEC.md` §3.4 / §19.5）を
+    /// **キー側ではなくこのゲート側で**表現すると、`input_idle` は「打鍵が止まった」より広い述語
+    /// なので、**worker 走査中のアイコン取得まで一緒に遅れる**退行が入る（`RowsSnapshot::input_idle`
+    /// の doc が `is_unsettled` について「同じ修正を当ててはならない」と名指ししている・#1074）。
+    /// しかも**絵は正しく見える**ため、挙動テストでは捕まらない。
+    ///
+    /// **残る死角は 2 つある。**
+    /// 1. 測っているのは部分文字列一致であって呼び出しではない。ゲートを別ヘルパーへ移しても、
+    ///    本体にこの綴りが残れば緑のまま通る。
+    /// 2. **より踏みやすい迂回がある**——`view.rs` が呼ぶ `is_search_armed()` の**中身**へ instant の
+    ///    条件を足せば、同じ害を、ここが見ている `view.rs` の 1 行を 1 文字も変えずに達成できる。
+    ///    **そこまで綴りで縛る形は採らない**——正当なリファクタリングまで赤にする検知器は無視される
+    ///    ようになる（#1133 のユーザー裁定「必要な分だけ縛る」）。
+    ///
+    /// **存在形の assert だけで書く**（否定形は母集団が消えたときに沈黙する）。`include_str!` の
+    /// 母集団は実ファイル全体なので空になりえない。
+    #[test]
+    fn icon_gate_keeps_input_idle_semantics() {
+        let view = include_str!("view.rs");
+        assert!(
+            view.contains("let input_idle = !self.controller.is_search_armed();"),
+            "view.rs の input_idle が search_debounce の armed 以外を材料にしている——\
+             instant のスキップをこのゲートで表現すると worker 走査中のアイコン取得まで遅れる（#1074 / #1133）"
+        );
+        let results_view = include_str!("results_view.rs");
+        assert!(
+            results_view.contains("if snapshot.input_idle {"),
+            "アイコン抽出要求が input_idle ゲートの内側に無い——連打中に icon worker を積む\
+             perf 退行が戻る（#532 SU4 の系譜）"
         );
     }
 }

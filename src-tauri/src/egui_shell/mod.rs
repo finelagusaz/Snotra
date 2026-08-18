@@ -60,7 +60,12 @@ pub(crate) use results_window::ResultsWindow;
 pub(crate) use visual::{RowTheme, VisualSnapshot};
 
 // results_view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5・#646 PR2 で移管）。
-pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
+// `needs_extraction` は re-export しない——**要求側の消費点は `wanted_icon_keys` に一本化した**
+// （#1133）。行からアイコンキーを導く読みが散っていると、片方だけが `path` を見た瞬間に
+// 「抽出したのに引けない」が起きるので、述語だけを直に呼べる口を残さない。
+pub(crate) use icon_textures::{
+    IconMsg, icon_for_row, png_to_color_image, retain_visible, visible_icon_keys, wanted_icon_keys,
+};
 // `blur_should_hide` / `blur_grace_action` / `BLUR_GRACE` は re-export しない——**判定の消費点は
 // `BlurGrace::observe` に一本化した**（#711 で判定と再要求の 2 経路を型で塞いだものを、
 // #745 の状態機械化でも維持する）。判定そのものは純粋核の内部で生きている。

@@ -513,7 +513,7 @@ mod tests {
         format_recent_history_label,
     };
     use snotra_core::config::Language;
-    use snotra_core::ui_types::SearchResult;
+    use snotra_core::ui_types::{IconSource, SearchResult};
 
     fn item(name: &str, path: &str) -> SearchResult {
         SearchResult {
@@ -521,6 +521,7 @@ mod tests {
             path: path.to_string(),
             is_folder: false,
             is_error: false,
+            icon: IconSource::FromPath,
         }
     }
 

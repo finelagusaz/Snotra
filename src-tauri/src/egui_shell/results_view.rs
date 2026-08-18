@@ -14,7 +14,7 @@ use tauri::Manager;
 
 use crate::commands::IconOutcome;
 use crate::egui_shell::icon_textures::ICON_MAX_ATTEMPTS;
-use crate::egui_shell::{IconMsg, RowTheme, needs_extraction, retain_visible};
+use crate::egui_shell::{IconMsg, RowTheme, retain_visible};
 
 /// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
 #[derive(Clone, Default, PartialEq)]
@@ -175,16 +175,15 @@ impl ResultsView {
         if !show_icons {
             return;
         }
-        let mut wanted: Vec<String> = Vec::new();
-        for r in rows {
-            if !r.is_error
-                && needs_extraction(&r.path, &self.icon_textures, &self.icon_attempts)
-                && !self.icon_pending.contains(&r.path)
-                && !wanted.contains(&r.path)
-            {
-                wanted.push(r.path.clone());
-            }
-        }
+        // **キーの導出は `wanted_icon_keys` へ寄せてある**（#1133）——引き（`icon_for_row`）と
+        // 剪定（`visible_icon_keys`）が同じ `SearchResult::icon_key` を通ることだけが、
+        // 「抽出したものを引ける」の根拠である。
+        let wanted = crate::egui_shell::wanted_icon_keys(
+            rows,
+            &self.icon_textures,
+            &self.icon_attempts,
+            &self.icon_pending,
+        );
         if wanted.is_empty() {
             return;
         }
@@ -195,7 +194,7 @@ impl ResultsView {
     }
 
     /// 現結果集合の未取得アイコンを別スレッドで抽出し IconMsg を channel へ送る（SU4）。folder の
-    /// per-nav thread パターン踏襲。token は載せない（staleness は path キーで無害）。
+    /// per-nav thread パターン踏襲。token は載せない（staleness はアイコンキーで無害）。
     /// show_icons=false 時は呼ばない（呼び出し側でガード）。Task 5 で view.rs から移設
     /// （worker の wake は clone した results の ctx の `request_repaint()`・形は不変）。
     fn spawn_icon_load(&self, paths: Vec<String>, egui_ctx: egui::Context) {
@@ -482,7 +481,7 @@ pub(crate) fn results_list_ui(
                 sel,
                 scroll_directive(sel, do_scroll, generation_changed),
                 generation_changed,
-                icons.get(&result.path),
+                crate::egui_shell::icon_for_row(icons, result),
                 show_icons,
                 theme,
                 row_height,
@@ -567,7 +566,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let theme = &visual.row;
         let metrics = &visual.metrics;
         let show_icons = visual.show_icons;
-        // アイコン drain（token 無し・path キーで適用）。到着したら load_texture して map へ。
+        // アイコン drain（token 無し・アイコンキーで適用）。到着したら load_texture して map へ。
         // load_texture は egui context 必須ゆえ、ここ（results の update()・自窓 ctx）でのみ呼ぶ
         // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。Task 5 で
         // main（view.rs）から本 view へ移設: TextureHandle は窓の Context 従属のため、行描画と
@@ -646,7 +645,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 毎フレームやっていた頃は、可視集合の構築だけで結果件数ぶんの `String` 確保を
         // 払っていた（`result_limit` は既定 200・設定次第で 1000）。
         if generation_changed {
-            let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
+            let visible = crate::egui_shell::visible_icon_keys(&snapshot.rows);
             retain_visible(&mut self.icon_textures, &visible);
             self.icon_attempts.retain(|p, _| visible.contains(p));
             // **pending も可視集合で刈る**（#692）。worker が 1 通も送らずに終わる経路
@@ -700,7 +699,7 @@ mod tests {
     use super::{RowScroll, row_hover_target, scroll_directive};
     use crate::egui_shell::RowTheme;
     use crate::egui_shell::layout::results_window_height;
-    use snotra_core::ui_types::SearchResult;
+    use snotra_core::ui_types::{IconSource, SearchResult};
     use std::collections::HashMap;
 
     // ---- 行ピッチと窓高の対（kittest・実コードをヘッドレスで走らせる）----------------
@@ -730,6 +729,7 @@ mod tests {
                 path: format!("C:\\test\\item{i}.exe"),
                 is_folder: false,
                 is_error: false,
+                icon: IconSource::FromPath,
             })
             .collect()
     }

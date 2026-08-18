@@ -14,7 +14,7 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32String};
 
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::history::HistoryStore;
-use crate::ui_types::SearchResult;
+use crate::ui_types::{IconSource, SearchResult};
 
 use super::path_store::CompactEntry;
 use super::{
@@ -223,6 +223,7 @@ fn heap_into_results(paths: &PathStore, top_k: BinaryHeap<ScoredEntry>) -> Vec<S
                 path: paths.to_path(r.index),
                 is_folder: entry.is_folder,
                 is_error: false,
+                icon: IconSource::FromPath,
             }
         })
         .collect()

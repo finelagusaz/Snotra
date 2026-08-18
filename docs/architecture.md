@@ -109,7 +109,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 
 - `SHGetFileInfoW` → HICON → BGRA → PNG で抽出し、件数上限で頭打ちするキャッシュとして `icons.bin` へ遅延ロードする（退避方式は `src-tauri/src/icon.rs` が正本）
 - egui へは `commands::load_icon_pngs`（worker スレッド）→ ColorImage decode → `load_texture`（`egui_shell/icon_textures.rs`・#532 SU4）
-- path キーで stale 無害・in-flight 重複 spawn 防止・clear-on-hide でメモリ境界
+- 行ごとのアイコンキー（既定は `path`・規則は `SPEC.md` §3.4）で stale 無害・in-flight 重複 spawn 防止・clear-on-hide でメモリ境界
 
 ### 多言語対応（3層）
 

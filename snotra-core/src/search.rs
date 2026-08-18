@@ -13,7 +13,7 @@ use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::index_tree::NameArena;
 use crate::str_arena::{LowerFileColumn, LowerNameColumn};
-use crate::ui_types::SearchResult;
+use crate::ui_types::{IconSource, SearchResult};
 
 // 構築処理（Wave 1/2・kana マスク・IndexCache 復元・全コンストラクタ）は子モジュールへ分離（#598）。
 mod build;
@@ -459,6 +459,7 @@ impl SearchEngine {
                     path: self.entries.to_path(i),
                     is_folder: entry.is_folder,
                     is_error: false,
+                    icon: IconSource::FromPath,
                 }
             })
             .collect()

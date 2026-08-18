@@ -13,7 +13,7 @@ use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use uuid::Uuid;
 
 use crate::config::{InstantAction, InstantCommand};
-use crate::ui_types::SearchResult;
+use crate::ui_types::{IconSource, SearchResult};
 
 /// `{date}`（書式省略時）の既定 strftime 書式。
 const DEFAULT_DATE_FMT: &str = "%Y-%m-%d";
@@ -344,7 +344,11 @@ fn display_text(action: &InstantAction) -> String {
 ///
 /// [`display_text`] の算出を `description` 空の枝に置いてあるのは、**非空なら出来上がった
 /// 文字列をその場で捨てることになる**からである（#1124 以前はそうしていた）。
-pub fn matching_results(commands: &[InstantCommand], prefix_input: &str) -> Vec<SearchResult> {
+pub fn matching_results(
+    commands: &[InstantCommand],
+    prefix_input: &str,
+    env_expand: impl Fn(&str) -> String,
+) -> Vec<SearchResult> {
     filter_instant_commands(commands, prefix_input)
         .into_iter()
         .map(|c| SearchResult {
@@ -356,8 +360,31 @@ pub fn matching_results(commands: &[InstantCommand], prefix_input: &str) -> Vec<
             },
             is_folder: false,
             is_error: false,
+            icon: icon_source_of(&c.action, &env_expand),
         })
         .collect()
+}
+
+/// instant 行のアイコン抽出キーを種別から導く（`SPEC.md`「19.5 マッチングと結果表示」）。
+///
+/// **`path`（副テキスト）とは独立に決まる。** あちらは `description` があればそれを出すが、
+/// アイコンが指すべきものは**その行が起動する実体**であって表示文字列ではない。ゆえに
+/// exec 種別は `args` の有無・`description` の有無に依らず `exe` を返す。
+///
+/// **`env_expand` を引数で受け取るのは、起動側と同じ展開を通すためである**——
+/// `launch_exec_core` は `expand_env(exe)` を実行するので（`src-tauri/src/commands/launch.rs`）、
+/// ここで展開しないと `%LOCALAPPDATA%\...` 形の exe は**起動できるのにアイコンだけ出ない**。
+/// 呼び出し元から渡させるのは、忘れようのない形にするためでもある（自前で展開すると
+/// `snotra-core` が Win32 へ依存する）。
+fn icon_source_of(action: &InstantAction, env_expand: &impl Fn(&str) -> String) -> IconSource {
+    match action {
+        InstantAction::Exec { exe, .. } => IconSource::Explicit(env_expand(exe)),
+        // URL も Legacy（移行済みゆえ実運用では到達しない）も、`path` に載るのは
+        // ファイルを指さない文字列である。**取りにいかない**——シェル問い合わせは失敗するが
+        // `IconFailure::ShellQueryFailed` は `is_transient() == true` ゆえ恒久失敗として
+        // latch されず、行が見えている限り上限まで再試行される（#1133 で実機実測）。
+        InstantAction::Url { .. } | InstantAction::Legacy { .. } => IconSource::Skip,
+    }
 }
 
 /// Filter instant commands by prefix-matching `input` against command names.
@@ -971,7 +998,7 @@ mod tests {
     #[test]
     fn matching_results_prefers_description_over_display() {
         let cmds = vec![url_cmd("g", "Google検索", "https://x")];
-        let r = matching_results(&cmds, "");
+        let r = matching_results(&cmds, "", no_env);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].name, "g");
         assert_eq!(r[0].path, "Google検索");
@@ -980,7 +1007,7 @@ mod tests {
     #[test]
     fn matching_results_falls_back_to_url_when_description_empty() {
         let cmds = vec![url_cmd("g", "", "https://x")];
-        assert_eq!(matching_results(&cmds, "")[0].path, "https://x");
+        assert_eq!(matching_results(&cmds, "", no_env)[0].path, "https://x");
     }
 
     #[test]
@@ -994,7 +1021,7 @@ mod tests {
             },
         }];
         assert_eq!(
-            matching_results(&cmds, "")[0].path,
+            matching_results(&cmds, "", no_env)[0].path,
             "everything.exe -s {query}"
         );
     }
@@ -1009,7 +1036,7 @@ mod tests {
                 args: String::new(),
             },
         }];
-        assert_eq!(matching_results(&cmds, "")[0].path, "notepad.exe");
+        assert_eq!(matching_results(&cmds, "", no_env)[0].path, "notepad.exe");
     }
 
     /// **実運用では到達しない防御的分岐である**——`Legacy` は `apply_migrations()` が `Url` へ
@@ -1025,7 +1052,10 @@ mod tests {
                 command: "https://legacy".into(),
             },
         }];
-        assert_eq!(matching_results(&cmds, "")[0].path, "https://legacy");
+        assert_eq!(
+            matching_results(&cmds, "", no_env)[0].path,
+            "https://legacy"
+        );
     }
 
     #[test]
@@ -1034,14 +1064,14 @@ mod tests {
             url_cmd("g", "", "https://g"),
             url_cmd("gh", "", "https://h"),
         ];
-        assert_eq!(matching_results(&cmds, "").len(), 2);
+        assert_eq!(matching_results(&cmds, "", no_env).len(), 2);
     }
 
     /// §19.5: マッチが 0 件なら「該当なし」の行を出さず、結果を空にする。
     #[test]
     fn matching_results_no_match_is_empty() {
         let cmds = vec![url_cmd("g", "", "https://g")];
-        assert!(matching_results(&cmds, "xyz").is_empty());
+        assert!(matching_results(&cmds, "xyz", no_env).is_empty());
     }
 
     /// 2 つの旗はどちらも UI 側の分岐を通す条件である（`src-tauri` の
@@ -1053,8 +1083,88 @@ mod tests {
     #[test]
     fn matching_results_rows_are_neither_folder_nor_error() {
         let cmds = vec![url_cmd("g", "d", "https://g")];
-        let r = matching_results(&cmds, "");
+        let r = matching_results(&cmds, "", no_env);
         assert!(!r[0].is_folder);
         assert!(!r[0].is_error);
+    }
+
+    // ---- アイコン抽出キー（`SPEC.md` §3.4 / §19.5・#1133）------------------------
+    //
+    // **`path`（副テキスト）とアイコンキーは独立に決まる**ことを、両方を同じ assert で
+    // 見て固定する——片方だけ見ると「表示が変わっていないから正しい」と読めてしまう。
+
+    fn exec_cmd(name: &str, description: &str, exe: &str, args: &str) -> InstantCommand {
+        InstantCommand {
+            name: name.into(),
+            description: description.into(),
+            action: InstantAction::Exec {
+                exe: exe.into(),
+                args: args.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn url_rows_skip_icon_extraction() {
+        let cmds = vec![url_cmd("g", "", "https://x/?q={query}")];
+        let r = matching_results(&cmds, "", no_env);
+        assert_eq!(r[0].icon, IconSource::Skip);
+        assert_eq!(r[0].icon_key(), None, "URL 文字列をキーにしてはならない");
+    }
+
+    #[test]
+    fn legacy_rows_skip_icon_extraction() {
+        // 移行で到達しない防御枝だが、`match` の網羅として挙動は決まっていなければならない。
+        let cmds = vec![InstantCommand {
+            name: "l".into(),
+            description: String::new(),
+            action: InstantAction::Legacy {
+                command: "https://legacy".into(),
+            },
+        }];
+        assert_eq!(
+            matching_results(&cmds, "", no_env)[0].icon,
+            IconSource::Skip
+        );
+    }
+
+    #[test]
+    fn exec_rows_take_the_icon_from_the_exe_when_args_are_empty() {
+        let cmds = vec![exec_cmd("e", "", r"C:\Windows\notepad.exe", "")];
+        let r = matching_results(&cmds, "", no_env);
+        assert_eq!(r[0].path, r"C:\Windows\notepad.exe");
+        assert_eq!(r[0].icon_key(), Some(r"C:\Windows\notepad.exe"));
+    }
+
+    #[test]
+    fn exec_rows_take_the_icon_from_the_exe_even_when_args_are_present() {
+        // **今日は失敗する経路**——`path` は "exe args" ゆえシェル問い合わせが 0 を返す。
+        let cmds = vec![exec_cmd("e", "", r"C:\Windows\notepad.exe", "{query}")];
+        let r = matching_results(&cmds, "", no_env);
+        assert_eq!(
+            r[0].path, r"C:\Windows\notepad.exe {query}",
+            "副テキストは不変"
+        );
+        assert_eq!(r[0].icon_key(), Some(r"C:\Windows\notepad.exe"));
+    }
+
+    #[test]
+    fn exec_rows_take_the_icon_from_the_exe_even_when_a_description_is_set() {
+        // `description` は副テキストを決める設定であってアイコンの話ではない（#1133 のユーザー裁定）。
+        let cmds = vec![exec_cmd("e", "メモ帳", r"C:\Windows\notepad.exe", "")];
+        let r = matching_results(&cmds, "", no_env);
+        assert_eq!(r[0].path, "メモ帳", "副テキストは description が勝つ");
+        assert_eq!(r[0].icon_key(), Some(r"C:\Windows\notepad.exe"));
+    }
+
+    #[test]
+    fn exec_icon_key_is_env_expanded_but_the_path_is_not() {
+        // 起動側（`launch_exec_core`）は `expand_env(exe)` を通すので、キーも同じ展開を通す。
+        // **`path` には当てない**——副テキストは設定の字面を見せる場所である。
+        let expand = |s: &str| s.replace("%APPS%", r"C:\Apps");
+        let cmds = vec![exec_cmd("e", "", r"%APPS%\tool.exe", "")];
+        let r = matching_results(&cmds, "", expand);
+        assert_eq!(r[0].path, r"%APPS%\tool.exe");
+        assert_eq!(r[0].icon_key(), Some(r"C:\Apps\tool.exe"));
     }
 }

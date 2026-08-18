@@ -150,21 +150,51 @@ npm run governance:check
 
 ### Phase 1: 純関数の新設・移行・旧 API 撤去（1 コミット）
 
-- [ ] `snotra-core/src/instant.rs` に `matching_results` と private `display_text` を追加（doc に read クロージャの契約と所有化の理由を書く）。**doc に書く `SPEC.md` の見出し参照は正準形で逐語一致させる**——`G-heading-refs` は `.rs` を走査対象に含む（`docs/build-commands.md` カテゴリ F・#925）ので、`SPEC.md`「19.5 マッチングと結果表示」の字面をそのまま使う
-- [ ] `filter_instant_commands` を private へ落とし、`//!` の公開関数列挙を追随させる
-- [ ] `launcher_controller.rs` の Instant 枝を `read_config` + `matching_results` + `Vec::new` fallback へ差し替える（`app_handle.clone()` を `&self.app_handle` へ）
-- [ ] `commands/instant.rs` から `get_instant_commands` / `matching_dtos` と未使用 `use` を削除する
-- [ ] `launch.rs` から `InstantCommandDto` / `From` impl / DTO テスト 3 件と未使用 import を削除する
-- [ ] テストを `snotra-core/src/instant.rs` の `mod tests` へ追加する（上の 8 ケース）
-- [ ] `SPEC.md` §19.2 の `display` 行を同期する
+- [x] `snotra-core/src/instant.rs` に `matching_results` と private `display_text` を追加（doc に read クロージャの契約と所有化の理由を書く）。**doc に書く `SPEC.md` の見出し参照は正準形で逐語一致させる**——`G-heading-refs` は `.rs` を走査対象に含む（`docs/build-commands.md` カテゴリ F・#925）ので、`SPEC.md`「19.5 マッチングと結果表示」の字面をそのまま使う
+- [x] `filter_instant_commands` を private へ落とし、`//!` の公開関数列挙を追随させる
+- [x] `launcher_controller.rs` の Instant 枝を `read_config` + `matching_results` + `Vec::new` fallback へ差し替える（`app_handle.clone()` を `&self.app_handle` へ）
+- [x] `commands/instant.rs` から `get_instant_commands` / `matching_dtos` と未使用 `use` を削除する
+- [x] `launch.rs` から `InstantCommandDto` / `From` impl / DTO テスト 3 件と未使用 import を削除する
+- [x] テストを `snotra-core/src/instant.rs` の `mod tests` へ追加する（上の 8 ケース）
+- [x] `SPEC.md` §19.2 の `display` 行を同期する
 
 ### Phase 2: 検証
 
-- [ ] カテゴリ A の全コマンドを実行する（`cargo doc` を含む・hook 非発火）
-- [ ] `npm run governance:check` を実行する
-- [ ] `grep -rn "InstantCommandDto\|get_instant_commands\|matching_dtos" --include=*.rs .` が **0 件**（歴史記録の `.md` を除く）であることを確認する
-- [ ] `/race-check` を実行する（本文が「計画段階では起動しない」と定めているため実装後・フレーム内 live-read の位置が変わるトリガーに対応）
-- [ ] 実装差分を確定させる（作業ツリーが計画どおりの形になっていることを `git diff` の引数 1 個の形で確認する）
+- [x] カテゴリ A の全コマンドを実行する（`cargo doc` を含む・hook 非発火）
+- [x] `npm run governance:check` を実行する
+- [x] `grep -rn "InstantCommandDto\|get_instant_commands\|matching_dtos" --include=*.rs .` が **0 件**（歴史記録の `.md` を除く）であることを確認する
+- [x] `/race-check` を実行する（本文が「計画段階では起動しない」と定めているため実装後・フレーム内 live-read の位置が変わるトリガーに対応）
+
+### Phase 3: レビュー対応（実装中に判明・計画外）
+
+`code-reviewer` round 1 は Critical / High **0 件**、Medium 1・Low 5・⚠ Low 1。**7 件すべてを採用**し、機序はいずれも自分で一次証拠を取り直して裁定した。
+
+- [x] **Medium 1**: `matching_results_rows_are_neither_folder_nor_error` の doc がアイコン取得へ**誤って帰属**していた。実測（`results_view.rs` の `request_icons_for_results` は行の種別を見ない / `needs_extraction` は path と試行回数だけ）で確認し、実際に守っている 2 点（→ 展開ガード・`execute_instant_selected` の `is_error` チェック）へ書き直した
+- [x] **Low 1**: 根拠のポインタが誤り（`AppState::read_config` の doc に `.manage` / `.setup` は**含まれない**・実測 0 件）→ `egui_shell::read_config` のコメントへ差し替え。§19.5「マッチ 0 件」との類比（別条件）を削り、代わりに**レビュアが見つけた非対称**（既定コマンドの行を出しても実行側の `|| None` が起動できない）を書いた
+- [x] **Low 2**: 「唯一の消費者」→「テストを除く消費者は」（同ファイルのテスト 5 箇所が呼ぶので字義どおりには偽だった・`AGENTS.md`「全称表現は前提条件とセットで書く」）
+- [x] **Low 3**: doc 第 3 段落が直下の分岐の写しだったので削り、理由（非空なら文字列をその場で捨てる）だけ残した
+- [x] **Low 4**: `launch.rs` のテスト移送の記録コメントを削除（`docs/comment-guidelines.md`「変更履歴の再現」）。失われる情報の再確立地点は `SPEC.md` §19.2 の同期と移植先テスト `matching_results_prefers_description_over_display`
+- [x] **Low 5**: `SPEC.md:1031` に `display` **フィールド**の語彙が残っていた——**§19.2 を直した当のコミットが取りこぼしていた**（`AGENTS.md`「写しを直す当のコミットが典型」の実例）。「§19.2 の `display`」へ改め、「表示されず、算出もされない」を明記
+- [x] **⚠ Low 6**: `docs/architecture.md` の純ロジック行に結果行の組み立てを追記（表示規則が UI 層から移ったため）
+- [x] fix-forward 差分にカテゴリ A + F を再実行（`AGENTS.md`「レビュー指摘へ修正を当てた」行）
+- [x] 指摘を出した枠組み（`code-reviewer`）を **`SendMessage` で継続**して修正差分を検算させる（新規起動しない＝Step 4b「1 体だけ」を守る）
+
+### Phase 4: round 2 の指摘への対応（fix-forward が新しい誤りを生んでいた）
+
+round 2 は Critical / High / Medium **0 件**、Low 5（新規の誤り 2・不正確 1・過剰 1・⚠ 部分修正 1）。
+**7 件のうち 6 件は正しく着地したが、Medium 1 への修正そのものが 2 件の新しい誤りを持ち込んでいた**——
+`AGENTS.md`「修正は指摘箇所へ注意が集中し、周辺に新しい誤りを生む」の実例である。
+
+- [x] **R2-1（新規の誤り）**: Medium 1 の修正がコードスパンを 2 本**行またぎ**させ、`sel.is_folder && !sel.is_error` と `if sel.is_error { return }` が **grep で辿れなくなっていた**（両方 0 件を実測）。`cargo doc` はリンクではないので緑のまま通る
+- [x] **R2-2（新規の誤り）**: 同じ修正が「ゲートは `show_icons` と `needs_extraction` **だけである**」という、**`snotra-core` が維持できない全称**（`src-tauri` の実装に依存）を書き込み、`SPEC.md:1036`（instant モード中はアイコン取得をスキップ）と**正面から矛盾**していた。**pre-existing だったのは挙動であって、矛盾の顕在化はこの差分が持ち込んだもの**である。→ アイコンの節を丸ごと落とし、肯定的記述（→ 展開ガード・実行可能条件）だけで自足させた。R2-1 も同じ書き直しで閉じた
+- [x] **R2-3（不正確）**: 「取得側と実行側が同じ答えになる」は成立しない。取得側が空を返すと `results()` が空になり、`execute_instant_selected` は入口の `results().get(index)` で**先に return する**ので実行側の fallback には到達しない（実測）——2 つの答えが同時に求まる場面が無い。→「空へ倒せば、起動できない行がそもそも出ない」へ
+- [x] **R2-4（過剰）**: `SPEC.md` の「算出もされない」を撤回。利用者から観測できず、**非算出を測るテストは書けない**（どのテストも支えない主張が第 1 層に増えていた）。記録は Low 3 の修正が書いた doc 文（過去形ゆえ腐らない）が既に持つ
+- [x] **⚠ R2-5（部分修正）**: 「借用のまま受け取る呼び出し元は**もう居ない**」の全称否定を撤回し、private 化の理由（#1124 で crate 外の消費者が消えたこと・過去の事実）だけを残した
+- [x] レビュアが指定した検出器（`git diff main -- '*.rs' | grep '^+' | awk -F'\`' 'NF%2==0'`）を**修正差分にも**当てて 0 件を確認（`.md` 側にも当てた）。**round 1 で 0 件・round 2 で 2 件を出したのはこの検出器だけ**であり、`cargo doc` も `clippy` も `governance:check` もこの型を見ていない
+- [x] カテゴリ A + F を再実行（すべて green）
+
+**別 issue へ送る残余**: `SPEC.md` §19.5「インスタントコマンドモード中はアイコン取得をスキップする」が現在の egui 経路に実装を持つかは未確認である（レビュアが 4 経路を辿った範囲では instant ゲートが見つからなかったが、「存在しない」とは断定していない）。**pre-existing であり本 issue の射程外**。
+- [x] 実装差分を確定させる（作業ツリーが計画どおりの形になっていることを `git diff` の引数 1 個の形で確認する）
 
 ## 未確定（実装前に潰す）
 

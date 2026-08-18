@@ -909,26 +909,28 @@ impl LauncherController {
                     } => {
                         // §19.5: 前方一致フィルタ。毎打鍵同期（30ms debounce 撤廃・spec M3 実装確定）。
                         // indexing を見ない（§19.7: instant はインデックス非依存ゆえ構築中でも使用可）。
-                        // 候補取得は `commands::instant` の 1 本を呼ぶ（かつては IPC コマンドと
-                        // 共有していたが、その相手は #532 SU7 で消滅した・同関数の doc が正本）。
-                        let rows = crate::commands::instant::get_instant_commands(
-                            filter_name,
-                            self.app_handle.clone(),
-                        )
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|dto| SearchResult {
-                            name: dto.name,
-                            // §19.5: description 設定時は優先、無ければ display（URL / exe args）
-                            path: if dto.description.is_empty() {
-                                dto.display
-                            } else {
-                                dto.description
+                        // 絞り込みと表示規則は `snotra_core::instant::matching_results` が持つ純関数で、
+                        // ここは config の読みだけを担う（#1124 で `commands/instant.rs` から移した——
+                        // かつて IPC コマンドと共有していた相手は #532 SU7 で消滅していた）。
+                        //
+                        // **fallback が空なのは、AppState 不在＝config 未ロードだからである**（#1124）。
+                        // 既定の instant コマンドを返すと「たまたま既定と一致する利用者にだけ正しい」
+                        // 行が出て、**しかもその行は起動できない**——`execute_instant_selected` の
+                        // 読みは同じ不在で `None` へ落ち、`egui_instant_error` を残して何もしない。
+                        // 空へ倒せば、起動できない行がそもそも出ない。
+                        // なお不在そのものが実運用で起きない（`.manage` は `.setup` より前・根拠は
+                        // `crate::egui_shell::read_config` のコメントと
+                        // ADR-config-default-fallback-references）。
+                        let rows = crate::egui_shell::read_config(
+                            &self.app_handle,
+                            |c| {
+                                snotra_core::instant::matching_results(
+                                    &c.instant_commands,
+                                    &filter_name,
+                                )
                             },
-                            is_folder: false,
-                            is_error: false,
-                        })
-                        .collect::<Vec<_>>();
+                            Vec::new,
+                        );
                         // 来歴 snapshot: この行集合が instant 候補であることと、その時点の
                         // instant_query を一体で記録する（activate_or_execute が参照・finding 0）。
                         self.instant_rows_query = Some(instant_query);

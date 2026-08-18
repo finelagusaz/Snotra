@@ -106,7 +106,7 @@ fn resolve_opener(path: &str, state: &AppState) -> Option<(String, String)> {
     // guard を束ねる（#1032 で `config()` が `RwLockReadGuard` を返すようになった）。
     #[expect(
         clippy::disallowed_methods,
-        reason = "platform（Win32 メッセージループ）スレッド上の読み。呼び出し元はトレイメニューからの起動経路であり、ここで待ってもイベントループは回り続ける。分類の正本は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項"
+        reason = "platform（Win32 メッセージループ）スレッド上の読み（呼び出し元はトレイメニューからの起動経路）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
     )]
     let cfg = engine.config();
     let tools = find_matching_tools(path, is_folder, &cfg.openers);
@@ -161,7 +161,7 @@ pub fn resolve_all_openers(path: &str, state: &AppState) -> Vec<(String, String,
     // guard を束ねる（`resolve_opener` と同じ理由・#1032）。
     #[expect(
         clippy::disallowed_methods,
-        reason = "platform（Win32 メッセージループ）スレッド上の読み。呼び出し元はトレイの履歴メニュー構築であり、ここで待ってもイベントループは回り続ける。分類の正本は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項"
+        reason = "platform（Win32 メッセージループ）スレッド上の読み（呼び出し元はトレイの履歴メニュー構築）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
     )]
     let cfg = engine.config();
     let tools = find_matching_tools(path, is_folder, &cfg.openers);

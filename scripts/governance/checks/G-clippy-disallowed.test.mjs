@@ -13,13 +13,13 @@ import {
 
 describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化・#950）", () => {
   // 赤フィクスチャは「clippy が exit 0 で沈黙した入力」そのもの（clippy 1.94.0 で実測）。
-  // 各エントリは**リテラルで書く**——カナリアから生成すると緑が恒真になり、名指しの意味が消える
-  // （**件数を書かない**。群を足すたびにこの行だけが腐る）。
+  // 各エントリは**リテラルで書く**——カナリアから生成すると緑が恒真になり、名指しの意味が消える。
+  // **件数も issue 番号も書かない**——群を足すたびに、そういう行が腐る。
   // reason に `（#751）` を入れてあるのは意図的で、引用符を見ないコメント除去（tomlLine）が
   // 行を切ることを緑側で押さえる。
   const R = 'reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）"';
   const CLIPPY_OK = [
-    "# 群ごとにコメントで区切った禁止集合（#751 / #900 / #1067）",
+    "# 群ごとにコメントで区切った禁止集合",
     "disallowed-methods = [",
     `    { path = "egui::Context::set_visuals", ${R} },`,
     `    { path = "egui::Context::set_visuals_of", ${R} },`,

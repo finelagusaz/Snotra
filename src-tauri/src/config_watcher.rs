@@ -86,7 +86,7 @@ fn apply_config_change(app: &AppHandle) {
     let state = app.state::<AppState>();
     #[expect(
         clippy::disallowed_methods,
-        reason = "**弁別子が他の例外と違う**——スレッドではなく手続きゆえの射程外である。これは読みではなく適用の一部（新旧の差分を取るための旧 config）であり、update_config と同じ錠の内側で取ることに意味がある。正本は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項"
+        reason = "弁別子が他の例外と違う——スレッドではなく手続きゆえの射程外である（読みではなく適用の一部で、新旧の差分を取るための旧 config）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
     )]
     let old_config = state.engine.lock().unwrap().config().clone();
 

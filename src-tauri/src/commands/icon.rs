@@ -16,7 +16,7 @@ pub(crate) fn ensure_icon_cache_loaded_if_enabled(
         let engine = state.engine.lock().unwrap();
         #[expect(
             clippy::disallowed_methods,
-            reason = "icon worker スレッド上の読み。ここで待ってもイベントループは回り続け、遅れるのはこの worker の産物（アイコン）だけである。分類の正本は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項"
+            reason = "icon worker スレッド上の読み（呼び出し元は results_view が spawn する icon worker）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
         )]
         let cfg = engine.config();
         (cfg.appearance.show_icons, cfg.icon_cache_cap())

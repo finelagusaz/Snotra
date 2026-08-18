@@ -16,11 +16,10 @@ export function run(snapshot, ctx) {
 // **前提は 4 つあり、どれも緑が含意しない**——(1) clippy.toml と Cargo.toml を正規表現で
 // 近似パースする範囲で、(2) member 側の opt-in（`[lints] workspace = true`）は G-workspace-lints が見る、
 // (3) 名指しした各パスが解決し続ける（解決しなくなっても文字列は変わらないので沈黙する。
-//     群 1 は上流 egui のピン更新、群 2・3 は snotra-core 側の改名が契機になる。**群 3 だけはこの前提が
-//     閉じている**——例外地点の `#[expect]` が不履行で赤くなるため。**閉じているのは注釈を持つ地点が
-//     1 つ以上残る間だけで**（全例外が移行すれば注釈ごと消える）、その赤は `-D warnings` にも依存する
-//     〔#1122〕）、
+//     群 1 は上流 egui のピン更新、群 2・3 は snotra-core 側の改名が契機になる）、
 // (4) DISALLOWED_METHODS_GROUPS が上流の群構成に追随している。**単独の緑を「禁止は生きている」と読んではならない。**
+// 群 3（#1122）だけは前提 (3) を例外地点の `#[expect]` が補うが、**それが成り立つ条件は clippy.toml の
+// 群 3 が正本である**（ここへ写さない——条件は 2 つあり、どちらも足せば腐る）。
 //
 // 塞ぐのは **clippy 自身が exit 0 で沈黙する** 次の経路である（clippy 1.94.0 で実測）:
 //   内容側 — ファイルの削除 / disallowed-methods の消滅・空配列化 / エントリが 1 行だけ消える /
@@ -36,7 +35,7 @@ export function run(snapshot, ctx) {
 //
 // 射程外（意図的）: reason 文言の変更・`#[allow]` による迂回（lint に内在する性質）・
 // disallowed_methods 以外の clippy lint のレベル・clippy.toml と cargo のキャッシュの関係
-// （挙動と 2026-08-18 の再測定は clippy.toml 冒頭の「この設定が死ぬ経路」3 が正本）。
+// （挙動と 2026-08-18 の再測定は clippy.toml 冒頭の「この設定が死ぬ経路」が正本）。
 //
 // 受容する残余:
 // - member 側の opt-in（src-tauri の `[lints] workspace = true`）は **G-workspace-lints が全 member について

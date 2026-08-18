@@ -43,6 +43,25 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// config を読む（`engine` の `Mutex` を経ない）。**この crate で read guard を取る唯一の地点である。**
+    ///
+    /// **`read` の中で lock も I/O も取らないこと。** read guard を保持したまま `engine.lock()` を
+    /// 要求すれば錠を分けた意味が消え、待ちが両方に乗る。ファイル I/O
+    /// （`Path::is_dir` は死んだ UNC で最大 21 秒塞がる・#524）を挟めば、その間 `update_config` の
+    /// 書き込みが進めず、設定の適用がそこで止まる。**`read` へ渡すのは純 CPU だけにする。**
+    ///
+    /// **クロージャ形が保証するのは guard を外へ持ち出せないことだけである**——中で I/O を
+    /// 書く形は構造では止まらない（**受容する残余**）。
+    ///
+    /// **`&AppHandle` しか持たない呼び出し元は [`crate::egui_shell::read_config`] を使う**
+    /// （あちらは `AppState` 不在の面倒を見てからここへ委譲する）。**口は 2 つだが、guard を
+    /// 取る地点はここ 1 つである。**
+    ///
+    /// 規範の全文と害は `src-tauri/CLAUDE.md`「モジュール構成」の config live-read 条項が正本。
+    pub fn read_config<T>(&self, read: impl FnOnce(&Config) -> T) -> T {
+        read(&self.config.read().unwrap())
+    }
+
     /// インデックスビルドの開始権を CAS で取得する。
     /// 成功時は `index_build_started` と `indexing` を両方 true にして `true` を返す。
     /// 既にビルドが始まっている場合は何も変更せず `false` を返す。
@@ -102,8 +121,10 @@ mod tests {
 
         let reader = std::sync::Arc::clone(&state);
         let handle = std::thread::spawn(move || {
-            // UI 役。engine lock を一切要求しない。
-            reader.config.read().unwrap().appearance.window_width
+            // UI 役。engine lock を一切要求しない。**製品が使う口そのものを測る**——
+            // `config` フィールドを直に読むと、`read_config` が engine lock を取り始めても
+            // この検査は緑のままになる（#1123）。
+            reader.read_config(|c| c.appearance.window_width)
         });
 
         let width = handle
@@ -125,7 +146,7 @@ mod tests {
         state.engine.lock().unwrap().update_config(changed);
 
         assert_eq!(
-            state.config.read().unwrap().appearance.window_width,
+            state.read_config(|c| c.appearance.window_width),
             999,
             "engine への update_config が AppState 側の読みへ届かなければ、両者は別物である"
         );

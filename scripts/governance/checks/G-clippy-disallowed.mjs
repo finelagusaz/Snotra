@@ -16,10 +16,8 @@ export function run(snapshot, ctx) {
 // **前提は 4 つあり、どれも緑が含意しない**——(1) clippy.toml と Cargo.toml を正規表現で
 // 近似パースする範囲で、(2) member 側の opt-in（`[lints] workspace = true`）は G-workspace-lints が見る、
 // (3) 名指しした各パスが解決し続ける（解決しなくなっても文字列は変わらないので沈黙する。
-//     群 1 は上流 egui のピン更新、群 2・3 は snotra-core 側の改名が契機になる）、
+//     群 1 は上流 egui のピン更新、群 2 は snotra-core 側の改名が契機になる）、
 // (4) DISALLOWED_METHODS_GROUPS が上流の群構成に追随している。**単独の緑を「禁止は生きている」と読んではならない。**
-// 群 3（#1122）だけは前提 (3) を例外地点の `#[expect]` が補うが、**それが成り立つ条件は clippy.toml の
-// 群 3 が正本である**（ここへ写さない——条件は 2 つあり、どちらも足せば腐る）。
 //
 // 塞ぐのは **clippy 自身が exit 0 で沈黙する** 次の経路である（clippy 1.94.0 で実測）:
 //   内容側 — ファイルの削除 / disallowed-methods の消滅・空配列化 / エントリが 1 行だけ消える /
@@ -62,8 +60,6 @@ export const REQUIRED_DISALLOWED_METHODS = [
   "egui::Context::all_styles_mut",
   // 群 2（#1067）: 計測ハーネス専用の観測口。製品が読んで分岐してはならない。
   "snotra_core::engine::Engine::sorted_by_path",
-  // 群 3（#1122）: engine 錠越しの config の live-read。例外は expect 属性が分類を記録して開ける。
-  "snotra_core::engine::Engine::config",
 ];
 
 const CLIPPY_TOML = "src-tauri/clippy.toml";

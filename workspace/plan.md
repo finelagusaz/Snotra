@@ -109,22 +109,22 @@ config の読みを 4 か所すべて engine 錠の外へ出し、`Engine::confi
 
 `clippy.toml` 群 3 の撤去条件が「**同じコミットで**」を要求する。加えて新 API の導入と呼び出し点の移行を分けない（`-D warnings` 下で未使用の新 API は `dead_code`）。
 
-- [ ] `AppState::read_config` を `src-tauri/src/state.rs` へ新設し、契約 doc（I1〜I3）の正本をそこに置く
-- [ ] `egui_shell::read_config` を委譲へ書き換え、doc の分担を縮める
-- [ ] `resolve_opener` / `resolve_all_openers` を移設（`is_dir()` を guard の外に維持）し `#[expect]` 2 件を削除
-- [ ] `ensure_icon_cache_loaded_if_enabled` を移設（2 値を単一 guard・`IconCache::load` は guard の外）し `#[expect]` 1 件を削除
-- [ ] `config_watcher::apply_config_change` の旧 config 読みを移設し `#[expect]` 1 件を削除
-- [ ] `Engine::config` を `#[cfg(test)] pub(crate)` へ落とし、doc を書き直す
-- [ ] `clippy.toml` の群 3（セクション＋配列エントリ＋群 1 冒頭からの言及）を削除
-- [ ] `G-clippy-disallowed.mjs` のカナリア行と群 3 コメントを削除
-- [ ] `G-clippy-disallowed.test.mjs` の緑 fixture 該当 2 行を削除
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` が緑
-- [ ] `cargo test -p snotra` / `cargo test -p snotra-core` が緑
-- [ ] `npm test`（`G-clippy-disallowed.test.mjs` を含む vitest）が緑
-- [ ] `cargo doc --workspace --no-deps --document-private-items` が緑（`///` を大幅改訂するため必須。**hook は発火しない**）
-- [ ] **故障注入**（手順は上の「機構の乗り換えは測る」節が正本）: E0599 で落ちること ＋ `config_handle().read()` が今も通ること を測る
-- [ ] `/race-check` を実行する（差分ができて初めて母集団が取れる。主論点は I1〜I4）
-- [ ] `/dry-check` を実行する
+- [x] `AppState::read_config` を `src-tauri/src/state.rs` へ新設し、契約 doc（I1〜I3）の正本をそこに置く
+- [x] `egui_shell::read_config` を委譲へ書き換え、doc の分担を縮める
+- [x] `resolve_opener` / `resolve_all_openers` を移設（`is_dir()` を guard の外に維持）し `#[expect]` 2 件を削除
+- [x] `ensure_icon_cache_loaded_if_enabled` を移設（2 値を単一 guard・`IconCache::load` は guard の外）し `#[expect]` 1 件を削除
+- [x] `config_watcher::apply_config_change` の旧 config 読みを移設し `#[expect]` 1 件を削除
+- [x] `Engine::config` を `#[cfg(test)] pub(crate)` へ落とし、doc を書き直す
+- [x] `clippy.toml` の群 3（セクション＋配列エントリ＋群 1 冒頭からの言及）を削除
+- [x] `G-clippy-disallowed.mjs` のカナリア行と群 3 コメントを削除
+- [x] `G-clippy-disallowed.test.mjs` の緑 fixture 該当 2 行を削除
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` が緑
+- [x] `cargo test -p snotra` / `cargo test -p snotra-core` が緑
+- [x] `npm test`（`G-clippy-disallowed.test.mjs` を含む vitest）が緑
+- [x] `cargo doc --workspace --no-deps --document-private-items` が緑（`///` を大幅改訂するため必須。**hook は発火しない**）
+- [x] **故障注入**（手順は上の「機構の乗り換えは測る」節が正本）: E0599 で落ちること ＋ `config_handle().read()` が今も通ること を測る
+- [x] `/race-check` を実行する（差分ができて初めて母集団が取れる。主論点は I1〜I4）
+- [x] `/dry-check` を実行する
 
 ### Phase 2 — 条項の書き換えと散文の追随（**1 コミット**）
 

@@ -32,7 +32,8 @@
 # `EguiWindow::new` から run_ui の**外**で呼ばれるため、そこでの global style 書き込みは第 1 pass から
 # 効く（＝ #751 の欠陥を持たない）。歴史上そこに style 書き込みは一度も無いので塞ぐ判断を採ったが、
 # 必要になったら `#[allow(clippy::disallowed_methods)]` + 理由コメントで開けること——
-# **それがこの機構で sanctioned な唯一の解消手段である。**
+# **それがこの群で sanctioned な解消手段である**（`view.rs` の `apply_exact_hit_test_style` が唯一の
+# 実使用）。**群ごとに違う**——群 3 は `#[expect]` を要求する（理由は同群のコメント）。
 #
 # **この設定が死ぬ経路と、いま誰が見ているか**（いずれも 2026-08-06 に実測）:
 #   0. この lint は **warn 既定**である（`clippy-driver -W help` で実測）。**ルート `Cargo.toml` の
@@ -45,7 +46,11 @@
 #      （ファイルの削除・空配列化・エントリ 1 行の消失・配列内でのコメントアウトも同じ検査が捕まえる）
 #   3. このファイルは cargo の fingerprint に入らない → ここだけを変えて同じコマンドを打つと、
 #      キャッシュ replay で設定を適用せずに exit 0 を返す（`.rs` を触るか `cargo clean -p snotra` を挟む）。
-#      **これは誰も見ていない残余である**
+#      **これは誰も見ていない残余である**。
+#      **2026-08-17（clippy 0.1.97）に、この経路は再現しなかった**——`cargo clippy` が exit 0 を返した
+#      直後にこのファイルだけを編集して同じコマンドを打つと、`.rs` を触らず `cargo clean` も挟まずに
+#      診断が現れた。**機序は測っていない**（上流が追随するようになったのか別の要因かは不明）ので、
+#      上の手順は安全側の上位集合としてそのまま残す。#1122 の計測はいずれも `.rs` を touch している。
 #   PostToolUse hook は exit code でしか検出しないため、1・2 の warning は会話にも届かない——
 #   だから検知を clippy の外（Node の静的読み取り）へ置いた。
 #   **パスを足す・変えるときは、その場で違反を注入して赤くなることを必ず測ること**——
@@ -73,6 +78,55 @@
 # 巻き込む——crate ごとに分けたいという要件そのものが workspace lints と反対を向いている。
 # **一方でレベル（deny）は移した**（#950）: 禁止集合を持たない 3 crate では集合が空で無害であり
 # （`-D warnings` 無しで exit 0・診断なしを実測）、上の経路 0 が消えるからである。
+# ## 群 3: engine 錠越しの config の live-read（#1032 / #1076 / #1122）
+#
+# **守る命題**: この群が実効なら、`engine.lock().config()` の形の live-read は src-tauri の clippy で
+# error として落ちる。検索 worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点で
+# 40〜95 ms）ため、UI がその錠越しに設定を読むとフレームが走査の完了まで返らない。**規範の全文と
+# 例外の弁別子は `src-tauri/CLAUDE.md`「モジュール構成」の当該条項が正本である**（ここに言い換えを
+# 置かない）。却下した弁別子と、型で表せない理由は ADR-config-read-exception-discriminator。
+#
+# **型では表せないので lint にした**——弁別子が否定形の述語（「イベントループスレッドを止め**ない**
+# 場所での読み」）であり、この crate 群が持つ証人型 `EventLoopProof` は肯定側の存在を証明できても
+# 不在を証明できない（同 ADR 案 G）。
+#
+# **例外は `#[expect(clippy::disallowed_methods, reason = …)]` で開ける。`#[allow]` を使わないこと。**
+# 条項は既に「どこで走るかは呼び出し元を辿って決めること」という**呼び出し点ごとの判定義務**を課して
+# いる。注釈はその判定結果をその場に残すものであって、義務を新設しない——**ここが群 1 で `style_ui` を
+# 禁止しなかった判断との差である**（あちらの呼び手は何も判定する義務を負っていないので、注釈は純粋な
+# 雑音になる）。**`#[expect]` を選ぶのは記録を load-bearing にするためである**: 違反が消えれば
+# `unfulfilled_lint_expectations` が鳴るので、読みを `read_config` へ移したときに古い注釈を残せない。
+# **分類は各 `#[expect]` の reason に書く**——下の配列側の reason は代替手段を指すだけに留める
+# （パスごとに 1 つしか書けず、呼び出し点ごとの分類を運べない）。
+#
+# 含めなかったもの:
+#   - `Engine::config_handle` — 返すのは `Arc` であって値ではなく、製品の呼び出し点は `main.rs` の
+#     `AppState` 構築だけである（他は `#[cfg(test)]` のヘルパー）。禁止すると構築そのものが不能に
+#     なる。**ただし `engine.lock()` 越しに取り直せば同じだけ待つ**——それは下の残余である。
+#   - `AppState.config` 経由の読み（`egui_shell::read_config`）— engine の錠を経ないので、そもそも
+#     規範が**求めている**形である。
+#
+# **規範は機構より広い**（受容する残余）:
+#   - 機構が見るのは `Engine::config` という**綴り**であって害ではない。`Engine` の内側で config を
+#     読む他のメソッド（`search` / `recent_history` / `begin_index_drain` 等）をイベントループから
+#     `engine.lock()` 越しに呼べば同じ待ちが同じだけ乗るのに、診断は出ない。
+#   - **記録した分類は黙って腐る。** 条項は「同じ関数が両方から呼ばれるようになれば分類は変わる」と
+#     要求するが、注釈を持つ関数へイベントループ側から新しい呼び出し元が増えても何も鳴らない。
+#     判定の責務は条項が読者に置いたままである。
+#   - **`#[expect]` の不履行検知は `-D warnings` に依存する。** `unfulfilled_lint_expectations` は
+#     warn 既定で、ルート `Cargo.toml` へ `[workspace.lints.rust]` を新設しない判断を採ったため、
+#     赤くなるのは `ci.yml` と `.claude/hooks/post-edit.mjs` がそれを渡している間だけである。
+#     **`cargo check` では診断そのものが評価されない**（rustc は `clippy::` ツール lint の
+#     expectation を見ない・実測）。禁止そのものが #950 で得た「コマンドラインからの独立」（上の
+#     経路 0）を、この足は持たない。
+#
+# **実測**（2026-08-17・rustc 1.97.1 / clippy 0.1.97。足場はすべて撤去済み）: 注釈なしで禁止を
+# 入れると当該地点が error（`-D warnings` 無しでも error＝経路 0 の deny がこの群にも効く）/ 注釈を
+# 付けると exit 0 / **禁止行を消すと注釈側が unfulfilled で赤** / **パスを書き損じても同じく赤**——
+# `does not refer to a reachable function` はそれ自体 exit 0（上の経路 1）だが、注釈がそれを赤へ
+# 変える。**G-clippy-disallowed が「緑は含意しない」と自ら宣言する前提（名指したパスが解決し
+# 続けること）は、この群についてはここで閉じている。** `cargo check` / `cargo test` / `cargo doc` /
+# `cargo fmt --check` はいずれも壊れない。
 disallowed-methods = [
     { path = "egui::Context::set_visuals", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
     { path = "egui::Context::set_visuals_of", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
@@ -83,4 +137,6 @@ disallowed-methods = [
     { path = "egui::Context::all_styles_mut", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
     # --- ここから下は #751 とは別の関心である（上の群は egui の global style・こちらは計測用の観測口） ---
     { path = "snotra_core::engine::Engine::sorted_by_path", reason = "計測ハーネス専用の観測口であり、製品はこれを読んで分岐してはならない（#1067）。索引が整列しているかで振る舞いを変えたいなら、分岐は PathStore::cmp_paths の内側に閉じる" },
+    # --- ここから下は上の 2 群とも別の関心である（engine 錠の待ちがフレームに乗ること） ---
+    { path = "snotra_core::engine::Engine::config", reason = "engine 錠越しの config の live-read はフレームを検索の完了まで止める。UI からは egui_shell::read_config を通すこと。例外は expect 属性に分類理由を添えて開ける（正本は src-tauri/CLAUDE.md「モジュール構成」の当該条項・#1032 / #1076）" },
 ]

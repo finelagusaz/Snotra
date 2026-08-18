@@ -11,11 +11,14 @@ export function run(snapshot, ctx) {
 // ---------------------------------------------------------------------------
 // G-clippy-disallowed — src-tauri/clippy.toml の禁止集合が実効しているか（#950）。
 //
-// **守る命題**: この検査が緑 ⇒ `Context` 経由の global style 書き込み（#751 / #900）が src-tauri の clippy で
-// error として落ちる。**前提は 4 つあり、どれも緑が含意しない**——(1) clippy.toml と Cargo.toml を正規表現で
+// **守る命題**: この検査が緑 ⇒ `REQUIRED_DISALLOWED_METHODS` が名指す各群の禁止が src-tauri の clippy で
+// error として落ちる（何を禁じているかと群ごとの理由は `src-tauri/clippy.toml` が正本）。
+// **前提は 4 つあり、どれも緑が含意しない**——(1) clippy.toml と Cargo.toml を正規表現で
 // 近似パースする範囲で、(2) member 側の opt-in（`[lints] workspace = true`）は G-workspace-lints が見る、
 // (3) 名指しした各パスが解決し続ける（解決しなくなっても文字列は変わらないので沈黙する。
-//     群 1 は上流 egui のピン更新、群 2 は snotra-core 側の改名が契機になる）、
+//     群 1 は上流 egui のピン更新、群 2・3 は snotra-core 側の改名が契機になる。**群 3 だけはこの前提が
+//     閉じている**——例外地点の `#[expect]` が不履行で赤くなるため。ただしその赤は `-D warnings` に
+//     依存する〔#1122〕）、
 // (4) DISALLOWED_METHODS_GROUPS が上流の群構成に追随している。**単独の緑を「禁止は生きている」と読んではならない。**
 //
 // 塞ぐのは **clippy 自身が exit 0 で沈黙する** 次の経路である（clippy 1.94.0 で実測）:
@@ -31,8 +34,8 @@ export function run(snapshot, ctx) {
 // Node の静的読み取りなので、6 経路すべてが入力テキストの差分として現れる）。
 //
 // 射程外（意図的）: reason 文言の変更・`#[allow]` による迂回（lint に内在する性質）・
-// disallowed_methods 以外の clippy lint のレベル・clippy.toml が cargo の fingerprint に入らないこと
-// （`.rs` を触らず同じコマンドを打つとキャッシュ replay で exit 0。正本は clippy.toml 冒頭のコメント）。
+// disallowed_methods 以外の clippy lint のレベル・clippy.toml と cargo のキャッシュの関係
+// （挙動と 2026-08-17 の再測定は clippy.toml 冒頭の「この設定が死ぬ経路」3 が正本）。
 //
 // 受容する残余:
 // - member 側の opt-in（src-tauri の `[lints] workspace = true`）は **G-workspace-lints が全 member について
@@ -59,6 +62,8 @@ export const REQUIRED_DISALLOWED_METHODS = [
   "egui::Context::all_styles_mut",
   // 群 2（#1067）: 計測ハーネス専用の観測口。製品が読んで分岐してはならない。
   "snotra_core::engine::Engine::sorted_by_path",
+  // 群 3（#1122）: engine 錠越しの config の live-read。例外は expect 属性が分類を記録して開ける。
+  "snotra_core::engine::Engine::config",
 ];
 
 const CLIPPY_TOML = "src-tauri/clippy.toml";

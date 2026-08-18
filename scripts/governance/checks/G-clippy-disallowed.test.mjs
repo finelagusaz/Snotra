@@ -13,7 +13,8 @@ import {
 
 describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化・#950）", () => {
   // 赤フィクスチャは「clippy が exit 0 で沈黙した入力」そのもの（clippy 1.94.0 で実測）。
-  // 7 エントリは**リテラルで書く**——カナリアから生成すると緑が恒真になり、名指しの意味が消える。
+  // 各エントリは**リテラルで書く**——カナリアから生成すると緑が恒真になり、名指しの意味が消える
+  // （**件数を書かない**。群を足すたびにこの行だけが腐る）。
   // reason に `（#751）` を入れてあるのは意図的で、引用符を見ないコメント除去（tomlLine）が
   // 行を切ることを緑側で押さえる。
   const R = 'reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）"';
@@ -30,6 +31,8 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
     // 群 2（#1067）。**fixture は群を跨いで持つ**——実ファイルが 1 つの関心ではなくなった以上、
     // 1 群だけの入力で緑にすると「群を足したらカナリアへも足す」運用が検算されない。
     `    { path = "snotra_core::engine::Engine::sorted_by_path", reason = "計測専用の観測口（#1067）" },`,
+    // 群 3（#1122）。上と同じ理由でここにも持つ。
+    `    { path = "snotra_core::engine::Engine::config", reason = "engine 錠越しの live-read（#1032）" },`,
     "]",
     "",
   ].join("\n");

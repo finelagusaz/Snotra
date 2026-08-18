@@ -86,7 +86,7 @@
 | コメントアウト | `clippy.toml` の当該行を `#` で潰す | `governance:check` 赤 |
 | fixture とカナリアの対応 | 定数へ 9 件目を足して `CLIPPY_OK` fixture を据え置く | `npm test` 赤（`G-clippy-disallowed.test.mjs`） |
 
-**注入の作法**: `clippy.toml` だけを触った回は `.rs` を touch するか `cargo clean -p snotra` を挟む（同ファイルの死経路 3）。**2026-08-17 の観測では touch なしでも診断が出たが、機序を測っていないので手順は従来どおり残す**（上位集合を満たすので安全側）。**稼働中のガードを弱める向きの変異（禁止行の削除・書き損じ・コメントアウト）は複製に当てる**——`clippy.toml` を scratchpad へ複製して変異させ `CLIPPY_CONF_DIR` を向ける（`.claude/rules/safety-nets.md`「複製に変異を当てる」）。作業ツリーへ足す向きの変異（新しい違反・`#[expect]` の一時除去）は作業ツリーで行い、`git checkout -- <個別パス>` で戻して `git status --short` で残っていないことを確認する。
+**注入の作法**（**実装をコミットしてから注入する**——2026-08-17 に、未コミットの実装が載るファイルへ注入し、撤去に `git checkout -- <path>` を使って `#[expect]` 4 件を全損した。HEAD へ戻るので注入だけでなく実装ごと消える。リポジトリの記録にある #934 と同じ型である）: `clippy.toml` だけを触った回は `.rs` を touch するか `cargo clean -p snotra` を挟む（同ファイルの死経路 3）。**2026-08-17 の観測では touch なしでも診断が出たが、機序を測っていないので手順は従来どおり残す**（上位集合を満たすので安全側）。**稼働中のガードを弱める向きの変異（禁止行の削除・書き損じ・コメントアウト）は複製に当てる**——`clippy.toml` を scratchpad へ複製して変異させ `CLIPPY_CONF_DIR` を向ける（`.claude/rules/safety-nets.md`「複製に変異を当てる」）。作業ツリーへ足す向きの変異（新しい違反・`#[expect]` の一時除去）は作業ツリーで行い、`git checkout -- <個別パス>` で戻して `git status --short` で残っていないことを確認する。
 
 **層と層の隙間**（`docs/development-principles.md`「検証の層と、層と層の隙間」の問い (2)）: この機構の出力を消費する層は 2 つ——CI の `rust-check`（`ci.yml:191`）と PostToolUse hook（`post-edit.mjs:325-326`）で、**どちらも `-D warnings` を渡す**。届いていることは実装の途中で自然に測れる——実装順序 2〜4 の中間状態では hook の clippy が赤くなり、その診断が会話に届くはずである（届かなければ、その時点で消費層の欠陥として扱う）。**届かない層も名指しておく**: `cargo check --workspace` は `clippy::` ツール lint の expectation を評価しないので、カナリアはそこに現れない（M5・受容残余）。
 
@@ -116,29 +116,29 @@ npm run governance:check
 
 ### Phase 1 — 機構
 
-- [ ] `src-tauri/clippy.toml` に群 3 のコメント節を書く（守る命題と前提 / 含めなかったもの（`config_handle`・`AppState.config` 経由の読み）/ 注釈が記録である理由 / 実測 M1〜M5 の要点 / `-D warnings` 依存の残余 / 規範は機構より広いこと。**件数は書かない**）
-- [ ] `disallowed-methods` 配列へ `snotra_core::engine::Engine::config` を追加（`reason` に代替手段 `egui_shell::read_config` を書く）
-- [ ] `scripts/governance/checks/G-clippy-disallowed.mjs` の `REQUIRED_DISALLOWED_METHODS` へ群 3 のコメント付きで追加
-- [ ] 同ファイル冒頭「守る命題」を群 1 限定の書き方から、禁止集合の各群を覆う形へ一般化（**数を書かない**）
-- [ ] `G-clippy-disallowed.test.mjs` の `CLIPPY_OK` fixture へ 9 件目のエントリを足す（**定数だけ足すと `npm test` が赤い**）
-- [ ] 同ファイル 16 行の「**7 エントリ**は…」（群 2 の時点で既に腐っている）を件数なしの形へ直す
+- [x] `src-tauri/clippy.toml` に群 3 のコメント節を書く（守る命題と前提 / 含めなかったもの（`config_handle`・`AppState.config` 経由の読み）/ 注釈が記録である理由 / 実測 M1〜M5 の要点 / `-D warnings` 依存の残余 / 規範は機構より広いこと。**件数は書かない**）
+- [x] `disallowed-methods` 配列へ `snotra_core::engine::Engine::config` を追加（`reason` に代替手段 `egui_shell::read_config` を書く）
+- [x] `scripts/governance/checks/G-clippy-disallowed.mjs` の `REQUIRED_DISALLOWED_METHODS` へ群 3 のコメント付きで追加
+- [x] 同ファイル冒頭「守る命題」を群 1 限定の書き方から、禁止集合の各群を覆う形へ一般化（**数を書かない**）
+- [x] `G-clippy-disallowed.test.mjs` の `CLIPPY_OK` fixture へ 9 件目のエントリを足す（**定数だけ足すと `npm test` が赤い**）
+- [x] 同ファイル 16 行の「**7 エントリ**は…」（群 2 の時点で既に腐っている）を件数なしの形へ直す
 
 ### Phase 2 — 注釈（分類の記録）
 
-- [ ] `commands/icon.rs:17` へ `#[expect]` + 理由（icon worker スレッド）
-- [ ] `commands/launch.rs:107` / `:158` へ `#[expect]` + 理由（tray／platform スレッド）
-- [ ] `config_watcher.rs:87` へ `#[expect]` + 理由（**適用手続きの一部ゆえ射程外**——軸が他と違うことを文言で書き分ける）
-- [ ] 4 か所すべてで、正本（`src-tauri/CLAUDE.md` の当該条項）を指す
-- [ ] 属性は**文（`let`）段**に置く（関数段にしない——関数へ新しい読みを足したときに黙って覆わないため）
-- [ ] `clippy.toml` の `reason`（パスごとに 1 つしか書けない）は**条項へのポインタに留め**、分類は各 `#[expect]` の `reason` に書く
+- [x] `commands/icon.rs:17` へ `#[expect]` + 理由（icon worker スレッド）
+- [x] `commands/launch.rs:107` / `:158` へ `#[expect]` + 理由（tray／platform スレッド）
+- [x] `config_watcher.rs:87` へ `#[expect]` + 理由（**適用手続きの一部ゆえ射程外**——軸が他と違うことを文言で書き分ける）
+- [x] 4 か所すべてで、正本（`src-tauri/CLAUDE.md` の当該条項）を指す
+- [x] 属性は**文（`let`）段**に置く（関数段にしない——関数へ新しい読みを足したときに黙って覆わないため）
+- [x] `clippy.toml` の `reason`（パスごとに 1 つしか書けない）は**条項へのポインタに留め**、分類は各 `#[expect]` の `reason` に書く
 
 ### Phase 3 — 規範の同期と副産物
 
-- [ ] `src-tauri/CLAUDE.md` 57 行の「**機構は無い**——`engine.lock().config()` は今もコンパイルが通るので…」を、機構が在ることと**その射程**（直呼びだけ・`config_handle` 取り直しは通る）・注釈が分類の記録であることへ書き換える。「この条項が `commands/` も覆うようになったぶん、その残余は以前より広い面に掛かる」も現状と整合させる
-- [ ] `clippy.toml` の死経路 3 へ 2026-08-17 の観測を日付つきで追記（**機序は主張しない**）
-- [ ] `G-clippy-disallowed.mjs:34` の fingerprint 機序の再述を正本参照へ寄せる
-- [ ] `clippy.toml:34` の全称「それがこの機構で sanctioned な唯一の解消手段である」を、群 1 に限定するか `#[expect]` を含める形へ直す
-- [ ] `snotra-core/src/engine.rs` の `Engine::config` の rustdoc へ「製品 crate では `clippy.toml` が禁じている」を 1 行（改名沈黙への予防・先例は `SearchEngine::sorted_by_path` の doc）
+- [x] `src-tauri/CLAUDE.md` 57 行の「**機構は無い**——`engine.lock().config()` は今もコンパイルが通るので…」を、機構が在ることと**その射程**（直呼びだけ・`config_handle` 取り直しは通る）・注釈が分類の記録であることへ書き換える。「この条項が `commands/` も覆うようになったぶん、その残余は以前より広い面に掛かる」も現状と整合させる
+- [x] `clippy.toml` の死経路 3 へ 2026-08-17 の観測を日付つきで追記（**機序は主張しない**）
+- [x] `G-clippy-disallowed.mjs:34` の fingerprint 機序の再述を正本参照へ寄せる
+- [x] `clippy.toml:34` の全称「それがこの機構で sanctioned な唯一の解消手段である」を、群 1 に限定するか `#[expect]` を含める形へ直す
+- [x] `snotra-core/src/engine.rs` の `Engine::config` の rustdoc へ「製品 crate では `clippy.toml` が禁じている」を 1 行（改名沈黙への予防・先例は `SearchEngine::sorted_by_path` の doc）
 
 ### Phase 4 — 注入で実測
 

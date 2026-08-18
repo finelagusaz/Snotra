@@ -14,6 +14,10 @@ pub(crate) fn ensure_icon_cache_loaded_if_enabled(
     // 詳細は snotra-core の同メソッド doc を参照）。
     let (show_icons, cap) = {
         let engine = state.engine.lock().unwrap();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "icon worker スレッド上の読み。ここで待ってもイベントループは回り続け、遅れるのはこの worker の産物（アイコン）だけである。分類の正本は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項"
+        )]
         let cfg = engine.config();
         (cfg.appearance.show_icons, cfg.icon_cache_cap())
     };

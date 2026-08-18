@@ -209,7 +209,27 @@ fn icon_gate_keeps_input_idle_semantics() {
 - **差分を読んでも気づけない**（テストは正しく書かれて見え、緑で、変異を当てて初めて分かる）
 - 対処は**第三のファイルへ移すこと**（`icon_textures.rs`）。needle が母集団に混入しない場所であることが、この検査の成立条件である。移設してはならない理由を検査自身の doc に書いた
 - **これは計画の「検知器を実装より前に置き、変異で落ちることまで測る」が捕まえた欠陥である。** 実装と同時に置いていれば、不動点は実装差分と一緒にコミットされていた
-- [ ] 実機ベースライン A 側を採る（`snotra.exe` の不在確認 → 隔離プロファイル → `@` 1 打鍵 → 番兵が `icon:extract_failed` に現れることの確認とレイテンシ L）
+- [x] 実機ベースライン A 側を採る（下記「Phase 0b の実測」）
+
+#### Phase 0b の実測（A 側・2026-08-18・debug ビルド）
+
+**run の有効性（先に確かめた肯定的確認）**: `startup:ready` を観測（trace は生きている）／`egui_results:show` の `rows=3`（既定 config なら 2 ゆえ、プローブ用 config が読まれている）／`config.toml.bak` 無し。**3 つとも立ったので、この run は有効である。**
+
+| 観測 | 値 |
+|---|---|
+| 番兵（url 型 `u1`）の `icon:extract_failed` | **3 回**（`ShellQueryFailed(2)` / `transient=true` / `exists=false`） |
+| `"C:\Windows\System32\notepad.exe {query}"`（exec + args）の失敗 | **3 回** |
+| `C:\Windows\System32\notepad.exe`（exec + args 空）の失敗 | **0 回**（＝抽出に成功している） |
+| 1 path あたりの試行 | **3 回**＝`ICON_MAX_ATTEMPTS`（1 打鍵・世代交代 1 回で上限まで） |
+| 打鍵 → 最初の失敗 trace | **L = 105 / 129 / 126 ms**（3 run） |
+
+**絵**（`target/probe-instant-icon/window-A.png`・results 窓を撮る）: `u1` プレースホルダ／**`e1` は本物の notepad アイコン**／`e2` プレースホルダ。**issue の事実 3（exec 型で本物のアイコンが出る）を実機で確定した。**
+
+**手順の逸脱 2 点（記録）**:
+1. **prefix は `@` ではなく英字 `q` を使った。** `@` の VK はキーボード配列で違い（JIS は専用キー・US は Shift+2）、誤ると「instant 行が出ない」が「スキップされた」と同じ見た目になる。instant 経路は prefix の字に依らないので、失敗モードを 1 つ減らす方へ倒した
+2. **撮るのは `Snotra Results` 窓である。** 主窓のハンドルで撮ると入力バーしか写らない（1 回目で実測）
+
+**B 側の期待**: 番兵 0 件／`e2` にアイコンが出る／`u1`・`e1` の絵は不変。予算は `max(B0, 5L)` ＝ 3000ms 固定待ち（L の 5 倍 ≒ 650ms を上回る）。
 
 ### Phase 1〜3（1 コミット）
 

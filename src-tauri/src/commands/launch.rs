@@ -95,22 +95,19 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
 /// パスに対して先頭のオープナーツール (exe, args) を返す。
 /// 0/1 ツール判定の共通ロジック。
 ///
-/// `is_dir()`（FS I/O）は**必ず engine ロックの外**で行う — 死んだ UNC パスでは
-/// SMB タイムアウトまで最大 21 秒ブロックする実測があり、ロック内で呼ぶと
-/// その間 `engine.lock()` を試みる全機能が待たされる（#524）。is_dir は engine
-/// 状態に依存しないためロック前で評価でき、ロック内は純 CPU（`find_matching_tools`
-/// + 小文字列 clone）のみに保つ。呼び出しスレッド自身の is_dir 待ちは仕様上残る。
+/// `is_dir()`（FS I/O）は**必ず config の read guard の外**で行う — 死んだ UNC パスでは
+/// SMB タイムアウトまで最大 21 秒ブロックする実測があり、guard の中で呼ぶとその間
+/// `update_config` の書き込みが進めず、設定の適用がそこで止まる（#524。**宛先が engine 錠から
+/// config の `RwLock` へ変わっただけで、規律は同一である**・#1123）。is_dir は config に依存
+/// しないため読みの前で評価でき、読みの中は純 CPU（`find_matching_tools` + 小文字列 clone）の
+/// みに保つ。呼び出しスレッド自身の is_dir 待ちは仕様上残る。
 fn resolve_opener(path: &str, state: &AppState) -> Option<(String, String)> {
     let is_folder = std::path::Path::new(path).is_dir();
-    let engine = state.engine.lock().unwrap();
-    // guard を束ねる（#1032 で `config()` が `RwLockReadGuard` を返すようになった）。
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "platform（Win32 メッセージループ）スレッド上の読み（呼び出し元はトレイメニューからの起動経路）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
-    )]
-    let cfg = engine.config();
-    let tools = find_matching_tools(path, is_folder, &cfg.openers);
-    tools.first().map(|t| (t.exe.clone(), t.args.clone()))
+    state.read_config(|cfg| {
+        find_matching_tools(path, is_folder, &cfg.openers)
+            .first()
+            .map(|t| (t.exe.clone(), t.args.clone()))
+    })
 }
 
 pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> LaunchResult {
@@ -154,21 +151,15 @@ pub fn launch_default_with_state(path: &str, state: &AppState) -> LaunchResult {
 }
 
 /// トレイサブメニュー構築用: パスに対するツール一覧を (name, exe, args) で返す。
-/// `is_dir()` は engine ロックの外で行う（`resolve_opener` と対称。理由はそちらの doc 参照、#524）。
+/// `is_dir()` は config の read guard の外で行う（`resolve_opener` と対称。理由はそちらの doc 参照、#524）。
 pub fn resolve_all_openers(path: &str, state: &AppState) -> Vec<(String, String, String)> {
     let is_folder = std::path::Path::new(path).is_dir();
-    let engine = state.engine.lock().unwrap();
-    // guard を束ねる（`resolve_opener` と同じ理由・#1032）。
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "platform（Win32 メッセージループ）スレッド上の読み（呼び出し元はトレイの履歴メニュー構築）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
-    )]
-    let cfg = engine.config();
-    let tools = find_matching_tools(path, is_folder, &cfg.openers);
-    tools
-        .iter()
-        .map(|t| (t.name.clone(), t.exe.clone(), t.args.clone()))
-        .collect()
+    state.read_config(|cfg| {
+        find_matching_tools(path, is_folder, &cfg.openers)
+            .iter()
+            .map(|t| (t.name.clone(), t.exe.clone(), t.args.clone()))
+            .collect()
+    })
 }
 
 fn shell_execute_error_message(code: i32) -> &'static str {

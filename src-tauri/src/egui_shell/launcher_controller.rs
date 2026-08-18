@@ -490,7 +490,7 @@ impl LauncherController {
     /// を取っていた）——ここは egui フレームの中であり、検索 worker が `engine.search` で
     /// `Mutex<Engine>` を握っている間フレームが返らなくなる。**分けている境界は錠の内外ではなく
     /// フレームの内外である**: config の読みは [`crate::egui_shell::read_config`] でフレームの中に
-    /// 置き、Win32 clipboard と `ShellExecuteW` は worker へ出す（射程と例外は
+    /// 置き、Win32 clipboard と `ShellExecuteW` は worker へ出す（射程は
     /// `src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項が正本）。
     fn execute_instant_selected(&mut self, index: usize, instant_query: &str, ctx: &egui::Context) {
         let Some(sel) = self.state.results().get(index) else {
@@ -728,9 +728,9 @@ impl LauncherController {
     ///
     /// **解決は config の読みの中で行う**（#1076 で `engine.lock()` から
     /// [`crate::egui_shell::read_config`] へ移した）。`find_matching_tools` は錠も I/O も取らない
-    /// 純 CPU なので、[`crate::egui_shell::read_config`] の「`read` の中で lock を取る操作を
-    /// 書かないこと」に反しない——**その純粋性がこの形の前提である**（`snotra_core::opener` 側で
-    /// fs に触れるようになったら、解決を読みの外へ出すこと）。
+    /// 純 CPU なので、[`crate::AppState::read_config`] が読みの中に許す範囲に収まる
+    /// ——**その純粋性がこの形の前提である**（`snotra_core::opener` 側で fs に触れるように
+    /// なったら、解決を読みの外へ出すこと）。
     fn resolve_tools(&self, path: &str, is_folder: bool) -> Vec<OpenerTool> {
         crate::egui_shell::read_config(
             &self.app_handle,
@@ -761,7 +761,7 @@ impl LauncherController {
     /// **この読みは #1076 で `engine.lock()` から [`crate::egui_shell::read_config`] へ移した。**
     /// 呼び出し点（`run_search` / 打鍵の changed エッジ / `on_enter`）はどれも毎フレームではないが、
     /// **どれも egui フレームの中にあり、ユーザーが待っている**——#1032 の規範が挙げる害は
-    /// 「フレームが走査の完了まで返らない」ことであって頻度ではない（射程と例外の定義は
+    /// 「フレームが走査の完了まで返らない」ことであって頻度ではない（射程の定義は
     /// `src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項が正本）。
     fn instant_prefix(&self) -> String {
         crate::egui_shell::read_config(

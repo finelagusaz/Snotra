@@ -6,8 +6,8 @@ use snotra_core::instant::{expand_instant_command, filter_instant_commands};
 /// **DTO 化まで config の読みの中で終える必要がある**——`filter_instant_commands` が返すのは
 /// `Vec<&InstantCommand>` で、config を借りたままの参照だからである。読みの外へ出すには所有へ
 /// 移す一手が要り、それが `InstantCommandDto` への変換とちょうど同じ仕事になる。
-/// 行うのは文字列の確保までで、I/O も錠も無い（[`crate::egui_shell::read_config`] の
-/// 「`read` の中で lock を取る操作を書かないこと」を満たす）。
+/// 行うのは文字列の確保までで、I/O も錠も無い
+/// （[`crate::AppState::read_config`] が読みの中に許す範囲に収まる）。
 fn matching_dtos(
     commands: &[InstantCommand],
     prefix_input: &str,
@@ -24,11 +24,11 @@ fn matching_dtos(
 /// 在る」と読まないこと**——いま `commands/` に在るのは撤去の残りであって、共有の要請ではない。
 ///
 /// **この関数は `commands/` に在るが egui フレームの中で毎打鍵走る**——唯一の呼び出し元は
-/// `egui_shell::launcher_controller` の `run_search_with` の Instant 枝である。ゆえに config は
-/// [`crate::egui_shell::read_config`] から読む（#1076）。#1032 条項の例外が名指すのは
-/// **egui フレームの外で行う読み**（icon worker・folder worker・tray スレッド）であって
-/// `commands/` というディレクトリではない——**弁別子はフレームを止めるかである**（正本は
-/// `src-tauri/CLAUDE.md`「モジュール構成」の当該条項）。
+/// `egui_shell::launcher_controller` の `run_search_with` の Instant 枝である。config は
+/// [`crate::egui_shell::read_config`] から読む（#1076 で `engine.lock()` から移した）。
+/// **どこで走るかは読み口の選択に効かない**（`src-tauri/CLAUDE.md`「モジュール構成」の
+/// 当該条項）。**フレームの中であることが効くのは別の規律である**: 読みの中で何をしてよいかは
+/// [`matching_dtos`] の doc が持つ。
 ///
 /// **AppState 不在時に panic しなくなった**（#1076）: 以前は `app.state::<AppState>()` が
 /// panic していた。`.manage` は `.setup` より前ゆえ到達しない経路だが、そこでは既定の

@@ -43,6 +43,38 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// config を読む（`engine` の `Mutex` を経ない）。**この crate で read guard を取る唯一の地点である**
+    /// ——**ただし表現不能化ではない**。`config` フィールドは `pub` ゆえ `state.config.read()` は今も
+    /// コンパイルを通る（正しい経路を 1 つに定めただけであり、製品の呼び出し点が 0 であることは
+    /// grep で測った事実にすぎない）。
+    ///
+    /// **`read` へ渡すのは純 CPU だけにする——錠も I/O も取らない。** 読みの間じゅう
+    /// `update_config` の書き込みは進めないので、**中で不定時間ブロックしうるものはすべて禁じる**。
+    /// 禁止は列挙ではない——`src-tauri` には engine 以外にも `IconCacheState` /
+    /// `SettingsProcessState` / updater の状態など多数の `Mutex` があり、どれを取っても同じ害が出る。
+    ///
+    /// **とくに `engine.lock()` は、遅くなるのではなく両者が永久に待つ。** 製品には
+    /// `engine Mutex → config の write` という順序が実在する: `config_watcher` は
+    /// `state.engine.lock().unwrap().update_config(..)` と書き、`MutexGuard` が文の間じゅう生きた
+    /// ままその内側で `config.write()` を取る。read guard を保持して `engine.lock()` を要求すれば
+    /// **その逆順**になり、両者が互いを待つ。
+    ///
+    /// **ファイル I/O も同じ理由で禁じる**（実例と実測値は `commands/launch.rs` の
+    /// `resolve_opener` の doc・#524）。
+    /// **確保を伴う読みの実例として、`config_watcher` は `Config` 全体を clone する**——錠も I/O も
+    /// 取らないので規則に反しない（移設前も engine 錠の内側で同じ複製をしていた）。
+    ///
+    /// **クロージャ形が保証するのは guard を外へ持ち出せないことだけである**——中で錠や I/O を
+    /// 書く形は構造では止まらない（**受容する残余**）。
+    ///
+    /// **`&AppHandle` しか持たない呼び出し元は [`crate::egui_shell::read_config`] を使う**
+    /// （あちらは `AppState` 不在の面倒を見てからここへ委譲する）。
+    ///
+    /// 規範の全文と害は `src-tauri/CLAUDE.md`「モジュール構成」の当該条項が正本。
+    pub fn read_config<T>(&self, read: impl FnOnce(&Config) -> T) -> T {
+        read(&self.config.read().unwrap())
+    }
+
     /// インデックスビルドの開始権を CAS で取得する。
     /// 成功時は `index_build_started` と `indexing` を両方 true にして `true` を返す。
     /// 既にビルドが始まっている場合は何も変更せず `false` を返す。
@@ -102,8 +134,10 @@ mod tests {
 
         let reader = std::sync::Arc::clone(&state);
         let handle = std::thread::spawn(move || {
-            // UI 役。engine lock を一切要求しない。
-            reader.config.read().unwrap().appearance.window_width
+            // UI 役。engine lock を一切要求しない。**製品が使う口そのものを測る**——
+            // `config` フィールドを直に読むと、`read_config` が engine lock を取り始めても
+            // この検査は緑のままになる（#1123）。
+            reader.read_config(|c| c.appearance.window_width)
         });
 
         let width = handle
@@ -125,7 +159,7 @@ mod tests {
         state.engine.lock().unwrap().update_config(changed);
 
         assert_eq!(
-            state.config.read().unwrap().appearance.window_width,
+            state.read_config(|c| c.appearance.window_width),
             999,
             "engine への update_config が AppState 側の読みへ届かなければ、両者は別物である"
         );

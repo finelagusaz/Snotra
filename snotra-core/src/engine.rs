@@ -16,7 +16,9 @@ use crate::indexer::{AppEntry, IndexMaterial};
 use crate::search::{SearchEngine, SearchMode, SearchOptions};
 use crate::ui_types::SearchResult;
 use std::path::Path;
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+// `RwLockReadGuard` は `use` へ載せない——唯一の使い手 `config()` が `#[cfg(test)]` で
+// 閉じており（#1123）、載せると非テストビルドで未使用 import になる。
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy)]
 pub struct FolderListContext {
@@ -231,12 +233,17 @@ impl Engine {
     /// 二重に取ることになり、同一スレッドで自己デッドロックする。値を使い終えたら落とすか、
     /// 必要な値をコピーしてから手放す。
     ///
-    /// **製品 crate（`src-tauri`）ではこの綴りを `clippy.toml` が禁じている**（#1122）——外側の
-    /// `Mutex<Engine>` 越しに読むとフレームが検索の完了まで返らないためで、UI は
-    /// `egui_shell::read_config` を通す。**改名・削除するなら、その禁止パスも同じ変更で直すこと**
-    /// ——解決しなくなっても型エラーにならず、`governance:check` も緑のままである（例外地点の
-    /// `#[expect]` が鳴りうるが、それが成り立つ条件は同ファイルの群 3 が正本）。
-    pub fn config(&self) -> RwLockReadGuard<'_, Config> {
+    /// **`#[cfg(test)]` で閉じてある**（#1123）。外側の `Mutex<Engine>` 越しに config を読むと
+    /// フレームが検索の完了まで返らないため、製品はこの綴りを使ってはならない。かつては
+    /// `src-tauri/clippy.toml` の lint がそれを禁じ、例外地点が `#[expect]` で分類を記録して
+    /// 開けていたが（#1122）、**読み手が 1 つも残らなくなったので lint ごと撤去し、規範を
+    /// コンパイラへ移した**——`src-tauri` は `AppState::read_config` を通す。
+    ///
+    /// **`pub(crate)` では足りない**——製品の読み手が居なくなると `dead_code` が立ち、
+    /// `-D warnings` の下で赤くなる。**公開面を減らすほうが、禁止を 1 つ足すより強い**
+    /// （同じ判断の先例は `search.rs` の `sorted_prefix_len`）。
+    #[cfg(test)]
+    pub(crate) fn config(&self) -> std::sync::RwLockReadGuard<'_, Config> {
         self.config.read().unwrap()
     }
 

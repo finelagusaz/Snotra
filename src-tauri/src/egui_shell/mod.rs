@@ -407,16 +407,20 @@ fn apply_rounded_corners(window: &tauri::Window) {
     }
 }
 
-/// UI が config を読む唯一の口（#1032）。**`engine.lock()` を経てはならない。**
+/// `&AppHandle` しか持たない呼び出し元のための config の読み口（#1032）。
+/// **`engine.lock()` を経てはならない。**
 ///
 /// 検索 worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点で 40〜95 ms）。
 /// UI がその錠越しに config を読むと、フレームは worker の走査が終わるまで返らない
 /// ——`read_window_width` 単独で 43,939 µs の待ちを実測した（`PERFORMANCE.md`「フレーム
-/// 後半の帰属」）。ここが読むのは `AppState.config` で、`Engine` が持つのと同じ `Arc` である
-/// （書き込みは `update_config` の 1 本だけ・`Engine::config_handle` の doc が正本）。
+/// 後半の帰属」）。
 ///
-/// **`read` の中で lock を取る操作を書かないこと**——read guard を保持したまま
-/// `engine.lock()` を要求すると、錠を分けた意味が消えるうえ待ちが両方に乗る。
+/// **この関数が見るのは `AppState` 不在の面倒だけである。** 読みそのものは
+/// [`crate::AppState::read_config`] へ委譲し、**`read` の中で lock も I/O も取らない**という
+/// 契約はあちらの doc が正本である（**read guard を取る地点は crate 全体でそこ 1 つ**）。
+///
+/// **`&AppState` を既に持っているなら直接 [`crate::AppState::read_config`] を呼ぶ**——
+/// こちらを通す必要はなく、通せば到達しない `fallback` を書かされる（#1123）。
 ///
 /// **1 フレームに何回呼んでもよいが、同じ値の一貫性が要る読みは 1 回にまとめること**
 /// （`read_visual` がテーマ値 3 種を 1 回で読み切るのはそのためである・#673 spec 決定 4）。
@@ -426,7 +430,7 @@ pub(crate) fn read_config<T>(
     fallback: impl FnOnce() -> T,
 ) -> T {
     match app.try_state::<crate::AppState>() {
-        Some(s) => read(&s.config.read().unwrap()),
+        Some(s) => s.read_config(read),
         // AppState 不在は setup 完了前の理論経路のみ（`.manage` は `.setup` より前）。
         None => fallback(),
     }

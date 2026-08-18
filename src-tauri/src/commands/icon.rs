@@ -8,19 +8,14 @@ pub(crate) fn ensure_icon_cache_loaded_if_enabled(
     state: &State<AppState>,
     icons: &State<IconCacheState>,
 ) {
-    // config は単一の engine ロック内で読み、icon cache のロックを取る前に解放する
-    // (engine ロックを跨いで I/O しない)。cap は `Config::icon_cache_cap()` が表示ワーキングセット
-    // から派生する（独立 config キー・検証・floor を持たず「cap ≥ ワーキングセット」が構造的に成立。
-    // 詳細は snotra-core の同メソッド doc を参照）。
-    let (show_icons, cap) = {
-        let engine = state.engine.lock().unwrap();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "icon worker スレッド上の読み（呼び出し元は results_view が spawn する icon worker）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
-        )]
-        let cfg = engine.config();
-        (cfg.appearance.show_icons, cfg.icon_cache_cap())
-    };
+    // config は**単一の read guard 内**で読み切り、icon cache のロックを取る前に解放する
+    // （guard を跨いで I/O も他の錠も取らない・#1123 で engine ロックから移した）。2 値を 1 回の
+    // 読みで取るのは、間に `update_config` が挟まると `show_icons` と `cap` が新旧で混ざるため。
+    // cap は `Config::icon_cache_cap()` が表示ワーキングセットから派生する（独立 config キー・
+    // 検証・floor を持たず「cap ≥ ワーキングセット」が構造的に成立。詳細は snotra-core の
+    // 同メソッド doc を参照）。
+    let (show_icons, cap) =
+        state.read_config(|cfg| (cfg.appearance.show_icons, cfg.icon_cache_cap()));
     let mut cache = icons.lock().unwrap();
     if !show_icons {
         *cache = None;

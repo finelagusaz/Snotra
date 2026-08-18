@@ -84,11 +84,14 @@ fn apply_config_change(app: &AppHandle) {
     }
 
     let state = app.state::<AppState>();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "弁別子が他の例外と違う——スレッドではなく手続きゆえの射程外である（読みではなく適用の一部で、新旧の差分を取るための旧 config）。分類の規則は src-tauri/CLAUDE.md「モジュール構成」の config live-read 条項が正本"
-    )]
-    let old_config = state.engine.lock().unwrap().config().clone();
+    // **この読みは表示のための live-read ではない**——新旧の差分から副作用（索引再構築・hotkey
+    // 再登録・トレイ・言語）を決める適用手続きの入口である。**それでも読み口は同じでよい**
+    // （#1123 で分類そのものを廃した。engine 錠を経ない読みが 1 種類しか無いなら、何のための
+    // 読みかで口を分ける理由が無い）。
+    //
+    // **書き込みとは原子的でない。** 読みは guard がこの文末で落ち、`update_config` は下で
+    // engine 錠を取り直す——この窓は #1123 以前から在り、移設で広がっていない。
+    let old_config = state.read_config(|c| c.clone());
 
     // Detect changes（egui は config-applied wake + 毎フレーム live-read で値を拾うため、
     // 検出が要るのは「副作用を伴う変更」だけ: index 再構築・hotkey 再登録・トレイ・言語）。
@@ -148,9 +151,9 @@ fn apply_config_change(app: &AppHandle) {
 
     // アイコン表示を切ったらメモリ内キャッシュを手放す（`icons.bin` は残す）。**判定は old/new
     // で上に済ませ、破棄はここ——`update_config` より後——で撃つ。順序が correctness の条件で
-    // ある**: 先に撃つと、engine がまだ `show_icons=true` を返す隙に icon worker
+    // ある**: 先に撃つと、config がまだ `show_icons=true` を返す隙に icon worker
     // （`ensure_icon_cache_loaded_if_enabled` → `IconCache::load`）がキャッシュを建て直し、
-    // **無効なのに常駐したまま次のトグルか終了まで残る**。後に撃てば、engine を読む worker は
+    // **無効なのに常駐したまま次のトグルか終了まで残る**。後に撃てば、config を読む worker は
     // 偽を見て自分で `None` にする。**それでも窓は閉じない**——`update_config` の直前に真を
     // 読んだ worker は、この破棄の後に挿入しうる（`ensure_…` は config 読みと icon lock を
     // 別々に取る）。**これは受容する残余で、drain 上で撃っていた頃から在る**。

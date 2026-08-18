@@ -31,8 +31,6 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
     // 群 2（#1067）。**fixture は群を跨いで持つ**——実ファイルが 1 つの関心ではなくなった以上、
     // 1 群だけの入力で緑にすると「群を足したらカナリアへも足す」運用が検算されない。
     `    { path = "snotra_core::engine::Engine::sorted_by_path", reason = "計測専用の観測口（#1067）" },`,
-    // 群 3（#1122）。上と同じ理由でここにも持つ。
-    `    { path = "snotra_core::engine::Engine::config", reason = "engine 錠越しの live-read（#1032）" },`,
     "]",
     "",
   ].join("\n");

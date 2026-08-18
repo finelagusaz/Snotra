@@ -21,7 +21,7 @@ mod trace;
 mod working_set;
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use serde_json::json;
@@ -237,15 +237,7 @@ fn main() {
     let engine = Engine::from_material(material, history, config);
     startup::mark(startup::Phase::EngineBuild);
 
-    let app_state = AppState {
-        // engine が持つのと同じ Arc を渡す（写しではない・`Engine::config_handle` の doc）。
-        config: engine.config_handle(),
-        engine: Mutex::new(engine),
-        indexing: AtomicBool::new(initial_indexing),
-        index_build_started: AtomicBool::new(false),
-        main_visible: AtomicBool::new(false),
-        index_generation: AtomicU64::new(0),
-    };
+    let app_state = AppState::new(engine, initial_indexing);
 
     // 宣言窓なし（tauri.conf.json の windows は空・#532 SU7 flip）。メイン窓は
     // setup フェーズで egui_shell::create が生成する。

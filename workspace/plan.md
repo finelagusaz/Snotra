@@ -87,33 +87,49 @@
 **E0451 で落ちる——それが移行漏れ検出器の作動そのものである**。**合否の判定点は Phase 末の
 `cargo check --workspace` 1 回であり、編集ごとの赤ではない。** fix-forward を当てないこと。
 
-- [ ] `src-tauri/src/state.rs` に `pub(crate) fn new(engine: Engine, initial_indexing: bool) -> Self` を追加する（`config_handle()` を `Mutex::new(engine)` より前に呼ぶ）
-- [ ] `AppState.config` の `pub` を外す
-- [ ] `src-tauri/src/main.rs` の構築を `AppState::new` へ移行する（**241 行目の説明コメント「engine が持つのと同じ Arc を渡す（写しではない）」は `new` の doc へ移す**——構造が規律を吸収した以上、そこが正しい置き場になる）
-- [ ] `src-tauri/src/commands/system.rs` の `test_state` を `AppState::new` へ移行する
-- [ ] `src-tauri/src/state.rs` の `test_state` を `AppState::new` へ移行する
-- [ ] `cargo check --workspace` が green であることを確認する（＝ 移行漏れが無い）
+- [x] `src-tauri/src/state.rs` に `pub(crate) fn new(engine: Engine, initial_indexing: bool) -> Self` を追加する（`config_handle()` を `Mutex::new(engine)` より前に呼ぶ）
+- [x] `AppState.config` の `pub` を外す
+- [x] `src-tauri/src/main.rs` の構築を `AppState::new` へ移行する（**241 行目の説明コメント「engine が持つのと同じ Arc を渡す（写しではない）」は `new` の doc へ移す**——構造が規律を吸収した以上、そこが正しい置き場になる）
+- [x] `src-tauri/src/commands/system.rs` の `test_state` を `AppState::new` へ移行する
+- [x] `src-tauri/src/state.rs` の `test_state` を `AppState::new` へ移行する
+- [x] `cargo check --workspace` が green であることを確認する（＝ 移行漏れが無い）
 
 ### Phase 2 — 機構が効くことと、閉じていない側を、**実装後の形で**測り直す
 
 計画段階（`new` を実装しない `pub` 外しのみ）で一度測ってある（値は「未確定」節）。**実装差分は
 それ自体が誰の検算も受けていない**ため、`new` が入った形で同じ注入を再実施して値を確定させる。
 
-- [ ] `commands/system.rs` の `#[cfg(test)]` 内へ `state.config.read()` を注入し、`cargo check --workspace --all-targets` が **E0616** で落ちることを確認して `git checkout --` で復元する
-- [ ] 同じ場で `state.engine.lock().unwrap().config_handle().read()` が**可視性のエラーを出さない**ことを確認して復元する（#1123 と同じ両向きの測定・偽の全称を防ぐ）
+- [x] `commands/system.rs` の `#[cfg(test)]` 内へ `state.config.read()` を注入し、`cargo check --workspace --all-targets` が **E0616** で落ちることを確認して `git checkout --` で復元する
+- [x] 同じ場で `state.engine.lock().unwrap().config_handle().read()` が**可視性のエラーを出さない**ことを確認して復元する（#1123 と同じ両向きの測定・偽の全称を防ぐ）
 
 ### Phase 3 — 文書
 
-- [ ] `state.rs` の `config` フィールド doc と `read_config` doc を、Phase 2 の実測値（エラーコード・日付）込みで更新する
-- [ ] `src-tauri/CLAUDE.md` 57 行目の条項の「**ただし機構ではない**（`AppState.config` は `pub` ゆえ直読みは通る）」を実態へ更新する。**残余を 3 つとも書く**——(a) `engine.lock().unwrap().config_handle().read()` は今も通る〔既存・不変〕、(b) `state.rs` の中（`#[cfg(test)] mod tests` を含む）では綴れる〔**private 化後に残る形。「どこでも綴れる」から縮んだのであって消えてはいない**〕、(c) `read` へ渡すクロージャの中の錠・I/O は構造では止まらない〔既存・不変〕
-- [ ] `docs/adr/ADR-appstate-config-visibility.md` を新設する。**構成は既存 ADR に倣う**（`ADR-config-read-without-exception.md` / `ADR-adr-frozen-history.md` の 2 枚が手本）——「文脈」「決定」「却下した代替案」「旧 ADR との関係」「帰結」。**H1 見出しは stem と一致させる**（`# ADR-appstate-config-visibility: …`。`G-adr-file-names` が形と見出しの一致まで照合する）
-- [ ] 新 ADR への短縮引用を生きた層（条項）へ置く（G-adr-citations）
+- [x] `state.rs` の `config` フィールド doc と `read_config` doc を、Phase 2 の実測値（エラーコード・日付）込みで更新する
+- [x] `src-tauri/CLAUDE.md` 57 行目の条項の「**ただし機構ではない**（`AppState.config` は `pub` ゆえ直読みは通る）」を実態へ更新する。**残余を 3 つとも書く**——(a) `engine.lock().unwrap().config_handle().read()` は今も通る〔既存・不変〕、(b) `state.rs` の中（`#[cfg(test)] mod tests` を含む）では綴れる〔**private 化後に残る形。「どこでも綴れる」から縮んだのであって消えてはいない**〕、(c) `read` へ渡すクロージャの中の錠・I/O は構造では止まらない〔既存・不変〕
+- [x] `docs/adr/ADR-appstate-config-visibility.md` を新設する。**構成は既存 ADR に倣う**（`ADR-config-read-without-exception.md` / `ADR-adr-frozen-history.md` の 2 枚が手本）——「文脈」「決定」「却下した代替案」「旧 ADR との関係」「帰結」。**H1 見出しは stem と一致させる**（`# ADR-appstate-config-visibility: …`。`G-adr-file-names` が形と見出しの一致まで照合する）
+- [x] 新 ADR への短縮引用を生きた層（条項）へ置く（G-adr-citations）
 
 ### Phase 4 — 検証
 
-- [ ] `docs/build-commands.md` カテゴリ A のコマンドをすべて実行する
-- [ ] `cargo doc --workspace --no-deps --document-private-items` を実行する（hook 非発火）
-- [ ] `npm run governance:check` を実行する（カテゴリ F・`*.md` の沈黙は合格ではない）
+- [x] `docs/build-commands.md` カテゴリ A のコマンドをすべて実行する
+- [x] `cargo doc --workspace --no-deps --document-private-items` を実行する（hook 非発火）
+- [x] `npm run governance:check` を実行する（カテゴリ F・`*.md` の沈黙は合格ではない）
+
+### レビュー対応（Step 4・計画外に生じた作業）
+
+`code-reviewer` を 2 ラウンド（round 2 は `SendMessage` で継続）。**Critical / High は 0 件。**
+
+- [x] **round 1 Medium** — `src-tauri/CLAUDE.md:57` の「この 2 つ以外の口は `state.rs` の外に無い」が偽の全称だった（`engine.lock().config_handle().read()` が外から config へ届く第三の口として今も通り、同じ bullet の後段が自らそう認めている）。射程を「`AppState.config` へ届く口」へ絞った
+- [x] **round 1 ⚠️ Low 1** — `new` の doc「この一致を保つのは規範ではなく構造である」が `state.rs` 内の別の記述と食い違っていた。「守る地点は 1 つになった。**規律が消えたのではない**」へ改めた
+- [x] **自己発見**（round 1 の指摘が届く前）— `read_config` の doc「下の 1 行がその唯一の出現である」が曖昧な全称だった。フィールドを綴る地点を grep したところ**読む側と書く側の 2 つ**あり、両方を名指しする形へ改めた
+- [x] **round 2 Medium** — 上の Low 1 を直した際、**同じ主張の言い換えを 2 か所（`src-tauri/CLAUDE.md` と新 ADR）に残していた**（「3 か所で守る規範から 1 か所の構造になった」）。採用した裁定と正面から食い違うため両方を「1 か所へ縮んだ」へ直した。**ADR は凍結前の今しか直せない**ため時限つきだった（AGENTS.md「取りこぼすのは写しを直す当のコミット」の実例）
+- [x] **round 2 ⚠️ Low** — 「下の 1 行がそれであり」が指す行が曖昧（同一性を確立するのは 2 行）→「この関数の本体」へ
+- [x] 「1 か所の構造」の残存をフィルタ無し grep で自分で測った（生きた層 0 件。`workspace/research.md` の 1 件は**調査時点の予測の記録なので意図的に直さない**）
+- [x] 修正差分に対しカテゴリ A ＋ F を再実行（3 ラウンドとも green）
+
+**不採用の記録**: round 1 ⚠️ Low 3（E0616/E0451 が 3 面に載ること）は受け入れ条件 1 と Phase 3 が明示的に要求し、条項は正本を指す構造を保つため現状維持。round 2 でレビュア自身が「測定値と日付は腐らない型であり判断は正しい」と反論を取り下げた。⚠️ Low 4（折返し）は #1127 の慣行と一致・コードスパンの行またぎ 0 件。
+
+**`/dry-check` と `/symmetric-check` は再実行していない**——修正 3 件はすべて散文（`.md` と doc コメント）で、コード実体は Phase 1 から 1 行も変わっていないため入力が同一である（`git diff` の非 doc 行で実測）。
 
 ## 未確定（実装前に潰す）
 

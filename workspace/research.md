@@ -2,7 +2,7 @@
 
 対象 issue: #1122（`検討:` ラベル相当の裁定 issue・出所は #1076 の `/simplify` 切り口の深さ枠 A1/A2）
 ブランチ: `chore/config-read-lint`
-計測日: 2026-08-17（rustc 1.97.1 / clippy 0.1.97・GPD WIN MINI 側かは未記録——本 issue に性能測定は無いので機体は無関係）
+計測日: 2026-08-18（rustc 1.97.1 / clippy 0.1.97・GPD WIN MINI 側かは未記録——本 issue に性能測定は無いので機体は無関係）
 
 ## 1. issue の要約
 
@@ -107,7 +107,7 @@ M3/M4 の**限界**（重要）: unfulfilled の診断は `-D unfulfilled-lint-e
 
 ### ⚠️ 確信の持てない所見（採用するが、本 issue では扱わない）
 
-**`clippy.toml` が cargo の fingerprint に入らない」という既知残余（同ファイル冒頭の死経路 3・`G-clippy-disallowed.mjs` の射程外節・`docs/build-commands.md`）は、この環境では再現しない。** 3b の指摘を受けて自分で測り直した（2026-08-17・clippy 0.1.97）: 温かいキャッシュで `cargo clippy` が exit 0 を返した直後に **`clippy.toml` だけを編集**して同じコマンドを打つと、`.rs` を touch せず `cargo clean` も挟まずに **4 件の診断が現れた**。
+**`clippy.toml` が cargo の fingerprint に入らない」という既知残余（同ファイル冒頭の死経路 3・`G-clippy-disallowed.mjs` の射程外節・`docs/build-commands.md`）は、この環境では再現しない。** 3b の指摘を受けて自分で測り直した（2026-08-18・clippy 0.1.97）: 温かいキャッシュで `cargo clippy` が exit 0 を返した直後に **`clippy.toml` だけを編集**して同じコマンドを打つと、`.rs` を touch せず `cargo clean` も挟まずに **4 件の診断が現れた**。
 
 - **観測は採るが、機序は主張しない**（上流 clippy が追随するようになったのか、別の要因かを測っていない）。
 - **本 issue の計測は無効化されない**——M1〜M5 は毎回 `.rs` を touch しており、必要条件の上位集合を満たしている。

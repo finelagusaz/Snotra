@@ -36,7 +36,7 @@ export function run(snapshot, ctx) {
 //
 // 射程外（意図的）: reason 文言の変更・`#[allow]` による迂回（lint に内在する性質）・
 // disallowed_methods 以外の clippy lint のレベル・clippy.toml と cargo のキャッシュの関係
-// （挙動と 2026-08-17 の再測定は clippy.toml 冒頭の「この設定が死ぬ経路」3 が正本）。
+// （挙動と 2026-08-18 の再測定は clippy.toml 冒頭の「この設定が死ぬ経路」3 が正本）。
 //
 // 受容する残余:
 // - member 側の opt-in（src-tauri の `[lints] workspace = true`）は **G-workspace-lints が全 member について

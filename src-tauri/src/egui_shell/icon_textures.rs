@@ -91,8 +91,8 @@ pub(crate) fn retain_visible<V>(textures: &mut HashMap<String, V>, visible: &Has
 /// ——**Enter ではない。あれはエクスプローラーで開く**）、`read_dir` が失敗する遷移である。
 /// [`crate::egui_shell::search_state::SearchState::enter_folder`] は `results` に触れず行の世代を
 /// 進めないので、フォルダ行のテクスチャが生きたまま同じ `path` のエラー行に置き換わる
-/// （#1133 のレビューで一次証拠を辿って確認。**この差分より前から在る挙動であり、ここでは
-/// 直していない**）。
+/// （#1133 のレビューで一次証拠を辿って確認。**#1133 より前から在る挙動であり、そこでは
+/// 直していない**——追跡は #1134。**閉じたらこの段落も更新すること**）。
 pub(crate) fn wanted_icon_keys<V>(
     rows: &[SearchResult],
     have: &HashMap<String, V>,

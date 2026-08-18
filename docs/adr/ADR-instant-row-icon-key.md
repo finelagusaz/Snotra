@@ -28,5 +28,6 @@ as-built を実機で測ったところ（`SNOTRA_CONFIG_DIR` で隔離したプ
 - URL / Legacy 種別の instant 行は、`SHGetFileInfoW` を 1 度も呼ばなくなる。**絵は変わらない**（どちらにせよ placeholder）が、毎打鍵の無駄仕事と再試行が消える
 - exec 種別は `args` の有無・`description` の有無に依らず exe のアイコンが出る。**`args` 有りの行は今日失敗している経路であり、ここだけが絵の変化である**
 - `icons.bin` は形式もバージョンも変えない。変わるのは**キーの中身**（instant exec 行が display 文字列 → 実 exe パス）だけで、旧キーのエントリは FIFO 上限で自然に押し出される
+- **`url` にファイルパスを書いていた config は、その行の絵を失う**。`InstantAction::Url` の起動は汎用シェル起動（`launch_item_core`）なので `url = 'C:\Tools\thing.exe'` は今日動きアイコンも出ているが、`SPEC.md` §19.2 は URL 種別を「`http://` または `https://` で始まる URL」と定めており out-of-spec な config である。バリデーションは強制していないので、**存在すれば黙って絵だけが消える**
 - **抽出に失敗した文字列はそもそもキャッシュへ入らない**（`load_icon_pngs` は `Ok` のときだけ挿入する）。#1133 の issue が ⚠未確認 3 として挙げた「表示文字列が `icons.bin` のキーとして永続化される」懸念は as-built で成立しておらず、この決定が解消したものでもない
 - 実運用点への届き方は非対称である——実 config・既定 config のどちらにも exec 種別の instant コマンドは 0 件なので、**「exec は本物のアイコン」の側は現状の利用者には届かない**。仕様は 1 つの config ではなく製品の姿を定めるため設計判断は変えないが、検証労力の配分はこの非対称に従う

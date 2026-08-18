@@ -176,8 +176,8 @@ impl ResultsView {
             return;
         }
         // **キーの導出は `wanted_icon_keys` へ寄せてある**（#1133）——引き（`icon_for_row`）と
-        // 剪定（`visible_icon_keys`）が同じ [`snotra_core::ui_types::SearchResult::icon_key`] を
-        // 通ることだけが、「抽出したものを引ける」の根拠である。
+        // 剪定（`visible_icon_keys`）が同じ `SearchResult::icon_key` を通ることだけが、
+        // 「抽出したものを引ける」の根拠である。
         let wanted = crate::egui_shell::wanted_icon_keys(
             rows,
             &self.icon_textures,

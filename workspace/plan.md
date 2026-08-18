@@ -254,7 +254,21 @@ fn icon_gate_keeps_input_idle_semantics() {
 
 ### Phase 5
 
-- [ ] 実機 B 側を採る（A 側と同じ手順で番兵が現れないこと・exec 行 2 件にアイコンが描かれることを窓キャプチャで確認）
+- [x] 実機 B 側を採る
+
+#### Phase 5 の実測（B 側・2026-08-18・debug ビルド）
+
+**run の有効性**: `startup:ready` あり／`egui_results:show` の `rows=3`／`config.toml.bak` 無し。**A 側と同じ 3 条件が立ったので有効。**
+
+| 観測 | A 側（実装前） | B 側（実装後） |
+|---|---|---|
+| `icon:extract_failed` 総数 | 6 | **0** |
+| 番兵（url 型 `u1`）の出現 | 3 回 | **0 回** |
+| `u1` の絵 | プレースホルダ | プレースホルダ（**不変**） |
+| `e1`（exec・args 空）の絵 | 本物の notepad アイコン | 本物の notepad アイコン（**不変**） |
+| `e2`（exec・args 有）の絵 | プレースホルダ | **本物の notepad アイコン**（改善） |
+
+キャプチャは `target/probe-instant-icon/window-{A,B}.png`。**受け入れ条件 2・3 を実機で確定した。**
 - [ ] `cargo test` / clippy / `cargo doc` / `governance:check` / `/dry-check` を実行し green を確認する
 - [ ] `code-reviewer` の 3 フェーズレビューを通す
 

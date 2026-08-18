@@ -69,21 +69,28 @@ pub(crate) fn retain_visible<V>(textures: &mut HashMap<String, V>, visible: &Has
     textures.retain(|k, _| visible.contains(k));
 }
 
-// ---- 行 → アイコンキーの読み（3 か所を 1 つの導出へ寄せる・#1133）--------------------
+// ---- 行 → アイコンキーの読み（#1133）--------------------------------------------------
 //
-// **キーを導く箇所は下の 3 つで尽きており、すべて [`SearchResult::icon_key`] を通る。**
-// 別々に導くと、片方だけが `path` を見た瞬間に「抽出したのに引けない」「抽出した直後に
-// 剪定で捨てる」が起きる。drain（`results_view.rs` の `icon_rx`）は 4 つ目に見えるが導出点では
-// ない——worker へ渡したキーが返ってくるだけで、構造的に `wanted_icon_keys` と一致する。
+// **キーを導くのは `SearchResult::icon_key` ただ 1 つである。** 要求・引き・剪定が別々に導くと、
+// 片方だけが `path` を見た瞬間に「抽出したのに引けない」「抽出した直後に剪定で捨てる」が起きる。
+// drain（`results_view.rs` の `icon_rx`）は導出点ではない——worker へ渡したキーが返ってくる
+// だけで、構造的に `wanted_icon_keys` と一致する。
 
 /// このフレームで抽出 worker に積むべきキー（重複排除済み）。
 ///
-/// **`is_error` 行を除くのはここだけの責務である。** 描画側（`draw_result_row`）の
-/// `Some(tex)` 枝に `is_error` ガードは無く、エラー行にアイコンが出ないのは「抽出要求に
-/// 載らないので `icon_textures` にキーが無い」ことだけが理由である。しかも
-/// [`snotra_core::folder::error_result`] は `path` に**実在ディレクトリの絶対パス**を入れ、
-/// 発火点は `read_dir` の失敗——権限不足ならディレクトリは実在するので `SHGetFileInfoW` は
-/// 成功する。**この条件を落とすと、フォルダ列挙失敗行に本物のフォルダアイコンが描かれる。**
+/// **`is_error` 行を要求から除くのはここの責務である。** 描画側（`draw_result_row`）の
+/// `Some(tex)` 枝に `is_error` ガードは無いので、ここが要求を積めばエラー行に本物のアイコンが
+/// 描かれる。しかも [`snotra_core::folder::error_result`] は `path` に**実在ディレクトリの
+/// 絶対パス**を入れ、発火点は `read_dir` の失敗——権限不足ならディレクトリは実在するので
+/// `SHGetFileInfoW` は成功する。
+///
+/// **ただし要求を止めても絵が出ない保証にはならない。** 同じ `path` が**前の世代で通常行と
+/// して**抽出されていると、[`visible_icon_keys`] が `is_error` を見ないため
+/// [`retain_visible`] がそのテクスチャを残し、`icon_for_row` が引く。フォルダ行で Enter →
+/// `read_dir` 失敗の遷移で成立する——`SearchState::enter_folder` は `results` に触れないので
+/// 行の世代が進まず、フォルダ行のテクスチャが生きたまま同じ `path` のエラー行に置き換わる
+/// （#1133 のレビューで一次証拠を辿って確認。**この差分より前から在る挙動であり、ここでは
+/// 直していない**）。
 pub(crate) fn wanted_icon_keys<V>(
     rows: &[SearchResult],
     have: &HashMap<String, V>,
@@ -108,9 +115,9 @@ pub(crate) fn wanted_icon_keys<V>(
 
 /// 世代交代フレームで保持してよいキーの集合（`retain_visible` の入力）。
 ///
-/// **`is_error` で絞らない。** ここは「捨ててよいか」を決める側なので、要求側より広い分には
-/// 害が無い（誰も入れないキーが集合に居るだけ）。逆に狭いと、抽出した直後の世代交代で
-/// テクスチャを落として積み直す往復になる。
+/// **`is_error` で絞らない。** 狭いと、抽出した直後の世代交代でテクスチャを落として積み直す
+/// 往復になる。**広い側の代償は机上で確認してある**——前の世代で入ったキーが残るため、同じ
+/// `path` がエラー行として戻ってくるとその行に絵が出る（正本は [`wanted_icon_keys`] の doc）。
 pub(crate) fn visible_icon_keys(rows: &[SearchResult]) -> HashSet<String> {
     rows.iter()
         .filter_map(|r| r.icon_key())

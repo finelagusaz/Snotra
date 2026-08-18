@@ -61,7 +61,7 @@ pub(crate) use visual::{RowTheme, VisualSnapshot};
 
 // results_view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5・#646 PR2 で移管）。
 // `needs_extraction` は re-export しない——**要求側の消費点は `wanted_icon_keys` に一本化した**
-// （#1133）。行からアイコンキーを導く読みが 3 つに散っていると、片方だけが `path` を見た瞬間に
+// （#1133）。行からアイコンキーを導く読みが散っていると、片方だけが `path` を見た瞬間に
 // 「抽出したのに引けない」が起きるので、述語だけを直に呼べる口を残さない。
 pub(crate) use icon_textures::{
     IconMsg, icon_for_row, png_to_color_image, retain_visible, visible_icon_keys, wanted_icon_keys,

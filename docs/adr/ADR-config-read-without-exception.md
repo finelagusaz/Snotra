@@ -42,7 +42,5 @@
 
 ## 帰結
 
-- **規範は機構より広いまま残る。** 塞がるのは `Engine::config` という綴りだけで、`engine.lock()` 越しに `config_handle().read()` を取り直す形は**今も通る**（実測）。ゆえに「engine 錠越しの config の読みは書けなくなった」とは言えない。
-- **guard の中に I/O を書く形は構造では止まらない。** クロージャ形が保証するのは guard を外へ持ち出せないことだけである。`is_dir()` を読みの前に置く規律は文書契約のまま残り、宛先が engine 錠から config の `RwLock` へ変わっただけである。
-- **口は 2 つになり、read guard を取る地点は 1 つのままである。** `AppState::read_config` が唯一の取得点で、`egui_shell::read_config` はその委譲になった（見るのは `AppState` 不在の面倒だけ）。
-- **機構の乗り換えは測ってある。** 回帰の形を注入すると `cargo check` が `E0599` で落ちる。旧 lint と違い clippy を要さない（`clippy::` ツール lint ではなくなったため）。
+- **規則の現在の全文は `src-tauri/CLAUDE.md`「モジュール構成」の当該条項が正本である**——ここに写しを置かない。本決定が条項へ与えた変化は「条件が 1 つも無くなったこと」と「機構が lint からコンパイラへ移ったこと」の 2 点で、**残った受容残余**（規範が機構より広いこと・guard 内の I/O は構造で止まらないこと・`AppState.config` の直読みが書けること）は条項と `AppState::read_config` の doc が持つ。
+- **機構の乗り換えは測ってある。** 回帰の形を注入すると `cargo check` が `E0599` で落ちる——旧 lint と違い clippy を要さない（`clippy::` ツール lint ではなくなったため）。**同じ場で反対向きも測った**: `engine.lock()` 越しに `config_handle().read()` を取り直す形は今も通る。ゆえに「engine 錠越しの config の読みは書けなくなった」とは言えない。

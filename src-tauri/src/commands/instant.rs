@@ -26,10 +26,9 @@ fn matching_dtos(
 /// **この関数は `commands/` に在るが egui フレームの中で毎打鍵走る**——唯一の呼び出し元は
 /// `egui_shell::launcher_controller` の `run_search_with` の Instant 枝である。config は
 /// [`crate::egui_shell::read_config`] から読む（#1076 で `engine.lock()` から移した）。
-/// **どこで走るかは、いまはこの読み口の選択に効かない**——#1123 が条項から例外を無くし、
-/// config の読みは走る場所によらず `read_config` を通すようになった（正本は
-/// `src-tauri/CLAUDE.md`「モジュール構成」の当該条項）。**フレームの中であることが効くのは
-/// 別の規律である**: 読みの中で何をしてよいかは [`matching_dtos`] の doc が持つ。
+/// **どこで走るかは読み口の選択に効かない**（`src-tauri/CLAUDE.md`「モジュール構成」の
+/// 当該条項）。**フレームの中であることが効くのは別の規律である**: 読みの中で何をしてよいかは
+/// [`matching_dtos`] の doc が持つ。
 ///
 /// **AppState 不在時に panic しなくなった**（#1076）: 以前は `app.state::<AppState>()` が
 /// panic していた。`.manage` は `.setup` より前ゆえ到達しない経路だが、そこでは既定の

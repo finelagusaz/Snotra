@@ -59,7 +59,8 @@ impl AppState {
     /// ままその内側で `config.write()` を取る。read guard を保持して `engine.lock()` を要求すれば
     /// **その逆順**になり、両者が互いを待つ。
     ///
-    /// **ファイル I/O も同じ理由で禁じる**（`Path::is_dir` は死んだ UNC で最大 21 秒塞がる・#524）。
+    /// **ファイル I/O も同じ理由で禁じる**（実例と実測値は `commands/launch.rs` の
+    /// `resolve_opener` の doc・#524）。
     /// **確保を伴う読みの実例として、`config_watcher` は `Config` 全体を clone する**——錠も I/O も
     /// 取らないので規則に反しない（移設前も engine 錠の内側で同じ複製をしていた）。
     ///

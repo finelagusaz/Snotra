@@ -84,11 +84,13 @@ pub(crate) fn retain_visible<V>(textures: &mut HashMap<String, V>, visible: &Has
 /// 絶対パス**を入れ、発火点は `read_dir` の失敗——権限不足ならディレクトリは実在するので
 /// `SHGetFileInfoW` は成功する。
 ///
-/// **ただし要求を止めても絵が出ない保証にはならない。** 同じ `path` が**前の世代で通常行と
-/// して**抽出されていると、[`visible_icon_keys`] が `is_error` を見ないため
-/// [`retain_visible`] がそのテクスチャを残し、`icon_for_row` が引く。フォルダ行で Enter →
-/// `read_dir` 失敗の遷移で成立する——`SearchState::enter_folder` は `results` に触れないので
-/// 行の世代が進まず、フォルダ行のテクスチャが生きたまま同じ `path` のエラー行に置き換わる
+/// **ただし要求を止めても絵が出ない保証にはならない。**
+/// 同じ `path` が**前の世代で通常行として**抽出されていると、[`visible_icon_keys`] が
+/// `is_error` を見ないため [`retain_visible`] がそのテクスチャを残し、[`icon_for_row`] が引く。
+/// 成立するのは、フォルダ行で右カーソルキーを押して展開し（`SPEC.md`「6.5 フォルダのEnter操作」
+/// ——**Enter ではない。あれはエクスプローラーで開く**）、`read_dir` が失敗する遷移である。
+/// [`crate::egui_shell::search_state::SearchState::enter_folder`] は `results` に触れず行の世代を
+/// 進めないので、フォルダ行のテクスチャが生きたまま同じ `path` のエラー行に置き換わる
 /// （#1133 のレビューで一次証拠を辿って確認。**この差分より前から在る挙動であり、ここでは
 /// 直していない**）。
 pub(crate) fn wanted_icon_keys<V>(

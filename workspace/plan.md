@@ -269,8 +269,8 @@ fn icon_gate_keeps_input_idle_semantics() {
 | `e2`（exec・args 有）の絵 | プレースホルダ | **本物の notepad アイコン**（改善） |
 
 キャプチャは `target/probe-instant-icon/window-{A,B}.png`。**受け入れ条件 2・3 を実機で確定した。**
-- [ ] `cargo test` / clippy / `cargo doc` / `governance:check` / `/dry-check` を実行し green を確認する
-- [ ] `code-reviewer` の 3 フェーズレビューを通す
+- [x] `cargo test` / clippy / `cargo doc` / `governance:check` / `/dry-check` を実行し green を確認する（core 604・snotra 296・doc 警告 0・governance 19 検査 passed・dry-check 重複 0。`/symmetric-check` と `/persistence-check` も実施）
+- [x] `code-reviewer` の 3 フェーズレビューを通す（2 巡。1 巡目 High 1・Medium 2・⚠ 4 / 2 巡目 High 1・Low 2・⚠ 3。**すべて反映済み**。指摘は全件 doc・コメント・SPEC の散文で、実装ロジックへの修正は 0 件）
 
 ## 条件別チェックの適用（AGENTS.md「トリガー → 参照先」）
 

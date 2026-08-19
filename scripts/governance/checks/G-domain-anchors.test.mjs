@@ -23,6 +23,13 @@ describe("G-domain-anchors checkDomainAnchors", () => {
     expect(f[0].message).toContain("メンバーが 0 件");
   });
 
+  it("赤: 錨が 0 件（メンバーは非空——保護の欠落が無言で緑にならない）", () => {
+    const f = checkDomainAnchors(dom("d", ["a.md"], []), snap({}));
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("d");
+    expect(f[0].message).toContain("錨が 0 件");
+  });
+
   it("赤: ドメインが 1 つも無い（メタ検査自身の母集団の欠落）", () => {
     const f = checkDomainAnchors(new Map(), snap({}));
     expect(f).toHaveLength(1);

@@ -66,6 +66,7 @@ import {
 } from "./governance/lib.mjs";
 import { checkNormativeAreaInstrument, normativeArea } from "./governance/instrument.mjs";
 import { assembleEvidence, evidenceView } from "./governance/evidence.mjs";
+import { buildDomains } from "./governance/domains.mjs";
 
 // `lib.mjs` の 2 名を、facade 経由で読む消費者のために再輸出する（`buildChecks` / `runAll` は
 // 下で `export function` として定義するのでここに要らない）。**`export *` にしない**——公開する
@@ -117,11 +118,13 @@ export function buildChecks(snapshot, sink = {}) {
   sink.staleDocs = staleDocs;
   sink.staleGuides = staleGuides;
   sink.staleTargets = staleTargets;
+  const domains = buildDomains(snapshot);
+  sink.domains = domains;
   const record = (key, r) => {
     sink[key] = r.checked;
     return r.findings;
   };
-  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record };
+  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record, domains };
   return CHECK_MODULES.map((m) => ({ id: m.id, run: () => m.run(snapshot, ctx) }));
 }
 

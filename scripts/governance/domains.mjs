@@ -91,7 +91,13 @@ export const DOMAIN_SPECS = [
   {
     name: "staleIdentifierTargets",
     members: staleIdentifierTargets,
-    anchors: [{ label: "対象が 1 件以上", holds: (m) => m.length > 0 }],
+    // `m.length > 0` は錨にならない——`STALE_EXTRA_DOCS`（lib.mjs）が実在を問わず 4 件を無条件に足すため、
+    // 実導出では長さが決して 0 にならない（空虚な錨だった。レビューで指摘）。
+    // 代わりに、可変な 2 腕（`staleIdentifierDocs` / `staleIdentifierGuideDocs`）をそれぞれ名指す。
+    anchors: [
+      { label: ".claude/ の腕（staleIdentifierDocs）", holds: (m) => m.some((f) => f.startsWith(".claude/")) },
+      { label: "docs/ の腕（staleIdentifierGuideDocs）", holds: (m) => m.some((f) => f.startsWith("docs/")) },
+    ],
   },
 ];
 

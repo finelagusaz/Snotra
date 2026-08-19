@@ -1,9 +1,9 @@
 //! G-module-linkage — `<crate>/src/**/*.rs` が crate ルートから `mod` 宣言で到達できるか（#1085）。
 import path from "node:path";
-import { finding, workspaceMembers } from "../lib.mjs";
+import { finding, workspaceMembers, crateSourceFiles } from "../lib.mjs";
 
 export const id = "G-module-linkage";
-export const domains = "unmigrated";
+export const domains = ["workspaceMemberDirs", "crateSources"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {
@@ -194,12 +194,13 @@ export function checkModuleLinkage(snapshot) {
   if (error) return [finding("Cargo.toml", 1, `${error}（G-module-linkage 母集団の欠落）`)];
 
   const findings = [];
+  const sources = crateSourceFiles(snapshot);
   for (const crate of members) {
     const prefix = `${crate}/src/`;
     // `src/bin/` は cargo が target として自動発見するので `mod` 宣言を要さない（射程外）。
-    const population = snapshot.files.filter(
-      (f) => f.startsWith(prefix) && f.endsWith(".rs") && !f.startsWith(`${prefix}bin/`),
-    );
+    // **除外は `crateSources` ドメインの側ではなくここに置く**——射程の判断はこの検査のもので、
+    // 母集団を共有する他の消費者（今は無い）まで巻き込まない。
+    const population = sources.filter((f) => f.startsWith(prefix) && !f.startsWith(`${prefix}bin/`));
     // 空母集団を合格に見せない（沈黙経路の閉塞・本ファイル冒頭の契約）
     if (population.length === 0) {
       findings.push(finding(`${crate}/Cargo.toml`, 1, `${prefix} 配下に .rs が無い（G-module-linkage 母集団の欠落）`));

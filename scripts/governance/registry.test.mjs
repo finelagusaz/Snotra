@@ -116,14 +116,10 @@ describe("domains の中身の検証（I1 — 空配列・綴り違いはラチ�
 // であり、**完了判定を書き換えるまで着手しない**（literal な members は錨が空虚になる）。
 const FROZEN_UNMIGRATED = [
   "G-architecture-table", // Phase 3（固定パス）
-  "G-build-commands",
   "G-ci-table", // Phase 3（固定パス）
   "G-clippy-disallowed",
   "G-hook-commands", // Phase 3（固定パス）
   "G-hook-fires",
-  "G-module-index",
-  "G-module-linkage",
-  "G-workspace-lints",
 ];
 
 describe("未移行マーカーのラチェット（I4）", () => {

@@ -2,7 +2,7 @@
 import { finding, workspaceMembers, tomlLine, lintLevel } from "../lib.mjs";
 
 export const id = "G-workspace-lints";
-export const domains = "unmigrated";
+export const domains = ["workspaceMemberDirs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

@@ -482,6 +482,16 @@ export function ruleDocs(snapshot) {
   return snapshot.files.filter((f) => RULE_FILE_RE.test(f));
 }
 
+/** `crateSources` ドメインのメンバー——workspace member の `src/` 配下の `.rs`。
+ *  crate の一覧はルート `Cargo.toml`（`workspaceMembers`）が SSOT である。
+ *  **`G-module-index` はこれを使わない**——あちらの母集団は `MODULE_INDEX_CRATES` から出る
+ *  2 本目の導出であり、その独立性そのものが `governance-check.test.mjs` の母集団カナリア（#701）の
+ *  対象になっている。今日は同じ集合を返すが、**同じ SSOT から導いてはならない**側である。 */
+export function crateSourceFiles(snapshot) {
+  const { members } = workspaceMembers(snapshot);
+  return snapshot.files.filter((f) => f.endsWith(".rs") && members.some((m) => f.startsWith(`${m}/src/`)));
+}
+
 /**
  * G-heading-refs / G-near-heading-refs の走査元のうち **md の腕**。見出し参照はガバナンス文書の外
  * （`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、実際にそこで腐っていた

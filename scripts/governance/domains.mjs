@@ -23,10 +23,12 @@ import {
   workspaceMembers,
   commentFamilyOf,
   ruleDocs,
+  crateSourceFiles,
 } from "./lib.mjs";
 import { adrFiles } from "./checks/G-adr-file-names.mjs";
 import { judgingScripts } from "./checks/G-rules-script-coverage.mjs";
 import { skillFiles } from "./checks/G-skill-table.mjs";
+import { moduleIndexSources, MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
 
 /** そのディレクトリ**直下**に 1 件以上（前方一致にしない——配下が在れば真になり、
  *  中間層が消えても沈黙する。#1143 で実測した形）。 */
@@ -135,6 +137,58 @@ export const DOMAIN_SPECS = [
     // （＝harness の配送が届かなくなる）形で倒れる。この母集団の**中身**の下界は
     // `G-rules-script-coverage` の `COVERAGE` が名指しで持つ（そちらが正本）。
     anchors: [{ label: ".claude/rules/ 直下", holds: (m) => hasDirectChild(m, ".claude/rules") }],
+  },
+  {
+    name: "workspaceMemberDirs",
+    members: (s) => workspaceMembers(s).members,
+    // 錨は両向きに置く。宣言 → 実在（メンバーに Cargo.toml が在る）だけでは、メンバーが
+    // 宣言から**落ちた**形が沈黙する——残ったメンバーについては every が成立し続けるためである。
+    anchors: [
+      {
+        label: "全メンバーのディレクトリに Cargo.toml が実在する",
+        holds: (m, s) => m.length > 0 && m.every((d) => s.read(`${d}/Cargo.toml`) !== null),
+      },
+      {
+        label: "Cargo.toml を持つ直下ディレクトリがすべてメンバーに居る",
+        holds: (m, s) => {
+          const dirs = s.files.filter((f) => /^[^/]+\/Cargo\.toml$/.test(f)).map((f) => f.split("/")[0]);
+          return dirs.length > 0 && dirs.every((d) => m.includes(d));
+        },
+      },
+    ],
+  },
+  {
+    name: "crateSources",
+    members: crateSourceFiles,
+    // crate ごとが腕である。`<crate>/src/` **直下**で見る——前方一致だと、直下が消えても配下の
+    // モジュールディレクトリが同じ接頭辞に当たって沈黙する（#1143 の実形）。
+    anchors: [
+      {
+        label: "全 workspace member の src/ 直下に .rs が居る",
+        holds: (m, s) => {
+          const crates = workspaceMembers(s).members;
+          return crates.length > 0 && crates.every((c) => m.some((f) => f.slice(0, f.lastIndexOf("/")) === `${c}/src`));
+        },
+      },
+    ],
+  },
+  {
+    // **`crateSources` と同じ集合を返すが、畳んではならない。** crate の一覧の出所が違う
+    // （こちらは `MODULE_INDEX_CRATES`、あちらはルート `Cargo.toml`）。この 2 本目の導出は意図で、
+    // 食い違いは `governance-check.test.mjs` の母集団カナリア（#701）が捕まえる。
+    // `instrument.mjs` の `duplicateDomains` が「同一メンバー」として報告するのは想定どおりで、
+    // **合否は持たない**——判断は人に残す（`ADR-retire-area-budget` と同じ向き）。
+    name: "moduleIndexSources",
+    members: moduleIndexSources,
+    anchors: [
+      {
+        label: "MODULE_INDEX_CRATES の全 crate の src/ 直下に索引対象が居る",
+        holds: (m) => {
+          const crates = Object.values(MODULE_INDEX_CRATES);
+          return crates.length > 0 && crates.every((cfg) => m.some((f) => f.slice(0, f.lastIndexOf("/") + 1) === cfg.src));
+        },
+      },
+    ],
   },
   {
     name: "skillDocs",

@@ -2,7 +2,7 @@
 import { finding, sectionOf } from "../lib.mjs";
 
 export const id = "G-module-index";
-export const domains = "unmigrated";
+export const domains = ["moduleIndexSources"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {
@@ -32,6 +32,19 @@ export const MODULE_INDEX_CRATES = {
   "src-tauri": { src: "src-tauri/src/", exts: /\.rs$/ },
   "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
 };
+
+/** `moduleIndexSources` ドメインのメンバー——索引が覆うべき production ファイル。
+ *  **crate の一覧は `MODULE_INDEX_CRATES` から出る**（ルート `Cargo.toml` からではない）。
+ *  この 2 本目の導出は意図であり、両者の食い違いは `governance-check.test.mjs` の母集団カナリア（#701）が
+ *  `npm test` で捕まえる。`crateSources` と畳んではならない。 */
+export function moduleIndexSources(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
+  return snapshot.files.filter((f) =>
+    crates.some((c) => {
+      const cfg = MODULE_INDEX_CRATES[c];
+      return f.startsWith(cfg.src) && cfg.exts.test(f) && !(cfg.excludeTest && cfg.excludeTest.test(f));
+    }),
+  );
+}
 
 export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
   const findings = [];
@@ -69,9 +82,7 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
       }
     }
     // 逆方向: production ファイルの basename が CLAUDE.md 本文に出現
-    const production = snapshot.files.filter(
-      (f) => f.startsWith(cfg.src) && cfg.exts.test(f) && !(cfg.excludeTest && cfg.excludeTest.test(f)),
-    );
+    const production = moduleIndexSources(snapshot, [crate]);
     for (const f of production) {
       const base = f.split("/").pop();
       if (!text.includes(`\`${base}\``) && !text.includes(`/${base}\``)) {

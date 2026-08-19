@@ -24,10 +24,10 @@
 | `G-rules-script-coverage` | 判定を持つスクリプト | `ruleDocs` / `judgingScripts` | 済 |
 | `G-skill-table` | `.claude/skills/*/SKILL.md` | `skillDocs` | 済 |
 | `G-check-skill-enumeration` | 同上（実在の照合） | `skillDocs` | 済 |
-| `G-module-index` | crate 配下の production `.rs` | — | 未 |
-| `G-module-linkage` | 同上 | — | 未 |
-| `G-build-commands` | workspace member | — | 未 |
-| `G-workspace-lints` | 同上 | — | 未 |
+| `G-module-index` | crate 配下の production `.rs` | `moduleIndexSources` | 済 |
+| `G-module-linkage` | 同上（crate の出所が違う） | `workspaceMemberDirs` / `crateSources` | 済 |
+| `G-build-commands` | workspace member | `workspaceMemberDirs` | 済 |
+| `G-workspace-lints` | 同上 | `workspaceMemberDirs` | 済 |
 | `G-clippy-disallowed` | clippy の禁止メソッド（ファイルでない母集団） | — | 未 |
 | `G-hook-fires` | `selectChecks` の発火表の行 | — | 未 |
 

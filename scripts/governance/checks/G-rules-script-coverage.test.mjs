@@ -1,6 +1,8 @@
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { snap } from "../test-helpers.mjs";
-import { checkRulesScriptCoverage } from "./G-rules-script-coverage.mjs";
+import { makeSnapshot } from "../lib.mjs";
+import { checkRulesScriptCoverage, COVERAGE } from "./G-rules-script-coverage.mjs";
 
 /** 実物と同じ 2 本の rule を持つ fixture を組む。`paths` の中身だけを差し替える。 */
 const rules = (safetyNetsPaths, governanceDocsPaths) => ({
@@ -56,6 +58,23 @@ describe("G-rules-script-coverage checkRulesScriptCoverage", () => {
       expect(f.some((x) => x.file === ".claude/rules/safety-nets.md" && x.message.includes(rel)), `${rel} が母集団から落ちている`).toBe(true);
       expect(f.some((x) => x.file === ".claude/rules/governance-docs.md" && x.message.includes(rel)), `${rel} が母集団から落ちている`).toBe(true);
     }
+  });
+
+  // 母集団の下界のうち、**走査（`makeSnapshot`）側**を縛る。上の fixture テストはこちらに反応できない
+  // ——`makeSnapshot` を呼ばないためである。実測（2026-08-19）: `WALK_EXCLUDE_PATHS` へ `scripts/governance` を
+  // 足すと #1093 の再発形の検知が 106 件 → 0 件へ落ち、`governance:check` も manifest delta も沈黙した。
+  // `scripts/lib/` は `.psm1` / `.ps1` しか持たないので、この 1 本が `SCRIPT_EXT` の狭窄にも同時に反応する。
+  it("canary: 実ツリーの母集団が走査側で縮んでいない（WALK_EXCLUDE_PATHS の狭窄を捕まえる）", () => {
+    const files = makeSnapshot(fileURLToPath(new URL("../../../", import.meta.url))).files;
+    const [safetyNets, governanceDocs] = COVERAGE;
+    const pop = files.filter(safetyNets.inPopulation);
+    for (const prefix of ["scripts/governance/checks/", "scripts/lib/", ".claude/hooks/", ".githooks/"]) {
+      expect(pop.some((f) => f.startsWith(prefix)), `${prefix} が母集団から消えている`).toBe(true);
+    }
+    expect(
+      files.filter(governanceDocs.inPopulation).some((f) => f.startsWith("scripts/governance/checks/")),
+      "governance-docs 側の母集団から scripts/governance/checks/ が消えている",
+    ).toBe(true);
   });
 
   // --- 下界の canary（被覆形の述語は母集団が縮む側で沈黙する） -----------------

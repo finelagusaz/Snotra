@@ -19,9 +19,16 @@
 //!   loud なので安全側である（**未被覆は切り詰めず全件名指すので、その赤は長い**）。そのときは
 //!   `WALK_EXCLUDE_PATHS` へ 1 行足すか下の `inPopulation` を絞る——同ヘッダが言うとおり、向きを決めるのは
 //!   走査器ではなく呼び出し点の述語であり、それがこの検査である。
-//!   **ただし母集団を狭めるときは、下界を縛るテストを同じ変更で直すこと**——`SCRIPT_EXT` を `.mjs` へ
-//!   狭める変異は、実ツリーが全件被覆である限り**どの層も赤にしない**（2026-08-19 実測）。
-//!   それを捕まえているのは `G-rules-script-coverage.test.mjs`「母集団の下界」1 本だけである。
+//!
+//! **母集団を狭める道は 2 つあり、縛っている検知器が別々である**（どちらも実ツリーが全件被覆である限り
+//! 判定結果を変えないので、**放っておけばどの層も赤にしない**・2026-08-19 実測）:
+//! - `inPopulation`（`SCRIPT_EXT` を `.mjs` へ狭める等）→ `G-rules-script-coverage.test.mjs`「母集団の下界」
+//! - **`lib.mjs` の `WALK_EXCLUDE_PATHS`（走査そのものを狭める）** → 同「実ツリーの母集団」。
+//!   fixture のテストはこちらに反応できない——`makeSnapshot` を呼ばないためである。実測では、
+//!   `WALK_EXCLUDE_PATHS` へ `scripts/governance` を足すと #1093 の再発形の検知が **106 件 → 0 件**へ落ち、
+//!   `governance:check` も manifest delta も沈黙した（manifest の 4 列はどれも `scripts/` を見ておらず、
+//!   `checks` 列は `readdirSync` 由来でスナップショットを経由しない）。
+//! **どちらを狭めるときも、対応する側のテストを同じ変更で直すこと。**
 import { finding, globToRegex, rulePathPatterns } from "../lib.mjs";
 
 export const id = "G-rules-script-coverage";
@@ -34,7 +41,7 @@ const SCRIPT_EXT = /\.(mjs|ps1|psm1)$/;
  *  `governance-docs.md` の母集団を `scripts/` 部分木へ限るのは、あちらの `paths` が `.claude/hooks/` を
  *  持たない＝射程がそもそも違うためである。**#837 が価値を置いた「2 rules の配送対象の一致」は
  *  `scripts/` 部分木について保つ**——片方だけが古びる形をそこで塞ぐ。 */
-const COVERAGE = [
+export const COVERAGE = [
   { rule: ".claude/rules/safety-nets.md", inPopulation: (f) => SCRIPT_EXT.test(f) },
   { rule: ".claude/rules/governance-docs.md", inPopulation: (f) => f.startsWith("scripts/") && SCRIPT_EXT.test(f) },
 ];

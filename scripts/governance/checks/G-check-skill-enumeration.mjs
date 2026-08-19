@@ -74,7 +74,8 @@ export function checkCheckSkillEnumeration(snapshot) {
   // ファイルは在るのにドメインから落ちる——そこで「実在しない」と断言すると、検査が偽の主張を出す
   // （レビューが変異注入で実測）。2 つの状態は区別できるので、区別したまま報告する。
   // **前者の枝は今日のフィクスチャからは到達できない**——`skillFiles` の述語が
-  // `.claude/skills/<name>/SKILL.md` そのものなので、ファイルが在れば必ず母集団にも居る。
+  // `.claude/skills/<name>/SKILL.md` そのものであり、かつ `CHECK_SKILL_REF` は `/` を含む名前を
+  // 生まないので、組み上がる `p` は必ずその述語に当たる。ファイルが在れば必ず母集団にも居る。
   // 到達するのは述語が狭まったときだけであり、この枝はその日のためにある（宣言する死角）。
   const skills = new Set(skillFiles(snapshot));
   const files = new Set(snapshot.files);

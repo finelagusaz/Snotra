@@ -21,11 +21,12 @@ export function run(snapshot, ctx) {
  *  その `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されず `governance:check` は緑を
  *  返す（2026-08-09 実測: member を 1 つ増やし、その索引へ実在しない `.rs` を書いても緑・#1008）。
  *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。
- *  **ただし写しのずれ自体は本ファイルの外で固定されている**——`governance-check.test.mjs` の
+ *  **写しのずれのうち固定されているのは一部である**——`governance-check.test.mjs` の
  *  母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ member が本表と
- *  `governanceDocs()` の**両方**に載ることを `npm test` で強制する。**残る穴は `CLAUDE.md` を
- *  持たない crate だけで、そのとき照合すべき索引もまだ無い**（`skip-ci` ラベルの付いた PR では
- *  そのカナリアも走らない）。 */
+ *  `governanceDocs()` の**両方**に載ることを `npm test` で強制し、`domains.test.mjs` が本表由来の
+ *  母集団が member の `src/` の外へ出ないことを見る。**それで全部ではない**——`CLAUDE.md` を
+ *  持たない crate（そのとき照合すべき索引もまだ無い）に加えて、`exts` / `excludeTest` による縮小は
+ *  どの層も赤にしない（2026-08-20 実測。`skip-ci` ラベルの付いた PR ではカナリアも走らない）。 */
 export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
@@ -35,9 +36,8 @@ export const MODULE_INDEX_CRATES = {
 
 /** `moduleIndexSources` ドメインのメンバー——索引が覆うべき production ファイル。
  *  **crate の一覧は `MODULE_INDEX_CRATES` から出る**（ルート `Cargo.toml` からではない）。
- *  この 2 本目の導出は意図である。**食い違いを全部捕まえる検知器は無い**——#701 のカナリアは crate 一覧の
- *  片方向しか固定せず、`excludeTest` による食い違いはどの層も赤にしない（実測）。縛られているのは
- *  部分集合の向きだけで、それは `domains.test.mjs` が持つ。`crateSources` と畳んではならない。 */
+ *  この 2 本目の導出は意図である。**食い違いを全部捕まえる検知器は無い**——縛られている向きは
+ *  上の `MODULE_INDEX_CRATES` の doc が名指す（そこが正本）。`crateSources` と畳んではならない。 */
 export function moduleIndexSources(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
   return snapshot.files.filter((f) =>
     crates.some((c) => {

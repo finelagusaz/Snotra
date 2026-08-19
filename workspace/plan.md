@@ -76,7 +76,6 @@ CI の `governance-check` job へ漏れてくる findings の 12/15 を占める
 | `.claude/skills/implement/SKILL.md`（2 箇所） | 「索引漏れは `governance:check` が捕捉する……が PR まで漏らさない」と「**hook が走らせない** `cargo doc` と `npm run governance:check`」——後者は `governance:check` の一部が hook で走るようになるので動く。**memory の `partial-automation-habituates`（hook の沈黙に慣れて hook が走らない検査を飛ばす）がまさにこの行である** |
 | `docs/build-commands.md` | 3 箇所。「**検査とは別に gate ではない reminder が在り**」（カテゴリ表の直前）に索引・参照実在を足す。「`.rs` では PostToolUse フックが走るが、**その沈黙は fmt / clippy / test の合格であって見出し参照の着地を含まない**」と「PostToolUse フックは `.md` に検査を割り当てない」の 2 文の射程が動く |
 | `.claude/rules/governance-docs.md` | 「**検査ではない reminder は 1 つ出る**」の数え上げ。同項の「`.rs` では逆に hook が走って沈黙するが〜」の射程も動く |
-| `.claude/skills/implement/SKILL.md`（**軽微**） | 「索引漏れは `governance:check` が捕捉する……が PR まで漏らさない」——**真のまま残るが不完全になる**。実装者が読むスキルなので「編集時にも reminder が出る」を足す |
 | `docs/adr/ADR-<slug>.md` | **新規**。却下した案（gate 化 / `dependents.mjs` への相乗り / `G-module-linkage` の同梱 / 全体を毎編集で回す）を持つ。**既存の `ADR-dependents-reminder-at-edit-time.md` は書き換えない**（`ADR-adr-frozen-history`） |
 
 `SPEC.md` の更新は**不要**（アプリの挙動ではなく開発時セーフティネットの変更）。
@@ -100,7 +99,7 @@ CI の `governance-check` job へ漏れてくる findings の 12/15 を占める
 判定を再実装せず、`checkModuleIndex` / `checkReferences` / `MODULE_INDEX_CRATES` / `governanceDocs` /
 `gitIgnoredPaths` を import して呼ぶ。
 
-- [ ] `scopedFindings(snapshot, rel, filterIgnored)` を書く。`rel` の形で母集団を決める
+- [x] `scopedFindings(snapshot, rel, filterIgnored)` を書く。`rel` の形で母集団を決める
   - `.rs` は **`MODULE_INDEX_CRATES` の `cfg.src` と `cfg.exts` で判定する**（`rel.startsWith(crate + "/")` の
     ような雑な導出をしない。**crate 名で前方一致すると `snotra-core/tests/*.rs` を拾って偽の reminder になる**
     ——`G-module-index` の逆方向が見るのは `cfg.src` 配下だけであり、母集団を一致させる必要がある。実測で
@@ -109,14 +108,21 @@ CI の `governance-check` job へ漏れてくる findings の 12/15 を占める
   - `<crate>/CLAUDE.md` → `checkModuleIndex(snapshot, [crate])` を**全件**返す（その文書が主語なので全件が帰属する）
   - `governanceDocs(snapshot).includes(rel)` な `.md` → `checkReferences(snapshot, [rel], filterIgnored)`
   - それ以外 → `[]`
-- [ ] `reportFor(snapshot, rel, filterIgnored)` を書く。findings が 0 件なら**空文字**（呼び出し側は何も出さない）。
+- [x] **【実装中に判明・計画の訂正】索引と参照実在は排他ではない** — 計画は上の 3 分岐を排他的に書いていたが、
+      `<crate>/CLAUDE.md` は `MODULE_INDEX_CRATES` の索引対象であり、かつ `governanceDocs()` の正規表現
+      `/^(snotra-core|…)\/CLAUDE\.md$/` にも**含まれる**。ゆえに両方が帰属する。**累積で組んだ**
+      （テスト「`<crate>/CLAUDE.md` は索引と参照実在の**両方**に帰属する」が固定）
+- [x] **実物のツリーで CLI を走らせて確認した**（合成 fixture だけで済ませない・ADR の先例「実物で走らせて
+      初めて出た欠陥」）: 索引に無い `.rs` → 1 件 / 索引に在る `.rs` → 沈黙 / 壊れた参照を持つ `.md` → 1 件 /
+      `tests/` 配下 → 沈黙。**4 ケースとも exit code 0**
+- [x] `reportFor(snapshot, rel, filterIgnored)` を書く。findings が 0 件なら**空文字**（呼び出し側は何も出さない）。
       1 行に畳み、件数の上限は `dependents.mjs` の `LISTED = 3` に倣う。全件を見る再現コマンドを文言に含める
-- [ ] CLI 部（`isMain` ガード・`makeSnapshot(process.cwd())`・**exit code は常に 0**）。
+- [x] CLI 部（`isMain` ガード・`makeSnapshot(process.cwd())`・**exit code は常に 0**）。
       shebang を置かない（CRLF checkout で vitest の transform が SyntaxError になる）
-- [ ] `//!` ヘッダに、`checks/` へ置けない理由・静的 import してはならない理由・合否を持たないことを書く
-- [ ] **実装中は自分で `npm test` を回す** — `scripts/governance/**.mjs` の編集に PostToolUse hook は
+- [x] `//!` ヘッダに、`checks/` へ置けない理由・静的 import してはならない理由・合否を持たないことを書く
+- [x] **実装中は自分で `npm test` を回す** — `scripts/governance/**.mjs` の編集に PostToolUse hook は
       何も走らせない（`docs/hooks.md` 発火一覧の「上記以外」）。**沈黙は「何も走らなかった」である**
-- [ ] `edit-findings.test.mjs`（正常 green / 3 種の変異で red / 判定対象外が混じらないこと）。
+- [x] `edit-findings.test.mjs`（正常 green / 3 種の変異で red / 判定対象外が混じらないこと）。
       **`checkModuleIndex` / `checkReferences` はモックせず実物を呼ぶ**——帰属フィルタはメッセージ書式に
       文字列で結合しており、モックするとその書式変更を検知できない（上の不変条件表）。
       **接頭辞関係にあるパスで誤爆しないことも固定する**——`includes` は部分一致なので、

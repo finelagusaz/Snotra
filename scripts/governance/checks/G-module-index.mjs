@@ -35,8 +35,9 @@ export const MODULE_INDEX_CRATES = {
 
 /** `moduleIndexSources` ドメインのメンバー——索引が覆うべき production ファイル。
  *  **crate の一覧は `MODULE_INDEX_CRATES` から出る**（ルート `Cargo.toml` からではない）。
- *  この 2 本目の導出は意図であり、両者の食い違いは `governance-check.test.mjs` の母集団カナリア（#701）が
- *  `npm test` で捕まえる。`crateSources` と畳んではならない。 */
+ *  この 2 本目の導出は意図である。**食い違いを全部捕まえる検知器は無い**——#701 のカナリアは crate 一覧の
+ *  片方向しか固定せず、`excludeTest` による食い違いはどの層も赤にしない（実測）。縛られているのは
+ *  部分集合の向きだけで、それは `domains.test.mjs` が持つ。`crateSources` と畳んではならない。 */
 export function moduleIndexSources(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
   return snapshot.files.filter((f) =>
     crates.some((c) => {

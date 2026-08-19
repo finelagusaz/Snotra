@@ -50,8 +50,10 @@ describe("diffManifest（件数ではなく集合を比べる）", () => {
     const overlapHead = { checks: [], docs: [], rules: [], skills: [] };
     expect(diffManifest(overlapBase, overlapHead)).toEqual(["-.claude/rules/foo.md"]);
   });
-  // I3 の当の欠陥——ドメインが 1 つ丸ごと消える。消費側が `ctx.domains.get(...)` で
-  // TypeError を出すドメイン（`adrFiles`）以外は、この列が無いと無言で消えていた。
+  // I3 の当の欠陥——ドメインが 1 つ丸ごと消える。**消費者を持つドメインは `registry.mjs` が
+  // ロード時に throw する**（検査の `domains` 宣言が未知の名前になるため）が、**消費者の無い
+  // ドメインはどの層も見なかった**——実測（2026-08-20）: `headingRefDocs` を `DOMAIN_SPECS` から
+  // 消すと `governance:check` も `npm test` も緑のままで、この列だけが `-headingRefDocs` を出した。
   it("ドメインが 1 つ消えると delta に出る（I3）", () => {
     const b = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs", "adrFiles"] };
     const h = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs"] };

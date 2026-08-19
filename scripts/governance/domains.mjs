@@ -174,10 +174,13 @@ export const DOMAIN_SPECS = [
   },
   {
     // **`crateSources` と同じ集合を返すが、畳んではならない。** crate の一覧の出所が違う
-    // （こちらは `MODULE_INDEX_CRATES`、あちらはルート `Cargo.toml`）。この 2 本目の導出は意図で、
-    // 食い違いは `governance-check.test.mjs` の母集団カナリア（#701）が捕まえる。
-    // `instrument.mjs` の `duplicateDomains` が「同一メンバー」として報告するのは想定どおりで、
-    // **合否は持たない**——判断は人に残す（`ADR-retire-area-budget` と同じ向き）。
+    // （こちらは `MODULE_INDEX_CRATES`、あちらはルート `Cargo.toml`）。この 2 本目の導出は意図である。
+    // **食い違いを全部捕まえる検知器は無い。** #701 の母集団カナリアが固定するのは crate 一覧の
+    // 片方向（`CLAUDE.md` を持つ member が `MODULE_INDEX_CRATES` に載る）だけで、集合の食い違いは
+    // 見ない——`excludeTest` を 1 行足すと両者は食い違い、`governance:check` も `npm test` も緑のまま
+    // である（2026-08-20 実測）。縛られているのは**部分集合の向き**だけで、それは
+    // `domains.test.mjs` が持つ。`instrument.mjs` の `duplicateDomains` が「同一メンバー」として
+    // 報告するのは想定どおりで、**合否は持たない**——判断は人に残す（`ADR-retire-area-budget` と同じ向き）。
     name: "moduleIndexSources",
     members: moduleIndexSources,
     anchors: [

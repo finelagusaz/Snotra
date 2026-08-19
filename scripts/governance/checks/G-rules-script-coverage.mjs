@@ -25,12 +25,18 @@
 //! - `SCRIPT_EXT`（`.mjs` へ狭める等）→ `G-rules-script-coverage.test.mjs`「母集団の下界」
 //! - **`lib.mjs` の `WALK_EXCLUDE_PATHS`（走査そのものを狭める）** → 同「実ツリーの母集団」。
 //!   fixture のテストはこちらに反応できない——`makeSnapshot` を呼ばないためである。実測では、
-//!   `WALK_EXCLUDE_PATHS` へ `scripts/governance` を足すと #1093 の再発形の検知が **106 件 → 0 件**へ落ち、
-//!   `governance:check` も manifest delta も沈黙した（manifest のファイル名の列はどれも `scripts/` を
-//!   見ておらず、`checks` 列は `readdirSync` 由来でスナップショットを経由しない）。
+//!   `WALK_EXCLUDE_PATHS` へ `scripts/governance` を足すと **この検査の**検知が 106 件 → 0 件へ落ちる。
+//!   manifest はこの狭窄を見ない（ファイル名の列はどれも `scripts/` を見ておらず、`checks` 列は
+//!   `readdirSync` 由来でスナップショットを経由しない）。
 //! **どちらを狭めるときも、対応する側のテストを同じ変更で直すこと。**
-//! **どちらの狭窄も、`judgingScripts` ドメインの錨が `governance:check` の実行時にも見る**（Phase 2 で
-//! 足した層）——上の 2 行は `npm test` でしか走らないので、テストを飛ばした経路が残っていた。
+//!
+//! **2 つの狭窄で、`judgingScripts` ドメインの錨（Phase 2）が果たす役割は違う**（2026-08-20 に A/B で実測）:
+//! - `SCRIPT_EXT` を `.mjs` へ狭める → 錨**だけ**が検出する。錨の無い版は `governance:check` が exit 0 で
+//!   完全に沈黙し、錨のある版は exit 1（finding は 2 件とも錨）。この形については錨が唯一の検知点である
+//! - `WALK_EXCLUDE_PATHS` でディレクトリを落とす → 錨の無い版でも赤い。落ちたディレクトリが文書から
+//!   逐語で名指されているため、見出し参照や索引の側が先に鳴る。**錨の寄与は検出ではなく帰属**
+//!   （原因を「母集団が縮んだ」と名指す）である
+//! **「錨があるから走査の狭窄は捕まる」と一般化してはならない**——捕まる理由が形ごとに違う。
 import { finding, globToRegex, rulePathPatterns } from "../lib.mjs";
 
 export const id = "G-rules-script-coverage";

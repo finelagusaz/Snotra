@@ -59,8 +59,24 @@ fail-closed な canary が既に赤にしており、残余は「その canary �
 - [x] `.claude/rules/` のクラスタを移行する（`ruleDocs` 8 件 / `judgingScripts` 96 件・移送前後で集合同一）
 - [x] skills のクラスタを移行する（`skillDocs` 12 件）
 - [x] crate と `.rs` のクラスタを移行する（`workspaceMemberDirs` 4 / `crateSources` 95 / `moduleIndexSources` 95）
-- [x] 走査から母集団を作る検査がすべて移行済みであることを、`snapshot.files` の使用箇所で検算する
+- [x] 走査から母集団を作る**検査**が移行済みであることを、`snapshot.files` の使用箇所で検算する
 - [x] 未移行が上記 5 本だけになったことを `governance:check` の evidence で確かめる（ドメイン未移行 5 本）
+
+## Phase 3 への申し送り（全体レビューが変異注入で実測したもの）
+
+- **錨の「部分的」な喪失は実行時に見えない。** `G-domain-anchors` が赤くするのは `anchors.length === 0`
+  だけで、錨オブジェクトを 1 個消しても `governance:check` は exit 0（実測）。捕まえたのは
+  `domains.test.mjs` の腕ごとの発火テストだけであり、それは **15 ドメイン中 4 本**にしかない。
+  閉じる案: 錨のラベルを manifest の列へ入れる（I3 と同じ手で、錨の削除が delta になる）。
+  代償は PR 本文へ書く delta が増えること。
+- **`crateSources` と `moduleIndexSources` が食い違ったとき、計器の行が「消える」ことが唯一の手掛かり
+  である。** 実ツリーに対してその行を assert するテストは無く、手掛かりが**不在の観測**になっている。
+- **「移行済み」は検査についての主張であって、母集団を作る全経路についての主張ではない。**
+  ドメインに属さない走査由来の母集団が少なくとも 2 か所ある: `adrCitationDocs` の 2 腕
+  （`G-adr-citations`・**沈黙の向き**——腕が消えても引用の照合が静かに減る）と、
+  `G-stale-identifiers` の走査（loud の向きなので優先度は低い）。
+- **錨の寄与が「検出」なのか「帰属」なのかは形ごとに違い、帰属の価値そのものは測れていない**
+  （`G-rules-script-coverage` のヘッダに A/B の実測を残した）。
 
 ## 人間レビュー
 

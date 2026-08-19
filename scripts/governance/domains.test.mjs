@@ -33,6 +33,19 @@ describe("buildDomains", () => {
     }
   });
 
+  // 「両者の食い違いは #701 の母集団カナリアが捕まえる」は**偽だった**（2026-08-20 実測:
+  // `MODULE_INDEX_CRATES` へ `excludeTest` を 1 行足すと両者は食い違い、`governance:check` も
+  // `npm test` も緑のまま）。カナリアが固定するのは crate 一覧の片方向だけである。
+  // ここで**成り立たねばならない向き**を縛る: 索引の母集団は workspace member の `src/` の外へ出ない
+  // ——`MODULE_INDEX_CRATES` へ Cargo.toml に無い crate を足す形が、これで赤になる。
+  // **等号は要求しない**——`excludeTest` による縮小（真の部分集合）は正当な設定である。
+  it("moduleIndexSources は crateSources の部分集合である", () => {
+    const d = buildDomains(makeSnapshot(ROOT));
+    const inCrates = new Set(d.get("crateSources").members);
+    const outside = d.get("moduleIndexSources").members.filter((f) => !inCrates.has(f));
+    expect(outside, `索引の母集団が workspace member の src/ の外へ出ている: ${outside.join(", ")}`).toEqual([]);
+  });
+
   it("adrFiles ドメインは docs/adr/ 直下の md である", () => {
     const m = buildDomains(makeSnapshot(ROOT)).get("adrFiles").members;
     expect(m.length).toBeGreaterThan(0);

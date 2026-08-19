@@ -19,6 +19,7 @@ import {
   staleIdentifierTargets,
   workspaceMembers,
 } from "./lib.mjs";
+import { adrFiles } from "./checks/G-adr-file-names.mjs";
 
 /** そのディレクトリ**直下**に 1 件以上（前方一致にしない——配下が在れば真になり、
  *  中間層が消えても沈黙する。#1143 で実測した形）。 */
@@ -98,6 +99,11 @@ export const DOMAIN_SPECS = [
       { label: ".claude/ の腕（staleIdentifierDocs）", holds: (m) => m.some((f) => f.startsWith(".claude/")) },
       { label: "docs/ の腕（staleIdentifierGuideDocs）", holds: (m) => m.some((f) => f.startsWith("docs/")) },
     ],
+  },
+  {
+    name: "adrFiles",
+    members: adrFiles,
+    anchors: [{ label: "docs/adr/ 直下", holds: (m) => hasDirectChild(m, "docs/adr") }],
   },
 ];
 

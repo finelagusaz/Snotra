@@ -32,4 +32,10 @@ describe("buildDomains", () => {
       }
     }
   });
+
+  it("adrFiles ドメインは docs/adr/ 直下の md である", () => {
+    const m = buildDomains(makeSnapshot(ROOT)).get("adrFiles").members;
+    expect(m.length).toBeGreaterThan(0);
+    expect(m.every((f) => /^docs\/adr\/[^/]+\.md$/.test(f))).toBe(true);
+  });
 });

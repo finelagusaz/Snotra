@@ -1,12 +1,16 @@
 //! G-adr-citations — `ADR-<slug>` の短縮引用が実在の ADR を指すか（#812 の A）。
 import { finding, linesOutsideFences } from "../lib.mjs";
+import { adrFiles } from "./G-adr-file-names.mjs";
 
 export const id = "G-adr-citations";
-export const domains = ["governanceDocs"];
+export const domains = ["governanceDocs", "adrFiles"];
 
-/** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs・record を使う） */
+/** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs・domains・record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, ctx.docs)));
+  return ctx.record(
+    "adrCitations",
+    scanAdrCitations(snapshot, adrCitationDocs(snapshot, ctx.docs, ctx.domains.get("adrFiles").members)),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -29,14 +33,16 @@ export function run(snapshot, ctx) {
 /** 短縮引用の形。`ADR-` + kebab slug */
 const ADR_CITATION = /\bADR-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\b/g;
 
-/** G-adr-citations の母集団: ガバナンス文書 + skills + 製品ソース（コメントに引用が在る） */
-export function adrCitationDocs(snapshot, docs) {
+/** G-adr-citations の母集団: ガバナンス文書 + skills + 製品ソース（コメントに引用が在る）
+ *  @param {string[]} [adrDocs] `adrFiles` ドメインのメンバー。`run` は `ctx.domains` 経由で渡す——
+ *  単体呼び出し（テスト等）向けに省略時は `adrFiles(snapshot)` を直接呼ぶ（写しではなく同じ関数） */
+export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
   return [
     ...docs,
     // 凍結された歴史も**実在の辺だけ**は守る——ADR → ADR の短縮引用は、指す側が凍結でも
     // 指される側の削除で壊れる。`docs`（governanceDocs）は docs/adr/ を含まないため明示的に足す。
     // この 1 行が落ちると ADR→ADR の実在検査が沈黙で消える（母集団カナリアがテストで膜を張る）
-    ...snapshot.files.filter((f) => /^docs\/adr\/[^/]+\.md$/.test(f)),
+    ...adrDocs,
     ...snapshot.files.filter((f) => /^\.claude\/skills\/.*\.md$/.test(f)),
     // 非 docs のソース。**見るのは直下の正規表現が挙げる拡張子だけである**——`.ts` / `.tsx` /
     // `.ps1` / `.psm1` に書いた ADR の短縮引用は実在照合を素通りする（2026-08-09 実測・#1008）。

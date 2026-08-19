@@ -1,5 +1,5 @@
 //! G-heading-refs — 見出し参照の実在（正準形 `<対象>`「<見出し>」）。
-import { finding, linesOutsideFences, collectAnchors, resolveRefTarget, normAnchor } from "../lib.mjs";
+import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor } from "../lib.mjs";
 
 export const id = "G-heading-refs";
 
@@ -43,7 +43,7 @@ export function scanHeadingRefs(snapshot, docs) {
       findings.push(finding(doc, 1, "対象文書が読めない（G-heading-refs 母集団の欠落）"));
       continue;
     }
-    for (const [lineNo, line] of linesOutsideFences(text, doc, findings)) {
+    for (const [lineNo, line] of refScanLines(text, doc, findings)) {
       for (const m of line.matchAll(HEADING_REF)) {
         const [, target, label] = m;
         if (!target.endsWith(".md") && !/^\/[a-z0-9-]+$/.test(target)) continue;

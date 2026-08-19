@@ -3,7 +3,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { snap } from "./test-helpers.mjs";
-import { gitIgnoredPaths, makeSnapshot, headingRefSourceDocs, headingRefDocs, governanceDocs, sectionOf, linesOutsideFences } from "./lib.mjs";
+import {
+  gitIgnoredPaths,
+  makeSnapshot,
+  headingRefSourceDocs,
+  headingRefCommentDocs,
+  headingRefDocs,
+  governanceDocs,
+  sectionOf,
+  linesOutsideFences,
+  linesOfComments,
+} from "./lib.mjs";
 import { scanHeadingRefs, checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkReferences } from "./checks/G-references.mjs";
@@ -103,6 +113,89 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
     // 0 件なので dogfood も evidence も動かない）。G-stale-identifiers が配線 describe を 2 本置いたのと同じ形
     const { findings } = runAll(rs('/// 詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\nfn f() {}\n'));
     expect(findings.some((f) => f.file === "src/a.rs" && f.message.includes("正準形でない"))).toBe(true);
+  });
+});
+
+describe("G-heading-refs / G-near-heading-refs のスクリプトの腕（コメント行・#1138）", () => {
+  // 守りたい対象 = スクリプトのコメントに書かれた正準形が、参照先の改題で沈黙すること。
+  // #1137 で `/implement` を改番したとき `.md` の 3 件は名指しされ、`scripts/race-boundaries.mjs`
+  // の 1 件だけが沈黙した。種はすべて合成スナップショットへ蒔く。
+  const TARGET = "## Git/GitHub 運用\n\n本文\n";
+  const src = (p, text) => snap({ "CLAUDE.md": TARGET, [p]: text });
+  const scan = (p, text) => scanHeadingRefs(src(p, text), [p]);
+
+  it("種 1: `.mjs` のコメントの正準形が着地しなければ finding（赤）。対照: 着地すれば緑", () => {
+    const rot = scan("scripts/a.mjs", '// 詳細は `CLAUDE.md`「Git 運用」\n');
+    expect(rot.findings).toHaveLength(1);
+    expect(rot.findings[0].message).toContain("見出し参照が着地しない");
+    const ok = scan("scripts/a.mjs", '// 詳細は `CLAUDE.md`「Git/GitHub 運用」\n');
+    expect(ok.findings).toEqual([]);
+    expect(ok.checked).toBe(1);
+  });
+
+  it("種 2: 文字列リテラルの中の同じ参照は見ない（負の fixture を偽陽性にしない契約の実体）", () => {
+    // **これが「`*.test.mjs` を外す」の代わりに置いた意味の写像である。**拡張子で外すと
+    // `*.Tests.ps1` のような別の綴りが素通りし、fixture を持たないテストのコメントまで落ちる。
+    // この it が落ちたら、母集団の定義が拡張子の写像へ戻った合図
+    const s = scan("scripts/a.test.mjs", 'const doc = "`CLAUDE.md`「Git 運用」";\n');
+    expect(s.findings).toEqual([]);
+    expect(s.checked).toBe(0);
+  });
+
+  it("種 3: ブロックコメント（`/* */`）の中も見る——継続行は行頭に `//` を持たない", () => {
+    const f = scan("scripts/a.mjs", '/**\n * 詳細は `CLAUDE.md`「Git 運用」\n */\n').findings;
+    expect(f).toHaveLength(1);
+    expect(f[0].line).toBe(2);
+  });
+
+  it("種 4: PowerShell は `#` と `<# #>` の両方を見る（`.ps1` の実参照は help ブロックにも在る）", () => {
+    const hash = scan("scripts/a.ps1", '# 詳細は `CLAUDE.md`「Git 運用」\n').findings;
+    expect(hash).toHaveLength(1);
+    const block = scan("scripts/a.ps1", '<#\n.SYNOPSIS\n詳細は `CLAUDE.md`「Git 運用」\n#>\n').findings;
+    expect(block).toHaveLength(1);
+    expect(block[0].line).toBe(3);
+  });
+
+  it("種 5: G-near-heading-refs もスクリプトのコメントを見る", () => {
+    const f = checkNearHeadingRefs(src("scripts/a.mjs", '// 詳細は `CLAUDE.md` の「Git/GitHub 運用」\n'), ["scripts/a.mjs"]);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("`CLAUDE.md`「Git/GitHub 運用」と書く");
+  });
+
+  it("種 6: スクリプトの母集団が 0 件なら runAll が明示 fail（md と `.rs` が非空でも鳴る）", () => {
+    // 腕ごとに 1 本ずつ要る（種 5 / 種 6 が `.rs` と md について置いたのと同型）
+    const { findings } = runAll(snap({ "CLAUDE.md": TARGET, "src/a.rs": "fn f() {}\n" }));
+    expect(findings.some((f) => f.message.includes("対象スクリプト"))).toBe(true);
+  });
+
+  it("種 7: 判定対象外の不混入（母集団はコメント記法を持つ拡張子だけ）", () => {
+    const s = snap({
+      "scripts/a.mjs": "",
+      "scripts/b.ps1": "",
+      "scripts/lib/c.psm1": "",
+      ".github/workflows/d.yml": "",
+      "Cargo.toml": "",
+      "src/e.rs": "",
+      "CLAUDE.md": "",
+      "package-lock.json": "",
+      "docs/f.png": "",
+    });
+    expect(headingRefCommentDocs(s).sort()).toEqual([
+      ".github/workflows/d.yml",
+      "Cargo.toml",
+      "scripts/a.mjs",
+      "scripts/b.ps1",
+      "scripts/lib/c.psm1",
+    ]);
+  });
+
+  it("種 8: 配線カナリア — runAll 経由でスクリプトのコメントの腐りが findings に出る", () => {
+    const { findings } = runAll(src("scripts/a.mjs", '// `CLAUDE.md`「Git 運用」\n'));
+    expect(findings.some((f) => f.file === "scripts/a.mjs" && f.message.includes("見出し参照が着地しない"))).toBe(true);
+  });
+
+  it("linesOfComments: コメント記法を持たない対象は契約違反として throw する", () => {
+    expect(() => linesOfComments("x\n", "docs/a.md")).toThrow(/コメント記法を持たない/);
   });
 });
 

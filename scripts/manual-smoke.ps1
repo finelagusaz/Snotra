@@ -70,7 +70,7 @@ $script:InvariantNames = Get-SnotraTraceInvariantNames
 # 連番だったが、**定義元がどこにも無かった**——このファイルにも無く、grep で出てくる
 # `.claude/hooks/post-edit.mjs` の `I6` / `I11` / `I13` は別体系である。結果として
 # **同じ `I7` が項目 1 では「raw 3 操作」・項目 6 では「z-order の所在」という別の不変条件を
-# 指していた**。`.claude/rules/governance-docs.md` の「序数で他を指してはならない」——
+# 指していた**。`.claude/rules/governance-docs.md`「序数で他を指してはならない」——
 # 番号は構造を凍らせ、ずれても誰も気づかない——が名指しで禁じる形そのものである。
 $items = @(
   @{ id = 1; title = "show → 1 文字打鍵でフォーカスを奪わない"

@@ -47,7 +47,7 @@ export const REQUIRED_RUSTDOC_LINTS = ["broken_intra_doc_links", "invalid_html_t
 
 /** member 側の opt-in。**字面ではなく構文的位置で判定する**——`version.workspace = true` と
  *  `<dep>.workspace = true` が同じ字面で全 member に現れるため、字面一致の述語は常に緑になる
- *  （`docs/development-principles.md`「6. 検出は構造化された信号で行い…」）。 */
+ *  （`docs/development-principles.md`「6. 検出は構造化された信号で行い」）。 */
 export function hasWorkspaceLintsOptIn(text) {
   let section = ""; // "" = 最初の `[` 見出しより前（ルート直下）
   for (const raw of text.split("\n")) {

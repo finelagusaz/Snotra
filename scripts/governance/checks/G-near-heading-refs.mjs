@@ -1,5 +1,5 @@
 //! G-near-heading-refs — 正準形に見えて隣接していない見出し参照（#727）。
-import { finding, linesOutsideFences, collectAnchors, resolveRefTarget, normAnchor } from "../lib.mjs";
+import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor } from "../lib.mjs";
 
 export const id = "G-near-heading-refs";
 
@@ -13,8 +13,11 @@ export function run(snapshot, ctx) {
 //
 // G-heading-refs が見るのはバッククォートを閉じた直後（`§` と空白のみを挟む）に `「` が続く形だけで、
 // **助詞が 1 つ挟まると検査対象から外れる**。人の目には同じ参照に見える:
-//   `/start-issue`「Step 6 — …」      ← G-heading-refs が見る
-//   `/start-issue` は「Step 6 — …」   ← 見ない
+//   `<対象>`「<見出し>」      ← G-heading-refs が見る
+//   `<対象>` は「<見出し>」   ← 見ない
+// **例示に実在の対象を置かない**——スクリプトのコメントもこの検査群の母集団だからである。
+// 実在させれば下の行が自分の指摘対象になり、実在しない名前を書けば G-heading-refs が
+// 着地しないと言う。プレースホルダは対象の形（`.md` か `/skill`）に当たらないので両方が見送る。
 // #725 では Claude 自身が書いた 3 件がこの形で、しかも `/implement` の入口判定の中核推論を
 // 支えていた（`/start-issue` が改番されれば黙って壊れる）。
 //
@@ -58,7 +61,7 @@ export function scanNearHeadingRefs(snapshot, docs) {
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) continue; // 読めない文書は G-heading-refs が母集団の欠落として報告済み
-    for (const [lineNo, line] of linesOutsideFences(text, doc, findings)) {
+    for (const [lineNo, line] of refScanLines(text, doc, findings)) {
       for (const m of line.matchAll(NEAR_REF)) {
         const [, target, gap, label] = m;
         if (!target.endsWith(".md") && !/^\/[a-z0-9-]+$/.test(target)) continue;

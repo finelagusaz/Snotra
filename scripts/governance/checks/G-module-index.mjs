@@ -26,7 +26,8 @@ export function run(snapshot, ctx) {
  *  `governanceDocs()` の**両方**に載ることを `npm test` で強制し、`domains.test.mjs` が本表由来の
  *  母集団が member の `src/` の外へ出ないことを見る。**それで全部ではない**——`CLAUDE.md` を
  *  持たない crate（そのとき照合すべき索引もまだ無い）に加えて、`exts` / `excludeTest` による縮小は
- *  どの層も赤にしない（2026-08-20 実測。`skip-ci` ラベルの付いた PR ではカナリアも走らない）。 */
+ *  **錨も部分集合テストも #701 のカナリアも赤にしない**（2026-08-20 実測: `exts` を狭めて 30 件を
+ *  落としても 3 つとも緑）。`skip-ci` ラベルの付いた PR ではカナリアも走らない。 */
 export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },

@@ -100,10 +100,11 @@ CI の `governance-check` job へ漏れてくる findings の 12/15 を占める
 `gitIgnoredPaths` を import して呼ぶ。
 
 - [x] `scopedFindings(snapshot, rel, filterIgnored)` を書く。`rel` の形で母集団を決める
-  - `.rs` は **`MODULE_INDEX_CRATES` の `cfg.src` と `cfg.exts` で判定する**（`rel.startsWith(crate + "/")` の
-    ような雑な導出をしない。**crate 名で前方一致すると `snotra-core/tests/*.rs` を拾って偽の reminder になる**
-    ——`G-module-index` の逆方向が見るのは `cfg.src` 配下だけであり、母集団を一致させる必要がある。実測で
-    確認: 索引を伴わない新規 `.rs` コミット 2 件はどちらも `tests/` 配下＝母集団外だった）
+  - `.rs` は **`MODULE_INDEX_CRATES` の `cfg.src` と `cfg.exts` で判定する**
+    （**⚠️ この項の当初の理由付け「crate 名で前方一致すると `tests/*.rs` を拾って偽の reminder になる」は
+    実装より強い主張で、偽だった**——委譲レビューの変異注入が緑のまま通し、実測（`.rs` 101 件 + 注入の
+    対照）で出力差分 0 件を確認した。後段の `attributesTo` が吸収する。実際の理由は費用の最適化と、
+    `attributesTo` を将来ゆるめたときの 2 段目。**この選択を守る検知器は無い**）
     → `checkModuleIndex(snapshot, [crate])` を呼び、**finding のメッセージが `rel` を含むものだけ**を返す
   - `<crate>/CLAUDE.md` → `checkModuleIndex(snapshot, [crate])` を**全件**返す（その文書が主語なので全件が帰属する）
   - `governanceDocs(snapshot).includes(rel)` な `.md` → `checkReferences(snapshot, [rel], filterIgnored)`

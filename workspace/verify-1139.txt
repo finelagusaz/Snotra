@@ -1,0 +1,362 @@
+issue #1139 検証・レビュー・変異注入 報告
+対象 sha: a6cd5e31b63c339f804063ce09909a6d8f078361（ブランチ chore/governance-hook-frontload）
+実施: 2026-08-19 / worktree C:/workspace/Snotra/.claude/worktrees/agent-af27bacd3092bcecc
+worktree の初期 HEAD は 885e7e40（アンカーより古い）だったため git checkout --detach a6cd5e31... で合わせた。
+node_modules は junction で C:/workspace/Snotra/node_modules へ張った（vitest の起動前失敗と変異検知を区別するため）。
+終了時: git status --porcelain 空・HEAD は a6cd5e31...・リポジトリへのコミットなし。
+
+================================================================================
+(a) カテゴリ A〜F の実行結果
+================================================================================
+判定は拡張子ではなく「変更が触れるコードパスの意味」で行った。差分の母集団（git diff --name-only main...HEAD）:
+  .claude/hooks/{post-edit.mjs,post-edit.test.mjs} / .claude/rules/governance-docs.md /
+  .claude/skills/implement/SKILL.md / AGENTS.md / CLAUDE.md /
+  docs/adr/ADR-scoped-governance-findings-at-edit-time.md / docs/build-commands.md /
+  docs/development-principles.md / docs/hooks.md / scripts/governance-check.mjs /
+  scripts/governance/edit-findings.mjs / scripts/governance/edit-findings.test.mjs / workspace/**
+
+A. Rust（*.rs）— 【該当なし】
+   差分に .rs は 1 件も無い。変更は node スクリプトと .md だけで、Rust のコードパスにも
+   rustdoc の intra-doc link にも触れない（cargo doc を含め A の全コマンドは対象ゼロ）。
+   ※ 本変更は .rs を編集したときの hook の振る舞いを変えるが、それは Rust のビルド・検査の
+     合否に影響しない（reminder は exit code を動かさない。変異注入 M1 で配線を実測）。
+
+B. TypeScript — 【該当なし】
+   差分に .ts は無い（vitest.config.ts も不変）。
+
+C. ウィンドウ生成／表示順・ホットキー・スラッシュコマンド — 【該当なし】
+   src-tauri/** にも snotra-egui-runtime/** にも触れていない。smoke:startup / smoke:egui /
+   test:powershell は対象ゼロ。
+   ただし C のブロックに在る npm test は E の注記（「.claude/hooks/** と同じ理由」）により
+   本変更に必須なので、下記のとおり実行した。
+   実行: node node_modules/vitest/vitest.mjs run（= npm test）
+   結果: Test Files 34 passed (34) / Tests 814 passed (814) / exit 0
+
+D. UI のスタイル・レイアウト・テキスト表示 — 【該当なし】
+   表示を 1 ピクセルも変えない（開発時セーフティネットのみ）。D の節が名指しする誤認の型
+   （「表示経路を触った」を理由に該当と読む・#1106）に当てても該当しない。
+
+E. git hook（.githooks/**）— 【該当なし（ただし同節の趣旨で npm test は実行済み）】
+   .githooks/** に差分は無い。E が要求する npm test は C の欄で実行し緑（.githooks のテストも
+   その 34 ファイルに含まれる）。セーフティネット本体（.claude/hooks/post-edit.mjs）を変更した
+   以上 npm test は実質必須である——通常はその編集で PostToolUse が自動発火するが、本件は
+   checkout で木へ到着したので何も発火していない（沈黙は「何も走らなかった」）。
+
+F. ガバナンス文書（*.md・.claude/rules/・.claude/skills/・workflow）— 【該当・実行】
+   実行: node scripts/governance-check.mjs
+   結果: exit 0 /「全検査 passed（検査 19 件 / 対象文書 35 件 / rules 8 件 / skills 12 件 /
+        見出し参照 277 件を md 47 件 + .rs 101 件 + スクリプトのコメント 107 件から照合 / …）」
+   補足 F-1: 新設した scripts/governance/edit-findings.mjs は checks/ の外に在り、検査件数 19 は
+   main と同じ（= registry の母集団に入っていない）。これは //! が名乗る設計どおりである。
+   補足 F-2: 追加した見出し参照（docs/hooks.md「検査ではない reminder」等）は着地している。
+
+追加で実施した接地（カテゴリ表の外）:
+  - 実ツリーでの CLI 実測: node scripts/governance/edit-findings.mjs <rel> を 6 形で実行。
+    ・snotra-core/src/search.rs → 沈黙・exit 0・110 ms
+    ・docs/hooks.md → 沈黙・exit 0・106 ms（計画の「+70〜130 ms」の幅に入る）
+    ・注入した snotra-core/src/__probe_orphan_1139.rs → WARN 1 件（当のファイルを名指し）
+    ・同時に snotra-core/src/search.rs → 沈黙（= 帰属フィルタが実ツリーでも効く）
+    ・snotra-core/tests/dir_stat_cost.rs → 沈黙
+    ・snotra-core/CLAUDE.md → WARN 1 件（whole 経路）
+    注入ファイルは削除済み（git status 空で確認）。
+  - 実ツリーでの hook プロセス実測: 上と同じ注入状態で post-edit.mjs へ payload を流し、
+    systemMessage と additionalContext の両方に WARN が出ること・exit 0 を観測した
+    （受け入れ条件 (C) の実物での接地）。
+
+================================================================================
+(b) レビュー所見
+================================================================================
+Critical: なし
+High:     なし
+
+--------------------------------------------------------------------------------
+Medium-1 【//! と ADR が名乗る cfg.src の効能が、組み上がったパイプラインでは実現していない】
+場所: scripts/governance/edit-findings.mjs:29-33（moduleIndexCrateOf の doc）と
+      docs/adr/ADR-scoped-governance-findings-at-edit-time.md:54-57（却下案「crate 名の前方一致」）
+根本原因（壊れた不変条件）: 「crate 名で前方一致させると <crate>/tests/*.rs を拾って索引に載る
+      筋合いの無いファイルへ reminder を出す」という主張が、attributesTo による後段の絞り込みに
+      吸収されて成り立たない——checkModuleIndex の逆方向が名指すのは cfg.src 配下のパスだけなので、
+      tests/ 配下の rel はどの finding のメッセージにも現れず、前方一致にしても出力は 0 件のままである。
+実測: 実ツリーの .rs 101 件すべてについて、元の cfg.src 判定と crate 名前方一致とで
+      scopedFindings の出力を突き合わせた → 差分 0 件。cfg.src の外だが crate 名で拾われる .rs は
+      6 件（snotra-core/tests/*.rs 4 件・snotra-settings/build.rs・src-tauri/build.rs）で、
+      違いは checkModuleIndex の呼び出し回数（95 → 101）だけだった。
+      変異注入 M3 でも npm test 全体（814 件）が緑のままだった（下記 (c)）。
+帰結: (1) cfg.src 判定は正しさの門ではなく費用の最適化であり、doc がそう書いていない。
+      (2) edit-findings.test.mjs:48-53 の「判定対象外: tests/ 配下の .rs は母集団の外
+      （cfg.src が src/ に閉じている）」は、名乗った理由ではなく帰属フィルタのおかげで緑になる
+      ——cfg.src を crate 名前方一致へ退化させても赤くならない（= この行を守る検知器は存在しない）。
+具体的な修正例（どちらか）:
+      (i) doc を実装に合わせる。moduleIndexCrateOf の doc から「偽の reminder が出る」という結果の
+          主張を落とし、「checkModuleIndex を呼ぶ母集団を G-module-index の逆方向と一致させ、判定の
+          要らない .rs（tests/・build.rs）に照合の費用を払わせない。出力そのものは後段の attributesTo が
+          同じに保つ（2026-08-19 に .rs 101 件で実測・差分 0）」と書き換える。ADR の当該箇条も同様に
+          「却下の理由は費用と母集団の一致であって出力の差ではない」へ直す（新設 ADR ゆえマージ前に直せる）。
+      (ii) doc の主張を実装で真にする。moduleIndexCrateOf を export して
+          expect(moduleIndexCrateOf("snotra-core/tests/x.rs")).toBeNull() を固定するか、
+          checkModuleIndex を spy にして「tests/ 配下では 1 度も呼ばれない」を assert する。
+      (i) を推す——(ii) は「出力に現れない差」をテストで凍らせるだけで、doc の誤りは残る。
+
+--------------------------------------------------------------------------------
+Medium-2 【射程の穴の一覧が //! にも書かれ、名指しされた正本（docs/hooks.md）と既にずれている】
+場所: scripts/governance/edit-findings.mjs:12-14
+根本原因: AGENTS.md「文書に事実の写しを増やす変更」（正本を 1 か所に定め他は参照へ）に対し、射程の
+      穴を //! が独自に 3 つ列挙している（順方向の索引 typo・削除に伴う orphan・governanceDocs の
+      外の .md）。docs/hooks.md「検査ではない reminder」は 4 つ挙げており（上記 3 つ + mod 宣言）、
+      ルート CLAUDE.md・AGENTS.md・docs/build-commands.md・.claude/rules/governance-docs.md の 4 枚は
+      そちらを正本として名指ししている。docs/comment-guidelines.md「第一原則」の
+      「列挙が正本の代わりなら書かない」に当たる。
+具体的な修正例: //! の 3 つ並べた列挙を落とし、「射程は編集した 1 ファイルに帰属する分に限られる
+      （穴の一覧は docs/hooks.md「検査ではない reminder」が正本）。全体の照合は PR CI の
+      governance-check job が担う。」の 2 文へ畳む。
+
+--------------------------------------------------------------------------------
+Medium-3 【旧 isSourceFileWrite が覆っていて新機構が覆わない範囲が、ADR の「受容する残余」に無い】
+場所: docs/adr/ADR-scoped-governance-findings-at-edit-time.md:77-79（受容する残余）
+根本原因: 旧 isSourceFileWrite は「.rs を Write した」だけで鳴ったので、MODULE_INDEX_CRATES に
+      無い場所の .rs（tests/・build.rs・そして 5 つ目の crate）でも合図が出ていた。新機構はそこで
+      沈黙する。tests/ と build.rs は ADR と //! が母集団外として明示するが、
+      「まだ CLAUDE.md を持たない新設 crate の最初の .rs」だけは、G-module-index も
+      （MODULE_INDEX_CRATES に無い）、npm test の母集団カナリア
+      （scripts/governance-check.test.mjs:20「CLAUDE.md を持つ workspace member は …」）も
+      （CLAUDE.md がまだ無い）鳴らない。旧 WARN はそこで盲目に鳴っていた唯一の合図だった。
+      露出は小さい（crate 新設は稀・CLAUDE.md を書いた瞬間にカナリアが起動する）が、
+      「受容する残余」に名前が無いと次に読む人はこの穴を知らない。
+具体的な修正例: ADR の受容する残余へ 1 行足す——「MODULE_INDEX_CRATES に無い場所の .rs
+      （tests/・build.rs・CLAUDE.md をまだ持たない新設 crate）。旧 isSourceFileWrite は盲目ゆえ
+      ここでも鳴っていた。CLAUDE.md を置いた時点で npm test の母集団カナリア（#701）が引き取る。」
+
+--------------------------------------------------------------------------------
+Low-1 【attributesTo の境界判定が末尾側にしか無い】
+場所: scripts/governance/edit-findings.mjs:58-64
+根本原因: rel の直後の 1 文字だけを見てパス境界を作っており、直前の文字は見ていない。
+      <何か>/<rel> の形のパスがメッセージに現れると誤って帰属する。今日の露出は 0
+      （checkModuleIndex のメッセージが名指すのは cfg.src 配下の完全パスと索引のトークンだけで、
+      そのどちらも先頭にディレクトリを足した形では現れない）。doc が「接頭辞で誤爆しない」ことだけを
+      境界の理由として書いているので非対称に見える。
+具体的な修正例: const prev = i === 0 ? undefined : message[i - 1]; を足し、
+      (prev === undefined || !/[A-Za-z0-9._/\-]/.test(prev)) を条件へ AND する。
+      直さない選択も妥当だが、その場合は doc に「見るのは末尾側の境界だけである（先頭側は
+      <何か>/<rel> の形がメッセージに現れないので不要）」と非対称を名乗らせる。
+
+--------------------------------------------------------------------------------
+Low-2 【CLI が例外で落ちたことと「不整合が無い」が hook から区別できない】
+場所: .claude/hooks/post-edit.mjs:240-244（if (res.error || res.status !== 0) return "";）
+根本原因: reminder は gate ではないので落とさないのが正しいが、stderr も捨てるため
+      edit-findings.mjs の内部例外が恒久的な沈黙になる。dependentsReminder と同型の既存パターンで、
+      規範は「reminder の不在は問題が無いを意味しない」と既に宣言しているので新規の欠陥ではない。
+      指摘に留め、修正を推さない（「reminder が壊れていることを reminder で報せる」形になるため、
+      2 本目の同型が現れた時点で両方まとめて考えるのが筋）。
+
+--------------------------------------------------------------------------------
+Low-3 【.rs が母集団外でも makeSnapshot の全走査を払う】
+場所: scripts/governance/edit-findings.mjs:118
+根本原因: moduleIndexCrateOf(rel) は snapshot を要らないのに CLI は先に makeSnapshot を組む。
+      <crate>/tests/*.rs や 4 crate 外の .rs では全走査が無駄になる。実測では CLI 全体で 106〜110 ms、
+      うち支配項は node 起動なので利得は小さい。修正を推さない。記録として残す。
+
+--------------------------------------------------------------------------------
+Phase 2 の各節（結論）
+--------------------------------------------------------------------------------
+2a. plan.md 不変条件との照合
+  1「.rs を Edit/Write したとき索引に無ければ reminder が出る」
+     実装箇所 post-edit.mjs:232-245 + edit-findings.mjs:76-87 / 判定: 守られている（実ツリーで注入観測）
+  2「<crate>/CLAUDE.md で双方向の不整合が出る」
+     実装箇所 edit-findings.mjs:40（whole: true）/ 判定: 守られている
+  3「governanceDocs の .md でその文書内の実在しない参照が出る」
+     実装箇所 edit-findings.mjs:83-85 / 判定: 守られている（統合テストで実プロセス観測）
+  4「reminder は exit code を動かさない」
+     実装箇所 main() が errors ではなく warnings/sections へ積む・CLI は常に exitCode 0 / 判定: 守られている
+  5「governance:check と npm test が緑」/ 判定: 守られている（上記 F / C）
+  6「G-hook-fires / BUDGETS / docs/hooks.md 発火一覧表 / id カナリアが無傷」
+     判定: 守られている（selectChecks の期待値が main と同一・G-hook-fires 緑・検査件数 19 が不変）
+
+2b. 対称コードパスチェック
+  対称: dependentsReminder（.md 限定・warnings のみ・検査ループの前）
+     ↔ editFindingsReminder（.rs+.md・warnings+sections・検査ループの後）
+     判定: 同じ修正は不要。チャネルの非対称は意図（ADR が持つ・申し送り済み）。位置の非対称も意図
+     （main() のコメントが「検査の証拠を先に見せる」と名乗る）。全ケース列挙:
+     (1) .rs → dependents は先頭の .md 判定で 0 コスト、editFindings が spawn
+     (2) 非ガバナンス .md → 両方 spawn し両方沈黙しうる
+     (3) ガバナンス .md → 両方 spawn し両方鳴りうる（統合テストが独立に固定・M1c で検算）
+     (4) .mjs/.toml/.json → どちらも spawn しない（ユニットテストが固定）
+  対称: 生成/破棄 — mkdtempSync ↔ rmSync(finally) がテスト内で対。spawnSync は同期ゆえライフサイクル無し。
+     判定: ペア成立
+  対称: 旧 API の削除 — isSourceFileWrite の削除に対し 5 テストの削除・doc の書き換え・下流参照の掃除が
+     そろっている。git grep isSourceFileWrite HEAD の残りは (a) 新テストの歴史コメント (b) 新設 ADR の
+     「帰結」 (c) workspace/**（/implement が消す作業バッファ）だけで、生きた規範に腐りは無い。
+     判定: 不要（全ケース列挙済み）
+
+2c. DRY / 関数カバレッジ
+  新規: scopedFindings / reportFor / attributesTo / moduleIndexCrateOf / editFindingsReminder。
+  索引整合・参照実在の判定を手書きしている箇所は無い（checkModuleIndex / checkReferences をそのまま呼ぶ）。
+  grep -rn "editFindingsReminder|edit-findings" で拾った参照はすべて意図された配線・テスト・文書だった。
+  申し送り済みの 4 件（reportFor の同名同型 / spawn 定型の 2 回目 / makeSnapshot+isMain の 4 本目 /
+  チャネルの非対称）は DRY 違反として報告しない。
+
+2d. リソースライフサイクル: 該当リソースなし（spawnSync は同期・ファイルハンドルを持たない）。
+  テスト側の一時ディレクトリは 3 箇所とも finally { rmSync(..., {recursive:true, force:true}) }。
+  判定: ペア成立
+
+2e. SPEC.md 同期
+  差分が変える挙動 = 開発時 hook が出す reminder の発火条件と届け先 / SPEC 該当節: 記述なし
+  判定: SPEC 対象外。自分で接地した——grep -n "post-edit|PostToolUse|governance|reminder|索引" SPEC.md の
+  ヒットはすべてアプリ側の検索インデックス（§3・§4.7・§15.1 等）であり、開発時セーフティネットに
+  関する記述は SPEC.md に 1 行も無い。計画の「SPEC.md の更新は不要」は正しい。
+
+2f.「変更不要」判断の再評価
+  再評価: selectChecks（変更しない）
+    ケース A: reminder が検査 id を発行する → 起きない（checks.push を通らない）→ OK
+    ケース B: docs/hooks.md の発火一覧表の（なし）行が空でなくなる → 起きない（G-hook-fires 緑）→ OK
+    ケース C: BUDGETS のカナリアが id 不足で落ちる → 起きない（id が増えていない）→ OK
+    結論: 変更不要を確認
+  再評価: G-module-linkage（前倒ししない）
+    ケース A: .rs 追加で mod を忘れる → 編集時は沈黙・governance:check が赤 → OK（AGENTS.md と
+      docs/hooks.md が非対称を名指しし「索引の reminder が鳴らなかったことを mod も足りていると読まない」を明記）
+    ケース B: 索引 reminder が鳴って mod 忘れが隠れる → 文言が「帰属する分だけ」と限定するので誤読経路は塞がれている → OK
+    結論: 変更不要を確認
+  再評価: CI の governance-check job（変更しない）
+    ケース A: 削除に伴う orphan → 編集時は見えない → CI が引き取る → OK（doc が明示）
+    ケース B: governanceDocs の外の .md の壊れた参照 → CI も見ない（元から母集団外）→ 不変 → OK
+    ケース C: 他文書からその文書を指す壊れた参照 → 編集時は見えない → CI が引き取る → OK
+    結論: 変更不要を確認
+
+2g. 逆向きの監査（差分が消した行の不変条件と、その再確立地点）
+  消えた行 1:「Write に絞るのは、既存ファイルの Edit まで拾うと沈黙=合格を壊す頻度になるため」
+    再確立地点: 帰属フィルタ（attributesTo）。頻度を抑えるのは trigger ではなく母集団の絞りへ移った。
+    ADR の却下案「絞らずに全件出す」がその判断を保持している。→ 再確立済み
+  消えた行 2:「ゆえに hook は索引を検査せず」（判定を持たない理由）
+    再確立地点: editFindingsReminder の doc が明示的に retract している。→ 再確立済み
+  消えた行 3: WARN 本文の再現コマンド提示（npm run governance:check で確認してください）
+    再確立地点: reportFor の末尾が「全体の照合は npm run governance:check（PR では CI の
+    governance-check job）が担う」を必ず含み、テストがそれを固定している。→ 再確立済み
+  消えた行 4:「.rs をどこに Write しても鳴る」という盲目のカバレッジ
+    再確立地点: 不完全。→ Medium-3 として報告した。
+
+Phase 3（パフォーマンス）— 【該当なし + 計測】
+  性能に敏感なアプリ経路（search.rs / folder.rs / 検索結果レンダリング / アイコンキャッシュ /
+  egui の update()）には一切触れていない。計算量・アロケーション・.clone() の観点は対象ゼロ。
+  開発ループの費用は計測した: CLI 単体 106〜110 ms（計画の「+70〜130 ms」の内側）。
+  .md の編集では reminder が 2 本 spawn する——ADR (D) が明示的に受け入れた設計。
+  Low-3 に短絡の余地を記録したが、修正は推さない。
+
+================================================================================
+(c) 変異注入の結果（すべて複製へ適用・稼働中のガードは弱めていない）
+================================================================================
+複製の作り方: 対象 sha の worktree を tar でスクラッチパッドへ写し（.git / target / node_modules /
+  .claude/worktrees を除外・8.9 MB）、node_modules を junction で張り、resolveRoot が根を見つけ
+  られるよう空の .git ディレクトリを置いた。
+  測定環境の欠陥を先に潰した——.git を置く前は post-edit.test.mjs の 2 件（「§5 .ts の編集は…」
+  「config-warn は systemMessage に出る」）が赤く、これは変異ではなく resolveRoot が null を
+  返したためだった。置いた後の基線は 117/117 緑。
+巻き戻しの照合は内容ハッシュ（git hash-object）で行った（mtime は使っていない）:
+  post-edit.mjs        70eff81d674d261040f869272d3f52cd3fa0e000（HEAD 一致）
+  edit-findings.mjs    173dc9fb9d3e4ffb45667a3ff035ba9b525222a5（HEAD 一致）
+  G-module-index.mjs   cee9b00c1e27b5179033751e27af560867a64cf7（HEAD 一致）
+
+--- M1: main() の配線を消す（warnings.push と sections.push の両方） ---
+結果: 赤（検知された）— Tests 2 failed | 115 passed
+落ちたテスト:
+  × 索引に無い実ファイルがあると reminder が systemMessage と additionalContext の両方へ出る（#1139 の配線）
+  × .md で 2 つの reminder が鳴るとき、それぞれが独立に届く（片方が他方の消失を埋めない）
+評価: #1140 の先例（配線 2 行を消してもユニットテストは 96/96 緑）は再発していない。
+      統合テストが配線を守っている。
+
+--- M1b: sections.push(editFindings) だけを消す（additionalContext の半分） ---
+結果: 赤 — Tests 1 failed | 100 passed
+落ちたテスト: × 索引に無い実ファイルがあると reminder が systemMessage と additionalContext の両方へ出る
+
+--- M1c: warnings.push(editFindings) だけを消す（systemMessage の半分） ---
+結果: 赤 — Tests 2 failed | 99 passed（上記 2 本）
+評価: M1/M1b/M1c の 3 通りで配線の両半分が独立に検知されることを確認した。ADR の
+      「assert は reminder ごとに 1 本ずつ置く」（束ねると片方の配線が消えても他方が埋めて沈黙する）が
+      実測で成立している。
+
+--- M2: 帰属フィルタを外す（.filter((f) => attributesTo(...)) を消して全件返す） ---
+結果: 赤 — Tests 2 failed | 115 passed
+落ちたテスト:
+  × 帰属: 索引漏れが 2 件あっても、編集した当のファイルの分だけが出る
+  × 接頭辞で誤爆しない: a.rs の編集が a.rs を接頭辞に持つ別パスの finding を拾わない
+
+--- M3: cfg.src 判定を crate 名の前方一致へ退化させる ---
+    （rel.startsWith(cfg.src) → rel.startsWith(name + "/")）
+結果: 緑のまま（検知されない）
+  対象 2 ファイル: Tests 117 passed (117)
+  npm test 全体: Tests 812 passed / 2 failed。この 2 件は変異と無関係——
+    scripts/governance/lib.test.mjs > gitIgnoredPaths… と
+    scripts/governance/checks/G-references.test.mjs > ignore 対象の不在パスは… で、複製の .git が
+    本物の repo でないため git check-ignore が使えないことによる測定環境の欠陥。
+    変異を戻した状態で同じ 2 件が同じように落ちることを実測して対照を取った（812/2 で一致）。
+    ゆえに M3 は npm test 全体でも検知されない。
+機序（吸収している層を名指しする）: checkModuleIndex の逆方向が走査するのは cfg.src 配下の
+  ファイルだけなので、<crate>/tests/*.rs や build.rs の rel は finding のメッセージに一度も現れない。
+  よって whole: false 経路の attributesTo が必ず 0 件へ落とす。
+  緑は「穴」ではなく「後段が吸収している」——ただしその結果、//! と ADR が名乗る「偽の reminder が
+  出る」という失敗様式にパイプラインが到達しない（→ Medium-1）。
+独立の実測（テストではなく実ツリーで）: .rs 101 件すべてについて元と変異の scopedFindings を
+  突き合わせ、出力の差分 0 件・checkModuleIndex の呼び出しだけが 95 → 101 に増えることを確認した。
+  cfg.src の外だが crate 名で拾われる .rs は 6 件（snotra-core/tests/{dir_stat_cost,memory_footprint,
+  path_query_cost,search_frame_cost}.rs・snotra-settings/build.rs・src-tauri/build.rs）。
+
+--- M4（追加・//! が名乗る検知器の検算）: G-module-index のメッセージ書式を変える ---
+    （実ファイル ${f} が… → 実ファイル ${base} が…＝完全パスを basename へ落とす）
+結果: 赤 — edit-findings.test.mjs で Tests 4 failed | 12 passed
+落ちたテスト:
+  × 赤: 索引に載っていない .rs を編集すると、その 1 件だけが出る
+  × 帰属: 索引漏れが 2 件あっても、編集した当のファイルの分だけが出る
+  × 接頭辞で誤爆しない: a.rs の編集が a.rs を接頭辞に持つ別パスの finding を拾わない
+  × 件数・対象・全件を見る再現コマンドを含む
+評価: attributesTo の doc と ADR が名乗る「検知器は edit-findings.test.mjs が実物の checkModuleIndex を
+      呼んでいることそのものである」という主張は真である（実測で確認）。M3 と対照的に、この doc の
+      主張は組み上がったパイプラインで実現している。
+
+================================================================================
+(d) ⚠️ 確信の持てない所見
+================================================================================
+⚠️-1 【M3 の緑を「欠陥」と読むかどうか】
+  出力が一致する以上、cfg.src を落としても利用者が見る挙動は変わらない。したがって Medium-1 は
+  「実装の欠陥」ではなく「doc が実装より強い主張をしている」であり、(i)（doc を実装へ合わせる）を
+  選ぶか (ii)（検知器を足す）を選ぶかは設計判断である。私は (i) を推すが確信度は中である——
+  attributesTo を将来ゆるめたときに cfg.src が防御の 2 段目として効く、という読み方も成り立つ
+  （そのときは (ii) が正しい）。裁定に要る一次証拠は上に載せた（差分 0 件・呼び出し 95→101）。
+
+⚠️-2 【.mjs コメントの折返し】
+  docs/comment-guidelines.md「日本語の折返し」は「文途中で物理改行を入れない（1 段落 1 行）」を
+  「新規に書くコメント」へ適用すると書いており、対象を .rs に限っていない（本書の適用範囲は
+  rustdoc / TSDoc / インラインコメント）。新設した //! はいずれも 100〜110 桁で折り返している。
+  ただし規約が名指しする実害（コードスパンの行またぎで grep が壊れる）は起きていない——変更 3 ファイルの
+  コメント行でバッククォートの個数が奇数の行は 0 件だった（実測）。加えて既存の
+  scripts/governance/*.mjs（dependents.mjs・lib.mjs）が同じ折返し様式なので、この差分だけを直すと
+  様式が割れる。指摘に留め、修正を推さない。確信が持てないのは「この規約の射程に .mjs が入るか」である。
+
+⚠️-3 【.claude/rules/safety-nets.md の paths が scripts/governance/** を覆っていない】
+  frontmatter は scripts/*.mjs（直下のみ）・scripts/lib/** で、scripts/governance/edit-findings.mjs は
+  自動配送の対象外である。本 PR が作った穴ではない（scripts/governance/ の 19 検査と dependents.mjs が
+  既に同じ位置に在る）が、判定を持つセーフティネットの実体がそこへ移ったことで露出は増えた。
+  別 issue の材料として置く。確信が持てないのは「意図的な射程か、単に追随していないか」である
+  （docs/adr/ にも git log にも根拠を見つけられなかった）。
+
+⚠️-4 【統合テストの copyGovernance が写すファイルの列】
+  lib.mjs / dependents.mjs / edit-findings.mjs / checks/G-module-index.mjs / checks/G-references.mjs を
+  逐語で列挙している。edit-findings.mjs が将来 import を増やすと写し漏れになるが、そのとき subprocess が
+  import エラーで exit 1 → editFindingsReminder が空文字 → assert が落ちて赤くなるので沈黙はしない
+  （読んで確認した。実測はしていない）。ゆえに問題ではないと判断したが、実測していないので ⚠️ に置く。
+
+⚠️-5 【編集粒度の発火率】
+  ADR は「編集粒度の発火率は原理的に測れない（git はコミットしか記録しない）」と書く。妥当だが、
+  .rs の編集のうち何割で reminder が鳴るかは、索引債務が 0 の今日は 0% である（実ツリーの .rs 101 件
+  すべてで沈黙することを実測した）。「今日は鳴らない」ことと「機構が効いている」ことは別なので、
+  注入して鳴ることを実ツリーで 1 度確かめた（上記 (a) 補足）。確信が持てないのは、実運用で
+  「索引を直すまで同じファイルの編集ごとに鳴り続ける」ことが慣れを作らないか——ADR が却下案として
+  扱ったのは「無関係な編集で鳴る」形だけで、「当のファイルの編集で鳴り続ける」形の評価は無い
+  （意図どおりだとは思う）。
+
+================================================================================
+実行したコマンドの一覧（再現用）
+================================================================================
+git checkout --detach a6cd5e31b63c339f804063ce09909a6d8f078361
+node node_modules/vitest/vitest.mjs run                # = npm test → 34 files / 814 tests / exit 0
+node scripts/governance-check.mjs                      # = npm run governance:check → exit 0
+node scripts/governance/edit-findings.mjs <rel>        # 実ツリーで 6 形
+printf <payload> | node .claude/hooks/post-edit.mjs    # 実ツリーで hook をプロセス起動
+（変異は複製ツリーでのみ実施。巻き戻しは git hash-object で照合）

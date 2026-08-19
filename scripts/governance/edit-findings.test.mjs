@@ -45,9 +45,12 @@ describe("scopedFindings — 索引（G-module-index）の帰属", () => {
     expect(f[0].message).not.toContain("a.rs.bak.rs");
   });
 
-  it("判定対象外: `tests/` 配下の `.rs` は母集団の外（`cfg.src` が `src/` に閉じている）", () => {
-    // crate 名で前方一致させると拾ってしまう。実測（直近 20 コミット）で索引を伴わない新規 `.rs` は
-    // 2 件ともここに居た——偽の reminder になる形である
+  it("判定対象外: `tests/` 配下の `.rs` は索引の照合に掛からない", () => {
+    // **このテストが緑である理由は `cfg.src` ではなく帰属フィルタである**（委譲レビューの変異注入が
+    // 実測）——`cfg.src` を crate 名の前方一致へ退化させても、`tests/` の rel は逆方向の findings に
+    // 現れないので `attributesTo` が 0 件へ落とし、このテストは緑のまま通る。
+    // 固定しているのは**挙動**（索引を持たない `tests/` の `.rs` で鳴らないこと）であって、
+    // `moduleIndexCrateOf` の判定の形ではない。
     const s = snap(base, ["snotra-core/tests/dir_stat_cost.rs"]);
     expect(scopedFindings(s, "snotra-core/tests/dir_stat_cost.rs")).toEqual([]);
   });

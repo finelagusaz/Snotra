@@ -1,5 +1,5 @@
 //! G-heading-refs — 見出し参照の実在（正準形 `<対象>`「<見出し>」）。
-import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor } from "../lib.mjs";
+import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor, HEADING_REF } from "../lib.mjs";
 
 export const id = "G-heading-refs";
 
@@ -20,10 +20,8 @@ export function run(snapshot, ctx) {
 // 検査されるのは正準形に書かれたものだけであり、**この検査は規範の完全な代替ではない**。
 // ---------------------------------------------------------------------------
 
-/** 見出し参照の正準形。対象は `<path>.md` か `/skill-name`。
- *  `§` には節番号を伴ってよい（`SPEC.md` §11「見た目の規範」）——番号を許さないと、
- *  節番号つきの参照は正準形へ直しても照合されず、G-near-heading-refs が「直せない指摘」を出し続ける（#727 で実測）。 */
-const HEADING_REF = /`([^`\n]+)`\s*(?:§\s*[\d.]*\s*)?「([^「」\n]+)」/g;
+// 正準形の正規表現は `lib.mjs` の `HEADING_REF` が正本である（#1140 で `dependents.mjs` が
+// 2 本目の消費者になったため移した）。ここで再定義すると、片方だけ直す形が作れてしまう。
 
 /** findings に加えて照合件数を返す（「差分ゼロ」と「照合していない」を区別する証跡・#497） */
 export function scanHeadingRefs(snapshot, docs) {

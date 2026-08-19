@@ -52,6 +52,7 @@ import {
   finding,
   gitIgnoredPaths,
   governanceDocs,
+  allHeadingRefDocs,
   headingRefCommentDocs,
   headingRefDocs,
   headingRefSourceDocs,
@@ -99,8 +100,10 @@ export function buildChecks(snapshot, sink = {}) {
   const refSourceDocs = headingRefSourceDocs(snapshot);
   const refCommentDocs = headingRefCommentDocs(snapshot);
   // 3 つの腕は検査へ渡すときだけ束ねる。母集団としては別々に持つ——`runAll` の 0 件検知が
-  // 腕ごとに 1 本ずつ要るためである（束ねた長さは他の腕の消滅を隠す）
-  const allRefDocs = [...refDocs, ...refSourceDocs, ...refCommentDocs];
+  // 腕ごとに 1 本ずつ要るためである（束ねた長さは他の腕の消滅を隠す）。
+  // **和の作り方は `allHeadingRefDocs` が正本**——`dependents.mjs` も同じ和を要るので、
+  // ここで連結を書くと腕を足したとき片方だけが知っている状態が作れる（#1140）
+  const allRefDocs = allHeadingRefDocs(snapshot);
   const staleDocs = staleIdentifierDocs(snapshot);
   const staleGuides = staleIdentifierGuideDocs(snapshot);
   const staleTargets = staleIdentifierTargets(snapshot);

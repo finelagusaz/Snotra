@@ -12,6 +12,11 @@
 // 無いファイル（*.md 等）の沈黙は「何も走らなかった」であり、合格ではない。
 // 割り当ての SSOT は selectChecks である（#497）。
 //
+// **検査とは別に、gate ではない reminder が 2 つ在る**（config-warn / 新規 .rs の索引 /
+// .md の依存参照・#1140）。reminder は warnings へ積むだけで exit code を動かさない。
+// **reminder の不在は「問題が無い」を意味しない**——上の「沈黙は合格ではない」は
+// reminder についても同じである。
+//
 // 詳細と実測の根拠は issue #471。
 
 import { existsSync, readFileSync } from "node:fs";
@@ -168,6 +173,36 @@ export function selectChecks(rel) {
   }
 
   return checks;
+}
+
+/**
+ * 節の中身が変わったときの依存参照 reminder（#1140）。**gate ではない**——`isSourceFileWrite` と同じく
+ * `warnings` へ積むだけで exit code を動かさない。
+ *
+ * **subprocess で呼ぶ。静的 import を足してはならない。** import 文は `try { main() } catch` の**外**で
+ * 走るため、解決に失敗すると JSON エンベロープを出さずにプロセスごと落ちる——この hook は全 `Edit|Write`
+ * で発火するので、`.rs` の fmt / clippy / test まで含めて**全編集が沈黙する**。さらに相対 import は
+ * importer の所在（`${CLAUDE_PROJECT_DIR}`）基準で解決し、`resolveRoot` が求める「編集されたファイルの
+ * ツリー」とずれる（この非対称は `docs/hooks.md`「PostToolUse（post-edit.mjs）の機構と保守」が持つ）。
+ *
+ * **スクリプトが無いツリーでは静かに何もしない。** この機構より前に凍結された worktree が該当する。
+ * 沈黙 = 合格を壊さない——この reminder は検査ではなく、**不在は「依存が無い」を意味しない**。
+ *
+ * @returns {string} 出す WARN 行。無ければ空文字
+ */
+export function dependentsReminder(rel, root, run = spawnSync) {
+  if (!rel.endsWith(".md")) return "";
+  const script = path.join(root, "scripts", "governance", "dependents.mjs");
+  if (!existsSync(script)) return "";
+  const res = run(process.execPath, [script, rel], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: MAX_BUFFER,
+    shell: false,
+    timeout: PER_CHECK_TIMEOUT_MS,
+  });
+  if (res.error || res.status !== 0) return "";
+  return (res.stdout ?? "").trim();
 }
 
 /**
@@ -435,6 +470,10 @@ function main() {
         "（#629/#630 で索引更新漏れが再発）。",
     );
   }
+
+  // 節の中身が変わったら、その節に依存する参照を知らせる（#1140）。判定は subprocess 側が持つ
+  const reminder = dependentsReminder(rel, root);
+  if (reminder) warnings.push(reminder);
 
   for (const id of ids) {
     if (id === "config-warn") {

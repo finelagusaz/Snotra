@@ -13,6 +13,7 @@ import {
   extractFilePath,
   selectChecks,
   isSourceFileWrite,
+  dependentsReminder,
   resolveTarget,
   checksForPayload,
   stripProgressLines,
@@ -169,7 +170,9 @@ describe("selectChecks", () => {
 
   // 題を「hooks 以外は発火しない」から改めた（#1083）。`.claude/lsp/` が加わって全称が偽になり、
   // 主張より広い題は、次に読む者を「ここは何も走らない」という誤りへ導く。
-  it(".claude/skills/ と settings.local.json は発火しない", () => {
+  // **ここが言うのは `selectChecks` が空を返すことだけである**——`.md` には検査でない reminder が
+  // 別経路（`main()` が `warnings` へ積む）で出る（#1140）。「何も出ない」とは読まないこと。
+  it(".claude/skills/ と settings.local.json は検査を発火しない", () => {
     expect(selectChecks(".claude/skills/implement/SKILL.md")).toEqual([]);
     expect(selectChecks(".claude/settings.local.json")).toEqual([]);
   });
@@ -213,6 +216,64 @@ describe("isSourceFileWrite — 新規ソース Write の索引 reminder（#629/
     expect(isSourceFileWrite("ui/vite.config.ts", "Write")).toBe(false); // ui/src/ 外
     expect(isSourceFileWrite("scripts/gen.ts", "Write")).toBe(false);
     expect(isSourceFileWrite("Cargo.toml", "Write")).toBe(false);
+  });
+});
+
+describe("dependentsReminder — 節の中身が変わったときの依存参照 reminder（#1140）", () => {
+  const ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
+  /** spawnSync の代役。呼ばれたことと引数を記録する */
+  const spy = (result) => {
+    const calls = [];
+    const fn = (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      return result;
+    };
+    fn.calls = calls;
+    return fn;
+  };
+
+  it("`.md` 以外では subprocess を起動しない（`.rs` 編集の経路に費用を載せない）", () => {
+    const run = spy({ status: 0, stdout: "出るはずのない行" });
+    expect(dependentsReminder("src-tauri/src/main.rs", ROOT, run)).toBe("");
+    expect(run.calls).toHaveLength(0);
+  });
+
+  it("`.md` なら判定スクリプトを root 基準で起動し、その stdout を返す", () => {
+    const run = spy({ status: 0, stdout: "WARN: 依存が 2 件\n" });
+    expect(dependentsReminder("AGENTS.md", ROOT, run)).toBe("WARN: 依存が 2 件");
+    expect(run.calls).toHaveLength(1);
+    expect(run.calls[0].args[0]).toBe(path.join(ROOT, "scripts", "governance", "dependents.mjs"));
+    expect(run.calls[0].opts.cwd).toBe(ROOT);
+    expect(run.calls[0].opts.shell).toBe(false);
+  });
+
+  it("依存が無ければ空を返す（呼び出し側は何も出さない）", () => {
+    expect(dependentsReminder("AGENTS.md", ROOT, spy({ status: 0, stdout: "" }))).toBe("");
+    expect(dependentsReminder("AGENTS.md", ROOT, spy({ status: 0, stdout: "\n" }))).toBe("");
+  });
+
+  it("スクリプトが無いツリーでは起動せず空を返す（hook を落とさない）", () => {
+    // この機構より前に凍結された worktree が該当する。**不在は「依存が無い」を意味しない**
+    const run = spy({ status: 0, stdout: "x" });
+    const missing = mkdtempSync(path.join(tmpdir(), "no-dependents-"));
+    try {
+      expect(dependentsReminder("AGENTS.md", missing, run)).toBe("");
+      expect(run.calls).toHaveLength(0);
+    } finally {
+      rmSync(missing, { recursive: true, force: true });
+    }
+  });
+
+  it("起動失敗・異常終了でも hook を落とさず空を返す（reminder は gate ではない）", () => {
+    expect(dependentsReminder("AGENTS.md", ROOT, spy({ error: new Error("spawn failed") }))).toBe("");
+    expect(dependentsReminder("AGENTS.md", ROOT, spy({ status: 1, stdout: "壊れた出力" }))).toBe("");
+  });
+
+  it("静的 import を足していない（足すと try/catch の外で落ち、全編集で hook が沈黙する）", () => {
+    // `post-edit.mjs` は `try { main() } catch` を持つが、import 文はその外で走る。
+    // 解決に失敗すると JSON エンベロープを出さずにプロセスごと落ち、`.rs` の fmt/clippy/test も止まる
+    const src = readFileSync(path.join(ROOT, ".claude", "hooks", "post-edit.mjs"), "utf8");
+    expect(src).not.toMatch(/^\s*import .*governance/m);
   });
 });
 

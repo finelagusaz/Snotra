@@ -158,6 +158,18 @@ export function linesOutsideFences(text, file, findings) {
 
 export const finding = (file, line, message) => ({ file, line, message });
 
+/** 見出し参照の正準形。対象は `<path>.md` か `/skill-name`。
+ *  `§` には節番号を伴ってよい（`SPEC.md` §11「見た目の規範」）——番号を許さないと、
+ *  節番号つきの参照は正準形へ直しても照合されず、G-near-heading-refs が「直せない指摘」を出し続ける（#727 で実測）。
+ *
+ *  **`g` フラグを持つので `matchAll` からだけ使う**（`matchAll` は内部で複製するため `lastIndex` を持ち越さない）。
+ *  `test` / `exec` で共有すると、消費者どうしが互いの `lastIndex` を踏む。
+ *  **消費者は 1 つではない**——`G-heading-refs` の照合と `dependents.mjs` の逆引きが同じ形を読む（#1140）。 */
+export const HEADING_REF = /`([^`\n]+)`\s*(?:§\s*[\d.]*\s*)?「([^「」\n]+)」/g;
+
+/** 正準形の対象として認める綴り（`<path>.md` か `/skill-name`）。`HEADING_REF` の第 1 群に当てる */
+export const isRefTargetSpelling = (target) => target.endsWith(".md") || /^\/[a-z0-9-]+$/.test(target);
+
 /** コメント記法の族。**拡張子ではなく記法で束ねる**——PowerShell と YAML は別の言語だが同じ `#` 族である。
  *  `.json` は入らない（コメント記法を持たない）。ここに無い拡張子は「散文の文書」として扱われる。 */
 const COMMENT_FAMILY = new Map([
@@ -365,11 +377,28 @@ export function gitIgnoredPaths(paths, root = process.cwd()) {
 }
 
 /** 参照先になりうる位置（ATX 見出し / 番号付きリスト項目 / 太字リード） */
+/**
+ * アンカーの種類（ATX 見出し・番号付きリスト項目・太字リード）。**1 行に当てる形で持つ**——
+ * `g` フラグを付けないのは、行ごとに `exec` する消費者が `lastIndex` を持ち越さないためである。
+ *
+ * **`depth` は節の入れ子を決める。** ATX は `#` の数、リスト項目は最も深い 7。
+ * 着地判定（`collectAnchors`）と節境界（`dependents.mjs` の `sectionsOf`）が**同じ一覧を読む**ので、
+ * 種類を足したときに片方だけが知っている状態を作れない（#1140 で 2 か所へ写していたのを畳んだ）。
+ */
+export const ANCHOR_SPECS = [
+  { re: /^(#{1,6})\s+(.+?)\s*$/, depth: (m) => m[1].length, label: (m) => m[2] },
+  { re: /^\s*\d+[.)]\s+(.+?)\s*$/, depth: () => 7, label: (m) => m[1] },
+  { re: /^\s*(?:[-*]|\d+[.)])\s+\*\*(.+?)\*\*/, depth: () => 7, label: (m) => m[1] },
+];
+
 export function collectAnchors(text) {
   const out = [];
-  for (const m of text.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)) out.push(m[1]);
-  for (const m of text.matchAll(/^\s*\d+[.)]\s+(.+?)\s*$/gm)) out.push(m[1]);
-  for (const m of text.matchAll(/^\s*(?:[-*]|\d+[.)])\s+\*\*(.+?)\*\*/gm)) out.push(m[1]);
+  for (const line of text.split("\n")) {
+    for (const spec of ANCHOR_SPECS) {
+      const m = spec.re.exec(line);
+      if (m) out.push(spec.label(m));
+    }
+  }
   return out;
 }
 
@@ -513,6 +542,15 @@ export function headingRefSourceDocs(snapshot) {
 export function headingRefCommentDocs(snapshot) {
   return snapshot.files.filter((f) => commentFamilyOf(f) !== null);
 }
+
+/** 3 本の腕の**和**。腕ごとの 0 件検知は `runAll` が別に持つので、束ねてよいのは走査元として渡すときだけである。
+ *  **和をここに 1 つ置く**——消費者（`governance-check.mjs` の検査と `dependents.mjs` の逆引き）が
+ *  それぞれ連結を書くと、腕を足したとき片方だけが知っている状態が作れる（#1140） */
+export const allHeadingRefDocs = (snapshot) => [
+  ...headingRefDocs(snapshot),
+  ...headingRefSourceDocs(snapshot),
+  ...headingRefCommentDocs(snapshot),
+];
 
 /** 語彙源ではなく検査対象になる、`.claude/**` の外の**固定パス**文書
  *  （意図の SSOT・常時ロードの規範・設定 UI のデザイン規約）。

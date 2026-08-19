@@ -22,8 +22,8 @@
 |---|---|---|---|
 | `G-rules-globs` | `.claude/rules/*.md` | `ruleDocs` | 済 |
 | `G-rules-script-coverage` | 判定を持つスクリプト | `ruleDocs` / `judgingScripts` | 済 |
-| `G-skill-table` | `.claude/skills/*/SKILL.md` | — | 未 |
-| `G-check-skill-enumeration` | 同上（実在の照合） | — | 未 |
+| `G-skill-table` | `.claude/skills/*/SKILL.md` | `skillDocs` | 済 |
+| `G-check-skill-enumeration` | 同上（実在の照合） | `skillDocs` | 済 |
 | `G-module-index` | crate 配下の production `.rs` | — | 未 |
 | `G-module-linkage` | 同上 | — | 未 |
 | `G-build-commands` | workspace member | — | 未 |

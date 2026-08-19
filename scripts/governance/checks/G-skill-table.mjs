@@ -2,7 +2,7 @@
 import { finding, sectionOf } from "../lib.mjs";
 
 export const id = "G-skill-table";
-export const domains = "unmigrated";
+export const domains = ["skillDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

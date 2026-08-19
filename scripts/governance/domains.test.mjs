@@ -59,6 +59,18 @@ describe("buildDomains", () => {
     }
   });
 
+  // 錨は走査結果のディレクトリ構造（メンバーの述語とは別の SSOT）から出る。1 本でも SKILL.md が
+  // メンバーから落ちれば倒れることを、実ツリーの members を 1 件引いて測る。
+  it("skillDocs は SKILL.md が 1 本消えると錨が倒れる", () => {
+    const snapshot = makeSnapshot(ROOT);
+    const spec = DOMAIN_SPECS.find((s) => s.name === "skillDocs");
+    const full = spec.members(snapshot);
+    expect(full.length).toBeGreaterThan(1);
+    const anchor = spec.anchors[0];
+    expect(anchor.holds(full, snapshot)).toBe(true);
+    expect(anchor.holds(full.slice(1), snapshot), "SKILL.md が 1 本消えても錨が成立している＝沈黙する").toBe(false);
+  });
+
   // #1143 の当の母集団。腕ごとに「その腕だけを引いた集合」で錨が倒れることを実ツリーで測る
   // ——`holds([], snapshot)` の合成 [] は、腕を足し忘れても黙って通る。
   it("judgingScripts は腕ごとの絞り込みで対応する錨が倒れる", () => {

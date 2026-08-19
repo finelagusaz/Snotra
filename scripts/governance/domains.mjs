@@ -26,6 +26,7 @@ import {
 } from "./lib.mjs";
 import { adrFiles } from "./checks/G-adr-file-names.mjs";
 import { judgingScripts } from "./checks/G-rules-script-coverage.mjs";
+import { skillFiles } from "./checks/G-skill-table.mjs";
 
 /** そのディレクトリ**直下**に 1 件以上（前方一致にしない——配下が在れば真になり、
  *  中間層が消えても沈黙する。#1143 で実測した形）。 */
@@ -34,6 +35,12 @@ const hasDirectChild = (members, dir) => members.some((f) => f.slice(0, f.lastIn
 /** `CLAUDE.md` を持つ workspace member（#701 のカナリアと同じ導出。正本は `Cargo.toml`）。 */
 const cratesWithClaudeMd = (snapshot) =>
   workspaceMembers(snapshot).members.filter((c) => snapshot.read(`${c}/CLAUDE.md`) !== null);
+
+/** `.claude/skills/` 直下のディレクトリ名。**メンバーの導出（`SKILL.md` の glob）とは独立に、
+ *  走査結果のディレクトリ構造から取る**——同じ述語から導くと錨が母集団の写しになり、
+ *  述語を狭める変異に対して両辺が同時に動いて沈黙する。 */
+const skillDirs = (snapshot) =>
+  new Set(snapshot.files.filter((f) => f.startsWith(".claude/skills/")).map((f) => f.split("/")[2]));
 
 export const DOMAIN_SPECS = [
   {
@@ -128,6 +135,23 @@ export const DOMAIN_SPECS = [
     // （＝harness の配送が届かなくなる）形で倒れる。この母集団の**中身**の下界は
     // `G-rules-script-coverage` の `COVERAGE` が名指しで持つ（そちらが正本）。
     anchors: [{ label: ".claude/rules/ 直下", holds: (m) => hasDirectChild(m, ".claude/rules") }],
+  },
+  {
+    name: "skillDocs",
+    members: skillFiles,
+    // 錨は他の SSOT（走査結果のディレクトリ構造）から導く——`governanceDocs` の
+    // 「`CLAUDE.md` を持つ workspace member のすべて」と同じ形である。
+    // **受け入れるトレードオフ**: `.claude/skills/` 直下へ skill でないディレクトリを置くと、
+    // 正当な変更でも赤くなる。そのときは錨の側を直す（起きたら loud で、沈黙はしない向き）。
+    anchors: [
+      {
+        label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ",
+        holds: (m, s) => {
+          const dirs = [...skillDirs(s)];
+          return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
+        },
+      },
+    ],
   },
   {
     name: "judgingScripts",

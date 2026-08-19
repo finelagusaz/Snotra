@@ -117,14 +117,12 @@ describe("domains の中身の検証（I1 — 空配列・綴り違いはラチ�
 const FROZEN_UNMIGRATED = [
   "G-architecture-table", // Phase 3（固定パス）
   "G-build-commands",
-  "G-check-skill-enumeration",
   "G-ci-table", // Phase 3（固定パス）
   "G-clippy-disallowed",
   "G-hook-commands", // Phase 3（固定パス）
   "G-hook-fires",
   "G-module-index",
   "G-module-linkage",
-  "G-skill-table",
   "G-workspace-lints",
 ];
 

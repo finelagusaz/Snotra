@@ -1,0 +1,45 @@
+## 壊せた項目
+
+（一次証拠を突き合わせた結果、命題 1〜8 のいずれも偽にできなかった。以下は「壊せなかった」節を参照。line 番号の微小なズレのみ検出——「⚠️ 確信の持てない所見」に記載。）
+
+## 壊せなかった項目
+
+- [命題 1: エラー行が出る世代の行はエラー行 1 行だけである]
+  当たった手段: `search_state.rs` の `set_results`（284-287行）→`put_rows`（272-280行）を読んだ。`put_rows` は `self.results = rows`（273行）で Vec を丸ごと差し替える単一の choke point であり、doc（266-268行）が「`results` を差し替える経路はこのメソッドに収束する」と明言している。`grep "self\.results\s*="` で `search_state.rs` 全体を検索し、代入箇所が 273 行の 1 箇所のみであることを確認（167件超のヒットではなく doc コメント内の引用 1 件のみが他に出た）。`launcher_controller.rs` の Folder 分岐（869-871行）は `self.state.set_results(err.clone())` を呼び、`err` は `spawn_folder_load`（823-846行）内 `snotra_core::folder::error_result(...)` の戻り値（単一要素 Vec）を `FolderMsg::Failed` 経由で運んだものである。`view.rs`（1150-1151行）は `self.controller.state().results()` をそのまま `RowsSnapshot.rows` へコピーしており、途中でマージする層は無い。**破れなかった。**
+
+- [命題 2: `icon_key` の製品コード呼び出し元は 3 箇所だけ]
+  当たった手段: `grep -rn "\.icon_key(" --include=*.rs .` で全リポジトリを検索し、製品コードのヒットが `icon_textures.rs:107,125,136` の 3 箇所のみであることを確認。さらに `grep -rn "icon_key" --include=*.rs . | grep -v "\.icon_key("` で「ドットを伴わない」呼び出し形（`SearchResult::icon_key` の裸の関数参照・re-export・マクロ経由）を別途走査したが、doc コメント・テスト関数名以外のヒットは無かった。`mod.rs` の re-export（`wanted_icon_keys` 等）も grep で確認済みで、これらは `icon_key` 自体の別名ではない。**破れなかった。**
+
+- [命題 3: `is_error: true` を作るのは `error_result` だけ]
+  当たった手段: `grep -rn "is_error" --include=*.rs src-tauri snotra-core` の全件（約 45 行）を目視分類。リテラル `true` は `folder.rs:219`（`error_result` 内）の 1 件のみ。他の構築点はすべて `false` のリテラルで、変数束縛・struct update 構文（`..`）・shorthand（`is_error,`）でのセット箇所は grep（`grep -v ": *false\|: *true\|..."` で除外フィルタをかけた差分抽出）で 0 件だった。`SearchResult` は `Default` を導出していない（`ui_types.rs:14`）ため `..Default::default()` 経由の漏れも構造的に無い。**破れなかった。**
+
+- [命題 4: `enter_folder` は世代を進めない]
+  当たった手段: `search_state.rs:344-358` の `enter_folder` 本体を読み、`self.rows_generation` に触れる行が無いことを確認。テスト `rows_generation_is_stable_on_enter_folder`（894-900行）は実在し、`set_results` で世代を取得 → `enter_folder` 呼び出し → 世代不変を `assert_eq!` で固定している。同ファイル 891-892 行のコメント「`enter_folder` は `results` を frame へ退避するだけで差し替えない——進めないのが正しい」も整合。**破れなかった。**
+
+- [命題 5: SPEC §3.4 は既にこの挙動を定めており変更不要]
+  当たった手段: `SPEC.md` を `grep -n "3\.4|6\.6|19\.5|4\.7|6\.5|アイコン"` で横断検索し、86-87 行（§3.4「列挙失敗行はこの規則の対象外である。path が実在ディレクトリを指していても抽出せず、placeholder も描かない」）、285-296 行（§6.5/§6.6）、203 行以降（§4.7）、1029-1039 行（§19.5、exec/URL 種別のアイコン規則で is_error 行とは無関係）を実読した。矛盾する記述は見つからなかった。§19.5 は §3.4 を参照するのみで独自のルールを追加していない。**破れなかった。**
+
+- [命題 6: `Some(tex)` 枝に `is_error` ガードは無く、`None if !result.is_error` は別の事実]
+  当たった手段: `results_view.rs:351-370` を読んだ。`Some(tex) => { ... }`（353-365行）は `tex.id()` を無条件に描画しており `result.is_error` を一切参照しない。`None if !result.is_error => draw_icon_fallback(...)`（368行）は「テクスチャが無い場合の placeholder 描画可否」のみを制御する別の分岐である。**破れなかった。**
+
+- [命題 7: 採用案 C でエラー行に本物のアイコンが描かれる状態は表現不能になる]
+  当たった手段: 描画側でテクスチャ HashMap を読む経路を `grep -n "icons\.get\|icon_for_row"` で洗い出し、`results_list_ui`（451-484行）が `icon_for_row(icons, result)`（484行）を呼ぶ 1 箇所のみであることを確認。`icon_for_row`（132-137行）は `icons.get(row.icon_key()?)` で、`row.icon_key()` が `None` を返せば早期 `None` になる。C は `icon_key()` 自体を「`is_error` なら常に `None`」に変更する提案であり、これが実装されれば `icon_for_row(icons, error_row)` は HashMap の中身に関わらず構造的に `None` を返す。`icon_textures` HashMap への挿入は `results_view.rs:581`（drain の `Loaded` 枝）の 1 箇所のみで、そこも worker が返す「要求時に渡したキー」をそのまま使う（`icon_key()` を再導出しない）ため、キー生成点は 1 つに閉じている。**破れなかった**（ただし C 自体は本セッション時点で未実装——検証したのは「実装されればこの構造になる」という論理的帰結である）。
+
+- [命題 8: C を採ると `wanted_icon_keys` の `if r.is_error { continue }` は撤去可能で、既存テストは通り続ける]
+  当たった手段: `icon_textures.rs:259-288` の `wanted_icon_keys_never_loads_icons_for_error_rows` を読んだ。`err`（`is_error: true, icon: FromPath`）と `explicit_err`（`is_error: true, icon: Explicit(...)`）の両方を渡し `wanted.is_empty()` を assert している。撤去後は `let Some(key) = r.icon_key() else { continue }`（107行）だけが働くが、C 実装下では is_error な行の `icon_key()` が variant を問わず `None` を返すため、このテストは同じ結果で通り続けると推論できる。**破れなかった**（同じく C 未実装につき論理的検証に留まる。実装後に `cargo test -p snotra` を走らせて実測することを推奨——本レビューでは実施していない）。
+
+- [測定環境そのものを疑う: research.md が読んだコードは HEAD と一致するか]
+  当たった手段: `git log --oneline -5` で HEAD が `c6d1bb50`（#1135 直後）であることを確認したうえで、research.md が引用する行番号を実ファイルと突き合わせた。`ui_types.rs:52`（`icon_key`）・`folder.rs:214/220`（`error_result`）・`icon_textures.rs:96/123`（`wanted_icon_keys`/`visible_icon_keys`）・`launcher_controller.rs:869/1301`は完全一致。`icon_textures.rs:69`（`retain_visible`。実際は 68 行）・`icon_textures.rs:135`（`icon_for_row`。関数開始は 132 行、135 行はシグネチャの閉じ括弧）・`results_view.rs:361-370`（アイコン枝。実際の主要部分は 351-369 行で、`Some(tex)` 枝の開始 353 行はこの範囲の外）に軽微なズレがある。内容の実質は正しいが行ポインタが不正確——下記 ⚠️ 参照。
+  `cargo test -p snotra-core --lib` および `cargo test -p snotra` は**走らせていない**（時間予算の都合。走らせるべきは C 実装後の回帰確認であり、現時点の research.md はコード変更前の調査ゆえ実行の必要性自体が低いと判断した）。
+
+## ⚠️ 確信の持てない所見
+
+- **line 引用の軽微なズレが 3 件ある**（`retain_visible` 69→実際68、`icon_for_row` 135→関数開始132、`draw_result_row` のアイコン枝 361-370→実際は351-369で`Some(tex)`枝の主要部が範囲外）。内容の正しさには影響しないが、「実装着手前にこの行番号を当てに Read/Edit する」運用だと誤った場所を開く恐れがある。偽にする手順: 上記各シンボルを `grep -n` で再検索し、行番号を突き合わせる（既に本レビューで実施済み・再現性あり）。
+
+- **命題 7/8 は「C が実装された後の構造」についての論理的検証であり、C 自体はこのセッション時点でまだコードに存在しない**（`ui_types.rs` の `icon_key` は現状 `is_error` を見ていない）。研究が「表現不能になる」「テストは通り続ける」と書いている箇所は、現在のコードの読みからの**演繹**であって実測ではない。演繹の前提（icon_textures への書き込み経路が `icon_for_row` の 1 点に閉じている・icon_key が唯一のキー導出点である）自体は grep で強く裏付けられているため確信度は高いが、**実装後に `cargo test` で実測していない**という点で「壊せなかった」と「実証された」は区別されるべきである。偽にする手順: C を実際に実装し、`wanted_icon_keys_never_loads_icons_for_error_rows` と新設予定の連鎖テストを実行して green を確認する。
+
+- **§6 の費用見積もり「往復は Escape で戻ったときの再抽出 1 回に限られる」について、独立に生成フロー（`enter_folder`→`spawn_folder_load`失敗→`run_search_with`→`on_escape`→`put_rows`）を辿り直したところ、C 採用時のコストは研究の主張と一致した**（status quo でも隣接行 N-1 件は世代交代で必ず落ちるため、C が追加で落とすのは P の 1 件だけ、という計算は筋が通る）。ただしこれは机上の再トレースであり、実機・ベンチマークでの実測ではない。確信度は中程度——folder generation の非同期タイミング（`spawn_folder_load` の失敗到着前に `results` が旧世代のまま残る挙動）を正しく辿れていることが前提。偽にする手順: 実機で「アクセス不可フォルダを展開 → Escape」の操作を行い、trace ログ（`egui_icon:*`）で実際の抽出要求回数を数える。
+
+## この所見を偽にする手順
+
+（「壊せた項目」が 0 件のため該当なし。上記「壊せなかった項目」の各命題を再度偽にしたい場合は、各項の「当たった手段」に記した grep/読み取りコマンドを再実行し、ヒット件数・内容が変わっていないかを確認すること。特に命題 2・3 は「grep の取りこぼし」が起点になりうるため、`rust-analyzer` の `findReferences` が本セッションと異なり応答する環境では、そちらで独立に呼び出し元を数え直すことを推奨する。）

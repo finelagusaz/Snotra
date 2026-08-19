@@ -13,12 +13,58 @@ import {
   sectionOf,
   linesOutsideFences,
   linesOfComments,
+  globToRegex,
+  rulePathPatterns,
 } from "./lib.mjs";
 import { scanHeadingRefs, checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkReferences } from "./checks/G-references.mjs";
 import { checkAdrCitations, adrCitationDocs } from "./checks/G-adr-citations.mjs";
 import { runAll } from "../governance-check.mjs";
+
+// `globToRegex` は `G-rules-globs` と `G-rules-script-coverage` の 2 検査が共有する（#1143 で lib へ移送）。
+// **意味論の固定はここ 1 か所で行う**——検査ごとに書き写すと、片方だけを直したときに配送判定が枝分かれする。
+describe("globToRegex（rules paths の意味論固定・代表入力）", () => {
+  const cases = [
+    // [pattern, 一致する例, 一致しない例]
+    ["AGENTS.md", "AGENTS.md", "docs/AGENTS.md"], // bare 名はルート直下のみ
+    [".claude/hooks/**", ".claude/hooks/a/b.mjs", ".claude/hooksX/a.mjs"],
+    ["snotra-core/**/*.rs", "snotra-core/src/lib.rs", "snotra-core/src/lib.ts"],
+    ["ui/src/**/*.{ts,tsx}", "ui/src/main.tsx", "ui/main.tsx"],
+    ["ui/src/**/*.{ts,tsx}", "ui/src/lib/a.ts", "ui/src/lib/a.rs"],
+    ["scripts/governance-check.mjs", "scripts/governance-check.mjs", "scripts/governance-check.test.mjs"],
+    // `*` は `/` を跨がない——#1143 の穴そのもの（この 1 行が、部分木が外れる形を固定する）
+    ["scripts/*.mjs", "scripts/governance-check.mjs", "scripts/governance/checks/G-module-index.mjs"],
+    ["scripts/**", "scripts/governance/checks/G-module-index.mjs", "scriptsX/a.mjs"],
+  ];
+  for (const [pat, ok, ng] of cases) {
+    it(`${pat}: ${ok} に一致し ${ng} に一致しない`, () => {
+      const re = globToRegex(pat);
+      expect(re.test(ok)).toBe(true);
+      expect(re.test(ng)).toBe(false);
+    });
+  }
+  it("未閉ブレースは literal 扱いで停止する（無限ループ回帰・レビュー H2）", () => {
+    const re = globToRegex("foo{bar.rs");
+    expect(re.test("foo{bar.rs")).toBe(true);
+    expect(re.test("foobar.rs")).toBe(false);
+  });
+});
+
+describe("rulePathPatterns（frontmatter の中だけを見る）", () => {
+  it("frontmatter の paths を順に返す", () => {
+    expect(rulePathPatterns('---\npaths:\n  - "AGENTS.md"\n  - "scripts/**"\n---\n本文\n')).toEqual(["AGENTS.md", "scripts/**"]);
+  });
+  it("CRLF checkout でも読める", () => {
+    expect(rulePathPatterns('---\r\npaths:\r\n  - "scripts/**"\r\n---\r\n本文\r\n')).toEqual(["scripts/**"]);
+  });
+  it("frontmatter が無ければ空（本文の箇条書きを拾わない）", () => {
+    expect(rulePathPatterns('本文\n  - "scripts/**"\n')).toEqual([]);
+  });
+  it("本文側の同形の行を拾わない（母集団は frontmatter に閉じる）", () => {
+    expect(rulePathPatterns('---\npaths:\n  - "AGENTS.md"\n---\n本文\n  - "scripts/**"\n')).toEqual(["AGENTS.md"]);
+  });
+});
 
 describe("gitIgnoredPaths（存在に依らずパス名で判定する・#1088）", () => {
   it("ignore 対象は不在でも返り、非 ignore は返らない", () => {

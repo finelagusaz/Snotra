@@ -163,18 +163,21 @@ PR 本文には `- checks: +G-rules-script-coverage` を逐語で宣言する（
 
 ### Phase 1 — 検出器（先に赤を作る）
 
-- [ ] `globToRegex` を `lib.mjs` へ移し、`rulePathPatterns`（rule の frontmatter から paths を取り出す）を新設する
-- [ ] `G-rules-globs.mjs` / `G-rules-globs.test.mjs` / `lib.test.mjs` を移送先へ追随させる
-- [ ] **移送で `G-rules-globs` の判定が逐語不変であることを実測する**——インラインのパースを
+- [x] `globToRegex` を `lib.mjs` へ移し、`rulePathPatterns`（rule の frontmatter から paths を取り出す）を新設する
+- [x] `G-rules-globs.mjs` / `G-rules-globs.test.mjs` / `lib.test.mjs` を移送先へ追随させる
+- [x] **移送で `G-rules-globs` の判定が逐語不変であることを実測する**——インラインのパースを
       `rulePathPatterns` へ差し替える前後で、実ツリーに対する `checkRulesGlobs` の findings が
       同一であることを確認する（既存テストが緑なだけでは、実ツリーの入力に対する不変性は言えない）
-- [ ] `G-rules-script-coverage.mjs` を新設する（`COVERAGE` 表・canary 3 種・死角の `//!` 宣言）
-- [ ] `G-rules-script-coverage.test.mjs` を書く（赤 1 / 緑 1 / canary 3）
-- [ ] **paths を直す前に** `npm run governance:check` を実行し、**新検査が赤くなる**ことを実測する（Red・受け入れ条件 B）
+- [x] `G-rules-script-coverage.mjs` を新設する（`COVERAGE` 表・canary 3 種・死角の `//!` 宣言）
+- [x] `G-rules-script-coverage.test.mjs` を書く（赤 1 / 緑 1 / canary 3）
+- [x] **paths を直す前に** `npm run governance:check` を実行し、**新検査が赤くなる**ことを実測する（Red・受け入れ条件 B）
       ——期待値は未被覆 **102 件**（51 × 2 rules・research §2f の実測値）。Phase 1 の時点で赤いのが正しい
-- [ ] `npm test` 緑 ——**Phase 1 で `governance:check` が赤でも `npm test` は緑であるべき**。実ツリーの findings が
-      0 件であることを期待するテストは存在しない（`process.cwd()` を使うのは `governance-manifest.test.mjs` だけで、
-      見るのは manifest の自己整合・grep 実測）。ここが赤いなら別の回帰である
+- [x] ~~`npm test` 緑~~ ——**この見積もりは誤りだった（実装中に実測して訂正）。**
+      `governance-check.test.mjs:109` が実ツリーに対して `expect(findings).toEqual([])` を持つため、
+      **Phase 1 の Red は `npm test` も赤にする**（1 failed / 826 passed）。計画時の grep が `process.cwd()` を
+      鍵に探し、この箇所は `import.meta.url` 起点だったため母集団から落ちていた（`AGENTS.md`「検証の作法」の
+      「除外句は狙った以外まで落とす」の 2 度目の実例）。**Phase 1+2 を 1 コミットに束ねる判断はこれで補強される**
+      ——分ければ `npm test` も赤いコミットが履歴に残っていた
 
 **コミット境界**: Phase 1 の末尾は `governance:check` が**意図的に赤**（102 件）である。この Red は
 **コミットする状態ではなく測定である**——**Phase 1 と Phase 2 は 1 コミットに束ねる**（Red の確認は
@@ -183,14 +186,14 @@ PR 本文には `- checks: +G-rules-script-coverage` を逐語で宣言する（
 
 ### Phase 2 — paths を広げる
 
-- [ ] `safety-nets.md` / `governance-docs.md` の 3 行を `scripts/**` へ畳む
-- [ ] `npm run governance:check` 緑（Green・受け入れ条件 C）／`npm test` 緑
-- [ ] `npm run governance:manifest` の `checks` 列の差分を控える（PR 本文の宣言に使う）
+- [x] `safety-nets.md` / `governance-docs.md` の 3 行を `scripts/**` へ畳む
+- [x] `npm run governance:check` 緑（Green・受け入れ条件 C）／`npm test` 緑
+- [x] `npm run governance:manifest` の `checks` 列の差分を控える（PR 本文の宣言に使う）
 
 ### Phase 3 — 記録
 
-- [ ] `docs/adr/ADR-rules-paths-subtree-coverage.md` を書く（採用・却下 4 案・受け入れた誤配送・宣言する死角）
-- [ ] `npm run governance:check` 緑（ADR 追加後の参照・命名検査を含む）
+- [x] `docs/adr/ADR-rules-paths-subtree-coverage.md` を書く（採用・却下 4 案・受け入れた誤配送・宣言する死角）
+- [x] `npm run governance:check` 緑（ADR 追加後の参照・命名検査を含む）
 
 ## 受容する残余（実装で塞がないもの）
 

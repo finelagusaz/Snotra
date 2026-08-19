@@ -529,8 +529,8 @@ export function headingRefSourceDocs(snapshot) {
  * **拡張子を並べた列ではなく `commentFamilyOf` を母集団の述語にする。** 「どのファイルを見るか」と
  * 「その中のどの行を見るか」が同じ 1 つの写像から出るので、片方だけ足して他方を忘れる形が作れない。
  *
- * **規範はすでにここへ配送されている。** `.claude/rules/governance-docs.md` の frontmatter は
- * `scripts/*.mjs` / `scripts/*.ps1` / `scripts/lib/**` を含む——正準形で書けと言いながら検めていない
+ * **規範はすでにここへ配送されている**——`.claude/rules/governance-docs.md` の `paths` が `scripts/` 配下を
+ * 覆っており（正本はその frontmatter。ここに glob を写さない）、正準形で書けと言いながら検めていない
  * 状態だった（`.rs` の非対称はこの逆で、検めるが規範を配送しない）。
  *
  * **腕を 3 本目として分ける理由は 2 本目と同じである**——`runAll` の 0 件検知が母集団ごとに
@@ -614,3 +614,57 @@ export const tomlLine = (raw) => stripTomlComment(raw).trim();
  *  （`= { level = "deny", priority = 1 }`）の 2 形を受ける。**rustdoc と clippy の 2 検査が共有する**——
  *  cargo が 3 つ目の表記を足したとき、直す場所が 1 か所であるために切り出してある（#950）。 */
 export const lintLevel = (value) => (value.startsWith("{") ? (value.match(/level\s*=\s*"([^"]+)"/)?.[1] ?? null) : (value.match(/^"([^"]+)"$/)?.[1] ?? null));
+
+// ---------------------------------------------------------------------------
+// `.claude/rules/` の frontmatter `paths` を読む道具。**2 つの検査が import する**ため
+// （`G-rules-globs` = glob → 実ファイルが 0 件 / `G-rules-script-coverage` = 実ファイル → glob が 0 件）、
+// 冒頭が定める掲載条件に当たる。写しにすると glob の意味論が検査ごとに独立に腐る。
+// ---------------------------------------------------------------------------
+
+/** documented 意味論（bare 名 = ルート直下のみ・`**` = 階層横断・`{a,b}` ブレース）の自前変換。
+ *  **harness の配送判定の再現ではなく近似である**——言えるのは「この意味論で覆われているか」までで、
+ *  「harness が実際に配送するか」ではない（`**` が 3 段跨ぐことだけは 2026-08-19 に実測・#1143）。 */
+export function globToRegex(pattern) {
+  let re = "";
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === "{" && pattern.indexOf("}", i) === -1) {
+      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの明示的な赤に倒れる）
+      i += 1;
+    } else if (c === "*") {
+      if (pattern.startsWith("**/", i)) {
+        re += "(?:.*/)?";
+        i += 3;
+        continue;
+      }
+      if (pattern.startsWith("**", i)) {
+        re += ".*";
+        i += 2;
+        continue;
+      }
+      re += "[^/]*";
+      i += 1;
+    } else if (c === "{") {
+      const end = pattern.indexOf("}", i);
+      re += `(?:${pattern
+        .slice(i + 1, end)
+        .split(",")
+        .map((s) => s.replace(/[.+^$()|[\]]/g, "\\$&"))
+        .join("|")})`;
+      i = end + 1;
+    } else {
+      re += /[.+^$()|[\]?\\]/.test(c) ? `\\${c}` : c;
+      i += 1;
+    }
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** rule 本文から `paths` の glob 文字列を取り出す（frontmatter ブロックの中だけを見る。CRLF checkout 耐性）。
+ *  **`G-skill-table` の frontmatter 読みとは束ねない**——あちらが取り出すのは別のキーであり、
+ *  片方だけが変わる将来を挙げられる＝別概念である。 */
+export function rulePathPatterns(text) {
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+  return [...fm.matchAll(/^\s*-\s*"([^"]+)"/gm)].map((m) => m[1]);
+}

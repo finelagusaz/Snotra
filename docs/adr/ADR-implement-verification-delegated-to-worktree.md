@@ -28,8 +28,18 @@
 ## 受容した残余
 
 - **「報告が届くまで触らない」は依然として規範である。** 消えたのは「相手が古い版を読む」ほうだけで、同時接触そのものは worktree が分離する。**変異注入の実行者を委譲先ただ 1 つに定めた**のは、主エージェントが同じ木を壊す機会を無くすためである。
-- **worktree が `SendMessage` の再開をまたいで残るかは未実測である。** 残れば 2 巡目以降は `git checkout <新 sha>` だけで warm、残らなければ毎回 cold（`rust-check` 相当で 6 分級）になる。初回運用で測り、残らないなら `/implement` の記述をそちらへ合わせる。
 - **`git status --porcelain` の確認を怠ると、コミットし忘れた変更が検証されないまま緑で返る。** 手順に置いたが、機構では塞いでいない。
+- **worktree が `SendMessage` の再開をまたいで残るかは未実測である。** 残れば 2 巡目以降は `git checkout <新 sha>` だけで warm、残らなければ毎回 cold（`rust-check` 相当で 6 分級）になる。
+
+## 初回運用で測ったこと（2026-08-19・この決定自身を新しい経路へ通した）
+
+`isolation: "worktree"` の実際の姿は、決定を書いた時点の想定と 3 点で違っていた。
+
+- **worktree の HEAD はアンカーの sha ではない**——セッション開始時点のコミットで切られており、渡した sha は載っていなかった。**「sha を渡せば届く」は偽である。** 手順に HEAD の照合と `git checkout --detach <sha>` を足した（渡し忘れると、アンカーより古い木を検証して緑を返す）
+- **`node_modules` は無い**。`npm test` 系は junction で張らないと**起動前**に落ち、変異を検知した場合と終了コードが同じになる（`.claude/rules/safety-nets.md` の手順が先例）
+- **`target/` も無い**（cold）。`.rs` 差分が無い回はビルドが走らないので費用は生じない
+
+同じ運用で、**`.mjs` に書いた正準形の参照は `governance:check` の視界の外**であることも判明した（`headingRefSourceDocs` は `.rs` だけを返す）。走査対象を `.mjs` へ広げる案は測って見送った——`scripts/governance/checks/*.test.mjs` が**意図的に壊した参照を fixture として持つ**ため、素直に足すと fixture が偽陽性になる。追随は別 issue とする。
 
 ---
 

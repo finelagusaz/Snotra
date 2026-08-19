@@ -640,6 +640,42 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
     expect(parsed.hookSpecificOutput).toBeUndefined();
   });
 
+  it("`.md` の節を書き換えると依存参照の reminder が systemMessage に出る（#1140 の配線）", () => {
+    // **`main()` の配線はここでしか守れない。** 委譲レビューが実測した: 呼び出し 2 行を消しても
+    // ユニットテストは 96/96 緑のままだった（`dependentsReminder` 自体は spy で試験できるが、
+    // それを `warnings` へ積む行は誰も見ていなかった）。
+    // 実リポジトリは差分を持たないので、判定に必要な最小の木を一時ディレクトリへ作る
+    const tmp = mkdtempSync(path.join(tmpdir(), "dependents-hook-"));
+    try {
+      const git = (...args) => spawnSync("git", args, { cwd: tmp, encoding: "utf8" });
+      git("init", "-q");
+      git("config", "user.email", "t@example.com");
+      git("config", "user.name", "t");
+      mkdirSync(path.join(tmp, "docs"), { recursive: true });
+      mkdirSync(path.join(tmp, "scripts", "governance"), { recursive: true });
+      for (const f of ["lib.mjs", "dependents.mjs"]) {
+        writeFileSync(
+          path.join(tmp, "scripts", "governance", f),
+          readFileSync(path.join(REPO, "scripts", "governance", f), "utf8"),
+        );
+      }
+      writeFileSync(path.join(tmp, "AGENTS.md"), "# 文書\n\n## 対象の節\n本文\n");
+      writeFileSync(path.join(tmp, "docs", "x.md"), "詳細は `AGENTS.md`「対象の節」を見よ\n");
+      git("add", "-A");
+      git("commit", "-qm", "fixture");
+      // 節の本文を**書き換える**（純追記では出ない契約なので、追記ではなく置換にする）
+      writeFileSync(path.join(tmp, "AGENTS.md"), "# 文書\n\n## 対象の節\n書き換えた本文\n");
+
+      const res = runHook({ tool_name: "Edit", tool_input: { file_path: path.join(tmp, "AGENTS.md") } });
+      expect(res.status).toBe(0);
+      const parsed = JSON.parse(res.stdout);
+      expect(parsed.systemMessage).toContain("依存する参照");
+      expect(parsed.systemMessage).toContain("docs/x.md:1");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("不正な payload は HOOK ERROR を両フィールドへ出し、exit 0（I8）", () => {
     const res = runHook("{ not json");
     expect(res.status).toBe(0);

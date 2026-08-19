@@ -56,7 +56,7 @@
 | `.claude/lsp/snotra-rust-lsp/.lsp.json` | `hook-selftest` | `.claude/lsp/**` 全体。Claude Code の RA インスタンスへ渡す設定で、**設定が届かない・上書きされる壊れ方は沈黙する**（下節） |
 | `rust-analyzer.toml` | `hook-selftest` | basename でアンカーするので crate 直下も拾う。同じカナリアの被検査対象（ratoml はクライアント設定より優先される） |
 | `.githooks/pre-commit` | `githooks-selftest` | `.githooks/**` 全体 |
-| `docs/hooks.md` | （なし） | 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等）は**検査が 1 つも走らない**——沈黙は「合格」ではない。`.md` には検査でない reminder が在るが（下記）、id を持たないのでこの列は空のままである |
+| `docs/hooks.md` | （なし） | 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等）は**検査が 1 つも走らない**——沈黙は「合格」ではない。`.md` にも `.rs` にも検査でない reminder が在るが（下記）、id を持たないのでこの列は空のままである |
 
 **照合の外に残るものが 2 つある**（足の名指しと、なぜそこで止めたかは `docs/adr/ADR-hook-fires-table-check.md`）: 実在しないファイル（4 crate 外の `.rs`・`config.toml`）は代表パスにできないので補足列の散文だけが記述する。補足列そのものの意味整合も機構は見ない。
 
@@ -104,10 +104,21 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 | 発火条件 | 出るもの |
 |---|---|
-| `.rs` を **Write** した | モジュール索引の更新 reminder（#629/#630） |
+| `.rs` を編集し（**Edit / Write の別を問わない**）、そのファイルが所属 crate の `CLAUDE.md` の索引に無い | そのファイルの索引漏れ（#629/#630 → #1139。判定は `scripts/governance/edit-findings.mjs` を subprocess で呼ぶ） |
+| `<crate>/CLAUDE.md` を編集した | その crate の索引と実ファイルの**双方向**の不整合（同上） |
+| ガバナンス文書（`governanceDocs()` が返すもの）の `.md` を編集し、**その文書の中に**実在しない参照がある | 実在しない参照（同上） |
 | `.md` を編集し、**依存を持つ節の本文が変わった** | その節に依存する参照の一覧（#1140。判定は `scripts/governance/dependents.mjs` を subprocess で呼ぶ） |
 
-**この reminder の不在は「依存が無い」を意味しない。** 純追記（行が足されただけ）では出ず、判定スクリプトが無いツリーでも出ない。**鳴ったときにだけ意味がある**——沈黙は検査のときと同じく「何も走らなかった」側である。
+**上 3 行は `additionalContext`（エージェント向け）にも出る**——#629/#630 は**エージェント**の索引更新漏れであり、人間向けの `systemMessage` だけに出しても当の失敗主体に届かない。**それでも検査ではない**（exit code を動かさず、`--- <id>: 失敗 ---` の形も取らない）。
+
+**この reminder の不在は「不整合が無い」を意味しない。** 少なくとも次では鳴らない——`.md` の依存参照は純追記（行が足されただけ）では出ず、判定スクリプトが無いツリー（この機構より前に凍結された worktree）ではどれも出ない。**射程そのものにも穴がある**:
+
+- **削除は見えない。** `rm` は `Edit|Write` matcher に届かないので、`.rs` を消したときの索引の orphan も、削除で他文書の参照が壊れる形も編集時には現れない。**CI の `governance-check` job を外さない理由の実体がこれである。**
+- **`governanceDocs()` の外の `.md` は参照実在を見ない**——`PERFORMANCE.md`・`RETROSPECTIVE.md`・`README.md`・`.claude/agents/**`・`docs/adr/**`・`.claude/skills/*/references/**`、および走査から除外される `workspace/`。**「`.md` を編集すれば参照実在が見える」は偽である。**
+- **索引側の順方向（索引に書かれた実在しないファイル名）は、その `CLAUDE.md` を編集したときにしか出ない**——`.rs` の編集では「編集した当のファイルに帰属する分」だけへ絞るためで、絞らないと未解消の債務が在る間その crate への無関係な編集のたびに同じ報告が並ぶ。
+- **`mod` 宣言は見ない**（`G-module-linkage` は前倒ししていない）。**索引だけが編集時に見えて `mod` は見えない**——`.rs` を追加したときの `mod` 忘れは今も `governance:check` だけが赤にする。
+
+**鳴ったときにだけ意味がある**——沈黙は検査のときと同じく「何も走らなかった」側である。
 
 **判定を hook へ静的 import してはならない。** import 文は `try { main() } catch` の**外**で走るため、解決に失敗すると JSON エンベロープを出さずにプロセスごと落ちる——この hook は全 `Edit|Write` で発火するので、`.rs` の fmt / clippy / test まで含めて**全編集が沈黙する**。相対 import が下記の非対称（スクリプトの所在は `${CLAUDE_PROJECT_DIR}` 基準）に巻き込まれる問題も同時に避けられるので、subprocess で呼ぶ。
 

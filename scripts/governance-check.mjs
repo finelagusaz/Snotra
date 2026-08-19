@@ -64,7 +64,7 @@ import {
   staleIdentifierTargets,
   workspaceMembers,
 } from "./governance/lib.mjs";
-import { checkNormativeAreaInstrument, normativeArea } from "./governance/instrument.mjs";
+import { checkNormativeAreaInstrument, normativeArea, duplicateDomains } from "./governance/instrument.mjs";
 import { assembleEvidence, evidenceView } from "./governance/evidence.mjs";
 import { buildDomains } from "./governance/domains.mjs";
 
@@ -150,6 +150,13 @@ export function runAll(snapshot) {
   // （空母集団の明示 fail と同じ役割・検査配列の外に置く理由がこれである）。
   findings.push(...checkNormativeAreaInstrument(snapshot));
   const area = normativeArea(snapshot);
+  // duplicateDomains も合否を持たない計器——findings へは積まない。同一メンバーのドメインが
+  // 在れば報告するだけで、畳むかどうかの判断は人に残す（`scripts/governance/instrument.mjs` の
+  // duplicateDomains 冒頭コメントが正本）。
+  const dupDomains = duplicateDomains(ctx.domains);
+  if (dupDomains.length > 0) {
+    console.log(`governance:check — 同一メンバーのドメイン: ${dupDomains.map((names) => names.join("=")).join(", ")}`);
+  }
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
   // 各検査は `domains` を宣言必須（registry.mjs の `checkModulesFrom` が起動時点で強制する）。

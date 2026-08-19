@@ -69,4 +69,4 @@
 | `/retrospective`     | サイクル終了後の教訓抽出・残タスク振り分け・RETROSPECTIVE.md 上書き |
 | `/deps-update`       | cargo/npm 依存の一括更新と PR 作成・CI 確認（マージは手動） |
 
-サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement`「4b. code-reviewer エージェント」が自動で起動する。
+サブエージェント: `code-reviewer`（`.claude/agents/`）— 3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement`「3b. 委譲へ渡すもの」が worktree で起動し、**コミット済みの sha** を対象にする（検証も同じ委譲が担う）。

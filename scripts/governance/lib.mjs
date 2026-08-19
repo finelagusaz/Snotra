@@ -77,7 +77,7 @@ export function makeSnapshot(root) {
  *
  * どちらも `sectionOf` 越しでは**フェンス内の `## にせ終端` が終端に採られて節が黙って縮み**、
  * **フェンス内の見出しがアンカーとして採用された**（2026-08-17 実測）。**今日の露出は 0 である**
- * ——`linesOutsideFences` / `sectionOf` の消費者（`governance-check.mjs` 経由の 19 検査）が実際に
+ * ——`linesOutsideFences` / `sectionOf` の消費者（`governance-check.mjs` 経由の各検査）が実際に
  * 走査する 201 文書に、4 連も `~~~` も 1 行も無い。4 連は追跡 `.md` 177 件中 6 行あるが、
  * いずれも `docs/superpowers/plans/` にあって走査に現れない（2026-08-17 に走査を全件記録して実測）。
  *

@@ -1,0 +1,463 @@
+================================================================================
+#1143 検証・変異注入・レビュー — fix/rules-paths-scripts-coverage
+================================================================================
+
+【出力先について】呼び出し側が指定した C:\workspace\Snotra\workspace\verify-1143.txt への Write は、
+本エージェントが worktree に隔離されているため harness に拒否された。そこで worktree 側へ書き、
+PowerShell の Copy-Item で指定先へ複製した。**2 か所とも実在し、内容は同一である**
+（複製後に両者の SHA-256 を突き合わせて一致を実測。値をここへ書かないのは、この文自身が
+ その値を変えてしまう自己参照になるため）:
+  C:\workspace\Snotra\workspace\verify-1143.txt                                     （指定先）
+  C:\workspace\Snotra\.claude\worktrees\agent-a1615979bdf2fcdb2\workspace\verify-1143.txt（正本）
+
+【検分していない 1 ファイル】差分 10 ファイルのうち `workspace/plan.md`（31 行）はレビューしていない。
+`/implement` が削除する作業バッファであり、`makeSnapshot` の `WALK_EXCLUDE_PATHS` が `workspace` を
+落とすので検査の母集団にも入らないためである。残る 9 ファイルは全件検分した。
+
+アンカー: 7261a4e99252c9dc1adf39e30f8de5610e1da879
+  セッション開始時の worktree HEAD は c4ba17398f09f68418946be29b82eb73dc6e4713 で
+  **アンカーと違っていた**（アンカーより古い＝対象を 1 件も含まない木）。
+  `git fetch origin fix/rules-paths-scripts-coverage` → `git checkout --detach 7261a4e9…` で合わせた。
+  実測（作業終了時に再測定）: git rev-parse HEAD = 7261a4e99252c9dc1adf39e30f8de5610e1da879
+  git status --porcelain = 空（実ファイルへの変更なし）
+
+測定環境: worktree に node_modules が無かったため
+  `New-Item -ItemType Junction -Path <worktree>/node_modules -Target C:/workspace/Snotra/node_modules`
+  で張った（symlink と違い開発者モード不要）。`node_modules/vitest/package.json` の Test-Path = True で
+  vitest 本体が解決できることを**実行前に**確認した。junction は gitignore 済みで
+  `git status --porcelain` は空のまま。`makeSnapshot` の `WALK_EXCLUDE_PATHS` は
+  ルート錨止めの完全一致で `node_modules` を落とすので、配下は走査に入らない。
+  （残余: junction は Dirent 上ディレクトリと判定されず `snapshot.files` に "node_modules" という
+   1 エントリとして現れる。拡張子を持たないので本検査の母集団にも被覆判定にも影響しない。
+   実測でも変異なしの findings は 0 件。）
+
+================================================================================
+1. 検証（docs/build-commands.md「変更後の検証チェックリスト」カテゴリ A〜F）
+================================================================================
+
+該当の判定は拡張子ではなく「変更が触れるコードパスの意味」で行った。
+差分の全体は 10 ファイル: `.claude/rules/` 2 / `docs/adr/` 1 / `scripts/governance/` 6 /
+`workspace/plan.md` 1。
+
+--- A. Rust ファイル（*.rs） ---------------------------------------- 該当なし
+  差分に `.rs` が 1 件も無く、`Cargo.toml` にも触れていない。Rust のコードパスを 1 行も通らないため
+  fmt / check / clippy / test / doc のいずれも対象を持たない。
+
+--- B. TypeScript ファイル ------------------------------------------ 該当なし
+  `vitest.config.ts` を含め `.ts` を 1 件も変更していない。
+
+--- C. `npm test`（vitest 本体） ------------------------------------ 実行
+  カテゴリ C が名乗るトリガー（ウィンドウ生成／表示順・ホットキー・スラッシュコマンド）には
+  **当たらない**。それでも `npm test` を実行したのは、変更した `.mjs`（`lib.mjs` /
+  `G-rules-globs.mjs` / 新規 `G-rules-script-coverage.mjs` とその `*.test.mjs` 2 本）が
+  **vitest スイートそのもの**であり、変更が触れるコードパスがここに在るためである
+  （SSOT の記述どおり vitest の対象は `.claude/hooks` + `.githooks` + `scripts`）。
+
+  コマンド: npm test
+  exit code: 0（`$LASTEXITCODE` を直接読んだ。パイプ越しの `$?` は使っていない）
+  出力の要点: Test Files 35 passed (35) / Tests 827 passed (827) / Duration 14.91s
+              コミットメッセージが主張する 827 passed と一致。
+
+  新検査のテストが**実際に走ったこと**を loud に確かめた（沈黙＝合格を仮定しない）:
+  コマンド: npx vitest run scripts/governance/checks/G-rules-script-coverage.test.mjs --reporter=verbose
+  exit code: 0 / Tests 7 passed (7)。7 件の題名がすべて出力に現れた
+  （赤ケース 1・緑ケース 1・母集団の非対称 1・拡張子の上界 1・canary 3）。
+
+--- D. UI のスタイル・レイアウト・テキスト表示 ---------------------- 該当なし
+  描画を 1 ピクセルも変えない。差分は rules の frontmatter・ADR・`scripts/governance/` の
+  検査ロジックのみで、`snotra-egui-runtime` にも `snotra-settings` にも `[visual]` の色にも
+  触れていない。**該当判定を広げる方向にも外さない**——エージェントは `smoke:manual` を
+  実行できないため、該当と読めばそのまま人間への過大な申し送りになる（#1106 の型）。
+
+--- E. git hook（.githooks/**） ------------------------------------- 該当なし
+  `.githooks/` を 1 件も変更していない。なお `.githooks/githooks.test.mjs` は上の
+  `npm test` の 35 ファイルに含まれて実行済みである（該当なしの根拠は「変更していない」であって
+  「走らせていない」ではない）。
+
+--- F. ガバナンス文書 ----------------------------------------------- 実行
+  該当理由: `.claude/rules/` 2 本 / `docs/adr/` 1 本 / 検査の実装 `scripts/governance/` を変更した。
+
+  コマンド: npm run governance:check
+  exit code: 0
+  出力: governance:check — 全検査 passed（検査 20 件 / 対象文書 35 件 / rules 8 件 / skills 12 件 /
+        恒久規範 常時ロード 16106 字・rules 12391 字 / 見出し参照 279 件を md 47 件 + .rs 101 件 +
+        スクリプトのコメント 109 件から照合 / workspace member 4 件の lints opt-in / clippy 禁止 8 件 /
+        散文の識別子 394 件を 33 文書から照合 / 近傍の見出し参照 17 件 / ADR 63 本の名前 /
+        ADR の短縮引用 308 件）
+
+  **新検査が registry に載っていること**を exit 0 とは別に確かめた（「ファイルは在るが
+  registry が読んでいない」は沈黙経路であるため）:
+  registry.mjs の CHECK_MODULES = 20 件、id 一覧に `G-rules-script-coverage` が現れる。
+  20 id: G-adr-citations, G-adr-file-names, G-architecture-table, G-build-commands,
+  G-check-skill-enumeration, G-ci-table, G-clippy-disallowed, G-heading-refs, G-hook-commands,
+  G-hook-fires, G-module-index, G-module-linkage, G-near-heading-refs, G-references,
+  G-rules-globs, G-rules-script-coverage, G-skill-table, G-spec-sections, G-stale-identifiers,
+  G-workspace-lints
+
+--- 実行不能だったもの --------------------------------------------- なし
+
+================================================================================
+2. 変異注入（効いていることを測る）
+================================================================================
+
+**稼働中のガードは一切弱めていない。** すべて (a) `makeSnapshot` の返り値を包んで `read()` だけを
+差し替えたメモリ上の複製、または (b) 検査ファイルを scratchpad へコピーして複製側へ変異、で行った。
+実ファイルへの書き込みは 0 件（下の「巻き戻しの照合」参照）。
+
+--- 変異の強さの裁定（先に測った） ---
+
+タスクが指定した形（rule の paths を `scripts/*.mjs` **1 行だけ**にする）は、**実際に起きた回帰より
+強い**。安全側へ倒さず、実際の回帰の姿そのもの（HEAD~1 の frontmatter 全文）で測り直した。
+
+  実際の回帰の姿 = git show HEAD~1:.claude/rules/{safety-nets,governance-docs}.md の paths
+    safety-nets:      [".claude/hooks/**", ".githooks/**", ".claude/settings.json", ".claude/lsp/**",
+                       ".github/workflows/**", ".claude/rules/**", ".claude/skills/**",
+                       "scripts/*.mjs", "scripts/*.ps1", "scripts/lib/**"]
+    governance-docs:  ["AGENTS.md", "CLAUDE.md", "docs/adr/**",
+                       "scripts/*.mjs", "scripts/*.ps1", "scripts/lib/**"]
+
+[変異 1] 実際の回帰の姿（HEAD~1 の rule 全文）           → **赤**
+  findings = 106 件（safety-nets.md 53 / governance-docs.md 53）
+  うち `scripts/governance/checks/` を名指すもの = 80 件
+  例: 「paths がこのスクリプトを覆わない: scripts/governance/checks/G-adr-citations.mjs」
+  ★ この 106 件はコミットメッセージが主張する「未被覆 106 件（53 × 2 rules）」と**完全に一致**する。
+     強さの証明はこの一致である（弱すぎも強すぎもしていない）。
+
+  同じ入力に対する対照 —— G-rules-globs は **0 件（緑のまま黙る）**。
+  ADR「既存の `G-rules-globs`（マッチ 0 件の検知）は緑のまま」と、`//!` の「facade が今もマッチする
+  ので『マッチ 0 件』にはならず、あちらは緑のままだった」を**同一入力の A/B で実証した**。
+  ＝新検査は既存検査が原理的に見られない事故を捕まえている。
+
+[変異 2] タスク指定の弱い形（paths = `scripts/*.mjs` 1 行）→ **赤**
+  findings = 157 件（safety-nets 82 / governance-docs 75）
+  `scripts/governance/checks/` を名指すもの = 80 件（変異 1 と同じ 80 件）
+  ただし 157 > 106 で、`.claude/hooks/**` 等まで剥がしているぶん**本来の回帰より強い**。
+  タスクが求めた「`scripts/governance/checks/` 配下が名指されて赤になる」は満たすが、
+  強さの証拠としては変異 1 のほうを採る。
+
+[対照] 無変異（HEAD の実ファイル）                       → **0 件（緑）**
+  誤検出しない向きも測れている。
+
+--- canary 3 種（下界。母集団が縮む側の沈黙を塞ぐ） ---
+
+[canary A] rule が snapshot に無い（read → null）        → 赤 2 件
+           「rule が snapshot に無い（G-rules-script-coverage 母集団の欠落）」× 2 rules
+[canary B] 母集団 0 件（走査から .mjs/.ps1/.psm1 が消える）→ 赤 2 件
+           「覆うべきスクリプトの母集団が 0 件（走査の欠落）」× 2 rules
+[canary C] paths が 0 件                                  → 赤 2 件
+           「frontmatter に paths パターンが 1 件も無い」× 2 rules（1 件で打ち切り、溢れない）
+
+--- canary 3 種で塞げていない縮み方の探索（タスク「沈黙経路」への回答） ---
+
+[縮み (c)] frontmatter が `paths:` 以外のキーの引用リストしか持たない（`tools:` 等）→ 赤 177 件
+           `rulePathPatterns` は frontmatter 内の引用リスト行を**キーを問わず**拾うため
+           patterns は非空になり canary C は鳴らないが、それらが何も覆わないので全件未被覆で赤。
+           ＝沈黙しない（向きは安全側）。
+
+[縮み (d)] paths が `**` 1 行（すべて覆う）                → **緑（0 件）**
+           検査は「覆われているか」しか見ないので、意味を失うほど広い glob と正しい glob を
+           区別できない。ただしこれは配送過多＝規範が届きすぎる向きで、#1143 の事故（届かない）の
+           逆であり、この検査の射程外である。Low-4 として下に挙げた。
+
+[縮み (e)] ★**SCRIPT_EXT を `.mjs` だけへ狭める** → **緑のまま沈黙する（下の High-1）**
+           複製ファイルへ `/\.(mjs|ps1|psm1)$/` → `/\.(mjs)$/` を注入。
+           - HEAD の実ファイルに対する findings = 0 件（governance:check は緑のまま）
+           - `.ps1` を覆う glob を欠く rule を与えても 変異版 = **0 件** / 現行版 = **44 件**
+             ＝ `.ps1`/`.psm1` の被覆要求が丸ごと消えたのに、どの層も鳴らない
+           - 複製ツリー（scripts/governance をコピーして変異）で
+             `npx vitest run checks/G-rules-script-coverage.test.mjs` → **exit 0 / 7 passed**
+             ＝ **7 本のテストも 3 canary も 1 本も落ちない**
+
+[縮み (f)] COVERAGE から `governance-docs.md` の行を落とす → 検知される
+           #1093 再発形の入力で 現行 = 106 件 / 変異版 = 53 件（半減）。
+           かつ canary A のテストが `toHaveLength(2)` で表の**行数**を縛るため `npm test` が赤になる。
+           ＝この縮み方はテストが押さえている。
+
+--- 移送（globToRegex / rulePathPatterns）の逐語不変性 ---
+
+HEAD~1 の `G-rules-globs.mjs` を scratchpad へ取り出して現行 `lib.mjs` と同一入力で比較した。
+
+  globToRegex: 10 パターン（scripts/**, scripts/*.mjs, scripts/lib/**, .claude/hooks/**, **,
+    docs/adr/**, .claude/settings.json, {a,b}/*.md, unclosed{a, a?b.md）で
+    **正規表現 source が 10/10 一致**、かつ snapshot 全 474 ファイルに対する判定も全パターンで一致。
+  rulePathPatterns: HEAD~1 ではインライン（`/^---\r?\n([\s\S]*?)\r?\n---/` +
+    `/^\s*-\s*"([^"]+)"/gm`）だった。同一入力 7 件（HEAD~1 の 2 rule / HEAD の 2 rule / 本文のみ /
+    `tools:` キー / CRLF）で **7/7 一致**。
+  checkRulesGlobs 全体: 新旧を 7 ケース（現行実ファイル / HEAD~1 の 2 rule / paths 0 件 /
+    死んだ glob / 未閉ブレース / rules 0 件 / read が常に null）で比較し、
+    findings の JSON が **7/7 逐語一致**（うち 5 ケースは findings 非空）。
+  ⇒ 移送で `G-rules-globs` の判定は変わっていない。
+
+--- ADR の数値主張の検算 ---
+
+  ADR「`scripts/**` は現行 3 glob の和の**真の上位集合**（被覆 32 → 84 件）で失うものが 0 件」
+  実測（HEAD の木・`globToRegex` で判定）:
+    旧 3 glob の和が覆う件数 = **32**（ADR と一致）
+    `scripts/**` が覆う件数  = **86**（ADR は 84。差 2 の説明は下の Low-1）
+    旧 ⊄ 新（失うもの）      = **0 件**（ADR と一致）
+    新 \ 旧（増える配送）    = 54 件。うち SCRIPT_EXT でないもの = **1 件 = scripts/run-codex.sh**
+                               （ADR「増える誤配送は run-codex.sh の 1 件」と一致）
+                               うち SCRIPT_EXT のもの = **53 件**（＝変異 1 の 53 × 2 rules と整合）
+
+--- 死角宣言の検算（`//!` が名乗る射程と実態の突き合わせ） ---
+
+  宣言「対象外の拡張子（`.sh` 等。`scripts/run-codex.sh` は判定に入らない）」
+    実測: `scripts/` 配下でコメント記法を持つが SCRIPT_EXT に入らないファイル = **1 件のみ =
+    scripts/run-codex.sh**。`.ts`/`.js`/`.cjs` は `scripts/` 配下に 0 件。宣言は正確。
+  宣言「母集団は `makeSnapshot` 由来ゆえ git 未追跡ファイルも入る」
+    実測: junction による未追跡エントリ "node_modules" が実際に `snapshot.files` に現れた。正確。
+  宣言「走査が広がったときは赤側へ倒れる」
+    構造の確認: `WALK_EXCLUDE_PATHS` はルート錨止めなので `ui/node_modules` は落ちず、
+    その `.mjs` が safety-nets の母集団（拡張子だけの述語）に入って被覆要求で赤くなる。正確。
+  実測: SCRIPT_EXT に入るが `scripts/` の外にあるファイル = 7 件
+    (.claude/hooks/{lsp-config,lsp-config.test,post-edit,post-edit.test,pre-bash,pre-bash.test}.mjs,
+     .githooks/githooks.test.mjs) — すべて safety-nets の paths が覆っており、
+     governance-docs の母集団（`scripts/` 部分木限定）からは正しく外れている。
+  大文字拡張子（.PS1 / .MJS 等）の実在: **0 件**（下の Low-3 の露出は今日 0）。
+
+--- 巻き戻しの照合（内容ハッシュ・mtime は使わない） ---
+
+  実ファイルへの変異は**一度も行っていない**（すべてメモリ上の複製と scratchpad のコピー）。
+  それでも念のため、変更 9 ファイルの作業ツリー内容を `git show HEAD:<path>` と SHA-256 で照合した。
+
+    .claude/rules/safety-nets.md                                disk=2E682D46E42D head=2E682D46E42D  一致
+    .claude/rules/governance-docs.md                            disk=9AC4E22B81D3 head=9AC4E22B81D3  一致
+    scripts/governance/lib.mjs                                  disk=275442FBDBEC head=275442FBDBEC  一致
+    scripts/governance/checks/G-rules-globs.mjs                 disk=63C44C9110F0 head=63C44C9110F0  一致
+    scripts/governance/checks/G-rules-script-coverage.mjs       disk=09CA73529E15 head=09CA73529E15  一致
+    scripts/governance/checks/G-rules-script-coverage.test.mjs  disk=84E8840A3D74 head=84E8840A3D74  一致
+    scripts/governance/lib.test.mjs                             disk=5CD082AB7726 head=5CD082AB7726  一致
+    scripts/governance/checks/G-rules-globs.test.mjs            disk=9C0BDC2340CD head=9C0BDC2340CD  一致
+    docs/adr/ADR-rules-paths-subtree-coverage.md                disk=1DD0D7F566FB head=1DD0D7F566FB  一致
+
+  9/9 一致。加えて `git status --porcelain` = 空、`git rev-parse HEAD` = 7261a4e9…（不変）。
+  scratchpad の複製ツリー（gov-copy）は junction を外してから削除済み（Test-Path = False）。
+
+================================================================================
+3. レビュー（実装の正しさ / 計画判断の妥当性 / パフォーマンス）
+================================================================================
+
+前置き: 渡された「意図的に分けた構造」5 件は根拠（ADR「検討した代替案と却下理由」・`lib.mjs` の
+`rulePathPatterns` の doc・`COVERAGE` 表の doc コメント・`e2e.yml` の別機構・`ADR-adr-frozen-history`）
+をすべて読んだうえで、**1 件も DRY 違反として挙げていない**。とくに (1) は
+「失敗の意味が違う（死んだ glob と未被覆のファイル）」を上の A/B（同一入力で 0 件 vs 106 件）が
+実証しており、畳めないことが測定で裏づけられている。
+
+-------------------------------------------------------------------- Critical
+なし。
+
+------------------------------------------------------------------------ High
+
+[High-1] 検査自身の母集団述語（`SCRIPT_EXT`）を狭める変更が、どの層からも見えない
+  根拠: scripts/governance/checks/G-rules-script-coverage.mjs:24
+        （`const SCRIPT_EXT = /\.(mjs|ps1|psm1)$/;`）
+        テスト側の該当行: scripts/governance/checks/G-rules-script-coverage.test.mjs:42-45
+        （題名は「判定の対象は .mjs / .ps1 / .psm1 に限る」だが、入力は
+          `["scripts/run-codex.sh", "scripts/x.mjs"]` の 2 件で `.ps1`/`.psm1` を**含まない**）
+
+  実測（上の縮み (e)）: `SCRIPT_EXT` を `/\.(mjs)$/` へ狭めた複製は
+    - HEAD の実ファイルで findings 0 件（governance:check 緑）
+    - 7 本のテストが全部 pass（exit 0）
+    - `.ps1` を覆わない rule に対して 現行 44 件 → 変異版 0 件
+
+  なぜ High か: この検査が置かれた理由そのもの（`//!` 8-18 行「**宣言する死角**」と 45-46 行
+  「**被覆形の述語は母集団が縮む側で沈黙する**ので、縮み方ごとに赤を置く」）が、
+  **述語自身の縮みには適用されていない**。3 canary は「rule が消える」「paths が消える」
+  「母集団が 0 になる」を塞ぐが、「母集団が**部分的に**縮む」を塞いでいない。
+  さらに `//!` 17 行が将来の保守者へ
+  「そのときは `WALK_EXCLUDE_PATHS` へ 1 行足すか下の `inPopulation` を絞る」と
+  **まさにこの無防備な編集を明示的に案内している**。
+  形としては #1143 が直した事故と同型（射程が黙って縮み、逆向きの検知器が無い）。
+
+  塞ぎ方の一例（実装は指示があってから）: テストの赤ケース（同ファイル :14-21）の files へ
+  `scripts/lib/SnotraSmoke.psm1` と `scripts/smoke-egui.ps1` を足し、名指されることを assert する
+  ——1 行の追加で `.ps1`/`.psm1` の下界が固定される。上界（`.sh` を含めない）は既に :42-45 が持つ。
+
+---------------------------------------------------------------------- Medium
+
+[Medium-1] 走査が広がったときの「赤側へ倒れる」が、実運用では読めない赤になりうる
+  根拠: scripts/governance/checks/G-rules-script-coverage.mjs:15-18（走査が広がったら赤・安全側）
+        と同 :63-64（「**切り詰めない。** 未被覆は 1 ファイル 1 finding で全部名指す」）
+        レポータ側に上限は無い: scripts/governance-check.mjs:190-192
+        （`for (const f of findings) console.error(...)` — 件数の cap 無し）
+  `//!` が名指す将来（2 つ目の npm パッケージで `ui/node_modules` が走査に入る）が来ると、
+  vendor の `.mjs` 1 件につき 2 rules 分の finding が出る。数千〜数万行の CI 出力になり、
+  「向きは沈黙ではなく loud なので安全側である」という宣言は**向きとしては正しいが、
+  読める赤であることまでは意味しない**。2 つの宣言（切り詰めない / 広がったら赤）が
+  同じファイルに在りながら、その積が検討された形跡が無い。
+  ＝ Medium（今日の露出は 0。`WALK_EXCLUDE_PATHS` への 1 行で解けることも doc が既に書いている）。
+
+[Medium-2] `COVERAGE` は 2 rules を名指す固定表だが、rules は 8 本ある——3 本目の取りこぼしは沈黙
+  根拠: scripts/governance/checks/G-rules-script-coverage.mjs:31-34
+        （`COVERAGE` = safety-nets.md と governance-docs.md の 2 行）
+        実測: governance:check の evidence が「rules 8 件」と報告する
+  この表は「**この表が SSOT である**」と自ら宣言しており（同 :26）、意図的な固定であることは
+  明示されている。それでも、`ADR-comment-guideline-delivery-by-pointer.md:35` が
+  「`.claude/rules/comments.md` の `paths` に足す必要がある…この取りこぼしは検知されない」と
+  名指した穴は、**この PR が導入した「ファイル側から検める」形でちょうど塞げる種類の穴**であり、
+  塞がずに残っている（対象が `.rs` × comments.md なので `SCRIPT_EXT` の外）。
+  この PR の射程外として受容するのは妥当だが、`//!` の「宣言する死角」に
+  **「COVERAGE に載らない rule は見ない」の 1 行が無い**のは宣言の漏れである
+  （他の 5 つの死角は明示されている）。ADR は凍結層なので直す先は `//!` 側。
+
+------------------------------------------------------------------------- Low
+
+[Low-1] ADR の被覆件数「32 → 84 件」が、その ADR を載せた当のコミットで既に 86 になっている
+  根拠: docs/adr/ADR-rules-paths-subtree-coverage.md:24（「被覆 32 → 84 件」）
+  実測: HEAD の木で 32 → **86**。差 2 の説明は明快で、このコミット自身が
+  `scripts/governance/checks/G-rules-script-coverage.mjs` と `.test.mjs` の 2 ファイルを
+  `scripts/` 配下へ追加したためである（86 − 2 = 84）。32 と「失うもの 0 件」「run-codex.sh の 1 件」は
+  実測と完全一致しており、**結論は 1 つも揺らがない**。
+  ⚠️ 裁定が割れる点を明示する: ADR は凍結された歴史（`ADR-adr-frozen-history`）ゆえ
+  「決定日時点の実測値」として読めば腐りではない。一方 `.claude/rules/governance-docs.md` の
+  「機構の実装の詳細（述語の種類・件数・分岐の列挙）を散文へ写さない」は件数を名指しており、
+  この 84 は**日付を伴わない**ため、後から読む人が現在値と誤読しうる。
+  提案するとしても「実測日を添える」までで、ADR 本文の書き換えは求めない。
+
+[Low-2] `lib.mjs` の「19 検査」が、この PR 後は 20 検査になっている
+  根拠: scripts/governance/lib.mjs:80
+        （「`linesOutsideFences` / `sectionOf` の消費者（`governance-check.mjs` 経由の 19 検査）が…」）
+  実測: registry の CHECK_MODULES = 20 件。
+  ⚠️ ただし新検査は `linesOutsideFences` も `sectionOf` も**使わない**ので、
+  「その 2 関数の消費者」という読みなら 19 のままで正しい可能性がある。文言が
+  「消費者（… 経由の 19 検査）」と両義的で、どちらの母集団を指すかがこの行から決まらない。
+  同段落は「2026-08-17 に走査を全件記録して実測」と日付つきの実測なので、
+  腐りとして直すより**曖昧さを解く**（「その 2 関数を通る N 検査」なのか「全検査」なのか）方が筋。
+  Low に留める。
+
+[Low-3] `SCRIPT_EXT` が大文字・小文字を区別する
+  根拠: scripts/governance/checks/G-rules-script-coverage.mjs:24（`/\.(mjs|ps1|psm1)$/` に `i` 無し）
+  Windows のファイルシステムは大文字小文字を区別しないので `Foo.PS1` を作れてしまい、
+  そのファイルは母集団から黙って外れる。実測: 現在そういう名前のファイルは **0 件**。
+  近傍の `commentFamilyOf`（lib.mjs:182）は `.toLowerCase()` を通しており、
+  **同じリポジトリ内で 2 つの拡張子述語の大小扱いが非対称**である。露出 0 件ゆえ Low。
+
+[Low-4] `paths` が `**` 1 行なら常に緑になる
+  根拠: 上の縮み (d)。検査は「覆われているか」だけを見るので、意味を失うほど広い glob を止められない。
+  向きは「規範が届きすぎる」側で、#1143 の事故（届かない）の逆。
+  `//!` の「意味的にセーフティネットかは判定しない。母集団は拡張子で取り、誤配送は受け入れる側へ
+  倒す」（:12-13）が既にこの方針を宣言しているので、指摘というより射程の確認である。
+
+[Low-5] `run(snapshot, ctx)` の `ctx` が未使用
+  根拠: scripts/governance/checks/G-rules-script-coverage.mjs:36-39
+  `G-rules-globs.mjs:8-11` と逐語で同じ形（JSDoc に「この検査は使わない」と明記）なので、
+  registry の契約に合わせた意図的な統一である。指摘ではなく確認。
+
+--------------------------------------------- パフォーマンス（3 観点のうち第 3）
+
+問題なし。計算量は rule 2 本 × (patterns 数 × population 数) で、実測の規模は
+safety-nets が 10 パターン × 92 ファイル、governance-docs が 4 パターン × 85 ファイルの
+オーダー（≒1,300 回の正規表現テスト）。`globToRegex` は `patterns.map` で **rule ごとに 1 回だけ**
+コンパイルされ、ファイルごとの再コンパイルは無い（:62）。
+`SCRIPT_EXT` は `g` フラグを持たないので `lastIndex` の持ち越しによる誤判定も無い
+（`lib.mjs:168` の `HEADING_REF` が `g` を持つゆえ `matchAll` 専用と明記されているのと対照的に、
+ここは正しく非 `g`）。`npm run governance:check` 全体は 20 検査で 1〜2 秒、`npm test` は 14.91s。
+
+--------------------------------------------- 計画判断・下流の整合（3 観点のうち第 2）
+
+- 移送された `globToRegex` の意味論テストは**消えていない**。`G-rules-globs.test.mjs` から
+  削除された 27 行は `lib.test.mjs:25-48` へ着地し、さらに #1143 の穴そのものを固定する
+  2 ケースが**追加**されている（`["scripts/*.mjs", "scripts/governance-check.mjs",
+  "scripts/governance/checks/G-module-index.mjs"]` と `["scripts/**", …, "scriptsX/a.mjs"]`）。
+  `rulePathPatterns` にも 4 ケース（frontmatter 内に閉じることの両方向）が新設されている。
+  ＝「差分が消した行の不変条件」は再確立されている。
+- `lib.mjs:532-534` の `headingRefCommentDocs` の JSDoc は、旧 3 glob を逐語で写していた記述が
+  「`paths` が `scripts/` 配下を覆っており（**正本はその frontmatter。ここに glob を写さない**）」へ
+  書き直されている。正しい向きの修正で、写しを 1 つ減らしている
+  （旧記述は `scripts/*.mjs / scripts/*.ps1 / scripts/lib/**` を列挙しており、この PR が畳んだ
+    時点で偽になるところだった）。
+- `.claude/skills/health-check/references/mechanized-checks.md` は「旧 Check → G 番号」の
+  **歴史対応表**であって全検査の一覧ではない（冒頭が明示）。新検査は旧 Check 番号を持たないので
+  足す必要はない。**更新漏れではない**ことを確認した。
+- `docs/build-commands.md` カテゴリ F の説明文は検査の話題を列挙するが「rules glob」が
+  両向きを含む読みで通り、`governance:check` も緑。更新義務は無い。
+- ⚠️ 検査の**総数に対する canary が無い**（`registry.test.mjs:9` は `toBeGreaterThan(0)` のみ）。
+  `checks/` からファイルを 1 本削除すると 19 検査で静かに緑になる。ただしこれは
+  per-check 分割（#1088）が「忘れうる登録行を無くす」ために選んだ設計の帰結であって
+  **20 検査すべてに等しく当たる既存の性質**であり、この PR が持ち込んだ回帰ではない。
+  この PR に対する指摘としては挙げない（記録として残す）。
+
+------------------------------------------ ⚠️ 確信の持てない所見（切り捨てない）
+
+[⚠️-1] **【撤回】この項目は誤りだった。配送は観測されていない。**
+
+  当初この欄には「本エージェント（サブエージェント）が `scripts/governance/checks/…` を Read した
+  直後の system-reminder に `.claude/rules/` の 2 本が全文配送された＝`scripts/**` がサブエージェント
+  へも効いた陽性証拠」と書いた。**呼び出し側の照会を受けて自分の会話履歴を検分した結果、
+  そのような system-reminder は履歴に存在しない。**
+
+  履歴に実在する `<system-reminder>` は次だけである: 冒頭の `claudeMd` 注入（ルート `CLAUDE.md` /
+  `AGENTS.md` / `MEMORY.md`）・稼働中エージェントの一覧・deferred tools の通知・skills roster・
+  ツールごとのファイル状態の定型注記。**`.claude/rules/` の本文はどれにも含まれない。**
+
+  誤りの機序: `.claude/rules/safety-nets.md` の「フォールトインジェクションでは、稼働中のガードを
+  弱めない——複製に変異を当てる」は、**本タスクのプロンプトが直接引用して私へ渡したもの**である。
+  それを harness による rule 配送と取り違えた。周辺の事実（worktree 側のパス・`checks/` 配下＝
+  2 段下・再アンカー後）が**すべて真**だったため、自己レビューでも生き延びた。
+  加えて「worktree 側とメインチェックアウト側の**両方**のパスで」は二重に誤りで、
+  私はメインチェックアウト側のパスを 1 度も Read していない。
+
+  4 点への回答（呼び出し側の照会に対応）:
+    1. 何を Read した直後か  → **該当する配送が履歴に無い**。私の最初の Read は
+       `…\.claude\worktrees\agent-a1615979bdf2fcdb2\scripts\governance\checks\G-rules-script-coverage.mjs`
+       （`checks/` 配下＝2 段下）だが、その直後に rules 本文は届いていない。
+    2. worktree 側かメイン側か → 私の Read は**すべて worktree 側**。ただし配送が無いので無意味。
+    3. 2 本とも配送されたか   → **どちらも確認できない**。
+    4. 再アンカーの前か後か   → **後**（`git checkout --detach` は 2 番目のツール呼び出しで、
+       Read はすべてその後）。ここだけは事実だが、前提が欠けているため結論を支えない。
+
+  **帰結: この項目でマージ前チェックリストを閉じてはならない。**
+  ADR:48-50 の「サブエージェントへの配送は機序が未解明・`paths` を広げても委譲先へ届くとは限らない」は
+  **本セッションからは何の反証も受けていない**。陽性証拠が要るなら、配送予算が未消費の新鮮な
+  サブエージェントで `scripts/governance/checks/` 配下だけを 1 回 Read する A/B を別に組む必要がある
+  （`ADR-comment-guideline-delivery-by-pointer.md:21` が「1 つの context で測れる glob は 1 本だけ」と
+    書いているとおり、重複排除のため 1 体 1 glob になる）。
+
+  この撤回自体が `MEMORY.md` の [confabulating-tool-results]（「観察した」確信を信頼しない）の実例で、
+  かつ本レポートが High-1 で指摘した構造——**周辺の事実が真であるほど、中心の偽が検算を素通りする**
+  ——と同型である。
+
+[⚠️-2] `rulePathPatterns` は frontmatter 内の**引用リスト行を `paths:` キーに限らず**拾う
+  （scripts/governance/lib.mjs:667-670。`fm.matchAll(/^\s*-\s*"([^"]+)"/gm)` はキーを見ない）。
+  ⚠️ これは HEAD~1 のインライン実装から**逐語で移した**性質であり、この PR の回帰ではない
+  （新旧比較 7/7 一致で確認済み）。実測でも現行 8 rules の frontmatter に `paths:` 以外の
+  引用リストは 0 件。`lib.test.mjs` の新テストも「frontmatter に閉じる」までは固定するが
+  「`paths:` の下だけを見る」は固定していない。
+  害が出るのは rules frontmatter に `tools:`/`allowed-tools:` のような別リストを持つ形が
+  現れたときで、そのとき `G-rules-script-coverage` は**そのリストを glob として扱って
+  誤った緑/赤を出す**。関数の doc は「frontmatter ブロックの中だけを見る」と正確に書いており
+  **`paths` だけを見るとは言っていない**が、関数名は `rulePathPatterns` である。
+  名前と挙動の乖離を指摘として挙げるか、既存挙動の保存として容認するかの裁定に確信が持てない。
+
+[⚠️-3] `//!` の「**harness が実際に配送するか**は見ない。`globToRegex` は documented な glob 意味論の
+  近似であり」（scripts/governance/checks/G-rules-script-coverage.mjs:10-11）は正しい宣言だが、
+  この検査が緑であることを「規範が届いている」と読む運用が生まれると、#1143 と同じ誤読
+  （glob が在る＝届いている）を別の層で再生産しうる。
+  ⚠️ 確信が持てない理由: 宣言は既に明示的で、`lib.mjs:626-628` にも同趣旨が正本として在り、
+  ADR:46-47 も同じことを書いている。**3 か所に書かれている**ので、これ以上の防御は
+  「やりすぎでは」に当たる可能性が高い。所見として残すに留める。
+
+[⚠️-4] `governance-docs.md` の母集団を `scripts/` 部分木へ限る非対称（:33）は
+  意図的分離 (3) として先に渡されており、`COVERAGE` の doc（:28-30）が根拠を持つ。
+  一方 `governance-docs.md` の `paths` は `AGENTS.md` / `CLAUDE.md` / `docs/adr/**` も持つので、
+  「あちらの射程が違う」の理由づけは `.claude/hooks/` を持たないことだけで足りている。
+  ⚠️ ただし将来 `governance-docs.md` の `paths` へ `.claude/hooks/**` が足された場合、
+  この `inPopulation` の `startsWith("scripts/")` は**手で外す必要がある**が、
+  外し忘れを見る機構は無い（緑のまま射程が狭いまま残る）。
+  露出は仮定的で、指摘として挙げる強さがあるか確信が持てない。Medium-2 と同根。
+
+================================================================================
+件数まとめ
+================================================================================
+検証:   実行 2（C: npm test / F: npm run governance:check）
+        補助実測 2（新テストの verbose 実行・registry の id 一覧）
+        該当なし 4（A: Rust / B: TS / D: UI 目視 / E: githooks）
+        実行不能 0
+変異注入: 変異 6 形（実回帰形・タスク指定形・縮み c/d/e/f）+ canary 3 + 対照 1
+        + 逐語不変性 3 系統（globToRegex 10/10・rulePathPatterns 7/7・checkRulesGlobs 7/7）
+        うち赤 = 6、意図的な緑 = 2（無変異・縮み d）
+        **canary で塞げていない沈黙する縮み方を 1 つ発見（縮み e → High-1）**
+        巻き戻し照合: SHA-256 で 9/9 一致・実ファイル変異 0 件・git status 空
+レビュー: Critical 0 / High 1 / Medium 2 / Low 5 / ⚠️ 4（うち ⚠️-1 は**撤回**。
+        「サブエージェントへ配送された」という観測は履歴に存在せず、私の取り違えだった。
+        ADR:48-50 は本セッションから何の反証も受けていない）

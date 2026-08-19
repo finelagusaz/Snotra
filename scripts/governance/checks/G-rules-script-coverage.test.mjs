@@ -39,9 +39,23 @@ describe("G-rules-script-coverage checkRulesScriptCoverage", () => {
     expect(f.some((x) => x.file === ".claude/rules/governance-docs.md")).toBe(false);
   });
 
+  // 母集団の**上界**——対象外の拡張子を巻き込まない（`.sh` は死角として宣言済み）。
   it("判定の対象は .mjs / .ps1 / .psm1 に限る（.sh は死角として宣言済み）", () => {
     const s = snap(rules(["scripts/*.mjs"], ["scripts/*.mjs"]), ["scripts/run-codex.sh", "scripts/x.mjs"]);
     expect(checkRulesScriptCoverage(s)).toEqual([]);
+  });
+
+  // 母集団の**下界**——上界だけを縛ると `SCRIPT_EXT` を `.mjs` へ狭める変異が全層で沈黙する
+  // （実測: 実ツリーは全件被覆ゆえ live も narrowed も 0 件、テストも `governance:check` も緑のまま）。
+  // **本 issue が直した欠陥と同じ形が、この検査自身の中に生まれる**ので、下界を名指しで固定する。
+  it("母集団の下界: .ps1 / .psm1 も対象である（SCRIPT_EXT を狭める変異を捕まえる）", () => {
+    const ps = ["scripts/lib/SnotraSmoke.psm1", "scripts/smoke-egui.ps1"];
+    const s = snap(rules(["scripts/*.mjs"], ["scripts/*.mjs"]), ps);
+    const f = checkRulesScriptCoverage(s);
+    for (const rel of ps) {
+      expect(f.some((x) => x.file === ".claude/rules/safety-nets.md" && x.message.includes(rel)), `${rel} が母集団から落ちている`).toBe(true);
+      expect(f.some((x) => x.file === ".claude/rules/governance-docs.md" && x.message.includes(rel)), `${rel} が母集団から落ちている`).toBe(true);
+    }
   });
 
   // --- 下界の canary（被覆形の述語は母集団が縮む側で沈黙する） -----------------

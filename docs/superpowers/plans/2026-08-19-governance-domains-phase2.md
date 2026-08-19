@@ -28,18 +28,39 @@
 | `G-module-linkage` | 同上（crate の出所が違う） | `workspaceMemberDirs` / `crateSources` | 済 |
 | `G-build-commands` | workspace member | `workspaceMemberDirs` | 済 |
 | `G-workspace-lints` | 同上 | `workspaceMemberDirs` | 済 |
-| `G-clippy-disallowed` | clippy の禁止メソッド（ファイルでない母集団） | — | 未 |
-| `G-hook-fires` | `selectChecks` の発火表の行 | — | 未 |
+| `G-clippy-disallowed` | clippy の禁止メソッド | — | 見送り（下の Ruling） |
+| `G-hook-fires` | `selectChecks` の発火表の行 | — | 見送り（下の Ruling） |
 
-固定パスの 3 本（`G-architecture-table` / `G-ci-table` / `G-hook-commands`）は Phase 3 であり、**完了判定を書き換えるまで着手しない**。
+`G-architecture-table` / `G-ci-table` / `G-hook-commands` も同じ理由で見送る。
+
+## Ruling — 残る 5 本は Phase 2 では移行しない（2026-08-20）
+
+計画は「自前 filter の 10 本」を移行対象としていたが、**実測が分類を訂正した**。残る 5 本は
+同じクラスであり、母集団が走査（`snapshot.files`）ではなく**名指しされたファイルの中身**から出る
+——4 本は `snapshot.files` を一度も読まず、`G-hook-fires` の使用も表の代表パスの実在照合であって
+母集団の filter ではない。
+
+**このクラスへ錨を足すと、検査自身の判定の言い直しになる。** clippy の禁止メソッドなら、縮み方の
+全モード（ファイル消失・配列消失・行消失）を検査が既に fail-closed で赤にしており、ドメインは
+新しい被覆を持たず同じ欠陥に finding を 2 件出すだけである。Phase 1 の全体レビューが 5 回捕まえた
+「常に真になる錨」を、こちらの手で再生産することになる。
+
+設計 §4 はこの 2 本を名指して移行可能と見込んでいた。**そこからの意図的な逸脱である**——設計は
+歴史資料ゆえ直さず、生きた記録はこの台帳と `registry.test.mjs` の凍結リストが持つ。
+**着手の条件は Phase 3 と同じ**: 完了判定を「腕ごとの絞り込みで発火を測る」形へ書き換えること。
+
+**間違えたら何を失うか**: この 5 本の母集団が縮む沈黙が残る。ただし縮み方の主要モードは各検査の
+fail-closed な canary が既に赤にしており、残余は「その canary 自身が消される」形に限られる。
 
 ## 作業項目
 
 - [x] I3 — manifest へ `domains` 列（名前の集合）を足す
 - [x] I4 — 未移行 id を凍結し、実際の集合との一致を検めるテストを置く
 - [x] `.claude/rules/` のクラスタを移行する（`ruleDocs` 8 件 / `judgingScripts` 96 件・移送前後で集合同一）
-- [ ] 残りのクラスタを移行する（集合の比較が決める。着手のたびに上の表と本項目を更新する）
-- [ ] 未移行が固定パスの 3 本だけになったことを `governance:check` の evidence で確かめる
+- [x] skills のクラスタを移行する（`skillDocs` 12 件）
+- [x] crate と `.rs` のクラスタを移行する（`workspaceMemberDirs` 4 / `crateSources` 95 / `moduleIndexSources` 95）
+- [x] 走査から母集団を作る検査がすべて移行済みであることを、`snapshot.files` の使用箇所で検算する
+- [x] 未移行が上記 5 本だけになったことを `governance:check` の evidence で確かめる（ドメイン未移行 5 本）
 
 ## 人間レビュー
 

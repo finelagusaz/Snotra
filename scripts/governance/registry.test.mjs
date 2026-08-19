@@ -111,14 +111,19 @@ describe("domains の中身の検証（I1 — 空配列・綴り違いはラチ�
 // **射程の限界**: この列自身を書き換えれば通る。機構が保証するのは「その 1 行が diff に現れる」
 // ことであって、レビュアが見落とさないことではない。
 //
-// 内訳（設計 §1.2 の分類）: 自前で `snapshot.files` を filter する 10 本が Phase 2 の移行対象。
-// 固定パスだけを読む 3 本（`G-architecture-table` / `G-ci-table` / `G-hook-commands`）は Phase 3
-// であり、**完了判定を書き換えるまで着手しない**（literal な members は錨が空虚になる）。
+// 残っている 5 本は**同じクラス**である——母集団が走査（`snapshot.files`）ではなく、名指しされた
+// ファイルの中身から出る。実測（2026-08-20）: 4 本は `snapshot.files` を一度も読まず、`G-hook-fires` の
+// 使用も表の代表パスの実在照合であって母集団の filter ではない。
+// **このクラスへ錨を足すと、検査自身の判定の言い直しになる**（clippy の禁止メソッドなら、縮み方の
+// 全モード——ファイル消失・配列消失・行消失——を検査が既に fail-closed で赤にしており、ドメインは
+// 新しい被覆を持たず同じ欠陥に finding を 2 件出すだけである）。Phase 1 の全体レビューが 5 回捕まえた
+// 「常に真になる錨」を、こちらの手で再生産することになる。
+// **ゆえに完了判定を書き換えるまで着手しない**（Phase 3 の申し送りが要求しているのと同じ書き換え）。
 const FROZEN_UNMIGRATED = [
-  "G-architecture-table", // Phase 3（固定パス）
-  "G-ci-table", // Phase 3（固定パス）
+  "G-architecture-table",
+  "G-ci-table",
   "G-clippy-disallowed",
-  "G-hook-commands", // Phase 3（固定パス）
+  "G-hook-commands",
   "G-hook-fires",
 ];
 

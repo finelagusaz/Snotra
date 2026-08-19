@@ -1,5 +1,5 @@
 //! G-near-heading-refs — 正準形に見えて隣接していない見出し参照（#727）。
-import { finding, linesOutsideFences, collectAnchors, resolveRefTarget, normAnchor } from "../lib.mjs";
+import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor } from "../lib.mjs";
 
 export const id = "G-near-heading-refs";
 
@@ -61,7 +61,7 @@ export function scanNearHeadingRefs(snapshot, docs) {
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) continue; // 読めない文書は G-heading-refs が母集団の欠落として報告済み
-    for (const [lineNo, line] of linesOutsideFences(text, doc, findings)) {
+    for (const [lineNo, line] of refScanLines(text, doc, findings)) {
       for (const m of line.matchAll(NEAR_REF)) {
         const [, target, gap, label] = m;
         if (!target.endsWith(".md") && !/^\/[a-z0-9-]+$/.test(target)) continue;

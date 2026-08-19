@@ -158,6 +158,81 @@ export function linesOutsideFences(text, file, findings) {
 
 export const finding = (file, line, message) => ({ file, line, message });
 
+/** コメント記法の族。**拡張子ではなく記法で束ねる**——PowerShell と YAML は別の言語だが同じ `#` 族である。
+ *  `.json` は入らない（コメント記法を持たない）。ここに無い拡張子は「散文の文書」として扱われる。 */
+const COMMENT_FAMILY = new Map([
+  [".mjs", "js"], [".js", "js"], [".cjs", "js"], [".ts", "js"],
+  [".ps1", "ps"], [".psm1", "ps"], [".psd1", "ps"],
+  [".sh", "hash"], [".yml", "hash"], [".yaml", "hash"], [".toml", "hash"],
+]);
+
+/** ファイル名からコメント記法の族を引く。散文の文書（`.md` / `.rs` ほか）は `null` */
+export const commentFamilyOf = (file) => COMMENT_FAMILY.get((/\.[a-z0-9]+$/i.exec(file) ?? [""])[0].toLowerCase()) ?? null;
+
+/**
+ * スクリプトの**コメント行だけ**を `[lineNo, text]` で返す。
+ *
+ * **これが「テストファイルを外す」の代わりに置く意味の写像である**（#1138）。負の fixture が
+ * 検査を赤くするのは「テストファイルだから」ではなく「**文字列リテラルに書かれたデータ**だから」で、
+ * 参照はコメント＝散文に書かれる。拡張子で外すと `*.Tests.ps1` のような別の綴りが素通りし、
+ * 逆に fixture を持たないテストのコメント内の参照まで落ちる。実測（この変更の直前の作業ツリー）:
+ * コメント行の参照 35 件はすべて実参照、非コメント行の 19 件はすべて `*.test.mjs` の fixture だった。
+ *
+ * **字句解析ではない。** 行頭のコメント記号とブロックの開閉だけを見る。ゆえに
+ * **テンプレートリテラルの中で `//` から始まる行はコメントと誤判定される**——これは受容する
+ * 死角ではなく**赤に倒れる**側の誤りなので、沈黙せず人が解く（負の fixture をそう書かない、が回避策）。
+ * 逆向きの取りこぼし（コメントと判定されなかった実コメント）は「今までどおり見ない」に落ちるだけである。
+ *
+ * @param {string} text ファイル全文
+ * @param {string} file 拡張子から記法族を引く。`commentFamilyOf` が `null` を返す名前は**契約違反**
+ */
+export function linesOfComments(text, file) {
+  const family = commentFamilyOf(file);
+  if (family === null) {
+    throw new Error(`linesOfComments: コメント記法を持たない対象（受け取った値: ${file}）`);
+  }
+  const out = [];
+  let inBlock = false;
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.trim();
+    let isComment = false;
+    if (family === "js") {
+      if (inBlock) {
+        isComment = true;
+        if (line.includes("*/")) inBlock = false;
+      } else if (line.startsWith("//")) {
+        isComment = true;
+      } else if (line.startsWith("/*")) {
+        isComment = true;
+        if (!line.includes("*/")) inBlock = true;
+      }
+    } else if (family === "ps") {
+      if (inBlock) {
+        isComment = true;
+        if (line.includes("#>")) inBlock = false;
+      } else if (line.startsWith("<#")) {
+        isComment = true;
+        if (!line.includes("#>")) inBlock = true;
+      } else if (line.startsWith("#")) {
+        isComment = true;
+      }
+    } else {
+      isComment = line.startsWith("#");
+    }
+    if (isComment) out.push([i + 1, raw]);
+  });
+  return out;
+}
+
+/**
+ * 見出し参照の検査が走査する行。**散文の文書は全行（フェンスの外側）・スクリプトはコメント行だけ**。
+ * `.rs` がここで散文側に落ちるのは意図である——`.rs` は #925 から全行を走査しており、
+ * その母集団を同じ変更で動かさない（検査対象を変更しながら検査を検証しない・#489）。
+ */
+export function refScanLines(text, file, findings) {
+  return commentFamilyOf(file) === null ? linesOutsideFences(text, file, findings) : linesOfComments(text, file);
+}
+
 /**
  * 見出しで節を切り出す共有の口。**「見出しで」節を切る検査はここを通る**——節を母集団にする検査は
  * ほかにもあり、そちらは通らない（`G-clippy-disallowed` は TOML の `[dependencies]` 節を、
@@ -399,11 +474,10 @@ export function headingRefDocs(snapshot) {
  * 現に `#[cfg(test)]` の内側にあった（`snotra-settings/src/tabs/visual.rs`）。`productionOnly` 相当を
  * 「G-stale-identifiers との対称性の完成」として後から入れてはならない（その非対称は意図である）。
  *
- * **`.mjs` / `.ps1` は入れない**（#925 の裁定）。実測した finding 9 件の内訳は、6 件が
- * `governance-check.test.mjs` のフィクスチャ（赤経路を測るため意図的に実在しない名前を持つ）、
- * 残り 3 件が**本ファイル自身のコメント**（正準形の例示 1・`…` で切り詰めた表記 1・本物の腐り 1）。
- * 入れれば検出器の説明が検出器を赤にする（`docs/adr/` を全検査の走査元から外したのと同クラスの理由）。
- * **腐り 1 件は #925 で直した**——母集団に入れなくても、直せるものは直す。
+ * **`.mjs` / `.ps1` はここではなく `headingRefCommentDocs` が持つ**（#1138）。#925 はこれらを
+ * 却下したが、その裁定の実測は `.mjs` だけを見ており、`.ps1` / `.psm1` には本物の腐りが残っていた。
+ * 却下の理由（フィクスチャと検出器自身のコメントが赤になる）は、走査をコメント行へ限る
+ * 意味の写像で解ける——詳細は `headingRefCommentDocs` と `linesOfComments`。
  *
  * **md の腕が持つ除外接頭辞を共有しない。** `docs/adr/` の除外は「ADR **本文**は決定日時点の世界の
  * 記述として凍結する」という散文についての契約であり（`ADR-adr-frozen-history`）、`docs/superpowers/`
@@ -415,6 +489,29 @@ export function headingRefDocs(snapshot) {
  */
 export function headingRefSourceDocs(snapshot) {
   return snapshot.files.filter((f) => f.endsWith(".rs"));
+}
+
+/**
+ * 同じ走査元の **スクリプトの腕**（コメント記法を持つ全ファイル。走査は `linesOfComments` が
+ * コメント行へ限る）。#1137 で `/implement` の見出しを改名したとき、`.md` の壊れた参照は
+ * 名指しされたが `scripts/race-boundaries.mjs` の 1 件は名指しされなかった——見つけたのは
+ * 委譲したレビュアであって機構ではない（#1138）。
+ *
+ * **拡張子を並べた列ではなく `commentFamilyOf` を母集団の述語にする。** 「どのファイルを見るか」と
+ * 「その中のどの行を見るか」が同じ 1 つの写像から出るので、片方だけ足して他方を忘れる形が作れない。
+ *
+ * **規範はすでにここへ配送されている。** `.claude/rules/governance-docs.md` の frontmatter は
+ * `scripts/*.mjs` / `scripts/*.ps1` / `scripts/lib/**` を含む——正準形で書けと言いながら検めていない
+ * 状態だった（`.rs` の非対称はこの逆で、検めるが規範を配送しない）。
+ *
+ * **腕を 3 本目として分ける理由は 2 本目と同じである**——`runAll` の 0 件検知が母集団ごとに
+ * 1 本ずつ要る（和にすると `.md` の長さが他の腕の消滅を埋めて永久に沈黙する）。
+ *
+ * **受容する残余**: `.json` はコメント記法を持たないので入らない。文字列リテラルの中に書かれた
+ * 参照（hook の案内文が文書の見出しを引く形など）も見ない。PR 本文と凍結層も従来どおり視界の外である。
+ */
+export function headingRefCommentDocs(snapshot) {
+  return snapshot.files.filter((f) => commentFamilyOf(f) !== null);
 }
 
 /** 語彙源ではなく検査対象になる、`.claude/**` の外の**固定パス**文書

@@ -103,7 +103,8 @@ export function assembleEvidence(ev) {
   return (
     `検査 ${ev.checkCount} 件 / 対象文書 ${ev.docs.length} 件 / rules ${ev.rules} 件 / skills ${ev.skills} 件` +
     ` / 恒久規範 常時ロード ${ev.areaAlways} 字・rules ${ev.areaRules} 字` +
-    ` / 見出し参照 ${ev.headingRefs} 件を md ${ev.refDocs.length} 件 + .rs ${ev.refSourceDocs.length} 件から照合` +
+    ` / 見出し参照 ${ev.headingRefs} 件を md ${ev.refDocs.length} 件 + .rs ${ev.refSourceDocs.length} 件` +
+    ` + スクリプトのコメント ${ev.refCommentDocs.length} 件から照合` +
     ` / workspace member ${ev.workspaceMembers} 件の lints opt-in / clippy 禁止 ${ev.clippyDisallowed} 件` +
     ` / 散文の識別子 ${ev.stale} 件を ${ev.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ev.nearRefs} 件` +
     ` / ADR ${ev.adrFiles} 本の名前 / ADR の短縮引用 ${ev.adrCitations} 件`

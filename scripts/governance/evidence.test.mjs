@@ -15,6 +15,7 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     headingRefs: 219,
     refDocs: ["a.md"],
     refSourceDocs: ["a.rs"],
+    refCommentDocs: ["a.mjs"],
     workspaceMembers: 4,
     clippyDisallowed: 8,
     stale: 377,

@@ -451,7 +451,7 @@ Expected: FAIL — `duplicateDomains is not a function`
 export function duplicateDomains(domains) {
   const byKey = new Map();
   for (const d of domains.values()) {
-    const key = [...d.members].sort().join(" ");
+    const key = JSON.stringify([...d.members].sort());
     byKey.set(key, [...(byKey.get(key) ?? []), d.name]);
   }
   return [...byKey.values()].filter((names) => names.length > 1).map((names) => names.sort());

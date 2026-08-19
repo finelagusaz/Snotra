@@ -12,14 +12,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeSnapshot, buildChecks, governanceDocs } from "./governance-check.mjs";
+import { DOMAIN_SPECS } from "./governance/domains.mjs";
 
-/** 構造母集団の 4 列。すべて sorted——`readdirSync` の順序は ext4 で不定であり、
+/** 構造母集団の列。すべて sorted——`readdirSync` の順序は ext4 で不定であり、
  *  揃えないと CI と手元で差分に化ける。
  *
  *  `checks` は `buildChecks` が積む検査 ID のみを見る——`G-area-instrument` は合否を持たない
  *  計器で `buildChecks` を経由せず `runAll` へ直接 push されるため、この列には現れない
  *  （その push 行を消しても manifest は沈黙する。歯止めは `governance-check.test.mjs` の
- *  カナリアテストの側にある）。 */
+ *  カナリアテストの側にある）。
+ *
+ *  `domains` は `DOMAIN_SPECS` の**名前の集合**である（I3）。これが無いと、ドメインを 1 つ
+ *  丸ごと消しても `G-domain-anchors` は残ったドメインだけを見て緑を返し、`domains.test.mjs` の
+ *  `domains.size === DOMAIN_SPECS.length` も両辺が同時に減るので沈黙する——「錨が 0 本は赤、
+ *  ドメインごと消えるのは緑」という非対称になっていた。**件数ではなく名前の集合**にするのは、
+ *  件数だと入れ替えが沈黙するのと、ドメインの増減以外では動かない値にするためである
+ *  （設計が件数の列を却下したのはこの前者の理由による）。他の列と違い snapshot を読まない
+ *  ——ドメインの一覧はファイル走査ではなくソースの宣言から出る。 */
 export function manifest(snapshot) {
   const files = (re) => snapshot.files.filter((f) => re.test(f)).sort();
   return {
@@ -29,16 +38,19 @@ export function manifest(snapshot) {
     docs: [...governanceDocs(snapshot)].sort(),
     rules: files(/^\.claude\/rules\/[^/]+\.md$/),
     skills: files(/^\.claude\/skills\/[^/]+\/SKILL\.md$/),
+    domains: DOMAIN_SPECS.map((s) => s.name).sort(),
   };
 }
 
-const KEYS = ["checks", "docs", "rules", "skills"];
+/** 列の一覧の SSOT。テストもここを読む——列を足したとき「非空」「sorted」の検算から
+ *  漏れる（＝新しい列だけが無検査になる）形を構造的に消すため。 */
+export const KEYS = ["checks", "docs", "rules", "skills", "domains"];
 
 /** `+<name>` / `-<name>` の列。
  *
- *  4 列は構造的に重なる——`governanceDocs` の定義そのものが `.claude/rules/` 配下の md と
+ *  ファイル名の列は構造的に重なる——`governanceDocs` の定義そのものが `.claude/rules/` 配下の md と
  *  `.claude/skills/` 配下の SKILL.md の glob を自分の腕として持つため（`governance-check.mjs`
- *  `governanceDocs` 実測）、`rules`/`skills` の要素は必ず `docs` にも現れる。それでも 4 列を
+ *  `governanceDocs` 実測）、`rules`/`skills` の要素は必ず `docs` にも現れる。それでも別の列を
  *  残すのは、`docs` が `governanceDocs()` の定義から出るのに対し `rules`/`skills` はファイル
  *  走査だけから独立に導出されるためで、この二重導出こそが母集団の裏取りになる——重なりは
  *  消すのではなく許容する。一方 diff は「名前の集合」であり、同じ名前が複数列から来ても

@@ -464,9 +464,32 @@ export function governanceDocs(snapshot) {
       ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "SPEC.md"].includes(f) ||
       (f.startsWith("docs/") && f.endsWith(".md") && !f.startsWith("docs/superpowers/") && !f.startsWith("docs/adr/")) ||
       /^(snotra-core|snotra-egui-runtime|src-tauri|snotra-settings)\/CLAUDE\.md$/.test(f) ||
-      /^\.claude\/rules\/[^/]+\.md$/.test(f) ||
+      RULE_FILE_RE.test(f) ||
       /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f),
   );
+}
+
+/** `.claude/rules/` 直下の md の形。**`governanceDocs` の腕と `G-rules-globs` の母集団が同じ集合を要る**ため
+ *  綴りを 1 か所に閉じる（`globToRegex` / `rulePathPatterns` を #1143 でここへ寄せたのと同じ理由）。
+ *
+ *  **`governance-manifest.mjs` の `rules` 列はここを読まない。** あちらが `governanceDocs` の定義とは
+ *  独立にファイル走査だけから導出しているのは意図であり、その二重導出こそが母集団の裏取りになる
+ *  （正本は同ファイル `diffManifest` の doc）。写しに見えるが畳んではならない側である。 */
+export const RULE_FILE_RE = /^\.claude\/rules\/[^/]+\.md$/;
+
+/** `ruleDocs` ドメインのメンバー。 */
+export function ruleDocs(snapshot) {
+  return snapshot.files.filter((f) => RULE_FILE_RE.test(f));
+}
+
+/** `crateSources` ドメインのメンバー——workspace member の `src/` 配下の `.rs`。
+ *  crate の一覧はルート `Cargo.toml`（`workspaceMembers`）が SSOT である。
+ *  **`G-module-index` はこれを使わない**——あちらの母集団は `MODULE_INDEX_CRATES` から出る
+ *  2 本目の導出である。今日は同じ集合を返すが、**同じ SSOT から導いてはならない**側である。
+ *  縛られている向きは `domains.test.mjs`「moduleIndexSources は crateSources の部分集合」が持つ。 */
+export function crateSourceFiles(snapshot) {
+  const { members } = workspaceMembers(snapshot);
+  return snapshot.files.filter((f) => f.endsWith(".rs") && members.some((m) => f.startsWith(`${m}/src/`)));
 }
 
 /**

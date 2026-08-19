@@ -22,8 +22,13 @@ import {
   staleIdentifierTargets,
   workspaceMembers,
   commentFamilyOf,
+  ruleDocs,
+  crateSourceFiles,
 } from "./lib.mjs";
 import { adrFiles } from "./checks/G-adr-file-names.mjs";
+import { judgingScripts } from "./checks/G-rules-script-coverage.mjs";
+import { skillFiles } from "./checks/G-skill-table.mjs";
+import { moduleIndexSources, MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
 
 /** そのディレクトリ**直下**に 1 件以上（前方一致にしない——配下が在れば真になり、
  *  中間層が消えても沈黙する。#1143 で実測した形）。 */
@@ -32,6 +37,12 @@ const hasDirectChild = (members, dir) => members.some((f) => f.slice(0, f.lastIn
 /** `CLAUDE.md` を持つ workspace member（#701 のカナリアと同じ導出。正本は `Cargo.toml`）。 */
 const cratesWithClaudeMd = (snapshot) =>
   workspaceMembers(snapshot).members.filter((c) => snapshot.read(`${c}/CLAUDE.md`) !== null);
+
+/** `.claude/skills/` 直下のディレクトリ名。**メンバーの導出（`SKILL.md` の glob）とは独立に、
+ *  走査結果のディレクトリ構造から取る**——同じ述語から導くと錨が母集団の写しになり、
+ *  述語を狭める変異に対して両辺が同時に動いて沈黙する。 */
+const skillDirs = (snapshot) =>
+  new Set(snapshot.files.filter((f) => f.startsWith(".claude/skills/")).map((f) => f.split("/")[2]));
 
 export const DOMAIN_SPECS = [
   {
@@ -117,6 +128,107 @@ export const DOMAIN_SPECS = [
     name: "adrFiles",
     members: adrFiles,
     anchors: [{ label: "docs/adr/ 直下", holds: (m) => hasDirectChild(m, "docs/adr") }],
+  },
+  {
+    name: "ruleDocs",
+    members: ruleDocs,
+    // 単一ディレクトリの母集団なので、構造が差し出す錨は「直下に居る」1 本だけである。
+    // それでも `|P| > 0` より強い——前方一致ではないので、rules が下位ディレクトリへ移された
+    // （＝harness の配送が届かなくなる）形で倒れる。この母集団の**中身**の下界は
+    // `G-rules-script-coverage` の `COVERAGE` が名指しで持つ（そちらが正本）。
+    anchors: [{ label: ".claude/rules/ 直下", holds: (m) => hasDirectChild(m, ".claude/rules") }],
+  },
+  {
+    name: "workspaceMemberDirs",
+    members: (s) => workspaceMembers(s).members,
+    // 錨は両向きに置く。宣言 → 実在（メンバーに Cargo.toml が在る）だけでは、メンバーが
+    // 宣言から**落ちた**形が沈黙する——残ったメンバーについては every が成立し続けるためである。
+    anchors: [
+      {
+        label: "全メンバーのディレクトリに Cargo.toml が実在する",
+        holds: (m, s) => m.length > 0 && m.every((d) => s.read(`${d}/Cargo.toml`) !== null),
+      },
+      {
+        label: "Cargo.toml を持つ直下ディレクトリがすべてメンバーに居る",
+        holds: (m, s) => {
+          const dirs = s.files.filter((f) => /^[^/]+\/Cargo\.toml$/.test(f)).map((f) => f.split("/")[0]);
+          return dirs.length > 0 && dirs.every((d) => m.includes(d));
+        },
+      },
+    ],
+  },
+  {
+    name: "crateSources",
+    members: crateSourceFiles,
+    // crate ごとが腕である。`<crate>/src/` **直下**で見る——前方一致だと、直下が消えても配下の
+    // モジュールディレクトリが同じ接頭辞に当たって沈黙する（#1143 の実形）。
+    anchors: [
+      {
+        label: "全 workspace member の src/ 直下に .rs が居る",
+        holds: (m, s) => {
+          const crates = workspaceMembers(s).members;
+          return crates.length > 0 && crates.every((c) => m.some((f) => f.slice(0, f.lastIndexOf("/")) === `${c}/src`));
+        },
+      },
+    ],
+  },
+  {
+    // **`crateSources` と同じ集合を返すが、畳んではならない。** crate の一覧の出所が違う
+    // （こちらは `MODULE_INDEX_CRATES`、あちらはルート `Cargo.toml`）。この 2 本目の導出は意図である。
+    // **食い違いを全部捕まえる検知器は無い**——`excludeTest` を 1 行足すと両者は食い違い、
+    // `governance:check` も `npm test` も緑のままである（2026-08-20 実測）。縛られている向きは
+    // `MODULE_INDEX_CRATES` の doc（`G-module-index.mjs`）が名指す。
+    // `instrument.mjs` の `duplicateDomains` が「同一メンバー」として
+    // 報告するのは想定どおりで、**合否は持たない**——判断は人に残す（`ADR-retire-area-budget` と同じ向き）。
+    name: "moduleIndexSources",
+    members: moduleIndexSources,
+    anchors: [
+      {
+        label: "MODULE_INDEX_CRATES の全 crate の src/ 直下に索引対象が居る",
+        holds: (m) => {
+          const crates = Object.values(MODULE_INDEX_CRATES);
+          return crates.length > 0 && crates.every((cfg) => m.some((f) => f.slice(0, f.lastIndexOf("/") + 1) === cfg.src));
+        },
+      },
+    ],
+  },
+  {
+    name: "skillDocs",
+    members: skillFiles,
+    // 錨は他の SSOT（走査結果のディレクトリ構造）から導く——`governanceDocs` の
+    // 「`CLAUDE.md` を持つ workspace member のすべて」と同じ形である。
+    // **受け入れるトレードオフ**: `.claude/skills/` 直下へ skill でないディレクトリを置くと、
+    // 正当な変更でも赤くなる。そのときは錨の側を直す（起きたら loud で、沈黙はしない向き）。
+    anchors: [
+      {
+        label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ",
+        holds: (m, s) => {
+          const dirs = [...skillDirs(s)];
+          return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
+        },
+      },
+    ],
+  },
+  {
+    name: "judgingScripts",
+    members: judgingScripts,
+    // #1143 の当の母集団。腕（ディレクトリ）ごとに 1 本ずつ置く——束ねた長さは他の腕の消滅を隠し、
+    // 前方一致は中間層の消滅を隠す（`scripts/governance/` 直下が消えても配下の `checks/` が
+    // 同じ接頭辞に当たって沈黙した・実測）。**`G-rules-script-coverage.test.mjs` の実ツリー canary と
+    // 同じ下界を、テストではなく `governance:check` の実行時に見る層である。**
+    //
+    // **`.githooks/` は錨にしない**——母集団へ 1 件しか出さないため、そのファイルの移設だけで
+    // 赤くなる「単一ファイルの錨」に化ける（#1143 の canary が通った道）。ここは宣言する死角である。
+    anchors: [
+      { label: "scripts/ 直下", holds: (m) => hasDirectChild(m, "scripts") },
+      { label: "scripts/governance/ 直下", holds: (m) => hasDirectChild(m, "scripts/governance") },
+      { label: "scripts/governance/checks/ 直下", holds: (m) => hasDirectChild(m, "scripts/governance/checks") },
+      { label: "scripts/lib/ 直下", holds: (m) => hasDirectChild(m, "scripts/lib") },
+      { label: ".claude/hooks/ 直下", holds: (m) => hasDirectChild(m, ".claude/hooks") },
+      // 拡張子の腕。`SCRIPT_EXT` を `.mjs` へ狭める変異は、実ツリーが全件被覆である限り
+      // 検査の判定を変えないので、母集団の側で捕まえるほかない。
+      { label: "ps 族（.ps1/.psm1）の腕", holds: (m) => m.some((f) => /\.(ps1|psm1)$/i.test(f)) },
+    ],
   },
 ];
 

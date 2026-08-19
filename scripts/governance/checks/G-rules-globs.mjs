@@ -1,10 +1,10 @@
 //! G-rules-globs — .claude/rules/*.md の paths glob が実在ファイルに 1 件以上マッチするかの照合。
 //! **逆向き（実在ファイルが glob に覆われているか）は `G-rules-script-coverage` が見る**——
 //! こちらが緑でも向こうは赤くなりうる（#1143: facade 1 本に当たる glob は、部分木ごと外れても 0 件にならない）。
-import { finding, globToRegex, rulePathPatterns } from "../lib.mjs";
+import { finding, globToRegex, rulePathPatterns, ruleDocs } from "../lib.mjs";
 
 export const id = "G-rules-globs";
-export const domains = "unmigrated";
+export const domains = ["ruleDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {
@@ -18,7 +18,7 @@ export function run(snapshot, ctx) {
 // ---------------------------------------------------------------------------
 export function checkRulesGlobs(snapshot) {
   const findings = [];
-  const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f));
+  const rules = ruleDocs(snapshot);
   if (rules.length === 0) return [finding(".claude/rules", 1, "rules ファイルが 0 件（G-rules-globs 母集団の欠落）")];
   for (const rule of rules) {
     const text = snapshot.read(rule) ?? "";

@@ -1,22 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { makeSnapshot } from "./governance-check.mjs";
-import { manifest, diffManifest, undeclared } from "./governance-manifest.mjs";
+import { manifest, diffManifest, undeclared, KEYS } from "./governance-manifest.mjs";
 
 describe("manifest（構造母集団の集合）", () => {
-  it("実リポジトリで 4 列すべてが非空", () => {
+  // 列の一覧は `KEYS` を読む——ここへ列名を書き写すと、列を足したときにその列だけが
+  // 検算から漏れる（新しい列が無検査で入る形。I3 の `domains` 追加で実際に踏みかけた）。
+  it("実リポジトリで全列が非空", () => {
     const m = manifest(makeSnapshot(process.cwd()));
-    for (const key of ["checks", "docs", "rules", "skills"]) {
+    for (const key of KEYS) {
       expect(m[key].length, `${key} が空（母集団の欠落）`).toBeGreaterThan(0);
     }
   });
   it("各列は sorted（readdir 順の揺れが差分に化けない）", () => {
     const m = manifest(makeSnapshot(process.cwd()));
-    for (const key of ["checks", "docs", "rules", "skills"]) {
+    for (const key of KEYS) {
       expect(m[key], `${key} が sorted でない`).toEqual([...m[key]].sort());
     }
   });
   it("検査 ID を含む", () => {
     expect(manifest(makeSnapshot(process.cwd())).checks).toContain("G-references");
+  });
+  // `DOMAIN_SPECS` と突き合わせない——manifest がそこから導出している以上、突き合わせは
+  // 不動点になり「両辺が同時に減る」当の欠陥を再現する。独立に書いたドメイン名で接地する。
+  it("ドメイン名を含む（I3 — ドメインの一覧が manifest の列である）", () => {
+    expect(manifest(makeSnapshot(process.cwd())).domains).toContain("governanceDocs");
   });
 });
 
@@ -42,6 +49,15 @@ describe("diffManifest（件数ではなく集合を比べる）", () => {
     };
     const overlapHead = { checks: [], docs: [], rules: [], skills: [] };
     expect(diffManifest(overlapBase, overlapHead)).toEqual(["-.claude/rules/foo.md"]);
+  });
+  // I3 の当の欠陥——ドメインが 1 つ丸ごと消える。**消費者を持つドメインは `registry.mjs` が
+  // ロード時に throw する**（検査の `domains` 宣言が未知の名前になるため）が、**消費者の無い
+  // ドメインはどの層も見なかった**——実測（2026-08-20）: `headingRefDocs` を `DOMAIN_SPECS` から
+  // 消すと `governance:check` も `npm test` も緑のままで、この列だけが `-headingRefDocs` を出した。
+  it("ドメインが 1 つ消えると delta に出る（I3）", () => {
+    const b = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs", "adrFiles"] };
+    const h = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs"] };
+    expect(diffManifest(b, h)).toEqual(["-adrFiles"]);
   });
 });
 

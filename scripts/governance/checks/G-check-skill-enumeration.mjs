@@ -1,8 +1,9 @@
 //! G-check-skill-enumeration — `/implement`「3a. 委譲の前に」の列挙 ↔ `AGENTS.md`「条件別チェック」表（#778）。
 import { finding, sectionOf } from "../lib.mjs";
+import { skillFiles } from "./G-skill-table.mjs";
 
 export const id = "G-check-skill-enumeration";
-export const domains = "unmigrated";
+export const domains = ["skillDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {
@@ -65,10 +66,27 @@ export function checkCheckSkillEnumeration(snapshot) {
       findings.push(finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` が 3a の列挙に在るが AGENTS.md の表に無い（起動条件を持たない検査）`));
     }
   }
-  // 列挙されたスキルが実在するか（誤記の検出）
+  // 列挙されたスキルが実在するか（誤記の検出）。**照合先は `skillDocs` ドメインである**
+  // ——`snapshot.files` 全体に問うと、母集団が走査側で消えたときに「誤記が 6 件」という
+  // 原因から遠い形で赤くなる。ドメインを見ていれば、同じ走査の欠落を錨が名指しで鳴らす。
+  //
+  // **ただし「ドメインに無い」を「実在しない」と言ってはならない。** 母集団の述語が狭まった場合、
+  // ファイルは在るのにドメインから落ちる——そこで「実在しない」と断言すると、検査が偽の主張を出す
+  // （レビューが変異注入で実測）。2 つの状態は区別できるので、区別したまま報告する。
+  // **前者の枝は今日のフィクスチャからは到達できない**——`skillFiles` の述語が
+  // `.claude/skills/<name>/SKILL.md` そのものであり、かつ `CHECK_SKILL_REF` は `/` を含む名前を
+  // 生まないので、組み上がる `p` は必ずその述語に当たる。ファイルが在れば必ず母集団にも居る。
+  // 到達するのは述語が狭まったときだけであり、この枝はその日のためにある（宣言する死角）。
+  const skills = new Set(skillFiles(snapshot));
+  const files = new Set(snapshot.files);
   for (const s of new Set([...inTable, ...in3a])) {
     const p = `.claude/skills/${s.slice(1)}/SKILL.md`;
-    if (!snapshot.files.includes(p)) findings.push(finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` に対応する ${p} が実在しない`));
+    if (skills.has(p)) continue;
+    findings.push(
+      files.has(p)
+        ? finding(p, 1, `G-check-skill-enumeration: \`${s}\` の ${p} は在るが skillDocs の母集団に無い（走査か述語が狭まっている）`)
+        : finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` に対応する ${p} が実在しない`),
+    );
   }
   return findings;
 }

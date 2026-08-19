@@ -2,7 +2,7 @@
 import { finding, sectionOf } from "../lib.mjs";
 
 export const id = "G-module-index";
-export const domains = "unmigrated";
+export const domains = ["moduleIndexSources"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {
@@ -21,17 +21,32 @@ export function run(snapshot, ctx) {
  *  その `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されず `governance:check` は緑を
  *  返す（2026-08-09 実測: member を 1 つ増やし、その索引へ実在しない `.rs` を書いても緑・#1008）。
  *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。
- *  **ただし写しのずれ自体は本ファイルの外で固定されている**——`governance-check.test.mjs` の
+ *  **写しのずれのうち固定されているのは一部である**——`governance-check.test.mjs` の
  *  母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ member が本表と
- *  `governanceDocs()` の**両方**に載ることを `npm test` で強制する。**残る穴は `CLAUDE.md` を
- *  持たない crate だけで、そのとき照合すべき索引もまだ無い**（`skip-ci` ラベルの付いた PR では
- *  そのカナリアも走らない）。 */
+ *  `governanceDocs()` の**両方**に載ることを `npm test` で強制し、`domains.test.mjs` が本表由来の
+ *  母集団が member の `src/` の外へ出ないことを見る。**それで全部ではない**——`CLAUDE.md` を
+ *  持たない crate（そのとき照合すべき索引もまだ無い）に加えて、`exts` / `excludeTest` による縮小は
+ *  **錨も部分集合テストも #701 のカナリアも赤にしない**（2026-08-20 実測: `exts` を狭めて 30 件を
+ *  落としても 3 つとも緑）。`skip-ci` ラベルの付いた PR ではカナリアも走らない。 */
 export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
   "src-tauri": { src: "src-tauri/src/", exts: /\.rs$/ },
   "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
 };
+
+/** `moduleIndexSources` ドメインのメンバー——索引が覆うべき production ファイル。
+ *  **crate の一覧は `MODULE_INDEX_CRATES` から出る**（ルート `Cargo.toml` からではない）。
+ *  この 2 本目の導出は意図である。**食い違いを全部捕まえる検知器は無い**——縛られている向きは
+ *  上の `MODULE_INDEX_CRATES` の doc が名指す（そこが正本）。`crateSources` と畳んではならない。 */
+export function moduleIndexSources(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
+  return snapshot.files.filter((f) =>
+    crates.some((c) => {
+      const cfg = MODULE_INDEX_CRATES[c];
+      return f.startsWith(cfg.src) && cfg.exts.test(f) && !(cfg.excludeTest && cfg.excludeTest.test(f));
+    }),
+  );
+}
 
 export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
   const findings = [];
@@ -69,9 +84,7 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
       }
     }
     // 逆方向: production ファイルの basename が CLAUDE.md 本文に出現
-    const production = snapshot.files.filter(
-      (f) => f.startsWith(cfg.src) && cfg.exts.test(f) && !(cfg.excludeTest && cfg.excludeTest.test(f)),
-    );
+    const production = moduleIndexSources(snapshot, [crate]);
     for (const f of production) {
       const base = f.split("/").pop();
       if (!text.includes(`\`${base}\``) && !text.includes(`/${base}\``)) {

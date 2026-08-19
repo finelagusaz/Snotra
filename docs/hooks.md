@@ -56,7 +56,7 @@
 | `.claude/lsp/snotra-rust-lsp/.lsp.json` | `hook-selftest` | `.claude/lsp/**` 全体。Claude Code の RA インスタンスへ渡す設定で、**設定が届かない・上書きされる壊れ方は沈黙する**（下節） |
 | `rust-analyzer.toml` | `hook-selftest` | basename でアンカーするので crate 直下も拾う。同じカナリアの被検査対象（ratoml はクライアント設定より優先される） |
 | `.githooks/pre-commit` | `githooks-selftest` | `.githooks/**` 全体 |
-| `docs/hooks.md` | （なし） | 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等）は**何も走らない**——沈黙は「合格」ではない |
+| `docs/hooks.md` | （なし） | 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等）は**検査が 1 つも走らない**——沈黙は「合格」ではない。`.md` には検査でない reminder が在るが（下記）、id を持たないのでこの列は空のままである |
 
 **照合の外に残るものが 2 つある**（足の名指しと、なぜそこで止めたかは `docs/adr/ADR-hook-fires-table-check.md`）: 実在しないファイル（4 crate 外の `.rs`・`config.toml`）は代表パスにできないので補足列の散文だけが記述する。補足列そのものの意味整合も機構は見ない。
 
@@ -97,6 +97,19 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
   - 実測の形: worktree 側の `.lsp.json` のサーバ名だけを変えて起動したところ、登録されたのは**メインツリー側の名前**だった。宣言パスは両方に存在しており、**パスの不在は条件ではない**。
   - 一方、`.claude/lsp/` を持たない古い枝から作った worktree は**公式 plugin へ素直に落ちる**（project 設定がツリーごとに読まれるため）。LSP サーバはどのツリーでも常にちょうど 1 つで、二重に付くことはない。
 - `.claude/settings.local.json`（gitignore 済み。実在検査は ignore 対象を免除するので参照してよい・#1088）は project より**優先順位が高い**ため、そこへ `enabledPlugins` を書けば plugin を無効化できる。カナリアは `.claude/settings.json` しか読まず、`selectChecks` もそのファイルに検査を割り当てていない。**リポジトリからは守れない**（現在そのキーは書かれていない）。
+
+## 検査ではない reminder（発火一覧に現れない）
+
+`selectChecks` が返す検査 id とは別に、`main()` が `warnings` へ直接積む reminder が在る。**exit code を動かさず、id を持たないので上の表にも現れない**（表の母集団照合は `checks.push("<id>")` の呼び出しだけを見る）。
+
+| 発火条件 | 出るもの |
+|---|---|
+| `.rs` を **Write** した | モジュール索引の更新 reminder（#629/#630） |
+| `.md` を編集し、**依存を持つ節の本文が変わった** | その節に依存する参照の一覧（#1140。判定は `scripts/governance/dependents.mjs` を subprocess で呼ぶ） |
+
+**この reminder の不在は「依存が無い」を意味しない。** 純追記（行が足されただけ）では出ず、判定スクリプトが無いツリーでも出ない。**鳴ったときにだけ意味がある**——沈黙は検査のときと同じく「何も走らなかった」側である。
+
+**判定を hook へ静的 import してはならない。** import 文は `try { main() } catch` の**外**で走るため、解決に失敗すると JSON エンベロープを出さずにプロセスごと落ちる——この hook は全 `Edit|Write` で発火するので、`.rs` の fmt / clippy / test まで含めて**全編集が沈黙する**。相対 import が下記の非対称（スクリプトの所在は `${CLAUDE_PROJECT_DIR}` 基準）に巻き込まれる問題も同時に避けられるので、subprocess で呼ぶ。
 
 ## PostToolUse（post-edit.mjs）の機構と保守
 

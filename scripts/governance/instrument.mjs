@@ -102,6 +102,24 @@ export function checkNormativeAreaInstrument(snapshot) {
   return findings;
 }
 
+// ---------------------------------------------------------------------------
+// duplicateDomains — 同一メンバーのドメインを報告する計器（合否を持たない）。
+// このリポジトリの「重複に見える」対はすべて意図的で、畳むと片方向が沈黙する実測記録を持つ
+// （G-heading-refs↔G-near-heading-refs / G-module-index↔G-module-linkage /
+//  G-adr-citations↔G-adr-file-names / G-rules-globs↔G-rules-script-coverage）。
+// ゆえに gate にせず、報告だけを行い判断は人に残す（`ADR-retire-area-budget` と同じ向き）。
+// ---------------------------------------------------------------------------
+
+/** 同一メンバーのドメインの組を返す。**合否を持たない**——判断は人に残す。 */
+export function duplicateDomains(domains) {
+  const byKey = new Map();
+  for (const d of domains.values()) {
+    const key = JSON.stringify([...d.members].sort());
+    byKey.set(key, [...(byKey.get(key) ?? []), d.name]);
+  }
+  return [...byKey.values()].filter((names) => names.length > 1).map((names) => names.sort());
+}
+
 /** evidence 用の実測（検査と同じ母集団・同じ数え方であることを型で担保するための共有関数） */
 export function normativeArea(snapshot) {
   const always =

@@ -2,6 +2,7 @@
 import { finding, linesOutsideFences } from "../lib.mjs";
 
 export const id = "G-stale-identifiers";
+export const domains = ["staleIdentifierTargets"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（staleTargets・record を使う） */
 export function run(snapshot, ctx) {

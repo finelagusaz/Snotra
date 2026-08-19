@@ -2,6 +2,7 @@
 import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor, HEADING_REF, isRefTargetSpelling } from "../lib.mjs";
 
 export const id = "G-heading-refs";
+export const domains = ["allHeadingRefDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（allRefDocs・record を使う） */
 export function run(snapshot, ctx) {

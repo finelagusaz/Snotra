@@ -22,6 +22,8 @@
 // - 検査の登録は `scripts/governance/checks/` の走査から導出される（`registry.mjs`）——ファイルを
 //   置けばそのまま検査になり、忘れうる登録行が無い。ファイル名と export した `id` の食い違いは
 //   `registry.mjs` が throw で拒む（#1088 が問うた「検査が沈黙で 1 本落ちる」構造の解消）
+// - 各検査は `domains`（`DOMAIN_SPECS` の名前を要素に持つ非空配列か `"*"`、または `"unmigrated"`）を
+//   宣言必須——空配列・未知の名前も `registry.mjs` が起動時点で throw で拒む
 // - `checks/` の外に置いたものは検査ではない——`governance/instrument.mjs`（合否を持たない計器）も
 //   `governance/evidence.mjs`（evidence の組み立てと、その入力の読み取りガード・#1098）も
 //   登録走査の対象外であり、「検査 N 件」に数えられない。**findings を出すかどうかとは別の軸である**
@@ -64,8 +66,9 @@ import {
   staleIdentifierTargets,
   workspaceMembers,
 } from "./governance/lib.mjs";
-import { checkNormativeAreaInstrument, normativeArea } from "./governance/instrument.mjs";
+import { checkNormativeAreaInstrument, normativeArea, duplicateDomains } from "./governance/instrument.mjs";
 import { assembleEvidence, evidenceView } from "./governance/evidence.mjs";
+import { buildDomains } from "./governance/domains.mjs";
 
 // `lib.mjs` の 2 名を、facade 経由で読む消費者のために再輸出する（`buildChecks` / `runAll` は
 // 下で `export function` として定義するのでここに要らない）。**`export *` にしない**——公開する
@@ -117,11 +120,13 @@ export function buildChecks(snapshot, sink = {}) {
   sink.staleDocs = staleDocs;
   sink.staleGuides = staleGuides;
   sink.staleTargets = staleTargets;
+  const domains = buildDomains(snapshot);
+  sink.domains = domains;
   const record = (key, r) => {
     sink[key] = r.checked;
     return r.findings;
   };
-  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record };
+  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record, domains };
   return CHECK_MODULES.map((m) => ({ id: m.id, run: () => m.run(snapshot, ctx) }));
 }
 
@@ -147,8 +152,19 @@ export function runAll(snapshot) {
   // （空母集団の明示 fail と同じ役割・検査配列の外に置く理由がこれである）。
   findings.push(...checkNormativeAreaInstrument(snapshot));
   const area = normativeArea(snapshot);
+  // duplicateDomains も合否を持たない計器——findings へは積まない。同一メンバーのドメインが
+  // 在れば報告するだけで、畳むかどうかの判断は人に残す（`scripts/governance/instrument.mjs` の
+  // duplicateDomains 冒頭コメントが正本）。**印字はここでは行わない**——`runAll` はテストからも
+  // 直接呼ばれるため（`lib.test.mjs` / `governance-check.test.mjs`）、副作用は `isMain` の
+  // CLI エントリポイントへ寄せる（この場に置いた版は `--reporter=verbose` で 8 件のテストへ
+  // 混入することが実測で判明した・レビュー修正ラウンド 1）。
+  const dupDomains = duplicateDomains(ctx.domains);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
+  // 各検査は `domains` を宣言必須（registry.mjs の `checkModulesFrom` が起動時点で強制する）。
+  // ここでは未移行（`"unmigrated"`）の残数を数え、evidence の 1 項目としてラチェットに使う——
+  // 移行が進むたびこの数が減り、後退（増加）は evidence の目視で気づける。
+  const unmigrated = CHECK_MODULES.filter((m) => m.domains === "unmigrated");
   // evidence の入力は view 越しに読む（#1098）。検査が `ctx.record` を呼ばなくなると
   // 値が `undefined` のまま印字され、誰も赤くしないまま exit 0 になっていた（実測）。
   // view を外す形も、別の Proxy へ差し替える形も、`assembleEvidence` が参照の照合で throw して拒む。
@@ -170,23 +186,28 @@ export function runAll(snapshot) {
         workspaceMembers: workspaceMembers(snapshot).members.length,
         clippyDisallowed: clippyDisallowedCount(snapshot),
         adrFiles: adrFiles(snapshot).length,
+        unmigrated: unmigrated.length,
       },
       findings,
     ),
   );
-  return { findings, evidence };
+  return { findings, evidence, dupDomains };
 }
 
 // fileURLToPath を使う — URL.pathname は空白等を percent-encode するため resolve と一致せず、
 // 「検査ゼロ件のまま exit 0」という沈黙経路になる（レビュー H1 で実測）
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const { findings, evidence } = runAll(makeSnapshot(process.cwd()));
+  const { findings, evidence, dupDomains } = runAll(makeSnapshot(process.cwd()));
   if (findings.length > 0) {
     console.error(`governance:check — ${findings.length} 件の不整合:`);
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
     process.exitCode = 1;
   } else {
     console.log(`governance:check — 全検査 passed（${evidence}）`);
+  }
+  // duplicateDomains は合否を持たない計器——findings にも exit code にも触れない、報告専用の 1 行。
+  if (dupDomains.length > 0) {
+    console.log(`governance:check — 同一メンバーのドメイン: ${dupDomains.map((names) => names.join("=")).join(", ")}`);
   }
 }

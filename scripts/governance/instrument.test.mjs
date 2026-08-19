@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { snap } from "./test-helpers.mjs";
-import { checkNormativeAreaInstrument, normativeArea, ALWAYS_LOADED_FILES } from "./instrument.mjs";
+import { checkNormativeAreaInstrument, normativeArea, ALWAYS_LOADED_FILES, duplicateDomains } from "./instrument.mjs";
 
 describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない計器・母集団だけを判定・ADR-retire-area-budget）", () => {
   const x = (n) => "x".repeat(n);
@@ -85,5 +85,21 @@ describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない
 
   it("ALWAYS_LOADED_FILES はルート直下の 2 文書", () => {
     expect(ALWAYS_LOADED_FILES).toEqual(["CLAUDE.md", "AGENTS.md"]);
+  });
+});
+
+describe("duplicateDomains（合否を持たない計器・同一メンバーのドメインを報告するだけ）", () => {
+  it("同一メンバーのドメインの組を返す（順序に依らない）", () => {
+    const d = new Map([
+      ["a", { name: "a", members: ["x", "y"], anchors: [] }],
+      ["b", { name: "b", members: ["y", "x"], anchors: [] }],
+      ["c", { name: "c", members: ["z"], anchors: [] }],
+    ]);
+    expect(duplicateDomains(d)).toEqual([["a", "b"]]);
+  });
+
+  it("重複が無ければ空", () => {
+    const d = new Map([["a", { name: "a", members: ["x"], anchors: [] }]]);
+    expect(duplicateDomains(d)).toEqual([]);
   });
 });

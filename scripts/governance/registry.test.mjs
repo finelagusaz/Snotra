@@ -101,6 +101,48 @@ describe("domains の中身の検証（I1 — 空配列・綴り違いはラチ�
   });
 });
 
+// I4 — 未移行マーカーのラチェット。`"unmigrated"` は Phase 4 で API から消えるまでの逃げ道であり、
+// **減る方向にしか動かない**。evidence は残数を印字するだけで、増えても何も落ちない
+// （Phase 1 の全体レビューが実測した欠落）。ここで現在の id を凍結し、実際の未移行集合と
+// **一致**することを検める。一致（片側の包含ではなく）にするのは 2 方向の理由がある。
+//   - 増える向き: 新しい検査が `"unmigrated"` を選ぶ／移行済みが逆流する → 凍結に無い id が出て赤
+//   - 減る向き: 移行が進んだら**同じコミットで刈る**ことを強制する。刈らずに残すと、移行済みの
+//     検査が後から `"unmigrated"` へ戻る後退が凍結集合の内側に収まって沈黙する
+// **射程の限界**: この列自身を書き換えれば通る。機構が保証するのは「その 1 行が diff に現れる」
+// ことであって、レビュアが見落とさないことではない。
+//
+// 内訳（設計 §1.2 の分類）: 自前で `snapshot.files` を filter する 10 本が Phase 2 の移行対象。
+// 固定パスだけを読む 3 本（`G-architecture-table` / `G-ci-table` / `G-hook-commands`）は Phase 3
+// であり、**完了判定を書き換えるまで着手しない**（literal な members は錨が空虚になる）。
+const FROZEN_UNMIGRATED = [
+  "G-architecture-table", // Phase 3（固定パス）
+  "G-build-commands",
+  "G-check-skill-enumeration",
+  "G-ci-table", // Phase 3（固定パス）
+  "G-clippy-disallowed",
+  "G-hook-commands", // Phase 3（固定パス）
+  "G-hook-fires",
+  "G-module-index",
+  "G-module-linkage",
+  "G-rules-globs",
+  "G-rules-script-coverage",
+  "G-skill-table",
+  "G-workspace-lints",
+];
+
+describe("未移行マーカーのラチェット（I4）", () => {
+  it("未移行の検査は凍結した集合と一致する", () => {
+    const actual = CHECK_MODULES.filter((m) => m.domains === "unmigrated")
+      .map((m) => m.id)
+      .sort();
+    const frozen = [...FROZEN_UNMIGRATED].sort();
+    const added = actual.filter((id) => !frozen.includes(id));
+    const migrated = frozen.filter((id) => !actual.includes(id));
+    expect(added, `未移行が増えた: ${added.join(", ")}（新しい検査はドメインを宣言する）`).toEqual([]);
+    expect(migrated, `移行済み: ${migrated.join(", ")} — FROZEN_UNMIGRATED から同じコミットで消す`).toEqual([]);
+  });
+});
+
 describe("走査が母集団である — ファイルの増減がそのまま検査の増減になる（#1088）", () => {
   it("使い捨てディレクトリからファイルを 1 本消すと、その id が registry から消える", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "gov-registry-"));

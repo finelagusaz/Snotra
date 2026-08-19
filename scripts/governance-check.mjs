@@ -152,6 +152,10 @@ export function runAll(snapshot) {
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
+  // 各検査は `domains` を宣言必須（registry.mjs の `checkModulesFrom` が起動時点で強制する）。
+  // ここでは未移行（`"unmigrated"`）の残数を数え、evidence の 1 項目としてラチェットに使う——
+  // 移行が進むたびこの数が減り、後退（増加）は evidence の目視で気づける。
+  const unmigrated = CHECK_MODULES.filter((m) => m.domains === "unmigrated").map((m) => m.id);
   // evidence の入力は view 越しに読む（#1098）。検査が `ctx.record` を呼ばなくなると
   // 値が `undefined` のまま印字され、誰も赤くしないまま exit 0 になっていた（実測）。
   // view を外す形も、別の Proxy へ差し替える形も、`assembleEvidence` が参照の照合で throw して拒む。
@@ -173,6 +177,7 @@ export function runAll(snapshot) {
         workspaceMembers: workspaceMembers(snapshot).members.length,
         clippyDisallowed: clippyDisallowedCount(snapshot),
         adrFiles: adrFiles(snapshot).length,
+        unmigrated: unmigrated.length,
       },
       findings,
     ),

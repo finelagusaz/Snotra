@@ -27,6 +27,9 @@ export async function checkModulesFrom(dir) {
     if (typeof m.id !== "string") throw new Error(`検査モジュールが id を export していない: ${f}`);
     if (typeof m.run !== "function") throw new Error(`検査モジュールが run を export していない: ${f}`);
     if (m.id !== path.basename(f, ".mjs")) throw new Error(`ファイル名と id が食い違う: ${f}（id=${m.id}）`);
+    if (!Array.isArray(m.domains) && m.domains !== "unmigrated") {
+      throw new Error(`検査モジュールが domains を宣言していない（ドメイン名の配列か "unmigrated"）: ${f}`);
+    }
     mods.push(m);
   }
   return mods;

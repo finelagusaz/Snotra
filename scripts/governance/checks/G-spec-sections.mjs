@@ -2,6 +2,7 @@
 import { finding, linesOutsideFences } from "../lib.mjs";
 
 export const id = "G-spec-sections";
+export const domains = ["governanceDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs を使う） */
 export function run(snapshot, ctx) {

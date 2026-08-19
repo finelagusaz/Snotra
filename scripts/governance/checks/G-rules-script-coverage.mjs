@@ -32,6 +32,7 @@
 import { finding, globToRegex, rulePathPatterns } from "../lib.mjs";
 
 export const id = "G-rules-script-coverage";
+export const domains = "unmigrated";
 
 /** 判定を持つスクリプトの拡張子。`commentFamilyOf` と違い**配送の母集団**を決めるので別概念である。 */
 const SCRIPT_EXT = /\.(mjs|ps1|psm1)$/;

@@ -3,6 +3,7 @@ import path from "node:path";
 import { finding, linesOutsideFences } from "../lib.mjs";
 
 export const id = "G-references";
+export const domains = ["governanceDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs・gitIgnoredPaths を使う） */
 export function run(snapshot, ctx) {

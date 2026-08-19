@@ -20,8 +20,8 @@
 
 | 検査 | 母集団 | ドメイン | 状態 |
 |---|---|---|---|
-| `G-rules-globs` | `.claude/rules/*.md` | — | 未 |
-| `G-rules-script-coverage` | `.claude/rules/*.md` | — | 未 |
+| `G-rules-globs` | `.claude/rules/*.md` | `ruleDocs` | 済 |
+| `G-rules-script-coverage` | 判定を持つスクリプト | `ruleDocs` / `judgingScripts` | 済 |
 | `G-skill-table` | `.claude/skills/*/SKILL.md` | — | 未 |
 | `G-check-skill-enumeration` | 同上（実在の照合） | — | 未 |
 | `G-module-index` | crate 配下の production `.rs` | — | 未 |
@@ -37,7 +37,7 @@
 
 - [x] I3 — manifest へ `domains` 列（名前の集合）を足す
 - [x] I4 — 未移行 id を凍結し、実際の集合との一致を検めるテストを置く
-- [ ] `.claude/rules/*.md` のクラスタを移行する（2 本目の使用が確定している唯一の組）
+- [x] `.claude/rules/` のクラスタを移行する（`ruleDocs` 8 件 / `judgingScripts` 96 件・移送前後で集合同一）
 - [ ] 残りのクラスタを移行する（集合の比較が決める。着手のたびに上の表と本項目を更新する）
 - [ ] 未移行が固定パスの 3 本だけになったことを `governance:check` の evidence で確かめる
 

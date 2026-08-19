@@ -22,8 +22,10 @@ import {
   staleIdentifierTargets,
   workspaceMembers,
   commentFamilyOf,
+  ruleDocs,
 } from "./lib.mjs";
 import { adrFiles } from "./checks/G-adr-file-names.mjs";
+import { judgingScripts } from "./checks/G-rules-script-coverage.mjs";
 
 /** そのディレクトリ**直下**に 1 件以上（前方一致にしない——配下が在れば真になり、
  *  中間層が消えても沈黙する。#1143 で実測した形）。 */
@@ -117,6 +119,36 @@ export const DOMAIN_SPECS = [
     name: "adrFiles",
     members: adrFiles,
     anchors: [{ label: "docs/adr/ 直下", holds: (m) => hasDirectChild(m, "docs/adr") }],
+  },
+  {
+    name: "ruleDocs",
+    members: ruleDocs,
+    // 単一ディレクトリの母集団なので、構造が差し出す錨は「直下に居る」1 本だけである。
+    // それでも `|P| > 0` より強い——前方一致ではないので、rules が下位ディレクトリへ移された
+    // （＝harness の配送が届かなくなる）形で倒れる。この母集団の**中身**の下界は
+    // `G-rules-script-coverage` の `COVERAGE` が名指しで持つ（そちらが正本）。
+    anchors: [{ label: ".claude/rules/ 直下", holds: (m) => hasDirectChild(m, ".claude/rules") }],
+  },
+  {
+    name: "judgingScripts",
+    members: judgingScripts,
+    // #1143 の当の母集団。腕（ディレクトリ）ごとに 1 本ずつ置く——束ねた長さは他の腕の消滅を隠し、
+    // 前方一致は中間層の消滅を隠す（`scripts/governance/` 直下が消えても配下の `checks/` が
+    // 同じ接頭辞に当たって沈黙した・実測）。**`G-rules-script-coverage.test.mjs` の実ツリー canary と
+    // 同じ下界を、テストではなく `governance:check` の実行時に見る層である。**
+    //
+    // **`.githooks/` は錨にしない**——母集団へ 1 件しか出さないため、そのファイルの移設だけで
+    // 赤くなる「単一ファイルの錨」に化ける（#1143 の canary が通った道）。ここは宣言する死角である。
+    anchors: [
+      { label: "scripts/ 直下", holds: (m) => hasDirectChild(m, "scripts") },
+      { label: "scripts/governance/ 直下", holds: (m) => hasDirectChild(m, "scripts/governance") },
+      { label: "scripts/governance/checks/ 直下", holds: (m) => hasDirectChild(m, "scripts/governance/checks") },
+      { label: "scripts/lib/ 直下", holds: (m) => hasDirectChild(m, "scripts/lib") },
+      { label: ".claude/hooks/ 直下", holds: (m) => hasDirectChild(m, ".claude/hooks") },
+      // 拡張子の腕。`SCRIPT_EXT` を `.mjs` へ狭める変異は、実ツリーが全件被覆である限り
+      // 検査の判定を変えないので、母集団の側で捕まえるほかない。
+      { label: "ps 族（.ps1/.psm1）の腕", holds: (m) => m.some((f) => /\.(ps1|psm1)$/i.test(f)) },
+    ],
   },
 ];
 

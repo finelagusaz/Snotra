@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { snap } from "../test-helpers.mjs";
 import { makeSnapshot } from "../lib.mjs";
-import { checkRulesScriptCoverage, COVERAGE } from "./G-rules-script-coverage.mjs";
+import { checkRulesScriptCoverage, COVERAGE, judgingScripts } from "./G-rules-script-coverage.mjs";
 
 /** 実物と同じ 2 本の rule を持つ fixture を組む。`paths` の中身だけを差し替える。 */
 const rules = (safetyNetsPaths, governanceDocsPaths) => ({
@@ -70,9 +70,10 @@ describe("G-rules-script-coverage checkRulesScriptCoverage", () => {
   // `githooks.test.mjs` 1 件しか出さないため、**そのテストを移すだけでこの検査が赤くなり**、
   // しかもメッセージが `WALK_EXCLUDE_PATHS` を指して原因から目を逸らさせた。検知器は必要な分だけ縛る。
   it("canary: 実ツリーの母集団が走査側で縮んでいない（WALK_EXCLUDE_PATHS の狭窄を捕まえる）", () => {
-    const files = makeSnapshot(fileURLToPath(new URL("../../../", import.meta.url))).files;
+    const snapshot = makeSnapshot(fileURLToPath(new URL("../../../", import.meta.url)));
+    const members = judgingScripts(snapshot);
     const [safetyNets, governanceDocs] = COVERAGE;
-    const pop = files.filter(safetyNets.inPopulation);
+    const pop = members.filter(safetyNets.narrow);
     // **前方一致ではなく「そのディレクトリ直下」で見る。** 前方一致だと、`scripts/governance/` 直下の 13 件
     // （`registry.mjs` を含む——#1143 の発端そのもの）が走査から消えても、配下の `checks/` が同じ接頭辞に
     // 当たるので沈黙する（実測: その層を落として exit 0 / 9 passed）。
@@ -84,9 +85,19 @@ describe("G-rules-script-coverage checkRulesScriptCoverage", () => {
       ).toBe(true);
     }
     expect(
-      files.filter(governanceDocs.inPopulation).some((f) => dirOf(f) === "scripts/governance/checks"),
+      members.filter(governanceDocs.narrow).some((f) => dirOf(f) === "scripts/governance/checks"),
       "governance-docs 側の母集団から scripts/governance/checks/ 直下が消えている",
     ).toBe(true);
+  });
+
+  // `narrow` は `judgingScripts` のメンバーに当たる述語であって、`snapshot.files` 全体に当たる
+  // 述語ではない——両者は「拡張子の判定を誰がするか」で挙動が分かれる。ここを取り違えると
+  // safety-nets 側の `() => true` が全ファイルを母集団に化けさせる（改名で呼び出し側は落ちるが、
+  // **新しく書く呼び出し側**には落ちる契機が無い）。
+  it("narrow は拡張子で絞らない（絞るのは judgingScripts の側である）", () => {
+    const s = snap(rules(["scripts/**"], ["scripts/**"]), ["scripts/run-codex.sh", "scripts/x.mjs"]);
+    expect(judgingScripts(s)).toEqual(["scripts/x.mjs"]);
+    expect(s.files.filter(COVERAGE[0].narrow)).toContain("scripts/run-codex.sh");
   });
 
   // --- 下界の canary（被覆形の述語は母集団が縮む側で沈黙する） -----------------

@@ -124,8 +124,6 @@ const FROZEN_UNMIGRATED = [
   "G-hook-fires",
   "G-module-index",
   "G-module-linkage",
-  "G-rules-globs",
-  "G-rules-script-coverage",
   "G-skill-table",
   "G-workspace-lints",
 ];

@@ -59,6 +59,30 @@ describe("buildDomains", () => {
     }
   });
 
+  // #1143 の当の母集団。腕ごとに「その腕だけを引いた集合」で錨が倒れることを実ツリーで測る
+  // ——`holds([], snapshot)` の合成 [] は、腕を足し忘れても黙って通る。
+  it("judgingScripts は腕ごとの絞り込みで対応する錨が倒れる", () => {
+    const snapshot = makeSnapshot(ROOT);
+    const spec = DOMAIN_SPECS.find((s) => s.name === "judgingScripts");
+    const full = spec.members(snapshot);
+    const dirOf = (f) => f.slice(0, f.lastIndexOf("/"));
+    const arms = [
+      ["scripts/ 直下", (f) => dirOf(f) === "scripts"],
+      ["scripts/governance/ 直下", (f) => dirOf(f) === "scripts/governance"],
+      ["scripts/governance/checks/ 直下", (f) => dirOf(f) === "scripts/governance/checks"],
+      ["scripts/lib/ 直下", (f) => dirOf(f) === "scripts/lib"],
+      [".claude/hooks/ 直下", (f) => dirOf(f) === ".claude/hooks"],
+      ["ps 族（.ps1/.psm1）の腕", (f) => /\.(ps1|psm1)$/i.test(f)],
+    ];
+    for (const [label, pred] of arms) {
+      const narrowed = full.filter((f) => !pred(f));
+      expect(narrowed.length, `腕 ${label} が実ツリーで空——絞り込みが何も引いていない`).toBeLessThan(full.length);
+      const anchor = spec.anchors.find((a) => a.label === label);
+      expect(anchor, `錨 ${label} が見つからない`).toBeDefined();
+      expect(anchor.holds(narrowed, snapshot), `腕 ${label} を除いても錨が成立している＝沈黙する`).toBe(false);
+    }
+  });
+
   it("headingRefCommentDocs は ps 族（.ps1/.psm1/.psd1）の腕が消えると対応する錨が倒れる", () => {
     const snapshot = makeSnapshot(ROOT);
     const spec = DOMAIN_SPECS.find((s) => s.name === "headingRefCommentDocs");

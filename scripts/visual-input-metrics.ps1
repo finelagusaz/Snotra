@@ -59,7 +59,7 @@ Write-Host "対象: $exe"
 $outDir = Join-Path $repoRoot 'target/visual-input-metrics'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-# **非既定色を使う**（`docs/build-commands.md`「`[visual]` の色を変える変更は非既定色で目視する」）。
+# **非既定色を使う**（`docs/build-commands.md`「`[visual]` の色を変える変更は、**非既定色で**目視する」）。
 # 塗りを宣言色で探すため、背景と入力欄の塗りが明確に違う組を選ぶ。
 $backgroundColor = '#1E2430'
 $inputBackgroundColor = '#3A2A55'

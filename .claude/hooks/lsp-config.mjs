@@ -9,7 +9,8 @@
  * 「Claude Code の RA インスタンスと hook の分担」が正本。
  *
  * **判定を非 test の `.mjs` に置くのは 2 つの理由による。** (1) 稼働中の `.claude/settings.json` へ
- * 変異を当てずに複製へ当てられる（`.claude/rules/safety-nets.md`「複製に変異を当てる」）。
+ * 変異を当てずに複製へ当てられる
+ * （`.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」）。
  * (2) `G-stale-identifiers` の語彙源になる——`VOCAB_SOURCE_EXT` に `.json` は入らず
  * `VOCAB_TEST_FILE` が `*.test.mjs` を外すため、設定キー名を test にだけ書くと、
  * 文書へ同じ名前を書いた瞬間に `governance:check` が赤くなる（`scripts/governance-check.mjs`）。

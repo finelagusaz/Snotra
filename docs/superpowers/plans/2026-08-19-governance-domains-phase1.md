@@ -520,10 +520,12 @@ Expected: FAIL — `Cannot read properties of undefined (reading 'members')`
 ```js
   {
     name: "adrFiles",
-    members: (s) => s.files.filter((f) => /^docs\/adr\/[^/]+\.md$/.test(f)),
+    members: adrFiles,
     anchors: [{ label: "docs/adr/ 直下", holds: (m) => hasDirectChild(m, "docs/adr") }],
   },
 ```
+
+（この `members: adrFiles` は Step 4 の帰結を先取りして書いてある。実際に `adrFiles` を import して渡す形は下の「依存の向きに注意する」で導く——この時点ではまだ import していないので、コードを逐語で動かすなら Step 4 の下の指示まで読んでから書くこと。）
 
 **依存の向きに注意する。** `adrFiles` は facade（`governance-check.mjs:52`）が evidence のために**静的 import している**——`ADR-facade-evidence-static-imports` が「ファイルが消えれば import が失敗して鳴る」性質として意図的に残したものであり、**壊してはならない**。
 

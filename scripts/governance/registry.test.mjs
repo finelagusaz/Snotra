@@ -63,6 +63,44 @@ describe("domains の宣言要求（Task 3）", () => {
   });
 });
 
+describe("domains の中身の検証（I1 — 空配列・綴り違いはラチェットを無償で減らす）", () => {
+  const withOne = async (body, fn) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "checks-i1-"));
+    try {
+      writeFileSync(path.join(dir, "G-x.mjs"), body);
+      return await fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  it("domains = [] （空配列）は throw する", async () => {
+    await withOne('export const id = "G-x";\nexport const domains = [];\nexport function run() { return []; }\n', async (dir) => {
+      await expect(checkModulesFrom(dir)).rejects.toThrow(/G-x\.mjs/);
+    });
+  });
+  it("DOMAIN_SPECS に無い名前（綴り違い）は throw する", async () => {
+    await withOne(
+      'export const id = "G-x";\nexport const domains = ["governanceDocsTYPO"];\nexport function run() { return []; }\n',
+      async (dir) => {
+        await expect(checkModulesFrom(dir)).rejects.toThrow(/G-x\.mjs/);
+      },
+    );
+  });
+  it('["*"]（メタ検査と同じ形）は登録される', async () => {
+    await withOne('export const id = "G-x";\nexport const domains = ["*"];\nexport function run() { return []; }\n', async (dir) => {
+      expect((await checkModulesFrom(dir)).map((m) => m.id)).toEqual(["G-x"]);
+    });
+  });
+  it("実在するドメイン名の配列は登録される", async () => {
+    await withOne(
+      'export const id = "G-x";\nexport const domains = ["governanceDocs", "adrFiles"];\nexport function run() { return []; }\n',
+      async (dir) => {
+        expect((await checkModulesFrom(dir)).map((m) => m.id)).toEqual(["G-x"]);
+      },
+    );
+  });
+});
+
 describe("走査が母集団である — ファイルの増減がそのまま検査の増減になる（#1088）", () => {
   it("使い捨てディレクトリからファイルを 1 本消すと、その id が registry から消える", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "gov-registry-"));

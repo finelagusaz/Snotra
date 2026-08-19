@@ -4,6 +4,9 @@
 //! 単一ファイルを錨にすると、そのファイルの移設だけで赤くなり、メッセージが原因から目を逸らさせる
 //! （#1143 で実測）。件数を錨にすると、文書が 1 枚増えるたびに赤くなり、無視されるゲートに化ける
 //! （`ADR-retire-area-budget` が面積 ratchet について通った道と同じ）。
+//! **例外**: `governanceDocs` の第 1 錨はルート `AGENTS.md` / `CLAUDE.md` の 2 ファイルを名指す
+//! ——これは構造的な定点（`instrument.mjs` の `ALWAYS_LOADED_FILES` が同じ固定名を持つ常時ロード面）
+//! を指しているため、移設ではなく「その定点が動いた」ことそのものを言い当てる。
 //!
 //! **`|P| > 0` では足りない**——#1143 のとき母集団は空ではなく、facade が 1 件マッチし続けたために
 //! 「マッチ 0 件」を見る検査が緑のままだった。錨は「空でないこと」ではなく
@@ -18,6 +21,7 @@ import {
   staleIdentifierGuideDocs,
   staleIdentifierTargets,
   workspaceMembers,
+  commentFamilyOf,
 } from "./lib.mjs";
 import { adrFiles } from "./checks/G-adr-file-names.mjs";
 
@@ -42,6 +46,11 @@ export const DOMAIN_SPECS = [
           return crates.length > 0 && crates.every((c) => m.includes(`${c}/CLAUDE.md`));
         },
       },
+      // 5 腕のうち残り 3 本——足さないと docs/・.claude/rules/・.claude/skills/ が丸ごと消えても
+      // 上の 2 錨（固定名・crate CLAUDE.md）は無傷のまま緑になる（#1143 と同じ形。レビューで実測）。
+      { label: "docs/ の腕", holds: (m) => m.some((f) => f.startsWith("docs/")) },
+      { label: ".claude/rules/ の腕", holds: (m) => m.some((f) => f.startsWith(".claude/rules/")) },
+      { label: ".claude/skills/ の腕", holds: (m) => m.some((f) => f.startsWith(".claude/skills/")) },
     ],
   },
   {
@@ -67,6 +76,10 @@ export const DOMAIN_SPECS = [
       { label: "scripts/governance/checks/ 直下", holds: (m) => hasDirectChild(m, "scripts/governance/checks") },
       { label: "scripts/governance/ 直下", holds: (m) => hasDirectChild(m, "scripts/governance") },
       { label: ".claude/hooks/ 直下", holds: (m) => hasDirectChild(m, ".claude/hooks") },
+      // 上の 3 本は .mjs だけを見ている——ps 族（.ps1/.psm1/.psd1）の腕が丸ごと消えても
+      // どれも鳴らない（I2 と同じクラス。レビューで実測）。族の述語は `commentFamilyOf` を使う
+      // ——拡張子を列挙し直すと `headingRefCommentDocs` 自身の母集団の述語からずれる。
+      { label: "ps 族（.ps1/.psm1/.psd1）の腕", holds: (m) => m.some((f) => commentFamilyOf(f) === "ps") },
     ],
   },
   {

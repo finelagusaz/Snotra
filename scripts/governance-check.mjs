@@ -22,6 +22,8 @@
 // - 検査の登録は `scripts/governance/checks/` の走査から導出される（`registry.mjs`）——ファイルを
 //   置けばそのまま検査になり、忘れうる登録行が無い。ファイル名と export した `id` の食い違いは
 //   `registry.mjs` が throw で拒む（#1088 が問うた「検査が沈黙で 1 本落ちる」構造の解消）
+// - 各検査は `domains`（`DOMAIN_SPECS` の名前を要素に持つ非空配列か `"*"`、または `"unmigrated"`）を
+//   宣言必須——空配列・未知の名前も `registry.mjs` が起動時点で throw で拒む
 // - `checks/` の外に置いたものは検査ではない——`governance/instrument.mjs`（合否を持たない計器）も
 //   `governance/evidence.mjs`（evidence の組み立てと、その入力の読み取りガード・#1098）も
 //   登録走査の対象外であり、「検査 N 件」に数えられない。**findings を出すかどうかとは別の軸である**
@@ -162,7 +164,7 @@ export function runAll(snapshot) {
   // 各検査は `domains` を宣言必須（registry.mjs の `checkModulesFrom` が起動時点で強制する）。
   // ここでは未移行（`"unmigrated"`）の残数を数え、evidence の 1 項目としてラチェットに使う——
   // 移行が進むたびこの数が減り、後退（増加）は evidence の目視で気づける。
-  const unmigrated = CHECK_MODULES.filter((m) => m.domains === "unmigrated").map((m) => m.id);
+  const unmigrated = CHECK_MODULES.filter((m) => m.domains === "unmigrated");
   // evidence の入力は view 越しに読む（#1098）。検査が `ctx.record` を呼ばなくなると
   // 値が `undefined` のまま印字され、誰も赤くしないまま exit 0 になっていた（実測）。
   // view を外す形も、別の Proxy へ差し替える形も、`assembleEvidence` が参照の照合で throw して拒む。

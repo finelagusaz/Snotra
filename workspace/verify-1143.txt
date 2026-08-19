@@ -1,292 +1,195 @@
 ================================================================================
-#1143 ラウンド 3 — 逆向きの監査 / canary への懐疑 / ⚠️-4 判断の検算
+#1143 ラウンド 4 — Medium 2 件の修正差分の確認（範囲限定）
 ================================================================================
 
-アンカー: **528e6c6e0c7f438c0050452c3d4a8fb52be1627a**（実測・作業終了時に再測定）
-  528e6c6e fix(governance): 走査側の狭窄を縛る canary を足し、2 つの道を書き分ける (#1143)
-  8dd4a311 fix(governance): 被覆検査の母集団の下界を縛り、死角の宣言を補う (#1143)
+アンカー: **81b81b175f416eb5f2ba5ade6ab4a61a209fdb32**（実測・作業終了時に再測定）
+  81b81b17 fix(governance): canary の射程を scripts/ 部分木へ絞り、中間層の消滅を捕まえる (#1143)
+  対象差分: 528e6c6e..81b81b17
 
-必須の 2 コマンド（新アンカーで各 1 回）:
-  `npm test`                 exit **0** / Test Files 35 passed / Tests **829 passed (829)**
+Q4（必須の 2 コマンド・新アンカーで各 1 回）:
+  `npm test`                 exit **0** / Test Files 35 passed (35) / Tests **829 passed (829)**
   `npm run governance:check` exit **0** / 全検査 passed（検査 20 件）
 
-【出力先】ラウンド 1・2 と同じく、worktree 隔離により指定先への直接 Write は harness が拒否する。
-  worktree 側へ書き Copy-Item で `C:\workspace\Snotra\workspace\verify-1143.txt` へ複製している。
+作業ツリー: `git status --porcelain` = 空（本レポート書き出し前）。
+  変更対象 `G-rules-script-coverage.test.mjs` は `git show HEAD:` と SHA-256 一致。
+  **稼働中のファイルは一度も変更していない**——変異はすべて scratchpad のミラー上。
 
-【測定手法の変更】新 canary は `new URL("../../../", import.meta.url)` で**自分の位置から**リポジトリ根を
-  導くため、`.claude/rules/safety-nets.md` が定める「複製に変異を当てる」を素直に適用できない
-  ——scratchpad へコピーすると `../../../` が scratchpad を指し、変異と無関係に赤くなる。
-  そこで **repo のミラー**（`scripts/governance` `scripts/lib` `.claude/hooks` `.githooks` を
-  scratchpad 配下へ同じ相対位置で複製）を組み、そこで変異させた。ミラーの baseline が
-  実ツリーと同じ **9 passed** になることを先に確認してから各変異を当てている。
-  稼働中のファイルは**一度も変更していない**（`git status --porcelain` = 空）。
+【出力先】前 3 巡と同じく worktree 隔離のため指定先への直接 Write は harness が拒否する。
+  worktree 側へ書き Copy-Item で `C:\workspace\Snotra\workspace\verify-1143.txt` へ複製。
 
 ================================================================================
-1. 逆向きの監査（8dd4a311..528e6c6e）— 消した・弱めた不変条件は何か
+0. 逆向きの監査（528e6c6e..81b81b17）
 ================================================================================
 
-**結論: 弱めた不変条件は無い。判定側の変更は 1 行（`const` → `export const`）だけである。**
+  scripts/ 配下の変更は **1 ファイルのみ**（`G-rules-script-coverage.test.mjs`）。
 
-コメント行を落として（稼働中の `linesOfComments` を使用）**行の多重集合**で比較した:
+  **検査本体 `G-rules-script-coverage.mjs`: 全文一致（1 バイトも変わっていない）**
+  **共有基盤 `lib.mjs`: 全文一致**
+  ⇒ 判定ロジックは今回まったく触られていない。差分は canary の本体のみ。
 
-  scripts/governance/checks/G-rules-script-coverage.mjs
-    コメント除去後 sha: 4a247ed01e8119fd → 4c327af674c75dbe
-    減った 1 種 / 増えた 1 種
-      - const COVERAGE = [
-      + export const COVERAGE = [
-    ⇒ **判定ロジックの変更はゼロ**。`COVERAGE` の中身・`checkRulesScriptCoverage` の本体は不変。
+  コメント除去後の行の多重集合（減った 4 種 / 増えた 8 種）——消えた 4 行はすべて
+  旧 canary の 4 脚・前方一致の実装で、同じ役割の新実装に置き換わっている:
+    - for (const prefix of ["scripts/governance/checks/", "scripts/lib/", ".claude/hooks/", ".githooks/"]) {
+    - expect(pop.some((f) => f.startsWith(prefix)), ...)
+    - files.filter(governanceDocs.inPopulation).some((f) => f.startsWith("scripts/governance/checks/")),
+    - "governance-docs 側の母集団から scripts/governance/checks/ が消えている",
+    + const dirOf = (f) => f.slice(0, f.lastIndexOf("/"));
+    + for (const dir of ["scripts/governance/checks", "scripts/governance", "scripts/lib"]) {
+    + pop.some((f) => dirOf(f) === dir),  ほか
+  ⇒ **テストは 1 本も削られていない**（9 本のまま）。既存 8 本は無傷。
 
-  scripts/governance/checks/G-rules-script-coverage.test.mjs
-    減った 1 種 / 増えた 15 種
-      - import { checkRulesScriptCoverage } from "./G-rules-script-coverage.mjs";
-      + import { checkRulesScriptCoverage, COVERAGE } from "./G-rules-script-coverage.mjs";
-      + （ほか 14 行はすべて新 canary `it(...)` の中身と 2 つの import）
-    ⇒ **消えたのは import 文 1 行のみで、それは同じ行の拡張版に置き換わっている。
-      既存テストは 1 本も削られていない。**
-
---- `COVERAGE` を export したことの評価 -------------------------- **指摘 0 件**
-
-  問われた「外部から書き換えられる・意図しない依存が生まれる余地」を実測で確かめた。
-
-  - **消費者は 1 つだけ**: `COVERAGE` を import しているのは
-    `G-rules-script-coverage.test.mjs:5` のみ（リポジトリ全体を grep して確認）。
-    `lib.mjs:563-564` が確立した規範「**公開面は実際の消費者と一致させる**」に
-    **適合している**（消費者 0 で export するのが違反であって、消費者 1 で export するのは適合）。
-  - **先例が在る**: `G-clippy-disallowed.mjs:53` の `REQUIRED_DISALLOWED_METHODS` が
-    **同じ形**（検査ファイルから const 配列を export し、テストが読む）で既に存在する。
-    新種の公開面ではない。
-  - **書き換えの余地**: `const` 束縛だが配列・要素オブジェクトは可変で、理屈の上では
-    importer が `push` や `inPopulation` の差し替えを行える。ただし
-    (a) 消費者は読み取り専用の分割代入 1 か所、(b) 上の先例も同じ可変性を持つ、
-    (c) `Object.freeze` を足すのはこの 1 か所だけ様式が変わる。
-    **「やりすぎでは」に当たると判断し、指摘として挙げない。**
-
-  ⇒ この差分で**新たに生まれたリスクは無い**。
+--- 測定手法 ---
+  新 canary は位置依存（`../../../`）ゆえ単純な複製では測れない（ラウンド 3 と同じ）。
+  `scripts/governance` `scripts/lib` `.claude/hooks` `.githooks` を同じ相対位置へ複製した
+  **ミラー**を組み、baseline が実ツリーと同じ **9 passed** になることを確認してから変異を当てた。
+  各変異は当てた直後に原本へ戻し、内容一致を確認している。
 
 ================================================================================
-2. 新 canary そのものへの懐疑
+Q1. Medium-1 は解消したか — **解消（実測）**
 ================================================================================
 
---- 2a. 呼び出し側の実測値の独立再現 ------------------------------ **一致**
+  変異: `.githooks/githooks.test.mjs` を削除（＝別ディレクトリへの移設を模す）
+  結果: **exit 0 / Tests 9 passed (9)**
 
-  ミラー上で変異させ、自分で測った:
-    変異 A: `WALK_EXCLUDE_PATHS` へ `scripts/governance` を追加
-            → exit 1 / **1 failed | 8 passed**
-              × canary: 実ツリーの母集団が走査側で縮んでいない
-                AssertionError: scripts/governance/checks/ が母集団から消えている
-    変異 B: `SCRIPT_EXT` を `/\.(mjs)$/` へ狭窄
-            → exit 1 / **2 failed | 7 passed**
-              × 母集団の下界: .ps1 / .psm1 も対象である
-                 → scripts/lib/SnotraSmoke.psm1 が母集団から落ちている
-              × canary: 実ツリーの母集団が走査側で縮んでいない
-                 → scripts/lib/ が母集団から消えている
-  呼び出し側の申告（1 failed / 8 passed、2 failed / 7 passed）と**独立に一致**。
-  変異はいずれも当てた直後に原本へ戻し、内容一致を確認している。
+  ラウンド 3 では同じ変異が `1 failed | 8 passed`（AssertionError: `.githooks/ が母集団から
+  消えている`）だった。**もはや赤くならない。**
 
---- 2b. コメントの主張の検算 -------------------------------------- **正しい**
-
-  「`scripts/lib/` は `.psm1` / `.ps1` しか持たないので、この 1 本が `SCRIPT_EXT` の狭窄にも
-  同時に反応する」（test.mjs のコメント）を実測:
-    `scripts/lib/` = 10 件、拡張子は `.ps1` `.psm1` のみ、**`.mjs` は 0 件**。
-  ⇒ `SCRIPT_EXT` を `.mjs` へ狭めると `scripts/lib/` の母集団が 0 件になり canary が赤くなる。
-    **主張どおり**（変異 B の実測がこれを裏づけている）。
-
---- 2c. 空虚に緑になる経路はあるか ------------------------------- **無い（fail-red 側）**
-
-  `makeSnapshot` の根が誤って解決された場合を測った:
-    makeSnapshot(ROOT)      = 474 件（正常）
-    makeSnapshot(ROOT/..)   = 481 件 → prefix は相対なので全 4 本が miss して**赤**
-    makeSnapshot(ROOT/scripts) = 86 件 → `scripts/` 始まりが 0 件で**赤**
-  ⇒ 根の取り違えは**緑ではなく赤**に倒れる。空虚な緑の経路は見つからなかった。
-
---- 2d. 偽陽性で落ちる条件はあるか ------------------------------- **在る（Medium-1）**
-
-  実測: 4 prefix の母集団の厚み
-    scripts/governance/checks/   40 件（.mjs）
-    scripts/lib/                 10 件（.ps1 .psm1）
-    .claude/hooks/                6 件（.mjs）
-    .githooks/                  **1 件**（`.githooks/githooks.test.mjs` のみ。
-                                 他の 5 件は拡張子なしの hook 本体と `.sh` で母集団外）
-
-  `.githooks/` の脚は**たった 1 ファイル**に載っている。変異 E で実証:
-    `.githooks/githooks.test.mjs` を移動した体（削除）→ exit 1 / **1 failed | 8 passed**
-      × AssertionError: **.githooks/ が母集団から消えている**
-
-  ＝ 「githooks のテストを別ディレクトリへ移す」という、**rules paths の被覆とは何の関係も無い
-  正当なリファクタリング**が、この検査を赤にする。しかも失敗メッセージと
-  テスト名（「WALK_EXCLUDE_PATHS の狭窄を捕まえる」）は**走査の狭窄を疑わせる**ので、
-  診断が原因から外れた方向を指す。
-
---- 2e. 責務を越えて他所を縛っていないか ------------------------- **越えている（Medium-1 と同根）**
-
-  `.claude/hooks/` と `.githooks/` を prefix 一覧に入れたことで、この検査は
-  「**他サブシステムのファイル在庫**」について主張するようになった。
-  `MEMORY.md` の [detector-scope-only-as-tight-as-needed]（検知器は必要な分だけ縛る。
-  広く縛ると正当な変更まで赤にして無視される）に照らすと、**必要より広い**。
-  この canary の目的は「走査（`makeSnapshot`）が `scripts/` 部分木を落としていないこと」であり、
-  それは `scripts/governance/checks/` と `scripts/lib/` の 2 本で足りる
-  （実測: 変異 A は `scripts/governance/checks/` の行で、変異 B は `scripts/lib/` の行で捕まる。
-   `.claude/hooks/` と `.githooks/` の 2 行は**どちらの変異の検出にも寄与していない**）。
-
---- 2f. 空虚に緑のまま残る狭窄は在るか --------------------------- **在る（Medium-2）**
-
-  `some()` は「1 件以上」という**極めて弱い下界**であり、prefix 一覧には
-  `scripts/governance/checks/` と `scripts/lib/` の**間の階層が抜けている**
-  ——`scripts/governance/` 直下（13 件）である:
-    dependents.mjs / dependents.test.mjs / edit-findings.mjs / edit-findings.test.mjs /
-    evidence.mjs / evidence.test.mjs / instrument.mjs / instrument.test.mjs /
-    lib.mjs / lib.test.mjs / **registry.mjs** / registry.test.mjs / test-helpers.mjs
-
-  変異 D で実証——`inPopulation` を「`scripts/governance/` 直下の `.mjs` を除く」へ狭める
-  （両 rule に適用）:
-    → exit **0** / **9 passed**（**完全に沈黙**）
-    `governance:check` も緑のまま（実ツリーが全件被覆なので findings は 0 → 0）。
-
-  なぜこれが効くか: #1143 の発端の実測は
-  「`scripts/governance/registry.mjs` の Read では配送されず、対照の
-  `scripts/governance-check.mjs` では配送された」だった。変異 D が母集団から外すのは
-  **その `registry.mjs` を含む階層そのもの**である。この issue が守ろうとした当のファイルの
-  被覆要求を消しても、9 本のテストは 1 本も落ちない。
-
-  ⚠️ 弱める材料: 変異 D は「`scripts/governance/` 直下だけを狙って除く」という
-  **人為的な述語**であり、`//!` がどこかで勧めている編集ではない（変異 A は doc が勧めていた）。
-  ゆえに High-R2-1 より**踏まれにくい**。Medium に置いた理由がこれである。
+  併せて、脚を外したことで検出力が落ちていないことを確認した（後述 Q2 の回帰 2 件）。
+  ラウンド 3 で私が実測した「`.claude/hooks/` と `.githooks/` の 2 脚は変異 A・B の
+  どちらの検出にも寄与していない」が、除去後も検出力が変わらないことで**裏づけられた**。
 
 ================================================================================
-3. ⚠️-4 の判断（死角の宣言で足りる）の検算 — **判断は「まだ正当化されていない」**
+Q2. Medium-2 は解消したか — **解消（実測）**
 ================================================================================
 
-問われたのは「機構で塞ぐ案が本当に無いか、あるならその費用はどれくらいか」。
-**推測せず試作して測った。**
+  **罠の回避**: ご指摘のとおり、`scripts/governance/` 直下の層を「消す」形はミラーでは作れない
+  ——`lib.mjs` / `test-helpers.mjs` がその層に居り、テスト自身が import するためである
+  （ファイルを消せば import が解決できず、変異の検知と区別が付かない）。
+  また `WALK_EXCLUDE_PATHS` はディレクトリ単位の完全一致ゆえ、`scripts/governance` を足すと
+  **配下の `checks/` ごと**消えてしまい、中間層だけを孤立させられない。
 
---- 試作: 射程を rule 自身の `paths` から導出する ---
+  そこで**母集団の述語側**へ変異を当てた——`inPopulation` から
+  `/^scripts\/governance\/[^/]+\.mjs$/`（＝中間層 13 件）だけを除く。
+  ファイルは 1 つも消えないので import は解決でき、`checks/` と `scripts/lib/` は無傷のまま、
+  **中間層だけが母集団から落ちる**状態を作れる。これはラウンド 3 の変異 D と同一である。
 
-  `inPopulation` に `startsWith("scripts/")` を手で書く代わりに、
-  **その rule の paths が主張している部分木**を導出して母集団にする（約 10 行の
-  `pathPrefixes(patterns)`——各パターンの glob 記号が現れる手前までの literal な階層を取り、
-  glob を含まないファイル指定＝部分木を主張していないものは接頭辞を生まない）。
+  結果: **exit 1 / Tests 1 failed | 8 passed (9)**
+    × canary: 実ツリーの母集団が走査側で縮んでいない
+      AssertionError: **scripts/governance/ 直下が母集団から消えている**
 
---- 実測（4 シナリオ） ---
+  ラウンド 3 では**まったく同じ変異が exit 0 / 9 passed（完全な沈黙）**だった。
+  失敗メッセージが落ちた層を名指ししており、診断も正しい方向を指す。
 
-  (1) 現行ツリー — 偽陽性を出さないか
-      safety-nets    接頭辞 7 本 / 母集団 92 件 / 未被覆 **0 件**
-      governance-docs 接頭辞 [docs/adr/, scripts/] / 母集団 85 件 / 未被覆 **0 件**
-      ⇒ 今日の手書き `startsWith("scripts/")` と**同じ答え**を、手書きなしで出す。
-
-  (2) #1093 の再発形 — 検出力を保つか
-      safety-nets 未被覆 **53 件** / governance-docs 未被覆 **53 件**（合計 106）
-      ⇒ 現行実装と**同じ 106 件**。検出力は落ちない。
-
-  (3) governance-docs が `.claude/hooks/**` を得た — ⚠️-4 が心配した当のケース
-      governance-docs 接頭辞が [docs/adr/, scripts/, **.claude/hooks/**] へ**自動で伸び**、
-      母集団 85 → **91 件**、未被覆 0 件。
-      ⇒ **手作業（`inPopulation` から `startsWith("scripts/")` を外す）が構造的に消える。**
-
-  (4) `.claude/hooks/lsp-config.mjs` のように**単一ファイル**を paths に書いた場合
-      接頭辞を生まないので母集団に入らない（緑）。
-      ⇒ 試作の**方針判断**であって欠陥ではない（部分木を主張していない指定は部分木を要求しない）。
-        ただしここは設計上決めるべき点であり、採用するなら明文化が要る。
-
---- 判定 ---
-
-  **「死角の宣言で足りる」という判断を、私は支持しない。**
-  宣言で済ませる理由が「機構が無い / 高い」であれば、それは**実測で否定された**——
-  約 10 行で、偽陽性ゼロ・検出力同等・⚠️-4 の手作業を構造的に消す案が動く。
-
-  ただし**採否は設計判断であって、私が押し通すものではない**。採らない正当な理由は在りうる:
-  - **検査の意味が変わる**。今は「手で選んだ 2 つの母集団を覆え」、案は「主張した部分木を覆え」。
-    後者のほうが一般的だが、`COVERAGE` の doc が記録する #837 由来の意図
-    （「2 rules の配送対象の一致を `scripts/` 部分木について保つ」）は**明示的な紐帯としては失われる**
-    （実質は残る——governance-docs が `scripts/**` を落とせば接頭辞が消えて母集団 0 件になり、
-      既存の「母集団が 0 件」finding が赤にする）。
-  - 接頭辞の導出規則（上の (4)、`**` 単独、ルート直下のファイル名）に**方針を決める面が増える**。
-  - 当然ながら**新しいテストが要る**（変異 A/B/D と同じ 3 形は最低限）。
-
-  ⇒ 結論として書くべきは「機構が無いから宣言した」ではなく
-    「**機構は在るが、検査の意味を変える設計判断なので今回は採らない**」である。
-    前者は実測と食い違う。**判断そのものより、判断の理由づけを直すべき**というのが私の指摘である。
+--- 回帰（既存の検出力が保たれているか） ---
+  変異 A（`WALK_EXCLUDE_PATHS` へ `scripts/governance` を追加）
+    → exit 1 / **1 failed | 8 passed**
+      AssertionError: `scripts/governance/checks/ 直下が母集団から消えている`
+  変異 B（`SCRIPT_EXT` を `/\.(mjs)$/` へ狭窄）
+    → exit 1 / **2 failed | 7 passed**
+      × 母集団の下界: .ps1 / .psm1 も対象である
+      × canary: 実ツリーの母集団が走査側で縮んでいない
+  ⇒ 前 2 巡で確立した検出力は**そのまま保たれている**。
 
 ================================================================================
-所見の一覧（件数を作らない——下記がすべてである）
+Q3. この修正差分が新しく開けた穴は無いか — **無い（実測で決着）**
+================================================================================
+
+これはラウンド 3 で私が「未測定」と断った点である（⚠️-R3-1）。**今回測って決着させた。**
+
+--- 問い: 外した 2 脚は、今日**この検査だけ**が縛っていたものか ---
+
+  実ファイルには触れず、`snapshot.files` を絞った複製を **全 20 検査へ通した**
+  （`buildChecks` で検査ごとに findings を集計）。対照（無変異）は 0 検査発火。
+
+  シナリオ 1: `.claude/hooks/` が走査から消える（6 件除去）
+    発火した検査 **3 件**:
+      G-references        (9 件)  バッククォート参照のパスが実在しない: .claude/hooks/pre-bash.mjs
+      **G-rules-globs**   (1 件)  paths glob が実在ファイルに 1 件もマッチしない: .claude/hooks/**
+      G-stale-identifiers (22 件) 散文に、現行語彙に無い識別子が残っている: `judgeCommandShape` ほか
+
+  シナリオ 2: `.githooks/` が走査から消える（6 件除去）
+    発火した検査 **3 件**:
+      G-hook-fires        (1 件)  代表パスが実在しない（死んだ行は判定を通り続ける）: .githooks/pre-commit
+      G-references        (1 件)  バッククォート参照のパスが実在しない: .githooks/githooks.test.mjs
+      **G-rules-globs**   (1 件)  paths glob が実在ファイルに 1 件もマッチしない: .githooks/**
+
+  シナリオ 3: `.claude/hooks/` の `.mjs` だけ消える（6 件除去）  → 同じ 3 検査が発火
+  シナリオ 4: `.githooks/` の `.mjs` だけ消える（1 件除去）
+    発火した検査 **1 件**: G-references (1 件)
+
+  ⇒ **4 シナリオすべてで、外した 2 脚が無くても別の検査が赤にする。**
+    外した脚は**唯一の見張りではなかった**。ラウンド 3 の私の懸念は否定された。
+
+--- とくに注目すべき事実 ---
+
+  シナリオ 1〜3 では **`G-rules-globs` が発火する**。これは本 issue の対になる検査であり、
+  「`.claude/hooks/**` という glob が実在ファイルに 1 件もマッチしない」を見る**順方向**である。
+  ＝ この 2 検査は、`.claude/hooks/` / `.githooks/` については**互いを覆っている**。
+  被覆形（逆方向）の脚を外しても、順方向が同じ消滅を捕まえる。
+  脚を外した判断は、**この対称性の上で正しい**。
+
+  シナリオ 4（＝ Q1 の「githooks.test.mjs を移設」と同じ形）だけは G-references 1 件のみで、
+  それは「どこかの文書がそのパスをバッククォートで引いている」ことに依存する間接的な守りである。
+  ただし**発火はする**ので死角ではない。しかも失敗の意味が正しい——
+  「文書の参照が腐った」であり、直す先は文書である。旧 canary の
+  「`WALK_EXCLUDE_PATHS` の狭窄」という**誤誘導するメッセージ**より明確に良い。
+
+  なお manifest delta は 4 シナリオとも 0 件（沈黙）。これは既知の性質
+  （4 列 checks/docs/rules/skills に `.claude/hooks/` も `.githooks/` も入らない）で、
+  本差分が作ったものではない。
+
+================================================================================
+所見の一覧
 ================================================================================
 
 -------------------------------------------------------------------- Critical
 **0 件。**
 
 ------------------------------------------------------------------------ High
-**0 件。** ラウンド 2 の High-R2-1（`WALK_EXCLUDE_PATHS` の道が無防備）は
-新 canary で**実測どおり塞がった**（変異 A: 1 failed / 8 passed）。
+**0 件。**
 
 ---------------------------------------------------------------------- Medium
-
-[Medium-1] canary の prefix 一覧が、この検査の責務を越えて他サブシステムを縛る
-           ——`.githooks/` は**単一ファイル**に載っており、正当な移動で赤くなる
-  根拠: scripts/governance/checks/G-rules-script-coverage.test.mjs:71
-        （`for (const prefix of ["scripts/governance/checks/", "scripts/lib/",
-          ".claude/hooks/", ".githooks/"])`）
-  実測: `.githooks/` の母集団は `githooks.test.mjs` **1 件のみ**（他 5 件は拡張子なし／`.sh`）。
-        そのファイルを移動した体で 1 failed / 8 passed（変異 E）。
-        `.claude/hooks/` と `.githooks/` の 2 行は、**変異 A・B のどちらの検出にも寄与していない**
-        （A は `scripts/governance/checks/` 行、B は `scripts/lib/` 行が捕まえる）。
-  害: 「rules paths の被覆」と無関係な変更で赤くなり、しかもテスト名と失敗文言が
-      `WALK_EXCLUDE_PATHS` を疑わせるため診断が誤誘導になる。
-      [detector-scope-only-as-tight-as-needed]（広く縛ると正当な変更まで赤にして無視される）に反する。
-  最小の直し: prefix 一覧を `scripts/governance/checks/` と `scripts/lib/` の 2 本へ絞る
-      （検出力は実測で不変）。`.claude/hooks/` / `.githooks/` の在庫を守りたいなら、
-      それは**別の検査の責務**である。
-
-[Medium-2] `some()` の下界と prefix 一覧の隙間——`scripts/governance/` 直下（`registry.mjs` を含む
-           13 件）を母集団から外す狭窄が、全 9 テストと `governance:check` を素通りする
-  根拠: 同 :71-73（prefix は `scripts/governance/checks/` と `scripts/lib/` の間の階層を持たない）
-  実測: 変異 D（`inPopulation` から `scripts/governance/` 直下の `.mjs` を除く）→ **exit 0 / 9 passed**。
-        外れる 13 件に **`registry.mjs`** が含まれる——#1143 の発端の実測で
-        「Read しても配送されなかった」と名指された当のファイルである。
-  ⚠️ 踏まれやすさは High-R2-1 より低い（doc がこの編集を勧めていない・人為的な述語が要る）。
-  最小の直し: prefix 一覧に `scripts/governance/` を 1 本足す
-      （`startsWith` 判定なので `checks/` も包含する。既存 2 本との重複は無害）。
+**0 件。** ラウンド 3 の Medium-1・Medium-2 はいずれも実測で解消を確認した
+（Q1: 9 passed で偽陽性が消えた / Q2: 同一変異が沈黙 → 1 failed へ転じた）。
+新たに開いた穴は Q3 の 4 シナリオ実測で**見つからなかった**。
 
 ------------------------------------------------------------------------- Low
-**0 件。**（ラウンド 2 の Low 3 件は本ラウンドの対象外——再走査は不要と指示されているため
- 再列挙しない。ADR の下限主張化・`workspace/` へのコミットは差分を確認済みで、新たな問題は無い。）
+**0 件。**
 
 ------------------------------------------ ⚠️（確信の持てない所見・切り捨てない）
 
-[⚠️-R3-1] Medium-1 の「最小の直し」が**別の穴を開けないか**を測っていない。
-  prefix を 2 本へ絞れば変異 A・B は今と同じく捕まる（実測済み）が、
-  「`.claude/hooks/` の `.mjs` が safety-nets の母集団から落ちる狭窄」は
-  絞った後は誰も見なくなる。今日それを見ている唯一の層がこの 2 行である可能性がある
-  ——**私はそこまで測っていない**。絞るなら、その狭窄が別経路で赤くなるかを先に測るべきである。
+[⚠️-R4-1] `startsWith` → `dirOf(f) === dir` の厳格化は、**`scripts/lib/` を階層化する
+  再編で赤くなる**。実測: ミラーで `scripts/lib/*.ps*1` を `scripts/lib/smoke/` へ移すと
+  exit 1 / 1 failed（`scripts/lib/ 直下が母集団から消えている`）。
+  ⚠️ ただしこれを**欠陥とは考えていない**——(1) 厳格化そのものが Medium-2 を塞いだ当の変更であり、
+  緩めれば中間層の沈黙が戻る、(2) メッセージが正確で、直す先（脚の一覧）が自明、
+  (3) 対象がこの検査自身の射程内（`scripts/` 部分木）なので、Medium-1 で問題にした
+  「他サブシステムを縛る」形ではない。**指摘には挙げず、受容される費用として記録する。**
+  確信が持てないのは「記録に留める」か「テストのコメントに 1 行書くべきか」の判断のほうである。
 
-[⚠️-R3-2] §3 の試作は**私が書いた 10 行**であって、実装候補としてレビューを受けていない。
-  4 シナリオで測ったが、測っていない形が在る: `paths` に `**` 単独が来た場合、
-  `docs/adr/**` のような**スクリプトを含まない部分木**が接頭辞に入ることの影響、
-  CRLF・記号を含むパス。**「約 10 行で足りる」は試作の規模であって、
-  本番投入の費用ではない**（テストと方針の明文化がその上に乗る）。
+[⚠️-R4-2] Q3 は「**今日の木で**別の検査が発火するか」を測った。
+  G-references と G-stale-identifiers の発火は、**文書がそのパス／識別子を引いていること**に
+  依存している（シナリオ 4 はとくにこれ 1 本）。将来その文書の記述が消えれば、
+  発火する検査は減りうる。**「脚を外しても守りは残る」は今日の測定であって恒久の保証ではない。**
+  G-rules-globs による守り（シナリオ 1〜3）は glob そのものを見るので、こちらは構造的で強い。
 
-[⚠️-R3-3] 本ラウンドは「同じ枠組みの 3 度目を避ける」ため逆向きの監査と canary への懐疑に
-  絞った。その結果、**前 2 巡が見ていた面（検証カテゴリ・ADR の整合・散文の正確さ）は
-  今回まったく見ていない**。指示どおりだが、「Low 0 件」は
-  **その面を見て 0 件だった**という意味ではない。射程の外に置いただけである。
-
-[⚠️-R3-4] 新 canary は位置依存（`../../../`）ゆえ、`.claude/rules/safety-nets.md` が定める
-  「複製に変異を当てる」を素直に適用できない（冒頭の測定手法の注記）。
-  今回はミラーを組んで回避したが、**次に誰かがこの canary へ変異注入を試みるとき、
-  同じ落とし穴に落ちて「変異が効いた」と誤読しうる**（コピーしただけで赤くなるため）。
-  テストのコメントにその 1 行を書いておく価値があるかもしれない——ただしこれは
-  「やりすぎでは」の側かもしれず、確信が無い。
+[⚠️-R4-3] 本ラウンドは指示どおり**この差分の 2 点にのみ**枠を当てた。
+  前 3 巡が見た面（検証カテゴリ・ADR・散文の正確さ・`COVERAGE` の export・
+  ⚠️-4 の機構案）は今回まったく見ていない。**「Low 0 件」「Medium 0 件」は
+  その面を見て 0 だったという意味ではない。** とくに ⚠️-4（`governance-docs` の
+  `inPopulation` が手作業依存／ラウンド 3 で「機構案が約 10 行で動く」と実測した件）は
+  **今回の差分では触れられておらず、未決のまま残っている**——収束の判断材料として明示しておく。
 
 ================================================================================
 まとめ
 ================================================================================
-アンカー: 528e6c6e0c7f438c0050452c3d4a8fb52be1627a（実測）
-必須コマンド: npm test exit **0**（829 passed）/ governance:check exit **0**（20 検査）
-逆向きの監査: 判定側の変更は `const` → `export const` の **1 行のみ**。
-      消えた非コメント行は import 1 行（拡張版へ置換）だけで、**弱めた不変条件は無い**。
-      `COVERAGE` の export は先例（`REQUIRED_DISALLOWED_METHODS`）と同型・消費者 1・規範適合で
-      **指摘 0 件**。
-canary: 呼び出し側の実測 2 件を独立再現（1f/8p・2f/7p）。空虚な緑の経路は無い（根の誤解決は赤側）。
-      ただし **偽陽性 1 件（Medium-1・実証済み）** と **沈黙する狭窄 1 件（Medium-2・実証済み）** が在る。
-⚠️-4 の判断: **支持しない。** 約 10 行の機構案が偽陽性 0・検出力同等（106 件）・
-      ⚠️-4 の手作業を構造的に解消することを実測した。採否は設計判断だが、
-      「機構が無い」を理由にはできない——**理由づけを直すべき**。
-所見: Critical 0 / High 0 / Medium 2 / Low 0 / ⚠️ 4
+アンカー: 81b81b175f416eb5f2ba5ade6ab4a61a209fdb32（実測）
+Q1 Medium-1: **解消**（githooks.test.mjs 削除 → exit 0 / 9 passed。前巡は 1 failed）
+Q2 Medium-2: **解消**（中間層を母集団から外す変異 → exit 1 / 1 failed で層を名指し。前巡は 9 passed）
+             回帰も維持（変異 A: 1 failed / 変異 B: 2 failed）
+Q3 新しい穴: **無い**。外した 2 脚は唯一の見張りではなく、4 シナリオすべてで別検査が発火
+             （とくに対の `G-rules-globs` が 3/4 で発火し、順方向が逆方向を覆っている）
+Q4 検証: npm test exit **0**（829 passed）/ governance:check exit **0**（20 検査）
+逆向きの監査: 検査本体と `lib.mjs` は**全文一致**。テストは 1 本も削られていない
+所見: **Critical 0 / High 0 / Medium 0 / Low 0** / ⚠️ 3（いずれも指摘ではなく、
+      受容される費用・測定の射程・未決事項の明示）

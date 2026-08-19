@@ -64,16 +64,28 @@ describe("G-rules-script-coverage checkRulesScriptCoverage", () => {
   // ——`makeSnapshot` を呼ばないためである。実測（2026-08-19）: `WALK_EXCLUDE_PATHS` へ `scripts/governance` を
   // 足すと #1093 の再発形の検知が 106 件 → 0 件へ落ち、`governance:check` も manifest delta も沈黙した。
   // `scripts/lib/` は `.psm1` / `.ps1` しか持たないので、この 1 本が `SCRIPT_EXT` の狭窄にも同時に反応する。
+  //
+  // **縛るのは `scripts/` 部分木だけである**（`.claude/hooks/` と `.githooks/` は意図的に見ない）。
+  // かつて入れていたが、実測で (1) どちらの狭窄の検知にも寄与せず、(2) `.githooks/` は母集団へ
+  // `githooks.test.mjs` 1 件しか出さないため、**そのテストを移すだけでこの検査が赤くなり**、
+  // しかもメッセージが `WALK_EXCLUDE_PATHS` を指して原因から目を逸らさせた。検知器は必要な分だけ縛る。
   it("canary: 実ツリーの母集団が走査側で縮んでいない（WALK_EXCLUDE_PATHS の狭窄を捕まえる）", () => {
     const files = makeSnapshot(fileURLToPath(new URL("../../../", import.meta.url))).files;
     const [safetyNets, governanceDocs] = COVERAGE;
     const pop = files.filter(safetyNets.inPopulation);
-    for (const prefix of ["scripts/governance/checks/", "scripts/lib/", ".claude/hooks/", ".githooks/"]) {
-      expect(pop.some((f) => f.startsWith(prefix)), `${prefix} が母集団から消えている`).toBe(true);
+    // **前方一致ではなく「そのディレクトリ直下」で見る。** 前方一致だと、`scripts/governance/` 直下の 13 件
+    // （`registry.mjs` を含む——#1143 の発端そのもの）が走査から消えても、配下の `checks/` が同じ接頭辞に
+    // 当たるので沈黙する（実測: その層を落として exit 0 / 9 passed）。
+    const dirOf = (f) => f.slice(0, f.lastIndexOf("/"));
+    for (const dir of ["scripts/governance/checks", "scripts/governance", "scripts/lib"]) {
+      expect(
+        pop.some((f) => dirOf(f) === dir),
+        `${dir}/ 直下が母集団から消えている`,
+      ).toBe(true);
     }
     expect(
-      files.filter(governanceDocs.inPopulation).some((f) => f.startsWith("scripts/governance/checks/")),
-      "governance-docs 側の母集団から scripts/governance/checks/ が消えている",
+      files.filter(governanceDocs.inPopulation).some((f) => dirOf(f) === "scripts/governance/checks"),
+      "governance-docs 側の母集団から scripts/governance/checks/ 直下が消えている",
     ).toBe(true);
   });
 

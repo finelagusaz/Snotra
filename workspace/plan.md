@@ -131,19 +131,19 @@ CI の `governance-check` job へ漏れてくる findings の 12/15 を占める
 
 ### Phase 2 — hook 配線（`.claude/hooks/post-edit.mjs`）
 
-- [ ] `editFindingsReminder(rel, root, run = spawnSync)` を新設。`dependentsReminder` と同型
+- [x] `editFindingsReminder(rel, root, run = spawnSync)` を新設。`dependentsReminder` と同型
       （`existsSync` でスクリプトが無ければ静かに `""`・`res.status !== 0` でも `""`・`MAX_BUFFER` と
       `PER_CHECK_TIMEOUT_MS` を共有）
-- [ ] `isSourceFileWrite` と、それが出していた無条件 WARN を削除する
-- [ ] `main()` で reminder を `warnings` と `sections` の**両方**へ積む（(C)）。
+- [x] `isSourceFileWrite` と、それが出していた無条件 WARN を削除する
+- [x] `main()` で reminder を `warnings` と `sections` の**両方**へ積む（(C)）。
       `sections` 側は `--- <id>: 失敗 ---` 形式にしない（検査の失敗と読ませない・`TS_LIKE` の情報行に倣う）
-- [ ] `post-edit.test.mjs` を差し替える（`editFindingsReminder` の注入テスト・`selectChecks` は不変であることの確認）
-- [ ] **配線をプロセス級の統合テストで固定する** — `dependentsReminder` の先例が「戻り値を `warnings` へ積む
+- [x] `post-edit.test.mjs` を差し替える（`editFindingsReminder` の注入テスト・`selectChecks` は不変であることの確認）
+- [x] **配線をプロセス級の統合テストで固定する** — `dependentsReminder` の先例が「戻り値を `warnings` へ積む
       2 行は誰も見ておらず、消してもユニットテストは 96/96 緑だった」と実測している
       （`ADR-dependents-reminder-at-edit-time.md`「帰結」）。**同じ穴が新 reminder にも空く**。
       一時 git リポジトリへ最小の木を作り hook をプロセス起動する形（#1140 が確立済み）を踏襲し、
       **その変異が赤になることまで確かめる**
-- [ ] **統合テストの assert は reminder ごとに 1 本ずつ置く** — `.md` の編集では `dependentsReminder` と
+- [x] **統合テストの assert は reminder ごとに 1 本ずつ置く** — `.md` の編集では `dependentsReminder` と
       `editFindingsReminder` が**両方鳴る**。assert を「WARN が在る」で済ませると、片方の配線が消えても
       もう片方が埋めて沈黙する（束ねた長さが片方の消滅を隠す形——`runAll` の 0 件検知が母集団ごとに
       1 本ずつ要るのと同型）
@@ -157,34 +157,38 @@ CI の `governance-check` job へ漏れてくる findings の 12/15 を占める
 **引用位置は行番号ではなくシンボル名・見出し名・逐語の断片で書く**
 （`docs/development-principles.md`「撤去（消す変更）の作法」——行番号は書いた時点で既にずれていることがある）。
 
-- [ ] `docs/hooks.md`「検査ではない reminder」表を書き換える
-- [ ] `post-edit.mjs` の契約ヘッダ（「検査とは別に、gate ではない reminder が 2 つ在る」の行）
-- [ ] ルート `CLAUDE.md`「フック」節
-- [ ] `AGENTS.md`「条件別チェック」表の射程を狭める（**索引は編集時にも見られる / `mod` は `governance:check` のまま**）
-- [ ] `docs/build-commands.md`（3 箇所）
-- [ ] `.claude/rules/governance-docs.md`
-- [ ] `.claude/skills/implement/SKILL.md`（2 箇所）
-- [ ] `docs/development-principles.md` の層の表
-- [ ] `scripts/governance-check.mjs` の契約ヘッダ
-- [ ] `AGENTS.md` の 2 行（**偽にはならないが誤導する**——非対称を名指しする一文を足す）
-- [ ] **`governanceDocs` の外の `.md` は依然として沈黙することを書く**（`PERFORMANCE.md` / `RETROSPECTIVE.md` /
+- [x] `docs/hooks.md`「検査ではない reminder」表を書き換える
+- [x] `post-edit.mjs` の契約ヘッダ（「検査とは別に、gate ではない reminder が 2 つ在る」の行）
+- [x] ルート `CLAUDE.md`「フック」節
+- [x] `AGENTS.md`「条件別チェック」表の射程を狭める（**索引は編集時にも見られる / `mod` は `governance:check` のまま**）
+- [x] `docs/build-commands.md`（3 箇所）
+- [x] `.claude/rules/governance-docs.md`
+- [x] `.claude/skills/implement/SKILL.md`（2 箇所）
+- [x] `docs/development-principles.md` の層の表
+- [x] `scripts/governance-check.mjs` の契約ヘッダ
+- [x] `AGENTS.md` の 2 行（**偽にはならないが誤導する**——非対称を名指しする一文を足す）
+- [x] **`governanceDocs` の外の `.md` は依然として沈黙することを書く**（`PERFORMANCE.md` / `RETROSPECTIVE.md` /
       `README.md` / `.claude/agents/**` / `docs/adr/**` / `.claude/skills/*/references/**`、および `workspace/`
       ——`makeSnapshot` の走査除外）。**「`.md` を編集すれば参照実在が見える」は偽の全称になる**
-- [ ] 新機構が**削除を見ない**ことが誤読されない一文を、`docs/hooks.md` の表かその直後に残す
-- [ ] ADR を新規に書く（却下した案を持つ。既存 ADR は書き換えない）
-- [ ] **6 枚を直したあと、同じ事実の写しが他に無いか grep で数え直す**（#977 は 5 枚へ書いて 6 枚目を落とし、
+- [x] 新機構が**削除を見ない**ことが誤読されない一文を、`docs/hooks.md` の表かその直後に残す
+- [x] ADR を新規に書く（却下した案を持つ。既存 ADR は書き換えない）
+- [x] **6 枚を直したあと、同じ事実の写しが他に無いか grep で数え直す**（#977 は 5 枚へ書いて 6 枚目を落とし、
       その 6 枚目が規範の根拠として使われていた）
 
 ### Phase 4 — 検証（受け入れ条件の実測）
 
-- [ ] `npm test` と `npm run governance:check` が緑
-- [ ] **変異注入**（`.claude/rules/safety-nets.md`「複製に変異を当てる」）: 索引に無い `.rs` を作って
-      reminder が出ること、索引へ足すと消えること、`.md` の壊れた参照でも同じことを**実際に hook を
-      発火させて**測る（`run-new-verification-path-before-reporting`: 新設した検証経路は完了報告の前に
-      その経路自体を実行する）
-- [ ] **受け入れ条件 6 を実測**: `selectChecks` の返り値・`BUDGETS` のキー集合・`docs/hooks.md` 発火一覧表が
-      変更前後で同一であること（`G-hook-fires` が緑であることだけを根拠にしない）
-- [ ] `.rs` を 1 件編集して、`fmt` / `clippy` / crate test の exit code が reminder に影響されないこと
+- [x] `npm test`（**814 passed / 34 files**）と `npm run governance:check`（**exit 0・検査 19 件**）が緑
+- [x] **実際に hook を発火させて測った**（`run-new-verification-path-before-reporting`: 新設した検証経路は
+      完了報告の前にその経路自体を実行する）。索引に載せない `.rs` を実ツリーへ置き、**Write と Edit の
+      両方**で reminder が `additionalContext` として会話へ届くことを観測した（旧 `isSourceFileWrite` では
+      Edit で沈黙していた形が塞がっている）。probe は撤去済み。
+      **変異注入（配線を消して赤になることの確認）は Step 3 の委譲先が worktree で行う**——
+      `/implement` は「注入するのはこのエージェントだけである: 主エージェントは同じ木へ注入しない」と定める
+- [x] **受け入れ条件 6 を実測**（`G-hook-fires` が緑であることだけを根拠にしない）: 変更前の版を
+      `git show f114a28:` で取り出し、`selectChecks` の返り値 14 パス分・`BUDGETS` のキー集合・
+      `docs/hooks.md` 発火一覧表の「走る検査 id」列を機械比較した。**いずれも差分ゼロ**
+- [x] `.rs` の編集で `fmt` / `clippy` / crate test が**沈黙＝合格**のまま reminder だけが出ることを観測
+      （reminder は exit code を動かしていない）
 
 ## 不変条件と異常系
 

@@ -12,7 +12,7 @@ import {
   toRelative,
   extractFilePath,
   selectChecks,
-  isSourceFileWrite,
+  editFindingsReminder,
   dependentsReminder,
   resolveTarget,
   checksForPayload,
@@ -188,34 +188,71 @@ describe("selectChecks", () => {
   });
 });
 
-describe("isSourceFileWrite — 新規ソース Write の索引 reminder（#629/#630）", () => {
-  // 真: Write されたソースファイル（.rs はどの crate でも、TS は ui/src・e2e）。
-  it("Write された .rs は真（どの crate でも）", () => {
-    expect(isSourceFileWrite("src-tauri/src/egui_shell/search_state.rs", "Write")).toBe(true);
-    expect(isSourceFileWrite("snotra-core/src/foo.rs", "Write")).toBe(true);
+describe("editFindingsReminder — 編集に帰属する索引・参照実在の reminder（#1139）", () => {
+  const ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
+  const spy = (result) => {
+    const calls = [];
+    const fn = (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      return result;
+    };
+    fn.calls = calls;
+    return fn;
+  };
+
+  // **Edit も対象である**（#629/#630 の形＝作成時に索引を書かず、以後の編集がすべて沈黙する、を
+  // 捕まえるのは Edit の側）。旧 `isSourceFileWrite` が Write に絞っていたのは判定を持たなかったため
+  it("`.rs` は Edit でも Write でも判定スクリプトを起動する", () => {
+    for (const tool of ["Edit", "Write"]) {
+      const run = spy({ status: 0, stdout: "WARN: 索引に無い\n" });
+      expect(editFindingsReminder("snotra-core/src/foo.rs", ROOT, run)).toBe("WARN: 索引に無い");
+      expect(run.calls, `tool=${tool}`).toHaveLength(1);
+      expect(run.calls[0].args[0]).toBe(path.join(ROOT, "scripts", "governance", "edit-findings.mjs"));
+      expect(run.calls[0].opts.cwd).toBe(ROOT);
+      expect(run.calls[0].opts.shell).toBe(false);
+    }
   });
 
-  it("TS の Write は偽（フロントは #532 SU7 で撤去済み・索引 reminder は .rs のみ）", () => {
-    expect(isSourceFileWrite("ui/src/lib/x.ts", "Write")).toBe(false);
-    expect(isSourceFileWrite("e2e/foo.e2e.ts", "Write")).toBe(false);
+  it("`.md` でも起動する（参照実在の帰属）", () => {
+    const run = spy({ status: 0, stdout: "WARN: 参照が実在しない\n" });
+    expect(editFindingsReminder("AGENTS.md", ROOT, run)).toBe("WARN: 参照が実在しない");
+    expect(run.calls).toHaveLength(1);
   });
 
-  // 偽: Edit は既存ファイル。沈黙=合格を壊さないため Write のみに絞る。
-  it("Edit は偽（新規ではない）", () => {
-    expect(isSourceFileWrite("src-tauri/src/main.rs", "Edit")).toBe(false);
+  it("`.rs` / `.md` 以外では subprocess を起動しない（判定の要らない拡張子に費用を載せない）", () => {
+    const run = spy({ status: 0, stdout: "出るはずのない行" });
+    expect(editFindingsReminder("Cargo.toml", ROOT, run)).toBe("");
+    expect(editFindingsReminder(".claude/settings.json", ROOT, run)).toBe("");
+    expect(run.calls).toHaveLength(0);
   });
 
-  it("tool_name が Write でなければ偽（undefined 含む）", () => {
-    expect(isSourceFileWrite("snotra-core/src/foo.rs", undefined)).toBe(false);
-    expect(isSourceFileWrite("snotra-core/src/foo.rs", "Read")).toBe(false);
+  it("不整合が無ければ空を返す（呼び出し側は何も出さない）", () => {
+    expect(editFindingsReminder("AGENTS.md", ROOT, spy({ status: 0, stdout: "" }))).toBe("");
+    expect(editFindingsReminder("AGENTS.md", ROOT, spy({ status: 0, stdout: "\n" }))).toBe("");
   });
 
-  // 偽: 索引を持たない場所・非ソース。ui/ 直下（ui/src/ 外）や scripts/ は対象外。
-  it("非ソース・索引外は偽（負例）", () => {
-    expect(isSourceFileWrite("docs/notes.md", "Write")).toBe(false);
-    expect(isSourceFileWrite("ui/vite.config.ts", "Write")).toBe(false); // ui/src/ 外
-    expect(isSourceFileWrite("scripts/gen.ts", "Write")).toBe(false);
-    expect(isSourceFileWrite("Cargo.toml", "Write")).toBe(false);
+  it("スクリプトが無いツリーでは起動せず空を返す（hook を落とさない）", () => {
+    // **不在は「不整合が無い」を意味しない**——reminder は検査ではない
+    const run = spy({ status: 0, stdout: "x" });
+    const missing = mkdtempSync(path.join(tmpdir(), "no-edit-findings-"));
+    try {
+      expect(editFindingsReminder("AGENTS.md", missing, run)).toBe("");
+      expect(run.calls).toHaveLength(0);
+    } finally {
+      rmSync(missing, { recursive: true, force: true });
+    }
+  });
+
+  it("起動失敗・異常終了でも hook を落とさず空を返す（reminder は gate ではない）", () => {
+    expect(editFindingsReminder("AGENTS.md", ROOT, spy({ error: new Error("spawn failed") }))).toBe("");
+    expect(editFindingsReminder("AGENTS.md", ROOT, spy({ status: 1, stdout: "壊れた出力" }))).toBe("");
+  });
+
+  it("reminder は検査 id を発行しない（`selectChecks` の母集団に入らない）", () => {
+    // これが立つ限り `G-hook-fires` の照合・`BUDGETS` のカナリア・`docs/hooks.md` の発火一覧表は
+    // 無傷である（表の母集団は `checks.push("<id>")` のリテラルだけを見る）
+    expect(selectChecks("snotra-core/src/foo.rs")).toEqual(["fmt", "clippy", "core-test"]);
+    expect(selectChecks("AGENTS.md")).toEqual([]);
   });
 });
 
@@ -671,6 +708,78 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
       const parsed = JSON.parse(res.stdout);
       expect(parsed.systemMessage).toContain("依存する参照");
       expect(parsed.systemMessage).toContain("docs/x.md:1");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  /** 一時ツリーへ governance の判定スクリプト一式を写す（`edit-findings` は checks/ を辿る） */
+  const copyGovernance = (tmp) => {
+    mkdirSync(path.join(tmp, "scripts", "governance", "checks"), { recursive: true });
+    const copy = (...rel) =>
+      writeFileSync(path.join(tmp, ...rel), readFileSync(path.join(REPO, ...rel), "utf8"));
+    for (const f of ["lib.mjs", "dependents.mjs", "edit-findings.mjs"]) copy("scripts", "governance", f);
+    for (const f of ["G-module-index.mjs", "G-references.mjs"]) copy("scripts", "governance", "checks", f);
+  };
+
+  it("索引に無い実ファイルがあると reminder が systemMessage と additionalContext の**両方**へ出る（#1139 の配線）", () => {
+    // **`main()` の配線はここでしか守れない**（#1140 が実測した型と同じ）——`editFindingsReminder`
+    // 自体は spy で試験できるが、その戻り値を `warnings` と `sections` へ積む行は誰も見ていない。
+    // **`.rs` ではなく `<crate>/CLAUDE.md` を編集対象にする**——`.rs` は `selectChecks` が cargo 検査を
+    // 発火し、Cargo.toml を持たない一時ツリーでその失敗がこのブロックの契約を汚すため。
+    // 配線の行は編集ファイルの種類に依らず同じである（発火条件そのものはユニットテストが固定）。
+    const tmp = mkdtempSync(path.join(tmpdir(), "edit-findings-hook-"));
+    try {
+      spawnSync("git", ["init", "-q"], { cwd: tmp, encoding: "utf8" });
+      copyGovernance(tmp);
+      mkdirSync(path.join(tmp, "snotra-core", "src"), { recursive: true });
+      writeFileSync(
+        path.join(tmp, "snotra-core", "CLAUDE.md"),
+        "# core\n## モジュール構成\n- `lib.rs` — エントリ\n\n## 次節\n",
+      );
+      writeFileSync(path.join(tmp, "snotra-core", "src", "lib.rs"), "");
+      writeFileSync(path.join(tmp, "snotra-core", "src", "orphan.rs"), ""); // 索引に無い
+
+      const res = runHook({
+        tool_name: "Edit",
+        tool_input: { file_path: path.join(tmp, "snotra-core", "CLAUDE.md") },
+      });
+      expect(res.status).toBe(0);
+      const parsed = JSON.parse(res.stdout);
+      // 人間向けとエージェント向けの両方（#629/#630 の失敗主体はエージェントである）
+      expect(parsed.systemMessage).toContain("orphan.rs");
+      expect(parsed.hookSpecificOutput.additionalContext).toContain("orphan.rs");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("`.md` で 2 つの reminder が鳴るとき、**それぞれが独立に届く**（片方が他方の消失を埋めない）", () => {
+    // 束ねた assert（「WARN が在る」）にすると、片方の配線が消えてももう片方が埋めて沈黙する
+    // ——`runAll` の 0 件検知が母集団ごとに 1 本ずつ要るのと同型である。
+    const tmp = mkdtempSync(path.join(tmpdir(), "both-reminders-"));
+    try {
+      const git = (...args) => spawnSync("git", args, { cwd: tmp, encoding: "utf8" });
+      git("init", "-q");
+      git("config", "user.email", "t@example.com");
+      git("config", "user.name", "t");
+      copyGovernance(tmp);
+      mkdirSync(path.join(tmp, "docs"), { recursive: true });
+      writeFileSync(path.join(tmp, "AGENTS.md"), "# 文書\n\n## 対象の節\n本文\n");
+      writeFileSync(path.join(tmp, "docs", "x.md"), "詳細は `AGENTS.md`「対象の節」を見よ\n");
+      git("add", "-A");
+      git("commit", "-qm", "fixture");
+      // 節の本文を書き換え（dependents が鳴る）、同時に実在しない参照を入れる（edit-findings が鳴る）
+      writeFileSync(
+        path.join(tmp, "AGENTS.md"),
+        "# 文書\n\n## 対象の節\n書き換えた本文と `docs/no-such-file.md` への参照\n",
+      );
+
+      const res = runHook({ tool_name: "Edit", tool_input: { file_path: path.join(tmp, "AGENTS.md") } });
+      expect(res.status).toBe(0);
+      const parsed = JSON.parse(res.stdout);
+      expect(parsed.systemMessage, "#1140 の依存参照 reminder").toContain("依存する参照");
+      expect(parsed.systemMessage, "#1139 の帰属 reminder").toContain("docs/no-such-file.md");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

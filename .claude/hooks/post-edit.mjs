@@ -12,10 +12,12 @@
 // 無いファイル（*.md 等）の沈黙は「何も走らなかった」であり、合格ではない。
 // 割り当ての SSOT は selectChecks である（#497）。
 //
-// **検査とは別に、gate ではない reminder が 2 つ在る**（config-warn / 新規 .rs の索引 /
-// .md の依存参照・#1140）。reminder は warnings へ積むだけで exit code を動かさない。
-// **reminder の不在は「問題が無い」を意味しない**——上の「沈黙は合格ではない」は
-// reminder についても同じである。
+// **検査とは別に、gate ではない reminder が在る**（config-warn / 編集に帰属する索引・参照実在の
+// 不整合〔#1139〕/ .md の依存参照〔#1140〕**だけではない**——一覧は docs/hooks.md が持つ）。
+// reminder は exit code を動かさない。**その不在は「問題が無い」を意味しない**——上の
+// 「沈黙は合格ではない」は reminder についても同じである。
+// **一部は additionalContext にも出る**（#1139。失敗主体がエージェントであるため）が、
+// それでも検査ではない——buildSection の `--- <id>: 失敗 ---` の形は取らない。
 //
 // 詳細と実測の根拠は issue #471。
 
@@ -176,8 +178,8 @@ export function selectChecks(rel) {
 }
 
 /**
- * 節の中身が変わったときの依存参照 reminder（#1140）。**gate ではない**——`isSourceFileWrite` と同じく
- * `warnings` へ積むだけで exit code を動かさない。
+ * 節の中身が変わったときの依存参照 reminder（#1140）。**gate ではない**——`editFindingsReminder` と同じく
+ * exit code を動かさない。
  *
  * **subprocess で呼ぶ。静的 import を足してはならない。** import 文は `try { main() } catch` の**外**で
  * 走るため、解決に失敗すると JSON エンベロープを出さずにプロセスごと落ちる——この hook は全 `Edit|Write`
@@ -206,20 +208,40 @@ export function dependentsReminder(rel, root, run = spawnSync) {
 }
 
 /**
- * 新規ソースファイル（.rs）を Write したかの述語。真なら main() が
- * 「モジュール索引の更新忘れ」を促す WARN を出す。
+ * 編集したファイルに帰属する索引・参照実在の不整合 reminder（#1139）。**gate ではない**——
+ * `dependentsReminder` と同じく exit code を動かさない。
  *
- * 索引整合の判定そのもの（どのファイルが索引に在るべきか）は governance:check が SSOT。
- * ここで再実装すると drift する（DRY）。ゆえに hook は**索引を検査せず**、「Write された
- * ソースファイル」という低頻度シグナルで reminder を出すだけに留める（gate ではない）。
- * Write に絞るのは、既存ファイルの Edit まで拾うと沈黙=合格を壊す頻度になるため——
- * 新規ファイルは必ず Write で作られる（削除は Edit|Write matcher に届かず、CI の
- * governance-check が索引の orphan を捕捉する残余）。#629/#630 で src-tauri/CLAUDE.md の
- * モジュール索引更新漏れが同型再発したことへの、実装中の気づきを増やす手当て。
+ * **判定は subprocess 側（`scripts/governance/edit-findings.mjs`）が持ち、そこは
+ * `governance:check` と同じ `checkModuleIndex` / `checkReferences` を呼ぶ。** かつてここは
+ * 「`.rs` を Write した」という低頻度シグナルだけを見て**無条件に**索引更新を促していた
+ * （判定を hook で再実装すると drift する、という理由で判定を持たなかった）。判定を持つ側を
+ * subprocess へ置いたことでその反論は解け、**実際に索引へ無いときだけ鳴る**ようになった。
+ * ゆえに Write に絞る理由も消え、`.rs` の Edit も対象にできる——**#629/#630 の形（作成時に
+ * 索引を書かず、以後の編集がすべて沈黙する）を捕まえるのは Edit の側である**。
+ *
+ * **`.rs` と `.md` 以外では spawn しない。** `dependentsReminder` が `.md` 以外に費用を載せないのと
+ * 同じ形で、判定の要らない拡張子にプロセス起動を払わせない。
+ *
+ * **subprocess で呼ぶ。静的 import を足してはならない**（理由は `dependentsReminder` の doc）。
+ *
+ * **スクリプトが無いツリーでは静かに何もしない。** この機構より前に凍結された worktree が該当する。
+ * **不在は「不整合が無い」を意味しない**——reminder は検査ではない。
+ *
+ * @returns {string} 出す WARN 行。無ければ空文字
  */
-export function isSourceFileWrite(rel, toolName) {
-  if (toolName !== "Write") return false;
-  return rel.endsWith(".rs");
+export function editFindingsReminder(rel, root, run = spawnSync) {
+  if (!rel.endsWith(".rs") && !rel.endsWith(".md")) return "";
+  const script = path.join(root, "scripts", "governance", "edit-findings.mjs");
+  if (!existsSync(script)) return "";
+  const res = run(process.execPath, [script, rel], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: MAX_BUFFER,
+    shell: false,
+    timeout: PER_CHECK_TIMEOUT_MS,
+  });
+  if (res.error || res.status !== 0) return "";
+  return (res.stdout ?? "").trim();
 }
 
 /**
@@ -461,16 +483,6 @@ function main() {
   const warnings = [];
   const errors = [];
 
-  // 新規ソースファイル Write は索引更新の reminder を出す（config-warn と同じインライン WARN・
-  // subprocess は走らせない）。判定は isSourceFileWrite（索引整合の SSOT は governance:check）。
-  if (isSourceFileWrite(rel, payload?.tool_name)) {
-    warnings.push(
-      `WARN: ソースファイル ${rel} を Write しました。新規追加なら該当 CLAUDE.md の` +
-        " モジュール構成節の索引にファイル名を足し、`npm run governance:check` で確認してください" +
-        "（#629/#630 で索引更新漏れが再発）。",
-    );
-  }
-
   // 節の中身が変わったら、その節に依存する参照を知らせる（#1140）。判定は subprocess 側が持つ
   const reminder = dependentsReminder(rel, root);
   if (reminder) warnings.push(reminder);
@@ -485,6 +497,20 @@ function main() {
       if (invalid) errors.push(`HOOK ERROR: ${invalid}`);
     }
     runCheck(id, root, sections, errors);
+  }
+
+  // 編集したファイルに帰属する索引・参照実在の不整合を知らせる（#1139）。判定は subprocess 側が持つ。
+  //
+  // **`warnings`（人間向け `systemMessage`）と `sections`（エージェント向け `additionalContext`）の
+  // 両方へ積む。** #629/#630 の失敗主体はエージェントであり、人間向けの面にだけ出すと
+  // 「機構を足したのに当の失敗主体に見えない」で終わる（この非対称は buildEnvelope の doc が持つ）。
+  //
+  // **検査ループの後に置く。** 検査が失敗していればその証拠を先に見せる。reminder は情報行であって
+  // 検査の失敗ではないので、`--- <id>: 失敗 ---` の形（buildSection）にはしない。
+  const editFindings = editFindingsReminder(rel, root);
+  if (editFindings) {
+    warnings.push(editFindings);
+    sections.push(editFindings);
   }
 
   // 検査が 0 件でも、TypeScript 系なら「型検査は存在しない」と言う。

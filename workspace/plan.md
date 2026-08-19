@@ -101,10 +101,11 @@ CI の `governance-check` job へ漏れてくる findings の 12/15 を占める
 
 - [x] `scopedFindings(snapshot, rel, filterIgnored)` を書く。`rel` の形で母集団を決める
   - `.rs` は **`MODULE_INDEX_CRATES` の `cfg.src` と `cfg.exts` で判定する**
-    （**⚠️ この項の当初の理由付け「crate 名で前方一致すると `tests/*.rs` を拾って偽の reminder になる」は
-    実装より強い主張で、偽だった**——委譲レビューの変異注入が緑のまま通し、実測（`.rs` 101 件 + 注入の
-    対照）で出力差分 0 件を確認した。後段の `attributesTo` が吸収する。実際の理由は費用の最適化と、
-    `attributesTo` を将来ゆるめたときの 2 段目。**この選択を守る検知器は無い**）
+    （**⚠️ この項の理由付けは 2 度書き直した。経緯と現在の記述は
+    `docs/adr/ADR-scoped-governance-findings-at-edit-time.md` が正本である**——当初の
+    「前方一致だと偽の reminder になる」も、次に書いた「費用の最適化であって正しさの門ではない」も、
+    どちらも実装より強い主張だった。**ここに 3 つ目の言い換えを置かない**——同じ命題の写しが増えるほど、
+    次の訂正で取りこぼす枚数が増える）
     → `checkModuleIndex(snapshot, [crate])` を呼び、**finding のメッセージが `rel` を含むものだけ**を返す
   - `<crate>/CLAUDE.md` → `checkModuleIndex(snapshot, [crate])` を**全件**返す（その文書が主語なので全件が帰属する）
   - `governanceDocs(snapshot).includes(rel)` な `.md` → `checkReferences(snapshot, [rel], filterIgnored)`

@@ -152,11 +152,11 @@ export function runAll(snapshot) {
   const area = normativeArea(snapshot);
   // duplicateDomains も合否を持たない計器——findings へは積まない。同一メンバーのドメインが
   // 在れば報告するだけで、畳むかどうかの判断は人に残す（`scripts/governance/instrument.mjs` の
-  // duplicateDomains 冒頭コメントが正本）。
+  // duplicateDomains 冒頭コメントが正本）。**印字はここでは行わない**——`runAll` はテストからも
+  // 直接呼ばれるため（`lib.test.mjs` / `governance-check.test.mjs`）、副作用は `isMain` の
+  // CLI エントリポイントへ寄せる（この場に置いた版は `--reporter=verbose` で 8 件のテストへ
+  // 混入することが実測で判明した・レビュー修正ラウンド 1）。
   const dupDomains = duplicateDomains(ctx.domains);
-  if (dupDomains.length > 0) {
-    console.log(`governance:check — 同一メンバーのドメイン: ${dupDomains.map((names) => names.join("=")).join(", ")}`);
-  }
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
   // 各検査は `domains` を宣言必須（registry.mjs の `checkModulesFrom` が起動時点で強制する）。
@@ -189,19 +189,23 @@ export function runAll(snapshot) {
       findings,
     ),
   );
-  return { findings, evidence };
+  return { findings, evidence, dupDomains };
 }
 
 // fileURLToPath を使う — URL.pathname は空白等を percent-encode するため resolve と一致せず、
 // 「検査ゼロ件のまま exit 0」という沈黙経路になる（レビュー H1 で実測）
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const { findings, evidence } = runAll(makeSnapshot(process.cwd()));
+  const { findings, evidence, dupDomains } = runAll(makeSnapshot(process.cwd()));
   if (findings.length > 0) {
     console.error(`governance:check — ${findings.length} 件の不整合:`);
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
     process.exitCode = 1;
   } else {
     console.log(`governance:check — 全検査 passed（${evidence}）`);
+  }
+  // duplicateDomains は合否を持たない計器——findings にも exit code にも触れない、報告専用の 1 行。
+  if (dupDomains.length > 0) {
+    console.log(`governance:check — 同一メンバーのドメイン: ${dupDomains.map((names) => names.join("=")).join(", ")}`);
   }
 }

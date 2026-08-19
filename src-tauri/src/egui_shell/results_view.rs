@@ -175,9 +175,9 @@ impl ResultsView {
         if !show_icons {
             return;
         }
-        // **キーの導出は `wanted_icon_keys` へ寄せてある**（#1133）——引き（`icon_for_row`）と
-        // 剪定（`visible_icon_keys`）が同じ `SearchResult::icon_key` を通ることだけが、
-        // 「抽出したものを引ける」の根拠である。
+        // **キーの導出は `SearchResult::icon_key` ただ 1 つである**（#1133 / #1134）——要求
+        // （`wanted_icon_keys`）・引き（`icon_for_row`）・剪定（`visible_icon_keys`）が同じ導出を
+        // 通ることだけが、「抽出したものを引ける」「列挙失敗行が絵を引かない」の根拠である。
         let wanted = crate::egui_shell::wanted_icon_keys(
             rows,
             &self.icon_textures,

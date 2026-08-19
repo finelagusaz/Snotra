@@ -49,7 +49,16 @@ impl SearchResult {
     /// **キーを読む箇所はこの 1 つの導出を通すこと。** 抽出の要求・テクスチャの引き・可視集合
     /// での剪定が別々に導くと、片方だけが `path` を見た瞬間に「抽出したのに引けない」
     /// 「抽出した直後に剪定で捨てる」が起きる（#1133）。
+    ///
+    /// **列挙失敗行（`is_error`）は `icon` の値によらずキーを持たない**（`SPEC.md`「3.4 アイコン」・
+    /// #1134）。[`crate::folder::error_result`] は `path` に**実在ディレクトリの絶対パス**を入れる
+    /// ので、`icon` だけを見ると本物のフォルダアイコンのキーになる。**要求側だけで弾いた版には、
+    /// 前の世代で抽出したテクスチャがエラー行に描かれる経路が残っていた**（#1134 で辿った）——
+    /// ここで折り込めば、キーを読む側が個別に条件を持たずに済む。
     pub fn icon_key(&self) -> Option<&str> {
+        if self.is_error {
+            return None;
+        }
         match &self.icon {
             IconSource::FromPath => Some(&self.path),
             IconSource::Skip => None,
@@ -97,6 +106,26 @@ mod tests {
             IconSource::Explicit(r"C:\Windows\notepad.exe".into()),
         );
         assert_eq!(r.icon_key(), Some(r"C:\Windows\notepad.exe"));
+    }
+
+    #[test]
+    fn icon_key_is_none_for_error_rows() {
+        // 列挙失敗行（`SPEC.md`「3.4 アイコン」）。`folder::error_result` は `path` に**実在
+        // ディレクトリ**を入れるので、`IconSource` だけを見ると本物のフォルダアイコンが引ける
+        // （#1134）。キーを返す 2 つの variant（`FromPath` / `Explicit`）で測る。
+        let err = SearchResult {
+            is_error: true,
+            ..row(r"C:\Windows", IconSource::FromPath)
+        };
+        assert_eq!(err.icon_key(), None, "FromPath のエラー行");
+        let explicit_err = SearchResult {
+            is_error: true,
+            ..row(
+                r"C:\Windows\notepad.exe {query}",
+                IconSource::Explicit(r"C:\Windows\notepad.exe".into()),
+            )
+        };
+        assert_eq!(explicit_err.icon_key(), None, "Explicit のエラー行");
     }
 
     #[test]

@@ -69,30 +69,18 @@ pub(crate) fn retain_visible<V>(textures: &mut HashMap<String, V>, visible: &Has
     textures.retain(|k, _| visible.contains(k));
 }
 
-// ---- 行 → アイコンキーの読み（#1133）--------------------------------------------------
+// ---- 行 → アイコンキーの読み（#1133 / #1134）------------------------------------------
 //
 // **キーを導くのは `SearchResult::icon_key` ただ 1 つである。** 要求・引き・剪定が別々に導くと、
 // 片方だけが `path` を見た瞬間に「抽出したのに引けない」「抽出した直後に剪定で捨てる」が起きる。
+// **導出が決めるのは「どのキーか」だけではなく「そもそもキーを持つか」でもある**——列挙失敗行が
+// アイコンを持たないことも、要求側の条件ではなくこの導出が担う（#1134）。
 // drain（`results_view.rs` の `icon_rx`）は導出点ではない——worker へ渡したキーが返ってくる
 // だけで、構造的に `wanted_icon_keys` と一致する。
 
 /// このフレームで抽出 worker に積むべきキー（重複排除済み）。
 ///
-/// **`is_error` 行を要求から除くのはここの責務である。** 描画側（`draw_result_row`）の
-/// `Some(tex)` 枝に `is_error` ガードは無いので、ここが要求を積めばエラー行に本物のアイコンが
-/// 描かれる。しかも [`snotra_core::folder::error_result`] は `path` に**実在ディレクトリの
-/// 絶対パス**を入れ、発火点は `read_dir` の失敗——権限不足ならディレクトリは実在するので
-/// `SHGetFileInfoW` は成功する。
-///
-/// **ただし要求を止めても絵が出ない保証にはならない。**
-/// 同じ `path` が**前の世代で通常行として**抽出されていると、[`visible_icon_keys`] が
-/// `is_error` を見ないため [`retain_visible`] がそのテクスチャを残し、[`icon_for_row`] が引く。
-/// 成立するのは、フォルダ行で右カーソルキーを押して展開し（`SPEC.md`「6.5 フォルダのEnter操作」
-/// ——**Enter ではない。あれはエクスプローラーで開く**）、`read_dir` が失敗する遷移である。
-/// [`crate::egui_shell::search_state::SearchState::enter_folder`] は `results` に触れず行の世代を
-/// 進めないので、フォルダ行のテクスチャが生きたまま同じ `path` のエラー行に置き換わる
-/// （#1133 のレビューで一次証拠を辿って確認。**#1133 より前から在る挙動であり、そこでは
-/// 直していない**——追跡は #1134。**閉じたらこの段落も更新すること**）。
+/// ここの責務は**重複排除と抽出要否の判定**である（[`needs_extraction`] と in-flight の除外）。
 pub(crate) fn wanted_icon_keys<V>(
     rows: &[SearchResult],
     have: &HashMap<String, V>,
@@ -101,9 +89,6 @@ pub(crate) fn wanted_icon_keys<V>(
 ) -> Vec<String> {
     let mut wanted: Vec<String> = Vec::new();
     for r in rows {
-        if r.is_error {
-            continue;
-        }
         let Some(key) = r.icon_key() else { continue };
         if needs_extraction(key, have, attempts)
             && !pending.contains(key)
@@ -117,9 +102,8 @@ pub(crate) fn wanted_icon_keys<V>(
 
 /// 世代交代フレームで保持してよいキーの集合（`retain_visible` の入力）。
 ///
-/// **`is_error` で絞らない。** 狭いと、抽出した直後の世代交代でテクスチャを落として積み直す
-/// 往復になる。**広い側の代償は机上で確認してある**——前の世代で入ったキーが残るため、同じ
-/// `path` がエラー行として戻ってくるとその行に絵が出る（正本は [`wanted_icon_keys`] の doc）。
+/// **行の性質でここを絞らない**（#1133）。狭いと、抽出した直後の世代交代でテクスチャを落として
+/// 積み直す往復になる。この関数は導出が返したキーをそのまま集める。
 pub(crate) fn visible_icon_keys(rows: &[SearchResult]) -> HashSet<String> {
     rows.iter()
         .filter_map(|r| r.icon_key())
@@ -259,8 +243,9 @@ mod tests {
     fn wanted_icon_keys_never_loads_icons_for_error_rows() {
         // **`path` が実在ディレクトリでも載らないことを、その形の行で測る**（#1133 plan-review B-1）。
         // `folder::error_result` は read_dir 失敗時に**実在するディレクトリの絶対パス**を入れる。
-        // 描画側の `Some(tex)` 枝に `is_error` ガードは無いので、ここで落とすとエラー行に
-        // 本物のフォルダアイコンが描かれる。
+        // #1134 でこの関数から `is_error` の条件を外したので、これは導出が要求側まで届いている
+        // ことの検知器でもある——**`icon_key` の `is_error` 判定を潰すと赤になることを実測した**
+        // （2026-08-19）。
         use snotra_core::ui_types::IconSource;
         let err = SearchResult {
             name: String::new(),
@@ -284,6 +269,66 @@ mod tests {
         assert!(
             wanted.is_empty(),
             "エラー行は FromPath でも Explicit でも抽出要求に載らない（実際に得た: {wanted:?}）"
+        );
+    }
+
+    /// **要求側だけを測るテストでは足りなかった**（足りなかった機序は #1134）。ゆえに**キーが既に
+    /// `icon_textures` に在る状態**から、保持（[`visible_icon_keys`]）→ 剪定（[`retain_visible`]）
+    /// → 引き（[`icon_for_row`]）の連鎖を通して測る。
+    ///
+    /// **旧構造を再現する変異**（要求側へ `is_error` の条件を戻し、導出の折り込みを外す）では、
+    /// [`wanted_icon_keys`] のエラー行テストは**緑のまま**ここだけが赤になった（2026-08-19 実測）。
+    /// **この対照がこのテストを別に置く理由である**——今は両方が同時に赤くなるが、それは両者が
+    /// 同じ導出を通るようになった結果であって、片方で足りることの根拠ではない。
+    ///
+    /// (c) が (a)(b) と独立に在るのは、**引きを保持側の挙動に依存させない**ためである——剪定の方針は
+    /// 費用の都合で変わりうるが、エラー行が引けないことはそれと別に成り立たねばならない。
+    #[test]
+    fn error_row_never_resolves_a_texture_from_a_previous_generation() {
+        use snotra_core::ui_types::IconSource;
+        // `folder::error_result` と同形の行（`path` は実在ディレクトリ・`name` は空）。
+        let err = SearchResult {
+            name: String::new(),
+            path: r"C:\Windows".into(),
+            is_folder: false,
+            is_error: true,
+            icon: IconSource::FromPath,
+        };
+        let explicit_err = SearchResult {
+            is_error: true,
+            icon: IconSource::Explicit(r"C:\Windows\notepad.exe".into()),
+            ..row("x", IconSource::FromPath)
+        };
+
+        // (a) 保持: 前の世代のキーを可視集合が拾わない
+        let visible = super::visible_icon_keys(std::slice::from_ref(&err));
+        assert!(
+            !visible.contains(r"C:\Windows"),
+            "エラー行の path が可視集合に載っている（実際に得た: {visible:?}）"
+        );
+
+        // (b) 剪定: 前の世代で抽出済みのテクスチャが落ちる
+        let mut icons: HashMap<String, u32> = HashMap::new();
+        icons.insert(r"C:\Windows".into(), 1);
+        super::retain_visible(&mut icons, &visible);
+        assert!(
+            icons.is_empty(),
+            "エラー行の世代で前の世代のテクスチャが残った（実際に得た: {icons:?}）"
+        );
+
+        // (c) 引き: **剪定を通していない**マップからでも引けない
+        let mut stale: HashMap<String, u32> = HashMap::new();
+        stale.insert(r"C:\Windows".into(), 1);
+        assert!(
+            super::icon_for_row(&stale, &err).is_none(),
+            "剪定を経ずにテクスチャが残っている状態で、エラー行が絵を引いた"
+        );
+
+        // (d) Explicit のエラー行も同じ
+        stale.insert(r"C:\Windows\notepad.exe".into(), 2);
+        assert!(
+            super::icon_for_row(&stale, &explicit_err).is_none(),
+            "Explicit のエラー行が絵を引いた"
         );
     }
 

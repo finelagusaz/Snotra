@@ -28,6 +28,8 @@
 | `src-tauri/src/egui_shell/icon_textures.rs` | `mod tests` | 連鎖の検知器を 1 本追加＋既存テスト `wanted_icon_keys_never_loads_icons_for_error_rows` のコメント改稿 |
 | `src-tauri/src/egui_shell/results_view.rs` | `request_icons_for_results` の導出コメント（:178-180） | `icon_key` が「どのキーか」だけでなく「そもそもキーを持つか」も決めることを反映（**コードは変えない**） |
 
+| `docs/adr/ADR-error-row-icon-key-in-derivation.md` | （新規） | 却下した代替案 4 件とその理由（`workspace/` の削除で失う否定の知識・#593） |
+
 `SPEC.md` は変更しない（→ §7）。
 
 **`results_view.rs:366-368` のコメント（「通常の欠落のみ placeholder。エラー行には…描かない」）は真のまま残す**——不変条件 I2 の担い手であり、今回の変更で偽にならない。
@@ -47,7 +49,7 @@
 
 ### Phase 1 — Red（検知器を先に落とす）
 
-1. `src-tauri/src/egui_shell/icon_textures.rs` の `mod tests` へ連鎖の検知器を追加する。
+- [x] 1. `src-tauri/src/egui_shell/icon_textures.rs` の `mod tests` へ連鎖の検知器を追加する。
 
 ```
 error_row_never_resolves_a_texture_from_a_previous_generation
@@ -60,31 +62,40 @@ error_row_never_resolves_a_texture_from_a_previous_generation
   ── (d) icon=Explicit のエラー行でも (c) が成り立つ
 ```
 
-2. `snotra-core/src/ui_types.rs` の `mod tests` へ導出そのものの検知器を追加する（`icon_key_is_none_for_error_rows`。`FromPath` と `Explicit` の両方）。
-3. 2 本とも**落ちることを確認する**（`cargo test -p snotra-core -q` / `cargo test -p snotra -q`）。
+- [x] 2. `snotra-core/src/ui_types.rs` の `mod tests` へ導出そのものの検知器を追加する（`icon_key_is_none_for_error_rows`。`FromPath` と `Explicit` の両方）。
+- [x] 3. 2 本とも**落ちることを確認する**（`cargo test -p snotra-core -q` / `cargo test -p snotra -q`）。
 
 ### Phase 2 — Green（最小実装）
 
-4. `SearchResult::icon_key` の先頭で `is_error` なら `None` を返す。
-5. `wanted_icon_keys` の `if r.is_error { continue }` を撤去する。
-6. Phase 1 の 2 本と既存テスト（とくに `wanted_icon_keys_never_loads_icons_for_error_rows`）が緑になることを確認する。
+- [x] 4. `SearchResult::icon_key` の先頭で `is_error` なら `None` を返す。
+- [x] 5. `wanted_icon_keys` の `if r.is_error { continue }` を撤去する。
+- [x] 6. Phase 1 の 2 本と既存テスト（とくに `wanted_icon_keys_never_loads_icons_for_error_rows`）が緑になることを確認する。
 
 ### Phase 3 — 散文を実装へ合わせる
 
-7. `icon_key` の doc を改稿し、`is_error` を折り込む理由（`SPEC.md`「3.4 アイコン」）を書く。
-8. `wanted_icon_keys` の doc から「要求を止めても絵が出ない保証にはならない」の段落と、`is_error` 行を弾く責務の記述を撤去する（#1134 の撤去約束）。**責務は「重複排除と抽出要否の判定」である旨を簡潔に書く**——`icon_key` が担い手であることをここで名指ししない（2026-08-19 のユーザー裁定。逐語: "重複排除と抽出要否の判定である旨を簡潔に書いてほしい"）。導出が 1 つであることはファイル冒頭のブロックコメント（Phase 3-10）が持つ。
-9. `visible_icon_keys` の doc から「広い側の代償」の記述を撤去し、`is_error` で狭めない理由（通常行の往復回避）だけを残す。
-10. ファイル冒頭のブロックコメントへ、`icon_key` が「どのキーか」だけでなく「そもそもキーを持つか」も決めることを書く。
-11. `results_view.rs` のアイコン枝のコメントと、既存テスト `wanted_icon_keys_never_loads_icons_for_error_rows` のコメントから、「描画側に `is_error` ガードが無いのでここが最後の砦」という趣旨の前提を外す。
-12. 全称表現を使わない（`AGENTS.md`「検証の作法」）。「〜する経路は存在しない」ではなく「エラー行はキーを持たないので、要求・保持・引きのいずれもエラー行を扱わない」と肯定形で書く。
+- [x] 7. `icon_key` の doc を改稿し、`is_error` を折り込む理由（`SPEC.md`「3.4 アイコン」）を書く。
+- [x] 8. `wanted_icon_keys` の doc から「要求を止めても絵が出ない保証にはならない」の段落と、`is_error` 行を弾く責務の記述を撤去する（#1134 の撤去約束）。**責務は「重複排除と抽出要否の判定」である旨を簡潔に書く**——`icon_key` が担い手であることをここで名指ししない（2026-08-19 のユーザー裁定。逐語: "重複排除と抽出要否の判定である旨を簡潔に書いてほしい"）。導出が 1 つであることはファイル冒頭のブロックコメント（Phase 3-10）が持つ。
+- [x] 9. `visible_icon_keys` の doc から「広い側の代償」の記述を撤去し、`is_error` で狭めない理由（通常行の往復回避）だけを残す。
+- [x] 10. ファイル冒頭のブロックコメントへ、`icon_key` が「どのキーか」だけでなく「そもそもキーを持つか」も決めることを書く。
+- [x] 11. `results_view.rs` のアイコン枝のコメントと、既存テスト `wanted_icon_keys_never_loads_icons_for_error_rows` のコメントから、「描画側に `is_error` ガードが無いのでここが最後の砦」という趣旨の前提を外す。
+- [x] 12. 全称表現を使わない（`AGENTS.md`「検証の作法」）。「〜する経路は存在しない」ではなく「エラー行はキーを持たないので、要求・保持・引きのいずれもエラー行を扱わない」と肯定形で書く。
 
 ### Phase 4 — 検証と変異注入
 
-13. カテゴリ A（`docs/build-commands.md`）を実行する。
-14. doc コメントを触るので `cargo doc --workspace --no-deps --document-private-items` を手で打つ（hook 非発火・カテゴリ A の必須行）。
-15. `.rs` のコメントが `SPEC.md` の見出しを参照するので `npm run governance:check` を実行する。
-16. **変異注入**: `icon_key` の `is_error` 判定を一時的に戻し、Phase 1 の 2 本が**赤になること**を実測する（緑のままなら検知器が何も測っていない）。注入は必ず巻き戻す。
-17. **`wanted_icon_keys` 側の変異も測る**: `icon_key` を直したうえで、既存テスト `wanted_icon_keys_never_loads_icons_for_error_rows` が**導出経由で**通っていることを、`icon_key` の `is_error` を戻したときに赤くなることで確かめる（16 と同じ注入で同時に観測できるなら 1 回でよい。観測できないなら別途測る）。
+- [x] 13. カテゴリ A（`docs/build-commands.md`）を実行する。
+- [x] 14. doc コメントを触るので `cargo doc --workspace --no-deps --document-private-items` を手で打つ（hook 非発火・カテゴリ A の必須行）。
+- [x] 15. `.rs` のコメントが `SPEC.md` の見出しを参照するので `npm run governance:check` を実行する。
+- [x] 16. **変異注入**: `icon_key` の `is_error` 判定を一時的に戻し、Phase 1 の 2 本が**赤になること**を実測する（緑のままなら検知器が何も測っていない）。注入は必ず巻き戻す。
+- [x] 17. **`wanted_icon_keys` 側の変異も測る**: `icon_key` を直したうえで、既存テスト `wanted_icon_keys_never_loads_icons_for_error_rows` が**導出経由で**通っていることを、`icon_key` の `is_error` を戻したときに赤くなることで確かめる（16 と同じ注入で同時に観測できるなら 1 回でよい。観測できないなら別途測る）。
+
+### Phase 5 — レビューと fix-forward（実装中に判明した作業・その場で追記）
+
+- [x] 18. `/symmetric-check` を実行する（テクスチャの生成/破棄の対称性）。**結果**: `results_view.rs:649-654` で `icon_textures` / `icon_attempts` / `icon_pending` が**同じ `visible` 集合**で刈られており、`icon_attempts` が増えるのは `Missing` のときだけ（:588）。成功して落ちたキーは試行回数を持たないので積み直せる——対称性は保たれている。適用漏れ 0 件。
+- [x] 19. `code-reviewer` ラウンド 1。**コード欠陥 0 件**、散文 6 件（High 1 / ⚠️ High の対 1 / Medium 1 / Low 3）を全件採用して修正。引用された規約 2 件（`docs/comment-guidelines.md:24` / :31）は自分で当たって逐語で実在を確認した。
+- [x] 20. ラウンド 2（同一エージェントを `SendMessage` で継続）。6 件の解消を現物で確認、**新規 Medium 1 件**——「現在形は消えたが置換先が**未観測の過去形**」（issue #1134 自身が「実機で再現はしていない」と書いているのに「#1134 の観測」と書いた）。採用して過去の行為へ倒した。あわせて依頼した変異 3 種の実測で、ラウンド 1 の「母集団はこの 2 本が持つ」が**1 対 1 の対応**だったとレビュア自身が訂正した。
+- [x] 21. ラウンド 3（母集団を修正差分の 1 文に限定）。**自分の監査で同型の再生を 1 件発見**——「その経路が**残っていること**を辿った」の目的語が現在形のままで、修正後は偽だった。3 度目の再生を止めるため置換ではなく**歴史の記述そのものを落とし**、機序は #1134 への参照へ委ねた。**ラウンド 3 の判定は一つ前の版に当たっていた**（`stat` の mtime 10:24:37 > 相手の読み 10:23。こちらが「触らない」と言った後に編集した落ち度）ので、現行版を対象にラウンド 3b を依頼し**新規 0 件**を得た。
+- [x] 22. `docs/adr/ADR-error-row-icon-key-in-derivation.md` を起こす（`workspace/` の削除で失う**否定の知識**＝却下した代替案 4 件とその理由）。
+- [x] 23. **旧構造を再現する変異で対照を測る**（レビュアが「読み取りによる裁定」と断った論点を自分で測った）。要求側の条件を戻し導出の折り込みを外すと、**`wanted_icon_keys_never_loads_icons_for_error_rows` は緑のまま `error_row_never_resolves_…` だけが赤**（2026-08-19 実測）。**旧テスト一式が緑のままバグが生きていた**ことの直接の証拠であり、連鎖検知器を別に置く根拠。結果を当該テストの doc へ記録した。注入はバックアップから復元し、痕跡 grep 0 件・全テスト緑を確認済み。**この 1 段落はラウンド 3b の後に足したので、4 カテゴリ（新しい現在形・数え上げ・双条件・未観測の観測）を自分で当てて 0 件を確認した**（過去形・実測済み・数を持たない・双条件でない）。
 
 ## 5. 不変条件と異常系
 

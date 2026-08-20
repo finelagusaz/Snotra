@@ -12,7 +12,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeSnapshot, buildChecks, governanceDocs } from "./governance-check.mjs";
-import { DOMAIN_SPECS } from "./governance/domains.mjs";
 
 /** 構造母集団の列。すべて sorted——`readdirSync` の順序は ext4 で不定であり、
  *  揃えないと CI と手元で差分に化ける。
@@ -20,15 +19,7 @@ import { DOMAIN_SPECS } from "./governance/domains.mjs";
  *  `checks` は `buildChecks` が積む検査 ID のみを見る——`G-area-instrument` は合否を持たない
  *  計器で `buildChecks` を経由せず `runAll` へ直接 push されるため、この列には現れない
  *  （その push 行を消しても manifest は沈黙する。歯止めは `governance-check.test.mjs` の
- *  カナリアテストの側にある）。
- *
- *  `domains` は `DOMAIN_SPECS` の**名前の集合**である（I3）。これが無いと、ドメインを 1 つ
- *  丸ごと消しても `G-domain-anchors` は残ったドメインだけを見て緑を返し、`domains.test.mjs` の
- *  `domains.size === DOMAIN_SPECS.length` も両辺が同時に減るので沈黙する——「錨が 0 本は赤、
- *  ドメインごと消えるのは緑」という非対称になっていた。**件数ではなく名前の集合**にするのは、
- *  件数だと入れ替えが沈黙するのと、ドメインの増減以外では動かない値にするためである
- *  （設計が件数の列を却下したのはこの前者の理由による）。他の列と違い snapshot を読まない
- *  ——ドメインの一覧はファイル走査ではなくソースの宣言から出る。 */
+ *  カナリアテストの側にある）。 */
 export function manifest(snapshot) {
   const files = (re) => snapshot.files.filter((f) => re.test(f)).sort();
   return {
@@ -38,21 +29,12 @@ export function manifest(snapshot) {
     docs: [...governanceDocs(snapshot)].sort(),
     rules: files(/^\.claude\/rules\/[^/]+\.md$/),
     skills: files(/^\.claude\/skills\/[^/]+\/SKILL\.md$/),
-    domains: DOMAIN_SPECS.map((s) => s.name).sort(),
   };
 }
 
 /** 列の一覧の SSOT。テストもここを読む——列を足したとき「非空」「sorted」の検算から
  *  漏れる（＝新しい列だけが無検査になる）形を構造的に消すため。 */
-export const KEYS = ["checks", "docs", "rules", "skills", "domains"];
-
-/** 格下げ中の列（`ADR-governance-meta-demotion`）。**`manifest()` は出し続ける**——数字が取れなく
- *  なると、戻す/撤去するの判定材料が消える。差分だけを取らない。 */
-export const META_KEYS = ["domains"];
-
-/** 差分を取る列。監査モード（`SNOTRA_GOV_META_AUDIT=1`）では格下げ中の列も戻す。 */
-export const diffKeys = () =>
-  process.env.SNOTRA_GOV_META_AUDIT === "1" ? KEYS : KEYS.filter((k) => !META_KEYS.includes(k));
+export const KEYS = ["checks", "docs", "rules", "skills"];
 
 /** `+<name>` / `-<name>` の列。
  *
@@ -65,7 +47,7 @@ export const diffKeys = () =>
  *  意味は 1 つなので、返す前に重複を畳む。 */
 export function diffManifest(base, head) {
   const out = new Set();
-  for (const key of diffKeys()) {
+  for (const key of KEYS) {
     const b = new Set(base[key] ?? []);
     const h = new Set(head[key] ?? []);
     for (const x of h) if (!b.has(x)) out.add(`+${x}`);

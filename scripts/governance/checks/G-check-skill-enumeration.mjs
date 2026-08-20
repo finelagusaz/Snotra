@@ -3,7 +3,6 @@ import { finding, sectionOf } from "../lib.mjs";
 import { skillFiles } from "./G-skill-table.mjs";
 
 export const id = "G-check-skill-enumeration";
-export const domains = ["skillDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

@@ -2,7 +2,6 @@
 import { finding } from "../lib.mjs";
 
 export const id = "G-adr-file-names";
-export const domains = ["adrFiles"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

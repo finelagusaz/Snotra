@@ -2,7 +2,6 @@
 import { finding, workspaceMembers } from "../lib.mjs";
 
 export const id = "G-build-commands";
-export const domains = ["workspaceMemberDirs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

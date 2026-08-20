@@ -4,7 +4,6 @@
 import { finding, globToRegex, rulePathPatterns, ruleDocs } from "../lib.mjs";
 
 export const id = "G-rules-globs";
-export const domains = ["ruleDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

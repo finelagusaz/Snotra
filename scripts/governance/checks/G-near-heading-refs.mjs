@@ -2,7 +2,6 @@
 import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor, isRefTargetSpelling } from "../lib.mjs";
 
 export const id = "G-near-heading-refs";
-export const domains = ["allHeadingRefDocs"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（allRefDocs・record を使う） */
 export function run(snapshot, ctx) {

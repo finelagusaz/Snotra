@@ -2,7 +2,6 @@
 import { finding, linesOutsideFences } from "../lib.mjs";
 
 export const id = "G-architecture-table";
-export const domains = "unmigrated";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

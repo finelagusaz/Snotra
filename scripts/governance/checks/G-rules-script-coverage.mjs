@@ -41,13 +41,12 @@
 import { finding, globToRegex, rulePathPatterns } from "../lib.mjs";
 
 export const id = "G-rules-script-coverage";
-export const domains = ["ruleDocs", "judgingScripts"];
 
 /** 判定を持つスクリプトの拡張子。`commentFamilyOf` と違い**配送の母集団**を決めるので別概念である。 */
 const SCRIPT_EXT = /\.(mjs|ps1|psm1)$/;
 
-/** `judgingScripts` ドメインのメンバー——判定を持つスクリプトの全体。
- *  **腕ごとの下界は `domains.mjs` の錨が `governance:check` の実行時に見る**（この検査の外側の層）。 */
+/** 判定を持つスクリプトの全体。**この母集団が黙って縮んでも、どの層も赤くしない**——
+ *  縮みを見張っていた錨の層は撤去した（`ADR-governance-anchor-layer-discarded`「受容する残余」）。 */
 export function judgingScripts(snapshot) {
   return snapshot.files.filter((f) => SCRIPT_EXT.test(f));
 }

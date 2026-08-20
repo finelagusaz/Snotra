@@ -75,9 +75,7 @@ export function scanFoldedHeadingRefs(snapshot, docs) {
       if (open && isRefTargetSpelling(open[1])) {
         checked += 1;
         findings.push(fold(doc, lineNo, open[1], "ラベルが次行へ流れている"));
-        // 同じ行を形 A でも数えない。**「`「` が在れば行末は対象綴りで終わらない」からではない**
-        // ——1 行に 2 つの参照が在り、後ろが開いたまま前が行末で終わる形は構築できる（実測）。
-        // 二重計上を避ける選択であり、そのとき形 A 側は見送る（1 行 1 件で報告すれば直せる）。
+        // 同じ行を形 A でも数えない——1 行 1 件で報告する選択である（機序ではなく方針）。
         continue;
       }
       const tail = TAIL_TARGET.exec(line);

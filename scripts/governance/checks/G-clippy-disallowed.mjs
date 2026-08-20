@@ -2,7 +2,6 @@
 import { finding, stripTomlComment, tomlLine, lintLevel } from "../lib.mjs";
 
 export const id = "G-clippy-disallowed";
-export const domains = "unmigrated";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {

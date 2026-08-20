@@ -22,8 +22,8 @@
 // - 検査の登録は `scripts/governance/checks/` の走査から導出される（`registry.mjs`）——ファイルを
 //   置けばそのまま検査になり、忘れうる登録行が無い。ファイル名と export した `id` の食い違いは
 //   `registry.mjs` が throw で拒む（#1088 が問うた「検査が沈黙で 1 本落ちる」構造の解消）
-// - 各検査は `domains`（`DOMAIN_SPECS` の名前を要素に持つ非空配列か `"*"`、または `"unmigrated"`）を
-//   宣言必須——空配列・未知の名前も `registry.mjs` が起動時点で throw で拒む
+// - 各検査は自分が読む母集団を自分で導く。宣言（ドメイン）も、その縮みを見張る層も持たない
+//   ——錨の層ごと撤去した経緯は `ADR-governance-anchor-layer-discarded`
 // - `checks/` の外に置いたものは検査ではない——`governance/instrument.mjs`（合否を持たない計器）も
 //   `governance/evidence.mjs`（evidence の組み立てと、その入力の読み取りガード・#1098）も
 //   登録走査の対象外であり、「検査 N 件」に数えられない。**findings を出すかどうかとは別の軸である**
@@ -66,9 +66,8 @@ import {
   staleIdentifierTargets,
   workspaceMembers,
 } from "./governance/lib.mjs";
-import { checkNormativeAreaInstrument, normativeArea, duplicateDomains } from "./governance/instrument.mjs";
+import { checkNormativeAreaInstrument, normativeArea } from "./governance/instrument.mjs";
 import { assembleEvidence, evidenceView } from "./governance/evidence.mjs";
-import { buildDomains } from "./governance/domains.mjs";
 
 // `lib.mjs` の 2 名を、facade 経由で読む消費者のために再輸出する（`buildChecks` / `runAll` は
 // 下で `export function` として定義するのでここに要らない）。**`export *` にしない**——公開する
@@ -92,20 +91,18 @@ export { makeSnapshot, governanceDocs };
 // メタ層の格下げ（`docs/adr/ADR-governance-meta-demotion.md`）
 // ---------------------------------------------------------------------------
 //
-// **ここに挙げるのは「主題が機構自身である判定」であって、母集団の欠落検知ではない。**
-// 両者は同じ `findings` の形をしているが、止めたときに起きることが違う——母集団が空になれば
-// 21 本は空虚に緑を返す（21 本自身の故障）ので `runAll` の 0 件検知はゲートに残す。
-// 一方、錨が倒れても 21 本の合否は変わらない（変わるのは「母集団が縮んでいないという保証」だけ）。
+// **格下げが残っているのは 2 件だけである**——面積計器の入力ガードと、evidence の供給断検知。
+// **錨の層は格下げではなく撤去した**（`ADR-governance-anchor-layer-discarded`）。中途半端に
+// 面だけ残すと「通過はするが、どこが効いているかは読まないと分からない」状態になるためで、
+// 撤去と作りきるの二択に倒した判断である。
 //
-// **格下げは撤去ではない。判定は走り、印字もされる。exit code に算入しないだけである。**
-// 消さない理由は `ADR-retire-area-budget` の先例——面積は格下げ後も動かし続けたからこそ
-// 「4 観測点で欠陥検出ゼロ」という**廃止できる根拠**が取れた。消していればその 4 点は無い。
+// 残した 2 件を撤去ではなく格下げにしている理由は `ADR-retire-area-budget` の先例——面積は
+// 格下げ後も動かし続けたからこそ「4 観測点で欠陥検出ゼロ」という**廃止できる根拠**が取れた。
+// **どちらも「主題が機構自身である判定」であって、母集団の欠落検知ではない**——母集団が空に
+// なれば 21 本は空虚に緑を返す（21 本自身の故障）ので、`runAll` の 0 件検知はゲートに残る。
 //
 // **`SNOTRA_GOV_META_AUDIT=1` で元のゲートへ戻る。** サイクル末の `/health-check` がこれを立てて
 // 走らせ、発火を数える。2 サイクル連続で 0 件なら当該項目を撤去する（判定規則は ADR が正本）。
-
-/** 主題が機構自身である検査の id。**`checks/` に住んでいても 21 本の合否には数えない。** */
-const META_CHECK_IDS = new Set(["G-domain-anchors"]);
 
 /** 監査モード（メタ層をゲートへ戻す）。既定は格下げ側——**安全側ではなく静か側を既定にしている**
  *  ことを明示する: これは「効いていないかもしれない層を、効いているか測るために止める」実験で
@@ -144,13 +141,11 @@ export function buildChecks(snapshot, sink = {}) {
   sink.staleDocs = staleDocs;
   sink.staleGuides = staleGuides;
   sink.staleTargets = staleTargets;
-  const domains = buildDomains(snapshot);
-  sink.domains = domains;
   const record = (key, r) => {
     sink[key] = r.checked;
     return r.findings;
   };
-  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record, domains };
+  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths, record };
   return CHECK_MODULES.map((m) => ({ id: m.id, run: () => m.run(snapshot, ctx) }));
 }
 
@@ -170,28 +165,18 @@ export function runAll(snapshot) {
   // 固定パスの `STALE_EXTRA_DOCS` はここに要らない（読めなければ scanStaleIdentifiers が鳴る）
   if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
   if (ctx.staleGuides.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の開発ガイド（docs/**）が 0 件（母集団の欠落）"));
-  // メタ層は別の器へ受ける（`ADR-governance-meta-demotion`）。**振り分けの根拠は id であって
-  // findings の中身ではない**——中身で判定すると、メッセージを書き換えただけで層が移る。
+  // 格下げ中のメタ層は別の器へ受ける（`ADR-governance-meta-demotion`）。**いま検査は 1 本も
+  // 入っていない**——錨の層を撤去したので、残るのは下の 2 件（面積計器の入力ガードと
+  // evidence の供給断検知）だけである。
   const metaFindings = [];
-  for (const c of checks) (META_CHECK_IDS.has(c.id) ? metaFindings : findings).push(...c.run());
+  for (const c of checks) findings.push(...c.run());
   // 計器は検査ではない——面積に合否は無い（`ADR-retire-area-budget`）ので「検査 N 件」に数えない。
   // 入力の健全性だけは残すが、**守っている相手が計器なので格下げ側へ置く**——面積の数字が
   // 静かに過小になるだけで、21 本の合否は動かない。
   metaFindings.push(...checkNormativeAreaInstrument(snapshot));
   const area = normativeArea(snapshot);
-  // duplicateDomains も合否を持たない計器——findings へは積まない。同一メンバーのドメインが
-  // 在れば報告するだけで、畳むかどうかの判断は人に残す（`scripts/governance/instrument.mjs` の
-  // duplicateDomains 冒頭コメントが正本）。**印字はここでは行わない**——`runAll` はテストからも
-  // 直接呼ばれるため（`lib.test.mjs` / `governance-check.test.mjs`）、副作用は `isMain` の
-  // CLI エントリポイントへ寄せる（この場に置いた版は `--reporter=verbose` で 8 件のテストへ
-  // 混入することが実測で判明した・レビュー修正ラウンド 1）。
-  const dupDomains = duplicateDomains(ctx.domains);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
-  // 各検査は `domains` を宣言必須（registry.mjs の `checkModulesFrom` が起動時点で強制する）。
-  // ここでは未移行（`"unmigrated"`）の残数を数え、evidence の 1 項目としてラチェットに使う——
-  // 移行が進むたびこの数が減り、後退（増加）は evidence の目視で気づける。
-  const unmigrated = CHECK_MODULES.filter((m) => m.domains === "unmigrated");
   // evidence の入力は view 越しに読む（#1098）。検査が `ctx.record` を呼ばなくなると
   // 値が `undefined` のまま印字され、誰も赤くしないまま exit 0 になっていた（実測）。
   // view を外す形も、別の Proxy へ差し替える形も、`assembleEvidence` が参照の照合で throw して拒む。
@@ -216,7 +201,6 @@ export function runAll(snapshot) {
         workspaceMembers: workspaceMembers(snapshot).members.length,
         clippyDisallowed: clippyDisallowedCount(snapshot),
         adrFiles: adrFiles(snapshot).length,
-        unmigrated: unmigrated.length,
       },
       metaFindings,
     ),
@@ -224,14 +208,14 @@ export function runAll(snapshot) {
   // 監査モードではメタ層をゲートへ戻す。**戻し方は「合流」であって別枠の再判定ではない**
   // ——別枠にすると、監査で赤くなったときの exit code の作り方が 2 通りになる。
   if (metaAuditEnabled()) findings.push(...metaFindings);
-  return { findings, metaFindings, evidence, dupDomains };
+  return { findings, metaFindings, evidence };
 }
 
 // fileURLToPath を使う — URL.pathname は空白等を percent-encode するため resolve と一致せず、
 // 「検査ゼロ件のまま exit 0」という沈黙経路になる（レビュー H1 で実測）
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const { findings, metaFindings, evidence, dupDomains } = runAll(makeSnapshot(process.cwd()));
+  const { findings, metaFindings, evidence } = runAll(makeSnapshot(process.cwd()));
   if (findings.length > 0) {
     console.error(`governance:check — ${findings.length} 件の不整合:`);
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
@@ -248,9 +232,5 @@ if (isMain) {
   if (!metaAuditEnabled() && metaFindings.length > 0) {
     console.log(`governance:check — 格下げ中のメタ層に ${metaFindings.length} 件（合否には算入しない）:`);
     for (const f of metaFindings) console.log(`  ${f.file}:${f.line}  ${f.message}`);
-  }
-  // duplicateDomains は合否を持たない計器——findings にも exit code にも触れない、報告専用の 1 行。
-  if (dupDomains.length > 0) {
-    console.log(`governance:check — 同一メンバーのドメイン: ${dupDomains.map((names) => names.join("=")).join(", ")}`);
   }
 }

@@ -4,7 +4,7 @@ import { manifest, diffManifest, undeclared, KEYS } from "./governance-manifest.
 
 describe("manifest（構造母集団の集合）", () => {
   // 列の一覧は `KEYS` を読む——ここへ列名を書き写すと、列を足したときにその列だけが
-  // 検算から漏れる（新しい列が無検査で入る形。I3 の `domains` 追加で実際に踏みかけた）。
+  // 検算から漏れる（新しい列が無検査で入る形）。
   it("実リポジトリで全列が非空", () => {
     const m = manifest(makeSnapshot(process.cwd()));
     for (const key of KEYS) {
@@ -19,11 +19,6 @@ describe("manifest（構造母集団の集合）", () => {
   });
   it("検査 ID を含む", () => {
     expect(manifest(makeSnapshot(process.cwd())).checks).toContain("G-references");
-  });
-  // `DOMAIN_SPECS` と突き合わせない——manifest がそこから導出している以上、突き合わせは
-  // 不動点になり「両辺が同時に減る」当の欠陥を再現する。独立に書いたドメイン名で接地する。
-  it("ドメイン名を含む（I3 — ドメインの一覧が manifest の列である）", () => {
-    expect(manifest(makeSnapshot(process.cwd())).domains).toContain("governanceDocs");
   });
 });
 
@@ -49,38 +44,6 @@ describe("diffManifest（件数ではなく集合を比べる）", () => {
     };
     const overlapHead = { checks: [], docs: [], rules: [], skills: [] };
     expect(diffManifest(overlapBase, overlapHead)).toEqual(["-.claude/rules/foo.md"]);
-  });
-  // I3 の当の欠陥——ドメインが 1 つ丸ごと消える。**消費者を持つドメインは `registry.mjs` が
-  // ロード時に throw する**（検査の `domains` 宣言が未知の名前になるため）が、**消費者の無い
-  // ドメインはどの層も見なかった**——実測（2026-08-20）: `headingRefDocs` を `DOMAIN_SPECS` から
-  // 消すと `governance:check` も `npm test` も緑のままで、この列だけが `-headingRefDocs` を出した。
-  // **この列は格下げ中である**（`ADR-governance-meta-demotion`）。錨の層をゲートから外した以上、
-  // その帳簿だけをゲートに残すのは筋が通らない——止めたのは「錨が守っている保証」であって、
-  // 帳簿はその保証の付属物である。
-  //
-  // **格下げで実際に見えなくなるものを名指しする**（上のコメントの実測がそのまま残余になる）:
-  // 消費者を持たないドメインを `DOMAIN_SPECS` から消しても、既定モードではどの層も鳴らない。
-  // 消費者を持つドメインは `registry.mjs` が未知の名前で throw するので、ここは変わらない。
-  const withAudit = (v, fn) => {
-    const prev = process.env.SNOTRA_GOV_META_AUDIT;
-    if (v === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
-    else process.env.SNOTRA_GOV_META_AUDIT = v;
-    try {
-      return fn();
-    } finally {
-      if (prev === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
-      else process.env.SNOTRA_GOV_META_AUDIT = prev;
-    }
-  };
-  const b = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs", "adrFiles"] };
-  const h = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs"] };
-
-  it("既定ではドメインの消滅は delta に出ない（格下げ中）", () => {
-    expect(withAudit(undefined, () => diffManifest(b, h))).toEqual([]);
-  });
-
-  it("監査モードではドメインが 1 つ消えると delta に出る（I3・戻す経路が実在する）", () => {
-    expect(withAudit("1", () => diffManifest(b, h))).toEqual(["-adrFiles"]);
   });
 });
 

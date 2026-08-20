@@ -73,11 +73,12 @@ allowed-tools:
 
 ## Check 11 — 格下げ中のメタ層の発火計数
 
-ガバナンス機構のうち**主題が機構自身である層**（錨・`G-domain-anchors`・evidence の供給断検知・面積計器の入力ガード・manifest の `domains` 列・錨の総称反証テスト）は、`governance:check` と `npm test` の合否から外してある（`ADR-governance-meta-demotion`）。**この Check だけがその層を観測する窓である。**
+ガバナンス機構のうち**主題が機構自身である判定 2 件**——面積計器の入力ガードと evidence の供給断検知——は、`governance:check` の合否から外してある（`ADR-governance-meta-demotion`）。**この Check だけがその 2 件を観測する窓である。**
+
+**錨の層は格下げではなく撤去した**（`ADR-governance-anchor-layer-discarded`）ので、観測の対象ではない。**「母集団が黙って縮んでも誰も赤くしない」は受容した残余であり、発見事項ではない**——同 ADR の「受容する残余」が正本。
 
 ```bash
 SNOTRA_GOV_META_AUDIT=1 npm run governance:check
-SNOTRA_GOV_META_AUDIT=1 npm test
 ```
 
 **報告するのは件数と内訳であって、修正ではない**（本スキルは修正しない）。
@@ -94,7 +95,7 @@ SNOTRA_GOV_META_AUDIT=1 npm test
 
 **この Check を機構で自動化してはならない。** 自動化すればそれ自身が「メタ層を守るメタ層」になり、格下げが止めようとしている再帰をもう一段伸ばす（同 ADR の記載）。
 
-**既定モードでの実行は代わりにならない。** 既定では `governance:check` が格下げ分を印字するが、`npm test` 側の 3 本は `skipped` として素通りする。**印字を読むことと、判定を走らせることは別である。**
+**既定モードでの印字を読むだけでは足りない。** 既定でも `governance:check` は格下げ分を印字するが、**印字は検出チャネルではない**（「検出は exit code、出力は証拠」・#471）。数えるのは監査モードの実行結果である。
 
 ## 出力
 

@@ -3,14 +3,10 @@ import { finding, linesOutsideFences } from "../lib.mjs";
 import { adrFiles } from "./G-adr-file-names.mjs";
 
 export const id = "G-adr-citations";
-export const domains = ["governanceDocs", "adrFiles", "skillTreeDocs", "nonDocSources"];
 
-/** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs・domains・record を使う） */
+/** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs・record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record(
-    "adrCitations",
-    scanAdrCitations(snapshot, adrCitationDocs(snapshot, ctx.docs, ctx.domains.get("adrFiles").members)),
-  );
+  return ctx.record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, ctx.docs, adrFiles(snapshot))));
 }
 
 // ---------------------------------------------------------------------------

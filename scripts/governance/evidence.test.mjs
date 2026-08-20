@@ -23,7 +23,6 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     nearRefs: 14,
     adrFiles: 53,
     adrCitations: 257,
-    unmigrated: 14,
   });
 
   it("緑: すべて記録済みなら finding は出ず、undefined も `?` も印字しない", () => {

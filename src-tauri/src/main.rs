@@ -611,8 +611,7 @@ fn setup_tray(app_handle: &AppHandle, show_tray: bool, load_outcome: LoadOutcome
 /// setup: `show_egui_main` depends on the platform bridge (IME control).
 fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
     if show_on_startup {
-        // setup フック自身がイベントループの中で走る（`src-tauri/CLAUDE.md`「ウィンドウ生成の
-        // 制約」）ため `on_event_loop` はインライン実行へ倒れるが、**証人を作れるのは
+        // setup フック自身がイベントループの中で走る（`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）ため `on_event_loop` はインライン実行へ倒れるが、**証人を作れるのは
         // `on_event_loop` の中だけ**なので包む形は必要である。
         snotra_egui_runtime::on_event_loop(app_handle, |app, el| {
             egui_shell::show_egui_main(app, el, Instant::now());

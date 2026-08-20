@@ -74,8 +74,7 @@ impl DerivedStrings {
 /// ここで既に最終形——[`NameArena`]——になっている。
 ///
 /// **`normalized_keys` はここに無い**——`target_path` からの導出に置き換えて索引から外した
-/// （実測 35.56 MiB。経緯は `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
-/// 保持するか導出するか」）。
+/// （実測 35.56 MiB。経緯は `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）。
 type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, NameArena);
 
 /// Wave 1: entries から文字列正規化データを並列構築する。
@@ -189,8 +188,7 @@ impl SearchEngine {
     /// 縮んでも確保バイト数が動かない。
     ///
     /// **合流点はここ 1 箇所である。** 3 つのコンストラクタがすべて通るため、
-    /// 個々の経路へ `shrink_to_fit` を配ると漏れが生じる。実測は `PERFORMANCE.md`
-    /// 「索引の常駐の内訳」。
+    /// 個々の経路へ `shrink_to_fit` を配ると漏れが生じる。実測は `PERFORMANCE.md`「索引の常駐の内訳」。
     fn assemble(
         tree: IndexTree,
         derived: DerivedStrings,
@@ -459,8 +457,7 @@ impl SearchEngine {
                 //
                 // **塊ごとに組んでから併合する。** アリーナへの push は逐次だが、
                 // **ここを逐次化してはならない**——この経路はキャッシュヒット起動が毎回通り、
-                // `to_kana` の全件適用が秒オーダーで**毎起動に**乗る（額は `PERFORMANCE.md`
-                // 「採用: `kana_lower_names` も文字列アリーナで持つ」が正本）。
+                // `to_kana` の全件適用が秒オーダーで**毎起動に**乗る（額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」が正本）。
                 // `chunks` + `collect` は順序を保つので、併合は受け取った順に繋ぐだけでよい。
                 //
                 // **この結線を守るのは `kana_column_survives_chunked_parallel_merge` である**

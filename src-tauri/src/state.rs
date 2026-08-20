@@ -34,8 +34,7 @@ pub struct AppState {
     /// **ただしこれは型ではなく規範で保たれている。** このフィールドは `pub` で、新しい
     /// `store()` を crate 内のどこにでも書ける。加えて `Manager` から main のハンドルを引いた
     /// `.hide()` はコンパイルが通り**実際に効く**ため、このフラグを更新せずに窓だけ消せる
-    /// （帰結と受容の理由は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループ
-    /// スレッドに閉じてある」に続く bullet 群が正本）。
+    /// （帰結と受容の理由は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに閉じてある」に続く bullet 群が正本）。
     pub main_visible: AtomicBool,
     /// index build 完了ごとに単調増加する世代（#633・SU6 spec 決定 3）。egui view が
     /// last-seen と比較して再検索をトリガするアキュムレータ。panic/spawn 失敗経路の finish でも

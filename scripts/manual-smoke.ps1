@@ -60,8 +60,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SnotraTraceInvariants.psm1') -Force
 $script:InvariantNames = Get-SnotraTraceInvariantNames
 
 # --- 項目定義（この `$items` が常設 13 項目の SSOT である） ---
-# **PR 本文の目視表とは別の母集団であって、写しではない**（`docs/adr/ADR-folder-location-display-surface.md`
-# 「却下 6」）。ここに載るのは**どの変更でも壊れうる横断不変条件**（フォーカス奪取・hide の順序・
+# **PR 本文の目視表とは別の母集団であって、写しではない**（`docs/adr/ADR-folder-location-display-surface.md`「却下 6」）。ここに載るのは**どの変更でも壊れうる横断不変条件**（フォーカス奪取・hide の順序・
 # クリック逆流の読み点・位置復元・フォント hot-reload・キャレット・ベースライン・通知期限）であり、
 # 機能単位の受け入れ確認は PR 限りの目視表が持つ。**新機能のために先回りで足さない**——足す条件は
 # 「その表示が実際に一度回帰したとき」である（#700 → 項目 11 がその経路）。

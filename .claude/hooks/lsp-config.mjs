@@ -5,8 +5,7 @@
  * JSON として壊しても抑制キーを消しても exit 0 を返す（2026-08-14 実測・#1083）。
  * そのうえ**設定が届かない・上書きされる壊れ方は沈黙する**——rust-analyzer は設定が無ければ既定値で
  * 普通に起動するので、navigation は動いたまま `checkOnSave` だけが復活する。壊れ方の分類と、
- * 沈黙しない枝（plugin の load 自体が失敗する形）は `docs/hooks.md`
- * 「Claude Code の RA インスタンスと hook の分担」が正本。
+ * 沈黙しない枝（plugin の load 自体が失敗する形）は `docs/hooks.md`「Claude Code の RA インスタンスと hook の分担」が正本。
  *
  * **判定を非 test の `.mjs` に置くのは 2 つの理由による。** (1) 稼働中の `.claude/settings.json` へ
  * 変異を当てずに複製へ当てられる

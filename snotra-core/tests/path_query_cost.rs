@@ -1,14 +1,12 @@
 //! パスクエリ（`has_path_sep`）の走査コスト実測ハーネス。
 //!
-//! パスクエリは Fuzzy ビットマスク pre-filter を**スキップする**（`snotra-core/CLAUDE.md`
-//! 「モジュール構成」の search.rs 節）。ゆえに全エントリの `normalized_key` に対する
+//! パスクエリは Fuzzy ビットマスク pre-filter を**スキップする**（`snotra-core/CLAUDE.md`「モジュール構成」の search.rs 節）。ゆえに全エントリの `normalized_key` に対する
 //! 部分文字列検索が毎打鍵で走る、索引規模がそのまま乗る唯一の経路である。
 //! それでいて `search/tests/performance.rs` の bench 群も
 //! `tests/search_frame_cost.rs` もパス区切りを含むクエリを 1 つも持っていない。
 //!
 //! **実 `index.bin` に対して測るのが要点である。** パス長がコストを支配し、
-//! 実運用点の平均 119.3 B は合成ラダー（66.4 B）の約 2 倍ある（`PERFORMANCE.md`
-//! 「索引の常駐の内訳」）。実インデックスが無い環境では自動スキップする。
+//! 実運用点の平均 119.3 B は合成ラダー（66.4 B）の約 2 倍ある（`PERFORMANCE.md`「索引の常駐の内訳」）。実インデックスが無い環境では自動スキップする。
 //!
 //! タイミング測定は環境依存ゆえ CI では回さない。手元で release 実行する（コマンドの
 //! SSOT は `docs/build-commands.md`）。
@@ -262,8 +260,8 @@ fn measure_path_query_frame_cost() {
 ///
 /// 検索結果の正しさ（挙動テストの担当）と、実 UI スレッドが本当にこの額を払うか
 /// （`smoke:egui` の担当）。**合否も言わない**——出力に添えた諸元を人間が読んで初めて
-/// 「実運用点を再現できたか」が確かめられる（`docs/development-principles.md`
-/// 「判定を持たない道具を層に数えてよい」）。
+/// 「実運用点を再現できたか」が確かめられる。判定を持たない道具も層に数えてよい、という原則に依っている
+/// （`docs/development-principles.md`「検証の層と、層と層の隙間」）。
 ///
 /// # 実データを直接読む
 ///

@@ -1,0 +1,111 @@
+import { describe, it, expect } from "vitest";
+import { snap } from "../test-helpers.mjs";
+import { checkFoldedHeadingRefs, scanFoldedHeadingRefs } from "./G-folded-heading-refs.mjs";
+
+// 守りたい対象 = #1154 で実測した 33 件。折れた正準形は `HEADING_REF` も `NEAR_REF` も
+// **一致を生成しない**ので、`checked` にも `findings` にも現れない——「照合していない」と
+// 「差分ゼロ」を分ける証跡すら残らない形である。
+// **例示に実在の対象を置かない**——`checks/` はこの検査群の母集団（コメントの腕）だからである。
+// プレースホルダは `isRefTargetSpelling` に当たらないので、この検査自身の finding にならない。
+describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が物理改行で折れた形・#1154）", () => {
+  const run = (text, file = "docs/x.md") => checkFoldedHeadingRefs(snap({ [file]: text }), [file]);
+
+  describe("形 A — 対象綴りで行が終わり、ラベルが次行から始まる", () => {
+    it("`.md` の散文で折れていれば finding", () => {
+      const f = run("実測は `PERFORMANCE.md`\n「索引の常駐の内訳」を見よ\n");
+      expect(f).toHaveLength(1);
+      expect(f[0].line).toBe(1);
+      expect(f[0].message).toContain("物理改行で折れている");
+    });
+
+    it("`§` + 節番号を挟んで折れていても finding", () => {
+      expect(run("`SPEC.md` §4.5\n「最大列挙数」\n")).toHaveLength(1);
+    });
+
+    it("`///` / `//!` / `//` の行頭記号を落として次行を見る", () => {
+      expect(run("/// 実測は `PERFORMANCE.md`\n/// 「索引の常駐の内訳」\n", "a.rs")).toHaveLength(1);
+      expect(run("//! 実測は `PERFORMANCE.md`\n//! 「索引の常駐の内訳」\n", "a.rs")).toHaveLength(1);
+      expect(run("// 実測は `PERFORMANCE.md`\n// 「索引の常駐の内訳」\n", "a.rs")).toHaveLength(1);
+    });
+
+    it("blockquote `>` を落として次行を見る（33 件のうち 1 件がこの形）", () => {
+      expect(run("> 実測は `PERFORMANCE.md`\n> 「索引の常駐の内訳」\n")).toHaveLength(1);
+    });
+
+    it("スクリプトのコメント記法（`#` / ` * `）でも見る", () => {
+      expect(run("# 実測は `PERFORMANCE.md`\n# 「索引の常駐の内訳」\n", "a.ps1")).toHaveLength(1);
+      expect(run("/**\n * 実測は `PERFORMANCE.md`\n * 「索引の常駐の内訳」\n */\n", "a.mjs")).toHaveLength(1);
+    });
+
+    it("CRLF でも見る（windows runner は `core.autocrlf=true` でチェックアウトする）", () => {
+      expect(run("実測は `PERFORMANCE.md`\r\n「索引の常駐の内訳」\r\n")).toHaveLength(1);
+    });
+  });
+
+  describe("形 B — `「` まで同一行に開き、ラベル本文だけが次行へ流れる", () => {
+    it("ラベルが次行へ流れていれば finding", () => {
+      const f = run("実測は `PERFORMANCE.md`「索引の\n常駐の内訳」を見よ\n");
+      expect(f).toHaveLength(1);
+      expect(f[0].line).toBe(1);
+    });
+
+    it("ラベルが 3 行以上に割れていても同じ述語で捕まる（次行を見ないため）", () => {
+      expect(run("`PERFORMANCE.md`「索引の\n常駐の\n内訳」\n")).toHaveLength(1);
+    });
+
+    it("次行が無くても（EOF で閉じない）finding", () => {
+      expect(run("`PERFORMANCE.md`「索引の\n")).toHaveLength(1);
+    });
+  });
+
+  describe("負例 — 折れていないものを赤にしない", () => {
+    it("1 物理行に収まった正準形は見ない", () => {
+      expect(run("実測は `PERFORMANCE.md`「索引の常駐の内訳」を見よ\n")).toEqual([]);
+    });
+
+    it("行末が対象綴りでも、次行が `「` で始まらなければ見ない（箇条書きの並び）", () => {
+      expect(run("- 意図（仕様）: `SPEC.md`\n- 実測: `PERFORMANCE.md`\n")).toEqual([]);
+    });
+
+    it("行末が対象綴りで次行が空行なら見ない", () => {
+      expect(run("詳細は `PERFORMANCE.md`\n\n「索引の常駐の内訳」\n")).toEqual([]);
+    });
+
+    it("対象の綴りでないバッククォートは見ない（`.mjs` や識別子）", () => {
+      expect(run("`domains.test.mjs`\n「moduleIndexSources は crateSources の部分集合」\n")).toEqual([]);
+      expect(run("`someVar`\n「見出し」\n")).toEqual([]);
+      expect(run("`someVar`「見出しの\n途中」\n")).toEqual([]);
+    });
+
+    it("コードフェンスの内側は見ない（`.md` の走査はフェンスを落とす）", () => {
+      expect(run("```\n`PERFORMANCE.md`\n「索引の常駐の内訳」\n```\n")).toEqual([]);
+    });
+
+    it("スクリプトの非コメント行は見ない（文字列リテラルに書かれたデータ）", () => {
+      expect(run('const s = "`PERFORMANCE.md`";\nconst t = "「索引の常駐の内訳」";\n', "a.mjs")).toEqual([]);
+    });
+
+    it("行頭記号の落としすぎを起こさない（本文が `-` で始まる行は `「` ではない）", () => {
+      expect(run("詳細は `PERFORMANCE.md`\n- 「索引の常駐の内訳」ではない項目\n")).toHaveLength(1);
+      expect(run("詳細は `PERFORMANCE.md`\n-- 通常の本文\n")).toEqual([]);
+    });
+
+    it("`/skill-name` の形も対象綴りとして見る", () => {
+      expect(run("手順は `/merge-pr`\n「マージ後の 3 点検証」\n")).toHaveLength(1);
+    });
+  });
+
+  describe("checked（照合していないと差分ゼロを分ける証跡・#497）", () => {
+    it("候補位置を数える（finding が 0 でも非ゼロでありうる）", () => {
+      const r = scanFoldedHeadingRefs(snap({ "docs/x.md": "`PERFORMANCE.md`「索引の常駐の内訳」\n詳細は `SPEC.md`\n次の行\n" }), ["docs/x.md"]);
+      expect(r.findings).toEqual([]);
+      expect(r.checked).toBe(1);
+    });
+
+    it("読めない文書は母集団の欠落として finding", () => {
+      const f = checkFoldedHeadingRefs(snap({}), ["docs/missing.md"]);
+      expect(f).toHaveLength(1);
+      expect(f[0].message).toContain("母集団の欠落");
+    });
+  });
+});

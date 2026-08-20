@@ -119,8 +119,7 @@ export const metaAuditEnabled = () => process.env.SNOTRA_GOV_META_AUDIT === "1";
  *  「G1..G15 passed」のような範囲を手で書く面が存在しない（範囲は黙って腐る。実例が
  *  `docs/build-commands.md` に「G1〜G12」と残っていた・#812）。
  *  ID は `G-<name>` 形で連番を持たない——連番は「いま空いている最大値 + 1」をマージの瞬間に
- *  確定させるため、並行する 2 本の PR が同じ値を見る（`.claude/rules/governance-docs.md`
- *  「序数で他を指してはならない」）。 */
+ *  確定させるため、並行する 2 本の PR が同じ値を見る（`.claude/rules/governance-docs.md`「序数で他を指してはならない」）。 */
 export function buildChecks(snapshot, sink = {}) {
   const docs = governanceDocs(snapshot);
   const refDocs = headingRefDocs(snapshot);

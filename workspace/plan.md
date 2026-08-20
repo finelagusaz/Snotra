@@ -183,24 +183,24 @@ checked: ①または③ を満たした位置の数
 
 ### Phase 1 — 検知器と、今日の 20 件の解消
 
-- [ ] 1-0. **ADR 2 本を先に書く**（`ADR-folded-canonical-reference-detector` / `ADR-measurement-record-provenance`）。**後ろに置けない**——`G-adr-citations` の母集団 `nonDocSources`（`.rs`/`.mjs`・`docs/` の外・`.test.mjs` を除く）に新検査ファイルが入り、`.claude/rules/governance-docs.md` は `governanceDocs` 経由で入る。**実在しない ADR を引いた時点で 1-6 / 2-5 が赤になる**（非 md の腕はフェンスのマスクを掛けず行全体を走査する）。フォールトインジェクションの実測値は 3-5 で追記する
-- [ ] 1-1. `G-folded-heading-refs.test.mjs` を fixture で書き、**落ちることを確認する**（Red）。fixture が固定するもの: 形 A の正例・形 B の正例・1 行に収まった参照（負例）・行末が対象綴りだが次行が箇条書き（負例）・行頭記号の落としすぎ／落とし足りない両方向・**blockquote `>` の剥がし**（33 件のうち `docs/design/2026-05-31-coherence-staleset.md:17` だけがこの形）・**CRLF**（`split("\n")` が `\r` を残すため）
-- [ ] 1-2. `G-folded-heading-refs.mjs` を実装し unit を通す（Green）。**この検査自身のコメントとテストの fixture は、`isRefTargetSpelling` に当たらないプレースホルダで書く**——`scripts/governance/checks/` は `allRefDocs` のコメントの腕に入っており、実在の形の対象を例示すると**検査が自分自身を赤にする**（先例: `G-near-heading-refs.mjs` の「例示に実在の対象を置かない」、`ADR-canonical-heading-references`「検討した代替案と却下理由」の `.mjs` 拡張の却下）
-- [ ] 1-2b. `evidence.mjs` のテンプレートと `governance-check.mjs` の袋へ新しいキーを足す。**供給する値は平坦な数にする——配列を渡して `.length` をテンプレート側で取ってはならない**（逆向き監査 M4b）。配列にすると**供給が断たれても「1 件」と印字して exit 0** になり、`?` canary も素通りする（`evidenceView` のガードは 1 段目の読みしか見ない。同型の穴が `evidence.mjs:41-44` / `governance-check.mjs:186-189` の `.length` に今も残っている）
-- [ ] 1-3. **リポジトリ実走査を行い、findings 全件を本ファイルへ貼る**（Red の実物。33 件のはず。**数が合わなければ実走査を正とし、`research.md` の一覧を差し替える**）
-- [ ] 1-4. 32 件を**参照を含む文の結合**で解消する（改行位置の移動ではない——上の訂正を参照）
-- [ ] 1-5. `path_query_cost.rs:265` を参照の書き換えで解消する
-- [ ] 1-6. `npm run governance:check` で **見出し参照 318 件 / 新検査 0 件**を確認する。**evidence 行は 1-4 の前後で全文を 2 本貼る**——`headingRefs` だけを見ると、33 件は「新しく生きた組み合わせ」ゆえ他の列が同時に動いていても気づけない（逆向き監査 M5）
-- [ ] 1-7. `npm test` と `cargo doc`（intra-doc link）を実行する。**`npm test` は省けない**——evidence の片側変更を捕まえる唯一の層である（上の訂正）。`.rs` は 24 箇所 / **16 ファイル**（`index_tree.rs` や `indexer.rs` のように 1 ファイルに複数箇所あるため、箇所数とファイル数は違う）
-- [ ] 1-8. コミット
+- [x] 1-0. **ADR 2 本を先に書く**（`ADR-folded-canonical-reference-detector` / `ADR-measurement-record-provenance`）。**後ろに置けない**——`G-adr-citations` の母集団 `nonDocSources`（`.rs`/`.mjs`・`docs/` の外・`.test.mjs` を除く）に新検査ファイルが入り、`.claude/rules/governance-docs.md` は `governanceDocs` 経由で入る。**実在しない ADR を引いた時点で 1-6 / 2-5 が赤になる**（非 md の腕はフェンスのマスクを掛けず行全体を走査する）。フォールトインジェクションの実測値は 3-5 で追記する
+- [x] 1-1. `G-folded-heading-refs.test.mjs` を fixture で書き、**落ちることを確認する**（Red）。fixture が固定するもの: 形 A の正例・形 B の正例・1 行に収まった参照（負例）・行末が対象綴りだが次行が箇条書き（負例）・行頭記号の落としすぎ／落とし足りない両方向・**blockquote `>` の剥がし**（33 件のうち `docs/design/2026-05-31-coherence-staleset.md:17` だけがこの形）・**CRLF**（`split("\n")` が `\r` を残すため）
+- [x] 1-2. `G-folded-heading-refs.mjs` を実装し unit を通す（Green）。**この検査自身のコメントとテストの fixture は、`isRefTargetSpelling` に当たらないプレースホルダで書く**——`scripts/governance/checks/` は `allRefDocs` のコメントの腕に入っており、実在の形の対象を例示すると**検査が自分自身を赤にする**（先例: `G-near-heading-refs.mjs` の「例示に実在の対象を置かない」、`ADR-canonical-heading-references`「検討した代替案と却下理由」の `.mjs` 拡張の却下）
+- [x] 1-2b. `evidence.mjs` のテンプレートと `governance-check.mjs` の袋へ新しいキーを足す。**供給する値は平坦な数にする——配列を渡して `.length` をテンプレート側で取ってはならない**（逆向き監査 M4b）。配列にすると**供給が断たれても「1 件」と印字して exit 0** になり、`?` canary も素通りする（`evidenceView` のガードは 1 段目の読みしか見ない。同型の穴が `evidence.mjs:41-44` / `governance-check.mjs:186-189` の `.length` に今も残っている）
+- [x] 1-3. **リポジトリ実走査を行い、findings 全件を本ファイルへ貼る**（Red の実物。33 件のはず。**数が合わなければ実走査を正とし、`research.md` の一覧を差し替える**）
+- [x] 1-4. 32 件を**参照を含む文の結合**で解消する（改行位置の移動ではない——上の訂正を参照）
+- [x] 1-5. `path_query_cost.rs:265` を参照の書き換えで解消する
+- [x] 1-6. `npm run governance:check` で **見出し参照 318 件 / 新検査 0 件**を確認する。**evidence 行は 1-4 の前後で全文を 2 本貼る**——`headingRefs` だけを見ると、33 件は「新しく生きた組み合わせ」ゆえ他の列が同時に動いていても気づけない（逆向き監査 M5）
+- [x] 1-7. `npm test` と `cargo doc`（intra-doc link）を実行する。**`npm test` は省けない**——evidence の片側変更を捕まえる唯一の層である（上の訂正）。`.rs` は 24 箇所 / **16 ファイル**（`index_tree.rs` や `indexer.rs` のように 1 ファイルに複数箇所あるため、箇所数とファイル数は違う）
+- [x] 1-8. コミット
 
 ### Phase 2 — 規範 4 面
 
-- [ ] 2-1. `PERFORMANCE.md` へ記録規約節（A-1・A-2 の「分けない」理由も 1 文で）。**置き場は「冒頭の無見出し散文の直後・`## ビルドプロファイル最適化の知見` の直前」**——H1 の直後へ挿すと既存の導入散文（着手の順序の 4 段）が新節へ流れ込む。既存散文へ見出しを与える構造変更は裁定に無いので行わない
-- [ ] 2-2. `AGENTS.md` の足場の行へ A-4 を 1 行
-- [ ] 2-3. `docs/comment-guidelines.md`「日本語の折返し」へ正準形の条項
-- [ ] 2-4. `.claude/rules/governance-docs.md` の射程宣言を新検査に合わせる
-- [ ] 2-5. `npm run governance:check` 緑を確認しコミット
+- [x] 2-1. `PERFORMANCE.md` へ記録規約節（A-1・A-2 の「分けない」理由も 1 文で）。**置き場は「冒頭の無見出し散文の直後・`## ビルドプロファイル最適化の知見` の直前」**——H1 の直後へ挿すと既存の導入散文（着手の順序の 4 段）が新節へ流れ込む。既存散文へ見出しを与える構造変更は裁定に無いので行わない
+- [x] 2-2. `AGENTS.md` の足場の行へ A-4 を 1 行
+- [x] 2-3. `docs/comment-guidelines.md`「日本語の折返し」へ正準形の条項
+- [x] 2-4. `.claude/rules/governance-docs.md` の射程宣言を新検査に合わせる
+- [x] 2-5. `npm run governance:check` 緑を確認しコミット
 
 ### Phase 3 — フォールトインジェクションと ADR
 

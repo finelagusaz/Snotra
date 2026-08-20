@@ -13,23 +13,33 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const withoutPrefix = (p) => (m) => m.filter((f) => !f.startsWith(p));
 const withoutExactDir = (d) => (m) => m.filter((f) => f.slice(0, f.lastIndexOf("/")) !== d);
 const withoutMatch = (re) => (m) => m.filter((f) => !re.test(f));
-/** 全件を 1 階層下へ移す（ディレクトリごと引っ越した形）。直下を見る錨だけが倒れる。 */
-const movedUnder = (d) => (m) => m.map((f) => f.replace(`${d}/`, `${d}/moved/`));
+/** 全件を 1 階層下へ移す（ディレクトリごと引っ越した形）。直下を見る錨だけが倒れる。
+ *  **接頭辞の位置で切る**——`String.replace` は最初の 1 出現を置換するので、パスの途中に同じ綴りが
+ *  現れる母集団へ流用したときに静かにずれる。 */
+const movedUnder = (d) => (m) => m.map((f) => (f.startsWith(`${d}/`) ? `${d}/moved/${f.slice(d.length + 1)}` : f));
+
+/** **`every` 形の錨には「1 件だけ引く」レシピを当てる。** 腕を丸ごと引くレシピだと、その錨を
+ *  `every` から `some` へ弱める変異を検出できない（`some` でも腕ごと引けば倒れるため、赤が
+ *  維持されて弱化が沈黙する。レビューが 3 本すべてで実測）。 */
+const withoutFirstMatch = (re) => (m) => {
+  const i = m.findIndex((f) => re.test(f));
+  return m.filter((_, j) => j !== i);
+};
 
 /** `"<ドメイン名>#<錨のラベル>"` → 反証レシピ（members を変えて錨を倒す関数）。
  *  **全錨がここに載っていること**は下の完全性 assert が縛る。 */
 const FALSIFIERS = new Map([
   // 固定名を名指す錨——名指された側を 1 つ引く
   ["governanceDocs#ルートの AGENTS.md と CLAUDE.md", withoutMatch(/^AGENTS\.md$/)],
-  // 別 SSOT（Cargo.toml）からの every——crate の CLAUDE.md を 1 つ引く
-  ["governanceDocs#CLAUDE.md を持つ workspace member のすべて", (m) => m.filter((f) => !/^[^/]+\/CLAUDE\.md$/.test(f))],
+  // 別 SSOT（Cargo.toml）からの every——crate の CLAUDE.md を **1 つだけ**引く
+  ["governanceDocs#CLAUDE.md を持つ workspace member のすべて", withoutFirstMatch(/^[^/]+\/CLAUDE\.md$/)],
   ["governanceDocs#docs/ の腕", withoutPrefix("docs/")],
   ["governanceDocs#.claude/rules/ の腕", withoutPrefix(".claude/rules/")],
   ["governanceDocs#.claude/skills/ の腕", withoutPrefix(".claude/skills/")],
 
   ["headingRefDocs#docs/ 配下の md", withoutPrefix("docs/")],
-  ["headingRefDocs#ruleDocs の全メンバー", withoutPrefix(".claude/rules/")],
-  ["headingRefDocs#skillDocs の全メンバー", withoutPrefix(".claude/skills/")],
+  ["headingRefDocs#ruleDocs の全メンバー", withoutFirstMatch(/^\.claude\/rules\//)],
+  ["headingRefDocs#skillDocs の全メンバー", withoutFirstMatch(/^\.claude\/skills\/[^/]+\/SKILL\.md$/)],
   ["headingRefDocs#ルートの AGENTS.md と CLAUDE.md", withoutMatch(/^AGENTS\.md$/)],
   ["headingRefSourceDocs#CLAUDE.md を持つ crate の src 配下の .rs", withoutMatch(/\/src\//)],
 
@@ -143,9 +153,11 @@ describe("buildDomains", () => {
   // `holds([], snapshot)` の合成 [] では、腕を丸ごと足し忘れても「非空虚」テストが黙って通る。
   // ここでは**腕だけを引いた集合**を渡し、対応する錨が実際に倒れることを実ツリーで測る。
   //
-  // **腕の同定は自動導出できない。** 2026-08-20 に腕を「1 ディレクトリ」で近似して測ったところ、
-  // `docs/**`（複数ディレクトリに跨る）と ps 族（拡張子で決まる）の腕を誤分類した。錨の意味を
-  // 知っているのは錨を書いた人だけなので、錨ごとに宣言する。
+  // **レシピの候補は機械的に生成できる**（前方一致・直下・拡張子・固定名・移設の総当たりで、
+  // 現在の錨のほとんどに当たる候補が得られることをレビューが実測した）。**決められないのは
+  // 「どれがその錨の意味する腕か」である**——総当たりは ps 族の錨へ `scripts/` の前方一致を返し、
+  // 主エージェントが腕を「1 ディレクトリ」で近似したときと同型の誤分類をした。
+  // 錨の意味を知っているのは錨を書いた人だけなので、錨ごとに宣言する。
   //
   // **この層は `npm test` に閉じる。** 本番の錨オブジェクトへ持たせれば `G-domain-anchors` が
   // 実行時にも見られたが、この置き方では見られない。得ているのは「レシピ無しの錨を足せない」
@@ -155,7 +167,12 @@ describe("buildDomains", () => {
     for (const spec of DOMAIN_SPECS) {
       for (const a of spec.anchors) if (!FALSIFIERS.has(`${spec.name}#${a.label}`)) missing.push(`${spec.name}#${a.label}`);
     }
-    expect(missing, `反証レシピの無い錨: ${missing.join(" / ")}（FALSIFIERS へ足すこと）`).toEqual([]);
+    expect(
+      missing,
+      `反証レシピの無い錨: ${missing.join(" / ")}（FALSIFIERS へ足すこと）。` +
+        "レシピが書けないと感じたら、まず**その錨が `|P| > 0` と同じ強さでないか**を疑うこと" +
+        "——レシピは絞り込みに限らず、移設（movedUnder）や偽メンバーの混入でも倒せる。",
+    ).toEqual([]);
   });
 
   // 逆向き。錨を消した／改名したときに写像へ古いキーが残ると、**それ自身は何も測っていないのに
@@ -166,21 +183,36 @@ describe("buildDomains", () => {
     expect(stale, `対応する錨の無い反証レシピ: ${stale.join(" / ")}（FALSIFIERS から消すこと）`).toEqual([]);
   });
 
+  // **切り詰めず全件を挙げる。** 最初の 1 本で止めると、複数の錨を同時に弱める変更に対して
+  // 「1 本だけ直せば緑になる」と読める（完全性 assert は全件名指しなので、そちらとの非対称も消す）。
   it("錨は対応する腕を引くと倒れる（空虚な錨を機構で落とす）", () => {
     const snapshot = makeSnapshot(ROOT);
+    const failures = [];
     for (const spec of DOMAIN_SPECS) {
       const full = spec.members(snapshot);
       for (const a of spec.anchors) {
         const key = `${spec.name}#${a.label}`;
         const falsify = FALSIFIERS.get(key);
-        expect(a.holds(full, snapshot), `${key}: 実ツリーで成立していない`).toBe(true);
+        // レシピ欠落は完全性 assert の担当。ここで関数として呼ぶと TypeError になり診断にならない
+        if (typeof falsify !== "function") continue;
+        if (!a.holds(full, snapshot)) {
+          failures.push(`${key}: 実ツリーで成立していない`);
+          continue;
+        }
         const mutated = falsify(full, snapshot);
         // 何も変えていないレシピは「倒れない」を「腕が無い」と取り違えさせる
-        expect(mutated, `${key}: レシピが members を変えていない（腕を外している）`).not.toEqual(full);
-        // 空集合での失敗は上の別テストが既に見ている——それは `|P| > 0` と同じ強さの証明にしかならない
-        expect(mutated.length, `${key}: レシピが空集合を返した`).toBeGreaterThan(0);
-        expect(a.holds(mutated, snapshot), `${key}: レシピを当てても成立している＝沈黙する`).toBe(false);
+        if (JSON.stringify(mutated) === JSON.stringify(full)) {
+          failures.push(`${key}: レシピが members を変えていない（腕を外している）`);
+          continue;
+        }
+        // 空集合での失敗は上の別テストが既に見ている——`|P| > 0` と同じ強さの証明にしかならない
+        if (mutated.length === 0) {
+          failures.push(`${key}: レシピが空集合を返した`);
+          continue;
+        }
+        if (a.holds(mutated, snapshot)) failures.push(`${key}: レシピを当てても成立している＝沈黙する`);
       }
     }
+    expect(failures, `空虚な錨:\n  ${failures.join("\n  ")}`).toEqual([]);
   });
 });

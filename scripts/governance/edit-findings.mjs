@@ -21,9 +21,41 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { makeSnapshot, governanceDocs, gitIgnoredPaths } from "./lib.mjs";
+import {
+  makeSnapshot,
+  governanceDocs,
+  gitIgnoredPaths,
+  allHeadingRefDocs,
+  staleIdentifierTargets,
+} from "./lib.mjs";
 import { checkModuleIndex, MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
 import { checkReferences } from "./checks/G-references.mjs";
+import { checkHeadingRefs } from "./checks/G-heading-refs.mjs";
+import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
+import { checkFoldedHeadingRefs } from "./checks/G-folded-heading-refs.mjs";
+import { checkStaleIdentifiers } from "./checks/G-stale-identifiers.mjs";
+import { checkAdrFileNames } from "./checks/G-adr-file-names.mjs";
+
+/**
+ * 走査元（参照・識別子が**書かれている**側）を 1 枚へ絞れる検査。
+ *
+ * **帰属の作り方が索引側と違う。** `G-module-index` は finding のメッセージへ文字列で結合して
+ * 帰属を判定する（`attributesTo`）が、こちらは**母集団そのものを `[rel]` へ絞る**ので帰属が
+ * 構造的に決まる——メッセージ書式が変わっても静かに 0 件へ倒れる経路が無い。
+ *
+ * **着地先は snapshot 全体のままである。** アンカー（`collectAnchors`）も語彙
+ * （`currentVocabulary`）も全ファイルから導くので、**判定の強さは CI と同じ**であり、
+ * 違うのは「どのファイルに書かれた違反を報告するか」だけである。
+ *
+ * **母集団の述語を写さない**——各検査が読む母集団は `lib.mjs` の導出関数が正本で、ここは
+ * その `includes` を取るだけである（写すと、母集団が動いたとき片方だけが知っている状態になる）。
+ */
+const SCAN_SCOPED = [
+  { population: allHeadingRefDocs, check: checkHeadingRefs },
+  { population: allHeadingRefDocs, check: checkNearHeadingRefs },
+  { population: allHeadingRefDocs, check: checkFoldedHeadingRefs },
+  { population: staleIdentifierTargets, check: checkStaleIdentifiers },
+];
 
 /**
  * `rel` が属する索引照合の対象（`{ name, whole }`）。無ければ null。
@@ -92,6 +124,15 @@ export function scopedFindings(snapshot, rel, filterIgnored = gitIgnoredPaths) {
   }
   if (rel.endsWith(".md") && governanceDocs(snapshot).includes(rel)) {
     findings.push(...checkReferences(snapshot, [rel], filterIgnored));
+  }
+  for (const { population, check } of SCAN_SCOPED) {
+    if (population(snapshot).includes(rel)) findings.push(...check(snapshot, [rel]));
+  }
+  // ADR の命名だけは走査元を絞れない——母集団が**ファイル名の一覧そのもの**で、「どこに書かれたか」が
+  // 存在しない。ゆえに finding の `file` で帰属させる。**空母集団の finding は落ちない**——この分岐へ
+  // 入る時点で `rel` 自身が `docs/adr/` 直下に在り、`adrFiles` は空になりえないからである。
+  if (/^docs\/adr\/[^/]+\.md$/.test(rel)) {
+    findings.push(...checkAdrFileNames(snapshot).filter((f) => f.file === rel));
   }
   return findings;
 }

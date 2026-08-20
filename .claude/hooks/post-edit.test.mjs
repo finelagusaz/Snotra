@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -719,7 +719,14 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
     const copy = (...rel) =>
       writeFileSync(path.join(tmp, ...rel), readFileSync(path.join(REPO, ...rel), "utf8"));
     for (const f of ["lib.mjs", "dependents.mjs", "edit-findings.mjs"]) copy("scripts", "governance", f);
-    for (const f of ["G-module-index.mjs", "G-references.mjs"]) copy("scripts", "governance", "checks", f);
+    // **`checks/` は走査して全件copyする。手で列挙してはならない。**
+    // `edit-findings.mjs` が import する検査が増えたとき、列挙は**沈黙で腐る**——解決に失敗した
+    // subprocess は非 0 で落ち、`editFindingsReminder` は `res.status !== 0` を空文字へ倒すので、
+    // **reminder が消えたことしか観測できない**（実測: 検査を 5 本足した #1139 の拡張で、この列挙が
+    // 原因の失敗が「配線が壊れた」ように見えた）。走査なら置いた瞬間に対象になる。
+    for (const f of readdirSync(path.join(REPO, "scripts", "governance", "checks"))) {
+      if (f.endsWith(".mjs") && !f.endsWith(".test.mjs")) copy("scripts", "governance", "checks", f);
+    }
   };
 
   it("索引に無い実ファイルがあると reminder が systemMessage と additionalContext の**両方**へ出る（#1139 の配線）", () => {

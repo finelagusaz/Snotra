@@ -46,6 +46,14 @@ export function manifest(snapshot) {
  *  漏れる（＝新しい列だけが無検査になる）形を構造的に消すため。 */
 export const KEYS = ["checks", "docs", "rules", "skills", "domains"];
 
+/** 格下げ中の列（`ADR-governance-meta-demotion`）。**`manifest()` は出し続ける**——数字が取れなく
+ *  なると、戻す/撤去するの判定材料が消える。差分だけを取らない。 */
+export const META_KEYS = ["domains"];
+
+/** 差分を取る列。監査モード（`SNOTRA_GOV_META_AUDIT=1`）では格下げ中の列も戻す。 */
+export const diffKeys = () =>
+  process.env.SNOTRA_GOV_META_AUDIT === "1" ? KEYS : KEYS.filter((k) => !META_KEYS.includes(k));
+
 /** `+<name>` / `-<name>` の列。
  *
  *  ファイル名の列は構造的に重なる——`governanceDocs` の定義そのものが `.claude/rules/` 配下の md と
@@ -57,7 +65,7 @@ export const KEYS = ["checks", "docs", "rules", "skills", "domains"];
  *  意味は 1 つなので、返す前に重複を畳む。 */
 export function diffManifest(base, head) {
   const out = new Set();
-  for (const key of KEYS) {
+  for (const key of diffKeys()) {
     const b = new Set(base[key] ?? []);
     const h = new Set(head[key] ?? []);
     for (const x of h) if (!b.has(x)) out.add(`+${x}`);

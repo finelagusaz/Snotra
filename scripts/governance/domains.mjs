@@ -106,12 +106,24 @@ export const DOMAIN_SPECS = [
   {
     name: "staleIdentifierDocs",
     members: staleIdentifierDocs,
-    anchors: [{ label: ".claude/ 配下の md", holds: (m) => m.some((f) => f.startsWith(".claude/")) }],
+    // 母集団は `.claude/` 配下だけで構成される（skills / rules / agents の 3 腕）。ゆえに
+    // 「`.claude/` 配下が居る」は腕ではなく母集団そのものの言い換えで、`|P| > 0` と同じ強さしか
+    // 持たなかった（腕ごとの発火テストが実測で落とした）。腕ごとに分ける。
+    // **`agents/` の腕は錨にしない**——母集団へ 1 件しか出さないため、そのファイルの移設だけで
+    // 赤くなる「単一ファイルの錨」に化ける（`.githooks/` と同じ判断）。宣言する死角である。
+    anchors: [
+      { label: ".claude/skills/ の腕", holds: (m) => m.some((f) => f.startsWith(".claude/skills/")) },
+      { label: ".claude/rules/ の腕", holds: (m) => m.some((f) => f.startsWith(".claude/rules/")) },
+    ],
   },
   {
     name: "staleIdentifierGuideDocs",
     members: staleIdentifierGuideDocs,
-    anchors: [{ label: "docs/ 配下の開発ガイド", holds: (m) => m.some((f) => f.startsWith("docs/")) }],
+    // 母集団は `docs/**` だけで構成されるので、「`docs/` 配下が居る」は母集団そのものの言い換えで
+    // `|P| > 0` と同じ強さしか持たなかった（腕ごとの発火テストが実測で落とした）。
+    // **前方一致をやめ `docs/` 直下で見る**——配下のサブディレクトリだけが残る形（開発ガイドが
+    // まとめて下層へ移された状態）で倒れる（#1143 の実形と同じ理由）。
+    anchors: [{ label: "docs/ 直下", holds: (m) => hasDirectChild(m, "docs") }],
   },
   {
     name: "staleIdentifierTargets",

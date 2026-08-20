@@ -5,6 +5,69 @@ import { buildDomains, DOMAIN_SPECS } from "./domains.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
+// 反証レシピは**部分集合への絞り込みに限らない**。単一ディレクトリだけで構成される母集団
+// （`adrFiles` / `ruleDocs`）では、腕を引くと空集合にしかならず「空でしか倒れない錨」と区別が
+// 付かなくなる——しかしそれらの錨は前方一致ではなく**直下**を見ているので、**全件を下層へ移す**
+// 形では倒れる。これは `|P| > 0` には無い強さであり、絞り込みだけをレシピの形にすると測れない。
+// ゆえにレシピは「members をどう変えれば倒れるか」を返す（空でない・元と違う、が下の要求）。
+const withoutPrefix = (p) => (m) => m.filter((f) => !f.startsWith(p));
+const withoutExactDir = (d) => (m) => m.filter((f) => f.slice(0, f.lastIndexOf("/")) !== d);
+const withoutMatch = (re) => (m) => m.filter((f) => !re.test(f));
+/** 全件を 1 階層下へ移す（ディレクトリごと引っ越した形）。直下を見る錨だけが倒れる。 */
+const movedUnder = (d) => (m) => m.map((f) => f.replace(`${d}/`, `${d}/moved/`));
+
+/** `"<ドメイン名>#<錨のラベル>"` → 反証レシピ（members を変えて錨を倒す関数）。
+ *  **全錨がここに載っていること**は下の完全性 assert が縛る。 */
+const FALSIFIERS = new Map([
+  // 固定名を名指す錨——名指された側を 1 つ引く
+  ["governanceDocs#ルートの AGENTS.md と CLAUDE.md", withoutMatch(/^AGENTS\.md$/)],
+  // 別 SSOT（Cargo.toml）からの every——crate の CLAUDE.md を 1 つ引く
+  ["governanceDocs#CLAUDE.md を持つ workspace member のすべて", (m) => m.filter((f) => !/^[^/]+\/CLAUDE\.md$/.test(f))],
+  ["governanceDocs#docs/ の腕", withoutPrefix("docs/")],
+  ["governanceDocs#.claude/rules/ の腕", withoutPrefix(".claude/rules/")],
+  ["governanceDocs#.claude/skills/ の腕", withoutPrefix(".claude/skills/")],
+
+  ["headingRefDocs#docs/ 配下の md", withoutPrefix("docs/")],
+  ["headingRefSourceDocs#CLAUDE.md を持つ crate の src 配下の .rs", withoutMatch(/\/src\//)],
+
+  ["headingRefCommentDocs#scripts/governance/checks/ 直下", withoutExactDir("scripts/governance/checks")],
+  ["headingRefCommentDocs#scripts/governance/ 直下", withoutExactDir("scripts/governance")],
+  ["headingRefCommentDocs#.claude/hooks/ 直下", withoutExactDir(".claude/hooks")],
+  ["headingRefCommentDocs#ps 族（.ps1/.psm1/.psd1）の腕", withoutMatch(/\.(ps1|psm1|psd1)$/i)],
+
+  ["allHeadingRefDocs#md の腕", withoutMatch(/\.md$/)],
+  ["allHeadingRefDocs#.rs の腕", withoutMatch(/\.rs$/)],
+  ["allHeadingRefDocs#スクリプトの腕", withoutMatch(/\.(mjs|ps1|psm1)$/)],
+
+  ["staleIdentifierDocs#.claude/skills/ の腕", withoutPrefix(".claude/skills/")],
+  ["staleIdentifierDocs#.claude/rules/ の腕", withoutPrefix(".claude/rules/")],
+  ["staleIdentifierGuideDocs#docs/ 直下", withoutExactDir("docs")],
+  ["staleIdentifierTargets#.claude/ の腕（staleIdentifierDocs）", withoutPrefix(".claude/")],
+  ["staleIdentifierTargets#docs/ の腕（staleIdentifierGuideDocs）", withoutPrefix("docs/")],
+
+  // 母集団が単一ディレクトリだけで構成されるので、引くと空にしかならない。移設で倒す
+  ["adrFiles#docs/adr/ 直下", movedUnder("docs/adr")],
+  ["ruleDocs#.claude/rules/ 直下", movedUnder(".claude/rules")],
+
+  // メンバーは crate ディレクトリ名。**引いても真のまま**なので（残った側で every が成立する）、
+  // 引くのではなく「宣言に在るが Cargo.toml を持たないディレクトリ」を 1 つ混ぜて倒す
+  // ——この錨が守っている当の失敗（宣言と実体の食い違い）そのものである。
+  ["workspaceMemberDirs#全メンバーのディレクトリに Cargo.toml が実在する", (m) => [...m.slice(1), "does-not-exist"]],
+  // 逆向き（実在 → 宣言）は 1 つ引けば倒れる
+  ["workspaceMemberDirs#Cargo.toml を持つ直下ディレクトリがすべてメンバーに居る", (m) => m.slice(1)],
+
+  ["crateSources#全 workspace member の src/ 直下に .rs が居る", withoutExactDir("snotra-core/src")],
+  ["moduleIndexSources#MODULE_INDEX_CRATES の全 crate の src/ 直下に索引対象が居る", withoutExactDir("snotra-core/src")],
+  ["skillDocs#.claude/skills/ 直下の全ディレクトリが SKILL.md を持つ", (m) => m.slice(1)],
+
+  ["judgingScripts#scripts/ 直下", withoutExactDir("scripts")],
+  ["judgingScripts#scripts/governance/ 直下", withoutExactDir("scripts/governance")],
+  ["judgingScripts#scripts/governance/checks/ 直下", withoutExactDir("scripts/governance/checks")],
+  ["judgingScripts#scripts/lib/ 直下", withoutExactDir("scripts/lib")],
+  ["judgingScripts#.claude/hooks/ 直下", withoutExactDir(".claude/hooks")],
+  ["judgingScripts#ps 族（.ps1/.psm1）の腕", withoutMatch(/\.(ps1|psm1)$/i)],
+]);
+
 describe("buildDomains", () => {
   it("実ツリーで全ドメインのメンバーが非空である", () => {
     const domains = buildDomains(makeSnapshot(ROOT));
@@ -53,69 +116,48 @@ describe("buildDomains", () => {
     expect(m.every((f) => /^docs\/adr\/[^/]+\.md$/.test(f))).toBe(true);
   });
 
-  // I2 / ⚠️3 の修正検算——`holds([], snapshot)` の合成 [] では、腕を丸ごと足し忘れても
-  // 「非空虚」テストは黙って通る（triage #2 が指摘した死角）。ここでは実ツリーの members から
-  // 当該腕だけを引いた集合を渡し、対応する錨が実際に false（発火）へ倒れることを検算する。
-  it("governanceDocs は docs/ / .claude/rules/ / .claude/skills/ の各腕が消えると対応する錨が倒れる", () => {
-    const snapshot = makeSnapshot(ROOT);
-    const spec = DOMAIN_SPECS.find((s) => s.name === "governanceDocs");
-    const full = spec.members(snapshot);
-    const arms = [
-      ["docs/ の腕", (f) => f.startsWith("docs/")],
-      [".claude/rules/ の腕", (f) => f.startsWith(".claude/rules/")],
-      [".claude/skills/ の腕", (f) => f.startsWith(".claude/skills/")],
-    ];
-    for (const [label, pred] of arms) {
-      const narrowed = full.filter((f) => !pred(f));
-      const anchor = spec.anchors.find((a) => a.label === label);
-      expect(anchor, `錨 ${label} が見つからない`).toBeDefined();
-      expect(anchor.holds(narrowed, snapshot), `腕 ${label} を除いても錨が成立している＝沈黙する`).toBe(false);
+  it("錨のラベルはドメイン内で一意（写像のキーが衝突しない）", () => {
+    for (const spec of DOMAIN_SPECS) {
+      const labels = spec.anchors.map((a) => a.label);
+      expect(new Set(labels).size, `ドメイン ${spec.name} の錨ラベルが重複: ${labels.join(" / ")}`).toBe(labels.length);
     }
   });
 
-  // 錨は走査結果のディレクトリ構造（メンバーの述語とは別の SSOT）から出る。1 本でも SKILL.md が
-  // メンバーから落ちれば倒れることを、実ツリーの members を 1 件引いて測る。
-  it("skillDocs は SKILL.md が 1 本消えると錨が倒れる", () => {
-    const snapshot = makeSnapshot(ROOT);
-    const spec = DOMAIN_SPECS.find((s) => s.name === "skillDocs");
-    const full = spec.members(snapshot);
-    expect(full.length).toBeGreaterThan(1);
-    const anchor = spec.anchors[0];
-    expect(anchor.holds(full, snapshot)).toBe(true);
-    expect(anchor.holds(full.slice(1), snapshot), "SKILL.md が 1 本消えても錨が成立している＝沈黙する").toBe(false);
-  });
-
-  // #1143 の当の母集団。腕ごとに「その腕だけを引いた集合」で錨が倒れることを実ツリーで測る
-  // ——`holds([], snapshot)` の合成 [] は、腕を足し忘れても黙って通る。
-  it("judgingScripts は腕ごとの絞り込みで対応する錨が倒れる", () => {
-    const snapshot = makeSnapshot(ROOT);
-    const spec = DOMAIN_SPECS.find((s) => s.name === "judgingScripts");
-    const full = spec.members(snapshot);
-    const dirOf = (f) => f.slice(0, f.lastIndexOf("/"));
-    const arms = [
-      ["scripts/ 直下", (f) => dirOf(f) === "scripts"],
-      ["scripts/governance/ 直下", (f) => dirOf(f) === "scripts/governance"],
-      ["scripts/governance/checks/ 直下", (f) => dirOf(f) === "scripts/governance/checks"],
-      ["scripts/lib/ 直下", (f) => dirOf(f) === "scripts/lib"],
-      [".claude/hooks/ 直下", (f) => dirOf(f) === ".claude/hooks"],
-      ["ps 族（.ps1/.psm1）の腕", (f) => /\.(ps1|psm1)$/i.test(f)],
-    ];
-    for (const [label, pred] of arms) {
-      const narrowed = full.filter((f) => !pred(f));
-      expect(narrowed.length, `腕 ${label} が実ツリーで空——絞り込みが何も引いていない`).toBeLessThan(full.length);
-      const anchor = spec.anchors.find((a) => a.label === label);
-      expect(anchor, `錨 ${label} が見つからない`).toBeDefined();
-      expect(anchor.holds(narrowed, snapshot), `腕 ${label} を除いても錨が成立している＝沈黙する`).toBe(false);
+  // --- 錨の反証レシピ（腕ごとの発火を測る） ---------------------------------
+  //
+  // `holds([], snapshot)` の合成 [] では、腕を丸ごと足し忘れても「非空虚」テストが黙って通る。
+  // ここでは**腕だけを引いた集合**を渡し、対応する錨が実際に倒れることを実ツリーで測る。
+  //
+  // **腕の同定は自動導出できない。** 2026-08-20 に腕を「1 ディレクトリ」で近似して測ったところ、
+  // `docs/**`（複数ディレクトリに跨る）と ps 族（拡張子で決まる）の腕を誤分類した。錨の意味を
+  // 知っているのは錨を書いた人だけなので、錨ごとに宣言する。
+  //
+  // **この層は `npm test` に閉じる。** 本番の錨オブジェクトへ持たせれば `G-domain-anchors` が
+  // 実行時にも見られたが、この置き方では見られない。得ているのは「レシピ無しの錨を足せない」
+  // という構造保証だけであり、評価される層は本番配置と同じではない。
+  it("錨の反証レシピが全錨ぶん揃っている（レシピ無しの錨を足せない）", () => {
+    const missing = [];
+    for (const spec of DOMAIN_SPECS) {
+      for (const a of spec.anchors) if (!FALSIFIERS.has(`${spec.name}#${a.label}`)) missing.push(`${spec.name}#${a.label}`);
     }
+    expect(missing, `反証レシピの無い錨: ${missing.join(" / ")}（FALSIFIERS へ足すこと）`).toEqual([]);
   });
 
-  it("headingRefCommentDocs は ps 族（.ps1/.psm1/.psd1）の腕が消えると対応する錨が倒れる", () => {
+  it("錨は対応する腕を引くと倒れる（空虚な錨を機構で落とす）", () => {
     const snapshot = makeSnapshot(ROOT);
-    const spec = DOMAIN_SPECS.find((s) => s.name === "headingRefCommentDocs");
-    const full = spec.members(snapshot);
-    const narrowed = full.filter((f) => !/\.(ps1|psm1|psd1)$/i.test(f));
-    const anchor = spec.anchors.find((a) => a.label.includes("ps 族"));
-    expect(anchor, "ps 族の錨が見つからない").toBeDefined();
-    expect(anchor.holds(narrowed, snapshot), "ps 族の腕を除いても錨が成立している＝沈黙する").toBe(false);
+    for (const spec of DOMAIN_SPECS) {
+      const full = spec.members(snapshot);
+      for (const a of spec.anchors) {
+        const key = `${spec.name}#${a.label}`;
+        const falsify = FALSIFIERS.get(key);
+        expect(a.holds(full, snapshot), `${key}: 実ツリーで成立していない`).toBe(true);
+        const mutated = falsify(full, snapshot);
+        // 何も変えていないレシピは「倒れない」を「腕が無い」と取り違えさせる
+        expect(mutated, `${key}: レシピが members を変えていない（腕を外している）`).not.toEqual(full);
+        // 空集合での失敗は上の別テストが既に見ている——それは `|P| > 0` と同じ強さの証明にしかならない
+        expect(mutated.length, `${key}: レシピが空集合を返した`).toBeGreaterThan(0);
+        expect(a.holds(mutated, snapshot), `${key}: レシピを当てても成立している＝沈黙する`).toBe(false);
+      }
+    }
   });
 });

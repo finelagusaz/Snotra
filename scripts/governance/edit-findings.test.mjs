@@ -113,13 +113,109 @@ describe("scopedFindings — 参照実在（G-references）の帰属", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 走査元を絞る検査群（参照の書き方・語彙・ADR の命名）。
+//
+// **索引側と帰属の作り方が違う。** `G-module-index` の帰属は finding のメッセージへの文字列結合だが、
+// ここは**走査元の母集団を `[rel]` へ絞る**ことで帰属が構造的に決まる（参照はその文書に書かれている）。
+// 着地先（アンカー・語彙）は snapshot 全体のままなので、判定の強さは CI と同じである。
+// ---------------------------------------------------------------------------
+
+describe("scopedFindings — 参照の書き方（heading-refs 3 種）の帰属", () => {
+  const refDocs = {
+    "AGENTS.md": "# a\n## 節 A\n本文\n",
+    "docs/guide.md": "# g\n参照: `AGENTS.md`「節 A」\n",
+  };
+
+  it("緑: 正準形が着地していれば findings は無い", () => {
+    expect(scopedFindings(snap(refDocs), "docs/guide.md")).toEqual([]);
+  });
+
+  it("赤: 着地しない正準形が、編集した文書の分だけ出る", () => {
+    const s = snap({ ...refDocs, "docs/guide.md": "# g\n参照: `AGENTS.md`「無い節」\n" });
+    const f = scopedFindings(s, "docs/guide.md");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("見出し参照が着地しない");
+  });
+
+  it("赤: 助詞が挟まった近傍形（G-near-heading-refs）", () => {
+    const s = snap({ ...refDocs, "docs/guide.md": "# g\n参照: `AGENTS.md` の「節 A」\n" });
+    expect(scopedFindings(s, "docs/guide.md")).toHaveLength(1);
+  });
+
+  it("赤: 物理改行で折れた形（G-folded-heading-refs）", () => {
+    const s = snap({ ...refDocs, "docs/guide.md": "# g\n参照: `AGENTS.md`\n「節 A」\n" });
+    expect(scopedFindings(s, "docs/guide.md")).toHaveLength(1);
+  });
+
+  it("**帰属**: 他の文書の壊れた参照は混じらない", () => {
+    const s = snap({ ...refDocs, "docs/other.md": "# o\n`AGENTS.md`「無い節」\n" });
+    expect(scopedFindings(s, "docs/guide.md")).toEqual([]);
+  });
+
+  it("判定対象外: `docs/adr/` は走査元の母集団に入らない（凍結された歴史・沈黙する）", () => {
+    const s = snap({ ...refDocs, "docs/adr/ADR-x.md": "# ADR-x: 題\n`AGENTS.md`「無い節」\n" });
+    expect(scopedFindings(s, "docs/adr/ADR-x.md")).toEqual([]);
+  });
+});
+
+describe("scopedFindings — 語彙（G-stale-identifiers）の帰属", () => {
+  const vocabTree = {
+    "snotra-core/src/lib.rs": "pub fn live_helper() {}\n",
+    ".claude/rules/sample.md": "---\npaths:\n  - \"x\"\n---\n\n# s\n`live_helper` を呼ぶ\n",
+  };
+
+  it("緑: 現行語彙に在る識別子は findings にならない", () => {
+    expect(scopedFindings(snap(vocabTree), ".claude/rules/sample.md")).toEqual([]);
+  });
+
+  it("赤: 語彙に無い識別子が、編集した文書の分だけ出る", () => {
+    const s = snap({
+      ...vocabTree,
+      ".claude/rules/sample.md": "---\npaths:\n  - \"x\"\n---\n\n# s\n`goneHelper` を呼ぶ\n",
+    });
+    const f = scopedFindings(s, ".claude/rules/sample.md");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("現行語彙に無い識別子");
+  });
+
+  it("判定対象外: 母集団の外の `.md` は語彙照合に掛からない", () => {
+    const s = snap({ ...vocabTree, "notes/scratch.md": "`goneHelper`\n" });
+    expect(scopedFindings(s, "notes/scratch.md")).toEqual([]);
+  });
+});
+
+describe("scopedFindings — ADR の命名（G-adr-file-names）の帰属", () => {
+  const adrTree = {
+    "docs/adr/ADR-good-slug.md": "# ADR-good-slug: 題\n本文\n",
+    "docs/adr/ADR-001-numbered.md": "# ADR-001-numbered: 題\n本文\n",
+  };
+
+  it("緑: 形の合った ADR を編集しても findings は無い", () => {
+    expect(scopedFindings(snap(adrTree), "docs/adr/ADR-good-slug.md")).toEqual([]);
+  });
+
+  it("赤: 連番形のファイル名は、その ADR を編集したときに出る", () => {
+    const f = scopedFindings(snap(adrTree), "docs/adr/ADR-001-numbered.md");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("連番を振らない");
+  });
+
+  it("**帰属**: 他の ADR の逸脱は混じらない", () => {
+    expect(scopedFindings(snap(adrTree), "docs/adr/ADR-good-slug.md")).toEqual([]);
+  });
+});
+
 describe("reportFor — hook が読む 1 行", () => {
   it("findings が無ければ空文字（呼び出し側は何も出さない）", () => {
     expect(reportFor(snap(base), "snotra-core/src/lib.rs")).toBe("");
   });
 
   it("件数・対象・全件を見る再現コマンドを含む", () => {
-    const s = snap(base, ["snotra-core/src/orphan.rs"]);
+    // **`extraFiles` ではなく本文を持たせる。** 走査元を絞る検査群（参照の書き方）は `.rs` も読むので、
+    // 本文の無い宣言だけのファイルは「母集団が読めない」側の finding を生む——実ツリーでは
+    // 編集直後の実在ファイルしか来ないので、その形はここで作らない。
+    const s = snap({ ...base, "snotra-core/src/orphan.rs": "" });
     const line = reportFor(s, "snotra-core/src/orphan.rs");
     expect(line).toContain("snotra-core/src/orphan.rs");
     expect(line).toContain("1 件");

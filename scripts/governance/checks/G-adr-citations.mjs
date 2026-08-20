@@ -3,7 +3,7 @@ import { finding, linesOutsideFences } from "../lib.mjs";
 import { adrFiles } from "./G-adr-file-names.mjs";
 
 export const id = "G-adr-citations";
-export const domains = ["governanceDocs", "adrFiles"];
+export const domains = ["governanceDocs", "adrFiles", "skillTreeDocs", "nonDocSources"];
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs・domains・record を使う） */
 export function run(snapshot, ctx) {
@@ -43,11 +43,26 @@ export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
     // 指される側の削除で壊れる。`docs`（governanceDocs）は docs/adr/ を含まないため明示的に足す。
     // この 1 行が落ちると ADR→ADR の実在検査が沈黙で消える（母集団カナリアがテストで膜を張る）
     ...adrDocs,
-    ...snapshot.files.filter((f) => /^\.claude\/skills\/.*\.md$/.test(f)),
-    // 非 docs のソース。**見るのは直下の正規表現が挙げる拡張子だけである**——`.ts` / `.tsx` /
-    // `.ps1` / `.psm1` に書いた ADR の短縮引用は実在照合を素通りする（2026-08-09 実測・#1008）。
-    ...snapshot.files.filter((f) => /\.(rs|mjs)$/.test(f) && !f.startsWith("docs/") && !f.endsWith(".test.mjs")),
+    ...skillTreeDocs(snapshot),
+    ...nonDocSources(snapshot),
   ];
+}
+
+/** `skillTreeDocs` ドメインのメンバー——`.claude/skills/` ツリーの md。
+ *  **`skillDocs` と畳んではならない**——あちらは `SKILL.md` だけで、こちらは配下の md も含む
+ *  （実測で差は `.claude/skills/health-check/references/mechanized-checks.md`）。ADR の短縮引用は
+ *  SKILL.md の外にも書かれるので、`skillDocs` へ寄せると照合が静かに減る。
+ *  **`references/` の腕には錨を置いていない**——母集団へ 1 件しか出さず、単一ファイルの錨に
+ *  化けるためである（宣言する死角）。 */
+export function skillTreeDocs(snapshot) {
+  return snapshot.files.filter((f) => /^\.claude\/skills\/.*\.md$/.test(f));
+}
+
+/** `nonDocSources` ドメインのメンバー——`docs/` の外のソース。
+ *  **見るのはこの正規表現が挙げる拡張子だけである**——`.ts` / `.tsx` / `.ps1` / `.psm1` に書いた
+ *  ADR の短縮引用は実在照合を素通りする（2026-08-09 実測・#1008）。 */
+export function nonDocSources(snapshot) {
+  return snapshot.files.filter((f) => /\.(rs|mjs)$/.test(f) && !f.startsWith("docs/") && !f.endsWith(".test.mjs"));
 }
 
 export function scanAdrCitations(snapshot, docs) {

@@ -29,6 +29,7 @@ import { adrFiles } from "./checks/G-adr-file-names.mjs";
 import { judgingScripts } from "./checks/G-rules-script-coverage.mjs";
 import { skillFiles } from "./checks/G-skill-table.mjs";
 import { moduleIndexSources, MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
+import { skillTreeDocs, nonDocSources } from "./checks/G-adr-citations.mjs";
 
 /** そのディレクトリ**直下**に 1 件以上（前方一致にしない——配下が在れば真になり、
  *  中間層が消えても沈黙する。#1143 で実測した形）。 */
@@ -43,6 +44,14 @@ const cratesWithClaudeMd = (snapshot) =>
  *  述語を狭める変異に対して両辺が同時に動いて沈黙する。 */
 const skillDirs = (snapshot) =>
   new Set(snapshot.files.filter((f) => f.startsWith(".claude/skills/")).map((f) => f.split("/")[2]));
+
+/** `skillDocs` と `skillTreeDocs` が共有する錨——後者は前者の上位集合なので、同じ下界が当たる。
+ *  **ドメインを畳まないことと、錨の述語を共有することは別である**（母集団が違うので判定結果は
+ *  別々に出る）。片方だけを強くする将来が来たら、そのときここから外す。 */
+const everySkillDirHasSkillMd = (m, s) => {
+  const dirs = [...skillDirs(s)];
+  return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
+};
 
 export const DOMAIN_SPECS = [
   {
@@ -67,7 +76,30 @@ export const DOMAIN_SPECS = [
   {
     name: "headingRefDocs",
     members: headingRefDocs,
-    anchors: [{ label: "docs/ 配下の md", holds: (m) => m.some((f) => f.startsWith("docs/")) }],
+    // Phase 1 が「腕の切り分けが自明でない」として保留した母集団。**除外句の列を割るのではなく、
+    // 別の母集団を丸ごと下界にする**ことで切り分けを回避した——`ruleDocs` / `skillDocs` は
+    // それ自身が錨を持つドメインであり、走査が同じ以上ここへ全件現れるはずである（実測で成立）。
+    // 腕を `some` で見るより強い（1 件残れば真、にならない）。
+    //
+    // **宣言する死角**: 縛っているのは `docs/` に 1 件・`.claude/rules/` の md 全件・
+    // `.claude/skills/` の **SKILL.md 全件**・ルートの `AGENTS.md` / `CLAUDE.md` だけである。
+    // それ以外——`.claude/agents/`・`.github/`・`src-tauri/capabilities/`・crate の `CLAUDE.md`・
+    // ルート直下の他の md（`CONTRIBUTING.md`・`SPEC.md` など）・`.claude/skills/` 配下の
+    // 非 SKILL.md——は**どの錨も見ていない**。とくに `.claude/agents/` は、この母集団の doc
+    // （`lib.mjs`）が「広く取る」理由として名指した場所である。
+    //
+    // **`governanceDocs` を丸ごと下界にする案は採らない。** 実測では部分集合（外へ出るもの 0 件）
+    // だが、(1) ここの錨を包含して**腕ごとの帰属が 1 本に潰れる**（「検知器は必要な分だけ縛る」に
+    // 反する）、(2) それでも覆えない腕が残るので被覆の完成にはならない。
+    anchors: [
+      { label: "docs/ 配下の md", holds: (m) => m.some((f) => f.startsWith("docs/")) },
+      // 下界にする側が空なら `every` は空虚に真になる。他の `every` 錨と同じく 0 件を弾く
+      { label: "ruleDocs の全メンバー", holds: (m, s) => { const r = ruleDocs(s); return r.length > 0 && r.every((f) => m.includes(f)); } },
+      { label: "skillDocs の全メンバー", holds: (m, s) => { const k = skillFiles(s); return k.length > 0 && k.every((f) => m.includes(f)); } },
+      // ルート直下の腕。固定点 2 つを名指すのは `governanceDocs` の第 1 錨と同じ理由である
+      // （本ファイル冒頭の「例外」を参照）。
+      { label: "ルートの AGENTS.md と CLAUDE.md", holds: (m) => m.includes("AGENTS.md") && m.includes("CLAUDE.md") },
+    ],
   },
   {
     name: "headingRefSourceDocs",
@@ -106,12 +138,24 @@ export const DOMAIN_SPECS = [
   {
     name: "staleIdentifierDocs",
     members: staleIdentifierDocs,
-    anchors: [{ label: ".claude/ 配下の md", holds: (m) => m.some((f) => f.startsWith(".claude/")) }],
+    // 母集団は `.claude/` 配下だけで構成される（skills / rules / agents の 3 腕）。ゆえに
+    // 「`.claude/` 配下が居る」は腕ではなく母集団そのものの言い換えで、`|P| > 0` と同じ強さしか
+    // 持たなかった（腕ごとの発火テストが実測で落とした）。腕ごとに分ける。
+    // **`agents/` の腕は錨にしない**——母集団へ 1 件しか出さないため、そのファイルの移設だけで
+    // 赤くなる「単一ファイルの錨」に化ける（`.githooks/` と同じ判断）。宣言する死角である。
+    anchors: [
+      { label: ".claude/skills/ の腕", holds: (m) => m.some((f) => f.startsWith(".claude/skills/")) },
+      { label: ".claude/rules/ の腕", holds: (m) => m.some((f) => f.startsWith(".claude/rules/")) },
+    ],
   },
   {
     name: "staleIdentifierGuideDocs",
     members: staleIdentifierGuideDocs,
-    anchors: [{ label: "docs/ 配下の開発ガイド", holds: (m) => m.some((f) => f.startsWith("docs/")) }],
+    // 母集団は `docs/**` だけで構成されるので、「`docs/` 配下が居る」は母集団そのものの言い換えで
+    // `|P| > 0` と同じ強さしか持たなかった（腕ごとの発火テストが実測で落とした）。
+    // **前方一致をやめ `docs/` 直下で見る**——配下のサブディレクトリだけが残る形（開発ガイドが
+    // まとめて下層へ移された状態）で倒れる（#1143 の実形と同じ理由）。
+    anchors: [{ label: "docs/ 直下", holds: (m) => hasDirectChild(m, "docs") }],
   },
   {
     name: "staleIdentifierTargets",
@@ -200,13 +244,32 @@ export const DOMAIN_SPECS = [
     // **受け入れるトレードオフ**: `.claude/skills/` 直下へ skill でないディレクトリを置くと、
     // 正当な変更でも赤くなる。そのときは錨の側を直す（起きたら loud で、沈黙はしない向き）。
     anchors: [
+      { label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ", holds: everySkillDirHasSkillMd },
+    ],
+  },
+  {
+    // `skillDocs` の上位集合である（あちらは SKILL.md だけ）。**畳んではならない**理由は
+    // `skillTreeDocs` の doc（`G-adr-citations.mjs`）が持つ。
+    name: "skillTreeDocs",
+    members: skillTreeDocs,
+    anchors: [
+      { label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ", holds: everySkillDirHasSkillMd },
+    ],
+  },
+  {
+    name: "nonDocSources",
+    members: nonDocSources,
+    // crate は別 SSOT（`Cargo.toml`）からの every で縛る。スクリプトと hook は腕ごとに 1 本。
+    anchors: [
       {
-        label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ",
+        label: "全 workspace member から .rs が居る",
         holds: (m, s) => {
-          const dirs = [...skillDirs(s)];
-          return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
+          const crates = workspaceMembers(s).members;
+          return crates.length > 0 && crates.every((c) => m.some((f) => f.startsWith(`${c}/`) && f.endsWith(".rs")));
         },
       },
+      { label: "scripts/ 直下", holds: (m) => hasDirectChild(m, "scripts") },
+      { label: ".claude/hooks/ 直下", holds: (m) => hasDirectChild(m, ".claude/hooks") },
     ],
   },
   {

@@ -65,12 +65,12 @@ export function checkCheckSkillEnumeration(snapshot) {
       findings.push(finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` が 3a の列挙に在るが AGENTS.md の表に無い（起動条件を持たない検査）`));
     }
   }
-  // 列挙されたスキルが実在するか（誤記の検出）。**照合先は `skillDocs` ドメインである**
+  // 列挙されたスキルが実在するか（誤記の検出）。**照合先は `skillFiles` の母集団である**
   // ——`snapshot.files` 全体に問うと、母集団が走査側で消えたときに「誤記が 6 件」という
-  // 原因から遠い形で赤くなる。ドメインを見ていれば、同じ走査の欠落を錨が名指しで鳴らす。
+  // 原因から遠い形で赤くなる。母集団を見ていれば、下の 2 分岐が原因の側を名指せる。
   //
-  // **ただし「ドメインに無い」を「実在しない」と言ってはならない。** 母集団の述語が狭まった場合、
-  // ファイルは在るのにドメインから落ちる——そこで「実在しない」と断言すると、検査が偽の主張を出す
+  // **ただし「母集団に無い」を「実在しない」と言ってはならない。** 母集団の述語が狭まった場合、
+  // ファイルは在るのに母集団から落ちる——そこで「実在しない」と断言すると、検査が偽の主張を出す
   // （レビューが変異注入で実測）。2 つの状態は区別できるので、区別したまま報告する。
   // **前者の枝は今日のフィクスチャからは到達できない**——`skillFiles` の述語が
   // `.claude/skills/<name>/SKILL.md` そのものであり、かつ `CHECK_SKILL_REF` は `/` を含む名前を
@@ -83,7 +83,7 @@ export function checkCheckSkillEnumeration(snapshot) {
     if (skills.has(p)) continue;
     findings.push(
       files.has(p)
-        ? finding(p, 1, `G-check-skill-enumeration: \`${s}\` の ${p} は在るが skillDocs の母集団に無い（走査か述語が狭まっている）`)
+        ? finding(p, 1, `G-check-skill-enumeration: \`${s}\` の ${p} は在るが skillFiles の母集団に無い（走査か述語が狭まっている）`)
         : finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` に対応する ${p} が実在しない`),
     );
   }

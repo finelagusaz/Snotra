@@ -197,7 +197,7 @@ export function checkModuleLinkage(snapshot) {
   for (const crate of members) {
     const prefix = `${crate}/src/`;
     // `src/bin/` は cargo が target として自動発見するので `mod` 宣言を要さない（射程外）。
-    // **除外は `crateSources` ドメインの側ではなくここに置く**——射程の判断はこの検査のもので、
+    // **除外は `crateSourceFiles` の側ではなくここに置く**——射程の判断はこの検査のもので、
     // 母集団を共有する他の消費者（今は無い）まで巻き込まない。
     const population = sources.filter((f) => f.startsWith(prefix) && !f.startsWith(`${prefix}bin/`));
     // 空母集団を合格に見せない（沈黙経路の閉塞・本ファイル冒頭の契約）

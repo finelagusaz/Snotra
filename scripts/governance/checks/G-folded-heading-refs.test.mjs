@@ -47,6 +47,13 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
     it("CRLF でも見る（windows runner は `core.autocrlf=true` でチェックアウトする）", () => {
       expect(run("実測は `PERFORMANCE.md`\r\n「索引の常駐の内訳」\r\n")).toHaveLength(1);
     });
+
+    // **#1155 で意図を反転させた不変条件**——ここは以前「`.mjs` は対象綴りでないので見ない」を
+    // 負例として固定していた。`isRefTargetSpelling` が `.mjs` を認めた以上、同じ入力は**赤にする側**である。
+    // 反転させた事実を負例から消すだけにすると、`.mjs` の折れを誰も固定しないまま残る（不変条件の孤立）。
+    it("`.mjs` を対象にした参照の折れも見る（#1155 で対象綴りに入った）", () => {
+      expect(run("// 縛る向きは `governance/evidence.test.mjs`\n// 「配線:」が持つ\n", "a.mjs")).toHaveLength(1);
+    });
   });
 
   describe("形 B — `「` まで同一行に開き、ラベル本文だけが次行へ流れる", () => {
@@ -79,10 +86,24 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
       expect(run("詳細は `PERFORMANCE.md`\n\n「索引の常駐の内訳」\n")).toEqual([]);
     });
 
-    it("対象の綴りでないバッククォートは見ない（`.mjs` や識別子）", () => {
-      expect(run("`domains.test.mjs`\n「moduleIndexSources は crateSources の部分集合」\n")).toEqual([]);
+    it("対象の綴りでないバッククォートは見ない（識別子）", () => {
       expect(run("`someVar`\n「見出し」\n")).toEqual([]);
       expect(run("`someVar`「見出しの\n途中」\n")).toEqual([]);
+    });
+
+    // **ドットを持つが受理されない綴りの固定点**（#1155）。`.mjs` を対象綴りへ入れたとき、この役目を
+    // 負っていた負例（`domains.test.mjs`）が正例へ移り、残った `someVar` はドットを持たないため
+    // **`isRefTargetSpelling` を `includes(".")` へ広げる不注意な変更が全緑で通る**状態になっていた
+    // （逆向きの監査が変異注入で実測）。ここで挙げる 2 つは
+    // `ADR-canonical-heading-references`「決定」が「入れない」と宣言している死角そのものであり、
+    // **死角を埋める日には同じ差分でこの負例も動く**。
+    //
+    // **`file` を既定（`.md`）のままにすること。** 初稿は `"a.mjs"` を渡しており、`refScanLines` が
+    // `linesOfComments` を選ぶため `詳細は` で始まる行が 1 行も走査されず、**変異を当てても緑のまま
+    // だった**（実測）。守りたいのは綴りの述語であってコメント抽出ではない。
+    it("ドットを持っても対象綴りでなければ見ない（`.ps1` / `.ts` は宣言された死角）", () => {
+      expect(run("詳細は `scripts/manual-smoke.ps1`\n「手順」\n")).toEqual([]);
+      expect(run("詳細は `src/lib/types.ts`\n「型」\n")).toEqual([]);
     });
 
     it("コードフェンスの内側は見ない（`.md` の走査はフェンスを落とす）", () => {

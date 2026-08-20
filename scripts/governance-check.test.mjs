@@ -59,9 +59,33 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
     const ids = buildChecks(snap({}), {}).map((c) => c.id);
     expect(ids).not.toContain("G-area-instrument");
   });
-  it("それでも計器の母集団欠落は runAll の findings に残る（検査配列の外でも沈黙しない）", () => {
-    const { findings } = runAll(snap({}));
-    expect(findings.some((f) => f.message.includes("G-area-instrument 母集団の欠落"))).toBe(true);
+  // 計器の母集団欠落は**格下げ側へ移した**（`ADR-governance-meta-demotion`）。守っている相手が
+  // 計器なので、倒れても 21 本の合否は動かない。**沈黙してはいない**——器が変わっただけで、
+  // 印字はされ、監査モードでは exit code へ戻る。
+  // **両モードとも env を明示的に固定して測る。** 固定しないと、`SNOTRA_GOV_META_AUDIT=1` で
+  // 走らせた監査そのものが「格下げされていること」のテストを落とす——検査対象の状態を
+  // 検査の実行条件が決めてしまう形である（実測で 1 本落ちた）。
+  const withAudit = (v, fn) => {
+    const prev = process.env.SNOTRA_GOV_META_AUDIT;
+    if (v === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
+    else process.env.SNOTRA_GOV_META_AUDIT = v;
+    try {
+      return fn();
+    } finally {
+      if (prev === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
+      else process.env.SNOTRA_GOV_META_AUDIT = prev;
+    }
+  };
+  const hasAreaGap = (fs) => fs.some((f) => f.message.includes("G-area-instrument 母集団の欠落"));
+
+  it("計器の母集団欠落は metaFindings に残る（格下げ後も沈黙しない）", () => {
+    const { findings, metaFindings } = withAudit(undefined, () => runAll(snap({})));
+    expect(hasAreaGap(metaFindings)).toBe(true);
+    expect(hasAreaGap(findings)).toBe(false);
+  });
+  it("監査モードではメタ層が findings へ合流する（戻す経路が実在する）", () => {
+    const { findings } = withAudit("1", () => runAll(snap({})));
+    expect(hasAreaGap(findings)).toBe(true);
   });
 });
 
@@ -123,6 +147,12 @@ describe("facade の公開面（export { … } の凍結）", () => {
   // （射程の正本は `governance-manifest.test.mjs` のフォールトインジェクション節）。
   it("公開する名前の集合が凍結した一覧と一致する", async () => {
     const mod = await import("./governance-check.mjs");
-    expect(Object.keys(mod).sort()).toEqual(["buildChecks", "governanceDocs", "makeSnapshot", "runAll"]);
+    expect(Object.keys(mod).sort()).toEqual([
+      "buildChecks",
+      "governanceDocs",
+      "makeSnapshot",
+      "metaAuditEnabled",
+      "runAll",
+    ]);
   });
 });

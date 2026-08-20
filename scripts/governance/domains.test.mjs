@@ -5,6 +5,15 @@ import { buildDomains, DOMAIN_SPECS } from "./domains.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
+/** 錨の**総称反証**（レシピの完全性・残骸・全錨の発火実測）は格下げ中である
+ *  （`ADR-governance-meta-demotion`）。測っているのは錨の層自身の判別力であって、21 本の合否では
+ *  ない。`SNOTRA_GOV_META_AUDIT=1` で戻る——サイクル末の `/health-check` がこれを立てて走らせ、
+ *  発火を数える。
+ *
+ *  **個々の錨が実ツリーで成立することを見る上の 4 本は格下げしない**——あれは母集団そのものが
+ *  読めているかの検算で、倒れれば `buildDomains` の故障を意味する。 */
+const itMeta = it.skipIf(process.env.SNOTRA_GOV_META_AUDIT !== "1");
+
 // 反証レシピは**部分集合への絞り込みに限らない**。単一ディレクトリだけで構成される母集団
 // （`adrFiles` / `ruleDocs`）では、腕を引くと空集合にしかならず「空でしか倒れない錨」と区別が
 // 付かなくなる——しかしそれらの錨は前方一致ではなく**直下**を見ているので、**全件を下層へ移す**
@@ -180,7 +189,7 @@ describe("buildDomains", () => {
   // **この層は `npm test` に閉じる。** 本番の錨オブジェクトへ持たせれば `G-domain-anchors` が
   // 実行時にも見られたが、この置き方では見られない。得ているのは「レシピ無しの錨を足せない」
   // という構造保証だけであり、評価される層は本番配置と同じではない。
-  it("錨の反証レシピが全錨ぶん揃っている（レシピ無しの錨を足せない）", () => {
+  itMeta("錨の反証レシピが全錨ぶん揃っている（レシピ無しの錨を足せない）", () => {
     const missing = [];
     for (const spec of DOMAIN_SPECS) {
       for (const a of spec.anchors) if (!FALSIFIERS.has(`${spec.name}#${a.label}`)) missing.push(`${spec.name}#${a.label}`);
@@ -195,7 +204,7 @@ describe("buildDomains", () => {
 
   // 逆向き。錨を消した／改名したときに写像へ古いキーが残ると、**それ自身は何も測っていないのに
   // 「レシピが在る」という見た目だけが残る**（写しが腐る形）。両向きで一致を要求する。
-  it("反証レシピに、対応する錨の無いキーが残っていない", () => {
+  itMeta("反証レシピに、対応する錨の無いキーが残っていない", () => {
     const live = new Set(DOMAIN_SPECS.flatMap((spec) => spec.anchors.map((a) => `${spec.name}#${a.label}`)));
     const stale = [...FALSIFIERS.keys()].filter((k) => !live.has(k));
     expect(stale, `対応する錨の無い反証レシピ: ${stale.join(" / ")}（FALSIFIERS から消すこと）`).toEqual([]);
@@ -203,7 +212,7 @@ describe("buildDomains", () => {
 
   // **切り詰めず全件を挙げる。** 最初の 1 本で止めると、複数の錨を同時に弱める変更に対して
   // 「1 本だけ直せば緑になる」と読める（完全性 assert は全件名指しなので、そちらとの非対称も消す）。
-  it("錨は対応する腕を引くと倒れる（空虚な錨を機構で落とす）", () => {
+  itMeta("錨は対応する腕を引くと倒れる（空虚な錨を機構で落とす）", () => {
     const snapshot = makeSnapshot(ROOT);
     const failures = [];
     for (const spec of DOMAIN_SPECS) {

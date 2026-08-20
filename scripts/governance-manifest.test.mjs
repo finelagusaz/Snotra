@@ -54,10 +54,33 @@ describe("diffManifest（件数ではなく集合を比べる）", () => {
   // ロード時に throw する**（検査の `domains` 宣言が未知の名前になるため）が、**消費者の無い
   // ドメインはどの層も見なかった**——実測（2026-08-20）: `headingRefDocs` を `DOMAIN_SPECS` から
   // 消すと `governance:check` も `npm test` も緑のままで、この列だけが `-headingRefDocs` を出した。
-  it("ドメインが 1 つ消えると delta に出る（I3）", () => {
-    const b = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs", "adrFiles"] };
-    const h = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs"] };
-    expect(diffManifest(b, h)).toEqual(["-adrFiles"]);
+  // **この列は格下げ中である**（`ADR-governance-meta-demotion`）。錨の層をゲートから外した以上、
+  // その帳簿だけをゲートに残すのは筋が通らない——止めたのは「錨が守っている保証」であって、
+  // 帳簿はその保証の付属物である。
+  //
+  // **格下げで実際に見えなくなるものを名指しする**（上のコメントの実測がそのまま残余になる）:
+  // 消費者を持たないドメインを `DOMAIN_SPECS` から消しても、既定モードではどの層も鳴らない。
+  // 消費者を持つドメインは `registry.mjs` が未知の名前で throw するので、ここは変わらない。
+  const withAudit = (v, fn) => {
+    const prev = process.env.SNOTRA_GOV_META_AUDIT;
+    if (v === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
+    else process.env.SNOTRA_GOV_META_AUDIT = v;
+    try {
+      return fn();
+    } finally {
+      if (prev === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
+      else process.env.SNOTRA_GOV_META_AUDIT = prev;
+    }
+  };
+  const b = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs", "adrFiles"] };
+  const h = { checks: [], docs: [], rules: [], skills: [], domains: ["governanceDocs"] };
+
+  it("既定ではドメインの消滅は delta に出ない（格下げ中）", () => {
+    expect(withAudit(undefined, () => diffManifest(b, h))).toEqual([]);
+  });
+
+  it("監査モードではドメインが 1 つ消えると delta に出る（I3・戻す経路が実在する）", () => {
+    expect(withAudit("1", () => diffManifest(b, h))).toEqual(["-adrFiles"]);
   });
 });
 

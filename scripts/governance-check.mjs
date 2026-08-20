@@ -89,6 +89,30 @@ import { buildDomains } from "./governance/domains.mjs";
 export { makeSnapshot, governanceDocs };
 
 // ---------------------------------------------------------------------------
+// メタ層の格下げ（`docs/adr/ADR-governance-meta-demotion.md`）
+// ---------------------------------------------------------------------------
+//
+// **ここに挙げるのは「主題が機構自身である判定」であって、母集団の欠落検知ではない。**
+// 両者は同じ `findings` の形をしているが、止めたときに起きることが違う——母集団が空になれば
+// 21 本は空虚に緑を返す（21 本自身の故障）ので `runAll` の 0 件検知はゲートに残す。
+// 一方、錨が倒れても 21 本の合否は変わらない（変わるのは「母集団が縮んでいないという保証」だけ）。
+//
+// **格下げは撤去ではない。判定は走り、印字もされる。exit code に算入しないだけである。**
+// 消さない理由は `ADR-retire-area-budget` の先例——面積は格下げ後も動かし続けたからこそ
+// 「4 観測点で欠陥検出ゼロ」という**廃止できる根拠**が取れた。消していればその 4 点は無い。
+//
+// **`SNOTRA_GOV_META_AUDIT=1` で元のゲートへ戻る。** サイクル末の `/health-check` がこれを立てて
+// 走らせ、発火を数える。2 サイクル連続で 0 件なら当該項目を撤去する（判定規則は ADR が正本）。
+
+/** 主題が機構自身である検査の id。**`checks/` に住んでいても 21 本の合否には数えない。** */
+const META_CHECK_IDS = new Set(["G-domain-anchors"]);
+
+/** 監査モード（メタ層をゲートへ戻す）。既定は格下げ側——**安全側ではなく静か側を既定にしている**
+ *  ことを明示する: これは「効いていないかもしれない層を、効いているか測るために止める」実験で
+ *  あり、実験の既定値は実験条件でなければならない。 */
+export const metaAuditEnabled = () => process.env.SNOTRA_GOV_META_AUDIT === "1";
+
+// ---------------------------------------------------------------------------
 // 実行
 // ---------------------------------------------------------------------------
 
@@ -146,11 +170,14 @@ export function runAll(snapshot) {
   // 固定パスの `STALE_EXTRA_DOCS` はここに要らない（読めなければ scanStaleIdentifiers が鳴る）
   if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
   if (ctx.staleGuides.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の開発ガイド（docs/**）が 0 件（母集団の欠落）"));
-  for (const c of checks) findings.push(...c.run());
+  // メタ層は別の器へ受ける（`ADR-governance-meta-demotion`）。**振り分けの根拠は id であって
+  // findings の中身ではない**——中身で判定すると、メッセージを書き換えただけで層が移る。
+  const metaFindings = [];
+  for (const c of checks) (META_CHECK_IDS.has(c.id) ? metaFindings : findings).push(...c.run());
   // 計器は検査ではない——面積に合否は無い（`ADR-retire-area-budget`）ので「検査 N 件」に数えない。
-  // ただし母集団が欠ければ下の evidence が嘘になるため、入力の健全性だけは findings に残す
-  // （空母集団の明示 fail と同じ役割・検査配列の外に置く理由がこれである）。
-  findings.push(...checkNormativeAreaInstrument(snapshot));
+  // 入力の健全性だけは残すが、**守っている相手が計器なので格下げ側へ置く**——面積の数字が
+  // 静かに過小になるだけで、21 本の合否は動かない。
+  metaFindings.push(...checkNormativeAreaInstrument(snapshot));
   const area = normativeArea(snapshot);
   // duplicateDomains も合否を持たない計器——findings へは積まない。同一メンバーのドメインが
   // 在れば報告するだけで、畳むかどうかの判断は人に残す（`scripts/governance/instrument.mjs` の
@@ -174,6 +201,9 @@ export function runAll(snapshot) {
   // **袋へ入れるのは平坦な値にする**——`area` をそのまま入れると evidence 側の読みが
   // `ev.area.always`＝2 段目になり、2 段目は生のオブジェクトからの読みなのでガードを通らない
   // （`always` を落とすと findings 0 件のまま `undefined` を印字して exit 0 だった・2026-08-17 実測）
+  //
+  // **供給断の検知は `metaFindings` へ受ける**（`ADR-governance-meta-demotion`）——守っている相手が
+  // evidence 行という計器なので、格下げの対象である。
   const evidence = assembleEvidence(
     evidenceView(
       {
@@ -188,23 +218,36 @@ export function runAll(snapshot) {
         adrFiles: adrFiles(snapshot).length,
         unmigrated: unmigrated.length,
       },
-      findings,
+      metaFindings,
     ),
   );
-  return { findings, evidence, dupDomains };
+  // 監査モードではメタ層をゲートへ戻す。**戻し方は「合流」であって別枠の再判定ではない**
+  // ——別枠にすると、監査で赤くなったときの exit code の作り方が 2 通りになる。
+  if (metaAuditEnabled()) findings.push(...metaFindings);
+  return { findings, metaFindings, evidence, dupDomains };
 }
 
 // fileURLToPath を使う — URL.pathname は空白等を percent-encode するため resolve と一致せず、
 // 「検査ゼロ件のまま exit 0」という沈黙経路になる（レビュー H1 で実測）
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const { findings, evidence, dupDomains } = runAll(makeSnapshot(process.cwd()));
+  const { findings, metaFindings, evidence, dupDomains } = runAll(makeSnapshot(process.cwd()));
   if (findings.length > 0) {
     console.error(`governance:check — ${findings.length} 件の不整合:`);
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
     process.exitCode = 1;
   } else {
     console.log(`governance:check — 全検査 passed（${evidence}）`);
+  }
+  // 格下げしたメタ層の報告（`ADR-governance-meta-demotion`）。**exit code には触れない。**
+  // 監査モードでは上の findings に合流済みなので、ここでは出さない（同じ行が 2 度出る形を作らない）。
+  //
+  // **この行が読まれないことは織り込み済みである**——「検出は exit code、出力は証拠」（#471）に
+  // 従えば、印字だけの判定は検出ではない。ゆえに読む場所を機構ではなく手順に置いた:
+  // サイクル末の `/health-check` が `SNOTRA_GOV_META_AUDIT=1` で走らせ、発火を数える。
+  if (!metaAuditEnabled() && metaFindings.length > 0) {
+    console.log(`governance:check — 格下げ中のメタ層に ${metaFindings.length} 件（合否には算入しない）:`);
+    for (const f of metaFindings) console.log(`  ${f.file}:${f.line}  ${f.message}`);
   }
   // duplicateDomains は合否を持たない計器——findings にも exit code にも触れない、報告専用の 1 行。
   if (dupDomains.length > 0) {

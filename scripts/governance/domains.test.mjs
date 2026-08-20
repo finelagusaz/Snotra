@@ -158,6 +158,14 @@ describe("buildDomains", () => {
     expect(missing, `反証レシピの無い錨: ${missing.join(" / ")}（FALSIFIERS へ足すこと）`).toEqual([]);
   });
 
+  // 逆向き。錨を消した／改名したときに写像へ古いキーが残ると、**それ自身は何も測っていないのに
+  // 「レシピが在る」という見た目だけが残る**（写しが腐る形）。両向きで一致を要求する。
+  it("反証レシピに、対応する錨の無いキーが残っていない", () => {
+    const live = new Set(DOMAIN_SPECS.flatMap((spec) => spec.anchors.map((a) => `${spec.name}#${a.label}`)));
+    const stale = [...FALSIFIERS.keys()].filter((k) => !live.has(k));
+    expect(stale, `対応する錨の無い反証レシピ: ${stale.join(" / ")}（FALSIFIERS から消すこと）`).toEqual([]);
+  });
+
   it("錨は対応する腕を引くと倒れる（空虚な錨を機構で落とす）", () => {
     const snapshot = makeSnapshot(ROOT);
     for (const spec of DOMAIN_SPECS) {

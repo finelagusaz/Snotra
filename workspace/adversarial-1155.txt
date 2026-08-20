@@ -1,0 +1,176 @@
+敵対レビュー — issue #1155 / workspace/research.md への反証試行
+観測時点: 585c0991 (main)。走査範囲: scripts/, docs/, .claude/rules/, .claude/skills/, ルート *.md, Cargo.toml
+（.claude/agents/ も確認のため追加で見た）。母集団の数え上げは git grep（追跡下）のみを使用。
+すべての変異注入は測定後に git checkout -- <path> で復元済み（git status --short で workspace/ 以外の差分ゼロを確認）。
+
+## 壊せた項目
+
+1) 命題1（`scripts/**/*.mjs` の 33行/10ファイルが母集団の全部）— 部分的に偽。2つの独立した穴を発見した。
+
+   a) `.claude/skills/health-check/SKILL.md:78` が「錨の層は格下げではなく撤去した」と書いており、
+      これは撤去層の語彙（「錨」）を含む occurrence だが `scripts/**/*.mjs` の外にある。
+      一次証拠:
+        git grep -ln "錨" -- '.claude/skills/*/SKILL.md'
+        → .claude/skills/health-check/SKILL.md
+        git show 74ae45fc -- .claude/skills/health-check/SKILL.md
+        → この行自体が撤去コミット 74ae45fc の diff で追加されたもの（+**錨の層は格下げではなく撤去した**...）
+      決定的な点: この行は `governanceDocs(snapshot)`（lib.mjs:470-478）の
+      `/^\.claude\/skills\/[^/]+\/SKILL\.md$/` 腕に一致し、G-heading-refs・G-references・
+      G-stale-identifiers が実際に走査する「生きた層」の一部である——ADR/design/superpowers のように
+      構造的に除外されていない。内容自体はクラスA相当（撤去を正しく描写）で「偽」ではないが、
+      「母集団の閉じを2方向で確認した」（research.md:15-18）という手順は `.mjs` の外を見ていない
+      ため、「33行/10ファイルが全部」という closure の主張は文字どおりには成立しない。
+      この所見を偽にする手順: `git grep -n "錨\|ドメイン" -- '.claude/skills/*/SKILL.md' '.claude/rules/*.md'`
+      を再実行し、ヒットが本当に health-check/SKILL.md:78 の1件だけであること、かつその1件が
+      research.md のどこかで数えられていることを示せれば、この所見は崩れる（未見のはず——research.md
+      は `scripts/**/*.mjs` にしか触れていない）。
+
+   b) より重い穴: `skillDocs` という「もう存在しない旧ドメイン名」が、issue の5語にも補完5語にも
+      当たらない形で少なくとも3箇所に残っている。
+        - scripts/governance/checks/G-adr-citations.mjs:48, :50
+        - scripts/governance/checks/G-check-skill-enumeration.mjs:86（コメントではなく実行時の
+          finding メッセージ文字列そのもの: `` `...skillDocs の母集団に無い（走査か述語が狭まっている）` ``）
+      一次証拠:
+        git grep -n "skillDocs" -- '*.mjs'
+        → 上記4箇所（:68 は「ドメイン」を含むため既に33件に入っているはずだが、:48,:50,:86 は
+          「ドメイン」も「錨」も含まない）
+      さらに重要な点: research.md の class D は「`ruleDocs()` も `crateSourceFiles()` も実在し、
+      指しているのは今日も在る母集団である」（research.md:57）と言うが、`skillDocs` は
+      **今日どの `.mjs` にも export されていない**（実測: `git grep -n "export function skillDocs" -- '*.mjs'`
+      は0件、実体は `G-skill-table.mjs` の `skillFiles`）。旧 `domains.mjs`（撤去前）を見ると
+      `skillDocs` は `members: skillFiles` というドメイン層のラッパー名でしかなく、ドメイン層ごと
+      消えた今、コード上のどこにも `skillDocs` という実体は存在しない。
+      一次証拠: `git show 74ae45fc^:scripts/governance/domains.mjs | grep -n "skillDocs\|skillFiles"`
+      → `name: "skillDocs"`, `members: skillFiles` （240-241行目）
+      つまり `skillDocs` への言及は class D の「語彙だけが偽（指す母集団は実在）」という言い訳が
+      効かない——指す先そのものが実在しない。これは class C 相当（消えた保証／消えた実体を
+      在るかのように書いている）に近く、少なくとも `G-check-skill-enumeration.mjs:86` は
+      ユーザーに見える finding メッセージの中に幽霊の識別子を埋め込んでいる。
+      この所見を偽にする手順: `export function skillDocs` あるいは `export const skillDocs` を
+      `scripts/**/*.mjs` 全体で見つけられれば（現存する別名としての実装）、この所見は崩れる。
+      また G-check-skill-enumeration.mjs:86 の分岐が本当に到達不能（同ファイル75-78行のコメントが
+      主張する「宣言する死角」）であることを反証注入で確かめれば「実害ゼロ」の側へ弱められる
+      （今回は時間の都合で分岐到達性そのものは変異注入していない——⚠️ 側に格上げする）。
+
+## 壊せなかった項目
+
+2) 命題2（lib.mjs:13,35 / lib.test.mjs:310「ルート錨止め」は別語義）
+   実際に打ったコマンド: `git grep -n "ルート錨止め" -- scripts/governance/lib.mjs scripts/governance/lib.test.mjs`
+   結果: 3箇所とも `WALK_EXCLUDE_PATHS` の完全一致照合（#728/#1089）を指しており、
+   `G-domain-anchors` や `domains.mjs` の API・ファイルへの参照は皆無。目視でも文脈は
+   一貫して「パスの先頭固定」の話。壊せなかった。
+
+3) 命題3（`.mjs` 正準形は今日4件、うち3件が実在テストへ前方一致で着地）
+   実際に打ったコマンド:
+     git grep -noP '`[^`\n]*\.mjs`\s*(?:§\s*[\d.]*\s*)?「' -- 'scripts/**' 'docs/**'
+     → 4件（ADR-facade-evidence-static-imports.md:9, governance-check.test.mjs:118,
+        G-rules-script-coverage.mjs:25, lib.mjs:498）で research.md の表と完全一致。
+     grep -n "describe(\"フォールトインジェクション" scripts/governance-manifest.test.mjs
+     grep -n "it(\"配線" scripts/governance/evidence.test.mjs
+     grep -n "it(\"母集団の下界" scripts/governance/checks/G-rules-script-coverage.test.mjs
+     → 3件とも実在し、ラベルは normAnchor 後に前方一致する（「配線:」は4本のitのうち
+       最初の76行目と前方一致）。
+   ただし「実測」という語の精度に注意——現行の `isRefTargetSpelling`（lib.mjs:180）は
+   `.mjs` を対象綴りと認めないので、この着地判定は**現行の生きた検査が実行して確認した結果ではなく、
+   normAnchor/collectAnchors のロジックを手で（あるいは仮に）当てたシミュレーション**である
+   （⚠️ へも記載）。壊せなかったが、性質の precision は下げるべき。
+
+4) 命題4（G-references はベア名 `domains.test.mjs` を構造的に捕まえられない）
+   実際に読んだコード: scripts/governance/checks/G-references.mjs の該当行
+     `if (!t.includes("/")) continue;`（バッククォート参照）
+   Markdown リンクの経路（`exists(doc, target)` は `allowSuffix` 無し）も別途確認したが、
+   `domains.test.mjs` のような canonical 形はバッククォート＋日本語ラベルの形でのみ現れ、
+   Markdown リンク構文 `[...](domains.test.mjs)` としては repo 中に存在しない
+   （`git grep -n "\](domains.test.mjs)"` 相当は0件）。suffix 一致の経路 `allowSuffix` も
+   `/` を含む参照にしか適用されないため抜け道にならない。壊せなかった。
+
+5) 命題5（G-rules-script-coverage.mjs:33-38,40 は偽・issueが挙げていない4件目）
+   **変異注入で直接検証した**（唯一この命題だけ実行結果で裏取りした）。
+     - `SCRIPT_EXT` を `/\.(mjs)$/` へ狭める変異を当て `npm run governance:check` を実行
+       → exit 0、「全検査 passed」で完全沈黙（doc の「錨の無い版は exit 0 で完全に沈黙」という
+         記述と一致——ただし今日は「錨の無い版」ではなく「錨が存在しない版」であり、doc の
+         present-tense framing はミスリーディング）
+     - 同じ変異のまま `npx vitest run scripts/governance/checks/G-rules-script-coverage.test.mjs`
+       → 2 tests failed（「母集団の下界」canary が実際に赤くなる）
+       → doc の「`npm test` では上の『母集団の下界』が別に赤くする」という記述と一致
+     結論: 挙動そのものは doc の記述と一致するが、doc は「`judgingScripts` ドメインの錨（Phase 2）が
+     果たす役割は違う」（33行目）と**現在形で2つの版を比較**しており、今日はその2つの版のうち
+     片方（錨版）が存在しない。研究が「偽」と分類したのは妥当——ただし「動作の予測」自体は
+     正しく、壊れているのは「anchor が今も選べる変数であるかのような文法」だけである。
+     変異は `git checkout -- scripts/governance/checks/G-rules-script-coverage.mjs` で復元済み
+     （git status で無差分を確認）。
+
+6) 命題6（class D の10行に、実際は保証を主張する行が紛れていないか）
+   1行ずつ読んだ。`lib.mjs:489`「`ruleDocs` ドメインのメンバー。」、`:494`「`crateSources`
+   ドメインのメンバー」、`G-module-index.mjs:37`「`moduleIndexSources` ドメインのメンバー」、
+   `G-adr-citations.mjs:47,57`（`skillTreeDocs`/`nonDocSources`）、`G-module-linkage.mjs:200`、
+   `G-rules-script-coverage.mjs:61` はいずれも実在する `.mjs` 内 export（`ruleDocs`/
+   `crateSourceFiles`/`moduleIndexSources`/`skillTreeDocs`/`nonDocSources`）を指しており、
+   単なる呼称（保証の主張なし）。G-check-skill-enumeration.mjs:72,73 も「ドメインに無い＝実在しない
+   ではない」という宣言する死角の文であり、保証の主張ではなくむしろ保証の**否定**（弱さの自認）。
+   → class C への混入は見つからなかった。ただし G-check-skill-enumeration.mjs:68 と G-adr-citations.mjs:48,50
+   に埋め込まれた「skillDocs」固有の問題は上記1(b)で別立てにした（class D の一般的な弁明が
+   通じない例外ケース）。
+
+7) 測定環境の疑い（ctx形状・governanceDocs・322件・折れfixture・DOMAIN_SPECSのフェンス内外）
+   - `grep -n "const ctx = " scripts/governance-check.mjs` → 147行目に検査へ渡る本物の ctx
+     （`{ docs, allRefDocs, staleTargets, gitIgnoredPaths, record }`）、152行目は別スコープの
+     `sink` 用の空オブジェクトで無関係。research の引用は正しい行を指している。
+   - `governanceDocs(snapshot)` は実際に `.md` 判定のみ（lib.mjs:470-478 を直接読んだ）。
+   - `npm run governance:check` を実行し baseline を再現: 「見出し参照 322 件を md 48 件 + .rs 101 件 +
+     スクリプトのコメント 111 件から照合」。48+101+111=260 ≠ 322 という不一致に見えるが、
+     これは「322 = 参照件数」「48/101/111 = 各系統の文書ファイル件数（照合元の分母）」という
+     別次元の数字であり、加算可能な内訳ではない。矛盾ではないと判断した（⚠️ 側に一部残す）。
+   - `.mjs` を isRefTargetSpelling へ足す変異を実際に当てて `npx vitest run scripts/governance/`
+     （27ファイル）を実行 → 1 test failed（G-folded-heading-refs.test.mjs:83 のみ）。
+     これは research の主張どおりで、**「このテスト以外にも赤くなる」という懸念は実測で否定された**
+     （isRefTargetSpelling だけを変異させた場合。resolveRefTarget も変異させると govenance:check 側で
+     3件の「対象が解決できない」finding が出ることも確認したが、これは research 自身が「3箇所同時に
+     直す必要がある」と明記している設計どおりの挙動であり矛盾ではない）。
+     変異は `git checkout -- scripts/governance/lib.mjs` で復元済み。
+   - `docs/design/2026-08-20-governance-meta-demotion-derivations.md` の DOMAIN_SPECS/buildDomains/
+     duplicateDomains 言及をフェンス境界で awk 走査した結果、フェンス外の出現は0件——research の
+     Q4 の実測記述と一致した。
+
+## ⚠️ 確信の持てない所見
+
+- G-check-skill-enumeration.mjs:86 の「skillDocs」finding メッセージが実際に到達可能かどうかは
+  変異注入していない（同ファイル75-78行の自己申告コメントは「今日のフィクスチャからは到達できない」
+  と主張している）。到達不能なら実害はゼロに近く、上記1(b)の重大度は下がる。決着させるには
+  `skillFiles` の述語を実際に狭めて（例えば拡張子フィルタを変える）、この分岐が本当に発火するかを
+  確かめる必要がある。
+
+- 命題3の「着地する（実測）」という表現は、現行の生きた `G-heading-refs` が実際に走らせて確認した
+  結果ではなく、`normAnchor`/`collectAnchors` のロジックを手作業ないし仮の変異で当てたシミュレーション
+  だと考えられる（isRefTargetSpelling を widen しただけでは resolveRefTarget が阻むことを実測済み）。
+  research.md 自身は「対象が `.mjs` の正準形は今日4件ある」の節の中でこれを行っているので文脈上は
+  妥当だが、「実測」という語が「現行の検査が実行した結果」と読めてしまう点は気になる。
+
+- `skillDocs` 型の「ドメイン名そのものが検索語に一致しない」残存が、私が見つけた3箇所（実質2ファイル）
+  以外にもまだあるかもしれない。旧 `domains.mjs` の17ドメイン名すべて（skillDocs, ruleDocs,
+  crateSources, moduleIndexSources, workspaceMemberDirs, judgingScripts, adrFiles, skillTreeDocs,
+  nonDocSources, governanceDocs, headingRefDocs, headingRefSourceDocs, headingRefCommentDocs,
+  staleIdentifierDocs, staleIdentifierGuideDocs, staleIdentifierTargets, allHeadingRefDocs）を
+  `.mjs` 全体で grep したが、skillDocs 以外はすべて今日も実在する export に対応していることを
+  確認した——ただし旧 `domains.mjs` が持っていた「ドメイン固有のラベル文字列」（`holds` の `label:`
+  引数、例えば `"skillDocs の全メンバー"`）まで完全に洗い出したわけではなく、それらが別の生きた
+  `.mjs` に部分文字列として紛れ込んでいないかは未確認。
+
+## 調査が測っていない領域
+
+- issue #1155 の由来は #1154（正準形の折れ検知の独立導出レビュー）だが、research.md はその
+  レビューが「副産物」としてこの語彙残存を発見した経緯（#1154 自体の内容）を検証していない。
+  #1154 の成果物と #1155 の母集団が実は重なっている（同じ `.mjs` ファイル群を触る）可能性があり、
+  2つの issue を同じ PR で扱おうとすると衝突しうる——現在 adv-1154 という別セッションが動いている
+  ようなので、ファイル境界（特に `lib.mjs` と `G-folded-heading-refs.test.mjs`）の競合を主エージェント側で
+  事前に調整すべきである。
+
+- `.claude/skills/health-check/SKILL.md:78` の発見（壊せた項目1a）は、Q4で扱っている
+  「docs/design/ の同型」問題と構造的に同じ形（撤去コミット自身が残した記述）だが、research.md の
+  「未解決の疑問」節はこのファイルに触れていない。計画フェーズでこの1行をどう扱うか
+  （直す/直さない/射程外と明記する）を決める必要がある——issue の射程外リストには
+  `.claude/skills/health-check/SKILL.md` は入っていない。
+
+- `npm test` 全体（489+ tests）を通しで実行して現状の baseline（何件 pass か）を確認していない
+  ——今回は `scripts/governance/` 配下の vitest のみ実行した（403 tests、mutation 適用時に確認）。
+  計画実装前にフルスイートの baseline を取ることを推奨する。

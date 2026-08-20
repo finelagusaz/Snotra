@@ -4,10 +4,7 @@
 //! 多重ロックを解消する。ロック保持時間を最小化するため、ロック外で扱うスナップショット/
 //! 構築物 `FolderListContext`・`PrebuiltIndex`・`PreparedHistorySave` を公開する。
 //!
-//! **設定だけは外側の `Mutex` を経ずに読める**（#1032・`config_handle` の doc が正本）。
-//! 検索は `&mut self` を要求するので外側の `Mutex` を長く握り、実運用点では 1 回の
-//! `search` が 40〜95 ms 保持する。その間 UI が同じ `Mutex` 越しに設定を読んでいたのが
-//! #1032 の主因だった。
+//! **設定だけは外側の `Mutex` を経ずに読める**（#1032・[`Engine::config_handle`] の doc が正本）。検索は `&mut self` を要求するので外側の `Mutex` を長く握り（実運用点での保持時間も同 doc が持つ）、その間 UI が同じ `Mutex` 越しに設定を読んでいたのが #1032 の主因だった。
 
 use crate::config::{Config, ScanPath};
 use crate::folder;
@@ -256,10 +253,9 @@ impl Engine {
 
     /// 設定の共有ハンドルを渡す（#1032）。
     ///
-    /// **UI が毎フレーム行う live-read を、外側の `Mutex<Engine>` の外へ出すための口である。**
-    /// 検索の worker は `search` の間じゅう外側の `Mutex` を握る（実運用点で 40〜95 ms）ため、
-    /// UI が同じ錠越しに設定を読むと、そのフレームは worker の走査が終わるまで返らない
-    /// （`read_window_width` 単独で 43,939 µs の待ちを実測した・`PERFORMANCE.md`）。
+    /// **UI が毎フレーム行う live-read を、外側の `Mutex<Engine>` の外へ出すための口である。** 検索の worker は `search` の間じゅう外側の `Mutex` を握るため、UI が同じ錠越しに設定を読むと、そのフレームは worker の走査が終わるまで返らない（`read_window_width` の待ちの実測値は `PERFORMANCE.md`「設定の読みを engine lock の外へ出す」）。
+    ///
+    /// **実運用点での保持時間は 40〜95 ms である**（#1032 実測）。**この値の正本はここであり、他の箇所はここを指す**——`PERFORMANCE.md` に記録の在る `read_window_width` の待ちと違って、この値は #1032 の計装（撤去済み）でしか測られておらず、寄せる先が他に無い。
     ///
     /// **返すのは同じ `Arc` であって写しではない**——`update_config` の書き込みは、この
     /// ハンドルを持つ読み手へそのまま届く。別々に持って両方へ書く形にすると、書き手が

@@ -329,35 +329,88 @@ worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用
 
 ### Phase 1 — `snotra-core/src/engine.rs`
 
-- [ ] crate の `//!` を 1-1 の新文へ差し替える
-- [ ] `Engine::config_handle` の doc を 1-2 の新文（2 段落）へ差し替える
+- [x] crate の `//!` を 1-1 の新文へ差し替える
+- [x] `Engine::config_handle` の doc を 1-2 の新文（2 段落）へ差し替える
 
 ### Phase 2 — `src-tauri/src/egui_shell/`
 
-- [ ] `mod.rs` の `read_config` doc を 2-1 の新文へ差し替える（repoint と cross-crate link を含む）
-- [ ] `view.rs` の `//` 段落を 2-2 の新文へ差し替える
+- [x] `mod.rs` の `read_config` doc を 2-1 の新文へ差し替える（repoint と cross-crate link を含む）
+- [x] `view.rs` の `//` 段落を 2-2 の新文へ差し替える
 
 ### Phase 3 — `src-tauri/src/state.rs`
 
-- [ ] `AppState.config` フィールドの doc を 3-1 の新文へ差し替える
-- [ ] `ui_reads_config_while_the_engine_lock_is_held` の doc を 3-2 の新文へ差し替える
+- [x] `AppState.config` フィールドの doc を 3-1 の新文へ差し替える
+- [x] `ui_reads_config_while_the_engine_lock_is_held` の doc を 3-2 の新文へ差し替える
 
 ### Phase 4 — ガバナンス文書
 
-- [ ] `src-tauri/CLAUDE.md` 57 行の該当句を 4-1 の新文へ差し替える（行の他の部分は触らない）
-- [ ] `docs/architecture.md` 228 行の内部ポインタを 4-2 の新文へ直す
-- [ ] `docs/architecture.md` 231 行の該当句を 4-3 の新文へ差し替える（bullet 末尾の節参照は触らない）
+- [x] `src-tauri/CLAUDE.md` 57 行の該当句を 4-1 の新文へ差し替える（行の他の部分は触らない）
+- [x] `docs/architecture.md` 228 行の内部ポインタを 4-2 の新文へ直す
+- [x] `docs/architecture.md` 231 行の該当句を 4-3 の新文へ差し替える（bullet 末尾の節参照は触らない）
 
 ### Phase 5 — 母集団の検算
 
-- [ ] 2 値それぞれの `git grep`（別綴り込み）を打ち、ヒットが正本の行だけであることを確かめ、出力を計画へ残す
-- [ ] 除外なしも打ち、差が `workspace/` の行だけであることを確かめる
+- [x] 2 値それぞれの `git grep`（別綴り込み）を打ち、ヒットが正本の行だけであることを確かめ、出力を計画へ残す
+- [x] 除外なしも打ち、差が `workspace/` の行だけであることを確かめる
 
 ### Phase 6 — 機械照合に載ったことの実測
 
-- [ ] `npm run governance:check` の見出し参照件数が 282 → 285（`.rs` 101 → 104）へ進んだことを確かめ、出力を残す
-- [ ] `mod.rs` の節名を崩して `governance:check` が赤になることを実測し、戻して緑と `git diff` の一致を確かめる
-- [ ] `mod.rs` の cross-crate intra-doc link を崩して `cargo doc` が赤になることを実測し、戻して緑と `git diff` の一致を確かめる
+- [x] `npm run governance:check` の見出し参照件数が 282 → 285（`.rs` 101 → 104）へ進んだことを確かめ、出力を残す
+- [x] `mod.rs` の節名を崩して `governance:check` が赤になることを実測し、戻して緑と `git diff` の一致を確かめる
+- [x] `mod.rs` の cross-crate intra-doc link を崩して `cargo doc` が赤になることを実測し、戻して緑と `git diff` の一致を確かめる
+
+### Phase 5・6 の実測記録（2026-08-20）
+
+**母集団（Phase 5）** — 受け入れ条件 1・2 が立った:
+
+```
+$ git grep -n "43,939\|43939" -- . ':(exclude)workspace'
+PERFORMANCE.md:529:| **`read_window_width` の lock 取得** | **911〜43,939** | mainwin |
+PERFORMANCE.md:566:| `read_window_width` の読み max | 43,939 | **7** |
+
+$ git grep -n "40〜95\|40-95" -- . ':(exclude)workspace'
+snotra-core/src/engine.rs:258:    /// **実運用点での保持時間は 40〜95 ms である**（#1032 実測）。…
+
+$ git grep -n "43\.9" -- . ':(exclude)workspace'
+(0 件)
+```
+
+除外の副作用: 除外なしとの差は `workspace/` の 4 ファイル（`adversarial-1128.txt` /
+`plan-review-1128-independent.md` / `plan.md` / `research.md`）だけで、生きた層に漏れは無い。
+
+**見出し参照（Phase 6-1）** — **282 → 285。予測が的中した。**
+
+```
+governance:check — 全検査 passed（… 見出し参照 285 件を md 48 件 + .rs 101 件 + スクリプトのコメント 109 件から照合 …）
+```
+
+> **訂正: 「`.rs` 101 → 104」は計画の読み違いだった。** `md 48 件 + .rs 101 件 + スクリプトのコメント 109 件` は
+> **走査した文書の数**であって腕ごとの参照件数ではない。今回はファイルを増減していないので 48 / 101 / 109 は不変で、
+> 動くのは合計の 285 だけである。**接地に使えるのは合計であり、腕別の内訳ではない。**
+> （なお Phase 6-2 の注入先を `.rs` に固定した判断自体は変わらない——`mod.rs` は今日まで不可視だった当のファイルである。）
+
+**見出し参照のフォールトインジェクション（Phase 6-2）** — 検知器が発火した:
+
+```
+$ sed -i 's/「設定の読みを engine lock の外へ出す」/「…外へ出さない」/' src-tauri/src/egui_shell/mod.rs
+$ npm run governance:check
+governance:check — 1 件の不整合:
+  src-tauri/src/egui_shell/mod.rs:418  見出し参照が着地しない: `PERFORMANCE.md`「設定の読みを engine lock の外へ出さない」
+```
+
+巻き戻しは**内容ハッシュで照合**した（`git hash-object` が前後とも `ef7b7ec4…`）。
+
+**intra-doc link のフォールトインジェクション（Phase 6-3）** — cross-crate link が検算されている:
+
+```
+$ sed -i 's/config_handle`\]/config_handle_typo`]/' src-tauri/src/egui_shell/mod.rs
+$ cargo doc --workspace --no-deps --document-private-items
+error: unresolved link to `snotra_core::engine::Engine::config_handle_typo`
+error: could not document `snotra`
+exit=101
+```
+
+巻き戻しは内容ハッシュで照合（前後とも `ef7b7ec4…`）。**注入前の clean run も exit 0 を実測済み。**
 
 ### Phase 7 — 変更後の検証
 

@@ -15,9 +15,7 @@ pub struct AppState {
     pub engine: Mutex<Engine>,
     /// 設定の共有ハンドル（`engine` が持つのと**同じ `Arc`**・#1032）。
     ///
-    /// **UI の毎フレームの live-read はこちらを読む**——`engine` の `Mutex` を経ると、
-    /// 検索 worker が `engine.search` を走らせている間（実運用点で 40〜95 ms）フレームが
-    /// そこで止まる。契約と、写しではないことの理由は `Engine::config_handle` の doc。
+    /// **UI の毎フレームの live-read はこちらを読む**——`engine` の `Mutex` を経ると、検索 worker が `engine.search` を走らせている間フレームがそこで止まる。契約と、写しではないことの理由と、実運用点での保持時間は [`Engine::config_handle`] の doc。
     ///
     /// **書き手はここには居ない。** 設定を変えるのは `engine.lock().update_config(..)` の
     /// 1 本だけで、そちらは `&mut Engine` を要求する（`Engine` の `config` フィールドの doc）。
@@ -143,11 +141,7 @@ mod tests {
 
     /// **UI の live-read は engine lock の外で完了する**（#1032）。
     ///
-    /// worker は `engine.search` の間ずっと engine lock を握る（実運用点で 40〜95 ms）。
-    /// その間に UI が同じ lock を取りに行っていたのが #1032 の主因で、`read_window_width`
-    /// 単独で 43,939 µs の待ちを実測した。**この検査はその待ちが構造的に起きえないことを
-    /// 測る**——engine lock を保持したまま別スレッドが config を読み切れることが受け入れ条件
-    /// である。
+    /// worker は `engine.search` の間ずっと engine lock を握る（実運用点での保持時間は `Engine::config_handle` の doc）。その間に UI が同じ lock を取りに行っていたのが #1032 の主因である（`read_window_width` の待ちの実測値は `PERFORMANCE.md`「設定の読みを engine lock の外へ出す」）。**この検査はその待ちが構造的に起きえないことを測る**——engine lock を保持したまま別スレッドが config を読み切れることが受け入れ条件である。
     ///
     /// **同一スレッドで 2 つの lock を順に取る形にはしない**——別々の `Mutex` / `RwLock` ゆえ
     /// 必ず成功し、何も測らない。競合を測るには、握っている者と読む者を分ける必要がある。

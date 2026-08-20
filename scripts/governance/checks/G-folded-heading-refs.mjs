@@ -52,9 +52,11 @@ const TAIL_TARGET = new RegExp(`${REF_HEAD}$`);
 const OPEN_UNCLOSED = new RegExp(`${REF_HEAD}「[^「」\\n]*$`);
 
 /** 継続行の先頭から、散文でない記号（コメント標識・blockquote・箇条書き）を落とす。
- *  **判定の中核であって装飾ではない**——落とさないと `.rs` / `.mjs` / `.ps1` の折れが
- *  「次行が `「` で始まらない」と読まれて母集団の半分近くが落ちる。 */
-const stripLead = (line) => line.replace(/^\s*(?:\/\/[!/]?|#|\*|>|-)*\s*/, "");
+ *  **判定の中核であって装飾ではない**——恒等写像へ変異させると形 A が 17 件全滅した
+ *  （2026-08-20 の複製での実測。形 B は次行を見ないので影響を受けない）。
+ *  **記号のあいだの空白も食う**（`> - 「…` のように 2 記号が空白で隔たる形が実在しうる。
+ *  今日 0 件だが、見逃しは沈黙側の誤りなので塞ぐ側へ倒した）。 */
+const stripLead = (line) => line.replace(/^\s*(?:(?:\/\/[!/]?|#|\*|>|-)\s*)*/, "");
 
 /** findings に加えて照合件数を返す（「差分ゼロ」と「照合していない」を区別する証跡・#497） */
 export function scanFoldedHeadingRefs(snapshot, docs) {
@@ -73,7 +75,10 @@ export function scanFoldedHeadingRefs(snapshot, docs) {
       if (open && isRefTargetSpelling(open[1])) {
         checked += 1;
         findings.push(fold(doc, lineNo, open[1], "ラベルが次行へ流れている"));
-        continue; // 同じ行を形 A でも数えない（`「` が在れば行末は対象綴りで終わらない）
+        // 同じ行を形 A でも数えない。**「`「` が在れば行末は対象綴りで終わらない」からではない**
+        // ——1 行に 2 つの参照が在り、後ろが開いたまま前が行末で終わる形は構築できる（実測）。
+        // 二重計上を避ける選択であり、そのとき形 A 側は見送る（1 行 1 件で報告すれば直せる）。
+        continue;
       }
       const tail = TAIL_TARGET.exec(line);
       if (!tail || !isRefTargetSpelling(tail[1])) continue;

@@ -34,6 +34,11 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
       expect(run("> 実測は `PERFORMANCE.md`\n> 「索引の常駐の内訳」\n")).toHaveLength(1);
     });
 
+    it("記号のあいだに空白がある 2 記号も落とす（`> - 「` / `/// - 「`）", () => {
+      expect(run("> - 実測は `PERFORMANCE.md`\n> - 「索引の常駐の内訳」\n")).toHaveLength(1);
+      expect(run("/// - 実測は `PERFORMANCE.md`\n/// - 「索引の常駐の内訳」\n", "a.rs")).toHaveLength(1);
+    });
+
     it("スクリプトのコメント記法（`#` / ` * `）でも見る", () => {
       expect(run("# 実測は `PERFORMANCE.md`\n# 「索引の常駐の内訳」\n", "a.ps1")).toHaveLength(1);
       expect(run("/**\n * 実測は `PERFORMANCE.md`\n * 「索引の常駐の内訳」\n */\n", "a.mjs")).toHaveLength(1);

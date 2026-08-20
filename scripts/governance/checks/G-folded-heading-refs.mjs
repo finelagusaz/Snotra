@@ -1,5 +1,5 @@
 //! G-folded-heading-refs — 正準形の参照が物理改行で折れた形（#1154）。
-import { finding, refScanLines, isRefTargetSpelling } from "../lib.mjs";
+import { finding, refScanLines, isRefTargetSpelling, REF_HEAD } from "../lib.mjs";
 
 export const id = "G-folded-heading-refs";
 
@@ -39,11 +39,17 @@ export function run(snapshot, ctx) {
 // プレースホルダは対象の形（`.md` か `/skill`）に当たらないので、この検査自身の finding にならない。
 // ---------------------------------------------------------------------------
 
-/** 形 A: 行末が `` `<対象>` ``（+ 任意の `§ <番号>`）で終わる。`\s*$` が CRLF の `\r` も食う */
-const TAIL_TARGET = /`([^`\n\r]+)`\s*(?:§\s*[\d.]*\s*)?[\r]?$/;
+// **正準形の頭は `lib.mjs` の `REF_HEAD` が正本である**——ここで再定義すると、`HEADING_REF` を
+// 直したときに折れの検知だけが古い形のまま残る（`G-heading-refs` のヘッダが同じ理由で禁じている）。
+// 違うのは末尾だけで、それが形 A と形 B の差そのものである。
+// CRLF は特別扱いしない: `refScanLines` が `split("\n")` で残す `\r` は、形 A では末尾の `\s*` が食い、
+// 形 B ではラベルの文字クラス `[^「」\n]` が含む。
+
+/** 形 A: 行末が `` `<対象>` ``（+ 任意の `§ <番号>`）で終わる */
+const TAIL_TARGET = new RegExp(`${REF_HEAD}$`);
 
 /** 形 B: 対象綴りの直後に `「` が開き、その行に `」` が無い */
-const OPEN_UNCLOSED = /`([^`\n\r]+)`\s*(?:§\s*[\d.]*\s*)?「[^「」\n\r]*[\r]?$/;
+const OPEN_UNCLOSED = new RegExp(`${REF_HEAD}「[^「」\\n]*$`);
 
 /** 継続行の先頭から、散文でない記号（コメント標識・blockquote・箇条書き）を落とす。
  *  **判定の中核であって装飾ではない**——落とさないと `.rs` / `.mjs` / `.ps1` の折れが

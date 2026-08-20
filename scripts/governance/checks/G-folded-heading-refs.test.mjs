@@ -15,7 +15,9 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
       const f = run("実測は `PERFORMANCE.md`\n「索引の常駐の内訳」を見よ\n");
       expect(f).toHaveLength(1);
       expect(f[0].line).toBe(1);
-      expect(f[0].message).toContain("物理改行で折れている");
+      // **形の名指しまで固定する**——2 つの枝は同型（どちらも RegExp を line に当てて finding を 1 件出す）
+      // なので、メッセージだけを入れ替えても件数・行番号は変わらない（`/symmetric-check` 2c で検出）。
+      expect(f[0].message).toContain("ラベルが次行から始まっている");
     });
 
     it("`§` + 節番号を挟んで折れていても finding", () => {
@@ -47,6 +49,7 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
       const f = run("実測は `PERFORMANCE.md`「索引の\n常駐の内訳」を見よ\n");
       expect(f).toHaveLength(1);
       expect(f[0].line).toBe(1);
+      expect(f[0].message).toContain("ラベルが次行へ流れている");
     });
 
     it("ラベルが 3 行以上に割れていても同じ述語で捕まる（次行を見ないため）", () => {

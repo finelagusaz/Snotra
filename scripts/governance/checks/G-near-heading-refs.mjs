@@ -1,5 +1,5 @@
 //! G-near-heading-refs — 正準形に見えて隣接していない見出し参照（#727）。
-import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor, isRefTargetSpelling } from "../lib.mjs";
+import { finding, refScanLines, collectAnchors, resolveRefTarget, normAnchor, isRefTargetSpelling, REF_HEAD } from "../lib.mjs";
 
 export const id = "G-near-heading-refs";
 
@@ -43,8 +43,10 @@ export function run(snapshot, ctx) {
 const NEAR_REF_GAP = 8;
 /** 非隣接の近傍参照。gap は最短一致で取る */
 const NEAR_REF = new RegExp("`([^`\\n]+)`([^`\\n]{1," + NEAR_REF_GAP + "}?)「([^「」\\n]+)」", "g");
-/** G-heading-refs が既に見ている隣接形（`§` + 節番号と空白のみを挟む）。HEADING_REF と同じ前提を持つ */
-const ADJACENT_REF = /`[^`\n]+`\s*(?:§\s*[\d.]*\s*)?「/;
+/** G-heading-refs が既に見ている隣接形（`§` + 節番号と空白のみを挟む）。
+ *  **頭は `lib.mjs` の `REF_HEAD` が正本である**——かつてここは同じ形を独立に綴っており、
+ *  `HEADING_REF` を直したときに片方だけ古い形で残る余地があった（#1154 の `/dry-check` で検出）。 */
+const ADJACENT_REF = new RegExp(`${REF_HEAD}「`);
 
 export function scanNearHeadingRefs(snapshot, docs) {
   const findings = [];

@@ -414,10 +414,55 @@ exit=101
 
 ### Phase 7 — 変更後の検証
 
-- [ ] カテゴリ A を実行し結果を残す（`cargo fmt --all -- --check` / `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra-core -q` / `cargo test -p snotra -q` / `cargo doc --workspace --no-deps --document-private-items`）
-- [ ] `///` の帰属が動いていないことを目視する（`docs/comment-guidelines.md`「rustdoc の様式」・#1106 型。
+- [x] カテゴリ A を実行し結果を残す（`cargo fmt --all -- --check` / `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra-core -q` / `cargo test -p snotra -q` / `cargo doc --workspace --no-deps --document-private-items`）
+- [x] `///` の帰属が動いていないことを目視する（`docs/comment-guidelines.md`「rustdoc の様式」・#1106 型。
       今回は**アイテムを挿入しない**ので構造的に起きないが、`state.rs` 3-2 は `#[test]` 直前の doc ゆえ確かめる）
-- [ ] 実装差分を確定させる（`git diff` で上記 6 ファイル以外が動いていないことを確認）
+- [x] 実装差分を確定させる（`git diff` で上記 6 ファイル以外が動いていないことを確認）
+
+## 委譲検証の結果（worktree・2 ラウンド）
+
+**同じエージェント（`verify-1128`）を `SendMessage` で継続した。** 出力は
+`workspace/verify-1128.txt`（R1）/ `workspace/verify-1128-round2.txt`（R2）——
+どちらも委譲先の worktree に在り、この repo へは持ち込まない。
+
+### ラウンド 1（アンカー `0a69c9b`）
+
+- **カテゴリ A 全件 exit 0**（`fmt` / `check` / `clippy -D warnings` / `test -p snotra-core` 605 passed /
+  `test -p snotra` 297 passed / `doc`）。**B・C・D・E 該当なし**（コメント行以外の差分 0 ゆえ表示経路・trace 名・hotkey に触れない）。
+  **F 実行・見出し参照 285 件**。**人間への申し送りはゼロ。**
+- **変異注入 5 件。** 指示した 2 件（見出し参照・intra-doc link）を独立に再現したうえ、**自選 3 件**を追加した。
+- **Critical / High なし。**
+
+### ラウンド 2（アンカー `dd7b544`）
+
+- `git rev-parse dd7b544^` が `0a69c9b` と一致することを先に測り（rebase でないことの確認）、
+  カテゴリ判定は継承せず `0a69c9b..dd7b544` の範囲で再導出した。**カテゴリ A 全件 exit 0・F 285 件（不変）。**
+- **変異注入 7 サイクル。L-1 の表は 6/6 実測一致**——推論で書いていた `state.rs:18` の行も
+  `cargo doc` **exit 101** で接地した（`--document-private-items` を外しても発火することまで確認）。
+- **Critical / High / Medium なし。**
+
+### 指摘と採否
+
+| # | 指摘 | 採否 |
+|---|---|---|
+| R1 L-1 | 「`.md` → `.rs` doc は**どの機構も**検算しない」が偽 | **採用・修正**（`dd7b544`）。自分で対照変異を打って裁定した |
+| R1 L-3 | 参照が「待ち」と書くが着地先の節に「待ち」が無い | **採用・修正**（`dd7b544`）。節内 grep 0 件を自分で実測してから直した |
+| R1 M-1 | 正本化の逆行に検知器が無い | **宣言で受け、人へ返す**（受容する残余 2）。セーフティネットの新設を単独で決めない |
+| R1 L-2 | repoint で「フレーム後半の帰属」の被参照が 0 件 | **宣言で受ける**（受容する残余 2b） |
+| R1 ⚠️-2 | `view.rs` / `state.rs`(test) が不可視 | **採用・表へ明示**。R2 の注入で推論から実測へ接地した |
+| **R2 L-4** | fix-forward が `state.rs:144` の「**その待ち**」から語彙的な先行詞を奪った | **直さない・受容。** 指摘者自身が「修正必須ではない」とし、指示対象は前文の「lock を取りに行っていた」から復元できる。**指示代名詞 1 語のために検証サイクルをもう 1 周回すのは釣り合わない**（同型が `docs/architecture.md:231` にも在り、そちらも据え置きで一貫する） |
+
+**R2 が主エージェントの判断を 1 つ追認した**: `state.rs` の「その待ち」据え置きは正しい——
+当該の「待ち」は**現象そのもの**を指し `PERFORMANCE.md` の表ラベルを指していない。
+両方直すと現象の記述を測定ラベルへ引きずる誤りになる。
+
+### 決着しなかった ⚠️（受容する）
+
+- **⚠️-4**: 見出し参照 285 は**合計でのみ接地できる**（腕の内訳 48/101/109 は文書数ゆえ不動）。
+  別 PR が別の内訳で同じ 285 を作れるため、接地としては弱い。
+- **⚠️-5**: rustdoc の private 項目への link 検査が `--document-private-items` の有無によらず発火した。
+  **1 例しか測っておらず、全 private 項目への一般化は測っていない。**
+- **⚠️-6**: 兄弟エージェントとの `target/` 共有は未確認（委譲先は worktree 専用 target で測った）。
 
 ## 未確定（実装前に潰す）
 

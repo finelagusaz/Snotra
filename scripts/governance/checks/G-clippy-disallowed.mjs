@@ -13,7 +13,7 @@ export function run(snapshot, ctx) {
 //
 // **守る命題**: この検査が緑 ⇒ `REQUIRED_DISALLOWED_METHODS` が名指す各群の禁止が src-tauri の clippy で
 // error として落ちる（何を禁じているかと群ごとの理由は `src-tauri/clippy.toml` が正本）。
-// **前提は 4 つあり、どれも緑が含意しない**——(1) clippy.toml と Cargo.toml を正規表現で
+// **前提はどれも緑が含意しない**（上流が振る舞いを足せば増える側なので、ここで数えない）——(1) clippy.toml と Cargo.toml を正規表現で
 // 近似パースする範囲で、(2) member 側の opt-in（`[lints] workspace = true`）は G-workspace-lints が見る、
 // (3) 名指しした各パスが解決し続ける（解決しなくなっても文字列は変わらないので沈黙する。
 //     群 1 は上流 egui のピン更新、群 2 は snotra-core 側の改名が契機になる）、

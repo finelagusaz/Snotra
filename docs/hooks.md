@@ -129,7 +129,7 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 **鳴ったときにだけ意味がある**——沈黙は検査のときと同じく「何も走らなかった」側である。
 
-**判定を hook へ静的 import してはならない。** import 文は `try { main() } catch` の**外**で走るため、解決に失敗すると JSON エンベロープを出さずにプロセスごと落ちる——この hook は全 `Edit|Write` で発火するので、`.rs` の fmt / clippy / test まで含めて**全編集が沈黙する**。相対 import が下記の非対称（スクリプトの所在は `${CLAUDE_PROJECT_DIR}` 基準）に巻き込まれる問題も同時に避けられるので、subprocess で呼ぶ。
+**判定を hook へ静的 import してはならない——subprocess で呼ぶ。** 破れたときの帰結は**全編集の沈黙**である（`.rs` の fmt / clippy / test を含む）。**機序は `post-edit.mjs` の `dependentsReminder` の doc が正本**であり、ここへ写さない——あの警告は**その import を書く場所**に置いてあるのが値打ちで、写すと片方だけが直る形が作れる。相対 import が下記の非対称（スクリプトの所在は `${CLAUDE_PROJECT_DIR}` 基準）に巻き込まれる問題も、subprocess なら同時に避けられる。
 
 ## PostToolUse（post-edit.mjs）の機構と保守
 

@@ -91,7 +91,8 @@ export { makeSnapshot, governanceDocs };
 // メタ層の格下げ（`docs/adr/ADR-governance-meta-demotion.md`）
 // ---------------------------------------------------------------------------
 //
-// **格下げが残っているのは 2 件だけである**——面積計器の入力ガードと、evidence の供給断検知。
+// **格下げしてあるのは、面積計器の入力ガードと evidence の供給断検知である**（撤去の期日は
+// `ADR-governance-meta-demotion` の規則が持つので、ここで数えない——数は期日ごとに動く）。
 // **錨の層は格下げではなく撤去した**（`ADR-governance-anchor-layer-discarded`）。中途半端に
 // 面だけ残すと「通過はするが、どこが効いているかは読まないと分からない」状態になるためで、
 // 撤去と作りきるの二択に倒した判断である。
@@ -164,9 +165,8 @@ export function runAll(snapshot) {
   // 固定パスの `STALE_EXTRA_DOCS` はここに要らない（読めなければ scanStaleIdentifiers が鳴る）
   if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
   if (ctx.staleGuides.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の開発ガイド（docs/**）が 0 件（母集団の欠落）"));
-  // 格下げ中のメタ層は別の器へ受ける（`ADR-governance-meta-demotion`）。**いま検査は 1 本も
-  // 入っていない**——錨の層を撤去したので、残るのは下の 2 件（面積計器の入力ガードと
-  // evidence の供給断検知）だけである。
+  // 格下げ中のメタ層は別の器へ受ける（`ADR-governance-meta-demotion`）。**`checks/` の検査は
+  // ここへ入らない**——受けるのは下で積む計器側の findings だけである（内訳は上の格下げ節）。
   const metaFindings = [];
   for (const c of checks) findings.push(...c.run());
   // 計器は検査ではない——面積に合否は無い（`ADR-retire-area-budget`）ので「検査 N 件」に数えない。

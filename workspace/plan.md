@@ -105,20 +105,21 @@
 
 ### Phase 1 — `.mjs` を対象綴りに足す（Red）
 
-- [ ] `.claude/rules/governance-docs.md:13` の正準形の規約に `.mjs` を足す（**確認済み**——同行が「対象は `<path>.md` か `/skill-name`」と明記しており、ここが規約の正本である）。**同時に、同じ行の隣接主張「走査元は `.md` だけではない——コード（`.rs`）のコメントに書いた参照も同じ検査に載る（#925）」が #1138 のスクリプトの腕（`.mjs` / `.ps1` / `.psm1`）を反映していないことを直す**——触る行の隣にある主張が今も真か見るのは同 rule の「書く約束」(3) の要求である
-- [ ] `isRefTargetSpelling` に `.mjs` を足す（`.ps1` / `.rs` を足さない理由を doc に宣言する）
-- [ ] `HEADING_REF` の doc（`lib.mjs:170`）の対象綴りの列挙を追随させる
-- [ ] `resolveRefTarget` の `.md` 決め打ちを解き、`.mjs` の解決経路を通す
-- [ ] `ANCHOR_SPECS` に `describe(` / `it(` の第 1 引数を取る腕を足す
-- [ ] `G-folded-heading-refs.test.mjs:82-87` の負の fixture をプレースホルダへ替える
-- [ ] **Red の実測**: `governance:check` が **C1 の指し先（`domains.test.mjs`）を「対象が解決できない」で赤にする**ことを確認する
-- [ ] **着地の実測**: 実在する 3 件（`governance-manifest.test.mjs`「フォールトインジェクション …」/ `evidence.test.mjs`「配線:」/ `G-rules-script-coverage.test.mjs`「母集団の下界」）が着地し、照合件数が 322 → 326 へ増えることを確認する
-- [ ] **4 消費者の波及の実測**: `G-heading-refs` / `G-near-heading-refs` / `G-folded-heading-refs` / `dependents.mjs` それぞれについて、C1 由来以外の新規 finding が出ていないか確認する（出たら分類し、この計画の射程内か判断する）
-- [ ] `npm test` を通す（`ANCHOR_SPECS` の腕でアンカー数が変わるテストがあれば追随させる）
+- [x] `.claude/rules/governance-docs.md:13` の正準形の規約を、**綴りの列挙ではなく正本（`isRefTargetSpelling`）を指す形**へ替えた（同 rule「機構の実装の詳細を散文へ写さない」に従う）。隣接主張の走査元も #1138 のスクリプトの腕を含む形へ直した
+- [x] `isRefTargetSpelling` に `.mjs` を足した（`.ps1` / `.rs` を足さない理由を宣言する死角として doc に置いた）
+- [x] `HEADING_REF` の doc（`lib.mjs:170`）は列挙を持たせず `isRefTargetSpelling` を正本として指す形にした
+- [x] `resolveRefTarget` の `.md` 決め打ちを `isRefTargetSpelling` へ替えた（新しい解決経路は不要だった・机上検証どおり）
+- [x] `ANCHOR_SPECS` に `describe(` / `it(` の第 1 引数を取る腕を足した。**波及は `.mjs` に閉じる**——`.md` と `.rs` にこの形の行は 0 件（実測）。行頭アンカーなので `split("\n")` のような行中の `it(` には当たらない
+- [x] `G-folded-heading-refs.test.mjs` の負の fixture から `.mjs` を外し、**同じ不変条件を正例へ移した**（「`.mjs` を対象にした参照の折れも見る」を追加。反転させた事実を負例から消すだけでは `.mjs` の折れを誰も固定しない）
+- [x] **Red の実測**: `governance:check` exit 1 / **`lib.mjs:520` の `domains.test.mjs` を「対象が解決できない」で赤にした**。**新しい検知器が issue の名指した偽を正確に 1 件捕まえた**
+- [x] **計画外の発見**: 同じ Red で `lib.mjs:185` も鳴った——**自分が今書いた doc の例示** `` `<script>.mjs`「<テスト名>」 `` が対象綴りに当たった。#925 が却下 (1) で挙げた「検出器の説明が検出器を赤にする」は**対象綴りの拡張でも起きる**（調査は「起きない」と書いていた。当時のプレースホルダが `<対象>` の形だけだったため）。例示を散文へ替え、`isRefTargetSpelling` の doc に「例示に対象の形を書かない」を宣言として足した
+- [x] **着地の実測（調査の訂正）**: 照合件数 322 → **324**（+2）。調査は「3 件が着地」と書いたが**誤り**——`ADR-facade-evidence-static-imports.md:9` の 1 件は `docs/adr/` が**走査元から除外**されている（凍結・`ADR-adr-frozen-history`）ため照合されない。着地したのは `governance-check.test.mjs:118`「配線:」と `G-rules-script-coverage.mjs:25`「母集団の下界」の 2 件
+- [x] **4 消費者の波及の実測**: `G-near-heading-refs` 17 → 19 件・`G-folded-heading-refs` の折れうる位置 21 → 23 件へ増えたが、**新規 finding は 0**。`dependents.mjs` は `.md` / `.rs` に新しい腕が 1 件も当たらないため節境界の計算が変わらない（実測）
+- [x] `npm test` を通した（36 files / 852 passed。ベースライン 851 + 新テスト 1）
 
 ### Phase 2 — 保証の記述（C1〜C6・Green）
 
-- [ ] C1 `lib.mjs` `crateSourceFiles` の doc — `domains.test.mjs` への参照を、守り手ゼロの記述へ替える（**これで Phase 1 の Red が緑へ戻る**）
+- [x] C1 `lib.mjs` `crateSourceFiles` の doc — `domains.test.mjs` への参照を、守り手ゼロの記述へ替えた（**これで Phase 1 の Red が緑へ戻った**）。あわせて `ruleDocs` / `crateSourceFiles` の「ドメインのメンバー」も落とした（D クラス 2 行の前倒し）
 - [ ] C2 `G-module-index.mjs` `MODULE_INDEX_CRATES` の doc — 3 機構の数え上げを性質ごとの守り手の記述へ替える（残るのは #701 のカナリア 1 本）。**括弧内の実測値と実測日は落とさない**
 - [ ] C3 `G-adr-citations.mjs:33` の `@param` — `ctx.domains` 経由という偽の経路を、実際の受け渡し（`run` が `adrFiles(snapshot)` を直接渡す）へ直す
 - [ ] C4 `G-rules-script-coverage.mjs:33-40` — A/B の値と実測日を保ったまま構図を過去形へ畳み、今日の守り手（`npm test` の「母集団の下界」）を現在形で書く
@@ -192,6 +193,6 @@
 
 ## 人間レビュー
 
-- [x] 承認済み — 2026-08-20 / 問い: "`workspace/plan.md` に注釈を追加していただくか、**(a)(b)(c) を含めて明示的にご承認いただく**か、いずれかをお願いいたします。承認をいただくまで実装へは渡しません。"（(a) `.mjs` を正準形の対象綴りに足す / (b) `AGENTS.md` へ撤去トリガーを 1 行 / (c) ADR 2 本へ日付つき追記） / 回答: "OK"
+- [x] 承認済み — 2026-08-20 / 問い: "`workspace/plan.md` に注釈を追加していただくか、(a)(b)(c) を含めて明示的にご承認いただくか、いずれかをお願いいたします。承認をいただくまで実装へは渡しません。" / 回答: "OK"
 
-承認と同じ提示に含めた訂正 2 件（U3 の効果説明の精緻化＝「今日の有効検知は 0」・U5 を「不要」から「要る」へ戻したこと）も、この承認の範囲に入る。
+承認を求めた (a)(b)(c) は同じ提示の直前に列挙したもので、(a) `.mjs` を正準形の対象綴りに足す / (b) `AGENTS.md` へ撤去トリガーを 1 行 / (c) ADR 2 本へ日付つき追記 である。同じ提示に含めた訂正 2 件（U3 の効果説明の精緻化＝「今日の有効検知は 0」・U5 を「不要」から「要る」へ戻したこと）も、この承認の範囲に入る。

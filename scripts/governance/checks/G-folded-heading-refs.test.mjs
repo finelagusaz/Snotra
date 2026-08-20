@@ -47,6 +47,13 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
     it("CRLF でも見る（windows runner は `core.autocrlf=true` でチェックアウトする）", () => {
       expect(run("実測は `PERFORMANCE.md`\r\n「索引の常駐の内訳」\r\n")).toHaveLength(1);
     });
+
+    // **#1155 で意図を反転させた不変条件**——ここは以前「`.mjs` は対象綴りでないので見ない」を
+    // 負例として固定していた。`isRefTargetSpelling` が `.mjs` を認めた以上、同じ入力は**赤にする側**である。
+    // 反転させた事実を負例から消すだけにすると、`.mjs` の折れを誰も固定しないまま残る（不変条件の孤立）。
+    it("`.mjs` を対象にした参照の折れも見る（#1155 で対象綴りに入った）", () => {
+      expect(run("// 縛る向きは `governance/evidence.test.mjs`\n// 「配線:」が持つ\n", "a.mjs")).toHaveLength(1);
+    });
   });
 
   describe("形 B — `「` まで同一行に開き、ラベル本文だけが次行へ流れる", () => {
@@ -79,8 +86,7 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
       expect(run("詳細は `PERFORMANCE.md`\n\n「索引の常駐の内訳」\n")).toEqual([]);
     });
 
-    it("対象の綴りでないバッククォートは見ない（`.mjs` や識別子）", () => {
-      expect(run("`domains.test.mjs`\n「moduleIndexSources は crateSources の部分集合」\n")).toEqual([]);
+    it("対象の綴りでないバッククォートは見ない（識別子）", () => {
       expect(run("`someVar`\n「見出し」\n")).toEqual([]);
       expect(run("`someVar`「見出しの\n途中」\n")).toEqual([]);
     });

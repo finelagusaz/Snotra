@@ -167,7 +167,7 @@ export const finding = (file, line, message) => ({ file, line, message });
  *  頭をここへ寄せる理由は `G-heading-refs` のヘッダが書いている——**再定義すると片方だけ直す形が作れる**。 */
 export const REF_HEAD = "`([^`\\n]+)`\\s*(?:§\\s*[\\d.]*\\s*)?";
 
-/** 見出し参照の正準形。対象は `<path>.md` か `/skill-name`。
+/** 見出し参照の正準形。**対象として認める綴りは `isRefTargetSpelling` が正本である**（ここへ写さない）。
  *  `§` には節番号を伴ってよい（`SPEC.md` §11「見た目の規範」）——番号を許さないと、
  *  節番号つきの参照は正準形へ直しても照合されず、G-near-heading-refs が「直せない指摘」を出し続ける（#727 で実測）。
  *
@@ -176,8 +176,23 @@ export const REF_HEAD = "`([^`\\n]+)`\\s*(?:§\\s*[\\d.]*\\s*)?";
  *  **消費者は 1 つではない**——`G-heading-refs` の照合と `dependents.mjs` の逆引きが同じ形を読む（#1140）。 */
 export const HEADING_REF = new RegExp(`${REF_HEAD}「([^「」\\n]+)」`, "g");
 
-/** 正準形の対象として認める綴り（`<path>.md` か `/skill-name`）。`HEADING_REF` の第 1 群に当てる */
-export const isRefTargetSpelling = (target) => target.endsWith(".md") || /^\/[a-z0-9-]+$/.test(target);
+/** 正準形の対象として認める綴り（`<path>.md` / `<path>.mjs` / `/skill-name`）。**ここが対象綴りの正本である**
+ *  ——`HEADING_REF` の第 1 群に当て、`G-heading-refs` / `G-near-heading-refs` / `G-folded-heading-refs` /
+ *  `dependents.mjs` の 4 者が同じ述語を読む。
+ *
+ *  **`.mjs` を含めたのは #1155 である**（`ADR-canonical-heading-references` の 2026-08-20 追記）。
+ *  スクリプトのコメントは #1138 で**走査元**に入っていたが、**対象の綴り**としては認められておらず、
+ *  スクリプトを対象に置いた正準形は照合そのものが生成されなかった——撤去されたファイルを指したまま
+ *  緑で推移する形がそこにあった。着地先は `ANCHOR_SPECS` のテスト名の腕が供給する。
+ *
+ *  **例示に対象の形を書かないこと**——`.mjs` で終わるプレースホルダはこの述語に当たり、
+ *  検出器の説明が検出器を赤にする（#1155 の導入時に実測。#925 が却下 (1) で挙げた形が
+ *  対象綴りの側でも起きる）。
+ *
+ *  **`.ps1` / `.psm1` / `.rs` は入らない**（宣言する死角）——対象にした正準形が今日 0 件であり、
+ *  足しても照合が 1 件も生まれず面積だけ増える。書かれ始めたらここへ足す。 */
+export const isRefTargetSpelling = (target) =>
+  target.endsWith(".md") || target.endsWith(".mjs") || /^\/[a-z0-9-]+$/.test(target);
 
 /** コメント記法の族。**拡張子ではなく記法で束ねる**——PowerShell と YAML は別の言語だが同じ `#` 族である。
  *  `.json` は入らない（コメント記法を持たない）。ここに無い拡張子は「散文の文書」として扱われる。 */
@@ -385,19 +400,26 @@ export function gitIgnoredPaths(paths, root = process.cwd()) {
   return new Set(r.stdout.split("\0").filter(Boolean));
 }
 
-/** 参照先になりうる位置（ATX 見出し / 番号付きリスト項目 / 太字リード） */
 /**
- * アンカーの種類（ATX 見出し・番号付きリスト項目・太字リード）。**1 行に当てる形で持つ**——
+ * アンカーの種類（ATX 見出し・番号付きリスト項目・太字リード・テスト名）。**1 行に当てる形で持つ**——
  * `g` フラグを付けないのは、行ごとに `exec` する消費者が `lastIndex` を持ち越さないためである。
  *
- * **`depth` は節の入れ子を決める。** ATX は `#` の数、リスト項目は最も深い 7。
+ * **`depth` は節の入れ子を決める。** ATX は `#` の数、残りは最も深い 7。
  * 着地判定（`collectAnchors`）と節境界（`dependents.mjs` の `sectionsOf`）が**同じ一覧を読む**ので、
  * 種類を足したときに片方だけが知っている状態を作れない（#1140 で 2 か所へ写していたのを畳んだ）。
+ *
+ * **テスト名の腕（`describe` / `it` の第 1 引数）は #1155 で足した。** `.mjs` を対象の綴りへ入れた以上、
+ * 着地先が要る——`.mjs` には ATX 見出しが無く、`//! - **…**` は行頭が `//!` なので太字リードにも当たらない
+ * （実測）。**この腕を持たずに対象綴りだけ広げてはならない**: 実在するファイルを指す参照が
+ * 「着地しない」で恒久的に赤くなる（独立導出が拡張前の写しで実測・2 件）。
+ * **他の腕と違い引用符の中だけを見る**ので、`split("\n")` のような行中の `it(` には当たらない（行頭アンカー）。
+ * 波及は `.mjs` に閉じる——`.md` と `.rs` にこの形の行は 1 件も無い（実測）。
  */
 export const ANCHOR_SPECS = [
   { re: /^(#{1,6})\s+(.+?)\s*$/, depth: (m) => m[1].length, label: (m) => m[2] },
   { re: /^\s*\d+[.)]\s+(.+?)\s*$/, depth: () => 7, label: (m) => m[1] },
   { re: /^\s*(?:[-*]|\d+[.)])\s+\*\*(.+?)\*\*/, depth: () => 7, label: (m) => m[1] },
+  { re: /^\s*(?:describe|it)\(\s*"([^"]*)"/, depth: () => 7, label: (m) => m[1] },
 ];
 
 export function collectAnchors(text) {
@@ -419,7 +441,7 @@ export function resolveRefTarget(snapshot, doc, target) {
     const p = `.claude/skills/${target.slice(1)}/SKILL.md`;
     return snapshot.files.includes(p) ? p : null;
   }
-  if (!target.endsWith(".md")) return null;
+  if (!isRefTargetSpelling(target)) return null;
   const norm = (p) => path.posix.normalize(p);
   const rel = norm(path.posix.join(path.posix.dirname(doc), target)); // 文書ディレクトリ基準を優先
   if (snapshot.files.includes(rel)) return rel;
@@ -486,16 +508,20 @@ export function governanceDocs(snapshot) {
  *  （正本は同ファイル `diffManifest` の doc）。写しに見えるが畳んではならない側である。 */
 export const RULE_FILE_RE = /^\.claude\/rules\/[^/]+\.md$/;
 
-/** `ruleDocs` ドメインのメンバー。 */
+/** `.claude/rules/` 直下の md。 */
 export function ruleDocs(snapshot) {
   return snapshot.files.filter((f) => RULE_FILE_RE.test(f));
 }
 
-/** `crateSources` ドメインのメンバー——workspace member の `src/` 配下の `.rs`。
+/** workspace member の `src/` 配下の `.rs`。
  *  crate の一覧はルート `Cargo.toml`（`workspaceMembers`）が SSOT である。
  *  **`G-module-index` はこれを使わない**——あちらの母集団は `MODULE_INDEX_CRATES` から出る
  *  2 本目の導出である。今日は同じ集合を返すが、**同じ SSOT から導いてはならない**側である。
- *  縛られている向きは `domains.test.mjs`「moduleIndexSources は crateSources の部分集合」が持つ。 */
+ *
+ *  **2 本の導出が食い違わないことを、今日は誰も見ていない。** かつては
+ *  「`moduleIndexSources` は本関数の結果の部分集合」を `npm test` で縛るテストが在ったが、
+ *  それは錨の層と一緒に #1152 で撤去された（`ADR-governance-anchor-layer-discarded`「受容する残余」）。
+ *  **畳んではならないという制約だけが残り、畳まれていないことの検知は無い**（#1155 で確認）。 */
 export function crateSourceFiles(snapshot) {
   const { members } = workspaceMembers(snapshot);
   return snapshot.files.filter((f) => f.endsWith(".rs") && members.some((m) => f.startsWith(`${m}/src/`)));

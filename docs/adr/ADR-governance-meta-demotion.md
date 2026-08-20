@@ -54,6 +54,15 @@
 
 **ゆえに下の「戻す条件・撤去する条件」が今も律するのは 2 件だけである**——面積計器の入力ガードと、evidence の供給断検知。
 
+## 追記（2026-08-20・#1155）— `META_CHECK_IDS` は同じ撤去で消えた
+
+上の撤去（#1152）は `META_CHECK_IDS` も落としている。**ゆえに冒頭の「格下げ後の姿は `META_CHECK_IDS` と `metaAuditEnabled` が持つ」と、下の「その項目だけを `META_CHECK_IDS` から外してゲートへ戻す」は、どちらも実在しない識別子を指している**（凍結規約により本文は書き換えず、ここで読み替えを与える）。
+
+- **格下げ後の姿を持つのは `scripts/governance-check.mjs` の `metaAuditEnabled` と、同ファイルが `metaFindings` へ振り分ける 2 件である。** 検査 id の集合として持つ形は残っていない——格下げ対象が検査ではなくなり（`G-domain-anchors` の撤去で 0 本になり）、残る 2 件がどちらも検査ではない計器だからである。
+- **「ゲートへ戻す」の実体**は、その項目を `metaFindings` ではなく `findings` へ積むことである。監査モードの合流（`if (metaAuditEnabled()) findings.push(...metaFindings)`）が既にその形を持つ。
+
+**この腐りは #1155 で見つかるまで沈黙で推移した。** `.claude/skills/health-check/SKILL.md` が判定規則の正本として本 ADR のこの節へ委譲しているため、**復帰手順が実行不能なまま運用の入口だけが生きていた**——凍結された歴史であっても、生きた層から手順として委譲されている節は、指し先の実在が切れれば実害になる。
+
 ## 戻す条件・撤去する条件
 
 サイクル末の `/health-check` が `SNOTRA_GOV_META_AUDIT=1` を立てて `governance:check` と `npm test` を走らせ、**格下げ中のメタ層の発火件数を数える**。

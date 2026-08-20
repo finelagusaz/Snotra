@@ -100,8 +100,8 @@
 
 ### Phase 0 — ベースライン
 
-- [ ] `npm test` のベースラインを取る（`governance:check` は取得済み: exit 0 / 21 件 / 322 件）
-- [ ] `dependents.mjs` の出力ベースラインを取る
+- [x] `npm test` のベースライン: **36 files / 851 passed** exit 0（`governance:check` は exit 0 / 21 件 / 見出し参照 322 件）
+- [x] `dependents.mjs` のベースライン — CLI は**未コミット差分に依存する**ため出力比較では波及を測れないと判明。**新しい腕のパターンが `.md` / `.rs` に当たる行数**（＝節境界が変わりうる箇所）を直接測る形へ替えた: **0 件**
 
 ### Phase 1 — `.mjs` を対象綴りに足す（Red）
 
@@ -120,27 +120,27 @@
 ### Phase 2 — 保証の記述（C1〜C6・Green）
 
 - [x] C1 `lib.mjs` `crateSourceFiles` の doc — `domains.test.mjs` への参照を、守り手ゼロの記述へ替えた（**これで Phase 1 の Red が緑へ戻った**）。あわせて `ruleDocs` / `crateSourceFiles` の「ドメインのメンバー」も落とした（D クラス 2 行の前倒し）
-- [ ] C2 `G-module-index.mjs` `MODULE_INDEX_CRATES` の doc — 3 機構の数え上げを性質ごとの守り手の記述へ替える（残るのは #701 のカナリア 1 本）。**括弧内の実測値と実測日は落とさない**
-- [ ] C3 `G-adr-citations.mjs:33` の `@param` — `ctx.domains` 経由という偽の経路を、実際の受け渡し（`run` が `adrFiles(snapshot)` を直接渡す）へ直す
-- [ ] C4 `G-rules-script-coverage.mjs:33-40` — A/B の値と実測日を保ったまま構図を過去形へ畳み、今日の守り手（`npm test` の「母集団の下界」）を現在形で書く
-- [ ] C5 `G-adr-citations.mjs:51` — 「`references/` の腕には錨を置いていない」を、錨の無い今日の言い方へ替える
-- [ ] C6 `G-check-skill-enumeration.mjs:70` — 「錨が名指しで鳴らす」を、鳴る主体が無い今日の記述へ替える
+- [x] C2 `G-module-index.mjs` `MODULE_INDEX_CRATES` の doc — 3 機構の数え上げを**性質ごとの守り手**の記述へ替えた（3 性質のうち守り手が在るのは #701 のカナリア 1 つだけで、残り 2 つはゼロと明記）。括弧内の実測値（`exts` を狭めて 30 件）と実測日 2026-08-20 は保持した
+- [x] C3 `G-adr-citations.mjs:33` の `@param` — `ctx.domains` 経由という偽の経路を、実際の受け渡し（`run` が `adrFiles(snapshot)` を直接渡す）へ直した
+- [x] C4 `G-rules-script-coverage.mjs` の `//!` ヘッダ — A/B の値（錨の無い版 exit 0 / ある版 exit 1 / finding 2 件）と実測日を保ったまま構図を過去形へ畳み、**「この測定は錨の層が現存した最後の日のものである」**と時制を閉じた。今日の守り手（`npm test` の 2 テストだけ・`governance:check` 側は両方とも沈黙）を現在形で書いた
+- [x] C5 `G-adr-citations.mjs` `skillTreeDocs` の doc — 「`references/` の腕には錨を置いていない」を「**腕が黙って縮んでも、どの層も赤くしない**（宣言する死角）」へ替えた
+- [x] C6 `G-check-skill-enumeration.mjs` — 「錨が名指しで鳴らす」を落とし、母集団を照合先に選ぶ理由を**錨に依存しない形**（原因から遠い赤を避ける一点）で書き直した
 
 ### Phase 3 — 幽霊識別子と語彙
 
-- [ ] C7 `crateSources` → `crateSourceFiles`（`lib.mjs:494`・`G-module-index.mjs:40`・`G-module-linkage.mjs:200`）
-- [ ] C8 `skillDocs` → `skillFiles`（`G-adr-citations.mjs:48,50`・`G-check-skill-enumeration.mjs:68`・**finding 文字列 `:86`**）
-- [ ] D 6 行の「ドメイン」を落とす（`74ae45fc` が `judgingScripts` で示した方針の完遂）
+- [x] C7 `crateSources` → `crateSourceFiles`（`lib.mjs`・`G-module-index.mjs`・`G-module-linkage.mjs`）
+- [x] C8 `skillDocs` → `skillFiles`（`G-adr-citations.mjs` 2 箇所・`G-check-skill-enumeration.mjs` のコメントと**実行時の finding 文字列**）
+- [x] D の「ドメイン」を落とした（`74ae45fc` が `judgingScripts` で示した方針の完遂）
 
 ### Phase 4 — 閉じと検証
 
-- [ ] C9 `docs/adr/ADR-governance-meta-demotion.md` へ日付つき追記（`:53` の先例と同じ形）— `META_CHECK_IDS` は #1152 で撤去され、格下げ後の姿は `metaAuditEnabled` と `metaFindings` が持つこと、`:61` の復帰手順の読み替えを書く。**本文は書き換えない**（凍結の契約・`ADR-adr-frozen-history`）
-- [ ] `AGENTS.md`「条件別チェック（トリガー → 参照先）」へ「機構・層・ファイル群を撤去する」行を足す（U5）
-- [ ] `docs/adr/ADR-canonical-heading-references` へ追記する（対象の綴りについて却下 (1) を覆した根拠・受容する残余＝`.ps1` / `.rs` は対象外・**今日の有効検知は 0 であり価値は将来の沈黙推移の防止にあること**）
-- [ ] 母集団を **3 軸**で取り直し、全出現がクラス A〜E のどれかに帰属することを確認する
-- [ ] `npm run governance:check` exit 0
-- [ ] `npm test` 全 pass（Phase 0 のベースラインと比較する）
-- [ ] `dependents.mjs` の出力を Phase 0 のベースラインと比較する
+- [x] C9 `docs/adr/ADR-governance-meta-demotion.md` へ日付つき追記 — `META_CHECK_IDS` は #1152 で撤去され、格下げ後の姿は `metaAuditEnabled` と `metaFindings` の振り分けが持つこと、`:61` の復帰手順の読み替え（`metaFindings` ではなく `findings` へ積む）を書いた。**本文は書き換えていない**
+- [x] `AGENTS.md`「条件別チェック（トリガー → 参照先）」へ「機構・層・ファイル群を**撤去する**」行を足した（U5）
+- [x] `docs/adr/ADR-canonical-heading-references` へ追記した（却下 (1) の残り半分＝対象の綴りを覆した根拠・腕が必須である理由・`.ps1` / `.rs` を入れない理由・**今日の有効検知は 0 であり根拠は将来の沈黙推移の防止**・#925 の懸念が対象綴り側でも起きた実測・ADR 内の 1 件は照合されない残余）
+- [x] 母集団を **3 軸**で取り直した。**生きた層に C クラスはゼロ**——軸 1 の残存はすべてクラス A（撤去の描写）かクラス B（「ルート錨止め」の別語義）、軸 2・軸 3 は `scripts/` と `.claude/` に 0 件（残るのは `docs/design/`＝U4 で射程外とした凍結記録、`docs/superpowers/`＝非規範化、`workspace/`＝Step 4 で削除）
+- [x] `npm run governance:check` exit 0（検査 21 件 / 見出し参照 324 件 / 折れうる位置 24 件）
+- [x] `npm test` 全 pass（36 files / 852 passed。ベースライン 851 + 新テスト 1）
+- [x] `dependents.mjs` への波及を確認 — 新しい腕が当たる行は `.md` / `.rs` に 0 件（実測）ゆえ節境界の計算は不変
 
 ## 未確定（実装前に潰す）
 

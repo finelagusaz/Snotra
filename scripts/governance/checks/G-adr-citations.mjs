@@ -30,8 +30,8 @@ export function run(snapshot, ctx) {
 const ADR_CITATION = /\bADR-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\b/g;
 
 /** G-adr-citations の母集団: ガバナンス文書 + skills + 製品ソース（コメントに引用が在る）
- *  @param {string[]} [adrDocs] `adrFiles` ドメインのメンバー。`run` は `ctx.domains` 経由で渡す——
- *  単体呼び出し（テスト等）向けに省略時は `adrFiles(snapshot)` を直接呼ぶ（写しではなく同じ関数） */
+ *  @param {string[]} [adrDocs] ADR の一覧。`run` は `adrFiles(snapshot)` を直接渡す——
+ *  単体呼び出し（テスト等）向けに省略時も同じ関数を呼ぶ（写しではなく同じ関数） */
 export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
   return [
     ...docs,
@@ -44,17 +44,17 @@ export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
   ];
 }
 
-/** `skillTreeDocs` ドメインのメンバー——`.claude/skills/` ツリーの md。
- *  **`skillDocs` と畳んではならない**——あちらは `SKILL.md` だけで、こちらは配下の md も含む
- *  （実測で差は `.claude/skills/health-check/references/mechanized-checks.md`）。ADR の短縮引用は
- *  SKILL.md の外にも書かれるので、`skillDocs` へ寄せると照合が静かに減る。
- *  **`references/` の腕には錨を置いていない**——母集団へ 1 件しか出さず、単一ファイルの錨に
- *  化けるためである（宣言する死角）。 */
+/** `.claude/skills/` ツリーの md。
+ *  **`skillFiles`（`G-skill-table`）と畳んではならない**——あちらは `SKILL.md` だけで、こちらは配下の
+ *  md も含む（実測で差は `.claude/skills/health-check/references/mechanized-checks.md`）。ADR の短縮引用は
+ *  SKILL.md の外にも書かれるので、`skillFiles` へ寄せると照合が静かに減る。
+ *  **`references/` の腕が黙って縮んでも、どの層も赤くしない**（宣言する死角）——母集団へ 1 件しか
+ *  出さないため、縮みを見張る側を置いても単一ファイルの見張りにしかならない。 */
 export function skillTreeDocs(snapshot) {
   return snapshot.files.filter((f) => /^\.claude\/skills\/.*\.md$/.test(f));
 }
 
-/** `nonDocSources` ドメインのメンバー——`docs/` の外のソース。
+/** `docs/` の外のソース。
  *  **見るのはこの正規表現が挙げる拡張子だけである**——`.ts` / `.tsx` / `.ps1` / `.psm1` に書いた
  *  ADR の短縮引用は実在照合を素通りする（2026-08-09 実測・#1008）。 */
 export function nonDocSources(snapshot) {

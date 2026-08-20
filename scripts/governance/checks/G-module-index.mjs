@@ -20,13 +20,18 @@ export function run(snapshot, ctx) {
  *  その `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されず `governance:check` は緑を
  *  返す（2026-08-09 実測: member を 1 つ増やし、その索引へ実在しない `.rs` を書いても緑・#1008）。
  *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。
- *  **写しのずれのうち固定されているのは一部である**——`governance-check.test.mjs` の
- *  母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ member が本表と
- *  `governanceDocs()` の**両方**に載ることを `npm test` で強制し、`domains.test.mjs` が本表由来の
- *  母集団が member の `src/` の外へ出ないことを見る。**それで全部ではない**——`CLAUDE.md` を
- *  持たない crate（そのとき照合すべき索引もまだ無い）に加えて、`exts` / `excludeTest` による縮小は
- *  **錨も部分集合テストも #701 のカナリアも赤にしない**（2026-08-20 実測: `exts` を狭めて 30 件を
- *  落としても 3 つとも緑）。`skip-ci` ラベルの付いた PR ではカナリアも走らない。 */
+ *
+ *  **写しのずれは 1 つの性質ではなく、性質ごとに守り手が違う**（#1155 で数え直した）:
+ *  - **`CLAUDE.md` を持つ member が本表と `governanceDocs()` の両方に載る** — `governance-check.test.mjs`
+ *    の母集団カナリア（#701）が実 `Cargo.toml` を読んで `npm test` で強制する。**守り手は在る**
+ *    （ただし `skip-ci` ラベルの付いた PR では走らない）
+ *  - **本表由来の母集団が member の `src/` の外へ出ない** — 部分集合テストが見ていたが、錨の層と
+ *    一緒に #1152 で撤去された。**今日の守り手はゼロである**
+ *  - **母集団が黙って縮む（`exts` / `excludeTest` の狭窄）** — 錨が見ることになっていたが同じく撤去された。
+ *    **今日の守り手はゼロであり、撤去前も実際には誰も赤にしていなかった**（2026-08-20 実測:
+ *    `exts` を狭めて 30 件を落としても、錨・部分集合テスト・#701 のカナリアの 3 つとも緑だった）
+ *
+ *  `CLAUDE.md` を持たない crate（そのとき照合すべき索引もまだ無い）は元から射程の外である。 */
 export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
@@ -34,10 +39,10 @@ export const MODULE_INDEX_CRATES = {
   "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
 };
 
-/** `moduleIndexSources` ドメインのメンバー——索引が覆うべき production ファイル。
+/** 索引が覆うべき production ファイル。
  *  **crate の一覧は `MODULE_INDEX_CRATES` から出る**（ルート `Cargo.toml` からではない）。
- *  この 2 本目の導出は意図である。**食い違いを全部捕まえる検知器は無い**——縛られている向きは
- *  上の `MODULE_INDEX_CRATES` の doc が名指す（そこが正本）。`crateSources` と畳んではならない。 */
+ *  この 2 本目の導出は意図である。**食い違いを全部捕まえる検知器は無い**——性質ごとの守り手は
+ *  上の `MODULE_INDEX_CRATES` の doc が名指す（そこが正本）。`crateSourceFiles` と畳んではならない。 */
 export function moduleIndexSources(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
   return snapshot.files.filter((f) =>
     crates.some((c) => {

@@ -187,8 +187,7 @@ pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color
 ///
 /// **その層は #1076 で `engine.lock()` を持たなくなった。** show はフレームの外だが、
 /// **窓が出るまでを止める**——検索 worker が `engine.search` で `Mutex<Engine>` を握っている
-/// 間に hotkey が来ると、そこで待つのは表示そのものである（`src-tauri/CLAUDE.md`
-/// 「モジュール構成」の #1032 条項）。
+/// 間に hotkey が来ると、そこで待つのは表示そのものである（`src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項）。
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
     let hex = super::read_config(
         app,

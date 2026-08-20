@@ -1825,8 +1825,7 @@ mod tests {
 
     /// [`owners_of`] が改行コードに依存しないことを固定する（#1112）。
     ///
-    /// [`method_body`] と同じ処方である（`docs/development-principles.md`「検証の層と、層と層の
-    /// 隙間」——切り出しの helper 自身を LF / CRLF 両方の fixture で測る。#1077 の CI 実害から
+    /// [`method_body`] と同じ処方である（`docs/development-principles.md`「検証の層と、層と層の隙間」——切り出しの helper 自身を LF / CRLF 両方の fixture で測る。#1077 の CI 実害から
     /// 生えた条項で、あちらは終端の探索が CRLF の作業ツリーに一致せず母集団が壊れた）。
     ///
     /// **帰属先を完全一致で測るのが要点である**——`contains` で測ると、`src.lines()` を

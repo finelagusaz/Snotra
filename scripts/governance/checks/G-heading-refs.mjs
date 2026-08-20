@@ -22,6 +22,8 @@ export function run(snapshot, ctx) {
 
 // 正準形の正規表現は `lib.mjs` の `HEADING_REF` が正本である（#1140 で `dependents.mjs` が
 // 2 本目の消費者になったため移した）。ここで再定義すると、片方だけ直す形が作れてしまう。
+// **頭（対象のバッククォートと `§`）だけは `REF_HEAD` として別に切り出してある**——ラベルの側の
+// 要求が消費者ごとに違うためで、`G-near-heading-refs` と `G-folded-heading-refs` が同じ頭を読む（#1154）。
 
 /** findings に加えて照合件数を返す（「差分ゼロ」と「照合していない」を区別する証跡・#497） */
 export function scanHeadingRefs(snapshot, docs) {

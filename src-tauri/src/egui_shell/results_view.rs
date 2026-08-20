@@ -73,8 +73,7 @@ pub(crate) struct ResultsShared {
     /// index が生きていれば別の行が起動してしまう。
     ///
     /// **取り出しは `take_clicked_for` だけを使う**（フィールドが private なので、世代照合を
-    /// 迂回して index を得る経路が型から消えている）。`docs/development-principles.md`
-    /// 「構造的設計原則と強制の階梯」の 2（不変条件は単一の通過点に閉じ込める）。
+    /// 迂回して index を得る経路が型から消えている）。`docs/development-principles.md`「構造的設計原則と強制の階梯」の 2（不変条件は単一の通過点に閉じ込める）。
     ///
     /// **reset-on-show 用の専用クリアは置かない**——`SearchState::reset` が世代を進めるため、
     /// hide を跨いだ stale クリックは同じ照合で失効する。専用クリアを足すと「クリアする経路」と

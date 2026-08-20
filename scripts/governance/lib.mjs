@@ -158,6 +158,15 @@ export function linesOutsideFences(text, file, findings) {
 
 export const finding = (file, line, message) => ({ file, line, message });
 
+/** 正準形の**頭**——対象のバッククォートと、任意の `§ <番号>` まで。第 1 群が対象を捕る。
+ *  **ラベル（`「…」`）の側は消費者ごとに違う**ので、共有するのはここまでである:
+ *    - `HEADING_REF`（下）はラベルを閉じた完全形を見る
+ *    - `G-near-heading-refs` の `ADJACENT_REF` は `「` が続くことだけを見る
+ *    - `G-folded-heading-refs` は「ラベルが来ない」「ラベルが閉じない」を見る
+ *  **文字列として持つのは、3 者が別のフラグ・別の末尾を要るからである**（`g` の有無・`$` の有無）。
+ *  頭をここへ寄せる理由は `G-heading-refs` のヘッダが書いている——**再定義すると片方だけ直す形が作れる**。 */
+export const REF_HEAD = "`([^`\\n]+)`\\s*(?:§\\s*[\\d.]*\\s*)?";
+
 /** 見出し参照の正準形。対象は `<path>.md` か `/skill-name`。
  *  `§` には節番号を伴ってよい（`SPEC.md` §11「見た目の規範」）——番号を許さないと、
  *  節番号つきの参照は正準形へ直しても照合されず、G-near-heading-refs が「直せない指摘」を出し続ける（#727 で実測）。
@@ -165,7 +174,7 @@ export const finding = (file, line, message) => ({ file, line, message });
  *  **`g` フラグを持つので `matchAll` からだけ使う**（`matchAll` は内部で複製するため `lastIndex` を持ち越さない）。
  *  `test` / `exec` で共有すると、消費者どうしが互いの `lastIndex` を踏む。
  *  **消費者は 1 つではない**——`G-heading-refs` の照合と `dependents.mjs` の逆引きが同じ形を読む（#1140）。 */
-export const HEADING_REF = /`([^`\n]+)`\s*(?:§\s*[\d.]*\s*)?「([^「」\n]+)」/g;
+export const HEADING_REF = new RegExp(`${REF_HEAD}「([^「」\\n]+)」`, "g");
 
 /** 正準形の対象として認める綴り（`<path>.md` か `/skill-name`）。`HEADING_REF` の第 1 群に当てる */
 export const isRefTargetSpelling = (target) => target.endsWith(".md") || /^\/[a-z0-9-]+$/.test(target);

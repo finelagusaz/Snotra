@@ -108,8 +108,7 @@ impl ResultsWindow {
     /// 証人を使わないが（`_` 始まり）、**シグネチャから外してはならない**——results の可視性を
     /// 変える経路を単一スレッドへ閉じるための拘束である。証人型を引数に要求する 5 関数は
     /// イベントループスレッドへ一意化されており、フラグと窓の実状態が食い違う並びは構築できない
-    /// （射程の正本は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに
-    /// 閉じてある」の bullet 群）。
+    /// （射程の正本は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに閉じてある」の bullet 群）。
     pub(crate) fn show(
         &self,
         _el: &snotra_egui_runtime::EventLoopProof,

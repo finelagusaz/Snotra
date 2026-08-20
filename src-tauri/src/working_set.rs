@@ -2,8 +2,7 @@
 //!
 //! hide 経路（`egui_shell::hide_egui_main` 合流点）で Win32 `EmptyWorkingSet` を
 //! プロセスツリー（自プロセス + 子孫。設定サイドカー存命中はそれも含む）へ能動適用し、
-//! hide 直後の物理 RSS を即時に削減する（`src-tauri/CLAUDE.md`
-//! 「working set の能動回収」節。旧 WebView2 suspend 層は #532 SU7 で消滅）。
+//! hide 直後の物理 RSS を即時に削減する（`src-tauri/CLAUDE.md`「working set の能動回収」節。旧 WebView2 suspend 層は #532 SU7 で消滅）。
 //!
 //! - show 時は OS がページを透過的に re-fault するため、逆操作（untrim）は不要かつ存在しない。
 //! - best-effort: Toolhelp / `OpenProcess` / `EmptyWorkingSet` の全失敗は黙ってスキップする

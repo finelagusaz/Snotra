@@ -21,6 +21,7 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     stale: 377,
     staleTargets: ["a.md"],
     nearRefs: 14,
+    foldedRefs: 21,
     adrFiles: 53,
     adrCitations: 257,
   });

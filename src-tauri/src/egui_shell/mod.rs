@@ -89,8 +89,7 @@ pub(crate) use search_state::{SlashCmd, find_slash_command};
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
 // 連言④も同じ理由で表示側と起動側が共有する（#1106）。③（`plain_results_hidden`）とは
 // **独立した規則**で、carve-out を持たない——③は Results ビューの通常結果だけを隠すが、
-// ④は tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**を隠す（`SPEC.md`
-// 「4.5 最大列挙数」）。
+// ④は tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**を隠す（`SPEC.md`「4.5 最大列挙数」）。
 pub(crate) use layout::results_area_collapsed;
 // FrameIndexing は `window_coordinator::read_indexing` の返り値型で、view.rs が 1 フレーム
 // 1 回だけ読み、launcher_controller.rs の起動判定がそれを受け取る（#1077）。**構築子を

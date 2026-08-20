@@ -57,8 +57,7 @@ pub struct AppEntry {
 ///   **版の番号を書かない**（`Engine::from_material` の doc と同じ理由で、番号を書くと版を上げるたびにこの散文だけが腐る）
 ///
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
-/// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
-/// 保持するか導出するか」）。
+/// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）。
 /// `PartialEq` は**テストのときだけ**持つ。「返した組と `index.bin` へ書いた組が同一である」
 /// を 1 行で言うためであり、製品はこの型を比べない。
 #[derive(Debug)]
@@ -476,8 +475,7 @@ pub struct LoadOrScanResult {
 ///
 /// **v4 との差は `normalized_keys` を持たないことだけである**（実測 35.56 MiB / 312,377 件）。
 /// `target_path` から `normalize_entry_key_into` で導出できる純粋な派生であり、検索時に
-/// 必要な候補についてだけ詰め直す形へ移した（`PERFORMANCE.md`「パスクエリ全走査のコスト —
-/// `normalized_keys` を保持するか導出するか」）。
+/// 必要な候補についてだけ詰め直す形へ移した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）。
 ///
 /// **owned/borrowed を単一 struct に統合する（`Cow<'a, [T]>`）**。save は `Cow::Borrowed` で
 /// `entries` の全件 clone を避けてシリアライズし、load は `Cow::Owned` で deserialize する
@@ -1027,8 +1025,7 @@ pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
 ///
 /// **書いた 4 本をそのまま返す。** かつては書いた直後に捨てており、cache-miss の枝は
 /// `new_from_tree` が木を実体化して Wave 1/2 を建て直していた——**計算したものを捨ててから、
-/// 同じものを作り直していた**（実測は `PERFORMANCE.md`「採用: 保存が返した派生データを
-/// cache-miss がそのまま使う」）。
+/// 同じものを作り直していた**（実測は `PERFORMANCE.md`「採用: 保存が返した派生データを cache-miss がそのまま使う」）。
 ///
 /// **書き込みの失敗は返り値に影響しない。** 返すのは今メモリに在る木と、その木に対して導出
 /// した派生データであり、両者の整合はディスクへ届いたかとは独立である。書けなければ次回が

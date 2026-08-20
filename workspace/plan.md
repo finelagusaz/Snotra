@@ -540,10 +540,32 @@ exit=101
 
 ### 受容する残余（**宣言して止める**）
 
-1. **`.md` → `.rs` doc の参照はどの機構も検算しない**（`G-heading-refs` の対象は `<path>.md`「見出し」と `/skill-name` だけ）。
-   `docs/architecture.md` と `src-tauri/CLAUDE.md` の `Engine::config_handle` 参照がこれに当たる。
-2. **`#[cfg(test)]` と `//`（非 doc）の中の参照も検算されない**（rustdoc が組み立てない・読まない）。
-   `state.rs` 3-2 と `view.rs` 2-2 がこれに当たる。
+1. **`Engine::config_handle` を指す 6 か所は、綴りの実在を見る機構が在るものと無いものに割れる。**
+   **計画の初稿は「`.md` → `.rs` doc の参照はどの機構も検算しない」と書いたが、これは偽だった**——
+   委譲レビューの指摘（L-1）を受けて対照変異で測り直した結果が下表である。
+   （**この欄は「だから機構を足さない」の根拠として使われる形なので、宣言は測った射程で書く**。）
+
+   | 参照の在り処 | 綴りの実在を見る機構 | 実測 |
+   |---|---|---|
+   | `docs/architecture.md`（228 / 231 行） | **`G-stale-identifiers`** | 誤綴りを注入 → `governance:check` が exit 1「散文に、現行語彙に無い識別子が残っている」 |
+   | `src-tauri/src/egui_shell/mod.rs`（`///` の intra-doc link） | **`cargo doc`** | 誤綴りを注入 → exit 101 `unresolved link` |
+   | `src-tauri/src/state.rs:18`（`///` の intra-doc link） | **`cargo doc`** | 同じ機構に載る |
+   | `src-tauri/CLAUDE.md`（57 行） | **無い** | 誤綴りを注入 → exit 0 の沈黙（モジュール `CLAUDE.md` は `G-stale-identifiers` の母集団外） |
+   | `src-tauri/src/state.rs:144`（`#[cfg(test)]` の doc） | **無い** | rustdoc が `cfg(test)` を組み立てない |
+   | `src-tauri/src/egui_shell/view.rs`（`//`） | **無い** | rustdoc が `//` を読まない |
+
+   **どの機構も「指し先がその値を持つか」までは見ない**——見るのは綴りの実在だけである。
+
+2. **正本化そのものの逆行を止める機構は無い**（委譲レビューの M-1）。
+   `engine.rs` の doc は「他の箇所はここを指す」と宣言するが、**5 番目の `43,939` や 9 番目の `40〜95 ms` が
+   明日書かれても何も鳴らない**。委譲エージェントが自選した変異 3（`src-tauri/CLAUDE.md` の正準形参照を
+   2 物理行へ折る）が同じ形で実証している——`governance:check` は exit 0 のまま、照合件数だけが 285 → 284 へ静かに落ちた。
+   **検知器を置くかはセーフティネットの新設ゆえ、この計画では決めない**（ルート `CLAUDE.md`
+   「セーフティネットの変更は合意してから」）。**人へ返す。**
+2b. **repoint により `PERFORMANCE.md`「フレーム後半の帰属」を指す参照が 0 件になった**（委譲レビューの L-2）。
+   孤立節を赤にする検査は無く、判断としては計画どおり。**ただし当該節は本差分の主張の一次証拠を持つ**ので、
+   節ごと消す変更が来たときに気づく仕掛けは無い——**受容する。**
+
 3. **PR 本文・過去の commit message の `43,939` は `git grep` の母集団外である**
    （`pr-body-is-outside-the-grep-population`）。#1128 の射程は「生きた層」であり、
    マージ済みの記録は `docs/adr/` と同じく凍結された歴史として扱う。**測っていないことを明示する。**

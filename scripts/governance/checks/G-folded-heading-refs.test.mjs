@@ -91,6 +91,17 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
       expect(run("`someVar`「見出しの\n途中」\n")).toEqual([]);
     });
 
+    // **ドットを持つが受理されない綴りの固定点**（#1155）。`.mjs` を対象綴りへ入れたとき、この役目を
+    // 負っていた負例（`domains.test.mjs`）が正例へ移り、残った `someVar` はドットを持たないため
+    // **`isRefTargetSpelling` を `includes(".")` へ広げる不注意な変更が全緑で通る**状態になっていた
+    // （逆向きの監査が変異注入で実測）。ここで挙げる 2 つは
+    // `ADR-canonical-heading-references`「決定」が「入れない」と宣言している死角そのものであり、
+    // **死角を埋める日には同じ差分でこの負例も動く**。
+    it("ドットを持っても対象綴りでなければ見ない（`.ps1` / `.ts` は宣言された死角）", () => {
+      expect(run("詳細は `scripts/manual-smoke.ps1`\n「手順」\n", "a.mjs")).toEqual([]);
+      expect(run("詳細は `src/lib/types.ts`\n「型」\n", "a.mjs")).toEqual([]);
+    });
+
     it("コードフェンスの内側は見ない（`.md` の走査はフェンスを落とす）", () => {
       expect(run("```\n`PERFORMANCE.md`\n「索引の常駐の内訳」\n```\n")).toEqual([]);
     });

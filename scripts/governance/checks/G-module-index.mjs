@@ -31,7 +31,10 @@ export function run(snapshot, ctx) {
  *    **今日の守り手はゼロであり、撤去前も実際には誰も赤にしていなかった**（2026-08-20 実測:
  *    `exts` を狭めて 30 件を落としても、錨・部分集合テスト・#701 のカナリアの 3 つとも緑だった）
  *
- *  `CLAUDE.md` を持たない crate（そのとき照合すべき索引もまだ無い）は元から射程の外である。 */
+ *  `CLAUDE.md` を持たない crate（そのとき照合すべき索引もまだ無い）は元から射程の外である。
+ *
+ *  **上の 3 つで全部ではない。** ここに挙げたのは #1155 の時点で名前の付いていた性質であり、
+ *  写しのずれ方を尽くしたものではない。 */
 export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },

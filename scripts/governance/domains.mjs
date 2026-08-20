@@ -81,11 +81,16 @@ export const DOMAIN_SPECS = [
     // それ自身が錨を持つドメインであり、走査が同じ以上ここへ全件現れるはずである（実測で成立）。
     // 腕を `some` で見るより強い（1 件残れば真、にならない）。
     //
-    // **宣言する死角**: ここが縛るのは `docs/` / `.claude/rules/` / `.claude/skills/` の各腕と
-    // ルートの定点だけである。`.claude/agents/`・`.github/`・`src-tauri/capabilities/`・
-    // `snotra-settings/SETTINGS-DESIGN.md` などの腕は**どの錨も見ていない**——消えても沈黙する。
-    // とくに `.claude/agents/` は、この母集団の doc（`lib.mjs`）が「広く取る」理由として名指した
-    // 場所であり、そこが覆われていないことを認めておく。
+    // **宣言する死角**: 縛っているのは `docs/` に 1 件・`.claude/rules/` の md 全件・
+    // `.claude/skills/` の **SKILL.md 全件**・ルートの `AGENTS.md` / `CLAUDE.md` だけである。
+    // それ以外——`.claude/agents/`・`.github/`・`src-tauri/capabilities/`・crate の `CLAUDE.md`・
+    // ルート直下の他の md（`CONTRIBUTING.md`・`SPEC.md` など）・`.claude/skills/` 配下の
+    // 非 SKILL.md——は**どの錨も見ていない**。とくに `.claude/agents/` は、この母集団の doc
+    // （`lib.mjs`）が「広く取る」理由として名指した場所である。
+    //
+    // **`governanceDocs` を丸ごと下界にする案は採らない。** 実測では部分集合（外へ出るもの 0 件）
+    // だが、(1) 既存 3 錨を包含して**腕ごとの帰属が 1 本に潰れる**（「検知器は必要な分だけ縛る」に
+    // 反する）、(2) それでも覆えない腕が残るので被覆の完成にはならない。
     anchors: [
       { label: "docs/ 配下の md", holds: (m) => m.some((f) => f.startsWith("docs/")) },
       // 下界にする側が空なら `every` は空虚に真になる。他の `every` 錨と同じく 0 件を弾く

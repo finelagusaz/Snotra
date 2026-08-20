@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
-import { makeSnapshot } from "./lib.mjs";
+import { makeSnapshot, workspaceMembers } from "./lib.mjs";
 import { buildDomains, DOMAIN_SPECS } from "./domains.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -18,9 +18,16 @@ const withoutMatch = (re) => (m) => m.filter((f) => !re.test(f));
  *  現れる母集団へ流用したときに静かにずれる。 */
 const movedUnder = (d) => (m) => m.map((f) => (f.startsWith(`${d}/`) ? `${d}/moved/${f.slice(d.length + 1)}` : f));
 
-/** **`every` 形の錨には「1 件だけ引く」レシピを当てる。** 腕を丸ごと引くレシピだと、その錨を
- *  `every` から `some` へ弱める変異を検出できない（`some` でも腕ごと引けば倒れるため、赤が
- *  維持されて弱化が沈黙する。レビューが 3 本すべてで実測）。 */
+/** **`every` 形の錨には「下界にしている母集団と同じ述語で 1 件だけ引く」レシピを当てる。**
+ *
+ *  「1 件だけ引く」だけでは足りない——腕を丸ごと引くレシピだと `every → some` の弱化が沈黙するが
+ *  （`some` でも腕ごと引けば倒れる）、**述語がずれた「1 件」は誤検出を生む**。下界の外に居る
+ *  ファイルを引くと錨は成立したままで、テストは「錨が空虚」という**原因から最も遠いメッセージ**で
+ *  赤くなる（`.claude/rules/<dir>/notes.md` や `docs/CLAUDE.md` を置いた実測でレビューが再現）。
+ *  それは `domains.mjs` 冒頭が #1143 で禁じた症状そのものである。
+ *
+ *  ⚠ `findIndex` ゆえ**走査順に依存する**。今日の用途は `every` 形だけなので結果は変わらないが、
+ *  `some` 形へ流用すると引く 1 件が順序で変わる。 */
 const withoutFirstMatch = (re) => (m) => {
   const i = m.findIndex((f) => re.test(f));
   return m.filter((_, j) => j !== i);
@@ -31,14 +38,25 @@ const withoutFirstMatch = (re) => (m) => {
 const FALSIFIERS = new Map([
   // 固定名を名指す錨——名指された側を 1 つ引く
   ["governanceDocs#ルートの AGENTS.md と CLAUDE.md", withoutMatch(/^AGENTS\.md$/)],
-  // 別 SSOT（Cargo.toml）からの every——crate の CLAUDE.md を **1 つだけ**引く
-  ["governanceDocs#CLAUDE.md を持つ workspace member のすべて", withoutFirstMatch(/^[^/]+\/CLAUDE\.md$/)],
+  // 別 SSOT（Cargo.toml）からの every——**crate の** CLAUDE.md を 1 つだけ引く。
+  // `/^[^/]+\/CLAUDE\.md$/` では足りない: `docs/CLAUDE.md` のような crate でない CLAUDE.md が
+  // 走査順で先に来ると、下界の外を引いて錨が成立したまま赤くなる（誤検出・レビューが実測）
+  [
+    "governanceDocs#CLAUDE.md を持つ workspace member のすべて",
+    (m, s) => {
+      const crates = workspaceMembers(s).members;
+      const i = m.findIndex((f) => crates.some((c) => f === `${c}/CLAUDE.md`));
+      return m.filter((_, j) => j !== i);
+    },
+  ],
   ["governanceDocs#docs/ の腕", withoutPrefix("docs/")],
   ["governanceDocs#.claude/rules/ の腕", withoutPrefix(".claude/rules/")],
   ["governanceDocs#.claude/skills/ の腕", withoutPrefix(".claude/skills/")],
 
   ["headingRefDocs#docs/ 配下の md", withoutPrefix("docs/")],
-  ["headingRefDocs#ruleDocs の全メンバー", withoutFirstMatch(/^\.claude\/rules\//)],
+  // 述語は `ruleDocs`（`lib.mjs` の `RULE_FILE_RE`）と同じ形にする——前方一致だと
+  // `.claude/rules/<dir>/notes.md` のような**下界の外**を引いて誤検出になる（レビューが実測）
+  ["headingRefDocs#ruleDocs の全メンバー", withoutFirstMatch(/^\.claude\/rules\/[^/]+\.md$/)],
   ["headingRefDocs#skillDocs の全メンバー", withoutFirstMatch(/^\.claude\/skills\/[^/]+\/SKILL\.md$/)],
   ["headingRefDocs#ルートの AGENTS.md と CLAUDE.md", withoutMatch(/^AGENTS\.md$/)],
   ["headingRefSourceDocs#CLAUDE.md を持つ crate の src 配下の .rs", withoutMatch(/\/src\//)],
@@ -193,8 +211,13 @@ describe("buildDomains", () => {
       for (const a of spec.anchors) {
         const key = `${spec.name}#${a.label}`;
         const falsify = FALSIFIERS.get(key);
-        // レシピ欠落は完全性 assert の担当。ここで関数として呼ぶと TypeError になり診断にならない
-        if (typeof falsify !== "function") continue;
+        // レシピ欠落は完全性 assert の担当だが、**素通りさせない**——完全性 assert が骨抜きに
+        // されたとき、ここまで沈黙すると錨がレシピ無しで入る（冗長な検知点として残す）。
+        // 関数として呼べば TypeError にはなるが、それは診断にならない赤である。
+        if (typeof falsify !== "function") {
+          failures.push(`${key}: 反証レシピが無い（FALSIFIERS へ足すこと）`);
+          continue;
+        }
         if (!a.holds(full, snapshot)) {
           failures.push(`${key}: 実ツリーで成立していない`);
           continue;
@@ -213,6 +236,8 @@ describe("buildDomains", () => {
         if (a.holds(mutated, snapshot)) failures.push(`${key}: レシピを当てても成立している＝沈黙する`);
       }
     }
-    expect(failures, `空虚な錨:\n  ${failures.join("\n  ")}`).toEqual([]);
+    // 見出しは「空虚な錨」に限らない——「実ツリーで成立していない」は空虚とは逆の故障であり、
+    // レシピ自体の欠陥（何も変えない・空を返す・欠落）も同じ列に並ぶ
+    expect(failures, `錨と反証レシピの不整合:\n  ${failures.join("\n  ")}`).toEqual([]);
   });
 });

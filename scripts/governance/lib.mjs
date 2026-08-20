@@ -176,9 +176,9 @@ export const REF_HEAD = "`([^`\\n]+)`\\s*(?:§\\s*[\\d.]*\\s*)?";
  *  **消費者は 1 つではない**——`G-heading-refs` の照合と `dependents.mjs` の逆引きが同じ形を読む（#1140）。 */
 export const HEADING_REF = new RegExp(`${REF_HEAD}「([^「」\\n]+)」`, "g");
 
-/** 正準形の対象として認める綴り（`<path>.md` / `<path>.mjs` / `/skill-name`）。**ここが対象綴りの正本である**
- *  ——`HEADING_REF` の第 1 群に当て、`G-heading-refs` / `G-near-heading-refs` / `G-folded-heading-refs` /
- *  `dependents.mjs` の 4 者が同じ述語を読む。
+/** 正準形の対象として認める綴り。**ここが対象綴りの正本である**——`HEADING_REF` の第 1 群に当てる。
+ *  **消費者は 1 つではない**（検査群と `dependents.mjs` の逆引きが同じ述語を読む）ので、
+ *  ここを広げると読む側すべての射程が同時に動く。
  *
  *  **`.mjs` を含めたのは #1155 である**（`ADR-canonical-heading-references` の 2026-08-20 追記）。
  *  スクリプトのコメントは #1138 で**走査元**に入っていたが、**対象の綴り**としては認められておらず、
@@ -422,8 +422,8 @@ export function gitIgnoredPaths(paths, root = process.cwd()) {
  * だけで、参照先の解決は `snapshot.files` 全体に対して行われる。
  *
  * **`describe` と `it` へ同じ深さを与えている**ので、`sectionsOf` から見て両者は入れ子にならず、
- * `describe` の節は次の `it` で閉じる。着地判定（前方一致）はこれで足りるが、`dependents.mjs` の
- * 節境界は `describe` 全体ではなく最初の `it` までを指す。合否を持たない計器の側の精度なので受容する。
+ * `describe` の節は次のアンカーで閉じる。着地判定（前方一致）はこれで足りるが、`dependents.mjs` の
+ * 節境界は `describe` 全体を指さない。合否を持たない計器の側の精度なので受容する。
  */
 export const ANCHOR_SPECS = [
   { re: /^(#{1,6})\s+(.+?)\s*$/, depth: (m) => m[1].length, label: (m) => m[2] },

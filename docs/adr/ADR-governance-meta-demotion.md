@@ -61,4 +61,4 @@
 
 ## 関連
 
-`docs/adr/ADR-retire-area-budget.md`（ゲートから計器への先例と、そこで積んだ観測）・`docs/adr/ADR-retire-norm-review.md`（規範は機構の代わりにならない実測）・`docs/adr/ADR-rules-paths-subtree-coverage.md`（#1143 の失効の経緯）・`.claude/rules/safety-nets.md`（機構の配置を変えたときの再測定の引き金）
+`docs/design/2026-08-20-governance-meta-demotion-derivations.md`（この決定を出した独立導出と敵対レビューの原文。**2 サイクル後の撤去判定はここを読む**——どの項目が争点で、どちらの側がどんな根拠を出したかは要約に落とすと消える）・`docs/adr/ADR-retire-area-budget.md`（ゲートから計器への先例と、そこで積んだ観測）・`docs/adr/ADR-retire-norm-review.md`（規範は機構の代わりにならない実測）・`docs/adr/ADR-rules-paths-subtree-coverage.md`（#1143 の失効の経緯）・`.claude/rules/safety-nets.md`（機構の配置を変えたときの再測定の引き金）

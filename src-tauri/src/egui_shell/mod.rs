@@ -415,10 +415,7 @@ fn apply_rounded_corners(window: &tauri::Window) {
 /// `&AppHandle` しか持たない呼び出し元のための config の読み口（#1032）。
 /// **`engine.lock()` を経てはならない。**
 ///
-/// 検索 worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点で 40〜95 ms）。
-/// UI がその錠越しに config を読むと、フレームは worker の走査が終わるまで返らない
-/// ——`read_window_width` 単独で 43,939 µs の待ちを実測した（`PERFORMANCE.md`「フレーム
-/// 後半の帰属」）。
+/// 検索 worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点での保持時間は [`snotra_core::engine::Engine::config_handle`] の doc）。UI がその錠越しに config を読むと、フレームは worker の走査が終わるまで返らない（`read_window_width` の読み max の実測値は `PERFORMANCE.md`「設定の読みを engine lock の外へ出す」）。
 ///
 /// **この関数が見るのは `AppState` 不在の面倒だけである。** 読みそのものは
 /// [`crate::AppState::read_config`] へ委譲し、**`read` の中で lock も I/O も取らない**という

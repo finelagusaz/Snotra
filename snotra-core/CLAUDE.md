@@ -189,7 +189,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ## engine.rs のロック最小化パターン
 
-`Engine` は Tauri 側で `Mutex<Engine>` に包まれる。**`Config` だけはその錠の外から読める**——`Arc<RwLock<Config>>` で持ち、`config_handle()` が同じ `Arc` を渡す（#1032・契約の正本は同メソッドと `config` フィールドの doc）。**読みだけが外に出ており、書き（`update_config`）は `&mut self` ＝ `Mutex<Engine>` の内側に残る。この非対称を崩してはならない**——`complete_index_drain` の「index を swap してから現在の `IndexInputs` と照合する」原子性は、書き手が外側の錠を要求することだけで成り立っている（#347/#348-A の lost-update 対策）。ロック保持時間を最小化するためのパターンは他に 3 つある:
+`Engine` は Tauri 側で `Mutex<Engine>` に包まれる。**`Config` だけはその錠の外から読める**——`Arc<RwLock<Config>>` で持ち、`config_handle()` が同じ `Arc` を渡す（#1032・契約の正本は同メソッドと `config` フィールドの doc）。**実運用点での lock 保持時間の正本も同メソッドの doc である**（#1128）——`PERFORMANCE.md` にこの値の記録は無く、そちらへ足さずコードの doc を正本にした理由は `ADR-measurement-canon-in-code-doc`。**読みだけが外に出ており、書き（`update_config`）は `&mut self` ＝ `Mutex<Engine>` の内側に残る。この非対称を崩してはならない**——`complete_index_drain` の「index を swap してから現在の `IndexInputs` と照合する」原子性は、書き手が外側の錠を要求することだけで成り立っている（#347/#348-A の lost-update 対策）。ロック保持時間を最小化するためのパターンは他に 3 つある:
 
 - **`FolderListContext`**: ロック内で `capture_folder_list_context()` してスナップショットを取得 → ロック外で I/O（`read_dir_entries`）→ ロック内で `finalize_folder_list()` でスコアリング。設定変更との微小な不整合は許容する設計判断
 - **`PrebuiltIndex`**: ロック外で構築 → ロック内で `apply_prebuilt_index()` でスワップ。SearchEngine の構築コスト（Wave 1/2 の並列計算）をロック外に追い出す。**入口は `PrebuiltIndex::from_material` の 1 つである**——派生データの有無で建て方が分かれるのは `SearchEngine::from_material` の 1 か所に閉じており、呼び出し点は分岐を持たない。`PrebuiltIndex::new` は `#[cfg(test)]` ゆえ製品から呼べない

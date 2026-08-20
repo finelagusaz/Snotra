@@ -60,6 +60,18 @@ const FALSIFIERS = new Map([
   ["moduleIndexSources#MODULE_INDEX_CRATES の全 crate の src/ 直下に索引対象が居る", withoutExactDir("snotra-core/src")],
   ["skillDocs#.claude/skills/ 直下の全ディレクトリが SKILL.md を持つ", (m) => m.slice(1)],
 
+  // SKILL.md を 1 本引く（先頭が references/ の md でありうるので、SKILL.md を名指しで探す）
+  [
+    "skillTreeDocs#.claude/skills/ 直下の全ディレクトリが SKILL.md を持つ",
+    (m) => {
+      const i = m.findIndex((f) => f.endsWith("/SKILL.md"));
+      return m.filter((_, j) => j !== i);
+    },
+  ],
+  ["nonDocSources#全 workspace member から .rs が居る", withoutPrefix("snotra-core/")],
+  ["nonDocSources#scripts/ 直下", withoutExactDir("scripts")],
+  ["nonDocSources#.claude/hooks/ 直下", withoutExactDir(".claude/hooks")],
+
   ["judgingScripts#scripts/ 直下", withoutExactDir("scripts")],
   ["judgingScripts#scripts/governance/ 直下", withoutExactDir("scripts/governance")],
   ["judgingScripts#scripts/governance/checks/ 直下", withoutExactDir("scripts/governance/checks")],

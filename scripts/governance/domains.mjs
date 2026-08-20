@@ -29,6 +29,7 @@ import { adrFiles } from "./checks/G-adr-file-names.mjs";
 import { judgingScripts } from "./checks/G-rules-script-coverage.mjs";
 import { skillFiles } from "./checks/G-skill-table.mjs";
 import { moduleIndexSources, MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
+import { skillTreeDocs, nonDocSources } from "./checks/G-adr-citations.mjs";
 
 /** そのディレクトリ**直下**に 1 件以上（前方一致にしない——配下が在れば真になり、
  *  中間層が消えても沈黙する。#1143 で実測した形）。 */
@@ -219,6 +220,37 @@ export const DOMAIN_SPECS = [
           return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
         },
       },
+    ],
+  },
+  {
+    // `skillDocs` の上位集合である（あちらは SKILL.md だけ）。**畳んではならない**理由は
+    // `skillTreeDocs` の doc（`G-adr-citations.mjs`）が持つ。
+    name: "skillTreeDocs",
+    members: skillTreeDocs,
+    anchors: [
+      {
+        label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ",
+        holds: (m, s) => {
+          const dirs = [...skillDirs(s)];
+          return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
+        },
+      },
+    ],
+  },
+  {
+    name: "nonDocSources",
+    members: nonDocSources,
+    // crate は別 SSOT（`Cargo.toml`）からの every で縛る。スクリプトと hook は腕ごとに 1 本。
+    anchors: [
+      {
+        label: "全 workspace member から .rs が居る",
+        holds: (m, s) => {
+          const crates = workspaceMembers(s).members;
+          return crates.length > 0 && crates.every((c) => m.some((f) => f.startsWith(`${c}/`) && f.endsWith(".rs")));
+        },
+      },
+      { label: "scripts/ 直下", holds: (m) => hasDirectChild(m, "scripts") },
+      { label: ".claude/hooks/ 直下", holds: (m) => hasDirectChild(m, ".claude/hooks") },
     ],
   },
   {

@@ -45,6 +45,14 @@ const cratesWithClaudeMd = (snapshot) =>
 const skillDirs = (snapshot) =>
   new Set(snapshot.files.filter((f) => f.startsWith(".claude/skills/")).map((f) => f.split("/")[2]));
 
+/** `skillDocs` と `skillTreeDocs` が共有する錨——後者は前者の上位集合なので、同じ下界が当たる。
+ *  **ドメインを畳まないことと、錨の述語を共有することは別である**（母集団が違うので判定結果は
+ *  別々に出る）。片方だけを強くする将来が来たら、そのときここから外す。 */
+const everySkillDirHasSkillMd = (m, s) => {
+  const dirs = [...skillDirs(s)];
+  return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
+};
+
 export const DOMAIN_SPECS = [
   {
     name: "governanceDocs",
@@ -224,13 +232,7 @@ export const DOMAIN_SPECS = [
     // **受け入れるトレードオフ**: `.claude/skills/` 直下へ skill でないディレクトリを置くと、
     // 正当な変更でも赤くなる。そのときは錨の側を直す（起きたら loud で、沈黙はしない向き）。
     anchors: [
-      {
-        label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ",
-        holds: (m, s) => {
-          const dirs = [...skillDirs(s)];
-          return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
-        },
-      },
+      { label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ", holds: everySkillDirHasSkillMd },
     ],
   },
   {
@@ -239,13 +241,7 @@ export const DOMAIN_SPECS = [
     name: "skillTreeDocs",
     members: skillTreeDocs,
     anchors: [
-      {
-        label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ",
-        holds: (m, s) => {
-          const dirs = [...skillDirs(s)];
-          return dirs.length > 0 && dirs.every((d) => m.includes(`.claude/skills/${d}/SKILL.md`));
-        },
-      },
+      { label: ".claude/skills/ 直下の全ディレクトリが SKILL.md を持つ", holds: everySkillDirHasSkillMd },
     ],
   },
   {

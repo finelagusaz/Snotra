@@ -1,0 +1,284 @@
+plan-audit-exec — 手順の実行可能性の枠（#1154 / workspace/plan.md）
+監査日: 2026-08-20 / 監査者: 実行可能性レビュー枠 / 対象 HEAD: 13f8a2e7 / ブランチ: chore/measurement-canon-and-fold-detector
+方針: ファイルは本ファイル以外に一切編集していない。変異はすべて scratchpad の複製 clone に当て、
+      junction は削除済み・複製の node_modules 経由で実体が消えていないことを確認済み。
+
+===============================================================================
+0. 実測の要約（この監査で自分で打ったコマンドの結果）
+===============================================================================
+
+E1. 今日の evidence 行（`npm run governance:check`・exit 0）
+    「検査 20 件 / 対象文書 36 件 / rules 8 件 / skills 12 件 / 恒久規範 常時ロード 16377 字・
+     rules 12754 字 / 見出し参照 285 件を md 48 件 + .rs 101 件 + スクリプトのコメント 109 件から照合 /
+     workspace member 4 件の lints opt-in / clippy 禁止 8 件 / 散文の識別子 396 件を 34 文書から照合 /
+     近傍の見出し参照 17 件 / ADR 67 本の名前 / ADR の短縮引用 347 件」
+
+E2. **318 は実測で裏が取れた。** 複製 clone に対し 33 件すべてを機械的に「行 i と行 i+1 の結合」
+    （行 i+1 のコメント接頭辞を剥がす）で解消したところ:
+      - findings は **1 件だけ**残った:
+        `snotra-core/tests/path_query_cost.rs:263  見出し参照が着地しない:
+         \`docs/development-principles.md\`「判定を持たない道具を層に数えてよい」`
+        → 計画 1-5 が名指した当の 1 件であり、**他の 32 件は全件着地した**（計画の前提は正しい）
+      - その 1 件を計画どおり「検証の層と、層と層の隙間」へ書き換えたところ exit 0 で
+        **「見出し参照 318 件」**（近傍の見出し参照は 17 件のまま）
+    → 受け入れ条件 plan.md:22 の 285 → 318 は、Phase 1 単独の状態については正しい。
+
+E3. 計画が挙げた file:line は全件現在形（spot-check 5 件が折れの当該行にぴたりと当たった）。
+
+E4. PostToolUse の費用（warm・内容変更なしの下限値。実測）
+      cargo fmt --all -- --check                                  : 0s
+      cargo clippy --workspace --all-targets -- -D warnings       : 4〜5s
+      cargo test -p snotra-core                                   : 17〜22s
+      cargo test -p snotra                                        : 32s
+
+E5. `workspace/plan.md` の未チェック `- [ ]` は **32 件**（pre-bash.mjs:370 `countUnchecked` の
+    正規表現 `/^\s*[-*]\s+\[ \]/gm` をそのまま当てた実測）。
+
+===============================================================================
+1. 要対処
+===============================================================================
+
+[要対処 1] plan.md:61 / 作業項目 1-2b の「片側だけの変更は赤で止まる」は**偽**である
+  計画の記述: 「**供給を忘れると `evidenceView` が「未記録の読み」として finding を出す**ので、
+              片側だけの変更は赤で止まる」
+  実測（複製 clone・`G-heading-refs.mjs` の `ctx.record` 呼び出しだけを外す変異）:
+      $ node scripts/governance-check.mjs
+      governance:check — 全検査 passed（… 見出し参照 ? 件を md 48 件 …）
+      governance:check — 格下げ中のメタ層に 1 件（合否には算入しない）:
+        scripts/governance/evidence.mjs:1  evidence が読む `headingRefs` が未記録である…
+      EXIT=0                                    ← **赤にならない**
+      $ SNOTRA_GOV_META_AUDIT=1 node scripts/governance-check.mjs   → EXIT=1
+  機序: `evidenceView` が積む finding は `metaFindings` へ入り（scripts/governance-check.mjs:205）、
+        `findings` へ合流するのは `metaAuditEnabled()`（同 :110・:210）が真のときだけである。
+        メタ層は #1150 / #1152（7506f093 / 74ae45fc・**2〜3 コミット前**）でゲートから計器へ格下げ済み。
+  実際に赤にするのは `npm test` の側である（同じ変異で実測）:
+      FAIL scripts/governance-check.test.mjs:119
+        「実リポジトリの evidence 行は `undefined` も `?` も含まない」
+      Test Files 1 failed | 34 passed / Duration 12.9s
+  もう一方の向きは**どこでも沈黙する**: `ctx.record` は供給するがテンプレートに `${ev.foo}` を
+  書かない形は、誰も `sink[key]` を読まないので finding も出ない（evidence.mjs:22-24 が
+  「消費点を SSOT にする」と明示している設計の帰結）。
+  実務上の帰結: **作業項目 1-6（`governance:check` 緑の確認）は配線の検算にならない。**
+  1-7 の `npm test` が唯一の門である。1-6 で evidence 行に `?` が出ていないかを目で見るのは
+  必須（`?` は「1 件」と読める数字に化けるので、行の数字自体は根拠にならない・evidence.mjs:41-43）。
+  推奨の差し替え: 1-2b の括弧内を「**片側（供給欠落）は `npm test` の
+  `governance-check.test.mjs`「evidence の供給カナリア（#1098）」が赤にする。`governance:check` は
+  exit 0 のまま `?` を印字するだけである**」へ。
+  この所見を偽にする手順: 複製で `G-heading-refs.mjs` の `ctx.record(...)` を
+  `scanHeadingRefs(...).findings` へ差し替え、`node scripts/governance-check.mjs` の exit code が
+  1 になれば偽。
+
+[要対処 2] plan.md:187 の「**改行位置の移動を既定にしたので行長は増えない**」は**偽**である
+  改行を参照の手前へ移すと、失われるのは行 i の末尾で、**行 i+1 は移した分だけ必ず伸びる**。
+  33 件全件について移動後の字数を測った（scratchpad/movelen.mjs・文字数は code point 数）:
+    形 A（20 件）新しい行 i+1: 中央値 68 字 / 最長 104 字（`scripts/manual-smoke.ps1:63`）
+      - 94 字（`.rs` コメントの p99）超は 2 件だが、いずれも `.ps1`（104）と `PERFORMANCE.md`（102）で
+        `.rs` の基準の外にある。**`.rs` の 11 件は最長 87 字**（`snotra-core/src/search/path_store.rs:11`）で
+        全件 p99 以下。→ 形 A は実務上問題ない。
+    形 B（13 件・全件 `.rs`）: 押し下げ（`` `x`「… `` を行 i+1 の頭へ）中央値 75 / 最長 114、
+      引き上げ（行 i+1 の継続部を行 i の末尾へ）中央値 96 / 最長 139。
+      - **`src-tauri/src/egui_shell/launcher_controller.rs:1828` はどちらを選んでも 94 字を超える**
+        （押し下げ 114 / 引き上げ 139）。ほかに 88〜89 字が 3 件（`index_tree.rs:148`・
+        `layout.rs:403`・`main.rs:614`）で p99 の直下に張り付く。
+  計画は「段落全体の再整形は射程外である」（plan.md:71-73）と明言しているので、
+  **この 1 件は「射程外の再整形」か「p99 超過の受容」のどちらかを選ばざるを得ない**。
+  機械的なゲートは壊れない（リポジトリ最長は 551 字・120 字超が 71 本あり、rustfmt は
+  `wrap_comments` 既定 false で折り返さない）。壊れるのは**計画自身の不変条件**である。
+  推奨: plan.md:187 を「移した分だけ次行が伸びる。`.rs` 形 A は最長 87 字で収まるが、
+  形 B は最長 114 字になる件が 1 件あり、そこだけ p99 超過を受容する（または段落を再整形する）」へ。
+  この所見を偽にする手順: `launcher_controller.rs:1828-1829` を実際に「参照が 1 物理行に収まる」
+  形へ直し、両行とも 94 字以下に収まれば偽。
+
+[要対処 3] ADR の作成（3-5）が、その ADR を短縮引用しうる 1-2 / 2-4 より**後ろにある**
+  `G-adr-citations` の母集団 `nonDocSources`（scripts/governance/checks/G-adr-citations.mjs:60-62）は
+  `/\.(rs|mjs)$/ && !docs/ && !*.test.mjs` であり、**`scripts/governance/checks/G-folded-heading-refs.mjs`
+  はここに入る**。非 md の腕はフェンスのマスクを掛けず**行全体**を走査する（同 :72）ので、
+  コメントでも文字列リテラルでも `ADR-<slug>` の形が出れば実在照合される。
+  `.claude/rules/governance-docs.md`（2-4 の対象）は `governanceDocs` 経由で同じ母集団に入る。
+  ゆえに:
+    - 1-2 で新検査のヘッダへ `ADR-folded-canonical-reference-detector` と書くと **1-6 が赤**
+      （先例の `G-near-heading-refs.mjs` のヘッダが ADR を引いているので、この形は誘い込まれやすい）
+    - 2-4 で `.claude/rules/governance-docs.md` から新 ADR を引くと **2-5 が赤**
+  正準形 `` `docs/adr/ADR-x.md`「…」 `` で書いた場合も、アンカー解決は `snapshot.files` 全体に対して
+  行われるので同じく赤になる。
+  推奨: (a) ADR 2 本の作成を Phase 1 の先頭（1-0）へ前倒しする、または
+        (b) 「3-5 より前に新 ADR を引用しない」を 1-2 / 2-4 の但し書きとして明記する。
+  この所見を偽にする手順: 複製で `checks/` の任意の `.mjs` へ `ADR-does-not-exist` の 1 語を書き、
+  `node scripts/governance-check.mjs` が exit 0 のままなら偽。
+
+[要対処 4] `gh pr create` のガードは「PR 本文へ送る項目」の `- [ ]` も**数える**
+  `pre-bash.mjs:370` `countUnchecked` は `/^\s*[-*]\s+\[ \]/gm` を plan.md 全文に当てるだけで、
+  見出し（「PR 本文へ送る項目（計画の作業項目ではない）」）を一切見ない。
+  `decide`（同 :329-336）は `plan.exists && plan.unchecked > 0` で無条件に block する。
+  実測: 今日の plan.md の未チェックは **32 件**（受け入れ条件 8 / PR 本文へ送る項目 1 / Phase 1 8 /
+  Phase 2 5 / Phase 3 6 / 人間レビュー 1、ほか 3）。
+  実装完了時点で必要な状態: **32 件すべてが `[x]`**（やらないと決めた項目は計画から外して理由を書く）。
+  含めて詰まるのは 2 か所:
+    - plan.md:144「PR 本文へ `## governance manifest delta` と `+G-folded-heading-refs` を書く」は
+      **PR が無いと完了できないのに、PR 作成前に `[x]` を要求される**。
+      回避は 1 本しかない: 本文を先にファイルへ書き（Write ツール）、
+      `git push -u origin HEAD && gh pr create --body-file <path>` の `&&` 鎖で 1 コマンドにして、
+      その時点で `[x]` を付けておく。**鎖に `cd` を入れると block される**（同 :324-327）。
+    - plan.md:281「承認待ち」も `[x]` が要る。
+  この所見を偽にする手順: `node -e` で `countUnchecked` を import し、plan.md:144 を含む文字列に
+  当てて 0 が返れば偽。
+
+[要対処 5] CI 固有 — **windows runner は CRLF チェックアウトで、実リポジトリ全走査のテストが走る**
+  - `scripts/governance-check.test.mjs:127-135`「実リポジトリ スモーク（dogfood）」は
+    `runAll(makeSnapshot(<リポジトリルート>)).findings` が **`[]` であること**を要求する。
+    これは `npm test` に含まれ、`ci.yml` の **node-check（ubuntu）と rust-check（windows）の両方**で走る。
+  - `linesOutsideFences`（lib.mjs:135）と `linesOfComments`（同 :208）は `split("\n")` であり、
+    **`\r` を行末に残す**。ローカルは `core.autocrlf=input`（実測）で LF、ubuntu も LF、
+    **windows runner は git-for-windows 既定の `core.autocrlf=true` で CRLF**。
+    `.gitattributes` が `eol=lf` を強制しているのは `.githooks/**` だけである（実測）。
+  - ゆえに新検査の述語が `\r` に敏感だと:
+      偽陽性側 → **ローカル緑・windows の npm test だけ赤**（ローカルで再現できない）
+      盲目側   → windows だけ静かに 0 件（`governance-check` job は ubuntu なので合否は保たれ、被害は軽い）
+  計画 1-1 は CRLF fixture を挙げており対策は入っているが、**「なぜ CRLF が実在するのか（windows CI の
+  チェックアウト）」を書いていない**ので優先度を下げられやすい。
+  推奨: 「PR 本文へ送る項目」へ **「rust-check（windows）の `npm test` が緑」** を 1 行足す
+  （`.claude/rules/safety-nets.md`「CI の実測は PR が在って初めて行える」の適用。今日の計画は
+  manifest delta の 1 行しか PR 側へ送っていない）。
+  この所見を偽にする手順: 複製を `git -c core.autocrlf=true clone` し直して
+  `node scripts/governance-check.mjs` と `npm test` の結果が LF 版と一致すれば（新検査導入後に）偽。
+
+[要対処 6] Phase 3 のフォールトインジェクション手順に 4 つの欠けがある
+  (a) **`.claude/rules/safety-nets.md` の罠に触れていない**——「複製で `npm test` を走らせるなら
+      `node_modules` を junction で張る。張らないと vitest は**起動前**にモジュール解決の失敗で
+      exit 1 を返し、**変異を検知した場合と終了コードが同じ**になる。モジュール解決の失敗を見たら
+      どのモジュールが解決できなかったかを必ず読む」。計画 3-1 は junction を張るとだけ書き、
+      **同一 exit code の罠と読み分けの手順を書いていない**。3-2 / 3-2b / 3-3 の判定を
+      exit code だけで行うなら、この一文が要る。
+  (b) **`governance:check` に `node_modules` は不要である**（実測: node_modules を持たない複製で
+      exit 0 と evidence 行が出た）。junction が要るのは**複製で `npm test` を走らせるとき**だけ。
+      3-2 / 3-2b が `governance:check` しか使わないなら 3-1 の junction は空振りで、
+      3-3「逆向き（既存 20 本のゲートを弱めていないか）」が `npm test` を含むなら必須になる。
+      **どちらを走らせるかを 3-2 / 3-3 に明記しないと、(a) の罠に踏むかどうかが決まらない。**
+  (c) **複製の置き場所に制約がある。** `makeSnapshot` の除外は
+      `WALK_EXCLUDE_PATHS = ["workspace", ".claude/worktrees", ".superpowers", "node_modules",
+      "target", "dist"]`（lib.mjs:39）で、**ルート錨止めの完全一致**である。
+      リポジトリ直下へ別名（例 `C:/workspace/Snotra/fi-copy`）で worktree を作ると、
+      **稼働中ツリーの `governance:check` がその中まで歩き**、見出し参照が二重に数えられて
+      1-6 / 2-5 / 3-6 の件数確認が壊れる。`.claude/worktrees/` 配下かリポジトリ**外**に置くこと。
+  (d) **変異前の基準（複製が緑であること）を記録する行が 3-2 に無い。** 3-2b は 33 → 15 の
+      「差」を測るので条件を満たすが、3-2 は「exit 1 になった」だけでは複製の作成手順が
+      壊れていないことと区別できない。「注入前に複製で exit 0 を確認 → 注入 → exit 1」の
+      2 点で書くこと。
+  この所見を偽にする手順: (b) は複製から `node_modules` を外して `node scripts/governance-check.mjs`
+  が起動に失敗すれば偽。(c) は `C:/workspace/Snotra/xx/` へファイルを 1 枚置いて evidence の
+  件数が動かなければ偽。
+
+===============================================================================
+2. 軽微
+===============================================================================
+
+[軽微 1] Phase の順序とコミット境界そのものは通る。**赤い中間状態は git 履歴に残らない。**
+  - `.githooks/pre-commit` は main 上の commit だけを拒む（実測: `[ "$(current_branch_ref)" = "$PROTECTED_REF" ]`）。
+    テストも検査も走らせないので、Phase 1 の途中（検査を置いたが 33 件を直していない状態）でも
+    commit は通る。Phase 1 は 1 コミットなので、履歴に赤は残らない。
+  - `pre-push` は宛先 `refs/heads/main` だけを拒む。feature ブランチの push は通る。
+  - `.claude/hooks/pre-bash.mjs` はこの手順のどのコマンドも拒まない（`gh pr create` を含まないため）。
+  - 1-2 の時点で `npm test` は**実リポジトリ スモークが 33 件で赤になる**が、これは Phase 内の
+    通過状態であり、1-4 / 1-5 の後に緑へ戻る。`checks/` へファイルを置いた瞬間に
+    `registry.mjs` が拾う（登録行が無い）ので、この赤は不可避かつ正常である。
+  - 途中で `scripts/governance/checks/*.mjs` を編集しても PostToolUse は何も走らせない（`selectChecks`
+    に割り当てが無い＝沈黙は「何も走らなかった」）。`.claude/hooks/lsp-config.mjs:8` を直すときだけ
+    `hook-selftest`（`vitest run .claude/hooks`）が走るが、**スコープが `.claude/hooks` なので
+    実リポジトリ スモーク（`scripts/`）には当たらない**——1-4 の途中で赤にならない。
+
+[軽微 2] 「`.rs` を 24 ファイル触る」は**箇所の数**であってファイル数ではない
+  重複を畳むと **16 ファイル / 24 箇所**（snotra-core 7 ファイル・src-tauri 9 ファイル）。
+  `snotra-core/src/index_tree.rs` と `snotra-core/src/search/build.rs` が形 A・形 B の両方に現れる。
+  PostToolUse の費用（E4 の warm 下限）:
+    snotra-core の 1 ファイル: fmt 0s + clippy 4〜5s + core-test 17〜22s ≒ **25s**
+    src-tauri の 1 ファイル  : fmt 0s + clippy 4〜5s + tauri-test 32s   ≒ **37s**
+    ファイル単位に束ねて 16 回 ≒ **8.5 分** / 箇所ごとに 24 回 ≒ **13 分**（いずれも下限）
+  → **1 ファイル 1 Edit へ束ねる**のが実務上の差になる（同一ファイルの複数箇所を 1 回で直す）。
+  出力量は問題にならない: 検査が緑なら hook は**何も出さない**（post-edit.mjs の契約）。
+  赤のときだけ fmt/clippy は head 20 行、cargo test は tail 5〜8 行に絞られる（BUDGETS）。
+
+[軽微 3] 「`cargo doc` は hook が走らせないので手動が要る」は**正しい**（検算済み）
+  `selectChecks`（post-edit.mjs:132-178）は `.rs` に fmt / clippy / <crate>-test しか割り当てない。
+  `docs/build-commands.md:29` も「`cargo doc` は CI（rust-check）でのみ発火し、PostToolUse フックは
+  発火しない…doc コメント（`///` / `//!`）を触ったらローカルで上記コマンドを手動実行」と一致。
+  計画 1-7 が正しい位置に置いている。**Phase 2 / 3 は `.rs` を触らないので 1-7 の 1 回で足りる。**
+
+[軽微 4] 受け入れ条件 plan.md:22 の「318 件」は **Phase 1 終了時点の数**であって最終状態ではない
+  Phase 2 が `PERFORMANCE.md` / `AGENTS.md` / `docs/comment-guidelines.md` /
+  `.claude/rules/governance-docs.md` へ書き足す文が正準形の参照を 1 つでも含めば 318 を超える
+  （4 枚とも `headingRefDocs` に入る）。2-2 は `AGENTS.md`「条件別チェック」の参照先セルへの追記なので、
+  正準形を書く可能性が高い。
+  推奨: 受け入れ条件を「1-6 の時点で 318 件」または「318 件以上」と書き分ける。
+  この所見を偽にする手順: Phase 2 の追記本文に `` `x.md`「…」 `` の形が 1 つも無ければ偽。
+
+[軽微 5] 3-4 の「作業ツリーが `git status --porcelain` 空」は今日すでに満たせない
+  実測: `?? workspace/`（`workspace/` は未追跡）。`plan.md` 自身がそこに在る以上、
+  PR 前に消さない限り空にならない。「追跡ファイルに差分が無い」（`git status --porcelain -uno` が空）
+  へ言い換えるのが正確。
+
+[軽微 6] 2-2 の「1 行入っている」は**表のセルへの追記**であって表の行追加ではない
+  `AGENTS.md:63` は「| 調査・測定のための一時的な足場（script・workflow・env フック）を新設 | … |」
+  という 1 行の表セルであり、Markdown の表セルは改行を持てない。裁定（plan.md:13「既存行へ 1 行」）
+  に従うなら参照先セルの末尾へ文を足す形になる。実装者が新しい表の行を足すと裁定と食い違う。
+
+[軽微 7] 新 ADR 2 本の中に書いた**正準形の参照は誰も照合しない**
+  `headingRefDocs`（lib.mjs:508-516）が `docs/adr/` を除外している（`ADR-adr-frozen-history`）。
+  一方 ADR 内の `ADR-<slug>` 短縮引用は `adrCitationDocs` が拾うので実在照合される（非対称）。
+  → ADR に書く見出し参照は腐っても鳴らない。**書くなら散文で書く**のが安全側。
+
+[軽微 8] `.test.mjs` の扱いが検査ごとに違う（1-2 のプレースホルダ規律に影響）
+  - `headingRefCommentDocs`（lib.mjs:565）は `commentFamilyOf(f) !== null` だけで絞るので
+    **`*.test.mjs` を含む**（実際 `scripts/plan-review-ledger.test.mjs:2` が今日の 33 件に入っている）。
+    ただし走査は `linesOfComments` が**コメント行に限る**ので、fixture の文字列リテラルは見えない。
+    → **新検査のテストで危ないのは fixture ではなくテストファイル自身のコメントである。**
+  - `G-adr-citations` の `nonDocSources`（G-adr-citations.mjs:61）は逆に `*.test.mjs` を**外す**が、
+    非 md の腕は**行全体**を見るので `.mjs` 本体では文字列リテラルも当たる（要対処 3 と同根）。
+
+[軽微 9] plan.md:145 の `lib.mjs:461` は `governanceDocs` の**定義開始行**で、`docs/adr/` 除外の実体は
+  `lib.mjs:465` である。結論（新 ADR は `docs` 列の delta にならない）は正しい。
+  `manifest`（governance-manifest.mjs:23-33）の 4 列のうち動くのは `checks` だけで、
+  `+G-folded-heading-refs` が唯一の delta になる——計画の PR 本文要求は過不足ない。
+
+[軽微 10] `pre-bash.mjs` の形の判定は **PowerShell ツールにも発火する**（本監査中に実際に踏んだ）
+    BLOCKED [pre-bash] (tool_name=PowerShell): パス区切りの `\` は…
+  Phase 3-1 の junction 作成（`New-Item -ItemType Junction -Path … -Target …`）は
+  **パスを `/` 区切りで書く**必要がある。同様に heredoc（`<<EOF`）も block されるので、
+  ADR や PR 本文などの多行テキストは Write ツールでファイルへ書いて `-F` / `--body-file` で渡す。
+
+===============================================================================
+3. 未検証
+===============================================================================
+
+[未検証 1] ⚠️ Phase 2 完了後の最終的な「見出し参照 N 件」は測れない（追記本文が未確定のため）。
+  318 が最終値かどうかは軽微 4 のとおり実装物を見ないと決まらない。
+
+[未検証 2] ⚠️ 新検査の **CRLF 下での挙動**は測れない（検査がまだ存在しない）。要対処 5 は
+  「windows CI が CRLF である」という測れた側の事実までで、新検査がそこで何件出すかは未知。
+
+[未検証 3] ⚠️ **内容変更を伴う** clippy / cargo test の再ビルド費用。E4 は「変更なし」と
+  「`touch` によるタイムスタンプ更新」で測った warm 下限で、実際に `.rs` の本文を書き換えると
+  当該 crate と下流（clippy は `--workspace --all-targets`）の再コンパイルが乗る。
+  作業ツリーを変更しない制約下では測れなかった。**軽微 2 の 8.5 分 / 13 分は下限である。**
+
+[未検証 4] ⚠️ 新検査の**偽陽性率**。今日 0 件（E2 で 33 件を直した複製が exit 0）だが、
+  将来の率は測れない。計画自身が同じことを「未検証」に置いており、そこは妥当。
+
+[未検証 5] ⚠️ `.claude/hooks/lsp-config.mjs:8` の編集が
+  「セーフティネットの変更は合意してから」（ルート `CLAUDE.md` 最重要ルール 2）に当たるか。
+  当該ファイルは母集団（`.claude/hooks/`）に入るが、変更はコメントの改行位置のみである。
+  計画は plan.md:79 でこのファイルを明示列挙しており、人間レビューは未承認（plan.md:281）なので
+  **開示はされている**。「コメントのみなら合意対象外」という判断が共有済みかは確認していない。
+
+[未検証 6] ⚠️ 3-3「逆向き（既存 20 本のゲートを弱めていないか）を 1 件測る」の
+  「20 本」は今日の検査数と一致する（E1）。新検査を数に入れていない読みなら正しい。
+  ただし**どの検査に対して何を測るか**が書かれておらず、`.claude/rules/safety-nets.md` の
+  「変異対象は他所から逐語で名指されていないものを選ぶ」を満たす対象かは判定できない
+  （`governance-manifest.test.mjs` が id を逐語で持つ検査を選ぶと、母集団と無関係に `npm test` が落ちる）。
+
+===============================================================================
+4. 使った複製の後始末
+===============================================================================
+scratchpad 配下に clone / clone2 を作り、node_modules は junction で張った後
+`(Get-Item …).Delete()` で reparse point だけを削除し、
+`C:/workspace/Snotra/node_modules/vitest/vitest.mjs` の実在を確認済み。
+稼働中のツリーには 1 バイトも変異を当てていない（`git status --porcelain` は `?? workspace/` のみ）。

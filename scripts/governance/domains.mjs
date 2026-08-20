@@ -68,7 +68,18 @@ export const DOMAIN_SPECS = [
   {
     name: "headingRefDocs",
     members: headingRefDocs,
-    anchors: [{ label: "docs/ 配下の md", holds: (m) => m.some((f) => f.startsWith("docs/")) }],
+    // Phase 1 が「腕の切り分けが自明でない」として保留した母集団。**除外句の列を割るのではなく、
+    // 別の母集団を丸ごと下界にする**ことで切り分けを回避した——`ruleDocs` / `skillDocs` は
+    // それ自身が錨を持つドメインであり、走査が同じ以上ここへ全件現れるはずである（実測で成立）。
+    // `some` の腕より強い（支えが 1 件ではなく母集団のサイズになる）。
+    anchors: [
+      { label: "docs/ 配下の md", holds: (m) => m.some((f) => f.startsWith("docs/")) },
+      { label: "ruleDocs の全メンバー", holds: (m, s) => ruleDocs(s).every((f) => m.includes(f)) },
+      { label: "skillDocs の全メンバー", holds: (m, s) => skillFiles(s).every((f) => m.includes(f)) },
+      // ルート直下の腕。固定点 2 つを名指すのは `governanceDocs` の第 1 錨と同じ理由である
+      // （本ファイル冒頭の「例外」を参照）。
+      { label: "ルートの AGENTS.md と CLAUDE.md", holds: (m) => m.includes("AGENTS.md") && m.includes("CLAUDE.md") },
+    ],
   },
   {
     name: "headingRefSourceDocs",

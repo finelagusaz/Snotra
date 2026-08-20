@@ -28,6 +28,9 @@ const FALSIFIERS = new Map([
   ["governanceDocs#.claude/skills/ の腕", withoutPrefix(".claude/skills/")],
 
   ["headingRefDocs#docs/ 配下の md", withoutPrefix("docs/")],
+  ["headingRefDocs#ruleDocs の全メンバー", withoutPrefix(".claude/rules/")],
+  ["headingRefDocs#skillDocs の全メンバー", withoutPrefix(".claude/skills/")],
+  ["headingRefDocs#ルートの AGENTS.md と CLAUDE.md", withoutMatch(/^AGENTS\.md$/)],
   ["headingRefSourceDocs#CLAUDE.md を持つ crate の src 配下の .rs", withoutMatch(/\/src\//)],
 
   ["headingRefCommentDocs#scripts/governance/checks/ 直下", withoutExactDir("scripts/governance/checks")],

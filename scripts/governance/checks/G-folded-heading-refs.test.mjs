@@ -97,9 +97,13 @@ describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が�
     // （逆向きの監査が変異注入で実測）。ここで挙げる 2 つは
     // `ADR-canonical-heading-references`「決定」が「入れない」と宣言している死角そのものであり、
     // **死角を埋める日には同じ差分でこの負例も動く**。
+    //
+    // **`file` を既定（`.md`）のままにすること。** 初稿は `"a.mjs"` を渡しており、`refScanLines` が
+    // `linesOfComments` を選ぶため `詳細は` で始まる行が 1 行も走査されず、**変異を当てても緑のまま
+    // だった**（実測）。守りたいのは綴りの述語であってコメント抽出ではない。
     it("ドットを持っても対象綴りでなければ見ない（`.ps1` / `.ts` は宣言された死角）", () => {
-      expect(run("詳細は `scripts/manual-smoke.ps1`\n「手順」\n", "a.mjs")).toEqual([]);
-      expect(run("詳細は `src/lib/types.ts`\n「型」\n", "a.mjs")).toEqual([]);
+      expect(run("詳細は `scripts/manual-smoke.ps1`\n「手順」\n")).toEqual([]);
+      expect(run("詳細は `src/lib/types.ts`\n「型」\n")).toEqual([]);
     });
 
     it("コードフェンスの内側は見ない（`.md` の走査はフェンスを落とす）", () => {

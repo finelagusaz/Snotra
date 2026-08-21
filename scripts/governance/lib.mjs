@@ -571,8 +571,9 @@ export function headingRefDocs(snapshot) {
  * 現に `#[cfg(test)]` の内側にあった（`snotra-settings/src/tabs/visual.rs`）。ゆえに、
  * この走査元へ **`#[cfg(test)]` 以降を落とす変換を入れてはならない**——テストコードを外さないのは
  * 意図であり、`lib.test.mjs` の種 3（`#[cfg(test)]` の内側のコメントも見る）がそれを固定する
- * ——入れるとあの it が落ちる。**落ちるのはそれだけである**——`governance:check` は緑のまま、
- * `#[cfg(test)]` の内側の生きた正準形が黙って照合から外れる（2026-08-21 実測）。**検知点は種 3 ただ 1 つ**。
+ * ——入れるとあの it が落ちる。**`governance:check` の全検査と `scripts/` のテストを通して、
+ * 落ちるのはそれだけである**（2026-08-21 実測）——`governance:check` 自身は緑のまま、
+ * `#[cfg(test)]` の内側の生きた正準形が黙って照合から外れる。
  *
  * **`.mjs` / `.ps1` はここではなく `headingRefCommentDocs` が持つ**（#1138）。#925 はこれらを
  * 却下したが、その裁定の実測は `.mjs` だけを見ており、`.ps1` / `.psm1` には本物の腐りが残っていた。

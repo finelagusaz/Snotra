@@ -14,12 +14,6 @@ function stripRustComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, " ");
 }
 
-/** `#[cfg(test)]` 以降を落とす。**母集団と読み手の両方に適用する**——読み手側で落とさないと
- *  「テストだけが読む」フィールドが読まれている側へ落ちる（`visible_rows` で実測） */
-function productionOnly(src) {
-  return src.split(/^#\[cfg\(test\)\]/m)[0];
-}
-
 // ---------------------------------------------------------------------------
 // G-stale-identifiers — 規範の散文に残る、現行語彙に無い識別子（腐り）の検出（#736 の同クラス）。
 //
@@ -90,8 +84,9 @@ function productionOnly(src) {
 // - **Rust のテストコードは今も語彙を寄付しうる。** `VOCAB_TEST_FILE` が当たるのはファイル名の
 //   `.test.<ext>` という形だけで、Rust 側の 3 つの形——`#[cfg(test)] mod` の中身・
 //   `<crate>/tests/*.rs` の統合テスト・`src/**/tests/*.rs` へ分けたテストファイル——はどれも外れる。
-//   `productionOnly` を通しても落ちるのは 1 つ目だけである。現時点でこの穴に落ちた finding は
-//   1 件も無く（測定の全セルで 0 件）、測って動かなかったものを入れないだけの理由で開けてある
+//   `#[cfg(test)]` 以降を落とす変換を通しても落ちるのは 1 つ目だけで、残る 2 つには述語が要る。
+//   現時点でこの穴に落ちた finding は 1 件も無く（測定の全セルで 0 件）、測って動かなかったものを
+//   入れないだけの理由で開けてある
 // - **`.json` は語彙源ではない**（`VOCAB_SOURCE_EXT`）。設定キーが JSON にしか無い語は偽陽性になりうる
 //   ——`docs/hooks.md` の `${CLAUDE_PROJECT_DIR}` はこの残余を避けて**文書側の記述を正確化**して外した。
 //   `.json` を入れれば免罪できるが、生成物（`src-tauri/gen/schemas/`）・依存メタデータ

@@ -86,12 +86,12 @@ git grep -n productionOnly             # 残った出現の全件振り分け
 
 **フェーズ 1 — 実装**
 
-- [ ] `lib.mjs:571-572` と `lib.test.mjs:113-114` の禁止文から偽の前提を落とし、禁止を変換の名で書き直す（正準形は 1 物理行に保つ）
-- [ ] `G-stale-identifiers.mjs:90-94` を書き換える（測定結果と却下理由を保存し、「受容する残余」を正準形へ格上げしない）
-- [ ] `productionOnly` の定義を削除し（`17,22d`）、実装差分を確定させる
-- [ ] `node scripts/governance-check.mjs` が exit 0 で、**サマリ行が変更前とバイト単位で一致する**ことを確認する
-- [ ] `npx vitest run scripts/` が 32 ファイル / 523 テスト passed であることを確認する
-- [ ] `git grep -n productionOnly` の全出現を「凍結された歴史／撤去を描写している」へ振り分け、実在を前提にした記述が 0 件であることを確認する
+- [x] `lib.mjs:571-572` と `lib.test.mjs:113-114` の禁止文から偽の前提を落とし、禁止を変換の名で書き直す（正準形は 1 物理行に保つ）
+- [x] `G-stale-identifiers.mjs:90-94` を書き換える（測定結果と却下理由を保存し、「受容する残余」を正準形へ格上げしない）
+- [x] `productionOnly` の定義を削除し（`17,22d`）、実装差分を確定させる
+- [x] `node scripts/governance-check.mjs` が exit 0 で、**サマリ行が変更前とバイト単位で一致する**ことを確認する
+- [x] `npx vitest run scripts/` が 32 ファイル / 523 テスト passed であることを確認する
+- [x] `git grep -n productionOnly` の全出現を「凍結された歴史／撤去を描写している」へ振り分け、実在を前提にした記述が 0 件であることを確認する
 
 **フェーズ 2 — 禁止の機構が無傷であることの再実測**
 

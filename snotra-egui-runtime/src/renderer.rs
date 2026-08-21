@@ -40,11 +40,17 @@ pub(crate) struct EguiRenderer {
     // Surface は自前の display handle を所有し Context 生存に依存しない（Context 非保持）。
     surface: softbuffer::Surface<tauri::Window, tauri::Window>,
     textures: HashMap<egui::TextureId, CpuTexture>,
+    /// `SNOTRA_EGUI_PAINT_TRACE` の行に載せる窓の識別子（`main` / `results`）。
+    /// **窓ごとに別の `egui::Context` を持つ構成ゆえ、窓を名指さない計測値は合算できない**
+    /// ——同じ字形の集合が窓の数だけ実体化されるため、どちらの窓の額かで意味が変わる。
+    label: String,
 }
 
 impl EguiRenderer {
     /// present するスレッド（tao イベントループ）で呼ぶこと。GDI 親和性のため。
     pub(crate) fn new(window: tauri::Window) -> Result<Self, RuntimeError> {
+        // label は `window` を softbuffer へ渡す前に取る（渡すと move される）。
+        let label = window.label().to_string();
         let context = softbuffer::Context::new(window.clone())
             .map_err(|e| RuntimeError::SurfaceInit(e.to_string()))?;
         let surface = softbuffer::Surface::new(&context, window)
@@ -52,6 +58,7 @@ impl EguiRenderer {
         Ok(Self {
             surface,
             textures: HashMap::new(),
+            label,
         })
     }
 
@@ -155,13 +162,39 @@ impl EguiRenderer {
         }
         present_result?;
         if let (Some(b), Some(t), Some(r)) = (t_begin, t_tess, t_raster) {
+            // **メモリ内訳は時刻の後に測る**——`fonts()` はフォントのロックを取るので、
+            // 上の 3 区間（tess / raster / present）へその待ちを混ぜない。
+            //
+            // ここが出す 3 つは**同じ字形集合の別々の実体**である（外から区別できないと、
+            // 増えた額をどれにも帰属させられない）:
+            // - `atlas`（epaint 側の `TextureAtlas::image`・RGBA8・幅は `MAX_TEXTURE_SIDE` 固定で
+            //   高さは 32 から倍々に伸びる）
+            // - `tex_font`（この層が `apply_texture_delta` で持つ**その複製**。CPU ラスタは
+            //   epaint のアトラス実体を借りられないため構造上 2 部目が要る）
+            // - `tex_other`（アイコン等の実行時テクスチャ。件数も出す）
+            //
+            // **撤去してよいのは、この 3 つの関係が別の手段で観測できるようになったときである。**
+            // 現状これらは外から測れない——プロセスの commit にまとめて現れるだけで、窓ごとにも
+            // 実体ごとにも分けられない。計器の一覧と読み方は `PERFORMANCE.md`「計測と受け入れ基準」。
+            let residency = raster::texture_residency(&self.textures);
+            let atlas = context.fonts(|f| f.font_image_size());
+            let kib = |bytes: usize| bytes / 1024;
             eprintln!(
-                "SNOTRA_EGUI_PAINT tess_ms={:.2} raster_ms={:.2} total_ms={:.2} meshes={} px={}",
+                "SNOTRA_EGUI_PAINT win={} tess_ms={:.2} raster_ms={:.2} total_ms={:.2} meshes={} px={} \
+                 surface_kib={} atlas={}x{} atlas_kib={} tex_font_kib={} tex_other_kib={} tex_other_n={}",
+                self.label,
                 (t - b).as_secs_f64() * 1000.0,
                 (r - t).as_secs_f64() * 1000.0,
                 b.elapsed().as_secs_f64() * 1000.0,
                 clipped.len(),
                 size.width as u64 * size.height as u64,
+                kib(width * height * 4),
+                atlas[0],
+                atlas[1],
+                kib(atlas[0] * atlas[1] * 4),
+                kib(residency.font_bytes),
+                kib(residency.other_bytes),
+                residency.other_count,
             );
         }
         Ok(PaintOutcome::Presented)

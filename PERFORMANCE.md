@@ -2606,7 +2606,7 @@ B 側は live +73.74 に対し peak 73.83（差 0.09 MiB）——`HashSet` に�
   - **検査は双方向でなければならない**——「説明されない `null`」だけを見る形は、**スキップした区間に `0` を書く誤りを素通しする**（変異を書いていて気づいた）。逆向き（`null` であるべき区間に値がある）も同じ重さで落とす
 - egui/softbuffer の計器は 5 つの env（いずれも未設定なら計器のコストは 0）。**このリストが計器の正本である**——`docs/build-commands.md` には置かない
   - **受理値: 空でなければ何でもよい**（`=1` でも `=0` でも点く）。**空文字は「未設定」として扱う**——判定は `snotra-egui-runtime/src/env.rs` の 1 箇所に集約してある（#872: PowerShell の env 復元が空文字を作り、測定ハーネスの全反復が黙って計器つきで走っていた）。**`SNOTRA_TRACE` だけは別の意味論である**（`1｜true｜yes｜on` のみ・`src-tauri/src/trace.rs` の `env_flag`）
-  - `SNOTRA_EGUI_PAINT_TRACE`: paint フェーズ（`tess_ms` / `raster_ms` / `total_ms` / `meshes` / `px`）。#532 SU6.5 の flip ゲート G3(b) の主判定に使った
+  - `SNOTRA_EGUI_PAINT_TRACE`: paint フェーズ（`win` / `tess_ms` / `raster_ms` / `total_ms` / `meshes` / `px`）と**描画側メモリの内訳**（`surface_kib` / `atlas`＝epaint のアトラス寸法 / `atlas_kib` / `tex_font_kib`＝この層が持つその複製 / `tex_other_kib` / `tex_other_n`）。#532 SU6.5 の flip ゲート G3(b) の主判定に使った。**内訳の 3 値は同じ字形集合の別々の実体であり、窓ごとに出る**（`win` を見ずに合算しない）——意味と撤去条件は `snotra-egui-runtime/src/renderer.rs` の当該コメントが正本
   - `SNOTRA_EGUI_REPAINT_TRACE`: フレームの到着（`window` / `focused` / `since_prev_ms` / egui の repaint 原因 `file:line`）。**「なぜ再描画が止まらないか」を推測せず原因に名乗らせる**ための計器（#628）
   - `SNOTRA_EGUI_WAKE_TRACE`: `RequestRedraw` の送信（repaint worker・`SEND`）と受信（イベントループの `RedrawRequested` arm・`RECV`・引き当て結果付き）。hidden 中にどの層が配送を抑止しているかの切り分けに使う（#697）
   - `SNOTRA_EGUI_INPUT_TRACE`: 打鍵の到達（注入 → tao の配送 → egui への push → フレーム）。**この計器は系を乱す**——runner では stderr 1 行が 17〜56ms かかり、最初のフレームの到来を押し下げる。**率を測る回と機序を測る回は別の回にすること**（#872/#936）

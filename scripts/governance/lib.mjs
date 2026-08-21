@@ -570,8 +570,8 @@ export function headingRefDocs(snapshot) {
  * テストコメントに書かれた規範への参照は本物であり、腐れば同じ害になる——#925 が見つけた腐り 1 件は
  * 現に `#[cfg(test)]` の内側にあった（`snotra-settings/src/tabs/visual.rs`）。ゆえに、
  * この走査元へ **`#[cfg(test)]` 以降を落とす変換を入れてはならない**——テストコードを外さないのは
- * 意図であり、`lib.test.mjs` の種 3（`#[cfg(test)]` の内側のコメントも見る）がそれを固定する
- * ——入れるとあの it が落ちる。**`governance:check` の全検査と `scripts/` のテストを通して、
+ * 意図であり、`lib.test.mjs` の種 3（`#[cfg(test)]` の内側のコメントも見る）が**この変換を**固定する
+ * ——入れるとあの it が落ちる。**`governance:check` の全検査と `vitest run scripts/` を通して、
  * 落ちるのはそれだけである**（2026-08-21 実測）——`governance:check` 自身は緑のまま、
  * `#[cfg(test)]` の内側の生きた正準形が黙って照合から外れる。
  *

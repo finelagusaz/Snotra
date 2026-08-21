@@ -41,8 +41,8 @@ cargo / npm の依存関係を一括更新し、ローカル検証 → PR 作成
     lint 対応が紛れるうえ、**切り出さないと他の PR はブロックされたままになる**（2026-08-21 に
     #1160 / #1159 でこの分離を実際に行った）。**clippy はエラーの出た crate でコンパイルを止めるので、
     CI のログだけでは全数が見えない**——`git grep` で母集団を数え、新しい版の clippy をローカルへ
-    入れて（`rustup toolchain install <版> --profile minimal --component clippy`・既定は変えない）
-    `cargo +<版> clippy --workspace --all-targets -- -D warnings` で検算する
+    入れて（`rustup toolchain install <版> --profile minimal --component clippy`・既定は変えない）、
+    `docs/build-commands.md` カテゴリ A の clippy 行を `cargo +<版>` で走らせて検算する
 
 ## Step 3 — ローカル検証（最大5サイクル）
 

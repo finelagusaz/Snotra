@@ -31,7 +31,9 @@ pub(crate) fn png_to_color_image(png: &[u8]) -> Option<egui::ColorImage> {
     let (w, h) = (info.width as usize, info.height as usize);
     let rgba = &buf[..info.buffer_size()];
     let pixels: Vec<egui::Color32> = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
         .collect();
     if pixels.len() != w * h {

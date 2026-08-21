@@ -568,8 +568,12 @@ export function headingRefDocs(snapshot) {
  * **Rust のテストコードを外さない。** `adrCitationDocs` が `*.test.mjs` を外すのは「フィクスチャが
  * 赤経路を測るため意図的に実在しない名前を持つ」からであって、テストだからではない。Rust の
  * テストコメントに書かれた規範への参照は本物であり、腐れば同じ害になる——#925 が見つけた腐り 1 件は
- * 現に `#[cfg(test)]` の内側にあった（`snotra-settings/src/tabs/visual.rs`）。`productionOnly` 相当を
- * 「G-stale-identifiers との対称性の完成」として後から入れてはならない（その非対称は意図である）。
+ * 現に `#[cfg(test)]` の内側にあった（`snotra-settings/src/tabs/visual.rs`）。ゆえに、
+ * この走査元へ **`#[cfg(test)]` 以降を落とす変換を入れてはならない**——テストコードを外さないのは
+ * 意図であり、`lib.test.mjs` の種 3（`#[cfg(test)]` の内側のコメントも見る）が**この変換を**固定する
+ * ——入れるとあの it が落ちる。**`governance:check` の全検査と `vitest run scripts/` を通して、
+ * 落ちるのはそれだけである**（2026-08-21 実測）——`governance:check` 自身は緑のまま、
+ * `#[cfg(test)]` の内側の生きた正準形が黙って照合から外れる。
  *
  * **`.mjs` / `.ps1` はここではなく `headingRefCommentDocs` が持つ**（#1138）。#925 はこれらを
  * 却下したが、その裁定の実測は `.mjs` だけを見ており、`.ps1` / `.psm1` には本物の腐りが残っていた。

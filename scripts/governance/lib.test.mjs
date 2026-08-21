@@ -110,8 +110,8 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
 
   it("種 3: `#[cfg(test)]` の内側のコメントも見る（テストコードを母集団から外さない）", () => {
     // #925 が実際に見つけた腐り 1 件は `snotra-settings/src/tabs/visual.rs` の `#[cfg(test)]` の
-    // 内側にあった。`productionOnly` 相当を「G-stale-identifiers との対称性の完成」として
-    // 入れると、この it が落ちる——非対称は意図である
+    // 内側にあった。走査元へ `#[cfg(test)]` 以降を落とす変換を入れると、この it が落ちる
+    // ——テストコードを母集団から外さないのは意図である
     const src = 'fn f() {}\n\n#[cfg(test)]\nmod tests {\n    // 根拠は `CLAUDE.md`「Git 運用」\n    #[test]\n    fn t() {}\n}\n';
     const f = scanRs(src).findings;
     expect(f).toHaveLength(1);

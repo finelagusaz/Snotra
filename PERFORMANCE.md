@@ -2548,6 +2548,101 @@ B 側は live +73.74 に対し peak 73.83（差 0.09 MiB）——`HashSet` に�
 **残余**: NTFS の case-sensitive ディレクトリで `Foo.exe` と `foo.exe` が同居していれば
 単一根でも重複が出うる。実運用点では **0 件**であった（測って 0 だった、という記録である）。
 
+## 常駐メモリの帰属（2026-08-22 計測・19,985 エントリ・計器 3 種）
+
+**測定条件**: 機体 HAL9000 / release / 実 config を複製した使い捨てプロファイル（`SNOTRA_CONFIG_DIR`。
+実 `%APPDATA%\Snotra` は読み書きしていない）/ 索引 **19,985 エントリ**・`index.bin` 0.58 MiB・v7 /
+`font_family = "HackGen Console"`（10.21 MiB・cmap 実測で CJK をカバーするため jp_font は積まれない）/
+`auto_hide_on_focus_lost = false` / **各構成 1 標本** / **同条件の再走のばらつきは 0.6〜0.8 MiB で、
+それ以下の差は有意と読まない**（旧「~4 MiB」の根拠は #1001 の再スキャン撤去で消えていたため取り直した）。
+
+> **この節の運用点は「索引の常駐の内訳（2026-08-07 計測・312,377 エントリ）」とは別である。**
+> 同じ機体で `[[paths.scan]]` が変わり、索引の常駐は 166.08 → **1.79 MiB** になった。
+> **索引を削る反復 1〜12 が対象にしていた額は、この運用点では実質ゼロである**——あちらの数値を
+> 現況と読まないこと。
+
+### 段階別（実 config 相当）
+
+| 段階 | PrivComm | PrivWS |
+|---|---:|---:|
+| アイドル（一度も表示せず） | 19.50 | 17.7 |
+| 表示（空クエリ） | 21.6 | 19.5 |
+| 検索後 | 31.3 | 27.2 |
+| hide 後（`EmptyWorkingSet` 適用済み） | 31.3 | **2.2** |
+
+**利用者から見た形**: 非表示 2.2 MiB / 定常の可視 約 9 MiB（2 周目以降）/ 物理のピークは初回の
+表示＋検索の一度だけ約 28 MiB。**hide 経路の trim は現行でも効いており、非表示常駐に削る余地は無い。**
+
+**60 周（24 語ローテーション・trace で 60/60 の show・results・hide を肯定的に確認）で PrivComm は
+20.31 → 38.4 ± 0.1 に収束し、35 周以降は平ら。負の差分も出る。hide 後の PrivWS は 60 周を通じて
+1.75〜2.50 MiB で平ら**——commit は増えるが物理は増えない。漏れではない。
+
+### アイドル 19.50 MiB の帰属
+
+| 項目 | 額 | 出所 |
+|---|---:|---|
+| フォントのバイト列 | 10.21 | font_family を 3 構成で振った線形性（下記） |
+| 索引（`SearchEngine` 常駐） | 1.79 | `snotra-core/tests/memory_footprint.rs`（cache-hit・1 標本） |
+| その他の Rust ヒープ | 0.47 | ヒープ計装 12.47 − 上記 2 つ |
+| Windows ヒープのオーバーヘッド + GDI の面 + 非 Rust の private | 3.20 | `VirtualQuery` の private 15.67 − ヒープ 12.47 |
+| スレッドスタック（**51 本**） | 1.71 | `VirtualQuery`（guard ページを含む private の確保単位） |
+| **未説明** | **2.12** | PrivComm −（private + stacks）。**差引で埋めて表を閉じない** |
+
+**フォントのバイト列は 1:1 で private commit に載る。** アイドルの PrivComm から font のファイル
+サイズを引くと 3 構成とも同じ値になる（`HackGen Console` 20.0−10.21 = 9.79 / 解決不能名→jp 単独
+23.2−13.26 = 9.94 / 既定の `Segoe UI`＋jp 23.8−14.18 = 9.62）。**既定構成が最も重い**——`Segoe UI` は
+CJK を覆わないため jp_font 13.26 MiB が併載され、font だけで 14.18 MiB になる。
+
+**アイドルの live heap 12.47 MiB はブロック数でも整合する**: 索引 520 blocks + フォントの leak 1 block に
+対し全体 3,114 blocks。差 2,593 ブロックに残余 0.47 MiB なら 1 ブロック平均 190 バイトで、
+「小さい確保が多数」と符合する。**ただし整合であって同定ではない。**
+
+### 検索段の増分は、アイコンの有無で性質が反転する
+
+| 構成 | 増分（表示 → 検索後） | Rust ヒープ | private その他 | mapped | image 計 |
+|---|---:|---:|---:|---:|---:|
+| `show_icons = false` | +6.95 | **+4.71（68%）** | +2.14 | ±0 | ±0 |
+| `show_icons = true`（上へ追加で） | +4.61 | **+0.31（7%）** | +3.93 | +1.15 | +9.67 |
+
+- **アイコンが無ければ、検索段の増分はほぼ我々のヒープである。**
+- **アイコンの額（3.4〜4.1 MiB）はシェル側の常駐であって我々のヒープではない**——ロード済み DLL が
+  63 → 75（+12）、ハンドル 493 → 598、スレッド 50 → 52 と動き、`show_icons = false` では 3 つとも動かない。
+  アイコンの**テクスチャ**は 24 KiB にすぎない。**削るなら「アイコンを OS のシェル API 以外で得る」か
+  「アイコンを使わない」しかない。**
+- **surface（softbuffer）は GDI の `CreateDIBSection` であって Rust ヒープではない。** 窓の高さだけを
+  動かす A/B（10 行 → 30 行・1 面 +1.73 MiB）で `private その他` が +2.26 動き、`mapped` は動かなかった。
+
+### 反証された 3 つの見立て（**計器を足すたびに帰属先が動いた**）
+
+| 見立て | 実測 | 何が誤らせたか |
+|---|---|---|
+| フォントアトラスが窓ごと 2 部・MiB 級で 4 部ある | **1 窓 1 MiB・2 窓で 2 MiB**（実運用点では初期値 4096×32 のまま倍加しない） | 機構（幅 4096 固定・高さ倍々）は実在するが、font_size 15 では発火しない。font_size 60 では main 4096×64 / results 4096×128 へ伸びる |
+| 行数を増やしたときの超過は surface の二重保持 | **surface は 1 部**（幅だけを動かす A/B で 1 面ぶん以下） | 行数の A/B は面積と字形を同時に動かす**縮退した A/B** だった |
+| 非ヒープの一部は解放済みヒープの保持 | **peak − live は 0.45〜0.50 MiB** | live だけでは切り分けられず、peak を数えて初めて否定できた |
+| スレッドスタックが非ヒープの最大候補 | **51 本で 1.71 MiB**（1 本 34 KiB） | reserve 1 MiB から推すと 51 MiB と誤る。Windows は触れたページしか commit しない |
+
+### 測っていないもの（受容する残余）
+
+- **`private その他` の内訳**（アイドル 3.20・検索段 +3.93）。Windows ヒープのオーバーヘッド・
+  GDI の面・非 Rust コード（シェル / COM）の確保が混ざっており、**`VirtualQuery` の粒度では
+  これ以上割れない**。割るなら ETW か `HeapWalk` が要る——**額 3〜4 MiB に見合うかを先に判断すること。**
+- **索引 312k の運用点・索引再構築中のピーク・first-run・DPI 150〜200%・アイコン cap 到達・
+  設定サイドカー起動中・updater 経路・数日常駐**——いずれも未踏。**この節の結論は上の運用点に閉じる。**
+- **`heap-trace` を有効にしたビルドは、`npm test` / Pester / smoke のいずれも通っていない**
+  （それらは既定ビルドで走る）。CI の `cargo check -p snotra --features heap-trace` が
+  コンパイルだけを守る。
+- 削る価値の**目標値が無い**。他のランチャーとの比較は測っていない。
+
+### 計器の所在
+
+- **描画側の内訳**は `SNOTRA_EGUI_PAINT_TRACE`（`win` / `surface_kib` / `atlas` / `atlas_kib` /
+  `tex_font_kib` / `tex_other_kib` / `tex_other_n`）。意味と撤去条件は
+  `snotra-egui-runtime/src/renderer.rs` の当該コメントが正本。
+- **ヒープ側**は `heap-trace` feature（既定ビルドには入らない）。`[trace]` 行の `heap` 欄として出る。
+  **欄の不在は「測っていない」であって 0 ではない。** 正本は `src-tauri/src/heap_trace.rs` の `//!`。
+- **`VirtualQuery` の種別分類**は使い捨ての PowerShell プローブで行った（**リポジトリには入れていない**
+  ——2 度目に必要になったら `scripts/` へ置く）。
+
 ## 試みたが機能しない手法
 
 - **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。
@@ -2606,7 +2701,7 @@ B 側は live +73.74 に対し peak 73.83（差 0.09 MiB）——`HashSet` に�
   - **検査は双方向でなければならない**——「説明されない `null`」だけを見る形は、**スキップした区間に `0` を書く誤りを素通しする**（変異を書いていて気づいた）。逆向き（`null` であるべき区間に値がある）も同じ重さで落とす
 - egui/softbuffer の計器は 5 つの env（いずれも未設定なら計器のコストは 0）。**このリストが計器の正本である**——`docs/build-commands.md` には置かない
   - **受理値: 空でなければ何でもよい**（`=1` でも `=0` でも点く）。**空文字は「未設定」として扱う**——判定は `snotra-egui-runtime/src/env.rs` の 1 箇所に集約してある（#872: PowerShell の env 復元が空文字を作り、測定ハーネスの全反復が黙って計器つきで走っていた）。**`SNOTRA_TRACE` だけは別の意味論である**（`1｜true｜yes｜on` のみ・`src-tauri/src/trace.rs` の `env_flag`）
-  - `SNOTRA_EGUI_PAINT_TRACE`: paint フェーズ（`tess_ms` / `raster_ms` / `total_ms` / `meshes` / `px`）。#532 SU6.5 の flip ゲート G3(b) の主判定に使った
+  - `SNOTRA_EGUI_PAINT_TRACE`: paint フェーズ（`win` / `tess_ms` / `raster_ms` / `total_ms` / `meshes` / `px`）と**描画側メモリの内訳**（`surface_kib` / `atlas`＝epaint のアトラス寸法 / `atlas_kib` / `tex_font_kib`＝この層が持つその複製 / `tex_other_kib` / `tex_other_n`）。#532 SU6.5 の flip ゲート G3(b) の主判定に使った。**内訳の 3 値は同じ字形集合の別々の実体であり、窓ごとに出る**（`win` を見ずに合算しない）——意味と撤去条件は `snotra-egui-runtime/src/renderer.rs` の当該コメントが正本
   - `SNOTRA_EGUI_REPAINT_TRACE`: フレームの到着（`window` / `focused` / `since_prev_ms` / egui の repaint 原因 `file:line`）。**「なぜ再描画が止まらないか」を推測せず原因に名乗らせる**ための計器（#628）
   - `SNOTRA_EGUI_WAKE_TRACE`: `RequestRedraw` の送信（repaint worker・`SEND`）と受信（イベントループの `RedrawRequested` arm・`RECV`・引き当て結果付き）。hidden 中にどの層が配送を抑止しているかの切り分けに使う（#697）
   - `SNOTRA_EGUI_INPUT_TRACE`: 打鍵の到達（注入 → tao の配送 → egui への push → フレーム）。**この計器は系を乱す**——runner では stderr 1 行が 17〜56ms かかり、最初のフレームの到来を押し下げる。**率を測る回と機序を測る回は別の回にすること**（#872/#936）

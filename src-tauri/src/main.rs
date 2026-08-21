@@ -10,6 +10,7 @@ mod commands;
 mod config_watcher;
 mod egui_shell;
 mod events;
+mod heap_trace;
 mod icon;
 mod ime;
 mod indexing;

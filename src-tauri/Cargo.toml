@@ -6,6 +6,11 @@ edition = "2024"
 [lints]
 workspace = true
 
+[features]
+# ヒープ計装（既定ビルドには入らない）。有効化すると `#[global_allocator]` が計数版へ差し替わり、
+# `[trace]` 行に `heap` 欄が出る。意味・測らないもの・撤去条件は `src/heap_trace.rs` の `//!`。
+heap-trace = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

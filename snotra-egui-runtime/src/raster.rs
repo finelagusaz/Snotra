@@ -208,10 +208,95 @@ pub(crate) fn apply_texture_delta(
     }
 }
 
+/// CPU 側テクスチャ常駐の内訳（バイト）。**フォントアトラスとそれ以外を分ける**
+/// ——前者は窓ごとに 1 枚で高さの倍加とともに階段状に伸び、後者（アイコン等）は件数が動く。
+/// 混ぜて 1 つの数にすると、増えたのがどちらかを外から区別できない。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TextureResidency {
+    pub(crate) font_bytes: usize,
+    pub(crate) other_bytes: usize,
+    pub(crate) other_count: usize,
+}
+
+/// `textures` が保持する RGBA8 画素のバイト数を、フォントアトラスとそれ以外へ振り分ける。
+///
+/// **フォントアトラスの判定は `TextureId::Managed(0)`** である——「最初の managed テクスチャが
+/// フォントデータ」は epaint の規約（`epaint::TextureId::Managed` の doc）であって、この層が
+/// 決めた約束ではない。規約が変われば `font_bytes` が 0 に落ち、同じ額が `other_bytes` 側へ
+/// 現れる（黙って消えはしない）。
+///
+/// 数えるのは `pixels` の**長さ**であり `Vec` の容量ではない。`apply_texture_delta` の全面更新は
+/// `collect` で正確な長さの `Vec` を作るため、両者は一致する。
+pub(crate) fn texture_residency(
+    textures: &HashMap<egui::TextureId, CpuTexture>,
+) -> TextureResidency {
+    let mut out = TextureResidency::default();
+    for (id, texture) in textures {
+        let bytes = texture.pixels.len() * std::mem::size_of::<[u8; 4]>();
+        if *id == egui::TextureId::Managed(0) {
+            out.font_bytes += bytes;
+        } else {
+            out.other_bytes += bytes;
+            out.other_count += 1;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use egui::epaint::image::{ImageData, ImageDelta};
+
+    fn texture(width: usize, height: usize) -> CpuTexture {
+        CpuTexture {
+            width,
+            height,
+            pixels: vec![[0u8; 4]; width * height],
+            filter: TexFilter::Nearest,
+        }
+    }
+
+    /// 空の store は 0 を返す。**「測れなかった」と「0 だった」を区別できる形にしておく**
+    /// ——呼び出し側は件数も併せて出すので、0 件と 0 バイトが同時に見える。
+    #[test]
+    fn texture_residency_of_empty_store_is_zero() {
+        let textures: HashMap<egui::TextureId, CpuTexture> = HashMap::new();
+        assert_eq!(texture_residency(&textures), TextureResidency::default());
+    }
+
+    /// `Managed(0)` はフォントアトラス（epaint の規約）。RGBA8 ゆえ画素数 × 4 バイト。
+    #[test]
+    fn texture_residency_attributes_managed_zero_to_the_font_atlas() {
+        let mut textures = HashMap::new();
+        textures.insert(egui::TextureId::Managed(0), texture(4096, 32));
+        assert_eq!(
+            texture_residency(&textures),
+            TextureResidency {
+                font_bytes: 4096 * 32 * 4,
+                other_bytes: 0,
+                other_count: 0,
+            }
+        );
+    }
+
+    /// アイコン等は `Managed(0)` 以外に載る。**件数も返す**——バイト数だけでは
+    /// 「大きいのが 1 枚」と「小さいのが多数」を区別できない。
+    #[test]
+    fn texture_residency_counts_non_font_textures_separately() {
+        let mut textures = HashMap::new();
+        textures.insert(egui::TextureId::Managed(0), texture(64, 2));
+        textures.insert(egui::TextureId::Managed(1), texture(32, 32));
+        textures.insert(egui::TextureId::User(7), texture(16, 16));
+        assert_eq!(
+            texture_residency(&textures),
+            TextureResidency {
+                font_bytes: 64 * 2 * 4,
+                other_bytes: (32 * 32 + 16 * 16) * 4,
+                other_count: 2,
+            }
+        );
+    }
 
     #[test]
     fn raster_core_matches_soft_probe_invariants() {

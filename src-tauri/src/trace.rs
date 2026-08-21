@@ -51,13 +51,17 @@ pub(crate) fn trace(event: &str, data: serde_json::Value) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    eprintln!(
-        "[trace] {}",
-        json!({
-            "seq": seq,
-            "ts_ms": ts_ms,
-            "event": event,
-            "data": data,
-        })
-    );
+    let mut line = json!({
+        "seq": seq,
+        "ts_ms": ts_ms,
+        "event": event,
+        "data": data,
+    });
+    // ヒープ計装は `heap-trace` feature を有効にしたビルドでだけ値を返す（既定は `None`）。
+    // **欄そのものを出さない**ことが「測っていない」の表現である——0 を書くと
+    // 「測ったら 0 だった」と区別できない。意味と限界は `heap_trace.rs` の `//!`。
+    if let Some(heap) = crate::heap_trace::snapshot() {
+        line["heap"] = crate::heap_trace::heap_fields(&heap);
+    }
+    eprintln!("[trace] {line}");
 }

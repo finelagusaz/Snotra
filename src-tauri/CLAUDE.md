@@ -27,6 +27,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `events.rs` — アプリ内 Tauri イベント名の定数（責務は `//!`）
 - `ime.rs` — IME をオフにする Win32 IMM API の薄いラッパー（責務は `//!`）
 - `trace.rs` — `SNOTRA_TRACE` 環境変数ゲートの構造化トレースログ（責務は `//!`）
+- `heap_trace.rs` — Rust ヒープ常駐の計装（`heap-trace` feature でのみ有効・責務と撤去条件は `//!`）。**既定ビルドには入らない**——feature 無しでは `#[global_allocator]` を差し替えず `snapshot()` が `None` を返し、`trace.rs` は `heap` 欄を出さない（**欄の不在が「測っていない」であり、0 ではない**）
 - `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計器（責務は `//!`）。**終端（`startup:ready` / `startup:failed`）を `platform/mod.rs` の `RegisterInitialHotkey` の arm だけに閉じてはならない**——bridge の初期化失敗・窓の生成失敗のように arm 自体が走らない経路が実在し、そこで終端を出さないとハーネスの「タイムアウト」に化ける（**呼び出し点の列挙・分類・一度きり性・受容する残余は `//!` が正本**——数をここへ写すと経路を足したときにこの行だけが腐る）
 - `monitor.rs`: マルチモニター対応の Win32 ヘルパー（`GetCursorPos` / `MonitorFromPoint` / `GetMonitorInfoW`）。物理座標ベースで作業領域を取得し、ウィンドウ位置のクランプ・中央配置を提供。**基準モニターは必ず点から決める**（`MonitorFromWindow` を使う `window_monitor_work_area` は #835 で消えた）
 - `working_set.rs` — 非表示アイドル時のプロセスツリー working set 回収（Windows のみ・非 Windows は no-op。責務は `//!`、適用の詳細は本ファイル「working set の能動回収（EmptyWorkingSet）」）

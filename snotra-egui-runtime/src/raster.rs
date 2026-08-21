@@ -99,7 +99,7 @@ pub(crate) fn fill_mesh(
     clip_max: (usize, usize),
     pixels_per_point: f32,
 ) {
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         let v0 = &vertices[triangle[0] as usize];
         let v1 = &vertices[triangle[1] as usize];
         let v2 = &vertices[triangle[2] as usize];

@@ -265,8 +265,10 @@ impl ImeContext {
             return None;
         }
         let utf16 = bytes
-            .chunks_exact(2)
-            .map(|unit| u16::from_ne_bytes([unit[0], unit[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_ne_bytes(*unit))
             .collect::<Vec<_>>();
         String::from_utf16(&utf16).ok()
     }

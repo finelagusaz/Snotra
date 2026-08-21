@@ -25,6 +25,10 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HeapSnapshot {
     pub(crate) live_bytes: usize,
+    /// プロセス開始からの live の最大値（単調・リセットしない）。**commit の高水位を決めるのは
+    /// live ではなくこちらである**——解放してもアロケータは OS へ返さないので、
+    /// `peak - live` は「かつて確保して解放した、まだ抱えられている分」の下限になる。
+    pub(crate) peak_bytes: usize,
     pub(crate) live_blocks: usize,
     pub(crate) allocs: u64,
     pub(crate) frees: u64,
@@ -37,6 +41,8 @@ pub(crate) fn heap_fields(snapshot: &HeapSnapshot) -> serde_json::Value {
     serde_json::json!({
         "live_bytes": snapshot.live_bytes,
         "live_kib": snapshot.live_bytes / 1024,
+        "peak_bytes": snapshot.peak_bytes,
+        "peak_kib": snapshot.peak_bytes / 1024,
         "live_blocks": snapshot.live_blocks,
         "allocs": snapshot.allocs,
         "frees": snapshot.frees,
@@ -50,6 +56,7 @@ pub(crate) fn snapshot() -> Option<HeapSnapshot> {
         use std::sync::atomic::Ordering;
         Some(HeapSnapshot {
             live_bytes: counting::LIVE.load(Ordering::Relaxed),
+            peak_bytes: counting::PEAK.load(Ordering::Relaxed),
             live_blocks: counting::BLOCKS.load(Ordering::Relaxed),
             allocs: counting::ALLOCS.load(Ordering::Relaxed),
             frees: counting::FREES.load(Ordering::Relaxed),
@@ -69,6 +76,7 @@ mod counting {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     pub(super) static LIVE: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static PEAK: AtomicUsize = AtomicUsize::new(0);
     pub(super) static BLOCKS: AtomicUsize = AtomicUsize::new(0);
     pub(super) static ALLOCS: AtomicU64 = AtomicU64::new(0);
     pub(super) static FREES: AtomicU64 = AtomicU64::new(0);
@@ -81,7 +89,11 @@ mod counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             let ptr = unsafe { System.alloc(layout) };
             if !ptr.is_null() {
-                LIVE.fetch_add(layout.size(), Ordering::Relaxed);
+                // **peak は自分が観測した live から更新する。** 他スレッドの確保と交錯すると
+                // 真の最大より小さく出うる（`Relaxed` の読みと `fetch_max` の間で更新されるため）
+                // ——peak は**下限**として読むこと。強い順序で厳密化する価値は無い（規模を見る計器）。
+                let live = LIVE.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+                PEAK.fetch_max(live, Ordering::Relaxed);
                 BLOCKS.fetch_add(1, Ordering::Relaxed);
                 ALLOCS.fetch_add(1, Ordering::Relaxed);
             }
@@ -109,6 +121,7 @@ mod tests {
     fn heap_fields_carry_both_raw_bytes_and_rounded_kib() {
         let value = heap_fields(&HeapSnapshot {
             live_bytes: 3_145_728,
+            peak_bytes: 5_242_880,
             live_blocks: 4_096,
             allocs: 1_000,
             frees: 900,
@@ -120,11 +133,28 @@ mod tests {
         assert_eq!(value["frees"], 900);
     }
 
+    /// **peak はプロセス開始からの単調な最大値である。** 毎行に載るので、系列の
+    /// どこで上がったかを見れば「いつ確保されたか」が局在する（区間ごとにリセットする形は
+    /// 複数スレッドから読まれると値が読み手に依存するため採らない）。
+    #[test]
+    fn heap_fields_carry_the_monotonic_peak() {
+        let value = heap_fields(&HeapSnapshot {
+            live_bytes: 3_145_728,
+            peak_bytes: 5_242_880,
+            live_blocks: 4_096,
+            allocs: 1_000,
+            frees: 900,
+        });
+        assert_eq!(value["peak_bytes"], 5_242_880);
+        assert_eq!(value["peak_kib"], 5_120);
+    }
+
     /// 1 KiB 未満は KiB 側では 0 に潰れる。**潰れても生バイトが残る**ことがこの形の要件である。
     #[test]
     fn heap_fields_keep_sub_kib_values_in_raw_bytes() {
         let value = heap_fields(&HeapSnapshot {
             live_bytes: 512,
+            peak_bytes: 512,
             live_blocks: 1,
             allocs: 1,
             frees: 0,

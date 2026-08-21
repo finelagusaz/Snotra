@@ -395,7 +395,7 @@ fn bgra_to_png(data: &IconData) -> Option<Vec<u8>> {
 
     // Convert BGRA to RGBA
     let mut rgba = Vec::with_capacity(w * h * 4);
-    for chunk in data.bgra.chunks_exact(4) {
+    for chunk in data.bgra.as_chunks::<4>().0 {
         rgba.push(chunk[2]); // R
         rgba.push(chunk[1]); // G
         rgba.push(chunk[0]); // B

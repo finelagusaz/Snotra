@@ -185,6 +185,12 @@ jobs:
       - name: cargo check
         run: cargo check --workspace
 
+      # 既定ビルドから外れる feature は、ここで通さないと**誰も通さない経路**になる
+      # （依存更新や edition 変更で黙って壊れ、次に計測へ使うとき初めて気づく）。
+      # 計器の意味と撤去条件は `src-tauri/src/heap_trace.rs` の `//!`。
+      - name: cargo check (heap-trace feature)
+        run: cargo check -p snotra --features heap-trace
+
       - name: cargo test (snotra-core)
         run: cargo test -p snotra-core
 

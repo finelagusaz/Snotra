@@ -10,6 +10,8 @@
 
 ### A. Rust ファイル（`*.rs`）を変更した場合
 
+**これらのコマンドが走る Rust の版は `rust-toolchain.toml` が決める**（#1161）。ローカルでも CI でも rustup がそれを読んで override するので、**手元の緑は CI の緑と同じ判定器で得たものである**。固定していなかった頃は、開発者のローカルが CI より古いと「手元では存在しない lint」で CI だけが赤くなった（2026-08-21 実測）。版を上げる契機は `/deps-update` が持つ。
+
 ```bash
 cargo fmt --all -- --check                                                             # 必須: 整形（#858・修復は `cargo fmt --all`）
 cargo check --workspace                                                                # 必須: Rust 全 crate 型チェック

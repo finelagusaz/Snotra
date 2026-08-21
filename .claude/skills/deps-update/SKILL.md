@@ -5,6 +5,7 @@ disable-model-invocation: true
 argument-hint: "[cargo | npm | 空=両方]"
 allowed-tools:
   - Bash(cargo *)
+  - Bash(rustup *)
   - Bash(npm *)
   - Bash(git *)
   - Bash(gh *)
@@ -31,6 +32,17 @@ cargo / npm の依存関係を一括更新し、ローカル検証 → PR 作成
   - `npm` または空: `npm update`
 - 更新後に `git diff Cargo.lock` / `git diff package-lock.json` で差分を確認し、更新されたクレート・パッケージを列挙する
 - 各更新を **minor/patch と major に分類**して記録する（major = メジャーバージョン番号が変わったもの）
+- **Rust の toolchain も見る**（`cargo` または空のとき・#1161）。`rust-toolchain.toml` が版を固定して
+  いるため、**CI の赤はもう更新を報せない**——固定はその合図を消す変更だった。ここが代わりの契機である:
+  - `rustup check` で最新 stable を見る
+  - `rust-toolchain.toml` の `channel` と差があれば上げる。**ローカルと CI はこの 1 行で揃う**
+    （rustup が両方で override し、未インストールなら自動取得する）
+  - **新しい lint が出ても、この PR では直さず別 PR へ切り出す。** toolchain を上げた差分へ無関係な
+    lint 対応が紛れるうえ、**切り出さないと他の PR はブロックされたままになる**（2026-08-21 に
+    #1160 / #1159 でこの分離を実際に行った）。**clippy はエラーの出た crate でコンパイルを止めるので、
+    CI のログだけでは全数が見えない**——`git grep` で母集団を数え、新しい版の clippy をローカルへ
+    入れて（`rustup toolchain install <版> --profile minimal --component clippy`・既定は変えない）
+    `cargo +<版> clippy --workspace --all-targets -- -D warnings` で検算する
 
 ## Step 3 — ローカル検証（最大5サイクル）
 

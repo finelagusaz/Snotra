@@ -138,6 +138,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # **実際に検査が使う版を決めるのはここではなく `rust-toolchain.toml` である**（#1161）。
+      # この action は toml を一切参照しない（`toolchain` は required・`rustup toolchain install`
+      # と `rustup default` を実行するだけ。action.yml で確認）が、cargo は rustup shim 越しに
+      # toml を読んで override する。ゆえにここが入れる stable は**使われない**。
+      # **それでも `@stable` を残すのは、この step が rustup と cargo を runner へ用意する
+      # 役目に変わったからである**——外すと下の「プリインストールに暗黙依存する」形そのものになる。
+      # 版を toml と揃えて書くことはしない（同じ値が 2 か所になり、片方だけ直す形が作れる）。
+      #
       # **この job が使う component はすべて明示する**。この action は
       # `rustup toolchain install <toolchain> ... --profile minimal` を実行しており、
       # minimal プロファイルは rustfmt も clippy も含まない（action.yml で確認・#858）。
@@ -145,6 +153,8 @@ jobs:
       # おかげ（rustup は既存 toolchain の component を削らない）であって、action の保証ではない。
       # **この依存は runner イメージが Rust のプリインストールをやめた日に初めて壊れる**——
       # それまで一切の兆候が出ない種類の依存なので、使う側で名指ししておく（#858 で rustfmt、#859 で clippy）。
+      # **同じ要求は toml 側にもある**——override 後に実際に走る toolchain の component は
+      # `rust-toolchain.toml` の `components` が決める（そちらが正本・2026-08-21 実測）。
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

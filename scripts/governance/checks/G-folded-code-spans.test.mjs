@@ -92,11 +92,13 @@ describe("G-folded-code-spans checkFoldedCodeSpans（コードスパンが物理
       expect(run("説明:\n\n```text\n`foo\nbar`\n```\n")).toEqual([]);
     });
 
-    it("沈黙側: 母集団から外れた文書は、渡されなければ見ない", () => {
-      // **母集団の絞り込みは `allHeadingRefDocs` が持ち、この検査は渡された docs しか見ない**——
-      // 除外の述語をここで再実装していないことの固定である（写しを持てば片方だけが腐る）
+    it("沈黙側: 母集団の絞り込みは呼び出し側が持ち、この検査は渡された docs をそのまま見る", () => {
+      // **渡せば見えることを主張する**（`[]` を渡して `[]` が返ることではない）——後者は
+      // 除外を再実装した実装でも同じ値を返すので、自称する不変条件に検知器が無い。
+      // 実測（2026-08-22・複製へ `if (doc.includes("adr/")) continue;` を注入）:
+      // 空母集団の形は緑のまま・この形は 1 件 → 0 件で落ちる
       const s = snap({ "docs/adr/ADR-x.md": "旧実装は `if seen.insert(key)\n{ push }` にあった\n" });
-      expect(checkFoldedCodeSpans(s, [])).toEqual([]);
+      expect(checkFoldedCodeSpans(s, ["docs/adr/ADR-x.md"])).toHaveLength(1);
     });
 
     it("赤側: `.rs` の rustdoc コードフェンスの内側も見る（マスクしない）", () => {

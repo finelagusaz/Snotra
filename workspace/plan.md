@@ -163,7 +163,7 @@
 - [x] 逆向き: 変異を戻して exit 0 に戻ることを実測する
 - [x] `npm test`（vitest）が緑
 - [x] `.rs` を 2 枚触るので `docs/build-commands.md` カテゴリ A、ガバナンス文書を触るのでカテゴリ F を実行
-- [ ] 実装差分を確定させる（**PR 本文で構造母集団の変更を宣言する**——`governance-manifest.mjs` の `KEYS` に `checks` が入っており、宣言が無いと `governance manifest delta` step が落ちる・#1088）
+- [x] 実装差分を確定させる（**PR 本文で構造母集団の変更を宣言する**——`governance-manifest.mjs` の `KEYS` に `checks` が入っており、宣言が無いと `governance manifest delta` step が落ちる・#1088）
 
 ## 不変条件と異常系
 

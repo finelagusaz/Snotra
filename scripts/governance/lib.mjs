@@ -235,8 +235,10 @@ export function linesOfComments(text, file, family = commentFamilyOf(file)) {
     throw new Error(`linesOfComments: コメント記法を持たない対象（受け取った値: ${file}）`);
   }
   // **未知の族は throw する。既定分岐へ落としてはならない**——落とすと `#` 始まりの行だけを見る
-  // 挙動になり、`"js"` を渡すつもりの呼び出し点が綴りを間違えたときに**沈黙側へ倒れる**
-  // （`.rs` の走査行が 7991 → ほぼ 0 へ落ちても、evidence の数字が減るだけで exit 0 のまま推移する）
+  // 挙動になり、`"js"` を渡すつもりの呼び出し点が綴りを間違えたときに**沈黙側へ倒れる**。
+  // 実測（2026-08-22・`G-folded-code-spans` の `.rs` の腕で `"js"` → `"hash"` の変異）:
+  // 走査行 12364 → 1500（`#[...]` の属性行だけが残る）・**照合したスパンは 7991 → 0**。
+  // それでも `governance:check` は **exit 0 のまま**で、evidence の数字が減るだけだった。
   if (!FAMILIES.has(family)) {
     throw new Error(`linesOfComments: 未知のコメント記法族（受け取った値: ${family} / 対象: ${file}）`);
   }

@@ -88,6 +88,17 @@ describe("G-folded-code-spans checkFoldedCodeSpans（コードスパンが物理
       expect(run("let x = 5; // `if seen.insert(key)\nlet y = 6; // { push }` の形\n", "a.rs")).toEqual([]);
     });
 
+    it("沈黙側: `.md` のフェンス内は見ない", () => {
+      expect(run("説明:\n\n```text\n`foo\nbar`\n```\n")).toEqual([]);
+    });
+
+    it("沈黙側: 母集団から外れた文書は、渡されなければ見ない", () => {
+      // **母集団の絞り込みは `allHeadingRefDocs` が持ち、この検査は渡された docs しか見ない**——
+      // 除外の述語をここで再実装していないことの固定である（写しを持てば片方だけが腐る）
+      const s = snap({ "docs/adr/ADR-x.md": "旧実装は `if seen.insert(key)\n{ push }` にあった\n" });
+      expect(checkFoldedCodeSpans(s, [])).toEqual([]);
+    });
+
     it("赤側: `.rs` の rustdoc コードフェンスの内側も見る（マスクしない）", () => {
       expect(run("/// ```text\n/// 図の `foo\n/// bar` の形\n/// ```\n", "a.rs")).toHaveLength(1);
     });

@@ -179,7 +179,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 1つでも欠けるとキャッシュヒット時/ミス時で異なる結果を返す。
 
-**版を 1 つ上げると、直前の版が「全ユーザーの `index.bin` が今まさに置かれている版」へ変わる**（反復 10 で 4 件の取りこぼしが同時に出た）。ゆえに 8 番目として、**直前の版を受け取る側を全部数え直す**: (a) `cache_byte_breakdown_in` の鎖（現行版だけを読む形にすると**一番測りたい相手にだけ黙る**）、(b) `load_cache_in_reports_the_version_it_actually_read` の枝（この値だけが昇格判定の入力で、取り違えても**検索結果は正しいまま**）、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは枝選択・`config_hash` 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない）。**枝の数を散文に書かないこと**——版を足したときにその数だけが腐り、しかも「揃っている」と読める。
+**版を 1 つ上げると、直前の版が「全ユーザーの `index.bin` が今まさに置かれている版」へ変わる**（反復 10 で 4 件の取りこぼしが同時に出た）。ゆえにチェックリストへもう 1 項として、**直前の版を受け取る側を全部数え直す**: (a) `cache_byte_breakdown_in` の鎖（現行版だけを読む形にすると**一番測りたい相手にだけ黙る**）、(b) `load_cache_in_reports_the_version_it_actually_read` の枝（この値だけが昇格判定の入力で、取り違えても**検索結果は正しいまま**）、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは枝選択・`config_hash` 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない）。**枝の数を散文に書かないこと**——版を足したときにその数だけが腐り、しかも「揃っている」と読める。
 
 **派生文字列 2 列も同じ形である**（#1003 の次の反復）。`lower_names` は `Cow<'a, LowerNameColumn>`（線上は `seq of Option<str>`）、`lower_file_names` は `Cow<'a, LowerFileColumn>`（線上は 3 variant の `seq of LowerFileName`）で、どちらも要素ごとの `String` を作らない。**`IndexCacheV6` も同じ列の型で読む**——線上表現が v7 と同一だからであり、`Vec<Option<String>>` へ戻すと旧版枝でだけ per-entry の確保が復活する。守るのは `str_arena` の `lower_name_column_wire_format_is_identical_to_vec_of_option_string` / `lower_file_column_wire_format_is_identical_to_vec_of_lower_file_name` で、**2 列とも変異注入で「golden は素通りし、この 2 本だけが落ちる」ことを実測してある**（射程は `str_arena` の `//!`——タグの並べ替えは golden も捕まえる）。
 

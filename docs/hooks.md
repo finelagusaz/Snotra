@@ -3,7 +3,7 @@
 このリポジトリの Claude Code フック（PreToolUse = `.claude/hooks/pre-bash.mjs`、PostToolUse = `.claude/hooks/post-edit.mjs`）を**改修**するときの実装契約・機構・保守規律。
 
 - エージェントが日常操作でフックにどう**応答するか**・沈黙をどう**読むか**は、常時ロードの `CLAUDE.md`「フック」節が SSOT。本ファイルはそこから退去させた**一覧と内訳**（どのファイルに何が発火するか・沈黙しうる経路は何か）も併せ持つ——常時ロードに写しを置くとコードとの二重管理になり、実際にドリフトした（#474〜#497）。
-- 設計哲学（検出は構造化信号で行い、fail-closed を既定値に埋める）は `docs/development-principles.md` §「構造的設計原則と強制の階梯」の項目 6・7 が SSOT。本ファイルはそのフック具体化＝運用 specifics を持つ。
+- 設計哲学（検出は構造化信号で行い、fail-closed を既定値に埋める）は `docs/development-principles.md`「構造的設計原則と強制の階梯」が SSOT。本ファイルはそのフック具体化＝運用 specifics を持つ。
 - セーフティネットが**効いているか**の検証手順（フォールトインジェクション等）は `.claude/rules/safety-nets.md`（フック改修時に自動配送される）。
 
 ## PreToolUse（pre-bash.mjs）の実装契約

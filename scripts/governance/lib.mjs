@@ -221,9 +221,13 @@ export const commentFamilyOf = (file) => COMMENT_FAMILY.get((/\.[a-z0-9]+$/i.exe
  *
  * @param {string} text ファイル全文
  * @param {string} file 拡張子から記法族を引く。`commentFamilyOf` が `null` を返す名前は**契約違反**
+ * @param {string} [family] 記法族を明示する口。**既定引数なので既存の呼び出し点は 1 つも動かない。**
+ *   要るのは `.rs` のためである——`COMMENT_FAMILY` に `.rs` を足すと `refScanLines` が `.rs` を
+ *   コメント行だけへ落とし、**#925 から全行を母集団にしている見出し参照の 3 検査が同じ変更で動く**
+ *   （検査対象を変更しながら検査を検証しない・#489）。呼び出し側が族を渡せば、母集団はそのままで
+ *   「コメント行だけを見たい検査」を書ける（`G-folded-code-spans` がそれである）。
  */
-export function linesOfComments(text, file) {
-  const family = commentFamilyOf(file);
+export function linesOfComments(text, file, family = commentFamilyOf(file)) {
   if (family === null) {
     throw new Error(`linesOfComments: コメント記法を持たない対象（受け取った値: ${file}）`);
   }

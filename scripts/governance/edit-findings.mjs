@@ -33,6 +33,7 @@ import { checkReferences } from "./checks/G-references.mjs";
 import { checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkFoldedHeadingRefs } from "./checks/G-folded-heading-refs.mjs";
+import { checkFoldedCodeSpans } from "./checks/G-folded-code-spans.mjs";
 import { checkStaleIdentifiers } from "./checks/G-stale-identifiers.mjs";
 import { checkAdrFileNames } from "./checks/G-adr-file-names.mjs";
 
@@ -54,6 +55,10 @@ const SCAN_SCOPED = [
   { population: allHeadingRefDocs, check: checkHeadingRefs },
   { population: allHeadingRefDocs, check: checkNearHeadingRefs },
   { population: allHeadingRefDocs, check: checkFoldedHeadingRefs },
+  // **着地先を持たない判定である。** 上の 3 本は「参照が着地するか」を snapshot 全体へ問うが、
+  // こちらは編集した 1 枚の中で完結する——前倒しの条件（`ADR-edit-time-check-scope`「決定」）を
+  // 既存より強く満たす形であり、**書いた瞬間に鳴ることが #992 の動機そのものである**
+  { population: allHeadingRefDocs, check: checkFoldedCodeSpans },
   { population: staleIdentifierTargets, check: checkStaleIdentifiers },
 ];
 

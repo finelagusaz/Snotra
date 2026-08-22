@@ -57,7 +57,7 @@
 | `scripts/governance/checks/G-folded-heading-refs.mjs`:33 | 死角の宣言のうち「0 である理由」を検査の新設に合わせて直す |
 | `.claude/agents/code-reviewer.md`:28 | 「どの機械検査も見ない」から折返しを外す（写しの型は引き続き見ない） |
 | `docs/comment-guidelines.md` | 「日本語の折返し」を 2 条へ縮める |
-| `docs/adr/ADR-fold-norm-reduced-to-measured-harms.md` | **新規**。却下 3 案の否定の知識 |
+| `docs/adr/ADR-folded-code-span-detector.md` | **新規**。却下した案の否定の知識（`G-adr-file-names` の stem 一致に従い、独立導出が推した名前を採った） |
 
 **`scripts/governance-check.mjs` の配線は変更しない**（実測で確認）——`record` は `sink[key]` へ書き、`runAll` が `...ctx` で evidence の袋へ広げるので、供給は検査側が `ctx.record` を呼べば自動で届く。**触るのは散文の「21 本」だけである。**
 
@@ -90,36 +90,36 @@
 
 ### Phase 1 — 検査の新設
 
-- [ ] `G-folded-code-spans.mjs` を書く。母集団は `allHeadingRefDocs`（`G-folded-heading-refs` と同一。**新しい母集団定義を作らない**——`ADR-folded-canonical-reference-detector` の決定に揃える）
-- [ ] `.rs` のコメント行抽出を状態追跡で書く。**`COMMENT_FAMILY` へ `.rs` を足してはならない**——`refScanLines` の母集団が動き `G-heading-refs` ほかの検査対象が変わる（#925 以来の意図的な母集団・#489）
-- [ ] 累積の偶奇で「折返しの開始点」だけを finding にする
-- [ ] `{findings, checked}` を返し `ctx.record` する（「差分ゼロ」と「照合していない」を分ける証跡・#497）
-- [ ] 検査のヘッダに**射程と死角を宣言する**——`docs/development-principles.md`「検証の層と、層と層の隙間」が要求する「その手段は何を見ていないか／出力は消費する層まで届いているか」に答える形で:
+- [x] `G-folded-code-spans.mjs` を書く。母集団は `allHeadingRefDocs`（`G-folded-heading-refs` と同一。**新しい母集団定義を作らない**——`ADR-folded-canonical-reference-detector` の決定に揃える）
+- [x] `.rs` のコメント行抽出を状態追跡で書く。**`COMMENT_FAMILY` へ `.rs` を足してはならない**——`refScanLines` の母集団が動き `G-heading-refs` ほかの検査対象が変わる（#925 以来の意図的な母集団・#489）
+- [x] 累積の偶奇で「折返しの開始点」だけを finding にする
+- [x] `{findings, checked}` を返し `ctx.record` する（「差分ゼロ」と「照合していない」を分ける証跡・#497）
+- [x] 検査のヘッダに**射程と死角を宣言する**——`docs/development-principles.md`「検証の層と、層と層の隙間」が要求する「その手段は何を見ていないか／出力は消費する層まで届いているか」に答える形で:
   - 母集団はファイル種別に依らない（`G-folded-heading-refs` と同じ理由）
   - **`.ps1` / `.psm1` にはコメント作法の生きた規範が一つも無い**ので、規範の無い面で機構だけが赤を出すことを名乗る
   - **述語は「行末で span が開いたままか」を見るのであって、折返しの意味は見ない**——非実在の例示コードも同じ重みで赤にする（実例は `launcher_controller.rs` の畳み）
   - 累積を捨てる境界（コメント行が途切れた地点）を宣言する
   - **`linesOfComments` の js 族から継承する死角**（raw string 内の `//` 始まり）を 1 行で名乗る
-- [ ] **ヘッダとテストが自分自身を赤にしないことを確かめる**——`checks/` はこの検査の走査母集団に入る（`G-stale-identifiers.mjs`:70 が実際にヒットしている）。**例示に実在の折れを置かない**（`G-folded-heading-refs` が同じ理由で明文化している）。`.md` 側（ADR・規約）へ折れた例を書くなら**コードフェンスの内側**に置く
-- [ ] `evidence.mjs` の行と `evidence.test.mjs` の `complete()` を更新する
-- [ ] `scripts/governance-check.mjs`:103,174 と `governance-check.test.mjs`:63 の「21 本」を**数を持たない形**（「`checks/` の全検査」等）へ倒す。**22 へ書き換えない**——`AGENTS.md`「検証の作法」の「数え上げは偽になる時点が確定している。数ではなく正本を指す」に当たる
-- [ ] `G-folded-code-spans.test.mjs` を書く
+- [x] **ヘッダとテストが自分自身を赤にしないことを確かめる**——`checks/` はこの検査の走査母集団に入る（`G-stale-identifiers.mjs`:70 が実際にヒットしている）。**例示に実在の折れを置かない**（`G-folded-heading-refs` が同じ理由で明文化している）。`.md` 側（ADR・規約）へ折れた例を書くなら**コードフェンスの内側**に置く
+- [x] `evidence.mjs` の行と `evidence.test.mjs` の `complete()` を更新する
+- [x] `scripts/governance-check.mjs`:103,174 と `governance-check.test.mjs`:63 の「21 本」を**数を持たない形**（「`checks/` の全検査」等）へ倒す。**22 へ書き換えない**——`AGENTS.md`「検証の作法」の「数え上げは偽になる時点が確定している。数ではなく正本を指す」に当たる
+- [x] `G-folded-code-spans.test.mjs` を書く
 
 ### Phase 2 — 実在した 6 箇所を畳む
 
-- [ ] `src-tauri/src/egui_shell/launcher_controller.rs`:2028 — **スパンを 2 つへ割る**（未確定(c) で起案し、説明が成立することを確認済み）:
+- [x] `src-tauri/src/egui_shell/launcher_controller.rs`:2028 — **スパンを 2 つへ割る**（未確定(c) で起案し、説明が成立することを確認済み）:
   ```
   /// **代償は整形と書き方への脆さで、向きは赤側である**: `let should = crate::egui_shell::…;` と
   /// `if should {` へ割る分解や、rustfmt が `if` とパスのあいだで折り返す形はここを赤にする。
   ```
-- [ ] 残る 5 箇所を畳む（`PERFORMANCE.md`:668 / `view.rs`:497 / `G-stale-identifiers.mjs`:70 / `SnotraSmoke.Tests.ps1`:230 / `SnotraTraceInvariants.Tests.ps1`:514）
+- [x] 残る 5 箇所を畳む（`PERFORMANCE.md`:668 / `view.rs`:497 / `G-stale-identifiers.mjs`:70 / `SnotraSmoke.Tests.ps1`:230 / `SnotraTraceInvariants.Tests.ps1`:514）
   - `PERFORMANCE.md`:668 は折り返し点を移すだけにする——**実測値の写しを増やさない**（同文書「この文書へ記録するときの規約」）
   - `.ps1` の 2 件は**同じ文言の重複**（`-ErrorAction SilentlyContinue` の説明）。片方を直して片方を忘れる形が起きやすいので**同じコミットで両方**
-- [ ] `npm run governance:check` が exit 0・照合件数が evidence 行に出ることを確認
+- [x] `npm run governance:check` が exit 0・照合件数が evidence 行に出ることを確認
 
 ### Phase 3 — 規約を実測された害へ縮める
 
-- [ ] `docs/comment-guidelines.md`「日本語の折返し」を書き換える。**見出し名は変えない**（生きた正準形の参照が 3 か所ある。凍結 ADR 側の参照は照合の母集団外なので、改名すると赤くならずに死ぬ）:
+- [x] `docs/comment-guidelines.md`「日本語の折返し」を書き換える。**見出し名は変えない**（生きた正準形の参照が 3 か所ある。凍結 ADR 側の参照は照合の母集団外なので、改名すると赤くならずに死ぬ）:
   - **58 行（規範の本文）**: 規範を 2 条にする — **コードスパン（バッククォートで囲んだ識別子・コマンド）を行またぎさせない**／**正準形の見出し参照を物理改行で折らない**。どちらも検査が持つ（`G-folded-code-spans` / `G-folded-heading-refs`）
   - **58 行（射程の分割）**: 「適用は新規に書くコメントと、その変更で触った段落だけである」は**この 2 形については消える**——機構が全ツリーを毎回走るため。**「この 2 形は既存・新規を問わず機構が見る。それ以外の書き方の条項は新規・touched だけに適用する」と射程の分割を明示する**。しないと `ADR-folded-canonical-reference-detector` が退けた「機構と規範が逆を向く」形になる
   - **素の散文の折返しは禁じない。** 実測（全ツリー 3151 件・害に当たるのは 0.1%）を根拠として 1 文で書き、**再導入されないようにする**
@@ -129,13 +129,13 @@
   - **64 行**: 「折返しは機械が持たない」→「**整形器は持たないが、害の 2 形は検査が持つ**」（issue の撤去条件）。**`wrap_comments` をバッククォートで囲まないこと**——この文書は `staleIdentifierTargets` に居り、現行語彙に無い外部識別子を span へ置くと `G-stale-identifiers` が赤になる
   - **射程が `.rs` を越えることを規範側にも書く**。検査は `.md` と `.ps1` / `.psm1` も見るが、本書の配送は 4 crate の `**/*.rs` だけである。⚠️ 冒頭 3 行が自ら「コードコメントの書き方」と名乗っているので、`.md` の散文の折れ（`PERFORMANCE.md`:668 が実例）は**規範が一言も無い面**である。1 文で受ける
   - 「禁則処理の規則は置かない」の段は**そのまま残す**（別の論点）。ただし**節の前半を縮めた後に論旨の接続先を失っていないか読み直す**——あの実測は「1 段落 1 行」の体制下で取られたものである
-- [ ] 偽になる 2 件を直す — `.claude/agents/code-reviewer.md`:28 と `G-folded-heading-refs.mjs`:33（上の表）
-- [ ] `node scripts/governance/dependents.mjs docs/comment-guidelines.md` を回し、数え上げが取りこぼした依存が無いか見る
-- [ ] 全称表現を検算する——書いた「2 条だけ」「実測された害は 2 つ」に対し「何が増えたらこの文は偽になるか」を 1 つ挙げ、前提条件として書き添えるか下限の主張へ弱める（`AGENTS.md`「検証の作法」）。**全称否定（「どの検査も見ない」型）を新しく書かない**——今回まさにその形が偽になった
+- [x] 偽になる 2 件を直す — `.claude/agents/code-reviewer.md`:28 と `G-folded-heading-refs.mjs`:33（上の表）
+- [x] `node scripts/governance/dependents.mjs docs/comment-guidelines.md` を回し、数え上げが取りこぼした依存が無いか見る
+- [x] 全称表現を検算する——書いた「2 条だけ」「実測された害は 2 つ」に対し「何が増えたらこの文は偽になるか」を 1 つ挙げ、前提条件として書き添えるか下限の主張へ弱める（`AGENTS.md`「検証の作法」）。**全称否定（「どの検査も見ない」型）を新しく書かない**——今回まさにその形が偽になった
 
 ### Phase 4 — 否定の知識を ADR へ
 
-- [ ] `docs/adr/ADR-folded-code-span-detector.md` を新設し、却下した案を実測つきで残す（1 行目は `# ADR-folded-code-span-detector: <題>`。`G-adr-file-names` が stem との一致を要求する。**連番を振らない**）:
+- [x] `docs/adr/ADR-folded-code-span-detector.md` を新設し、却下した案を実測つきで残す（1 行目は `# ADR-folded-code-span-detector: <題>`。`G-adr-file-names` が stem との一致を要求する。**連番を振らない**）:
   - **却下 A**: 差分ベースの `G-` 検査（`checks/` 初の git 依存・CI は depth 1 で base を持たない・fail-open の `checked=0` が正常状態・費用は毎 PR 中央 19〜20 件で**上限ではなく下限**）
   - **却下 B**: 「1 段落 1 行」を**検査の代わりに** post-edit reminder で鳴らす（母集団は構造的に一致するが、中央 19 件はほぼ毎編集で鳴り、鳴っていることが「見た」を意味しなくなる）。**縮めた 2 条を検査に加えて前倒しすることは却下していない**——それは Phase 4.5 で採用しており、件数が 0 から始まるので同じ問題を持たない
   - **却下 C**: 機構を足さず規約だけ縮める（害 1 の再発が誰も検知しないまま残り、却下 3 の受容する残余が生き延びる）
@@ -149,13 +149,13 @@
     - **原理**: 折れたスパンは**正しい CommonMark** であり rustdoc は soft line break を跨いで正しく描画する。害は `grep` にしか出ず、**整形器も lint も「人間が正規表現で検索する」ことをモデルに持たない**。規約自身の「壊れるのは検索だけである（だから気づかれない）」がこの理由の正本である
   - **凍結層との非対称を 1 文で名乗る**: 生きた散文からは「21 本」という数を捨てるが、`ADR-governance-meta-demotion` の**見出し**は数を含んだまま残り、`ADR-folded-canonical-reference-detector`:19 がそれを正準形で引用している。見出しは凍結された歴史なので触らない
   - **受容する残余**: 「1 段落 1 行」を捨てたことで、素の折返し（3149 件）は今後も誰も見ない。#984 型の見落としは再発しうる
-- [ ] 既存 ADR は**編集しない**（凍結された歴史）。`ADR-comment-guideline-delivery-by-pointer` の「却下 3」「行またぎスパンの再発は誰も検知しない」「折返し・訳語の条項は 100% 規範であって機構ではない」は**すべて偽になるが書き換えない**——`ADR-folded-canonical-reference-detector` が「却下 3 の理由が陳腐化していたこと」を**新しい ADR の側へ**置いた先例に倣う
+- [x] 既存 ADR は**編集しない**（凍結された歴史）。`ADR-comment-guideline-delivery-by-pointer` の「却下 3」「行またぎスパンの再発は誰も検知しない」「折返し・訳語の条項は 100% 規範であって機構ではない」は**すべて偽になるが書き換えない**——`ADR-folded-canonical-reference-detector` が「却下 3 の理由が陳腐化していたこと」を**新しい ADR の側へ**置いた先例に倣う
 
 ### Phase 4.5 — 編集時への前倒し（利用者の裁定・2026-08-22）
 
-- [ ] `edit-findings.mjs` へ `import { checkFoldedCodeSpans }` と `SCAN_SCOPED` の 1 行を足す（走査元を編集ファイル 1 枚へ絞るので帰属は構造的に決まる。前倒しの条件は `ADR-edit-time-check-scope`「決定」——本検査は**着地先を持たない**ぶん既存 4 本より強く条件を満たす）
-- [ ] `edit-findings.test.mjs` へ「赤: コードスパンが行をまたぐ」の it を 1 本足す
-- [ ] `docs/hooks.md`「検査ではない reminder（発火一覧に現れない）」の表へ 1 行足す（**射程の穴の一覧はここが正本**であり、`edit-findings.mjs` の `//!` へ写さない）
+- [x] `edit-findings.mjs` へ `import { checkFoldedCodeSpans }` と `SCAN_SCOPED` の 1 行を足す（走査元を編集ファイル 1 枚へ絞るので帰属は構造的に決まる。前倒しの条件は `ADR-edit-time-check-scope`「決定」——本検査は**着地先を持たない**ぶん既存 4 本より強く条件を満たす）
+- [x] `edit-findings.test.mjs` へ「赤: コードスパンが行をまたぐ」の it を 1 本足す
+- [x] `docs/hooks.md`「検査ではない reminder（発火一覧に現れない）」の表へ 1 行足す（**射程の穴の一覧はここが正本**であり、`edit-findings.mjs` の `//!` へ写さない）
 
 ### Phase 5 — 検証と確定
 

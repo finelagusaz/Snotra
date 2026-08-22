@@ -10,7 +10,8 @@ import { checkEditFindingsTable, scanEditFindingsTable, tableJudgments } from ".
 // **表そのものを fixture に書く。** 実ツリーの表を読む形にすると、テストが実データの
 // 変化で落ちるようになり、判定の正しさと現在のツリーの状態が分離できない。
 const HEADER = "| 発火条件 | 出るもの | 判定 |\n|---|---|---|\n";
-const doc = (rows) => `## 検査ではない reminder（発火一覧に現れない）\n\n前置き\n\n${HEADER}${rows}\n\n後書き\n`;
+const HEADING_LINE = "## 検査ではない reminder（発火一覧に現れない）";
+const doc = (rows) => `${HEADING_LINE}\n\n前置き\n\n${HEADER}${rows}\n\n後書き\n`;
 const at = (text) => snap({ "docs/hooks.md": text });
 
 /** 実装が持つ判定名の全体（この順序に意味は無い——照合は集合で行う） */
@@ -39,6 +40,12 @@ describe("G-edit-findings-table（reminder の表 ↔ 判定の照合・#992）"
 
     it("判定列に注釈が付いていても名前を取る（`reportFor`（`dependents.mjs`） の形）", () => {
       const rows = rowsFor(ALL.slice(0, -1)) + "\n| `.md` を編集した | 何か | `reportFor`（`dependents.mjs`） |";
+      expect(checkEditFindingsTable(at(doc(rows)))).toEqual([]);
+    });
+
+    it("**注釈が判定名より前でも緑**（順序に依存しない）", () => {
+      // 先頭 1 span だけを見ていた頃は、これだけで 2 件の偽陽性になった（2026-08-22 実測）
+      const rows = rowsFor(ALL.slice(0, -1)) + "\n| `.md` を編集した | 何か | `dependents.mjs`（`reportFor`） |";
       expect(checkEditFindingsTable(at(doc(rows)))).toEqual([]);
     });
   });
@@ -71,6 +78,15 @@ describe("G-edit-findings-table（reminder の表 ↔ 判定の照合・#992）"
       const f = checkEditFindingsTable(at(text));
       expect(f).toHaveLength(1);
       expect(f[0].message).toContain("母集団の曖昧化");
+    });
+
+    it("**見出しより前の同形の表を本物と取り違えない**（本物が消えたら母集団の欠落）", () => {
+      // 文書全体からヘッダを探していた頃は、decoy を唯一の候補として採り、
+      // 本物の消滅を報告しないまま 8 件の別種の偽陽性へすり替わった（2026-08-22 実測）
+      const text = `# 別の節\n\n${HEADER}| a | b | \`checkModuleIndex\` |\n\n${HEADING_LINE}\n\n表が消えた\n`;
+      const f = checkEditFindingsTable(at(text));
+      expect(f).toHaveLength(1);
+      expect(f[0].message).toContain("母集団の欠落");
     });
 
     it("行が 0 件なら finding", () => {

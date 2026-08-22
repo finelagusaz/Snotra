@@ -74,7 +74,11 @@ export function scanEditFindingsTable(snapshot) {
   if (!lines.some((l) => l.trim() === HEADING)) {
     return { findings: [finding(docsPath, 1, `「${HEADING.replace(/^#+\s*/, "")}」の節が無い（G-edit-findings-table 母集団の欠落）`)], checked: 0 };
   }
-  const headers = lines.map((l, i) => (TABLE_HEADER.test(l) ? i : -1)).filter((i) => i >= 0);
+  // **見出しより後だけを探す。** 文書全体から拾うと、無関係な節に同じ列名の表があるとき
+  // **本物の表が丸ごと消えていても「母集団の欠落」を報告せず**、decoy を唯一の候補として採る
+  // （2026-08-22 実測: checked=1 のまま、実在する 8 判定が「表に無い」という別の偽陽性へすり替わった）。
+  const from = lines.findIndex((l) => l.trim() === HEADING);
+  const headers = lines.map((l, i) => (i > from && TABLE_HEADER.test(l) ? i : -1)).filter((i) => i >= 0);
   if (headers.length === 0) {
     return { findings: [finding(docsPath, 1, "reminder 表のヘッダ行（| 発火条件 | 出るもの | 判定 |）が見つからない（G-edit-findings-table 母集団の欠落）")], checked: 0 };
   }
@@ -100,15 +104,21 @@ export function scanEditFindingsTable(snapshot) {
       findings.push(finding(docsPath, i + 1, `reminder 表の行に判定列がそろっていない: ${lines[i]}`));
       continue;
     }
-    // 判定列の先頭のバッククォート span を判定名として取る（注釈が続いてよい: `reportFor`（`dependents.mjs`））。
-    // 散文へ崩れると照合が静かに緩むので、名前が取れない行は赤にする
-    const name = cols[3].match(/`([^`]+)`/)?.[1];
-    if (!name) {
-      findings.push(finding(docsPath, i + 1, `判定列がバッククォート括りの判定名で始まっていない（散文へ崩れると照合が緩む）: ${cols[3]}`));
+    // **判定列の span をすべて見る**（注釈が付いてよい: `reportFor`（`dependents.mjs`））。
+    // かつては先頭 1 つだけを判定名として取っていたが、**注釈を前に置くだけで 2 件の偽陽性になった**
+    // ——`` `dependents.mjs`（`reportFor`） `` は人が読めば等価なのに「実装に無い」＋「表に無い」を
+    // 同時に出す（2026-08-22 実測）。全部を候補にして実装が持つ名前と交差させれば、順序に依存しない。
+    // 散文へ崩れると照合が静かに緩むので、span が 1 つも無い行は赤にする。
+    const spans = [...cols[3].matchAll(/`([^`]+)`/g)].map((s) => s[1]);
+    if (spans.length === 0) {
+      findings.push(finding(docsPath, i + 1, `判定列にバッククォート括りの判定名が無い（散文へ崩れると照合が緩む）: ${cols[3]}`));
       continue;
     }
+    const known = spans.filter((s) => tableJudgments().has(s));
+    // **実装に在る名前が 1 つも無い行は、その先頭を「実装に無い判定」として報告させる**
+    // （綴り間違いを沈黙させないため。注釈だけの行という形は今日存在しない）
     checked += 1;
-    declared.add(name);
+    for (const s of known.length > 0 ? known : [spans[0]]) declared.add(s);
   }
   if (checked === 0) {
     findings.push(finding(docsPath, start + 1, "reminder 表の行が 0 件（G-edit-findings-table 母集団の欠落）"));

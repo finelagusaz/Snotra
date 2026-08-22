@@ -104,18 +104,20 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 | 発火条件 | 出るもの | 判定 |
 |---|---|---|
-| `.rs` を編集し（**Edit / Write の別を問わない**）、そのファイルが所属 crate の `CLAUDE.md` の索引に無い | そのファイルの索引漏れ（#629/#630 → #1139） | `edit-findings.mjs` |
-| `<crate>/CLAUDE.md` を編集した | その crate の索引と実ファイルの**双方向**の不整合 | 同上 |
-| ガバナンス文書（`governanceDocs()` が返すもの）の `.md` を編集し、**その文書の中に**実在しない参照がある | 実在しない参照 | 同上 |
-| 見出し参照の走査元（`allHeadingRefDocs()`。`.md` ・`.rs` ・コメント記法を持つスクリプト）を編集し、**その中に**着地しない正準形・近傍形・物理改行で折れた形がある | 参照の書き方 | 同上 |
-| 同じ走査元を編集し、**その中に**物理改行を跨いだコードスパンがある（#992） | 折れたコードスパン | 同上 |
-| `staleIdentifierTargets()` の文書を編集し、**その中に**現行語彙に無い識別子がある | 語彙の腐り | 同上 |
-| `docs/adr/` 直下の `.md` を編集し、ファイル名か冒頭見出しが `ADR-<slug>` 形でない | ADR の命名 | 同上 |
-| `.md` を編集し、**依存を持つ節の本文が変わった** | その節に依存する参照の一覧（#1140） | `dependents.mjs` |
+| `.rs` を編集し（**Edit / Write の別を問わない**）、そのファイルが所属 crate の `CLAUDE.md` の索引に無い | そのファイルの索引漏れ（#629/#630 → #1139） | `checkModuleIndex` |
+| `<crate>/CLAUDE.md` を編集した | その crate の索引と実ファイルの**双方向**の不整合 | `checkModuleIndex` |
+| ガバナンス文書（`governanceDocs()` が返すもの）の `.md` を編集し、**その文書の中に**実在しない参照がある | 実在しない参照 | `checkReferences` |
+| 見出し参照の走査元（`allHeadingRefDocs()`。`.md` ・`.rs` ・コメント記法を持つスクリプト）を編集し、**その中に**着地しない正準形がある | 参照の書き方 | `checkHeadingRefs` |
+| 同じ走査元を編集し、**その中に**助詞が挟まった近傍形がある | 同上 | `checkNearHeadingRefs` |
+| 同じ走査元を編集し、**その中に**物理改行で折れた正準形がある | 同上 | `checkFoldedHeadingRefs` |
+| 同じ走査元を編集し、**その中に**物理改行を跨いだコードスパンがある（#992） | 折れたコードスパン | `checkFoldedCodeSpans` |
+| `staleIdentifierTargets()` の文書を編集し、**その中に**現行語彙に無い識別子がある | 語彙の腐り | `checkStaleIdentifiers` |
+| `docs/adr/` 直下の `.md` を編集し、ファイル名か冒頭見出しが `ADR-<slug>` 形でない | ADR の命名 | `checkAdrFileNames` |
+| `.md` を編集し、**依存を持つ節の本文が変わった** | その節に依存する参照の一覧（#1140） | `reportFor`（`dependents.mjs`） |
 
 **上の表の発火条件はどれも「編集したファイルが `.rs` か `.md` である」を前提に読むこと。** 各 reminder 関数が入口で拡張子を見て早期 return するため、**それ以外の編集では表の判定が 1 つも走らない**——母集団が広い判定ほどこの差が効く（見出し参照とコードスパンの走査元はコメント記法を持つスクリプトを含むのに、そこを編集しても鳴らない）。**行ごとに書き分けない**——この前提は表の全行で真であり、1 行だけ限定を書くと「この行だけ鳴らない」という偽の非対称ができる。
 
-**判定はどれも `scripts/governance/` のスクリプトを subprocess で呼ぶ**（`edit-findings.mjs` / `dependents.mjs`）。**母集団の述語をここへ写さない**——`governanceDocs` / `allHeadingRefDocs` / `staleIdentifierTargets` の中身は `scripts/governance/lib.mjs` が正本であり、上の表が名指すのは**どの導出を使うか**までである。
+**「判定」列は判定関数の名前であり、`G-edit-findings-table` がこの表と実装を照合する**——`checkAdrFileNames` までの 9 行は `edit-findings.mjs` が、最終行は `dependents.mjs` が持つ。**行を足したら実装にも足す**（逆も同じ。片方だけでは赤になる）。判定はどれも `scripts/governance/` のスクリプトを subprocess で呼ぶ。**母集団の述語をここへ写さない**——`governanceDocs` / `allHeadingRefDocs` / `staleIdentifierTargets` の中身は `scripts/governance/lib.mjs` が正本であり、上の表が名指すのは**どの導出を使うか**までである。
 
 **`edit-findings.mjs` が出す行は `additionalContext`（エージェント向け）にも出る**——#629/#630 は**エージェント**の更新漏れであり、人間向けの `systemMessage` だけに出しても当の失敗主体に届かない（`dependents.mjs` の行は `systemMessage` だけ）。**それでも検査ではない**（exit code を動かさず、`--- <id>: 失敗 ---` の形も取らない）。
 

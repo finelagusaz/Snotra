@@ -23,6 +23,7 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     nearRefs: 14,
     foldedRefs: 21,
     codeSpans: 17628,
+    editFindingsRows: 10,
     adrFiles: 53,
     adrCitations: 257,
   });

@@ -51,7 +51,14 @@ import { checkAdrFileNames } from "./checks/G-adr-file-names.mjs";
  * **母集団の述語を写さない**——各検査が読む母集団は `lib.mjs` の導出関数が正本で、ここは
  * その `includes` を取るだけである（写すと、母集団が動いたとき片方だけが知っている状態になる）。
  */
-const SCAN_SCOPED = [
+/**
+ * **export しているのは `G-edit-findings-table` が照合するためである。**
+ * あちらは `docs/hooks.md`「検査ではない reminder（発火一覧に現れない）」の表が
+ * この配列と釣り合っているかを見る——**判定を再実装せず、この配列そのものを読む**
+ * （`G-hook-fires` が `selectChecks` を import して呼ぶのと同じ理由。抽出で近似すると、
+ * 閉じたい写しを一段下で作り直すことになる）。**要素を足すときは表にも行を足す。**
+ */
+export const SCAN_SCOPED = [
   { population: allHeadingRefDocs, check: checkHeadingRefs },
   { population: allHeadingRefDocs, check: checkNearHeadingRefs },
   { population: allHeadingRefDocs, check: checkFoldedHeadingRefs },

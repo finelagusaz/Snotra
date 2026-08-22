@@ -1,0 +1,496 @@
+# 規範の書式を文書の役割から決める Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 規範文書の条項を、読んだときに次の行動が分かる形へ寄せる。
+
+**Architecture:** 文書の役割ごとに書式の候補を定め（`AGENTS.md`「ドキュメント参照」が役割の出所）、条項ごとに「書き換えテスト」で裁定する。書式を守る機構は新設しない。条項の太字リードは `G-heading-refs` のアンカーなので、書き換えは参照の随伴修正とセットで行う。
+
+**Tech Stack:** Markdown / `npm run governance:check`（Node・全 23 検査）/ `git` / `cargo check`（`.rs` の doc コメントに書かれた参照の検証）
+
+**Spec:** `docs/superpowers/specs/2026-08-22-norm-format-by-role-design.md`
+
+## Global Constraints
+
+これらは全タスクの要件に含まれる。値は spec から逐語で写した。
+
+- **単位はすべて UTF-8 バイトである。** この環境では `wc -m` も `awk length` もバイトを返す。日本語主体ではバイト ≒ 文字 × 2.05 なので「800 バイト超」は体感で約 390 字。
+- **条項の太字リードは `G-heading-refs` のアンカーそのものである。** 照合は正規化後の**前方一致**なので、頭を変える書き換え（事実形 → 行動形）は着地していた参照を落とす。頭を残して末尾を足す書き換えは前方一致が生きるので安全。
+- **見出しへ昇格するときは `###` 以下にする。** `##` は `sectionOf` の節を切り、`G-module-index` の順方向照合の母集団が finding を出さずに縮む。
+- **定型スロット（規範／機序／機構の射程／受容する残余／前史）は任意である。** 持たない条項に節を作らない。
+- **面は作業の単位であって裁定の単位ではない。** 条項ごとに書き換えテストを当てる。
+- **`main` へ直接コミット・プッシュしない。** ブランチは `chore/734-norm-format-by-role`。
+- **各タスクの検証が green になってからコミットする。**
+- **書式を守る機構（検査・lint・hook）を新設しない。** spec が測って却下した——行動形と事実形は語形では割れず、合否を持たない計器も `ADR-governance-anchor-layer-discarded`（壊れ方が沈黙である層では観測しても分からない／メタ層は作りきるか捨てるかの二択）により却下している。作業中に「これを機械で守れる」と思ったら、まず spec の当該節を読むこと。
+
+## 共通の道具
+
+以降のタスクが繰り返し使うコマンド。**タスクごとに再掲せず、ここを参照する。**
+
+**(A) 条項の列挙**（対象ファイルの条項と、そのバイト長）
+```bash
+grep -nE '^\s*- \*\*' <file> | awk -F: '{printf "%s\t%d\t%s\n", $1, length($0), substr($0,1,60)}'
+```
+
+**(B) あるファイルの条項を指す正準形参照の列挙**（書き換え前に必ず取る）
+```bash
+git grep -n -oE '`<file>`\s*の?\s*「[^」]+」' -- . | sort -u
+```
+
+**(C) 参照の着地判定**（書き換え後に必ず回す。`governance:check` は `docs/superpowers/` を見ないので、この面の参照は自分で測る）
+```bash
+PYTHONIOENCODING=utf-8 python -c "
+import re,io,os,subprocess
+out=subprocess.run(['git','grep','-h','-oE',r'\`[^\`]+\`\s*の?\s*「[^」]+」'],capture_output=True,encoding='utf-8').stdout
+for line in sorted(set(out.split('\n'))):
+    m=re.match(r'\`([^\`]+)\`\s*の?\s*「([^」]+)」', line)
+    if not m: continue
+    tgt,head=m.group(1),m.group(2)
+    if not os.path.exists(tgt): continue
+    body=io.open(tgt,encoding='utf-8').read()
+    pats=[r'^#{1,6}\s+'+re.escape(head), r'^\s*[-*]\s+\*\*'+re.escape(head), r'^\*\*'+re.escape(head)]
+    if not any(re.search(p,body,re.M) for p in pats):
+        print('MISS %-40s [%s]'%(tgt,head))
+"
+```
+期待: 出力が空（MISS が 1 件も無い）。
+
+**(D) ガバナンス検査**
+```bash
+npm run governance:check
+```
+期待: `全検査 passed`。失敗時のみ finding が出る。
+
+**(F) 随伴修正の判定**（書き換えた面について、(B) で記録した参照が今も着地するかを見る）
+```bash
+# 使い方: TARGET=<書き換えた .md> BEFORE=<(B) の出力ファイル> で置き換えて実行
+PYTHONIOENCODING=utf-8 TARGET=src-tauri/CLAUDE.md BEFORE=/tmp/refs-src-tauri-before.txt python -c "
+import re,io,os
+tgt=os.environ['TARGET']; before=os.environ['BEFORE']
+leads=[]
+for l in io.open(tgt,encoding='utf-8'):
+    m=re.match(r'^\s*(?:- \*\*(.+?)\*\*|#{1,6}\s+(.+))',l)
+    if m: leads.append(re.sub(r'[\`\*]','',m.group(1) or m.group(2)).strip())
+for l in io.open(before,encoding='utf-8'):
+    m=re.search(r'「([^」]+)」',l)
+    if not m: continue
+    h=re.sub(r'[\`\*]','',m.group(1))
+    if not any(x.startswith(h) for x in leads): print('MISS: '+l.strip())
+"
+```
+期待: 出力が空。MISS が出た行は、その参照元を新しいリードへ直す。
+
+**(E) 書き換えテスト**（条項ごとの裁定手順・spec の「書き換えテスト」節が正本）
+1. 条項を `A のときは B する。C が起きたため（#NNN 実測）` の形へ**実際に書いてみる**
+2. 嘘にならないか
+3. その面の役割が読者に行動を求めるものか
+4. 書き換えると失われる保証があるか（射程宣言のように「逸脱の明記と対で真になる」形か）
+   → 2〜4 がすべて肯定なら書き換える。1 つでも否定なら現状のまま残し、**裁定の理由を PR 本文へ 1 行記録する**
+
+---
+
+## Phase 1: 規範の追加
+
+`AGENTS.md`「ドキュメント参照」へ書式を添える。以降のタスクが「合意された書式へ寄せる作業」になるよう先行させる。
+
+### Task 1: `AGENTS.md`「ドキュメント参照」へ書式と語の定義を置く
+
+**Files:**
+- Modify: `AGENTS.md`（`## ドキュメント参照` 節）
+
+**Interfaces:**
+- Produces: 「行動形」「事実形」の定義と、面ごとの書式の候補。Task 2 以降の裁定はこの節を参照する
+
+- [ ] **Step 1: 現状の面積を記録する**
+
+```bash
+npm run governance:check 2>&1 | grep -o '常時ロード [0-9]* 字・rules [0-9]* 字'
+```
+この値を控える。Step 6 で増分を確認する（合否は無い。`ADR-retire-area-budget` により面積に判定は持たない）。
+
+- [ ] **Step 2: 節の冒頭へ、語の定義と書式の位置づけを足す**
+
+`## ドキュメント参照` の直後（既存の箇条書きの前）へ挿入する:
+
+```markdown
+各行は「その役割の面をどう書くか」を併記する。**書式は候補であって規則ではない**——役割から書式は一意に決まらないので、条項ごとに書き換えテストで裁定する（手順は `docs/superpowers/specs/2026-08-22-norm-format-by-role-design.md`）。**行動形**は読者が次に取る動作で終わる形（`config の読みは read_config を通す`）、**事実形**は断定の繋辞で終わる形（`Layer 1 は best-effort である`）。
+```
+
+- [ ] **Step 3: 既存 9 行へ書式を添える**
+
+各行の末尾へ ` — <書式>` を足す。**行の前半（役割とパス）は一字も変えない**——`G-heading-refs` は見出しを見るので本文の変更は安全だが、他所からの引用がある行を壊さないため。
+
+```markdown
+- 意図（仕様）: `SPEC.md` — 語彙層で書く（実装のパスは書かない）
+- プロダクト知識（アーキテクチャ・横断パターン）: `docs/architecture.md` — 構造を記述する。**行動形にしない**（#326 が二重管理をドリフトの根治として撤去した面であり、条項自身が「ここに言い換えを置かない」と宣言している）
+- 開発原則・デバッグ指針（汎用）: `docs/development-principles.md` — 局面 → 立てる問いの形で書く
+- コメント規約（rustdoc / TSDoc の様式・粒度・定型ラベル）: `docs/comment-guidelines.md` — 様式を規定する
+- ビルド・テストコマンド: `docs/build-commands.md` — 索引と行動形で書く
+- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`） — 行動形で書き、その射程（機構が守る範囲と、守らない範囲）を明示する
+- 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約） — 書式は定めない
+- 実装前チェック: `.claude/rules/`（該当ファイルの読み取り時に自動配送） — `A のときは B する。C が起きたため（#NNN 実測）` で書く
+- 意思決定記録（否定の知識＝なぜ B を却下したか）: `docs/adr/ADR-<slug>.md`（否定の知識が生じた決定のみ・#593。連番を振らない・#812） — 書式は定めない（凍結された歴史ゆえ）
+```
+
+- [ ] **Step 4: 役割の行が無い 3 面を足す**
+
+同じ箇条書きの末尾へ追加する。**この 3 行は新設である**——ルート `CLAUDE.md` / `AGENTS.md` 自身の役割は同節に無く、`docs/hooks.md` の役割はルート `CLAUDE.md`「フック」が持っていた。
+
+```markdown
+- 運用ガイド・開発プロセス（常時ロード）: ルート `CLAUDE.md` と本ファイル — トリガー → 行動／参照先で書く
+- フックの実装契約・機構・保守: `docs/hooks.md`（責務の所在はルート `CLAUDE.md`「フック」） — 射程の宣言と、その逸脱の明記を**対で**書く。**片方だけ書き換えない**——「読むのは `tool_input.command` だけである」は単独では実装より強い全称で、直後の「判定の起点はコマンド位置である。ただし全判定がそこに閉じるわけではない」が支えている（#774 が意図的に作った対）
+```
+
+- [ ] **Step 5: 検査を回す**
+
+共通の道具 (D) と (C) を実行する。
+期待: (D) は `全検査 passed`、(C) は出力が空。
+
+- [ ] **Step 6: 面積の増分を確認する**
+
+Step 1 と同じコマンドを実行し、常時ロード面の増分を記録する。**合否は無い**（`ADR-retire-area-budget`）。増分を PR 本文へ書く。
+
+- [ ] **Step 7: コミット**
+
+```bash
+git add AGENTS.md
+git commit -m "docs(governance): #734 ドキュメント参照へ役割ごとの書式を併記する"
+```
+
+---
+
+## Phase 2: モジュール `CLAUDE.md`
+
+4 面を条項ごとに裁定して行動形化する。**この Phase が参照の随伴修正を最も多く伴う**——`src-tauri/CLAUDE.md` の太字リードには `.rs` / `.ps1` / `.md` から複数の正準形参照が着地している。
+
+### Task 2: `src-tauri/CLAUDE.md`（条項 36 本・800 バイト超 11 本）
+
+**Files:**
+- Modify: `src-tauri/CLAUDE.md`
+- Modify: 参照元（Step 2 の列挙で確定する。`.rs` の doc コメント・`.ps1`・他の `.md`）
+
+**Interfaces:**
+- Consumes: Task 1 が置いた書式の定義
+- Produces: モジュール `CLAUDE.md` の書き換え手順の実例。Task 3〜5 は同じ手順を踏む
+
+- [ ] **Step 1: 対象条項を列挙する**
+
+共通の道具 (A) を `src-tauri/CLAUDE.md` に対して実行する。
+期待: 36 本。うちバイト長 800 以上が 11 本。
+
+- [ ] **Step 2: 現在の参照を記録する（書き換え前に必ず）**
+
+共通の道具 (B) を `src-tauri/CLAUDE.md` に対して実行し、**出力をファイルへ保存する**。
+
+```bash
+git grep -n -oE '`src-tauri/CLAUDE\.md`\s*の?\s*「[^」]+」' -- . | sort -u > /tmp/refs-src-tauri-before.txt
+wc -l /tmp/refs-src-tauri-before.txt
+```
+
+この一覧が Step 6 の随伴修正の母集団になる。**記録せずに書き換えると、どれを直すべきか分からなくなる。**
+
+- [ ] **Step 3: 条項ごとに書き換えテストを当てる**
+
+36 本それぞれに共通の道具 (E) を当て、`書き換える` / `残す（理由）` を記録する。**この面の役割は「モジュール固有の不変条件」なので、行動形と射程の明示が書式の候補である。**
+
+裁定の記録例（PR 本文へ載せる形）:
+```
+:53 処置を返す純粋核の強制（#934）           → 残す（既に行動形。#[must_use] を持つ、が動作）
+:58 config の読みは read_config を通す        → 残す（既に行動形）
+:17 <条項>                                    → 書き換える（事実形 → 「〜のときは〜する」）
+```
+
+- [ ] **Step 4: 書き換える**
+
+Step 3 で `書き換える` と裁定した条項のリードを直す。**頭を残して末尾を足せる場合はそうする**（前方一致が生きるので参照が落ちない）。頭を変える必要がある条項は、Step 2 の一覧に載っているかを確認してから変える。
+
+- [ ] **Step 5: 800 バイト超の条項を `###` へ昇格する（任意）**
+
+11 本のうち、位置参照（「上の」「末尾の」「次の N つ」）や数え上げ（「残余は N 件」）を含む条項だけを昇格する。**スロットは任意**——持たない条項に節を作らない。**昇格先は `###` 以下**（`##` は `## モジュール構成` の節を切る）。
+
+昇格の対象を機械的に見つける:
+```bash
+grep -nE '^\s*- \*\*' src-tauri/CLAUDE.md | grep -E '上の|末尾の|次の [0-9]|は [0-9]+ 件|は [0-9]+ つ'
+```
+
+- [ ] **Step 6: 参照を随伴修正する**
+
+共通の道具 (F) を `TARGET=src-tauri/CLAUDE.md BEFORE=/tmp/refs-src-tauri-before.txt` で実行する。
+期待: 出力が空。MISS が出たら、その参照元を新しいリードへ直してから再実行する。
+
+- [ ] **Step 7: 陳腐化した手順を処理する**
+
+**この工程を Phase 3 ではなく Phase 2 に置いた理由**: spec の分割表はこれを「rules と build-commands」の PR へ置いているが、対象は `src-tauri/CLAUDE.md` であり、同じファイルを 2 つの PR で触ることになる。ファイル境界で衝突を避けるため、この面を触る唯一のタスクへ寄せた。
+
+`src-tauri/CLAUDE.md:138` の `webview2-com` / `windows_core_0_61` を指示する条項を扱う。**実際の依存に存在しない**ことを 3 通りで確認済み:
+
+```bash
+git grep -n "webview2" -- '*Cargo.toml'          # 期待: 0 件
+git grep -rn "windows_core_0_61" -- .            # 期待: 当該 CLAUDE.md の 1 行のみ
+grep -n "windows" src-tauri/Cargo.toml           # 期待: windows 0.62.2 のみ
+```
+
+3 つとも期待どおりなら、その条項を削除する。**削除の作法**（`docs/development-principles.md`「撤去（消す変更）の作法」）に従い、消した語彙（`webview2-com` / `windows_core_0_61`）を `git grep` で数え上げ、残った出現を「撤去を描写している / 撤去されたものが在る前提で書いている」へ振り分ける。
+
+- [ ] **Step 8: 検査を回す**
+
+```bash
+npm run governance:check
+cargo check -p snotra 2>&1 | tail -5
+```
+期待: `全検査 passed` と、`cargo check` がエラー無し（`.rs` の doc コメントに書いた参照は `governance:check` の `G-heading-refs` が見るが、コンパイル自体も確認する）。
+さらに共通の道具 (C) を実行する。期待: 出力が空。
+
+- [ ] **Step 9: コミット**
+
+```bash
+git add src-tauri/CLAUDE.md <Step 6 で直した参照元ファイル>
+git commit -m "docs(src-tauri): #734 条項を行動形へ寄せ、陳腐化した webview2-com の手順を撤去する"
+```
+
+### Task 3: `snotra-core/CLAUDE.md`（条項 57 本・800 バイト超 7 本）
+
+**Files:**
+- Modify: `snotra-core/CLAUDE.md`
+- Modify: 参照元（Step 2 の列挙で確定する）
+
+**Interfaces:**
+- Consumes: Task 1 の書式の定義、Task 2 が確立した手順
+
+- [ ] **Step 1: 対象条項を列挙する** — 共通の道具 (A) を `snotra-core/CLAUDE.md` へ。期待: 57 本
+- [ ] **Step 2: 現在の参照を記録する** — 共通の道具 (B) を `snotra-core/CLAUDE.md` へ。出力を `/tmp/refs-snotra-core-before.txt` へ保存
+- [ ] **Step 3: 条項ごとに書き換えテストを当てる** — 共通の道具 (E)。裁定を記録
+- [ ] **Step 4: 書き換える** — 頭を残せる場合はそうする
+- [ ] **Step 5: 800 バイト超 7 本のうち、位置参照・数え上げを含むものを `###` へ昇格する**
+- [ ] **Step 6: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=snotra-core/CLAUDE.md BEFORE=/tmp/refs-snotra-core-before.txt` で実行。期待: 出力が空
+- [ ] **Step 7: 検査を回す** — `npm run governance:check` と `cargo check -p snotra-core`、共通の道具 (C)
+- [ ] **Step 8: コミット**
+
+```bash
+git add snotra-core/CLAUDE.md <直した参照元>
+git commit -m "docs(core): #734 条項を行動形へ寄せる"
+```
+
+### Task 4: `snotra-settings/CLAUDE.md`（条項 18 本・800 バイト超 0 本）
+
+**Files:**
+- Modify: `snotra-settings/CLAUDE.md`
+
+- [ ] **Step 1: 対象条項を列挙する** — 共通の道具 (A)。期待: 18 本・800 バイト超は 0 本なので昇格の工程は無い
+- [ ] **Step 2: 現在の参照を記録する** — 共通の道具 (B)。`/tmp/refs-snotra-settings-before.txt` へ
+- [ ] **Step 3: 条項ごとに書き換えテストを当てる** — 共通の道具 (E)
+- [ ] **Step 4: 書き換える**
+- [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=snotra-settings/CLAUDE.md BEFORE=/tmp/refs-snotra-settings-before.txt` で実行。期待: 出力が空
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 7: コミット**
+
+```bash
+git add snotra-settings/CLAUDE.md <直した参照元>
+git commit -m "docs(settings): #734 条項を行動形へ寄せる"
+```
+
+### Task 5: `snotra-egui-runtime/CLAUDE.md`（条項 8 本・800 バイト超 2 本）
+
+**Files:**
+- Modify: `snotra-egui-runtime/CLAUDE.md`
+
+**注意:** この面の条項「不変条件」は `src-tauri/CLAUDE.md` と `snotra-egui-runtime/CLAUDE.md` の間で相互参照されている（`src-tauri/CLAUDE.md` の wake 経路の条項が `snotra-egui-runtime/CLAUDE.md`「不変条件」を指す）。**Task 2 の後に実行する。**
+
+- [ ] **Step 1: 対象条項を列挙する** — 共通の道具 (A)。期待: 8 本
+- [ ] **Step 2: 現在の参照を記録する** — 共通の道具 (B)。`/tmp/refs-egui-runtime-before.txt` へ
+- [ ] **Step 3: 条項ごとに書き換えテストを当てる** — 共通の道具 (E)
+- [ ] **Step 4: 書き換える**
+- [ ] **Step 5: 800 バイト超 2 本のうち、位置参照・数え上げを含むものを `###` へ昇格する**
+- [ ] **Step 6: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=snotra-egui-runtime/CLAUDE.md BEFORE=/tmp/refs-egui-runtime-before.txt` で実行。期待: 出力が空
+- [ ] **Step 7: 検査を回す** — `npm run governance:check` と `cargo check -p snotra-egui-runtime`、共通の道具 (C)
+- [ ] **Step 8: コミット**
+
+```bash
+git add snotra-egui-runtime/CLAUDE.md <直した参照元>
+git commit -m "docs(egui-runtime): #734 条項を行動形へ寄せる"
+```
+
+---
+
+## Phase 3: rules・build-commands・ルート `CLAUDE.md`・architecture の長い条項
+
+### Task 6: `.claude/rules/**`（条項 28 本）
+
+**Files:**
+- Modify: `.claude/rules/governance-docs.md`（7 本）・`safety-nets.md`（11 本）・`snotra-core-search.md`（4 本）・`spec.md`（2 本）・`src-tauri.md`（4 本）
+
+**注意:** この面は `.claude/rules/safety-nets.md` が自動配送される母集団である（セーフティネットの変更）。**ルート `CLAUDE.md`「最重要ルール（常に適用）」により、この面の変更はチームの共有物として合意が要る**——本 plan が spec 経由で得た合意の射程に収まっているかを、着手前に PR 本文で確認する。
+
+- [ ] **Step 1: 対象条項を列挙する** — 共通の道具 (A) を 5 ファイルへ。期待: 合計 28 本
+- [ ] **Step 2: 現在の参照を記録する** — 共通の道具 (B) を各ファイルへ。`/tmp/refs-rules-before.txt` へまとめる
+- [ ] **Step 3: 条項ごとに書き換えテストを当てる** — この面の書式の候補は `A のときは B する。C が起きたため（#NNN 実測）`。**根拠節（`C が起きたため`）を落とさない**——issue #734 が名指した書式の後半である
+- [ ] **Step 4: 書き換える**
+- [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を、書き換えた rules ファイルごとに `TARGET=.claude/rules/<書き換えたファイル>.md BEFORE=/tmp/refs-rules-before.txt` で実行。期待: 出力が空
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`（`G-rules-globs` が rules の `paths` を見る）、共通の道具 (C)
+- [ ] **Step 7: コミット**
+
+```bash
+git add .claude/rules/
+git commit -m "docs(rules): #734 条項を A のときは B する の形へ寄せる"
+```
+
+### Task 7: `docs/build-commands.md`（条項 54 本・事実形が多い面）
+
+**Files:**
+- Modify: `docs/build-commands.md`
+
+- [ ] **Step 1: 対象条項を列挙する** — 共通の道具 (A)。期待: 54 本
+- [ ] **Step 2: 現在の参照を記録する** — 共通の道具 (B)。`/tmp/refs-build-commands-before.txt` へ
+- [ ] **Step 3: 条項ごとに書き換えテストを当てる** — この面の役割は「コマンドリファレンス」。書式の候補は索引と行動形。書き換えの例（spec の検算で確認済み）:
+
+```
+現状: `cargo fmt` は検査（`--check`）と修復（`cargo fmt --all`）で別コマンドである
+書換: fmt が赤いときは `cargo fmt --all` を打つ（`--check` は直さない）
+
+現状: SKIP は「判定できなかった」であって合格ではない
+書換: SKIP を見たら合格と読まず、なぜ判定できなかったかを確かめる
+
+現状: `smoke:manual` はエージェントが実行できない
+書換: `smoke:manual` は人間へ依頼する
+```
+
+- [ ] **Step 4: 書き換える**
+- [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=docs/build-commands.md BEFORE=/tmp/refs-build-commands-before.txt` で実行。期待: 出力が空
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 7: コミット**
+
+```bash
+git add docs/build-commands.md
+git commit -m "docs(build): #734 事実形の条項を行動形へ寄せる"
+```
+
+### Task 8: ルート `CLAUDE.md`（条項 30 本）
+
+**Files:**
+- Modify: `CLAUDE.md`
+
+**注意:** この面は常時ロードであり、かつ**ルート `CLAUDE.md`「最重要ルール（常に適用）」は番号付きリストなので条項の母集団（行頭 `- **`）の外にある**。書き換えテストは番号付きの 2 項にも当てる。
+
+- [ ] **Step 1: 対象条項を列挙する** — 共通の道具 (A)。期待: 30 本。加えて番号付きリスト項目を列挙する:
+
+```bash
+grep -nE '^[0-9]+\. ' CLAUDE.md
+```
+
+- [ ] **Step 2: 現在の参照を記録する** — 共通の道具 (B)。`/tmp/refs-root-claude-before.txt` へ
+- [ ] **Step 3: 条項ごとに書き換えテストを当てる** — 条項 30 本と番号付き項目の両方へ
+- [ ] **Step 4: 書き換える**
+- [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=CLAUDE.md BEFORE=/tmp/refs-root-claude-before.txt` で実行。期待: 出力が空
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 7: 面積の増減を記録する** — Task 1 Step 1 と同じコマンド。合否は無い
+- [ ] **Step 8: コミット**
+
+```bash
+git add CLAUDE.md
+git commit -m "docs: #734 ルート CLAUDE.md の条項を行動形へ寄せる"
+```
+
+### Task 9: `docs/architecture.md` の長い条項 2 本と履歴 1 本
+
+**Files:**
+- Modify: `docs/architecture.md`
+
+**注意:** この面は**行動形化の対象ではない**（地図。#326 が二重管理を撤去した面であり、条項自身が「ここに言い換えを置かない」と宣言している）。扱うのは**長さと位置参照だけ**である。
+
+- [ ] **Step 1: 対象を特定する**
+
+```bash
+grep -nE '^\s*- \*\*' docs/architecture.md | awk -F: 'length($0)>=1500 {print $1": "length($0)" bytes"}'
+grep -nE '^\s*- \*\*' docs/architecture.md | grep -E 'いま除いた|上の|末尾の|次の [0-9]'
+grep -nE '^\s*- \*\*' docs/architecture.md | grep -E 'ていた$|ていた。'
+```
+期待: 1,500 バイト超が 2 本、位置参照を含む条項（「いま除いた枝に当たらない限りにおいて」）、過去形の履歴 1 本（「検索がフレームから出た後も、検索の `Mutex` はフレームに残っていた」）。
+
+- [ ] **Step 2: 現在の参照を記録する** — 共通の道具 (B) を `docs/architecture.md` へ。`/tmp/refs-architecture-before.txt` へ
+- [ ] **Step 3: 長い条項 2 本を `###` へ昇格する** — **リードの文言は変えない**（行動形化しない面なので、変える理由が無い。文言を保てば参照も落ちない）。昇格先は `###` 以下
+- [ ] **Step 4: 位置参照を名前へ置き換える** — 「いま除いた枝」を、その枝の名前で指す
+- [ ] **Step 5: 過去形の履歴 1 本を扱う** — 条項でも地図でもないので、節の位置づけを決めてから移すか散文化する。**削除する場合は、その主張を引いている箇所を `git grep` で数え上げてから消す**
+- [ ] **Step 6: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=docs/architecture.md BEFORE=/tmp/refs-architecture-before.txt` で実行。期待: 出力が空（文言を変えていなければ MISS は出ない）
+- [ ] **Step 7: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 8: コミット**
+
+```bash
+git add docs/architecture.md
+git commit -m "docs(arch): #734 長い条項を ### へ昇格し、位置参照を名前へ置き換える"
+```
+
+---
+
+## Phase 4: 索引の拡張
+
+**この Phase は Phase 2・3 の後に行う。** `docs/development-principles.md`「局面 → 立てる問い」表の第 3 列は素の `##` 見出し名であって正準形ではなく、`G-heading-refs` の射程外である。先に作ると、指す先が Phase 2・3 の書き換えで静かに腐る。
+
+### Task 10: `docs/development-principles.md` の「局面 → 立てる問い」表を条項レベルへ届かせる
+
+**Files:**
+- Modify: `docs/development-principles.md`（`## 局面 → 立てる問い` 節）
+
+**Interfaces:**
+- Consumes: Phase 2・3 で確定した各面の条項の見出し
+
+- [ ] **Step 1: 現状を測る**
+
+```bash
+awk '/^## 局面 → 立てる問い/{f=1;next} f&&/^## /{exit} f&&/^\|/{n++} END{print "表の行数（ヘッダ・区切り込み）: "n}' docs/development-principles.md
+grep -cE '^\s*- \*\*' docs/development-principles.md
+```
+期待: 表のデータ行 10、条項 91 本。
+
+- [ ] **Step 2: 91 条項を「この条項に来る局面を言えるか」で仕分ける**
+
+各条項について、`AGENTS.md`「条件別チェック（トリガー → 参照先）」と同じ形で「この局面に来たら」を書けるかを判定する。**言えない条項は表へ足さない**——表は入口であって目次ではない。
+
+仕分けの記録を PR 本文へ載せる（件数ではなく、足した局面の一覧を書く）。
+
+- [ ] **Step 3: 表へ行を足す**
+
+第 3 列は**正準形** `` `docs/development-principles.md`「<見出し>」 `` で書く。素の見出し名のままだと `G-heading-refs` が照合しないため、機械照合されない写しが増える。
+
+```markdown
+| この局面に来たら | 立てる問い | 節 |
+|---|---|---|
+| （既存 10 行はそのまま） | | |
+| <新しい局面> | <立てる問い> | `docs/development-principles.md`「<見出し>」 |
+```
+
+- [ ] **Step 4: 既存 10 行の第 3 列も正準形へ揃える**
+
+現在は素の `##` 見出し名（`撤去（消す変更）の作法` 等）なので、正準形へ書き換えて `G-heading-refs` の射程へ入れる。
+
+- [ ] **Step 5: 検査を回す**
+
+```bash
+npm run governance:check
+```
+期待: `全検査 passed`。**Step 4 で正準形にした 10 件が新たに照合対象になるので、着地しないものがあればここで赤になる**——それは既存の腐りが露出したのであって、この変更が壊したのではない。
+
+さらに共通の道具 (C) を実行する。期待: 出力が空。
+
+- [ ] **Step 6: コミット**
+
+```bash
+git add docs/development-principles.md
+git commit -m "docs(principles): #734 局面 → 立てる問い の表を条項レベルへ届かせ、第 3 列を正準形にする"
+```
+
+---
+
+## 完了時の検証（全 Phase 共通）
+
+- [ ] `npm run governance:check` が `全検査 passed`
+- [ ] 共通の道具 (C) の出力が空
+- [ ] `cargo check --workspace` がエラー無し
+- [ ] `git log --oneline main..HEAD` で、各 Phase のコミットが揃っている
+- [ ] PR 本文へ、条項ごとの裁定（書き換えた / 残した + 理由）と、随伴修正した参照の一覧を載せる
+
+## 受容する残余（spec から引き継ぐ）
+
+- **行動形／事実形のずれを検知する機構は無い。** この plan の作業が正しく行われたことを機械が保証する手段は無く、受け皿は `.claude/rules/governance-docs.md`「書く約束」・レビュー・`/health-check` の意味判断である
+- **裁定は意味判断であり、ぶれる。** 同じ条項でも実行者が変われば違う裁定になりうる
+- **見出しへ昇格した条項は `- **` でなくなり、条項の母集団から消える。** 作業の前後で条項数を比べても改善の証拠にならない
+- **この plan の計測は太字で始まる箇条書きしか見ていない。** 太字でない箇条書き・番号付き・表行は射程外である（Task 8 だけが番号付きを明示的に扱う）

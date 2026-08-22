@@ -10,15 +10,19 @@
 
 ## ドキュメント参照
 
-- 意図（仕様）: `SPEC.md`
-- プロダクト知識（アーキテクチャ・横断パターン）: `docs/architecture.md`
-- 開発原則・デバッグ指針（汎用）: `docs/development-principles.md`
-- コメント規約（rustdoc / TSDoc の様式・粒度・定型ラベル）: `docs/comment-guidelines.md`
-- ビルド・テストコマンド: `docs/build-commands.md`
-- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`）
-- 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約）
-- 実装前チェック: `.claude/rules/`（該当ファイルの読み取り時に自動配送）
-- 意思決定記録（否定の知識＝なぜ B を却下したか）: `docs/adr/ADR-<slug>.md`（否定の知識が生じた決定のみ・#593。連番を振らない・#812）
+末尾の一句は**その面の条項をどう書くか**の索引。判定と理由の正本は `docs/development-principles.md`「規範の書式は文書の役割から選ぶ」——**書式は候補であって規則ではなく、裁定は条項ごとに行う**。
+
+- 意図（仕様）: `SPEC.md` — 語彙層で書く
+- プロダクト知識（アーキテクチャ・横断パターン）: `docs/architecture.md` — 構造を記述する
+- 開発原則・デバッグ指針（汎用）: `docs/development-principles.md` — 局面 → 立てる問い
+- コメント規約（rustdoc / TSDoc の様式・粒度・定型ラベル）: `docs/comment-guidelines.md` — 様式を規定する
+- ビルド・テストコマンド: `docs/build-commands.md` — 索引と行動形
+- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`） — 行動形 + 射程の明示
+- 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約） — 書式は定めない
+- 実装前チェック: `.claude/rules/`（該当ファイルの読み取り時に自動配送） — `A のときは B する。C が起きたため（#NNN 実測）`
+- 意思決定記録（否定の知識＝なぜ B を却下したか）: `docs/adr/ADR-<slug>.md`（否定の知識が生じた決定のみ・#593。連番を振らない・#812） — 書式は定めない（凍結された歴史ゆえ）
+- 運用ガイド・開発プロセス（常時ロード）: ルート `CLAUDE.md` と本ファイル — トリガー → 行動／参照先
+- フックの実装契約・機構・保守: `docs/hooks.md`（責務の所在はルート `CLAUDE.md`「フック」） — 射程の宣言と逸脱の明記を対で書く
 
 ## 開発ワークフロー
 

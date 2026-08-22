@@ -148,6 +148,15 @@ describe("scopedFindings — 参照の書き方（heading-refs 3 種）の帰属
     expect(scopedFindings(s, "docs/guide.md")).toHaveLength(1);
   });
 
+  it("赤: コードスパンが行をまたぐ（G-folded-code-spans）", () => {
+    // **配線されていることの固定である。** 判定の正しさは当該検査の隣のテストが持つので、
+    // ここは 1 形だけを見る——写すと、述語が動いたとき片方だけが知っている状態になる
+    const s = snap({ ...refDocs, "docs/guide.md": "# g\n旧実装は `if seen.insert(key)\n{ push }` にあった\n" });
+    const f = scopedFindings(s, "docs/guide.md");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("コードスパンが物理改行を跨いでいる");
+  });
+
   it("**帰属**: 他の文書の壊れた参照は混じらない", () => {
     const s = snap({ ...refDocs, "docs/other.md": "# o\n`AGENTS.md`「無い節」\n" });
     expect(scopedFindings(s, "docs/guide.md")).toEqual([]);

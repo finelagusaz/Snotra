@@ -104,15 +104,20 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 | 発火条件 | 出るもの | 判定 |
 |---|---|---|
-| `.rs` を編集し（**Edit / Write の別を問わない**）、そのファイルが所属 crate の `CLAUDE.md` の索引に無い | そのファイルの索引漏れ（#629/#630 → #1139） | `edit-findings.mjs` |
-| `<crate>/CLAUDE.md` を編集した | その crate の索引と実ファイルの**双方向**の不整合 | 同上 |
-| ガバナンス文書（`governanceDocs()` が返すもの）の `.md` を編集し、**その文書の中に**実在しない参照がある | 実在しない参照 | 同上 |
-| 見出し参照の走査元（`allHeadingRefDocs()`。`.md` ・`.rs` ・コメント記法を持つスクリプト）を編集し、**その中に**着地しない正準形・近傍形・物理改行で折れた形がある | 参照の書き方 | 同上 |
-| `staleIdentifierTargets()` の文書を編集し、**その中に**現行語彙に無い識別子がある | 語彙の腐り | 同上 |
-| `docs/adr/` 直下の `.md` を編集し、ファイル名か冒頭見出しが `ADR-<slug>` 形でない | ADR の命名 | 同上 |
-| `.md` を編集し、**依存を持つ節の本文が変わった** | その節に依存する参照の一覧（#1140） | `dependents.mjs` |
+| `.rs` を編集し（**Edit / Write の別を問わない**）、そのファイルが所属 crate の `CLAUDE.md` の索引に無い | そのファイルの索引漏れ（#629/#630 → #1139） | `checkModuleIndex` |
+| `<crate>/CLAUDE.md` を編集した | その crate の索引と実ファイルの**双方向**の不整合 | `checkModuleIndex` |
+| ガバナンス文書（`governanceDocs()` が返すもの）の `.md` を編集し、**その文書の中に**実在しない参照がある | 実在しない参照 | `checkReferences` |
+| 見出し参照の走査元（`allHeadingRefDocs()`。`.md` ・`.rs` ・コメント記法を持つスクリプト）を編集し、**その中に**着地しない正準形がある | 参照の書き方 | `checkHeadingRefs` |
+| 同じ走査元を編集し、**その中に**助詞が挟まった近傍形がある | 同上 | `checkNearHeadingRefs` |
+| 同じ走査元を編集し、**その中に**物理改行で折れた正準形がある | 同上 | `checkFoldedHeadingRefs` |
+| 同じ走査元を編集し、**その中に**物理改行を跨いだコードスパンがある（#992） | 折れたコードスパン | `checkFoldedCodeSpans` |
+| `staleIdentifierTargets()` の文書を編集し、**その中に**現行語彙に無い識別子がある | 語彙の腐り | `checkStaleIdentifiers` |
+| `docs/adr/` 直下の `.md` を編集し、ファイル名か冒頭見出しが `ADR-<slug>` 形でない | ADR の命名 | `checkAdrFileNames` |
+| `.md` を編集し、**依存を持つ節の本文が変わった** | その節に依存する参照の一覧（#1140） | `reportFor`（`dependents.mjs`） |
 
-**判定はどれも `scripts/governance/` のスクリプトを subprocess で呼ぶ**（`edit-findings.mjs` / `dependents.mjs`）。**母集団の述語をここへ写さない**——`governanceDocs` / `allHeadingRefDocs` / `staleIdentifierTargets` の中身は `scripts/governance/lib.mjs` が正本であり、上の表が名指すのは**どの導出を使うか**までである。
+**上の表の発火条件はどれも「編集したファイルが `.rs` か `.md` である」を前提に読むこと。** 各 reminder 関数が入口で拡張子を見て早期 return するため、**それ以外の編集では表の判定が 1 つも走らない**——母集団が広い判定ほどこの差が効く（見出し参照とコードスパンの走査元はコメント記法を持つスクリプトを含むのに、そこを編集しても鳴らない）。**行ごとに書き分けない**——この前提は表の全行で真であり、1 行だけ限定を書くと「この行だけ鳴らない」という偽の非対称ができる。
+
+**「判定」列は判定関数の名前であり、`G-edit-findings-table` がこの表と実装を照合する**——**照合するのは判定名の集合だけである**（行数も並びも、どの行がどのスクリプトに属すかも見ない。並べ替えても緑のまま推移する・実測）。**判定を足したら表にも足す**（逆も同じ。片方だけなら赤になる）。判定の在り処は `reportFor` が `dependents.mjs`、残りが `edit-findings.mjs` である。判定はどれも `scripts/governance/` のスクリプトを subprocess で呼ぶ。**母集団の述語をここへ写さない**——`governanceDocs` / `allHeadingRefDocs` / `staleIdentifierTargets` の中身は `scripts/governance/lib.mjs` が正本であり、上の表が名指すのは**どの導出を使うか**までである。
 
 **`edit-findings.mjs` が出す行は `additionalContext`（エージェント向け）にも出る**——#629/#630 は**エージェント**の更新漏れであり、人間向けの `systemMessage` だけに出しても当の失敗主体に届かない（`dependents.mjs` の行は `systemMessage` だけ）。**それでも検査ではない**（exit code を動かさず、`--- <id>: 失敗 ---` の形も取らない）。
 
@@ -120,6 +125,7 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 **この reminder の不在は「不整合が無い」を意味しない。** 少なくとも次では鳴らない——`.md` の依存参照は純追記（行が足されただけ）では出ず、判定スクリプトが無いツリー（この機構より前に凍結された worktree）ではどれも出ない。**射程そのものにも穴がある**:
 
+- **`.rs` と `.md` 以外の編集では、上の表の判定がどれも走らない**（機序は表の直後に書いた拡張子ゲート）。#992 の実在 6 箇所のうち **3 件がこの面（`.mjs` 1 / `.ps1` 2）に在り、書いた瞬間には鳴らなかった**——`governance:check` だけが後から赤にする。
 - **削除は見えない。** `rm` は `Edit|Write` matcher に届かないので、`.rs` を消したときの索引の orphan も、削除で他文書の参照が壊れる形も編集時には現れない。**CI の `governance-check` job を外さない理由の実体がこれである。**
 - **`governanceDocs()` の外の `.md` は参照実在を見ない**——`PERFORMANCE.md`・`RETROSPECTIVE.md`・`README.md`・`.claude/agents/**`・`docs/adr/**`・`.claude/skills/*/references/**`、および走査から除外される `workspace/`。**「`.md` を編集すれば参照実在が見える」は偽である。**
   - **ただし「その文書が丸ごと見えない」でもない**——母集団は判定ごとに違い、見出し参照の走査元（`allHeadingRefDocs()`）は `governanceDocs()` より広い。**どの判定がどの母集団を見るかは上の表の「判定」列から辿る**（ここで対応表を作らない——2 つの母集団の差分は片方が動けば腐る）。

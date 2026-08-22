@@ -202,6 +202,9 @@ const COMMENT_FAMILY = new Map([
   [".sh", "hash"], [".yml", "hash"], [".yaml", "hash"], [".toml", "hash"],
 ]);
 
+/** 記法族の集合。**`COMMENT_FAMILY` の値から導く**——手で並べると、族を足したとき片方だけが知る */
+const FAMILIES = new Set(COMMENT_FAMILY.values());
+
 /** ファイル名からコメント記法の族を引く。散文の文書（`.md` / `.rs` ほか）は `null` */
 export const commentFamilyOf = (file) => COMMENT_FAMILY.get((/\.[a-z0-9]+$/i.exec(file) ?? [""])[0].toLowerCase()) ?? null;
 
@@ -221,11 +224,32 @@ export const commentFamilyOf = (file) => COMMENT_FAMILY.get((/\.[a-z0-9]+$/i.exe
  *
  * @param {string} text ファイル全文
  * @param {string} file 拡張子から記法族を引く。`commentFamilyOf` が `null` を返す名前は**契約違反**
+ * @param {string} [family] 記法族を明示する口。**既定引数なので既存の呼び出し点は 1 つも動かない。**
+ *   要るのは `.rs` のためである——`COMMENT_FAMILY` に `.rs` を足すと `refScanLines` が `.rs` を
+ *   コメント行だけへ落とし、**#925 から全行を母集団にしている見出し参照の 3 検査が同じ変更で動く**
+ *   （検査対象を変更しながら検査を検証しない・#489）。呼び出し側が族を渡せば、母集団はそのままで
+ *   「コメント行だけを見たい検査」を書ける（`G-folded-code-spans` がそれである）。
  */
-export function linesOfComments(text, file) {
-  const family = commentFamilyOf(file);
+export function linesOfComments(text, file, family = commentFamilyOf(file)) {
   if (family === null) {
     throw new Error(`linesOfComments: コメント記法を持たない対象（受け取った値: ${file}）`);
+  }
+  // **未知の族は throw する。既定分岐へ落としてはならない**——落とすと `#` 始まりの行だけを見る
+  // 挙動になり、族名を綴り間違えた呼び出し点が**沈黙側へ倒れる**（`"jss"` / `"rust"` / `"toml"` 等）。
+  //
+  // **このガードが防ぐのは未知の綴りだけであり、族どうしの取り違えは通す**——`"js"` のつもりで
+  // `"hash"` と書けば、`"hash"` は正当な族なのでここは黙る（2026-08-22 実測）。そちらの沈黙は
+  // **呼び出し側の隣接テストが受け持つ**（`G-folded-code-spans.test.mjs` の `.rs` の fixture が
+  // `///` 形を要求するので、`"hash"` に化けると 3 本が赤くなる）。**この分担は構造ではなく
+  // fixture の性質に依っているので、第 3 引数の新しい呼び出し点を足す人は自分のテストで
+  // 族の取り違えが赤くなることを確かめること。**
+  //
+  // 沈黙の実害は測ってある（`G-folded-code-spans` の `.rs` の腕で `"js"` → `"hash"`）:
+  // 走査行 12364 → 1500・**照合スパン 7991 → 0**、それでも `governance:check` は
+  // **exit 0 のまま**で evidence の数字が減るだけだった。**この変異を捕まえたのは上記のテストであって、
+  // このガードではない。**
+  if (!FAMILIES.has(family)) {
+    throw new Error(`linesOfComments: 未知のコメント記法族（受け取った値: ${family} / 対象: ${file}）`);
   }
   const out = [];
   let inBlock = false;

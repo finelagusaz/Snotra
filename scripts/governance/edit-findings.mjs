@@ -33,6 +33,7 @@ import { checkReferences } from "./checks/G-references.mjs";
 import { checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkFoldedHeadingRefs } from "./checks/G-folded-heading-refs.mjs";
+import { checkFoldedCodeSpans } from "./checks/G-folded-code-spans.mjs";
 import { checkStaleIdentifiers } from "./checks/G-stale-identifiers.mjs";
 import { checkAdrFileNames } from "./checks/G-adr-file-names.mjs";
 
@@ -50,10 +51,21 @@ import { checkAdrFileNames } from "./checks/G-adr-file-names.mjs";
  * **母集団の述語を写さない**——各検査が読む母集団は `lib.mjs` の導出関数が正本で、ここは
  * その `includes` を取るだけである（写すと、母集団が動いたとき片方だけが知っている状態になる）。
  */
-const SCAN_SCOPED = [
+/**
+ * **export しているのは `G-edit-findings-table` が照合するためである。**
+ * あちらは `docs/hooks.md`「検査ではない reminder（発火一覧に現れない）」の表が
+ * この配列と釣り合っているかを見る——**判定を再実装せず、この配列そのものを読む**
+ * （`G-hook-fires` が `selectChecks` を import して呼ぶのと同じ理由。抽出で近似すると、
+ * 閉じたい写しを一段下で作り直すことになる）。**要素を足すときは表にも行を足す。**
+ */
+export const SCAN_SCOPED = [
   { population: allHeadingRefDocs, check: checkHeadingRefs },
   { population: allHeadingRefDocs, check: checkNearHeadingRefs },
   { population: allHeadingRefDocs, check: checkFoldedHeadingRefs },
+  // **着地先を持たない判定である。** 上の 3 本は「参照が着地するか」を snapshot 全体へ問うが、
+  // こちらは編集した 1 枚の中で完結する——前倒しの条件（`ADR-edit-time-check-scope`「決定」）を
+  // 既存より強く満たす形であり、**書いた瞬間に鳴ることが #992 の動機そのものである**
+  { population: allHeadingRefDocs, check: checkFoldedCodeSpans },
   { population: staleIdentifierTargets, check: checkStaleIdentifiers },
 ];
 

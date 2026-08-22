@@ -100,7 +100,9 @@ export { makeSnapshot, governanceDocs };
 // 残した 2 件を撤去ではなく格下げにしている理由は `ADR-retire-area-budget` の先例——面積は
 // 格下げ後も動かし続けたからこそ「4 観測点で欠陥検出ゼロ」という**廃止できる根拠**が取れた。
 // **どちらも「主題が機構自身である判定」であって、母集団の欠落検知ではない**——母集団が空に
-// なれば 21 本は空虚に緑を返す（21 本自身の故障）ので、`runAll` の 0 件検知はゲートに残る。
+// なれば `checks/` の検査群は空虚に緑を返す（検査群自身の故障）ので、`runAll` の 0 件検知は
+// ゲートに残る。**本数を書かない**——検査を 1 本足すたびに散文だけが腐り、しかも誰も検算しない
+// （`AGENTS.md`「検証の作法（全タスク共通）」の「数ではなく正本を指す」。#992 で実際に腐った）。
 //
 // **`SNOTRA_GOV_META_AUDIT=1` で元のゲートへ戻る。** サイクル末の `/health-check` がこれを立てて
 // 走らせ、発火を数える。2 サイクル連続で 0 件なら当該項目を撤去する（判定規則は ADR が正本）。
@@ -171,7 +173,7 @@ export function runAll(snapshot) {
   for (const c of checks) findings.push(...c.run());
   // 計器は検査ではない——面積に合否は無い（`ADR-retire-area-budget`）ので「検査 N 件」に数えない。
   // 入力の健全性だけは残すが、**守っている相手が計器なので格下げ側へ置く**——面積の数字が
-  // 静かに過小になるだけで、21 本の合否は動かない。
+  // 静かに過小になるだけで、`checks/` の検査群の合否は動かない。
   metaFindings.push(...checkNormativeAreaInstrument(snapshot));
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;

@@ -511,8 +511,8 @@ Describe 'Read-SnotraTraceSnapshot（捨てた行の数え方）' {
     }
 
     It '読み取りに失敗したら Available=false と ReadError を立て、「読めた」と言わない（#872）' {
-        # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction
-        # SilentlyContinue` のままだと Available=true・Events 0 件・Dropped 0 という
+        # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction SilentlyContinue` の
+        # ままだと Available=true・Events 0 件・Dropped 0 という
         # **正常な空ログと区別できない値**を返し、稼働中のアプリを観測する経路で
         # 「読めなかった」が「まだ出ていない」に化ける。
         $dir = Join-Path $TestDrive 'unreadable-snapshot'

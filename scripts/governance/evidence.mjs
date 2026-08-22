@@ -107,7 +107,7 @@ export function assembleEvidence(ev) {
     ` + スクリプトのコメント ${ev.refCommentDocs.length} 件から照合` +
     ` / workspace member ${ev.workspaceMembers} 件の lints opt-in / clippy 禁止 ${ev.clippyDisallowed} 件` +
     ` / 散文の識別子 ${ev.stale} 件を ${ev.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ev.nearRefs} 件` +
-    ` / 折れうる位置 ${ev.foldedRefs} 件` +
-    ` / ADR ${ev.adrFiles} 本の名前 / ADR の短縮引用 ${ev.adrCitations} 件`
+    ` / 折れうる位置 ${ev.foldedRefs} 件 / コードスパン ${ev.codeSpans} 件` +
+    ` / reminder 表 ${ev.editFindingsRows} 行 / ADR ${ev.adrFiles} 本の名前 / ADR の短縮引用 ${ev.adrCitations} 件`
   );
 }

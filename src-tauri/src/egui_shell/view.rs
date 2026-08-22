@@ -494,8 +494,8 @@ struct PostWidgetInput {
 /// style だけ**である（`Options::style()` が `dark_style` / `light_style` を選ぶ）。この窓は
 /// テーマ設定に触れないので `theme_preference` は既定の `System` のまま、`system_theme` が
 /// `None` の間は `fallback_theme`（Dark）へ落ちる——**そこへ OS が Light を報せた瞬間、
-/// 書いていない側の style が現役になり修正が黙って消える**（実測: `RawInput.system_theme =
-/// Some(Light)` を 1 フレーム流すだけで 0.0 → 5.0 へ戻る）。現状の `input.rs` は
+/// 書いていない側の style が現役になり修正が黙って消える**（実測: `RawInput.system_theme = Some(Light)` を
+/// 1 フレーム流すだけで 0.0 → 5.0 へ戻る）。現状の `input.rs` は
 /// `system_theme` を積まないため到達しないが、**積む変更は色の追従を足すつもりの誰かが書く**
 /// ものであり、当たり判定が道連れになることを予測できない。両テーマへ書けば費用ゼロで塞がる。
 ///

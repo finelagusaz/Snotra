@@ -227,8 +227,8 @@ Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
     }
 
     It '読み取りに失敗した周回を「まだ出ていない」と同じ沈黙へ潰さない' {
-        # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction
-        # SilentlyContinue` は空を返すので、**読めなかったと未発生が同じ $null に化ける**。
+        # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction SilentlyContinue` は
+        # 空を返すので、**読めなかったと未発生が同じ $null に化ける**。
         $dir = Join-Path $TestDrive 'unreadable'
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
 

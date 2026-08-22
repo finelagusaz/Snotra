@@ -80,6 +80,27 @@ describe("G-folded-code-spans checkFoldedCodeSpans（コードスパンが物理
     });
   });
 
+  // **宣言した死角を固定する。** ヘッダが「赤を受け取った者の唯一の拠り所」を自称する以上、
+  // 宣言と実装がずれたら鳴る必要がある——**沈黙側の死角はとくにそうで、テストが無ければ
+  // 「見ないと書いてあるが実は見る」へ静かに変わっても誰も気づかない**。
+  describe("宣言した死角（振る舞いの固定であって、望ましさの主張ではない）", () => {
+    it("沈黙側: 折れの両端が行末インラインコメントに在ると見ない", () => {
+      expect(run("let x = 5; // `if seen.insert(key)\nlet y = 6; // { push }` の形\n", "a.rs")).toEqual([]);
+    });
+
+    it("赤側: `.rs` の rustdoc コードフェンスの内側も見る（マスクしない）", () => {
+      expect(run("/// ```text\n/// 図の `foo\n/// bar` の形\n/// ```\n", "a.rs")).toHaveLength(1);
+    });
+
+    it("赤側: PowerShell のエスケープ文字を 1 個として数える", () => {
+      expect(run("# 改行は `n で表す\n# 次の行\n", "a.ps1")).toHaveLength(1);
+    });
+
+    it("赤側: `.md` の 4 スペースのインデントコードブロックも見る", () => {
+      expect(run("説明:\n\n    let a = `x\n    y`;\n")).toHaveLength(1);
+    });
+  });
+
   describe("母集団の健全性", () => {
     it("読めない文書は finding にする（母集団の欠落）", () => {
       const f = checkFoldedCodeSpans(snap({}), ["docs/missing.md"]);

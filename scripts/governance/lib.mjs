@@ -202,6 +202,9 @@ const COMMENT_FAMILY = new Map([
   [".sh", "hash"], [".yml", "hash"], [".yaml", "hash"], [".toml", "hash"],
 ]);
 
+/** 記法族の集合。**`COMMENT_FAMILY` の値から導く**——手で並べると、族を足したとき片方だけが知る */
+const FAMILIES = new Set(COMMENT_FAMILY.values());
+
 /** ファイル名からコメント記法の族を引く。散文の文書（`.md` / `.rs` ほか）は `null` */
 export const commentFamilyOf = (file) => COMMENT_FAMILY.get((/\.[a-z0-9]+$/i.exec(file) ?? [""])[0].toLowerCase()) ?? null;
 
@@ -230,6 +233,12 @@ export const commentFamilyOf = (file) => COMMENT_FAMILY.get((/\.[a-z0-9]+$/i.exe
 export function linesOfComments(text, file, family = commentFamilyOf(file)) {
   if (family === null) {
     throw new Error(`linesOfComments: コメント記法を持たない対象（受け取った値: ${file}）`);
+  }
+  // **未知の族は throw する。既定分岐へ落としてはならない**——落とすと `#` 始まりの行だけを見る
+  // 挙動になり、`"js"` を渡すつもりの呼び出し点が綴りを間違えたときに**沈黙側へ倒れる**
+  // （`.rs` の走査行が 7991 → ほぼ 0 へ落ちても、evidence の数字が減るだけで exit 0 のまま推移する）
+  if (!FAMILIES.has(family)) {
+    throw new Error(`linesOfComments: 未知のコメント記法族（受け取った値: ${family} / 対象: ${file}）`);
   }
   const out = [];
   let inBlock = false;

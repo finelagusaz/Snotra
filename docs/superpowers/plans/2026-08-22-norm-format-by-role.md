@@ -4,7 +4,7 @@
 
 **Goal:** 規範文書の条項を、読んだときに次の行動が分かる形へ寄せる。
 
-**Architecture:** 文書の役割ごとに書式の候補を定め（`AGENTS.md`「ドキュメント参照」が役割の出所）、条項ごとに「書き換えテスト」で裁定する。書式を守る機構は新設しない。条項の太字リードは `G-heading-refs` のアンカーなので、書き換えは参照の随伴修正とセットで行う。
+**Architecture:** 文書の役割ごとに書式の候補を定め（正本は `docs/development-principles.md`「規範の書式は文書の役割から選ぶ」・役割の出所は `AGENTS.md`「ドキュメント参照」）、条項ごとに「書き換えテスト」で裁定する。ゲートは新設しない。条項の太字リードは `G-heading-refs` のアンカーなので、書き換えは参照の随伴修正とセットで行う。
 
 **Tech Stack:** Markdown / `npm run governance:check`（Node・全 23 検査）/ `git` / `cargo check`（`.rs` の doc コメントに書かれた参照の検証）
 
@@ -19,14 +19,14 @@
 - **見出しへ昇格する前に、その面を `sectionOf` で切っている検査を確かめる。** `G-module-index` が見るのは `<crate>/CLAUDE.md` の 4 枚だけであり、他の面には当たらない。昇格先を `###` 以下にする理由は面ごとに違う。
 - **`docs/comment-guidelines.md` はどのタスクも触らない**（spec が「行動形化を当てない面」として体言止めの分類ラベルが役割に合っていると裁定した）。
 
-- **単位はすべて UTF-8 バイトである。** この環境では `wc -m` も `awk length` もバイトを返す。日本語主体ではバイト ≒ 文字 × 2.05 なので「800 バイト超」は体感で約 390 字。
+- **数値は UTF-8 バイトである。測るときは `wc -c` を使う。** `wc -m` と `awk length` の返す単位はロケールと実装に依存し、同じコマンドが環境によって文字数を返す（2026-08-22 に 2 つの環境で 216,329 と 422,374 に割れた）。日本語主体ではバイト ≒ 文字 × 2 なので「800 バイト超」は体感で約 400 字。
 - **条項の太字リードは `G-heading-refs` のアンカーそのものである。** 照合は正規化後の**前方一致**なので、頭を変える書き換え（事実形 → 行動形）は着地していた参照を落とす。頭を残して末尾を足す書き換えは前方一致が生きるので安全。
 - **見出しへ昇格するときは `###` 以下にする。** `##` は `sectionOf` の節を切り、`G-module-index` の順方向照合の母集団が finding を出さずに縮む。
 - **定型スロット（規範／機序／機構の射程／受容する残余／前史）は任意である。** 持たない条項に節を作らない。
 - **面は作業の単位であって裁定の単位ではない。** 条項ごとに書き換えテストを当てる。
 - **`main` へ直接コミット・プッシュしない。** ブランチは `chore/734-norm-format-by-role`。
 - **各タスクの検証が green になってからコミットする。**
-- **書式を守る機構（検査・lint・hook）を新設しない。** spec が測って却下した——行動形と事実形は語形では割れず、合否を持たない計器も `ADR-governance-anchor-layer-discarded`（壊れ方が沈黙である層では観測しても分からない／メタ層は作りきるか捨てるかの二択）により却下している。作業中に「これを機械で守れる」と思ったら、まず spec の当該節を読むこと。
+- **行動形／事実形のずれを見るゲート（合否を持つ検査）を新設しない。** spec が測って却下した——語形では割れず、独立に書いた 4 本の述語がいずれも一点に収束しなかった。**計器（合否を持たない観測）の要否は spec が未決としている**ので、この計画では置かない。作業中に「これを機械で守れる」と思ったら、まず spec の当該節を読むこと。**既存の機構を再実装する道具も書かない**（共通の道具 (C) を参照）。
 
 ## 共通の道具
 
@@ -39,26 +39,17 @@ grep -nE '^\s*- \*\*' <file> | awk -F: '{printf "%s\t%d\t%s\n", $1, length($0), 
 
 **(B) あるファイルの条項を指す正準形参照の列挙**（書き換え前に必ず取る）
 ```bash
-git grep -n -oE '`<file>`\s*の?\s*「[^」]+」' -- . | sort -u
+git grep -n -oP '`<file>`\s*の?\s*「[^」]+」' -- . | sort -u
 ```
+**`-oP`（PCRE）を使うこと。`-oE`（ERE）では `\s` が効かず、静かに数件しか拾わない**（2026-08-22 実測: 同じパターンで ERE 6 件 / PCRE 650 件）。
 
-**(C) 参照の着地判定**（書き換え後に必ず回す。`governance:check` は `docs/superpowers/` を見ないので、この面の参照は自分で測る）
-```bash
-PYTHONIOENCODING=utf-8 python -c "
-import re,io,os,subprocess
-out=subprocess.run(['git','grep','-h','-oE',r'\`[^\`]+\`\s*の?\s*「[^」]+」'],capture_output=True,encoding='utf-8').stdout
-for line in sorted(set(out.split('\n'))):
-    m=re.match(r'\`([^\`]+)\`\s*の?\s*「([^」]+)」', line)
-    if not m: continue
-    tgt,head=m.group(1),m.group(2)
-    if not os.path.exists(tgt): continue
-    body=io.open(tgt,encoding='utf-8').read()
-    pats=[r'^#{1,6}\s+'+re.escape(head), r'^\s*[-*]\s+\*\*'+re.escape(head), r'^\*\*'+re.escape(head)]
-    if not any(re.search(p,body,re.M) for p in pats):
-        print('MISS %-40s [%s]'%(tgt,head))
-"
-```
-期待: 出力が空（MISS が 1 件も無い）。
+**(C) 参照の着地は機構に委ねる。自前で判定器を書かない**
+
+**この工程で機構を再実装してはならない。** `.claude/rules/governance-docs.md`「ガバナンス文書の参照と命名のルール」が「対象として認める綴りの正本は `scripts/governance/lib.mjs` の `isRefTargetSpelling` である——**ここへ写さない**」と定めている。2026-08-22 に Phase 1 の実行中、この禁止を破って着地判定器を自前で書いたところ、`governance:check` が passed の状態で **MISS 52 件の偽陽性**を出した（検査自身の fixture の架空見出し・歴史記述の旧リード・`<file>:<行番号>` 形などを拾う）。**判定器を書き直すのではなく、書かないことが正しい。**
+
+- **生きた面の参照**: `npm run governance:check` の `G-heading-refs` が照合する（共通の道具 (D)）
+- **書き換えたリードへの参照**: (B) の記録を入力に (F) が判定する（母集団が「その面を指す参照」に限られるので偽陽性が出にくい）
+- **`docs/superpowers/` 内の参照**: `governanceDocs` と `headingRefDocs` の双方から除外されているので機構は見ない。**書いた時点で参照先の実在を目視で確かめる**（`grep -n '^## <見出し>' <対象>`）
 
 **(D) ガバナンス検査**
 ```bash
@@ -299,7 +290,7 @@ npm run governance:check
 cargo check -p snotra 2>&1 | tail -5
 ```
 期待: `全検査 passed` と、`cargo check` がエラー無し（`.rs` の doc コメントに書いた参照は `governance:check` の `G-heading-refs` が見るが、コンパイル自体も確認する）。
-さらに共通の道具 (C) を実行する。期待: 出力が空。
+
 
 - [ ] **Step 9: コミット**
 
@@ -323,7 +314,7 @@ git commit -m "docs(src-tauri): #734 条項を行動形へ寄せ、陳腐化し�
 - [ ] **Step 4: 書き換える** — 頭を残せる場合はそうする
 - [ ] **Step 5: 800 バイト超 7 本のうち、位置参照・数え上げを含むものを `###` へ昇格する**
 - [ ] **Step 6: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=snotra-core/CLAUDE.md BEFORE=/tmp/refs-snotra-core-before.txt` で実行。期待: 出力が空
-- [ ] **Step 7: 検査を回す** — `npm run governance:check` と `cargo check -p snotra-core`、共通の道具 (C)
+- [ ] **Step 7: 検査を回す** — `npm run governance:check` と `cargo check -p snotra-core`
 - [ ] **Step 8: コミット**
 
 ```bash
@@ -341,7 +332,7 @@ git commit -m "docs(core): #734 条項を行動形へ寄せる"
 - [ ] **Step 3: 条項ごとに書き換えテストを当てる** — 共通の道具 (E)
 - [ ] **Step 4: 書き換える**
 - [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=snotra-settings/CLAUDE.md BEFORE=/tmp/refs-snotra-settings-before.txt` で実行。期待: 出力が空
-- [ ] **Step 6: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`
 - [ ] **Step 7: コミット**
 
 ```bash
@@ -362,7 +353,7 @@ git commit -m "docs(settings): #734 条項を行動形へ寄せる"
 - [ ] **Step 4: 書き換える**
 - [ ] **Step 5: 800 バイト超 2 本のうち、位置参照・数え上げを含むものを `###` へ昇格する**
 - [ ] **Step 6: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=snotra-egui-runtime/CLAUDE.md BEFORE=/tmp/refs-egui-runtime-before.txt` で実行。期待: 出力が空
-- [ ] **Step 7: 検査を回す** — `npm run governance:check` と `cargo check -p snotra-egui-runtime`、共通の道具 (C)
+- [ ] **Step 7: 検査を回す** — `npm run governance:check` と `cargo check -p snotra-egui-runtime`
 - [ ] **Step 8: コミット**
 
 ```bash
@@ -386,7 +377,7 @@ git commit -m "docs(egui-runtime): #734 条項を行動形へ寄せる"
 - [ ] **Step 3: 条項ごとに書き換えテストを当てる** — この面の書式の候補は `A のときは B する。C が起きたため（#NNN 実測）`。**根拠節（`C が起きたため`）を落とさない**——issue #734 が名指した書式の後半である
 - [ ] **Step 4: 書き換える**
 - [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を、書き換えた rules ファイルごとに `TARGET=.claude/rules/<書き換えたファイル>.md BEFORE=/tmp/refs-rules-before.txt` で実行。期待: 出力が空
-- [ ] **Step 6: 検査を回す** — `npm run governance:check`（`G-rules-globs` が rules の `paths` を見る）、共通の道具 (C)
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`（`G-rules-globs` が rules の `paths` を見る）
 - [ ] **Step 7: コミット**
 
 ```bash
@@ -416,7 +407,7 @@ git commit -m "docs(rules): #734 条項を A のときは B する の形へ寄�
 
 - [ ] **Step 4: 書き換える**
 - [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=docs/build-commands.md BEFORE=/tmp/refs-build-commands-before.txt` で実行。期待: 出力が空
-- [ ] **Step 6: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`
 - [ ] **Step 7: コミット**
 
 ```bash
@@ -441,7 +432,7 @@ grep -nE '^[0-9]+\. ' CLAUDE.md
 - [ ] **Step 3: 条項ごとに書き換えテストを当てる** — 条項 30 本と番号付き項目の両方へ
 - [ ] **Step 4: 書き換える**
 - [ ] **Step 5: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=CLAUDE.md BEFORE=/tmp/refs-root-claude-before.txt` で実行。期待: 出力が空
-- [ ] **Step 6: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 6: 検査を回す** — `npm run governance:check`
 - [ ] **Step 7: 面積の増減を記録する** — Task 1 Step 1 と同じコマンド。合否は無い
 - [ ] **Step 8: コミット**
 
@@ -471,7 +462,7 @@ grep -nE '^\s*- \*\*' docs/architecture.md | grep -E 'ていた$|ていた。'
 - [ ] **Step 4: 位置参照を名前へ置き換える** — 「いま除いた枝」を、その枝の名前で指す
 - [ ] **Step 5: 過去形の履歴 1 本を扱う** — 条項でも地図でもないので、節の位置づけを決めてから移すか散文化する。**削除する場合は、その主張を引いている箇所を `git grep` で数え上げてから消す**
 - [ ] **Step 6: 参照を随伴修正する** — 共通の道具 (F) を `TARGET=docs/architecture.md BEFORE=/tmp/refs-architecture-before.txt` で実行。期待: 出力が空（文言を変えていなければ MISS は出ない）
-- [ ] **Step 7: 検査を回す** — `npm run governance:check`、共通の道具 (C)
+- [ ] **Step 7: 検査を回す** — `npm run governance:check`
 - [ ] **Step 8: コミット**
 
 ```bash
@@ -529,7 +520,7 @@ npm run governance:check
 ```
 期待: `全検査 passed`。**Step 4 で正準形にした 10 件が新たに照合対象になるので、着地しないものがあればここで赤になる**——それは既存の腐りが露出したのであって、この変更が壊したのではない。
 
-さらに共通の道具 (C) を実行する。期待: 出力が空。
+
 
 - [ ] **Step 6: コミット**
 
@@ -543,7 +534,7 @@ git commit -m "docs(principles): #734 局面 → 立てる問い の表を条項
 ## 完了時の検証（全 Phase 共通）
 
 - [ ] `npm run governance:check` が `全検査 passed`
-- [ ] 共通の道具 (C) の出力が空
+- [ ] `docs/superpowers/` 内に書いた見出し参照は、参照先の実在を目視で確かめた（機構は見ない面である）
 - [ ] `cargo check --workspace` がエラー無し
 - [ ] `git log --oneline main..HEAD` で、各 Phase のコミットが揃っている
 - [ ] PR 本文へ、条項ごとの裁定（書き換えた / 残した + 理由）と、随伴修正した参照の一覧を載せる

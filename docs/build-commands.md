@@ -6,7 +6,7 @@
 
 ## 変更後の検証チェックリスト（必須・スキップ不可）
 
-変更したファイルの種類に応じて、以下のカテゴリの必須コマンドを実行する。複数カテゴリに該当する場合はすべて実行する。
+変更したファイルの種類に応じて、対応するカテゴリの必須コマンドを実行する。複数カテゴリに該当する場合はすべて実行する。
 
 ### A. Rust ファイル（`*.rs`）を変更した場合
 
@@ -23,15 +23,15 @@ cargo test -p snotra-settings                                                   
 cargo doc --workspace --no-deps --document-private-items                               # 必須: intra-doc link 切れ検査（#562・CI 発火／hook 非発火）
 ```
 
-- **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で全 4 crate のテストを常に実行し担保）
-- **エージェントが確認のために手で打つときは `-q` を付けてよい**（`cargo test -p snotra -q` 等）。畳まれるのは cargo の進捗行と成功テストの逐一報告だけで、**失敗時の証拠は一つも落ちない**——panic メッセージ・`assert_eq!` の left/right・`failures:` の一覧・`test result: FAILED`・非ゼロ exit はいずれも残る（2026-08-13 に使い捨て crate で実測）。量は `cargo test -p snotra` の 276 行 / 22,235 文字に対し `-q` が 8 行 / 411 文字。**上のコードブロックの必須行へ `-q` を足してはならない**——G-hook-commands は「hook の cargo コマンドがカテゴリ A に在ること」を要求する片方向照合ゆえ、余剰行は無害だが**必須行を書き換えると hook 側の形が母集団から消えて赤になる**
-- **`cargo fmt` は検査（`--check`）と修復（`cargo fmt --all`）で別コマンドである**（#858）。ローカルでは PostToolUse フックが検査を自動発火するため、赤が届いたら `cargo fmt --all` を実行して直す——**差分を読んで手で直さない**（機械が持つ判定を人が写す作業になる）。整形の様式は rustfmt の既定であり `rustfmt.toml` を置かない（既定が drift 最小であることを 7 設定の比較で実測・`docs/adr/ADR-rustfmt-gate.md`）
-- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で fmt と clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
+- **変更した crate のテストはローカルで必ず走らせる**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意——CI の rust-check が PR で workspace の全 crate のテストを常に実行し担保する
+- **エージェントが確認のために手で打つときは `-q` を付けてよい**（`cargo test -p snotra -q` 等）。畳まれるのは cargo の進捗行と成功テストの逐一報告だけで、**失敗時の証拠は一つも落ちない**——panic メッセージ・`assert_eq!` の left/right・`failures:` の一覧・`test result: FAILED`・非ゼロ exit はいずれも残る（2026-08-13 に使い捨て crate で実測）。量は `cargo test -p snotra` の 276 行 / 22,235 文字に対し `-q` が 8 行 / 411 文字。**カテゴリ A のコードブロックの必須行へ `-q` を足してはならない**——G-hook-commands は「hook の cargo コマンドがカテゴリ A に在ること」を要求する片方向照合ゆえ、余剰行は無害だが**必須行を書き換えると hook 側の形が母集団から消えて赤になる**
+- **fmt が赤いときは `cargo fmt --all` を打つ**（#858）。検査（`cargo fmt --all -- --check`）と修復（`cargo fmt --all`）は別コマンドで、`--check` は直さない。ローカルでは PostToolUse フックが検査を自動発火するので、赤が届いたら修復コマンドを実行する——**差分を読んで手で直さない**（機械が持つ判定を人が写す作業になる）。整形の様式は rustfmt の既定であり `rustfmt.toml` を置かない（既定が drift 最小であることを 7 設定の比較で実測・`docs/adr/ADR-rustfmt-gate.md`）
+- カテゴリ A のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で fmt と clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
 - **`check` / `clippy` は `--workspace` を使う**（#500）。crate 名を `-p` で列挙すると `Cargo.toml` の `members` の写しになり、5 つ目の crate を追加したとき hook・CI・本ファイルが同じ誤りを共有して気づかれないまま漏れる。`--workspace` は cargo に SSOT を読ませる。一方 `cargo test -p <crate>` は「編集した crate → そのテスト」の写像なので `-p` のまま残す（`--workspace` にすると編集していない crate のテストまで走る）
 - **既定ビルドから外れる feature は CI でだけ通る**: `cargo check -p snotra --features heap-trace`（ヒープ計装）。**カテゴリ A の必須ではない**——`.rs` を触るたびに走らせる必要は無く、CI（rust-check）が毎 PR で通す。ここに書くのは「**誰も通さない経路**を作らない」ための配置の記録であって、手で打つ手順ではない（計器の意味と撤去条件は `src-tauri/src/heap_trace.rs` の `//!`）
-- **`cargo doc` は CI（rust-check）でのみ発火し、PostToolUse フックは発火しない**（#562・編集レイテンシ回避の設計判断）。deny 化は各 crate の `[lints] workspace = true`（`Cargo.toml`）→ root `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）で、既定 warn の素通りを塞ぐ。この 2 段（member 側の opt-in 漏れと、root 側の deny の降格・欠落）はどちらも cargo が exit 0 で沈黙するため、`npm run governance:check`（G-workspace-lints）が検知する（#713）。**沈黙は合格を意味しない**（hook 対象外）ため、doc コメント（`///` / `//!`）を触ったらローカルで上記コマンドを手動実行してリンク切れを確認する
-- **`src-tauri` の `disallowed-methods`（`clippy.toml`・#900）が赤くなるのは `-D warnings` のおかげではない**（#950）。この lint は warn 既定だが root `[workspace.lints.clippy]` の `disallowed_methods = "deny"` で昇格させてあるため、コマンドラインのフラグから独立している（`clippy.toml` を持たない 3 crate は禁止集合が空で無害）。禁止集合そのものの空洞化（ファイルの削除・空配列化・エントリ 1 行の消失・**カナリアが名指すパスの**書き損じ・コメントアウト）と、この deny の消失・降格・同じ節の群 allow による打ち消しは、どちらも clippy が exit 0 で沈黙するため `npm run governance:check`（G-clippy-disallowed）が検知する。**名指しの母集団は `scripts/governance/checks/G-clippy-disallowed.mjs` の `REQUIRED_DISALLOWED_METHODS` である**——**そこへ登録していないパスの書き損じは射程外**なので、禁止を足すときはカナリアへも足すこと（正本は `src-tauri/clippy.toml` 冒頭）
-- **フックの検査コマンドと本ファイルの整合規約**: フックの cargo コマンドは、**カテゴリ A のコードブロック**の記載と**合否・検査対象を変えるフラグにおいて一致**させる（`--lib` の付与・`-p` の欠落等を乖離とする）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は hook 側の証拠予算のための追加として許容する。npm 系検査は SSOT コマンド（`npm test`）の部分集合ラッパー（対象ディレクトリ限定の vitest 実行）を許容する。コマンドの実在は `npm run governance:check`（G-build-commands）が、cargo フラグの乖離は同（G-hook-commands・#589）が検知する。npm 系ラッパーの等価判断のみ `/health-check`（Check 5 残置部分）に残る
+- **doc コメント（`///` / `//!`）を触ったら `cargo doc --workspace --no-deps --document-private-items` をローカルで手で実行する**（#562）。`cargo doc` は CI（rust-check）でのみ発火し PostToolUse フックは発火しない（編集レイテンシ回避の設計判断）ため、**編集時の沈黙は合格を意味しない**。deny 化は各 crate の `[lints] workspace = true`（`Cargo.toml`）→ root `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）で、既定 warn の素通りを塞ぐ。この 2 段（member 側の opt-in 漏れと、root 側の deny の降格・欠落）はどちらも cargo が exit 0 で沈黙するため、`npm run governance:check`（G-workspace-lints）が検知する（#713）
+- **`src-tauri/clippy.toml` の `disallowed-methods` へ禁止を足したら、`scripts/governance/checks/G-clippy-disallowed.mjs` の `REQUIRED_DISALLOWED_METHODS` へも足す**（#900・禁止集合の正本は `src-tauri/clippy.toml` 冒頭）——**カナリアへ登録していないパスの書き損じは射程外**である。この lint が赤くなるのは `-D warnings` のおかげではない（#950）: warn 既定だが root `[workspace.lints.clippy]` の `disallowed_methods = "deny"` で昇格させてあるため、コマンドラインのフラグから独立している（`clippy.toml` を持たない crate は禁止集合が空で無害）。禁止集合そのものの空洞化（ファイルの削除・空配列化・エントリ 1 行の消失・**カナリアが名指すパスの**書き損じ・コメントアウト）と、この deny の消失・降格・同じ節の群 allow による打ち消しは、どちらも clippy が exit 0 で沈黙するため `npm run governance:check`（G-clippy-disallowed）が検知する
+- **フックの cargo コマンドは、カテゴリ A のコードブロックの記載と「合否・検査対象を変えるフラグ」において一致させる**（フックと本ファイルの整合規約・`--lib` の付与・`-p` の欠落等を乖離とする）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は hook 側の証拠予算のための追加として許容する。npm 系検査は SSOT コマンド（`npm test`）の部分集合ラッパー（対象ディレクトリ限定の vitest 実行）を許容する。コマンドの実在は `npm run governance:check`（G-build-commands）が、cargo フラグの乖離は同（G-hook-commands・#589）が検知する。npm 系ラッパーの等価判断のみ `/health-check`（Check 5 残置部分）に残る
 - **検査が割り当てられているファイルでは、フックの沈黙は合格を意味する**（#471・前提条件は #497）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる。**割り当ての無いファイル**（`*.md`・`scripts/`・`.github/workflows/` 等）の沈黙は「何も走らなかった」であり合格ではない。割り当ての SSOT は `post-edit.mjs` の `selectChecks` である。**検査とは別に gate ではない reminder が在り**（`.md` の依存参照・#1140、編集に帰属する索引と参照実在の不整合・#1139。一覧と射程の穴は `docs/hooks.md`「検査ではない reminder」が正本）、**その不在も「問題が無い」を意味しない**
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
@@ -51,7 +51,7 @@ npm run smoke:egui          # 必須: egui show/hide スモーク（hotkey 注�
 - `test:powershell` は Pester 6.0.1 を `target/pester/` へ固定取得し、グローバル環境を変更しない。統合テストの本体は `cargo metadata` の `target_directory` から導くため `CARGO_TARGET_DIR` に追随する。未ビルドなら先に `cargo build -p snotra` を実行する（別の本体を検査するときだけ `npm run test:powershell -- -ExePath <path>`）
 - **実バイナリを起動する検査の前に `cargo build -p snotra` を打つ。`cargo test` では更新されない**——`cargo test` がビルドするのはテストターゲットであって `target/debug/snotra.exe` ではない。危ないのは「未ビルド」より**古いまま在る**ほうで、検査は成功したまま**変更前の挙動を測って赤や緑を出す**（#835 で 2 時間前のバイナリを測り、直したはずの伸縮を FAIL として観測した）
 - WebView2 E2E（Playwright + tauri-driver）は #532 SU7 flip で撤去済み。後継は `smoke:egui`（自動回帰の最低線）+ 手動 GUI smoke（カテゴリ D）
-- **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・`snotra-egui-runtime`（描画ループ所有・#701 で追加）・依存 manifest/lockfile 等を含む変更は `Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke 済みを意味しない
+- **「通常 CI が緑」だけで smoke 済みと読まない**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・`snotra-egui-runtime`（描画ループ所有・#701 で追加）・依存 manifest/lockfile 等を含む変更は `Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）
   - **CI に検証を委ねるなら、その job が実際に何を実行したかを確かめる**（#671 サイクルで実測: `Smoke` が 5 run 連続で緑のまま results の検証を skip していた）。この 1 事例は #686 が `-RequireResults` で機構化し、#804 が「results 検査を無条件に要求する」形へ格上げした（「スモーク運用メモ」節）が、**「緑」が「検査が走った」を意味しない形は他にも作れる**——委ねる前に、その job のステップと渡す引数を読む
 
 ### D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）
@@ -68,11 +68,11 @@ npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 
 - **trace には性質の違う 2 つが載る。混ぜて読まない**（#757）。**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: `egui_results:hide` は出たのに窓は残り、presence を見る smoke は緑のまま通した）。一方 **H1 / H4 / H5 の不変条件は「起きてはならないことが起きていないか」を見るので合否を名乗れる**——判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測。`smoke:egui` の orphan 検出と同じ導出を共有する）
 - **項目の合否は目視と trace の両方が決める。** trace が緑でも目視が赤なら赤であり、逆も同じ。記録は不一致を専用の節で名指しする
-- **SKIP は「判定できなかった」であって合格ではない。** 「該当イベントが無い」「`rows` が読めない」「main の可視状態が未観測」「hide 窓が閉じていない」「parse できなかった行がある」はすべて SKIP として現れ、理由が記録に併記される
-- **`smoke:manual` はエージェントが実行できない**（`Read-Host` で判定を採るため）。人間が自分の端末で走らせる。実施の有無が会話にしか残らないと「検証されていない」と「問題が無かった」が区別できなくなるため、`-PostToPr` か出力ファイルの貼り付けで PR に残す。**カテゴリ D 全体がそうではない**——`check:colors`（下記）は exit code で自動判定するのでエージェントが実行でき（**画面ロック中を除く**・下記）、目視項目も打鍵注入 + 窓矩形キャプチャで実施した実績がある（#836 / #870）
-- **`$items` の常設 13 項目が SSOT であり、PR 本文の目視表とは別の母集団である**（写しではない・`docs/adr/ADR-folder-location-display-surface.md`「却下 6」）。`$items` に載るのは**どの変更でも壊れうる横断不変条件**、PR 本文の表はその PR 限りの受け入れ確認。**新機能のために先回りで `$items` へ足さない**——足す条件は「その表示が実際に一度回帰したとき」である
+- **SKIP を見たら合格と読まず、記録に併記された理由を確かめる。** SKIP は「判定できなかった」であって合格ではない——「該当イベントが無い」「`rows` が読めない」「main の可視状態が未観測」「hide 窓が閉じていない」「parse できなかった行がある」はすべて SKIP として現れる
+- **`smoke:manual` は人間へ依頼する**（`Read-Host` で判定を採るためエージェントには実行できない）。実施の有無が会話にしか残らないと「検証されていない」と「問題が無かった」が区別できなくなるため、`-PostToPr` か出力ファイルの貼り付けで PR に残す。**カテゴリ D 全体がそうではない**——`check:colors` は exit code で自動判定するのでエージェントが実行でき（**画面がロックされているときを除く**）、目視項目も打鍵注入 + 窓矩形キャプチャで実施した実績がある（#836 / #870）
+- **新機能のために先回りで `$items` へ足さない**——足す条件は「その表示が実際に一度回帰したとき」である。`scripts/manual-smoke.ps1` の `$items`（常設項目）が SSOT であり、PR 本文の目視表とは別の母集団である（写しではない・`docs/adr/ADR-folder-location-display-surface.md`「却下 6」）。`$items` に載るのは**どの変更でも壊れうる横断不変条件**、PR 本文の表はその PR 限りの受け入れ確認
 
-- **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`cargo run`（`-p` 欠落）は**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` の 2 本。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する。必ず `-p snotra` を付ける
+- **`cargo run` には必ず `-p snotra` を付ける**（既定が egui・#532 SU7 flip 済み・env フラグ不要）。`-p` を欠くと**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` が候補。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する
 
 #### `[visual]` の色を変える変更は、**非既定色で**目視する
 
@@ -82,14 +82,14 @@ npm run check:colors -- -Color '#FFF'     # 3 桁 hex の受理（#680 の 1・�
 npm run check:colors -- -Interactive      # 判定せず起動し、目視項目を読み上げる
 ```
 
-- **CI では走らない。** GUI を要するため `ci.yml` にも `e2e.yml` にも入っておらず、明示的に起動したときだけ動く（**エージェントも起動できる**——下記のロック中を除く）。ゆえに `[visual]` の色に効く変更は、**CI が緑でも未検証である**
+- **CI では走らない。** GUI を要するため `ci.yml` にも `e2e.yml` にも入っておらず、明示的に起動したときだけ動く（**エージェントも起動できる**——画面がロックされているときを除く）。ゆえに `[visual]` の色に効く変更は、**CI が緑でも未検証である**
 - **既定色での確認はこの検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」）
 - **自動判定するのは、各窓が「見せねばならない」と宣言した色である**（#953）——main は**背景と入力欄背景**、results は**背景**。判定は「窓全体の最頻色が期待色か」**ではない**: その前提（背景は窓で最も広い色）は main 窓で偽であり（**入力欄の塗りが背景より広い**・実測 37.6% > 33.3%）、**main はどんな背景色を指定しても赤だった**。**下限占有率は宣言ごとに持つ**（main 15% / results 50%・実測に対し 1.5〜2.5 倍の余裕）——「最頻である」は「下限以上」を含意するが逆は成り立たないため、一律の小さな下限にすると results の検出力が落ちる。**合否に依らず色ごとの実測占有率を出す**ので、レイアウトのドリフトは失敗になる前に「余裕の縮小」として見える。**判定述語は `scripts/lib/SnotraWindowColors.psm1`**（Pester が述語と**配備される下限の両方**を測る）、宣言を呼び出すのは `scripts/visual-check-colors.ps1` である。却下した代替案は `docs/adr/ADR-declared-colors-over-modal-color.md`
 - results は専用 scan 3 件を seed し、キー注入で表示して実ピクセルを測る。残る 2 点は目視（`-Interactive`）に留まる——**show の一瞬のフラッシュ**は present 前の 1 フレーム未満で連写しても捉えられず、**results のリサイズ時のちらつき**は入力と描画のタイミングに依存して単一キャプチャでは不在を証明できない
 - **測れないもの（受容する残余）**: 位置に紐付かない存在検査ゆえ、**背景と入力欄で色が入れ替わる「クロス配線」を検出できない**（両色とも下限を超えて緑になる）。選択色・hint 色も測らない
 - **trace は判定に使わない。** 「`set_clear_color` を呼んだ」というログは、その色が画面へ出たことを意味しない（`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。判定の根拠は描かれたピクセルだけである
 - **画面がロックされていると実行できない**（#866）。ロック中は窓が可視のままでも画面に合成されず、`CopyFromScreen` は**ロック画面の中身を持つ有効な Bitmap** を返す（`IsWindowVisible` も矩形も DPI も真っ当な値なので、他のガードは全部通る）。`Get-SnotraWindowCapture` が起動前に名指しして止める。**ロック状態を判定できなかったときは警告のみで続行する**——読めないホストで実行そのものを拒めば、情報を足さずに道具を失うため
-- **ユーザーの実 config は読みも書きもしない。** `SNOTRA_CONFIG_DIR`（下記）で `target/visual-check/profile` を指し、そこへ検証用の config を 1 枚書いて起動する。退避も復元も無いので、異常終了しても実 config が検証色のまま残る経路が**構造的に無い**（#803）。残るのは使い捨てプロファイルだけで、`cargo clean` が掃く（`CARGO_TARGET_DIR` を設定している環境では対象外）
+- **ユーザーの実 config は読みも書きもしない。** `SNOTRA_CONFIG_DIR`（env ハッチ）で `target/visual-check/profile` を指し、そこへ検証用の config を 1 枚書いて起動する。退避も復元も無いので、異常終了しても実 config が検証色のまま残る経路が**構造的に無い**（#803）。残るのは使い捨てプロファイルだけで、`cargo clean` が掃く（`CARGO_TARGET_DIR` を設定している環境では対象外）
 - **seed が読めたかは本体の stderr で確かめる。** `[config] ` で始まる行が出たら赤にする。**`config.toml.bak` の不在では証明にならない**——退避は best-effort で、`fs::rename` が失敗すれば parse 失敗でも `.bak` は現れない（`snotra-core/src/config.rs` の `backup_invalid`）。seed が読めていないと既定色で起動するため、「色が届いていない」と誤読される
 - **`SNOTRA_CONFIG_DIR` が効いたことは肯定的に確かめる。** 実行後にプロファイル配下へ `*.bin` が生成されていることを見る。効いていなければ本体は実 config を読むため、ピクセルが赤いときに「色が届いていない」と「env が効いていない」を切り分けられない
 - 判定が赤のとき（`-KeepShot` なら緑でも）`target/visual-check/` へスクリーンショットを残す。観測点が背景でない場所を指していないかは、この画像で確認する
@@ -105,7 +105,7 @@ pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮った窓を 
 - **合否を出さない。道具であって検査ではない。** 出るのは「欄の内側 / キャレットの高さ / 上下余白 / Skew」の表で、読むのは人間である。**毎作業では走らせない**——使う契機は egui / epaint を上げたとき・入力欄の描画や行高やフォント登録に触ったとき・「見え方が変わった気がする」と報告を受けたときである
 - **判定を持たせない理由**: フォント依存で 1px の非対称が構造的に残る（#1045）ため、閾値を置けば「常に緑」か「常に赤」のどちらかへ倒れる。**永久に赤いゲートはゲートが無いのと機能的に同じである**（`check:colors` が #953 で旧述語を捨てたのと同型）
 - **Rust 側の検査では届かない領域を見る。** `view.rs` の `input_text_sits_vertically_centered_for_both_body_and_hint` は egui の**論理座標**で galley を縛るが、実機のフォント解決・softbuffer のラスタライズ・DPI を通らない。2026-08-11 の実測では、論理座標では 8 フォントすべて対称だったのに**実機では 4 種で 1px ずれていた**（Windows 既定の Yu Gothic UI と Segoe UI が両方ずれる側）
-- **前後で撮って突き合わせる使い方を想定している。** egui 0.36.1 への更新では、8 フォントの値が 0.35.0 と一寸違わないことをこの形で確かめた
+- **変更の前後で撮って突き合わせる。** egui 0.36.1 への更新では、8 フォントの値が 0.35.0 と一寸違わないことをこの形で確かめた
 - 判定ロジックは `scripts/lib/SnotraInputMetrics.psm1`（純関数・Pester が測る）、起動とキャプチャは `scripts/visual-input-metrics.ps1` が持つ。**値の意味と読み方はモジュールの doc が正本**
 - `check:colors` と同じく **CI では走らない**・**ユーザーの実 config には触れない**（`SNOTRA_CONFIG_DIR` で `target/visual-input-metrics/` を指す）・**画面ロック中は実行できない**
 
@@ -166,7 +166,7 @@ npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/git
 npm run governance:check    # 必須: ガバナンス文書の決定的検査（参照実在・モジュール索引・スキル表・SPEC 番号・rules glob・コマンド写像・見出し参照の着地。#587/#593。恒久規範の面積は合否を持たない計器として報告するだけ・`ADR-retire-area-budget`）
 ```
 
-- **`.rs` のコメントに正準形の見出し参照を書く／その参照先の見出しを改題する変更もこのカテゴリである**（#925。G-heading-refs / G-near-heading-refs の走査元に `.rs` が入っている）。`.rs` では PostToolUse フックが走るが、その沈黙は fmt / clippy / test の合格であって見出し参照の着地を含まない（#1139 の索引 reminder も見出し参照は見ない）
+- **`.rs` のコメントへ正準形の見出し参照を書いた／その参照先の見出しを改題したときも `npm run governance:check` を打つ**（#925。G-heading-refs / G-near-heading-refs の走査元に `.rs` が入っている）。`.rs` では PostToolUse フックが走るが、その沈黙は fmt / clippy / test の合格であって見出し参照の着地を含まない（#1139 の索引 reminder も見出し参照は見ない）
 - PostToolUse フックは `.md` に検査を割り当てない（#497 の受容を維持）ため、**編集時の沈黙は「何も走らなかった」である**。ローカルで本コマンドを実行するか、PR CI の `governance-check` job（skip-ci 非対象・常時実行）に委ねる。**`.md` と `.rs` に出る reminder は検査ではない**（依存参照・#1140、編集に帰属する索引と参照実在・#1139）——**鳴っても `governance:check` の代わりにはならず、鳴らなくても合格ではない**。とくに #1139 が見るのは編集した 1 ファイルに帰属する分だけで、削除・`governanceDocs` の外・`mod` 宣言は射程外である（`docs/hooks.md`「検査ではない reminder」）
 - 検査の実体は `scripts/governance-check.mjs`（facade）と `scripts/governance/checks/` 配下の各ファイル。**検査の一覧は `checks/` ディレクトリの走査が SSOT**（`scripts/governance/registry.mjs`）——ファイルを置けばそのまま検査になり、範囲を手書きする面が無い（旧来はファイル冒頭のコメント見出しへ範囲を手で書いていたため黙って腐った。実際「G-module-index〜G-config-reachability」と書いたまま G-check-skill-enumeration まで増えていた・#812。per-check 分割・#1088 が範囲の手書きそのものを消した）。面積 ratchet の文字数指標は `docs/adr/ADR-area-metric-characters.md`、見出し参照の着地は `docs/adr/ADR-canonical-heading-references.md`、config フィールドの到達性は `docs/development-principles.md`「config の値は到達性の検出器を持たない」。意味判断（責務の妥当性・npm ラッパー等価・メモリ整合）は `/health-check` に残る
 
@@ -192,7 +192,7 @@ cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロ�
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
 cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocapture --test-threads=1  # 索引の常駐メモリ実測（詳細: PERFORMANCE.md）
 cargo test --release -p snotra-core --test path_query_cost -- --ignored --nocapture --test-threads=1   # パスクエリ全走査のコスト実測（詳細: PERFORMANCE.md）
-cargo test --release -p snotra-core --test path_query_cost at_operating_point -- --ignored --nocapture --test-threads=1  # 上のうち実運用点（PATH マージ + 実 config の normal_mode）を 2×2 で測る（#1067）
+cargo test --release -p snotra-core --test path_query_cost at_operating_point -- --ignored --nocapture --test-threads=1  # path_query_cost のうち実運用点（PATH マージ + 実 config の normal_mode）を 2×2 で測る（#1067）
 cargo test --release -p snotra-core --test path_query_cost across_settings -- --ignored --nocapture --test-threads=1     # 設定の組み合わせ 36 構成で c:\ のコストを掃く（改修の射程を決める・#1067）
 cargo test --release -p snotra-core --test dir_stat_cost -- --ignored --nocapture --test-threads=1     # ディレクトリの列挙と属性読み取りの費用差（判断は ADR-mtime-differential-scan-ceiling・撤去条件は当該ハーネスの //!）
 cargo check --workspace          # Rust 全 crate 型チェック
@@ -231,7 +231,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 ## スモーク運用メモ
 
-- `scripts/lib/SnotraSmoke.psm1` は 3 本の検証スクリプトに共通する config seed の骨格、env の設定/復元、Cargo target の本体導出、既存プロセス方針、起動、窓/trace 待機、キー注入、DWM/DPI 対応キャプチャを所有する。各 smoke の合否条件と固有の TOML 節は呼び出し側に残す。`scripts/lib/SnotraSmoke.Tests.ps1` は env の正常/例外時復元、Cargo target 導出、trace parse、既存プロセス方針を単体検査し、実バイナリで seed parse・意図したプロファイルへの `index.bin` 生成・窓矩形＝キャプチャ寸法に加え、**起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっていること**を統合検査する（#872 で機序を再設計。キャレットの断言は `src-tauri/src/egui_shell/view.rs` の kittest が実コードの並びごと縛るので、実機側は打鍵を注入しない）
+- `scripts/lib/SnotraSmoke.psm1` は各検証スクリプトに共通する config seed の骨格、env の設定/復元、Cargo target の本体導出、既存プロセス方針、起動、窓/trace 待機、キー注入、DWM/DPI 対応キャプチャを所有する。各 smoke の合否条件と固有の TOML 節は呼び出し側に残す。`scripts/lib/SnotraSmoke.Tests.ps1` は env の正常/例外時復元、Cargo target 導出、trace parse、既存プロセス方針を単体検査し、実バイナリで seed parse・意図したプロファイルへの `index.bin` 生成・窓矩形＝キャプチャ寸法に加え、**起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっていること**を統合検査する（#872 で機序を再設計。キャレットの断言は `src-tauri/src/egui_shell/view.rs` の kittest が実コードの並びごと縛るので、実機側は打鍵を注入しない）
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、trace が 1 件以上出ることを要求する。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-startup/profile` を指す・#804）をループ前に 1 回だけ seed し、5 起動で共有する**——実 config には触れず、毎回作り直さないのは「first-run でない起動」を測る現在の意味論を保つため。**seed が正常に読まれたこと、first-run を踏んでいないこと、env が効いたこと（プロファイルに `*.bin` が生成されたこと）も肯定的に検査する**。trace の失敗名には統一分類がなく、正常系でも起こりうる best-effort の失敗も含まれるため、汎用的な「起動エラー不在」は保証しない（#845）。trace 0 件は起動経路を何も観測できていないため失敗にする（#690 follow-up）。実際に冷えた CI runner の初回起動で trace 0 行を実測しており、その状態でも旧 smoke は緑を返していた。サマリ表の `event_count` は成功時にも出す（検査が実際に何かを見たことを示す肯定的報告）。**待ち方は「最初の trace を待ってから観測時間 `WaitMs` を開始する」**（`-FirstTraceTimeoutMs`・既定 12s）——固定待機だけだと遅い側に振れた起動が丸ごと無音になる（実測: 同一 runner・同一バイナリで最初の trace までが 0.6s〜8s 超とばらつき、5 回中 3 回が無音だった）。固定待機を一律に伸ばす案を採らないのは、速い起動まで毎回待つことになるため。`first_trace_ms` も成功時に出す（**分散の原因は未解明**ゆえ、予算に触れる前に悪化を読めるようにする。`n/a` は予算内に 1 行も出なかったことを表す）
 - `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で hotkey（起動時の `hotkey:registered` trace から導出した VK 列を注入。対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`。押下順で押し、解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-HotkeyVks` を明示指定すると trace より優先される（trace を出さない旧バイナリの検証など）。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す・#804）へ最小の有効 TOML を常に seed する**——実ユーザーの `%APPDATA%\Snotra` は読みも書きもしない（退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である）。seed を置く理由は `scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile` のコメントを正本とする。**seed が読めたこと・first-run を踏んでいないこと・env が効いたこと（プロファイルに `*.bin` が生成されたこと）を 3 つとも肯定的に検査する**——「観測できなかった」を合格と読ませないため。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
 - `scripts/smoke-egui.ps1` は results 窓の表示も検査する（#671/#673 サイクル PR A）: `egui_show:done` の後、1 文字クエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。**#804 以降 skip は無い**——検証用プロファイルを常に seed するので、既定クエリ `"z"` が seed した索引 1 件に必ず一致する（`-ResultsQuery <letter>` は残るが、開発機の既存索引に合わせる用途は消えた。空文字を渡す用途については次の bullet）（CONTRIBUTING.md の「results 窓 show/hide の trace 観測」と対応）
@@ -253,16 +253,16 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 | 検証コマンド | workflow | トリガー |
 |---|---|---|
-| `npm test`（Vitest: hooks/githooks/scripts） | `ci.yml`（node-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` は下記ノート参照） |
-| `npm run test:powershell`（Pester: 共有 smoke 配管 + 実バイナリ統合） | `ci.yml`（rust-check） | PR 自動（`skip-ci` は下記ノート参照） |
+| `npm test`（Vitest: hooks/githooks/scripts） | `ci.yml`（node-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` を貼ると job ごとスキップ） |
+| `npm run test:powershell`（Pester: 共有 smoke 配管 + 実バイナリ統合） | `ci.yml`（rust-check） | PR 自動（`skip-ci` を貼ると job ごとスキップ） |
 | `cargo fmt --all -- --check`（#858・整形ゲート） | `ci.yml`（rust-check） | PR 自動 |
 | `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-egui-runtime` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `cargo check -p snotra --features heap-trace`（ヒープ計装・既定ビルド外の feature） | `ci.yml`（rust-check） | PR 自動 |
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
 | `npm run governance:manifest`（#1088・構造母集団の manifest 差分） | `ci.yml`（governance-check） | PR 自動のみ（step 自身が `if: github.event_name == 'pull_request'` を持つ。job 自体は push でも走るがこの step は走らない） |
-| `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・下記ノート参照）/ 手動 dispatch |
-| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・下記ノート参照）/ 手動 dispatch |
+| `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
+| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
 
 （注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリが trace を出し、seed 済み検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。**その帰結として、この job のバイナリだけは `[profile.release]` の `lto` / `codegen-units` を env で緩めて建てる**（`e2e.yml` の "Build release binary" ステップにコメントで根拠を置いた。`Cargo.toml` は変えないので `release.yml` が建てる配布物は fat LTO のまま）。`panic = "abort"` と `opt-level` は共有するため、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
 
@@ -275,4 +275,4 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 ### その他
 
-- **`GITHUB_TOKEN` では他のワークフローをトリガーできない**: tag push や `workflow_dispatch` を `GITHUB_TOKEN` で発火させても、別ワークフローは起動しない（GitHub の仕様）。ワークフロー間の連鎖には `workflow_call`（呼び出し元から直接呼ぶ）を使う
+- **ワークフロー間の連鎖には `workflow_call`（呼び出し元から直接呼ぶ）を使う**。`GITHUB_TOKEN` では他のワークフローをトリガーできない——tag push や `workflow_dispatch` を `GITHUB_TOKEN` で発火させても、別ワークフローは起動しない（GitHub の仕様）

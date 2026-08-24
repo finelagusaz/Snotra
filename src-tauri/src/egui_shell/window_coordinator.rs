@@ -342,8 +342,17 @@ pub(crate) fn show_egui_main(
         // `outer_size()` で読み戻していた——**畳むこと自体に目的は無く、値を渡す手段が
         // OS の窓しか無かった**（継ぎ目 2）。導出できなければ位置決めをしない（取得失敗時に
         // 何もしない側へ倒すのは、クランプ経路と同じ倒し方である）。
-        if let Some(bar) = derive_bar_rect_phys(&window, width, m.bar_height) {
-            position_on_target_monitor(app, &window, bar);
+        let derived_bar = derive_bar_rect_phys(&window, width, m.bar_height);
+        if let Some(bar) = &derived_bar {
+            position_on_target_monitor(app, &window, *bar);
+        }
+        // 不変条件検出器（#878）の受け皿。**導けなかったときは 0 を書いて残骸を消す**
+        // ——前回の show の値が残ると、次のフレームがそれと現在の矩形を突き合わせて
+        // 誤って発火する。突き合わせは `check_show_bar_rect`。
+        if let Some(sh) = app.try_state::<EguiShellState>() {
+            let (w, h) = derived_bar.map_or((0, 0), |b| (b.width, b.height));
+            sh.show_bar_width_phys.store(w, Ordering::SeqCst);
+            sh.show_bar_height_phys.store(h, Ordering::SeqCst);
         }
         // サイズは実高で決める（#755 / #801 の修正が導く「そのフレームで実際に描かれる高さ」）。
         // **位置はバー高、サイズは実高**——この非対称は「バーの位置はユーザーが決め、行の出没では
@@ -690,6 +699,7 @@ fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor>
 /// ——`set_size` の目的は「値を渡すこと」だけで、畳むこと自体には意味が無かった
 /// （`ADR-show-path-derives-drawn-height` 却下 2 の反転・#878）。
 #[cfg(windows)]
+#[derive(Clone, Copy)]
 struct BarRectPhys {
     width: i32,
     height: i32,
@@ -767,6 +777,63 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
 #[cfg(not(windows))]
 pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f64) {}
 
+/// 不変条件検出器（#878）: **show が導いたバー矩形は、フレームが測るバー矩形と一致する。**
+///
+/// show は OS へ書かずに矩形を導くようになった（[`derive_bar_rect_phys`]）ので、**この PR が
+/// 持ち込む退行は「導出の誤り」である**——非クライアント分の落とし、scale の取り違え、
+/// 丸め規則の食い違い。ここはその導出を**毎回の show で実データに当てて検算する**。
+///
+/// **外から測る検査ではこの退行が見えない。** show の矩形が誤っていても、窓の実サイズは
+/// 2 手目の `set_size` が決めるので DWM で測る幅・高さは正しいままであり、位置のずれも
+/// 可視中のクランプが次のフレームで戻す（`egui_main:height_mismatch` と同じ「安全機構が
+/// 外部の検出器を無力化する」形。理由の正本は
+/// `.claude/rules/safety-nets.md`「検出器のカバー範囲は、欠落のパターンごとに検算する」）。
+///
+/// **「クランプが動いたか」を見る形は採らなかった。** `WorkArea::clamp` は矩形が境界を
+/// 越えたときにしか座標を変えないため、窓が作業領域の内側にいる限り導出が壊れていても
+/// 沈黙する（＝**守りたい退行の足を 1 本も捕まえない配置がある**）。却下の詳細は
+/// `ADR-show-path-derives-bar-rect`。
+///
+/// **受容する残余が 2 つある。** (1) show と最初のフレームのあいだに `config_watcher` が
+/// `bar_height` や `window_width` を変えると偽陽性になる（`egui_main:height_mismatch` に
+/// 既に在る同種の残余）。(2) 同じ窓で DPI が変わった場合も同様である。
+#[cfg(windows)]
+pub(crate) fn check_show_bar_rect(app: &tauri::AppHandle, bar_height: f64) {
+    let Some(sh) = app.try_state::<EguiShellState>() else {
+        return;
+    };
+    let (show_w, show_h) = (
+        sh.show_bar_width_phys.load(Ordering::SeqCst),
+        sh.show_bar_height_phys.load(Ordering::SeqCst),
+    );
+    // 0 は「show が導けなかった（`read_frame_geom` が `None`）」の番兵。実際の矩形は
+    // 非クライアント分だけでも正なので、0 と衝突しない。
+    if show_w == 0 || show_h == 0 {
+        return;
+    }
+    let Some(main) = app.get_window("main") else {
+        return;
+    };
+    let Some(a) = read_bar_anchor(&main, bar_height) else {
+        return;
+    };
+    let (frame_w, frame_h) = (a.width_phys as i32, a.outer_bar_height_phys);
+    if show_w != frame_w || show_h != frame_h {
+        crate::trace_main(
+            "egui_main:bar_rect_mismatch",
+            serde_json::json!({
+                "show_w": show_w,
+                "show_h": show_h,
+                "frame_w": frame_w,
+                "frame_h": frame_h,
+            }),
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
+
 /// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
 /// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
 /// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
@@ -780,6 +847,20 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 /// **上端 y を返さない。** #675 のクランプが唯一の消費者だったため、#835 の撤去で返す先が
 /// 無くなった。**`Option` は型に `#[must_use]` を持たないので、返し続けても警告は出ない**
 /// ——消費者のいない戻り値は、次の読者に「何に使うのか」を探させる。
+///
+/// # ここが `main.outer_size()` を読み戻すのは正当である（#878）
+///
+/// #878 の裁定則は「コード自身が直前に書いた content 寸法を読み戻してはならない」だが、
+/// **書き手のフレーム文脈が読み手に届かない経路が呼び出し元に含まれるとき、読み戻しは
+/// 正当である**——ここがその唯一の例外である（`Moved` リスナーは egui のフレームの外で走る）。
+/// `outer_position()` はそもそもユーザーが動かした位置＝コードが持っていない量である。
+///
+/// **「main の直近の書き込み高さを共有 atomic へ残して渡す」案は却下した**（理由の詳細は
+/// `ADR-show-path-derives-bar-rect`）: (1) `outer_position()` はどのみち読むので Win32 の
+/// 呼び出しは減らない、(2) 物理 outer 高を残すには書き込み点で非クライアント分を読む必要が
+/// あり、読み戻しが移動するだけである、(3) 書き手が 2 人（show と毎フレーム）の memo を
+/// フレーム跨ぎで持つ形は #878 の継ぎ目 1 そのもので、results 側には補正フレームの
+/// 相当物が無い。
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {

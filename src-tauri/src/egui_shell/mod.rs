@@ -41,8 +41,8 @@ mod window_coordinator;
 // からしか呼ばれず、`position_results_below_main` は親である本ファイルが
 // `window_coordinator::` で直に呼ぶ。
 pub(crate) use window_coordinator::{
-    DriveResultsInputs, clamp_main_into_work_area, drive_results_window, hide_egui_main,
-    show_egui_main, wake_main, wake_results,
+    DriveResultsInputs, check_show_bar_rect, clamp_main_into_work_area, drive_results_window,
+    hide_egui_main, show_egui_main, wake_main, wake_results,
 };
 
 // mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
@@ -114,7 +114,7 @@ pub(crate) use search_worker::{SearchMsg, SearchRequest, spawn_search_worker};
 pub(crate) use strings as ui_strings;
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64};
 use std::time::Instant;
 
 use snotra_core::config::AppearanceConfig;
@@ -144,6 +144,9 @@ pub(crate) enum HotkeyFailureKind {
 ///   リテラルではなく読んだ値そのもの」を残す——将来 show 側が「読んだが渡さない」形へ退行しても
 ///   拾えるようにするため。詳細は `window_coordinator::show_egui_main` の書き込み点、突き合わせは
 ///   `view.rs` の reset-on-show 消費フレームを参照。
+/// - show_bar_width_phys / show_bar_height_phys: 不変条件検出器（#878）が使う、show が
+///   位置決めに使ったバー矩形の物理サイズ。**0 は「導けなかった」の番兵である**。突き合わせは
+///   `window_coordinator::check_show_bar_rect`。
 pub(crate) struct EguiShellState {
     pub(crate) hotkey_generation: AtomicU64,
     pub(crate) hide_pending: AtomicBool,
@@ -151,6 +154,8 @@ pub(crate) struct EguiShellState {
     pub(crate) show_read_indexing: AtomicBool,
     pub(crate) show_read_toast: AtomicBool,
     pub(crate) show_applied_height_bits: AtomicU64,
+    pub(crate) show_bar_width_phys: AtomicI32,
+    pub(crate) show_bar_height_phys: AtomicI32,
     /// main 窓を外部から起こすハンドル（`create()` = `attach` の戻り値・#671 PR D）。
     /// hidden 中は次 show のフレームで toast 等が読まれるため、wake は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
@@ -182,6 +187,8 @@ impl EguiShellState {
             show_read_indexing: AtomicBool::new(false),
             show_read_toast: AtomicBool::new(false),
             show_applied_height_bits: AtomicU64::new(0),
+            show_bar_width_phys: AtomicI32::new(0),
+            show_bar_height_phys: AtomicI32::new(0),
             main_waker: handles.main_waker.clone(),
             results_waker: handles.results_waker.clone(),
             pending_hotkey_failure: Mutex::new(None),

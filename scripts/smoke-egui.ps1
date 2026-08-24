@@ -545,23 +545,33 @@ function Get-MainWindowDwmSize {
   [pscustomobject]@{ W = $r.Right - $r.Left; H = $r.Bottom - $r.Top }
 }
 
-# **可視区間に `egui_main:height_mismatch` が現れないことを判定する（是正 D）。** #801 は
-# 「行が変わっていないのに高さが変わった」ときにだけこの trace が出る——表示直後の
-# 1 フレーム（約 16ms）の中で起きるため、`Wait-SnotraWindow`（PollMs 200）や 100ms 間隔の
-# サンプリングでは過渡をほぼ観測できない（旧 `min -ne max` 断言が原理的に無力だった理由）。
+# **可視区間に `-EventName` が現れないことを判定する（是正 D）。** 消費者は 2 つあり、どちらも
+# 「起きてはならないことが起きていないか」の形である
+# （形の正本は `src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない（#671 PR A′）」）:
+#
+# - `egui_main:height_mismatch`（#801）— 行が変わっていないのに高さが変わった
+# - `egui_main:bar_rect_mismatch`（#878）— show が導いたバー矩形が、フレームが測る矩形と
+#   食い違った
+#
+# **どちらも回復機構が外から見えなくする類の退行である**——過渡は表示直後の 1 フレーム
+# （約 16ms）で、`Wait-SnotraWindow`（PollMs 200）や 100ms 間隔のサンプリングでは観測できない
+# （旧 `min -ne max` 断言が原理的に無力だった理由）。**イベント名を引数へ出しているのは、
+# 2 つ目を足すときに区間の切り方を書き写さないためである。**
+#
 # **判定は presence（区間内に 1 件でも出たか）で行う。** `seq` は全 trace 事象を貫く単一の
 # AtomicU64（`src-tauri/src/trace.rs`）なので、区間の境界は show/hide の `seq` で切れる
 # （`SnotraTraceInvariants.psm1` の `Get-SnotraTraceMarker` と同じ考え方）。`-BeforeSeq` を
 # 省くと「ここまでに読めた分すべて」が上限になる（最終 round・次の hide が無い場合）。
-function Test-SnotraNoHeightMismatch {
+function Test-SnotraNoTraceEventInWindow {
   param(
     [Parameter(Mandatory)] [string]$Path,
+    [Parameter(Mandatory)] [string]$EventName,
     [Parameter(Mandatory)] [long]$AfterSeq,
     [long]$BeforeSeq
   )
   $events = (Read-SnotraTraceSnapshot -Path $Path).Events
   return @($events | Where-Object {
-    $_.event -eq 'egui_main:height_mismatch' -and [long]$_.seq -gt $AfterSeq -and
+    $_.event -eq $EventName -and [long]$_.seq -gt $AfterSeq -and
     (-not $PSBoundParameters.ContainsKey('BeforeSeq') -or [long]$_.seq -lt $BeforeSeq)
   })
 }
@@ -652,19 +662,29 @@ try {
 
     # 区間は「この round の egui_show:done の後、次の egui_hide:done（最終 round は
     # ここまでの観測）まで」（是正 D）。
-    # **呼び出し側で `@()` に包む**——`Test-SnotraNoHeightMismatch` 内で `return @(...)` していても、
-    # 関数境界を跨ぐと PowerShell は配列を要素ごとにパイプへ展開するため、一致 0 件のとき
-    # `$mismatches` は空配列ではなく `$null` になる（`Set-StrictMode` 下で `.Count` が例外・実測）。
-    # このファイルの他の代入（`Wait-SnotraTraceCondition` の `$matched` 等）も同じ理由で
-    # 呼び出し側 `@()` を徹底している。
-    $mismatches = @(if ($null -ne $hideEvent) {
-      Test-SnotraNoHeightMismatch -Path $toastErrPath -AfterSeq ([long]$showEvent.seq) -BeforeSeq ([long]$hideEvent.seq)
-    } else {
-      Test-SnotraNoHeightMismatch -Path $toastErrPath -AfterSeq ([long]$showEvent.seq)
-    })
+    # **呼び出し側で `@()` に包む**——`Test-SnotraNoTraceEventInWindow` 内で `return @(...)` して
+    # いても、関数境界を跨ぐと PowerShell は配列を要素ごとにパイプへ展開するため、一致 0 件の
+    # とき `$mismatches` は空配列ではなく `$null` になる（`Set-StrictMode` 下で `.Count` が
+    # 例外・実測）。このファイルの他の代入（`Wait-SnotraTraceCondition` の `$matched` 等）も
+    # 同じ理由で呼び出し側 `@()` を徹底している。
+    $seqArgs = @{ Path = $toastErrPath; AfterSeq = [long]$showEvent.seq }
+    if ($null -ne $hideEvent) { $seqArgs['BeforeSeq'] = [long]$hideEvent.seq }
+
+    $mismatches = @(Test-SnotraNoTraceEventInWindow @seqArgs -EventName 'egui_main:height_mismatch')
     if ($mismatches.Count -gt 0) {
       $failures += ("toast ありの show #{0}: 可視区間中に egui_main:height_mismatch が {1} 件出た（show_h={2} / frame_h={3}・#801）" -f `
         $round, $mismatches.Count, $mismatches[0].data.show_h, $mismatches[0].data.frame_h)
+      $scenario2Failed = $true
+    }
+
+    # **show の位置決めの退行（#878 の継ぎ目 2）はここでしか見えない。** show はバー矩形を
+    # OS へ書かずに導くようになったので、導出が壊れても窓の実サイズは 2 手目の `set_size` が
+    # 決める（＝ DWM で測る幅・高さは正しいまま）し、位置のずれは可視中のクランプが次の
+    # フレームで戻す。**発火しないことが正常である。**
+    $rectMismatch = @(Test-SnotraNoTraceEventInWindow @seqArgs -EventName 'egui_main:bar_rect_mismatch')
+    if ($rectMismatch.Count -gt 0) {
+      $failures += ("toast ありの show #{0}: 可視区間中に egui_main:bar_rect_mismatch が {1} 件出た（show {2}x{3} / frame {4}x{5}・#878）" -f `
+        $round, $rectMismatch.Count, $rectMismatch[0].data.show_w, $rectMismatch[0].data.show_h, $rectMismatch[0].data.frame_w, $rectMismatch[0].data.frame_h)
       $scenario2Failed = $true
     }
   }

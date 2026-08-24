@@ -29,7 +29,7 @@
 3. **窓の位置は変わらない**——同一 config・同一モニターで、変更前後の `egui_show:done` 時点の
    main の X/Y が一致する（実測で確かめる）
 4. show の位置決めが退行したとき、**in-process の信号が発火する**。故障注入で実測する
-5. smoke がその信号の**不在**を断言する（`Test-SnotraNoHeightMismatch` と同型）
+5. smoke がその信号の**不在**を断言する（既存の height_mismatch 断言と**同じ判定関数**を通す）
 6. `layout::bar_rect_height_phys` の doc・`src-tauri/CLAUDE.md`「モジュール構成」・
    `position_results_below_main` の doc が、変更後の構造と一致する
 7. #878 へ、継ぎ目 4 の決着・裁定則・R4 の却下理由・射程外 1 件をコメントで残す
@@ -40,17 +40,18 @@
 |---|---|---|
 | `src-tauri/src/egui_shell/layout.rs` | `logical_to_phys`（**新規**・純粋核） | 論理→物理の丸め規則を 1 か所へ。`bar_rect_height_phys` がこれへ委譲 |
 | 同上 | `bar_rect_height_phys` | 委譲へ変更。doc から「show 経路は `outer_size()` を読み戻すため OS から供給される」を落とす |
+| `src-tauri/src/egui_shell/mod.rs` | `EguiShellState` の `show_bar_width_phys` / `show_bar_height_phys`（**新規**） | 検出器の受け皿（`AtomicI32`・0 は「導けなかった」の番兵） |
 | `src-tauri/src/egui_shell/window_coordinator.rs` | `FrameGeom` / `read_frame_geom`（**新規**） | 窓の frame 幾何（`outer_size` / `inner_size` の差 = 非クライアント、`scale`、`outer`）を**1 回だけ**読む唯一の点 |
 | 同上 | `BarRectPhys`（**新規**） | バー矩形の物理サイズ。構築点は `derive_bar_rect_phys` のみ |
 | 同上 | `derive_bar_rect_phys`（**新規**） | show が「これから当てるバー矩形」を OS へ書かずに導く |
 | 同上 | `position_on_target_monitor` | シグネチャに `BarRectPhys` を追加。`outer_size()` の読みを削除 |
 | 同上 | `read_bar_anchor` | `read_frame_geom` から合成する形へ（非クライアント合成の写しを作らない） |
 | 同上 | `show_egui_main` | 1 手目の `set_size` を撤去。`derive_bar_rect_phys` → `position_on_target_monitor` → `set_size(実高)` の順 |
-| 同上 | `clamp_main_into_work_area` | 戻り値を `bool`（実際に動かしたか）へ。`#[cfg(not(windows))]` 版も同じ型 |
+| 同上 | `check_show_bar_rect`（**新規**） | show が導いた矩形と、フレームが測る矩形を突き合わせる検出器。`clamp_main_into_work_area` は変更しない |
 | 同上 | `position_results_below_main` | doc に「共有 atomic 案を却下した理由」を追記（コードは変えない） |
-| `src-tauri/src/egui_shell/view.rs` | `update` 内のクランプ呼び出し（:1279-1281） | `was_reset_frame && 動いた` で `egui_main:position_clamped_after_show` を trace |
-| `scripts/smoke-egui.ps1` | 新規判定関数 + シナリオ 2 の断言 | 可視区間に当該 trace が現れないことを断言 |
-| `src-tauri/CLAUDE.md` | 「モジュール構成」`window_coordinator.rs` の項 | show が寸法を OS へ書いて読み戻す構造が消えたことを反映 |
+| `src-tauri/src/egui_shell/view.rs` | `update` 内・クランプ呼び出しの直後 | `was_reset_frame` のフレームで `check_show_bar_rect` を呼ぶ（**`!any_down()` の外**——クランプの成否とは無関係な不変条件のため） |
+| `scripts/smoke-egui.ps1` | `Test-SnotraNoHeightMismatch` → `Test-SnotraNoTraceEventInWindow` + シナリオ 2 の断言 | 可視区間に `egui_main:bar_rect_mismatch` が現れないことを断言。**判定関数は新設せず一般化した** |
+| `src-tauri/CLAUDE.md` | 「モジュール構成」`window_coordinator.rs` の項 + 「実装パターン」の show 操作順序制約 | show が寸法を OS へ書いて読み戻す構造が消えたことを反映（後者は**実装中に判明**） |
 | `docs/architecture.md` | :82 末尾 | 「show 時に bar_height（既定 43px）へリセットする」が**偽になる**——物理的に畳む瞬間が消えるため |
 | `docs/adr/ADR-show-path-derives-bar-rect.md`（**新規**） | — | `ADR-show-path-derives-drawn-height` **却下 2 の反転**を記録する（下記） |
 
@@ -90,36 +91,49 @@
 
 ### Phase 2 — 退行を見る in-process 信号（セーフティネットの新設）
 
-- [ ] `clamp_main_into_work_area` の戻り値を `bool`（`set_position` を撃ったか）にする。
-      `#[must_use]` を付ける（#957 の揃え方に倣う）
-- [ ] `view.rs` のクランプ呼び出しで、`was_reset_frame` かつ戻り値が `true` のとき
-      `egui_main:position_clamped_after_show` を trace する。payload は
-      `{"from_x","from_y","to_x","to_y"}`
-- [ ] `scripts/smoke-egui.ps1` に不在断言を足す（`Test-SnotraNoHeightMismatch` と同型・
-      `seq` で可視区間を切る）
-- [ ] **故障注入で発火を実測する**——`derive_bar_rect_phys` の `height` を実高へ差し替えた
-      複製ビルドで、作業領域の下端付近に置いた main が trace を出すことを確認する。
-      **稼働中のガードは弱めない**（`.claude/rules/safety-nets.md`）
-- [ ] 故障注入を巻き戻し、**通常ビルドで trace が 0 件**であることを確認する
-- [ ] **検出器の死角を、発火条件の隣（`view.rs` の呼び出し点コメント）へ宣言する**——下記
+**【実装中に方針を変えた】検出器を「クランプが動いたか」から「矩形が一致するか」へ差し替えた。**
+理由: 変異注入の形を検討したところ、**計画の検出器は守りたい退行を捕まえられない**と分かった
+——`WorkArea::clamp` は矩形が境界を越えたときしか座標を変えないため、窓が作業領域の内側に
+いれば show 側の導出が壊れていてもクランプは no-op で、検出器は沈黙する。そして本 PR が
+持ち込む退行は**導出の誤り**（非クライアント分の落とし・scale の取り違え・丸め規則のずれ）で
+ある。`.claude/rules/safety-nets.md`「検出器のカバー範囲は、欠落のパターンごとに検算する」の
+「捕まらない足は機構へ載せる」に従い、**位置に依存しない矩形の突き合わせ**へ替えた。
+却下の記録は `ADR-show-path-derives-bar-rect`。
+
+- [x] ~~`clamp_main_into_work_area` の戻り値を `bool` にする~~ → **不要になった**（上記）。
+      同関数は変更しない
+- [x] `EguiShellState` に `show_bar_width_phys` / `show_bar_height_phys`（`AtomicI32`）を足し、
+      `show_egui_main` が導出した矩形を残す。**導けなかったときは 0 を書いて残骸を消す**
+- [x] `window_coordinator::check_show_bar_rect` を新設し、`view.rs` が `was_reset_frame` の
+      フレームで呼ぶ。食い違ったときだけ `egui_main:bar_rect_mismatch` を trace する。
+      payload は `{"show_w","show_h","frame_w","frame_h"}`
+- [x] `scripts/smoke-egui.ps1` に不在断言を足す。**新規関数は作らず**、既存の
+      `Test-SnotraNoHeightMismatch` を `Test-SnotraNoTraceEventInWindow -EventName` へ
+      一般化した（区間の切り方を書き写さないため。呼び出し点 2 → 3）
+- [ ] **故障注入で発火を実測する**（Step 3 の worktree 委譲が実施する——`/implement` は
+      「注入するのはこのエージェントだけである。主エージェントは同じ木へ注入しない」と定めており、
+      worktree は `.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」の「複製」にも当たる）
+- [ ] 故障注入を巻き戻し、**通常ビルドで trace が 0 件**であることを確認する（同上）
+- [x] **検出器の死角を、発火点の隣（`check_show_bar_rect` の doc）へ宣言する**——受容する
+      残余は 2 つ（show と 1 フレーム目のあいだの config 変更・DPI 変更）
 
 ### Phase 3 — 記録を構造へ一致させる
 
 - [x] `layout::bar_rect_height_phys` の doc を書き替える（show 経路の読み戻しが消えたこと・
       丸め規則への依存が**この doc 1 か所へ集約された**こと）— Phase 1 のコミットに含めた
       （挙動を変える変更では実装と散文を同じ変更で整合させる・`AGENTS.md`「3層分担」）
-- [ ] `position_results_below_main` の doc に、R4 を読み戻しのまま残す理由と、共有 atomic 案を
+- [x] `position_results_below_main` の doc に、R4 を読み戻しのまま残す理由と、共有 atomic 案を
       却下した理由（`research.md` §8 却下 1 の 3 点）を書く
 - [x] `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項を更新する — 同上
 - [x] **【実装中に判明】`src-tauri/CLAUDE.md`「実装パターン」の「show の操作順序制約」も偽になる**
       ——`set_size`（バー高）→ 位置 → `set_size`（実高）という**手順そのもの**を逐語で書いていた。
       計画の変更ファイル一覧は同ファイルの「モジュール構成」節しか挙げておらず、**節の単位で
       落としていた**（`.claude/rules/src-tauri.md` の自動配送で気づいた）。Phase 1 のコミットで修正済み
-- [ ] `docs/architecture.md:82` 末尾の「show 時に bar_height（`font_size + bar_padding`・既定 43px）へ
+- [x] `docs/architecture.md:82` 末尾の「show 時に bar_height（`font_size + bar_padding`・既定 43px）へ
       リセットする」を、変更後の事実へ直す（畳む瞬間が無くなるため。**この 1 文だけを直す**）
-- [ ] `docs/adr/ADR-show-path-derives-bar-rect.md` を新規作成する（内容は上記 5 点。
+- [x] `docs/adr/ADR-show-path-derives-bar-rect.md` を新規作成する（内容は上記 5 点。
       **既存 ADR は編集しない**）
-- [ ] `npm run governance:check` が通る（カテゴリ F）
+- [x] `npm run governance:check` が通る（カテゴリ F）
 - [ ] 実装差分を確定させる（`git diff` で変更ファイルが上表と一致することを確認する）
 
 ### Phase 4 — issue への記録
@@ -133,32 +147,30 @@
 
 | 不変条件 | 検知手段 |
 |---|---|
-| show が置いた位置は、直後のフレームのクランプが動かす必要のない位置である（**死角つき**——下記） | **Phase 2 の trace**（新設）。故障注入で発火を実測する |
+| **show が導いたバー矩形は、フレームが測る矩形と一致する**（**死角つき**——下記） | **Phase 2 の trace `egui_main:bar_rect_mismatch`**（新設）。故障注入で発火を実測する |
 | 変更前後で main の X/Y が変わらない | 未確定 3 の実測（下） |
 | バー矩形が作業領域内へ戻る（可視中・非押下フレーム） | 既存（`SPEC.md` §8.2・変更しない） |
 | 「Win32 の読みはここ 1 回」（`read_bar_anchor` の doc の宣言） | `read_frame_geom` が唯一の読み点になることで構造的に保つ |
 
 ### 検出器の死角（宣言して止める・縛りを広げない）
 
-plan-review A-1 の指摘を採用する。**ただし到達条件は自分で導出した**——指摘は「越境しうる」と
-だけ述べていたが、実際に必要な条件は次のとおり狭い。
+**plan-review A-1 と軽微 1 は、検出器を差し替えたことで両方とも消えた。** どちらも
+「クランプが動いたか」を見る設計に固有の性質だったためである。
 
-show は `target_wa.clamp(...)` で置くので、**バー矩形が作業領域に収まる限り、その中心も収まる**
-——ゆえに 1 フレーム目の `point_monitor_work_area(中心)` は同じモニターを返し、クランプは
-no-op になる。破れるのは `WorkArea::clamp` が「左上へ寄せるだけ」へ倒れるとき、すなわち
-**バー矩形の幅が作業領域の幅を超えるとき**である（`monitor.rs:36-42`）。そのとき中心は
-`left + win_w/2`（`layout::bar_rect_center`）なので、**中心が作業領域を出るには
-`win_w > 2 × 作業領域幅` が要る**。この状態は `SPEC.md:483` が既に受容済みの残余であり、
-`appearance.window_width` に上限が無いため到達可能ではある。
+- A-1（バー矩形の幅が作業領域幅の 2 倍を超えると基準モニターが変わり偽陽性）— **消えた**。
+  新しい検出器は矩形そのものを比べるので、どのモニターが基準かに依存しない
+- 軽微 1（`!any_down()` の内側なので show 直後にポインタが押されていると検証機会が落ちる）—
+  **消えた**。`check_show_bar_rect` の呼び出しをクランプの `if` の**外**へ置いた
+
+**残る死角は 2 つで、どちらも `egui_main:height_mismatch` に既に在る同種の残余である**
+（宣言先は `check_show_bar_rect` の doc と新規 ADR）。
+
+1. show と最初のフレームのあいだに `config_watcher` が `bar_height` / `window_width` を
+   変えると偽陽性になる
+2. 同じ窓の DPI が変わった場合も同様
 
 **対処は「発火条件を絞ること」ではなく「死角として宣言すること」**である
-（検知器は必要な分だけ縛る——広く縛ると正当な変更まで赤くする）。宣言先は `view.rs` の
-発火点コメントと新規 ADR。**smoke は単一モニター・`window_width=600` でこの経路へ到達しない**
-ため、CI の断言は成立する。
-
-**もう 1 つの死角（plan-review 軽微 1）**: 発火は `!any_down()` の内側にあるため、show 直後の
-1 フレーム目でポインタが押されていれば**その回の検証機会が黙って落ちる**。偽陽性にも
-偽陰性にもならないが、`egui_main:height_mismatch` には無い性質なので同じ場所へ書く。
+（検知器は必要な分だけ縛る——広く縛ると正当な変更まで赤くする）。
 
 **異常系**: `read_frame_geom` が `None`（`outer_size` / `inner_size` / `scale_factor` のいずれかが
 失敗）のとき、show は**位置決めをしない**。現行の `position_on_target_monitor` が

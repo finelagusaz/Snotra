@@ -862,10 +862,12 @@ mod tests {
     /// `.trunc()` や銀行家丸めへ替えると 0.5 の 3 例が落ちる。
     #[test]
     fn logical_to_phys_rounds_half_away_from_zero() {
-        // .5 ちょうど: trunc なら 43・銀行家丸めなら 44（偶数へ）→ どちらでも落ちる
+        // **.5 ではない端数**: `trunc` なら 43 になるので切り捨てを弾く。
+        // **銀行家丸めはここを通す**（43.6 は境界ではないため）——それを弾くのは次の 3 行である。
         assert_eq!(logical_to_phys(43.6, MainScale::new(1.0)), 44);
-        assert_eq!(logical_to_phys(34.0, MainScale::new(1.25)), 43); // 42.5 → 43
-        assert_eq!(logical_to_phys(43.0, MainScale::new(1.5)), 65); // 64.5 → 65
+        // **.5 ちょうどの 3 例**: いずれも銀行家丸め（偶数へ）なら 1 小さくなって落ちる。
+        assert_eq!(logical_to_phys(34.0, MainScale::new(1.25)), 43); // 42.5 → 43（偶数丸めなら 42）
+        assert_eq!(logical_to_phys(43.0, MainScale::new(1.5)), 65); // 64.5 → 65（偶数丸めなら 64）
         assert_eq!(logical_to_phys(1.0, MainScale::new(2.5)), 3); // 2.5 → 3（偶数丸めなら 2）
         // 端数なし・恒等
         assert_eq!(logical_to_phys(600.0, MainScale::new(1.0)), 600);

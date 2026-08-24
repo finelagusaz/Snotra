@@ -110,10 +110,26 @@
 - [x] `scripts/smoke-egui.ps1` に不在断言を足す。**新規関数は作らず**、既存の
       `Test-SnotraNoHeightMismatch` を `Test-SnotraNoTraceEventInWindow -EventName` へ
       一般化した（区間の切り方を書き写さないため。呼び出し点 2 → 3）
-- [ ] **故障注入で発火を実測する**（Step 3 の worktree 委譲が実施する——`/implement` は
-      「注入するのはこのエージェントだけである。主エージェントは同じ木へ注入しない」と定めており、
-      worktree は `.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」の「複製」にも当たる）
-- [ ] 故障注入を巻き戻し、**通常ビルドで trace が 0 件**であることを確認する（同上）
+- [x] **故障注入で発火を実測した**（Step 3 の worktree 委譲が実施。成果物は
+      `workspace/verify-878.txt`）。`derive_bar_rect_phys` から `+ geom.inset_h` を落とすと
+      `smoke:egui` が exit 1 になり、
+      `{"frame_h":64,"frame_w":768,"show_h":54,"show_w":768}` が出た——**幅は 768 で一致した
+      まま高さ 10 px 差だけで発火**した。この 10 px は `FrameGeom::inset_h` の doc が記録する
+      「DPI 125% で実測 10 物理 px」の独立再測にあたる
+- [x] 故障注入を巻き戻し、**通常ビルドで trace が 0 件**であることを確認した（SHA256 一致で
+      巻き戻しを照合）。**変異の強さ**: 強すぎない（ビルド・clippy・test・DWM 外形寸法は
+      すべて正常で、赤にしたのは当該検出器だけ）
+- [x] **【レビュー所見の反映】検出器の 2 軸の強さが違うことを doc へ書き、死角の数え上げを
+      やめた**（委譲の M1）。高さ軸は同じ導出を通る 2 呼び出し点の A/B であり、共有した導出
+      そのものの誤りは沈黙する。現実と突き合わせているのは幅軸だけである
+- [x] **【レビュー所見の反映】`check_show_bar_rect` を `read_bar_anchor` 経由から
+      `read_frame_geom` 直呼びへ変えた**（委譲の L1）——基準モニターの取得失敗で検出器が黙る
+      要らない依存を外した。合成は `FrameGeom::bar_height_phys` へ寄せ、写しを 3 か所に
+      作らないようにした
+- [x] **【レビュー所見の反映】検出器の 2 フィールドを `#[cfg(windows)]` で囲った**（委譲の
+      ⚠️ W1）——書き手も読み手も windows 限定ゆえ、非 windows ビルドで `field is never read` が
+      `-D warnings` に当たりうる。**この環境でも CI でも非 windows ビルドは測れない**ので、
+      断定ではなく成立しない形にした
 - [x] **検出器の死角を、発火点の隣（`check_show_bar_rect` の doc）へ宣言する**——受容する
       残余は 2 つ（show と 1 フレーム目のあいだの config 変更・DPI 変更）
 

@@ -660,6 +660,18 @@ struct FrameGeom {
 }
 
 #[cfg(windows)]
+impl FrameGeom {
+    /// バー矩形の**物理**高さ（非クライアント分を足した後）。
+    ///
+    /// **合成をここ 1 か所に置く**——消費者は 3 つ（[`read_bar_anchor`］・
+    /// [`derive_bar_rect_phys`］・[`check_show_bar_rect`］）あり、書き写すと
+    /// 「片方だけが非クライアント分を落とす」形の欠陥が沈黙で入る（#738 の実例）。
+    fn bar_height_phys(&self, bar_height_logical: f64) -> i32 {
+        layout::bar_rect_height_phys(bar_height_logical, self.scale) + self.inset_h
+    }
+}
+
+#[cfg(windows)]
 fn read_frame_geom(window: &tauri::Window) -> Option<FrameGeom> {
     let (Ok(outer), Ok(inner), Ok(scale)) = (
         window.outer_size(),
@@ -681,7 +693,7 @@ fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor>
     let (Ok(pos), Some(geom)) = (window.outer_position(), read_frame_geom(window)) else {
         return None;
     };
-    let outer_bar_height_phys = layout::bar_rect_height_phys(bar_height, geom.scale) + geom.inset_h;
+    let outer_bar_height_phys = geom.bar_height_phys(bar_height);
     let (cx, cy) = layout::bar_rect_center(pos.x, pos.y, geom.outer.width, outer_bar_height_phys);
     let work_area = crate::monitor::point_monitor_work_area(cx, cy)?;
     Some(BarAnchor {
@@ -721,7 +733,7 @@ fn derive_bar_rect_phys(
     let geom = read_frame_geom(window)?;
     Some(BarRectPhys {
         width: layout::logical_to_phys(width_logical, geom.scale) + geom.inset_w,
-        height: layout::bar_rect_height_phys(bar_height_logical, geom.scale) + geom.inset_h,
+        height: geom.bar_height_phys(bar_height_logical),
     })
 }
 
@@ -794,9 +806,25 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 /// 沈黙する（＝**守りたい退行の足を 1 本も捕まえない配置がある**）。却下の詳細は
 /// `ADR-show-path-derives-bar-rect`。
 ///
-/// **受容する残余が 2 つある。** (1) show と最初のフレームのあいだに `config_watcher` が
-/// `bar_height` や `window_width` を変えると偽陽性になる（`egui_main:height_mismatch` に
-/// 既に在る同種の残余）。(2) 同じ窓で DPI が変わった場合も同様である。
+/// # 何を突き合わせているのか——**2 軸の強さは同じではない**
+///
+/// **幅軸だけが導出を現実と突き合わせている。** show 側は config の幅から
+/// `logical_to_phys(幅) + inset_w` を導き、こちらは `outer.width` を**実測**する。両者が
+/// 一致することは、「`set_size(論理値)` の後に窓が占める物理幅は
+/// `round(論理値 × scale) + 非クライアント分` である」という上流（tao / `dpi`）の振る舞いへの
+/// 依存を、**毎回の show で検算している**ことにほかならない。
+///
+/// **高さ軸は 2 つの呼び出し点の A/B である。** show 側もここも同じ
+/// [`FrameGeom::bar_height_phys`] を通るので、**共有した導出そのものの誤り**（`inset_h` の
+/// 読み違い・`bar_rect_height_phys` の丸め）は両側が同じだけずれて沈黙する。捕まえるのは
+/// 「片方の呼び出し点だけが変わった」形——`derive_bar_rect_phys` から非クライアント分を
+/// 落とす変異を注入すると、幅が一致したまま高さ 10 px 差だけで発火することを実測した（#878）。
+///
+/// **ゆえに残余を数え上げない。** 沈黙するのは「show 側とフレーム側が同じ値を見る」経路
+/// すべてであり、config 変更・DPI 変更が窓に挟まる場合（`egui_main:height_mismatch` に既に
+/// 在る同種の残余）はその一例にすぎない。**scale もこの窓が今いるモニターのものであって、
+/// show がこれから置く先のモニターのものではない**（旧経路も同じで退行ではないが、
+/// 両者の DPI が違う配置ではどちらの軸も現実を測れない）。
 #[cfg(windows)]
 pub(crate) fn check_show_bar_rect(app: &tauri::AppHandle, bar_height: f64) {
     let Some(sh) = app.try_state::<EguiShellState>() else {
@@ -814,10 +842,13 @@ pub(crate) fn check_show_bar_rect(app: &tauri::AppHandle, bar_height: f64) {
     let Some(main) = app.get_window("main") else {
         return;
     };
-    let Some(a) = read_bar_anchor(&main, bar_height) else {
+    // **`read_bar_anchor` は通さない。** あちらは基準モニターまで引くので
+    // `point_monitor_work_area` が `None` を返す経路で検出器が黙る（要らない依存である
+    // ——ここが要るのは矩形だけで、どのモニターに乗っているかは問わない）。
+    let Some(geom) = read_frame_geom(&main) else {
         return;
     };
-    let (frame_w, frame_h) = (a.width_phys as i32, a.outer_bar_height_phys);
+    let (frame_w, frame_h) = (geom.outer.width as i32, geom.bar_height_phys(bar_height));
     if show_w != frame_w || show_h != frame_h {
         crate::trace_main(
             "egui_main:bar_rect_mismatch",

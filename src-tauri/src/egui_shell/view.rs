@@ -1286,6 +1286,15 @@ impl EguiView for SearchWindowView {
         // 不変条件であり、内側に置くと show 直後にポインタが押されていた回の検証機会が
         // 黙って落ちる。**位置にも依存しない**——矩形そのものを比べるので、窓が作業領域の
         // 内側にいてクランプが no-op でも導出の誤りは現れる。
+        //
+        // **呼び出し側にしか無い制約**（`/race-check` 境界 1）: **上の `set_size` ブロックより
+        // 後**でなければならない。`check_show_bar_rect` は `read_bar_anchor` 経由で
+        // `outer_size()` を**実測**するが、reset-on-show はサイズ memo を 0 へ戻すので
+        // このフレームは必ず `set_size` を撃つ。前へ動かすと、幅設定が hide を跨いで
+        // 変わっていた回に**旧幅を読んで偽陽性**になる。**同期性への依存はクランプと同じ**
+        // ——`SetWindowPos` は所有スレッドから撃てば同期で効く（`SWP_ASYNCWINDOWPOS` が
+        // 効くのは呼び出しスレッドと窓の所有スレッドが違うときだけである）。
+        // クランプ（上）との前後は問わない——あちらは `set_position` だけでサイズを変えない。
         if was_reset_frame {
             crate::egui_shell::check_show_bar_rect(&app, metrics.bar_height);
         }

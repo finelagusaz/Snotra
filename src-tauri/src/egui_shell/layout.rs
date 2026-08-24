@@ -305,6 +305,11 @@ pub fn results_top_y(
 /// ここだけである——以前は show 経路（OS の読み戻し）とフレーム経路（自前の `.round()`）で
 /// **同じ物理バー高が 2 通りに導出されており**、一致は偶然に依っていた
 /// （`ADR-main-window-clamp-on-pointer-release`「残っている代価」が記録した状態）。
+///
+/// **[`results_top_y`] の gap 換算は式が逐語で同じだが、ここへ束ねていない**（`/dry-check`
+/// で「維持」と判定・#878）。あちらは窓の矩形と一致する必要が無く、**上流が丸め規則を
+/// 変えたときに追随しなければならないのはこちらだけ**である——片方だけが変わる将来が
+/// 挙がる以上、式が同じでも概念は別である。
 pub fn logical_to_phys(logical: f64, main_scale: MainScale) -> i32 {
     (logical * main_scale.0).round() as i32
 }

@@ -210,12 +210,20 @@ pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
 /// Moved here from `main.rs` alongside its counterpart `read_placement_relative` (#749):
 /// keeping save and restore in separate modules would falsify the claim that placement is
 /// owned by one responsibility. `show_egui_main` is the only caller.
+///
+/// **クランプの材料は引数で受け取る**（#878）——以前は `main.outer_size()` を読み戻しており、
+/// 呼び出し側は「位置計算へ高さを伝える」ためだけに窓を `set_size(幅, バー高)` で畳んでいた。
+/// **畳むことに目的は無く、値を渡す手段が OS の窓しか無かったことの帰結だった**
+/// （#878 の継ぎ目 2・`ADR-show-path-derives-bar-rect`）。
 #[cfg(windows)]
 fn position_on_target_monitor(
     app_handle: &tauri::AppHandle,
     // &Window に一般化して egui 経路と共有（#532 SU2）。両経路とも同一の "main" 窓
     // （get_window/get_webview_window は同じ内部 Window を指す・manager/window.rs:106）。
     main: &tauri::Window,
+    // 材料は `derive_bar_rect_phys` が導く——クランプ経路（`clamp_main_into_work_area`）と
+    // **同じ合成**を通ることが、両者の基準が一致することの担保である（#877 と同型）。
+    bar: BarRectPhys,
 ) {
     use snotra_core::window_data;
 
@@ -234,12 +242,9 @@ fn position_on_target_monitor(
     };
     let Some(target_wa) = target_wa else { return };
 
-    // Get current window size (physical) for centering/clamping.
-    let Ok(win_size) = main.outer_size() else {
-        return;
-    };
-    let win_w = win_size.width as i32;
-    let win_h = win_size.height as i32;
+    // Bar rect size (physical) for centering/clamping. **OS からは読まない**（#878）。
+    let win_w = bar.width;
+    let win_h = bar.height;
 
     // Load saved relative placement and convert to absolute on target monitor.
     let (abs_x, abs_y) = if let Some(placement) = window_data::load_search_placement() {
@@ -282,17 +287,15 @@ pub(crate) fn show_egui_main(
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 高さ決定 → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約。#755 / #801 の
-    // 修正後もこの順序は不変——畳む先の値だけが変わった）。
-    // **「高さ決定」は 1 回では済まない**（レビュー是正 1）: position のクランプ
-    // （`monitor.rs` の `WorkArea::clamp`・`max_y = bottom - win_h`）は
-    // `position_on_target_monitor` が `outer_size()` で読み戻す「その時点の窓サイズ」に対して
-    // 効く。status / toast 込みの実高をそのまま渡すと、作業領域の下端付近では常にその分だけ
-    // 窓が上へ押し戻される——毎フレーム経路（`view.rs`）は `set_size` しか呼ばないため、
-    // toast が消えて窓が縮んでも位置は戻らず、次の hide が `read_placement_relative` でその
-    // ずれた位置を永続化する。**バーの位置はユーザーが決め、行の出没では動かさない**
-    // （人間裁定・2026-08-04）という仕様の帰結として、位置はバー高で決め、サイズは実高で
-    // 決める——ここでは 2 回に分けて set_size する。
+    // 位置 → サイズ → show の順（旧 WebView2 経路から引き継いだ順序制約）。
+    // **位置とサイズは別々の高さで決まる**: 位置は**バー高**、サイズは**実高**（status / toast 込み）。
+    // 実高で位置を決めると、作業領域の下端付近では常にその分だけ窓が上へ押し戻される——毎フレーム
+    // 経路（`view.rs`）は `set_size` しか呼ばないため、toast が消えて窓が縮んでも位置は戻らず、
+    // 次の hide が `read_placement_relative` でそのずれた位置を永続化する。**バーの位置は
+    // ユーザーが決め、行の出没では動かさない**（人間裁定・2026-08-04）の帰結である。
+    // **かつてこの非対称は「窓を 2 回 set_size する」形で表現されていた**（1 手目にバー高へ畳み、
+    // `position_on_target_monitor` がそれを `outer_size()` で読み戻す）。**#878 で材料を引数へ移した**
+    // ため、畳む必要は消えて `set_size` は 1 回になった——順序制約だけが残る。
     // `egui_show:done` の trace payload（下）が読む「show が適用した高さ」の受け皿。
     // 非 windows ビルドは本関数がサイズ/位置を一切設定しないため常に `None` のまま残る。
     #[cfg(not(windows))]
@@ -334,12 +337,18 @@ pub(crate) fn show_egui_main(
             status.then_some(m.toast_height),
             toast_now.then_some(m.toast_height),
         );
-        // 1 手目: バー高だけで position のクランプ材料を確定する。
-        let _ = window.set_size(tauri::LogicalSize::new(width, m.bar_height));
-        position_on_target_monitor(app, &window);
-        // 2 手目: 実高（#755 / #801 の修正が導く「そのフレームで実際に描かれる高さ」）へ
-        // 書き直す。2 手の間はフレームが 1 枚も描かれない（窓はまだ hidden）ため、
-        // 視覚的な影響は無い。
+        // 位置決めの材料は**導出して引数で渡す**（#878）。かつてはここで
+        // `set_size(width, m.bar_height)` を撃ち、`position_on_target_monitor` が
+        // `outer_size()` で読み戻していた——**畳むこと自体に目的は無く、値を渡す手段が
+        // OS の窓しか無かった**（継ぎ目 2）。導出できなければ位置決めをしない（取得失敗時に
+        // 何もしない側へ倒すのは、クランプ経路と同じ倒し方である）。
+        if let Some(bar) = derive_bar_rect_phys(&window, width, m.bar_height) {
+            position_on_target_monitor(app, &window, bar);
+        }
+        // サイズは実高で決める（#755 / #801 の修正が導く「そのフレームで実際に描かれる高さ」）。
+        // **位置はバー高、サイズは実高**——この非対称は「バーの位置はユーザーが決め、行の出没では
+        // 動かさない」（人間裁定・2026-08-04）の帰結である。`set_size` は `SWP_NOMOVE` を立てるので
+        // （tao `util::set_inner_size_physical`）、ここで位置は動かない。
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
 
         // 不変条件検出器（レビュー是正 4）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
@@ -615,29 +624,94 @@ struct BarAnchor {
     work_area: crate::monitor::WorkArea,
 }
 
+/// 窓の frame 幾何——**OS しか知らない量だけ**を読む（#878）。
+///
+/// **窓の矩形から読んでよいのは、コードが持っていない量だけである**——非クライアント分と
+/// scale がそれで、位置はユーザーが動かす。**コード自身が直前に書いた content 寸法を、
+/// 渡す手段が無いという理由で読み戻してはならない**（#878 の裁定則。`show_egui_main` は
+/// かつて「位置決めへ高さを伝える」ためだけに窓を畳んでいた）。
+///
+/// **Win32 の読みはここ 1 回である。** 消費者は 2 つ——[`read_bar_anchor`]（クランプと hide
+/// 保存）と [`derive_bar_rect_phys`]（show の位置決め）。**非クライアント分の合成を
+/// 呼び出し側 2 か所へ書き写さないために型で配る**。
+///
+/// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側へ倒す。
 #[cfg(windows)]
-fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor> {
-    let (Ok(pos), Ok(outer), Ok(inner), Ok(scale)) = (
-        window.outer_position(),
+struct FrameGeom {
+    /// 窓の現在の外形（物理）。**バー矩形の幅として使うのは [`read_bar_anchor`] だけである**
+    /// ——show 側は config の幅から導く（OS の現在値は hide を跨いだ旧幅でありうるため）。
+    outer: tauri::PhysicalSize<u32>,
+    /// 非クライアント分の幅（`outer` − `inner`）。
+    inset_w: i32,
+    /// 非クライアント分の高さ（`outer` − `inner`）。**「将来の保険」ではなく今すでに効いている**
+    /// ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
+    /// 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
+    inset_h: i32,
+    scale: layout::MainScale,
+}
+
+#[cfg(windows)]
+fn read_frame_geom(window: &tauri::Window) -> Option<FrameGeom> {
+    let (Ok(outer), Ok(inner), Ok(scale)) = (
         window.outer_size(),
         window.inner_size(),
         window.scale_factor(),
     ) else {
         return None;
     };
-    // 非クライアント分は OS から取る。**この項は「将来の保険」ではなく今すでに効いている**
-    // ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
-    // 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
-    let outer_bar_height_phys =
-        layout::bar_rect_height_phys(bar_height, layout::MainScale::new(scale))
-            + (outer.height as i32 - inner.height as i32);
-    let (cx, cy) = layout::bar_rect_center(pos.x, pos.y, outer.width, outer_bar_height_phys);
+    Some(FrameGeom {
+        outer,
+        inset_w: outer.width as i32 - inner.width as i32,
+        inset_h: outer.height as i32 - inner.height as i32,
+        scale: layout::MainScale::new(scale),
+    })
+}
+
+#[cfg(windows)]
+fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor> {
+    let (Ok(pos), Some(geom)) = (window.outer_position(), read_frame_geom(window)) else {
+        return None;
+    };
+    let outer_bar_height_phys = layout::bar_rect_height_phys(bar_height, geom.scale) + geom.inset_h;
+    let (cx, cy) = layout::bar_rect_center(pos.x, pos.y, geom.outer.width, outer_bar_height_phys);
     let work_area = crate::monitor::point_monitor_work_area(cx, cy)?;
     Some(BarAnchor {
         pos,
-        width_phys: outer.width,
+        width_phys: geom.outer.width,
         outer_bar_height_phys,
         work_area,
+    })
+}
+
+/// show がこれから当てるバー矩形の**物理**サイズ（#878）。
+///
+/// **`position_on_target_monitor` はこれを引数で受け取る。** かつては呼び出し側が
+/// `set_size(幅, バー高)` で窓を物理的に畳み、あちらが `outer_size()` で**読み戻して**いた
+/// ——`set_size` の目的は「値を渡すこと」だけで、畳むこと自体には意味が無かった
+/// （`ADR-show-path-derives-drawn-height` 却下 2 の反転・#878）。
+#[cfg(windows)]
+struct BarRectPhys {
+    width: i32,
+    height: i32,
+}
+
+/// [`BarRectPhys`] の唯一の構築点——型がその証拠を担う（`FrameVisibleRows` と同じ形）。
+///
+/// **クランプ経路（[`read_bar_anchor`]）と同じ材料・同じ合成を通る**。以前は show 側が
+/// OS の読み戻しで、クランプ側が `bar_rect_height_phys` + 非クライアント分で、**同じ物理
+/// バー高が 2 通りに導出されていた**（`ADR-main-window-clamp-on-pointer-release`
+/// 「残っている代価」）。導出が 1 つになったので、上流の丸め規則への依存も
+/// [`layout::logical_to_phys`] の doc 1 か所に集まる。
+#[cfg(windows)]
+fn derive_bar_rect_phys(
+    window: &tauri::Window,
+    width_logical: f64,
+    bar_height_logical: f64,
+) -> Option<BarRectPhys> {
+    let geom = read_frame_geom(window)?;
+    Some(BarRectPhys {
+        width: layout::logical_to_phys(width_logical, geom.scale) + geom.inset_w,
+        height: layout::bar_rect_height_phys(bar_height_logical, geom.scale) + geom.inset_h,
     })
 }
 

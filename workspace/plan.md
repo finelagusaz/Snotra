@@ -71,22 +71,22 @@
 
 ### Phase 1 — R1 を塞ぐ（挙動不変）
 
-- [ ] `layout::logical_to_phys(logical: f64, scale: MainScale) -> i32` を追加し、
+- [x] `layout::logical_to_phys(logical: f64, scale: MainScale) -> i32` を追加し、
       `bar_rect_height_phys` を委譲へ変える。ユニットテストで丸め規則を固定する
       （`f64::round` = 0 から遠ざかる丸め。`dpi 0.1.2` の `Pixel::from_f64` と同じ）
-- [ ] `FrameGeom { outer: PhysicalSize<u32>, inset_w: i32, inset_h: i32, scale: MainScale }` と
+- [x] `FrameGeom { outer: PhysicalSize<u32>, inset_w: i32, inset_h: i32, scale: MainScale }` と
       `read_frame_geom(window) -> Option<FrameGeom>` を追加する（`outer_size` / `inner_size` /
       `scale_factor` の読みは**ここ 1 回**。取得失敗は `None`）
-- [ ] `read_bar_anchor` を `outer_position()` + `read_frame_geom` の合成へ書き替える
+- [x] `read_bar_anchor` を `outer_position()` + `read_frame_geom` の合成へ書き替える
       （既存の `outer - inner` の直書きを消す。**Win32 の読みの回数は増やさない**）
-- [ ] `derive_bar_rect_phys(window, width_logical, bar_height_logical) -> Option<BarRectPhys>` を
+- [x] `derive_bar_rect_phys(window, width_logical, bar_height_logical) -> Option<BarRectPhys>` を
       追加する。`width = logical_to_phys(width) + inset_w` / `height = bar_rect_height_phys(bar_h) + inset_h`
-- [ ] `position_on_target_monitor` に `bar: BarRectPhys` を足し、`main.outer_size()` の読みを削除する。
+- [x] `position_on_target_monitor` に `bar: BarRectPhys` を足し、`main.outer_size()` の読みを削除する。
       `WorkArea::clamp` / `center` へ渡す `win_w` / `win_h` をその値にする
-- [ ] `show_egui_main` から 1 手目の `set_size`（`:338`）を撤去し、`derive_bar_rect_phys` の
+- [x] `show_egui_main` から 1 手目の `set_size`（`:338`）を撤去し、`derive_bar_rect_phys` の
       結果を `position_on_target_monitor` へ渡す。**`derive_bar_rect_phys` が `None` のときは
       位置決めをしない**（現行の「取得失敗ならクランプしない側へ倒す」と同じ倒し方）
-- [ ] `cargo build -p snotra-tauri` と `cargo test` が通る（カテゴリ A）
+- [x] `cargo build -p snotra-tauri` と `cargo test` が通る（カテゴリ A）
 
 ### Phase 2 — 退行を見る in-process 信号（セーフティネットの新設）
 
@@ -105,11 +105,16 @@
 
 ### Phase 3 — 記録を構造へ一致させる
 
-- [ ] `layout::bar_rect_height_phys` の doc を書き替える（show 経路の読み戻しが消えたこと・
-      丸め規則への依存が**この doc 1 か所へ集約された**こと）
+- [x] `layout::bar_rect_height_phys` の doc を書き替える（show 経路の読み戻しが消えたこと・
+      丸め規則への依存が**この doc 1 か所へ集約された**こと）— Phase 1 のコミットに含めた
+      （挙動を変える変更では実装と散文を同じ変更で整合させる・`AGENTS.md`「3層分担」）
 - [ ] `position_results_below_main` の doc に、R4 を読み戻しのまま残す理由と、共有 atomic 案を
       却下した理由（`research.md` §8 却下 1 の 3 点）を書く
-- [ ] `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項を更新する
+- [x] `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項を更新する — 同上
+- [x] **【実装中に判明】`src-tauri/CLAUDE.md`「実装パターン」の「show の操作順序制約」も偽になる**
+      ——`set_size`（バー高）→ 位置 → `set_size`（実高）という**手順そのもの**を逐語で書いていた。
+      計画の変更ファイル一覧は同ファイルの「モジュール構成」節しか挙げておらず、**節の単位で
+      落としていた**（`.claude/rules/src-tauri.md` の自動配送で気づいた）。Phase 1 のコミットで修正済み
 - [ ] `docs/architecture.md:82` 末尾の「show 時に bar_height（`font_size + bar_padding`・既定 43px）へ
       リセットする」を、変更後の事実へ直す（畳む瞬間が無くなるため。**この 1 文だけを直す**）
 - [ ] `docs/adr/ADR-show-path-derives-bar-rect.md` を新規作成する（内容は上記 5 点。

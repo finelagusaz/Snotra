@@ -26,8 +26,9 @@
    （`window_coordinator.rs:338`）である
 2. `position_on_target_monitor` は `main.outer_size()` を読まない。バー矩形の物理サイズを
    引数で受け取る
-3. **窓の位置は変わらない**——同一 config・同一モニターで、変更前後の `egui_show:done` 時点の
-   main の X/Y が一致する（実測で確かめる）
+3. **窓の位置は変わらない**——同一 config・同一モニターで、変更前後の main の X/Y が一致する。
+   **A/B で実測した（2026-08-24）。数値と、計器の判別力を示す対照 2 種は
+   `ADR-show-path-derives-bar-rect` が正本である**
 4. show の位置決めが退行したとき、**in-process の信号が発火する**。故障注入で実測する
 5. smoke がその信号の**不在**を断言する（既存の height_mismatch 断言と**同じ判定関数**を通す）
 6. `layout::bar_rect_height_phys` の doc・`src-tauri/CLAUDE.md`「モジュール構成」・
@@ -164,7 +165,7 @@
 | 不変条件 | 検知手段 |
 |---|---|
 | **show が導いたバー矩形は、フレームが測る矩形と一致する**（**死角つき**——下記） | **Phase 2 の trace `egui_main:bar_rect_mismatch`**（新設）。故障注入で発火を実測する |
-| 変更前後で main の X/Y が変わらない | 未確定 3 の実測（下） |
+| 変更前後で main の X/Y が変わらない | **A/B 実測で確認済み**（対照 2 種で計器の判別力も実証・ADR が正本） |
 | バー矩形が作業領域内へ戻る（可視中・非押下フレーム） | 既存（`SPEC.md` §8.2・変更しない） |
 | 「Win32 の読みはここ 1 回」（`read_bar_anchor` の doc の宣言） | `read_frame_geom` が唯一の読み点になることで構造的に保つ |
 

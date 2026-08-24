@@ -663,9 +663,21 @@ struct FrameGeom {
 impl FrameGeom {
     /// バー矩形の**物理**高さ（非クライアント分を足した後）。
     ///
-    /// **合成をここ 1 か所に置く**——消費者は 3 つ（[`read_bar_anchor`］・
-    /// [`derive_bar_rect_phys`］・[`check_show_bar_rect`］）あり、書き写すと
-    /// 「片方だけが非クライアント分を落とす」形の欠陥が沈黙で入る（#738 の実例）。
+    /// **合成をここ 1 か所に置く**——消費者は [`read_bar_anchor`] をはじめ複数あり、書き写すと
+    /// 「片方だけが非クライアント分を落とす」形の欠陥が沈黙で入る（#738 の実例）。件数を
+    /// 書かないのは、**足すたびに腐る数**だからである（呼び出し点は grep で数える）。
+    ///
+    /// **この合成そのものの誤り（`inset_h` を半分にする等）を捕まえる自動検査は無い。**
+    /// 呼び出し点が 1 つに寄った以上、片方だけを壊す変異は
+    /// [`check_show_bar_rect`] が捕まえるが、**ここを壊すと全消費者が同じだけずれる**ので
+    /// 検出器も型検査もテストも沈黙する（実測: `+ self.inset_h / 2` で clippy / test /
+    /// `smoke:egui` / 検出器のすべてが緑・#878）。**発見経路は目視だけである**
+    /// （`docs/build-commands.md`「D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）」）——#878 が
+    /// 「6 例中 4 例がカテゴリ D でのみ見つかった」と集計した状態が、この 1 点については残る。
+    ///
+    /// **`dead_code` が拾うことを検査に数えない**——`+ self.inset_h` を丸ごと落とす変異は
+    /// 今日は `field is never read` で赤くなるが、それは `inset_h` の読み手がここ 1 つだという
+    /// 配置の副産物であり、誰かが別の場所で 1 回読んだ瞬間に音もなく消える。
     fn bar_height_phys(&self, bar_height_logical: f64) -> i32 {
         layout::bar_rect_height_phys(bar_height_logical, self.scale) + self.inset_h
     }
@@ -817,8 +829,11 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 /// **高さ軸は 2 つの呼び出し点の A/B である。** show 側もここも同じ
 /// [`FrameGeom::bar_height_phys`] を通るので、**共有した導出そのものの誤り**（`inset_h` の
 /// 読み違い・`bar_rect_height_phys` の丸め）は両側が同じだけずれて沈黙する。捕まえるのは
-/// 「片方の呼び出し点だけが変わった」形——`derive_bar_rect_phys` から非クライアント分を
-/// 落とす変異を注入すると、幅が一致したまま高さ 10 px 差だけで発火することを実測した（#878）。
+/// 「**片方の呼び出し点だけが変わった**」形である。実測（#878）: show 側の呼び出しを
+/// [`FrameGeom::bar_height_phys`] から素の [`layout::bar_rect_height_phys`] へ差し替える
+/// （＝非クライアント分を落とす・#738 が名指す欠陥形）と、**幅が一致したまま高さ 10 px 差
+/// だけで発火**した。**共有した合成そのものを壊す変異では沈黙する**——その射程は
+/// [`FrameGeom::bar_height_phys`] の doc が持つ。
 ///
 /// **ゆえに残余を数え上げない。** 沈黙するのは「show 側とフレーム側が同じ値を見る」経路
 /// すべてであり、config 変更・DPI 変更が窓に挟まる場合（`egui_main:height_mismatch` に既に

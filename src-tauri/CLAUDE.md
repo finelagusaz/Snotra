@@ -48,7 +48,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
   - `results_view.rs` — 結果リスト窓の従属 view（責務は `//!`）
   - `results_window.rs` — results 窓の所有型（責務は `//!`）
   - `visual.rs` — テーマの 1 フレーム分の読み取り値と純粋な導出（責務は `//!`）
-  - `window_coordinator.rs` は窓を駆動する責務（main の show/hide（両窓同期）・位置永続と復元・results の毎フレーム driver・wake primitive。**z-order は含まない**——`commands/window.rs` と `ResultsWindow` が持つ。**main のサイズは 2 か所で設定する**——show 経路（ここ）と毎フレーム（`view.rs`）。**両者は同じ高さを導く**: status 行の有無は `status_row_present` を、積算は `main_window_height` を共有する。**main の位置に基準モニターを判断する箇所は 3 つある**（#738）——show（`position_on_target_monitor`）・可視中のクランプ（`clamp_main_into_work_area`。呼ぶのは `view.rs` だが**ポインタ非押下のフレームに限る**——reset-on-show の backstop は実測で却下した・`ADR-main-window-clamp-on-pointer-release`）・hide 時の保存（`read_placement_relative`）。**材料はどれもバー高で共通である**（実高ではない——理由は `layout::bar_rect_height_phys` の doc）。**基準モニターは 2 対 1 に分かれる**: クランプと hide 保存は**バー矩形の中心**が乗るモニター（**両者は `read_bar_anchor` という同じ 1 つの関数を通る**——一致を doc の申し合わせではなく構造で担保する）、show だけがカーソル/プライマリである。show が違うのは「これから出す窓をどこへ置くか」であって既存の窓を戻す話ではないため。**`MonitorFromWindow`（窓全体の矩形）を使ってはならない**——status/toast で伸びた分の重なりで隣モニターが選ばれ、**行の出没でバーが飛ぶ**（正本は `monitor::point_monitor_work_area` の doc）。**唯一の例外だった `results_available_height` は #835 のクランプ撤去で消えた**ため、この crate に窓の矩形から**位置決めの基準モニター**を決める経路はもう無い（`snotra-egui-runtime/src/monitor.rs` は `MonitorFromWindow` を使うが、リフレッシュレートの取得であって位置決めではない）。show 側は reset-on-show 後の状態をリテラルで渡す（畳む高さと描く高さが食い違っても、memo リセットが同じフレームの動的高さ算出で直すため固着はしない——ずれはその 1 フレームだけのスナップとして現れる〔#755 / #801〕。反転の経緯は `ADR-show-path-derives-drawn-height`）・#749）
+  - `window_coordinator.rs` は窓を駆動する責務（main の show/hide（両窓同期）・位置永続と復元・results の毎フレーム driver・wake primitive。**z-order は含まない**——`commands/window.rs` と `ResultsWindow` が持つ。**main のサイズは 2 か所で設定する**——show 経路（ここ）と毎フレーム（`view.rs`）。**両者は同じ高さを導く**: status 行の有無は `status_row_present` を、積算は `main_window_height` を共有する。**main の位置に基準モニターを判断する箇所は 3 つある**（#738）——show（`position_on_target_monitor`）・可視中のクランプ（`clamp_main_into_work_area`。呼ぶのは `view.rs` だが**ポインタ非押下のフレームに限る**——reset-on-show の backstop は実測で却下した・`ADR-main-window-clamp-on-pointer-release`）・hide 時の保存（`read_placement_relative`）。**材料はどれもバー高で共通である**（実高ではない——理由は `layout::bar_rect_height_phys` の doc）。**3 つとも OS からは非クライアント分と scale しか読まない**（#878）——バー矩形の物理サイズは `read_frame_geom` が読んだ差分の上で `layout::logical_to_phys` が導く。**show が `outer_size()` を読み戻していた経路は消えた**ため、同じ物理バー高が 2 通りに導出されることはもう無い（`ADR-show-path-derives-bar-rect`）。**基準モニターは 2 対 1 に分かれる**: クランプと hide 保存は**バー矩形の中心**が乗るモニター（**両者は `read_bar_anchor` という同じ 1 つの関数を通る**——一致を doc の申し合わせではなく構造で担保する）、show だけがカーソル/プライマリである。show が違うのは「これから出す窓をどこへ置くか」であって既存の窓を戻す話ではないため。**`MonitorFromWindow`（窓全体の矩形）を使ってはならない**——status/toast で伸びた分の重なりで隣モニターが選ばれ、**行の出没でバーが飛ぶ**（正本は `monitor::point_monitor_work_area` の doc）。**唯一の例外だった `results_available_height` は #835 のクランプ撤去で消えた**ため、この crate に窓の矩形から**位置決めの基準モニター**を決める経路はもう無い（`snotra-egui-runtime/src/monitor.rs` は `MonitorFromWindow` を使うが、リフレッシュレートの取得であって位置決めではない）。show 側は reset-on-show 後の状態をリテラルで渡す（畳む高さと描く高さが食い違っても、memo リセットが同じフレームの動的高さ算出で直すため固着はしない——ずれはその 1 フレームだけのスナップとして現れる〔#755 / #801〕。反転の経緯は `ADR-show-path-derives-drawn-height`）・#749）
   - `mod.rs` — 窓生成（main/results 両窓）・共有状態・config の 1 フレーム読み・listener 登録（責務は `//!`）
 
 ### 処置を返す純粋核の強制（#934）
@@ -87,12 +87,16 @@ runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレーム
 - `AppState` は `Mutex<Engine>` で検索エンジン・履歴・設定を一括管理。Phase 2.3 以前の 3重ロック（`Mutex<SearchEngine>` / `Mutex<HistoryStore>` / `Mutex<Config>`）は Engine facade に統合済み
 - **インデックスビルドのフラグは `AppState` のメソッド経由で更新する**: `try_begin_index_build()`（`index_build_started` を CAS 取得 → `indexing` を立てる）と `finish_index_build()`（両方を戻す）が唯一の正しい経路。`indexing` / `index_build_started` を直接 `store()` しない——外部からの force-reset は走行中ビルドのガードを踏み倒す競合の原因になる。2フラグは別物（`index_build_started` は CAS 専用ガード、`indexing` は first-run 時にビルドスレッド不在でも true になる UI 表示用）
 - Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）と `SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）を保持
-- **show の操作順序制約（`egui_shell::show_egui_main`） — この順で撃つ**: `set_size`（バー高）→
+- **show の操作順序制約（`egui_shell::show_egui_main`） — この順で撃つ**:
   `position_on_target_monitor` → `set_size`（実高。最初のフレームが描く高さ）→ `show()` の順。
-  位置計算はウィンドウサイズを OS から読み戻してクランプするため、位置決定に使う 1 回目の
-  `set_size` はバー高固定のまま不変——**バーの位置はユーザーが決めるものであり、status 行・
-  toast 行の出没で動かしてはならない**。実高への 2 回目の `set_size` は位置決定の後に置くこと
-  で、show 後に窓が伸びる／縮んでから伸びる（#755 / #801）を消す
+  **位置とサイズは別々の高さで決まる**——位置は**バー高**（`derive_bar_rect_phys` が導いて引数で
+  渡す）、サイズは**実高**である。**バーの位置はユーザーが決めるものであり、status 行・toast 行の
+  出没で動かしてはならない**。`set_size` を位置決定の後に置くことで、show 後に窓が伸びる／縮んで
+  から伸びる（#755 / #801）を消す。**`set_size` は位置を動かさない**（tao の
+  `util::set_inner_size_physical` が `SWP_NOMOVE` を立てる）。
+  **かつてはここで `set_size` を 2 回撃っていた**——1 手目でバー高へ畳み、位置計算がそれを
+  `outer_size()` で**読み戻して**いた。畳むこと自体に目的は無く、値を渡す手段が OS の窓しか
+  無かったことの帰結である（#878 の継ぎ目 2・`ADR-show-path-derives-bar-rect`）
 
 ## 共有 core 関数の返り値契約
 

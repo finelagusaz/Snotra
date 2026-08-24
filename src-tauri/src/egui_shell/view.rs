@@ -1279,6 +1279,25 @@ impl EguiView for SearchWindowView {
         if !ui.input(|i| i.pointer.any_down()) {
             crate::egui_shell::clamp_main_into_work_area(&app, metrics.bar_height);
         }
+        // 不変条件検出器（#878）: **show が導いたバー矩形は、いまフレームが測る矩形と一致する。**
+        // 突き合わせと理由の正本は `window_coordinator::check_show_bar_rect` の doc。
+        //
+        // **クランプの `!any_down()` の外に置く。** クランプが走ったかどうかとは無関係な
+        // 不変条件であり、内側に置くと show 直後にポインタが押されていた回の検証機会が
+        // 黙って落ちる。**位置にも依存しない**——矩形そのものを比べるので、窓が作業領域の
+        // 内側にいてクランプが no-op でも導出の誤りは現れる。
+        //
+        // **呼び出し側にしか無い制約**（`/race-check` 境界 1）: **上の `set_size` ブロックより
+        // 後**でなければならない。`check_show_bar_rect` は `read_bar_anchor` 経由で
+        // `outer_size()` を**実測**するが、reset-on-show はサイズ memo を 0 へ戻すので
+        // このフレームは必ず `set_size` を撃つ。前へ動かすと、幅設定が hide を跨いで
+        // 変わっていた回に**旧幅を読んで偽陽性**になる。**同期性への依存はクランプと同じ**
+        // ——`SetWindowPos` は所有スレッドから撃てば同期で効く（`SWP_ASYNCWINDOWPOS` が
+        // 効くのは呼び出しスレッドと窓の所有スレッドが違うときだけである）。
+        // クランプ（上）との前後は問わない——あちらは `set_position` だけでサイズを変えない。
+        if was_reset_frame {
+            crate::egui_shell::check_show_bar_rect(&app, metrics.bar_height);
+        }
         // **`result_count` はここで読む**（#749）——`take_clicked_for`（クリック逆流の消費・
         // 上のブロック）より**後**でなければならない（#752 F2 / ADR-results-presentation-two-stage）。この式を
         // `plain_hidden` の算出（`show_results` の直前）へ動かすと、行クリック起動フレームで

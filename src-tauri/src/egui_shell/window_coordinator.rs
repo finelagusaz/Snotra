@@ -210,12 +210,20 @@ pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
 /// Moved here from `main.rs` alongside its counterpart `read_placement_relative` (#749):
 /// keeping save and restore in separate modules would falsify the claim that placement is
 /// owned by one responsibility. `show_egui_main` is the only caller.
+///
+/// **クランプの材料は引数で受け取る**（#878）——以前は `main.outer_size()` を読み戻しており、
+/// 呼び出し側は「位置計算へ高さを伝える」ためだけに窓を `set_size(幅, バー高)` で畳んでいた。
+/// **畳むことに目的は無く、値を渡す手段が OS の窓しか無かったことの帰結だった**
+/// （#878 の継ぎ目 2・`ADR-show-path-derives-bar-rect`）。
 #[cfg(windows)]
 fn position_on_target_monitor(
     app_handle: &tauri::AppHandle,
     // &Window に一般化して egui 経路と共有（#532 SU2）。両経路とも同一の "main" 窓
     // （get_window/get_webview_window は同じ内部 Window を指す・manager/window.rs:106）。
     main: &tauri::Window,
+    // 材料は `derive_bar_rect_phys` が導く——クランプ経路（`clamp_main_into_work_area`）と
+    // **同じ合成**を通ることが、両者の基準が一致することの担保である（#877 と同型）。
+    bar: BarRectPhys,
 ) {
     use snotra_core::window_data;
 
@@ -234,12 +242,9 @@ fn position_on_target_monitor(
     };
     let Some(target_wa) = target_wa else { return };
 
-    // Get current window size (physical) for centering/clamping.
-    let Ok(win_size) = main.outer_size() else {
-        return;
-    };
-    let win_w = win_size.width as i32;
-    let win_h = win_size.height as i32;
+    // Bar rect size (physical) for centering/clamping. **OS からは読まない**（#878）。
+    let win_w = bar.width;
+    let win_h = bar.height;
 
     // Load saved relative placement and convert to absolute on target monitor.
     let (abs_x, abs_y) = if let Some(placement) = window_data::load_search_placement() {
@@ -282,17 +287,15 @@ pub(crate) fn show_egui_main(
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 高さ決定 → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約。#755 / #801 の
-    // 修正後もこの順序は不変——畳む先の値だけが変わった）。
-    // **「高さ決定」は 1 回では済まない**（レビュー是正 1）: position のクランプ
-    // （`monitor.rs` の `WorkArea::clamp`・`max_y = bottom - win_h`）は
-    // `position_on_target_monitor` が `outer_size()` で読み戻す「その時点の窓サイズ」に対して
-    // 効く。status / toast 込みの実高をそのまま渡すと、作業領域の下端付近では常にその分だけ
-    // 窓が上へ押し戻される——毎フレーム経路（`view.rs`）は `set_size` しか呼ばないため、
-    // toast が消えて窓が縮んでも位置は戻らず、次の hide が `read_placement_relative` でその
-    // ずれた位置を永続化する。**バーの位置はユーザーが決め、行の出没では動かさない**
-    // （人間裁定・2026-08-04）という仕様の帰結として、位置はバー高で決め、サイズは実高で
-    // 決める——ここでは 2 回に分けて set_size する。
+    // 位置 → サイズ → show の順（旧 WebView2 経路から引き継いだ順序制約）。
+    // **位置とサイズは別々の高さで決まる**: 位置は**バー高**、サイズは**実高**（status / toast 込み）。
+    // 実高で位置を決めると、作業領域の下端付近では常にその分だけ窓が上へ押し戻される——毎フレーム
+    // 経路（`view.rs`）は `set_size` しか呼ばないため、toast が消えて窓が縮んでも位置は戻らず、
+    // 次の hide が `read_placement_relative` でそのずれた位置を永続化する。**バーの位置は
+    // ユーザーが決め、行の出没では動かさない**（人間裁定・2026-08-04）の帰結である。
+    // **かつてこの非対称は「窓を 2 回 set_size する」形で表現されていた**（1 手目にバー高へ畳み、
+    // `position_on_target_monitor` がそれを `outer_size()` で読み戻す）。**#878 で材料を引数へ移した**
+    // ため、畳む必要は消えて `set_size` は 1 回になった——順序制約だけが残る。
     // `egui_show:done` の trace payload（下）が読む「show が適用した高さ」の受け皿。
     // 非 windows ビルドは本関数がサイズ/位置を一切設定しないため常に `None` のまま残る。
     #[cfg(not(windows))]
@@ -334,12 +337,27 @@ pub(crate) fn show_egui_main(
             status.then_some(m.toast_height),
             toast_now.then_some(m.toast_height),
         );
-        // 1 手目: バー高だけで position のクランプ材料を確定する。
-        let _ = window.set_size(tauri::LogicalSize::new(width, m.bar_height));
-        position_on_target_monitor(app, &window);
-        // 2 手目: 実高（#755 / #801 の修正が導く「そのフレームで実際に描かれる高さ」）へ
-        // 書き直す。2 手の間はフレームが 1 枚も描かれない（窓はまだ hidden）ため、
-        // 視覚的な影響は無い。
+        // 位置決めの材料は**導出して引数で渡す**（#878）。かつてはここで
+        // `set_size(width, m.bar_height)` を撃ち、`position_on_target_monitor` が
+        // `outer_size()` で読み戻していた——**畳むこと自体に目的は無く、値を渡す手段が
+        // OS の窓しか無かった**（継ぎ目 2）。導出できなければ位置決めをしない（取得失敗時に
+        // 何もしない側へ倒すのは、クランプ経路と同じ倒し方である）。
+        let derived_bar = derive_bar_rect_phys(&window, width, m.bar_height);
+        if let Some(bar) = &derived_bar {
+            position_on_target_monitor(app, &window, *bar);
+        }
+        // 不変条件検出器（#878）の受け皿。**導けなかったときは 0 を書いて残骸を消す**
+        // ——前回の show の値が残ると、次のフレームがそれと現在の矩形を突き合わせて
+        // 誤って発火する。突き合わせは `check_show_bar_rect`。
+        if let Some(sh) = app.try_state::<EguiShellState>() {
+            let (w, h) = derived_bar.map_or((0, 0), |b| (b.width, b.height));
+            sh.show_bar_width_phys.store(w, Ordering::SeqCst);
+            sh.show_bar_height_phys.store(h, Ordering::SeqCst);
+        }
+        // サイズは実高で決める（#755 / #801 の修正が導く「そのフレームで実際に描かれる高さ」）。
+        // **位置はバー高、サイズは実高**——この非対称は「バーの位置はユーザーが決め、行の出没では
+        // 動かさない」（人間裁定・2026-08-04）の帰結である。`set_size` は `SWP_NOMOVE` を立てるので
+        // （tao `util::set_inner_size_physical`）、ここで位置は動かない。
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
 
         // 不変条件検出器（レビュー是正 4）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
@@ -615,29 +633,119 @@ struct BarAnchor {
     work_area: crate::monitor::WorkArea,
 }
 
+/// 窓の frame 幾何——**OS しか知らない量だけ**を読む（#878）。
+///
+/// **窓の矩形から読んでよいのは、コードが持っていない量だけである**——非クライアント分と
+/// scale がそれで、位置はユーザーが動かす。**コード自身が直前に書いた content 寸法を、
+/// 渡す手段が無いという理由で読み戻してはならない**（#878 の裁定則。`show_egui_main` は
+/// かつて「位置決めへ高さを伝える」ためだけに窓を畳んでいた）。
+///
+/// **Win32 の読みはここ 1 回である。** 消費者は 2 つ——[`read_bar_anchor`]（クランプと hide
+/// 保存）と [`derive_bar_rect_phys`]（show の位置決め）。**非クライアント分の合成を
+/// 呼び出し側 2 か所へ書き写さないために型で配る**。
+///
+/// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側へ倒す。
 #[cfg(windows)]
-fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor> {
-    let (Ok(pos), Ok(outer), Ok(inner), Ok(scale)) = (
-        window.outer_position(),
+struct FrameGeom {
+    /// 窓の現在の外形（物理）。**バー矩形の幅として使うのは [`read_bar_anchor`] だけである**
+    /// ——show 側は config の幅から導く（OS の現在値は hide を跨いだ旧幅でありうるため）。
+    outer: tauri::PhysicalSize<u32>,
+    /// 非クライアント分の幅（`outer` − `inner`）。
+    inset_w: i32,
+    /// 非クライアント分の高さ（`outer` − `inner`）。**「将来の保険」ではなく今すでに効いている**
+    /// ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
+    /// 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
+    inset_h: i32,
+    scale: layout::MainScale,
+}
+
+#[cfg(windows)]
+impl FrameGeom {
+    /// バー矩形の**物理**高さ（非クライアント分を足した後）。
+    ///
+    /// **合成をここ 1 か所に置く**——消費者は [`read_bar_anchor`] をはじめ複数あり、書き写すと
+    /// 「片方だけが非クライアント分を落とす」形の欠陥が沈黙で入る（#738 の実例）。件数を
+    /// 書かないのは、**足すたびに腐る数**だからである（呼び出し点は grep で数える）。
+    ///
+    /// **この合成そのものの誤り（`inset_h` を半分にする等）を捕まえる自動検査は無い。**
+    /// 呼び出し点が 1 つに寄った以上、片方だけを壊す変異は
+    /// [`check_show_bar_rect`] が捕まえるが、**ここを壊すと全消費者が同じだけずれる**ので
+    /// 検出器も型検査もテストも沈黙する（実測: `+ self.inset_h / 2` で clippy / test /
+    /// `smoke:egui` / 検出器のすべてが緑・#878）。**発見経路は目視だけである**
+    /// （`docs/build-commands.md`「D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）」）——#878 が
+    /// 「6 例中 4 例がカテゴリ D でのみ見つかった」と集計した状態が、この 1 点については残る。
+    ///
+    /// **`dead_code` が拾うことを検査に数えない**——`+ self.inset_h` を丸ごと落とす変異は
+    /// 今日は `field is never read` で赤くなるが、それは `inset_h` の読み手がここ 1 つだという
+    /// 配置の副産物であり、誰かが別の場所で 1 回読んだ瞬間に音もなく消える。
+    fn bar_height_phys(&self, bar_height_logical: f64) -> i32 {
+        layout::bar_rect_height_phys(bar_height_logical, self.scale) + self.inset_h
+    }
+}
+
+#[cfg(windows)]
+fn read_frame_geom(window: &tauri::Window) -> Option<FrameGeom> {
+    let (Ok(outer), Ok(inner), Ok(scale)) = (
         window.outer_size(),
         window.inner_size(),
         window.scale_factor(),
     ) else {
         return None;
     };
-    // 非クライアント分は OS から取る。**この項は「将来の保険」ではなく今すでに効いている**
-    // ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
-    // 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
-    let outer_bar_height_phys =
-        layout::bar_rect_height_phys(bar_height, layout::MainScale::new(scale))
-            + (outer.height as i32 - inner.height as i32);
-    let (cx, cy) = layout::bar_rect_center(pos.x, pos.y, outer.width, outer_bar_height_phys);
+    Some(FrameGeom {
+        outer,
+        inset_w: outer.width as i32 - inner.width as i32,
+        inset_h: outer.height as i32 - inner.height as i32,
+        scale: layout::MainScale::new(scale),
+    })
+}
+
+#[cfg(windows)]
+fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor> {
+    let (Ok(pos), Some(geom)) = (window.outer_position(), read_frame_geom(window)) else {
+        return None;
+    };
+    let outer_bar_height_phys = geom.bar_height_phys(bar_height);
+    let (cx, cy) = layout::bar_rect_center(pos.x, pos.y, geom.outer.width, outer_bar_height_phys);
     let work_area = crate::monitor::point_monitor_work_area(cx, cy)?;
     Some(BarAnchor {
         pos,
-        width_phys: outer.width,
+        width_phys: geom.outer.width,
         outer_bar_height_phys,
         work_area,
+    })
+}
+
+/// show がこれから当てるバー矩形の**物理**サイズ（#878）。
+///
+/// **`position_on_target_monitor` はこれを引数で受け取る。** かつては呼び出し側が
+/// `set_size(幅, バー高)` で窓を物理的に畳み、あちらが `outer_size()` で**読み戻して**いた
+/// ——`set_size` の目的は「値を渡すこと」だけで、畳むこと自体には意味が無かった
+/// （`ADR-show-path-derives-drawn-height` 却下 2 の反転・#878）。
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct BarRectPhys {
+    width: i32,
+    height: i32,
+}
+
+/// [`BarRectPhys`] の唯一の構築点——型がその証拠を担う（`FrameVisibleRows` と同じ形）。
+///
+/// **クランプ経路（[`read_bar_anchor`]）と同じ材料・同じ合成を通る**。以前は show 側が
+/// OS の読み戻しで、クランプ側が `bar_rect_height_phys` + 非クライアント分で、**同じ物理
+/// バー高が 2 通りに導出されていた**（`ADR-main-window-clamp-on-pointer-release`
+/// 「残っている代価」）。導出が 1 つになったので、上流の丸め規則への依存も
+/// [`layout::logical_to_phys`] の doc 1 か所に集まる。
+#[cfg(windows)]
+fn derive_bar_rect_phys(
+    window: &tauri::Window,
+    width_logical: f64,
+    bar_height_logical: f64,
+) -> Option<BarRectPhys> {
+    let geom = read_frame_geom(window)?;
+    Some(BarRectPhys {
+        width: layout::logical_to_phys(width_logical, geom.scale) + geom.inset_w,
+        height: geom.bar_height_phys(bar_height_logical),
     })
 }
 
@@ -693,6 +801,85 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
 #[cfg(not(windows))]
 pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f64) {}
 
+/// 不変条件検出器（#878）: **show が導いたバー矩形は、フレームが測るバー矩形と一致する。**
+///
+/// show は OS へ書かずに矩形を導くようになった（[`derive_bar_rect_phys`]）ので、**この PR が
+/// 持ち込む退行は「導出の誤り」である**——非クライアント分の落とし、scale の取り違え、
+/// 丸め規則の食い違い。ここはその導出を**毎回の show で実データに当てて検算する**。
+///
+/// **外から測る検査ではこの退行が見えない。** show の矩形が誤っていても、窓の実サイズは
+/// 2 手目の `set_size` が決めるので DWM で測る幅・高さは正しいままであり、位置のずれも
+/// 可視中のクランプが次のフレームで戻す（`egui_main:height_mismatch` と同じ「安全機構が
+/// 外部の検出器を無力化する」形。理由の正本は
+/// `.claude/rules/safety-nets.md`「検出器のカバー範囲は、欠落のパターンごとに検算する」）。
+///
+/// **「クランプが動いたか」を見る形は採らなかった。** `WorkArea::clamp` は矩形が境界を
+/// 越えたときにしか座標を変えないため、窓が作業領域の内側にいる限り導出が壊れていても
+/// 沈黙する（＝**守りたい退行の足を 1 本も捕まえない配置がある**）。却下の詳細は
+/// `ADR-show-path-derives-bar-rect`。
+///
+/// # 何を突き合わせているのか——**2 軸の強さは同じではない**
+///
+/// **幅軸だけが導出を現実と突き合わせている。** show 側は config の幅から
+/// `logical_to_phys(幅) + inset_w` を導き、こちらは `outer.width` を**実測**する。両者が
+/// 一致することは、「`set_size(論理値)` の後に窓が占める物理幅は
+/// `round(論理値 × scale) + 非クライアント分` である」という上流（tao / `dpi`）の振る舞いへの
+/// 依存を、**毎回の show で検算している**ことにほかならない。
+///
+/// **高さ軸は 2 つの呼び出し点の A/B である。** show 側もここも同じ
+/// [`FrameGeom::bar_height_phys`] を通るので、**共有した導出そのものの誤り**（`inset_h` の
+/// 読み違い・`bar_rect_height_phys` の丸め）は両側が同じだけずれて沈黙する。捕まえるのは
+/// 「**片方の呼び出し点だけが変わった**」形である。実測（#878）: show 側の呼び出しを
+/// [`FrameGeom::bar_height_phys`] から素の [`layout::bar_rect_height_phys`] へ差し替える
+/// （＝非クライアント分を落とす・#738 が名指す欠陥形）と、**幅が一致したまま高さ 10 px 差
+/// だけで発火**した。**共有した合成そのものを壊す変異では沈黙する**——その射程は
+/// [`FrameGeom::bar_height_phys`] の doc が持つ。
+///
+/// **ゆえに残余を数え上げない。** 沈黙するのは「show 側とフレーム側が同じ値を見る」経路
+/// すべてであり、config 変更・DPI 変更が窓に挟まる場合（`egui_main:height_mismatch` に既に
+/// 在る同種の残余）はその一例にすぎない。**scale もこの窓が今いるモニターのものであって、
+/// show がこれから置く先のモニターのものではない**（旧経路も同じで退行ではないが、
+/// 両者の DPI が違う配置ではどちらの軸も現実を測れない）。
+#[cfg(windows)]
+pub(crate) fn check_show_bar_rect(app: &tauri::AppHandle, bar_height: f64) {
+    let Some(sh) = app.try_state::<EguiShellState>() else {
+        return;
+    };
+    let (show_w, show_h) = (
+        sh.show_bar_width_phys.load(Ordering::SeqCst),
+        sh.show_bar_height_phys.load(Ordering::SeqCst),
+    );
+    // 0 は「show が導けなかった（`read_frame_geom` が `None`）」の番兵。実際の矩形は
+    // 非クライアント分だけでも正なので、0 と衝突しない。
+    if show_w == 0 || show_h == 0 {
+        return;
+    }
+    let Some(main) = app.get_window("main") else {
+        return;
+    };
+    // **`read_bar_anchor` は通さない。** あちらは基準モニターまで引くので
+    // `point_monitor_work_area` が `None` を返す経路で検出器が黙る（要らない依存である
+    // ——ここが要るのは矩形だけで、どのモニターに乗っているかは問わない）。
+    let Some(geom) = read_frame_geom(&main) else {
+        return;
+    };
+    let (frame_w, frame_h) = (geom.outer.width as i32, geom.bar_height_phys(bar_height));
+    if show_w != frame_w || show_h != frame_h {
+        crate::trace_main(
+            "egui_main:bar_rect_mismatch",
+            serde_json::json!({
+                "show_w": show_w,
+                "show_h": show_h,
+                "frame_w": frame_w,
+                "frame_h": frame_h,
+            }),
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
+
 /// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
 /// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
 /// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
@@ -706,6 +893,20 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 /// **上端 y を返さない。** #675 のクランプが唯一の消費者だったため、#835 の撤去で返す先が
 /// 無くなった。**`Option` は型に `#[must_use]` を持たないので、返し続けても警告は出ない**
 /// ——消費者のいない戻り値は、次の読者に「何に使うのか」を探させる。
+///
+/// # ここが `main.outer_size()` を読み戻すのは正当である（#878）
+///
+/// #878 の裁定則は「コード自身が直前に書いた content 寸法を読み戻してはならない」だが、
+/// **書き手のフレーム文脈が読み手に届かない経路が呼び出し元に含まれるとき、読み戻しは
+/// 正当である**——ここがその唯一の例外である（`Moved` リスナーは egui のフレームの外で走る）。
+/// `outer_position()` はそもそもユーザーが動かした位置＝コードが持っていない量である。
+///
+/// **「main の直近の書き込み高さを共有 atomic へ残して渡す」案は却下した**（理由の詳細は
+/// `ADR-show-path-derives-bar-rect`）: (1) `outer_position()` はどのみち読むので Win32 の
+/// 呼び出しは減らない、(2) 物理 outer 高を残すには書き込み点で非クライアント分を読む必要が
+/// あり、読み戻しが移動するだけである、(3) 書き手が 2 人（show と毎フレーム）の memo を
+/// フレーム跨ぎで持つ形は #878 の継ぎ目 1 そのもので、results 側には補正フレームの
+/// 相当物が無い。
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {

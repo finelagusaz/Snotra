@@ -294,6 +294,26 @@ pub fn results_top_y(
     main_y + main_height_phys as i32 + (f64::from(gap_logical) * main_scale.0).round() as i32
 }
 
+/// 論理 px を物理 px へ直す（#878）。**丸め規則の唯一の置き場である。**
+///
+/// **規則は `f64::round`（0 から遠ざかる丸め）でなければならない**——`set_size` に渡した
+/// `LogicalSize` を tao/dpi が物理へ戻すときの変換が `dpi::Pixel::from_f64`（= `f64::round`）
+/// であり、ここが違えば **show が置く位置と、窓が実際に占める矩形がずれる**（#755 / #801 と
+/// 同じ観測形の 1 px スナップ）。
+///
+/// **上流への依存はこの doc 1 か所に集約してある。** `dpi` が銀行家丸めへ変われば、直すのは
+/// ここだけである——以前は show 経路（OS の読み戻し）とフレーム経路（自前の `.round()`）で
+/// **同じ物理バー高が 2 通りに導出されており**、一致は偶然に依っていた
+/// （`ADR-main-window-clamp-on-pointer-release`「残っている代価」が記録した状態）。
+///
+/// **[`results_top_y`] の gap 換算は式が逐語で同じだが、ここへ束ねていない**（`/dry-check`
+/// で「維持」と判定・#878）。あちらは窓の矩形と一致する必要が無く、**上流が丸め規則を
+/// 変えたときに追随しなければならないのはこちらだけ**である——片方だけが変わる将来が
+/// 挙がる以上、式が同じでも概念は別である。
+pub fn logical_to_phys(logical: f64, main_scale: MainScale) -> i32 {
+    (logical * main_scale.0).round() as i32
+}
+
 /// バー矩形の**物理**高さ（#738）。可視中の位置クランプの材料である。
 ///
 /// **実高（status 行・toast 行を含む高さ）ではない。** 実高でクランプすると toast が消えて
@@ -303,18 +323,15 @@ pub fn results_top_y(
 /// 1 手目で畳む高さと同じ導出である**——書き手が 2 人でも材料は 1 つに保つ（#877 と同型）。
 ///
 /// **返すのは content 高さである。** 非クライアント領域の分は
-/// `window_coordinator::read_bar_anchor` が 1 か所で足す（show 経路は
-/// `position_on_target_monitor` が `outer_size()` を読み戻すため OS から供給されるが、
-/// **フレームループ経路にその読み戻しは無い**）。
+/// `window_coordinator::read_frame_geom` が読んだ差分を、クランプ経路（`read_bar_anchor`）と
+/// show 経路（`derive_bar_rect_phys`）が同じ形で足す（#878）。
 ///
-/// **show 経路との一致は `dpi` crate の丸め規則に依存する。** あちらは `set_size` に渡した
-/// `LogicalSize` を tao/dpi が物理へ戻した結果を `outer_size()` で読むだけで、その変換は
-/// `Pixel::from_f64`（= `round`）である。ここの `.round()` と同じ規則ゆえ今日は一致するが、
-/// **一致を固定するテストは書けない**（読み戻し側が OS と tao を跨ぐ）。上流が銀行家丸めへ
-/// 変われば 1 px 食い違い、show 直後の 1 フレームで位置がスナップする（#755 / #801 と同じ
-/// 観測形）。依存先を名指しておくのが最小の担保である。
+/// **丸め規則は [`logical_to_phys`] が持つ**——上流（`dpi` crate）への依存の説明はあちらにある。
+/// **かつてここに在った「show 経路との一致は偶然である」という断りは、show 経路が
+/// `outer_size()` の読み戻しをやめた時点で不要になった**（#878。以前は同じ物理バー高が
+/// 2 通りに導出されていた）。
 pub fn bar_rect_height_phys(bar_height_logical: f64, main_scale: MainScale) -> i32 {
-    (bar_height_logical * main_scale.0).round() as i32
+    logical_to_phys(bar_height_logical, main_scale)
 }
 
 /// バー矩形の中心（物理座標・#738）。クランプと hide 保存の**基準モニター**を決めるために使う。
@@ -836,6 +853,25 @@ mod tests {
         for &scale in &[1.0_f64, 1.25, 2.0] {
             assert_eq!(results_height_phys(0.0, ResultsScale::new(scale)), 0);
         }
+    }
+
+    /// #878: 丸め規則は `f64::round`（0 から遠ざかる丸め）である。
+    ///
+    /// **`dpi::Pixel::from_f64` と同じ規則でなければならない**——`set_size` に渡した論理値を
+    /// tao/dpi が物理へ戻すときの変換がそれであり、違えば show が置く位置と窓の実矩形がずれる。
+    /// `.trunc()` や銀行家丸めへ替えると 0.5 の 3 例が落ちる。
+    #[test]
+    fn logical_to_phys_rounds_half_away_from_zero() {
+        // **.5 ではない端数**: `trunc` なら 43 になるので切り捨てを弾く。
+        // **銀行家丸めはここを通す**（43.6 は境界ではないため）——それを弾くのは次の 3 行である。
+        assert_eq!(logical_to_phys(43.6, MainScale::new(1.0)), 44);
+        // **.5 ちょうどの 3 例**: いずれも銀行家丸め（偶数へ）なら 1 小さくなって落ちる。
+        assert_eq!(logical_to_phys(34.0, MainScale::new(1.25)), 43); // 42.5 → 43（偶数丸めなら 42）
+        assert_eq!(logical_to_phys(43.0, MainScale::new(1.5)), 65); // 64.5 → 65（偶数丸めなら 64）
+        assert_eq!(logical_to_phys(1.0, MainScale::new(2.5)), 3); // 2.5 → 3（偶数丸めなら 2）
+        // 端数なし・恒等
+        assert_eq!(logical_to_phys(600.0, MainScale::new(1.0)), 600);
+        assert_eq!(logical_to_phys(0.0, MainScale::new(1.25)), 0);
     }
 
     /// #738: 論理 px × scale の四捨五入。**動機（なぜ実高ではなくバー高か）は関数 doc**。

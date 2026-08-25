@@ -53,7 +53,11 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SnotraInputMetrics.psm1') -Force
 Assert-SnotraSessionUnlocked -Operation '入力欄の幾何測定'
 
 $exe = if ($ExePath) { $ExePath } else { Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot }
-if (-not (Test-Path $exe)) { throw "実行ファイルがありません: $exe" }
+# **復旧手順を文言に持たせる**（#1179）。既定が自分のコピーを指すぶん、worktree では
+# 「本体が無い」が起きやすい——以前は隣のコピーを拾えていたのだから。既定は debug ゆえ
+# 復旧も debug ビルドである（`-Profile` を渡していない）。
+if (-not (Test-Path -LiteralPath $exe)) { throw "実行ファイルがありません: $exe（先に cargo build -p snotra）" }
+$exe = (Resolve-Path -LiteralPath $exe).Path   # 出力へ載せる形（理由は導出関数の doc）
 Write-Host "対象: $exe"
 
 $outDir = Join-Path $repoRoot 'target/visual-input-metrics'

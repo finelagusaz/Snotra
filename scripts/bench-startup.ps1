@@ -98,10 +98,13 @@ if ($UseVerificationProfile) {
   # `GetFullPath(path, basePath)` は絶対パスをそのまま通し、相対パスだけを基準へ解決する
   # ——`Join-Path` は絶対値を渡されると `<cwd>\C:\…` を組んでしまう（実測で exit 1）。
   # 明示値の基準は cwd、既定は repoRoot（`-ExePath` と同じ判断）。
+  # **両枝とも 2 引数版で書く**（基準だけが違う: 明示値は cwd、既定は repoRoot）。1 引数版は相対を
+  # `Environment.CurrentDirectory` で解決し、これは PowerShell のカレント位置とは別物である
+  # ——2 枝で版が割れていると、この issue と同型の罠を将来へ残す。
   $profileFull = if ($ProfileDir) {
     [System.IO.Path]::GetFullPath($ProfileDir, (Get-Location).Path)
   } else {
-    [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'target/bench-startup/profile'))
+    [System.IO.Path]::GetFullPath('target/bench-startup/profile', $repoRoot)
   }
   New-SnotraVerificationProfile -ProfileDir $profileFull -ShowIcons $false | Out-Null
 }

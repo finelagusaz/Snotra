@@ -1,0 +1,275 @@
+# verify-1179-round3.txt — issue #1179 / 3 巡目（High-2・Low-2 の対応の検算）
+
+アンカー: `3bff387bd11141e1d6332af9b1b84c42dba3a24d`（最終確認時も HEAD = このsha）
+前回アンカー: `0f0c7af8`（差分は 1 コミット `3bff387b`）
+worktree: `C:/workspace/Snotra/.claude/worktrees/agent-a9f0ef41cb3d195ef`
+
+## アンカー合わせ（実測）
+
+checkout は**今回も 1 度中断した**——2 巡目に私が置いた未追跡の
+`workspace/verify-1179-round2.txt` が `3bff387b` で追跡ファイルになったため
+（`Please move or remove them before you switch branches. Aborting`）。scratchpad へ退避してから
+消して checkout した。**副産物の検算**: コミットされた round2 は私が書いた版と **SHA256 一致**。
+
+**最終整合**: 全変異の巻き戻し後、`git status --porcelain` は `?? workspace/verify-1179-round3.txt`
+のみ、`git diff --stat HEAD` は空、5 ファイルの SHA256 全一致、`test:powershell` 再実行で
+131 passed / 0 failed。
+
+### 巻き戻し照合用ベースライン（SHA256・`3bff387b` 時点／最終確認でも全一致）
+
+```
+365AFA3E7713302D42C0D25DCB0C37B9DC3E1C6A8B0FA5C761F8DCB4C5CCC835  scripts/bench-startup.ps1
+9CB1C46B0C06E4CF9A572DE24C07BB736BDE516DBA988E9252D8ABAFEBD69D57  scripts/smoke-startup.ps1   ← 2 巡目と同一（未変更）
+4F5511690AE5F3EA790C6770401AFEF11AACF10CD32B80F0C6662C3F7236E38A  scripts/lib/SnotraSmoke.psm1 ← 1 巡目から不変
+64829A6CD6E3EF792EDF239258E977F445E642E0C76707ADC2853DECE3BEEFB7  scripts/lib/SnotraSmoke.Tests.ps1
+2F224781E99EB55D10975F9F99A84DCA5427D8F2F0D17C38413239B376DD016B  docs/build-commands.md
+```
+
+
+## 1. カテゴリ A〜F 再判定（自分で確かめた）
+
+| カテゴリ | 判定 | 根拠 |
+|---|---|---|
+| **A. Rust** | **該当なし** | `git diff --stat 0f0c7af8..3bff387b -- '*.rs' 'Cargo.lock' '*/Cargo.toml' <各 crate>` が**空**（実行して確かめた。前回と同じ結論だが、前提を測り直している） |
+| **B. TypeScript** | **該当なし** | `.ts` に差分なし |
+| **C.** | **文面上は非該当／実質は一部実行** | Phase 6 は `scripts/lib/SnotraSmoke.Tests.ps1`（＝検査そのもの）と `scripts/bench-startup.ps1` を変更したので `test:powershell` と bench は**必須**。**`smoke:startup` は再実行しなかった**——`git diff --stat 0f0c7af8..3bff387b -- 'scripts/smoke-startup.ps1' '.github'` が**空**で、`smoke-startup.ps1` の SHA256 も 2 巡目と同一、本体（`.rs`）も不変であることを**差分で確かめてから**省いた（推論で省いていない）。ただし**変異注入では smoke を何度も起動しており**、正版の smoke が緑であることは変異アームの前後で実測済み |
+| **D. UI の見た目** | **該当なし** | 描画は不変 |
+| **E. `.githooks/`** | **該当なし** | 差分なし |
+| **F. ガバナンス文書** | **該当・実行** | `docs/build-commands.md` + `workspace/plan.md` |
+
+**「実行不能」は 0 件。**
+
+### ベースライン（変異注入の前）
+
+| コマンド | exit | 証拠 |
+|---|---|---|
+| `npm run governance:check` | **0** | 全検査 passed |
+| `npm test`（vitest） | **0** | `Tests 901 passed (901)` |
+| `npm run test:powershell`（Pester） | **0** | `Tests Passed: 131, Failed: 0` |
+| `bench-startup.ps1`（既定・cwd = メイン） | **0** | 下記 §3 |
+
+検知器は書き換え後もパラメータ化が生きている（所要時間が別々・38ms / 14ms）:
+```
+[+] bench-startup.ps1 は repoRoot をスクリプト自身の位置から導き、それを渡す（…・#1179） 38ms
+[+] smoke-startup.ps1 は repoRoot をスクリプト自身の位置から導き、それを渡す（…・#1179） 14ms
+```
+
+
+## 2. High-2 の対応の検算
+
+### (a) 変異 G は本当に赤くなるか → **なる。自分の手で測った**
+
+`smoke-startup.ps1` の導出行を無傷のまま、使用点だけ `-RepositoryRoot (Get-Location).Path` へ:
+
+| | 2 巡目（`0f0c7af8`） | 3 巡目（`3bff387b`） |
+|---|---|---|
+| `test:powershell` | **exit 0・131 passed / 0 failed**（素通り） | **exit 1・130 passed / 1 failed** |
+| 落ちた It | — | **smoke の It だけ**（bench は緑） |
+| 文言 | — | `Expected regular expression '-RepositoryRoot \$repoRoot' to match '  $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot (Get-Location).Path -Profile debug', because 導出した repoRoot をそのまま渡すこと（…）` |
+
+**穴は塞がった。**
+
+### 検知器の書き換えで既存の足が落ちていないか（fix-forward の再実行）
+
+`Should` の集合が変わったので、2 巡目の 2 足を**当て直した**（「修正差分は再実行しない限り誰の検算も受けない」）:
+
+| 足 | 3 巡目の結果 | 捕まえた `Should` |
+|---|---|---|
+| **D**（導出を cwd 起点へ差し替え） | **赤**（exit 1 / 130 passed 1 failed） | Match（導出） |
+| **M-add**（正しい導出の後ろに再導出を足す） | **赤**（`Expected 1, … but got 2`） | Count（導出） |
+| **G**（使用点だけ差し替え） | **赤** | Match（使用点） |
+
+**3 足とも生きている。書き換えで落ちた足は無い。**
+
+ついでに **Low-1 の採用も実測で確認**できた——D の失敗メッセージが
+`because 導出を 1 行で $PSScriptRoot から書くこと（cwd 起点にすると…）` と**形の要求**になっており、
+`-Because` 内の `` `$ `` エスケープも正しく `$PSScriptRoot` として展開されている。
+
+### (b) 4 つ目の迂回はあるか → **ある。2 件（High-3）**
+
+**変異 I: `param()` の既定を #1179 以前の直書き絶対パスへ戻す**（`$ExePath = 'C:/workspace/Snotra/target/debug/snotra.exe'`）
+
+```
+述語が見る 2 行は無傷:
+  L28: $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+  L30: $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile debug
+
+npm run test:powershell : exit 0 / 131 passed   ← 4 つの Should が全部通る
+npm test                : exit 0 / 901 passed
+smoke（cwd = worktree・既定のまま）: exit 0
+  本体: C:\workspace\Snotra\target\debug\snotra.exe   ← メインのコピー
+```
+
+**これは #1179 の欠陥そのものの逐語的な復活である。** しかも D / G より悪い:
+D と G は cwd が別コピーのときにしか症状が出ないが、**I は cwd = worktree（＝ `npm run` と同じ、
+最も有利な条件）でも症状が出る**。導出は「壊れた」のではなく `if (-not $ExePath)` のガードによって
+**一度も走らない**——検知器は「導出がどう書かれているか」を見るので、導出が走らない形は射程の外にある。
+
+**変異 J: 導出も使用点も無傷のまま、導出結果を後段で上書きする**
+
+```
+$ExePath = (Resolve-Path -LiteralPath (Join-Path (Get-Location) 'target/debug/snotra.exe')).Path
+
+npm run test:powershell : exit 0 / 131 passed
+smoke（cwd = メイン）    : exit 0 ・ 本体: C:\workspace\Snotra\target\debug\snotra.exe
+```
+
+**I と J は同じクラスである**——鎖は
+**`param()` の既定 → `if (-not $ExePath)` のガード → 導出 → 使用点 → `$ExePath` の後続**
+の 5 節で、検知器が覆っているのは**真ん中の 2 節の接続だけ**である。
+
+### (c) 誤検出 → **3 件ある（Low-1）。ただし 1 件は委譲元の予測が外れている**
+
+いずれも**先にハーネスを実行して意味不変を確かめてから**検知器に掛けた。
+
+| プローブ | ハーネスの挙動 | 検知器 | 判定 |
+|---|---|---|---|
+| **K** バッククォートで行を折る（`Resolve-SnotraCargoExecutable` ` + 改行 + `-RepositoryRoot $repoRoot …`） | **正常**（worktree の本体・`Startup smoke passed`） | **exit 1** | **誤検出** |
+| **L** コロン記法 `-RepositoryRoot:$repoRoot`（PowerShell として正当） | **正常** | **exit 1** | **誤検出** |
+| **N** 関数名に言及するコメントを 1 行足す | **正常** | **exit 1**（`Expected 1, because 本体の導出は 1 か所であるべき, but got 2`） | **誤検出**（しかも文言が事実に反する——呼び出しは 1 か所のままである） |
+| **M** 引数順の入れ替え（`-Profile debug -RepositoryRoot $repoRoot`） | **正常** | **exit 0** | **誤検出ではない** |
+
+**委譲元の予測「引数順の入れ替えや行折りに脆いはず」は、半分だけ当たっている**——
+行折り（K）には脆いが、**引数順の入れ替え（M）には脆くない**（`-RepositoryRoot $repoRoot` は
+部分文字列として残るため）。予測を実測で分けた。
+
+
+## 3. Low-2 の対応の検算
+
+### 既定の枝が Medium-1 の修正を保っているか → **保っている**
+
+2 巡目に Medium-1 を捕まえたのと**同じ道具**（cwd = メイン作業コピー・worktree のスクリプトを
+絶対パスで・引数なし・**メイン側 `target/bench-startup` の LastWriteTime**）で測った:
+
+```
+BEFORE: 08/25/2026 19:53:07  config.toml / index.bin   （2 巡目の変異 E' が残した時刻）
+Exe:      …\agent-a9f0ef41cb3d195ef\target\release\snotra.exe
+Profile:  …\agent-a9f0ef41cb3d195ef\target\bench-startup\profile
+起動計器 passed（1 runs）。 exit 0
+AFTER : 08/25/2026 19:53:07  config.toml / index.bin   ← **動いていない**
+```
+
+`GetFullPath` の適用位置を動かしても、既定の枝はメイン側へ 1 バイトも書いていない。
+
+### 明示 `-ProfileDir`（相対・絶対）
+
+| 入力 | 2 巡目 | 3 巡目 | 結果 |
+|---|---|---|---|
+| 相対 `rel-prof3` | exit 0 | **exit 0** | `Profile: …\pdprobe\rel-prof3`・生成確認。**cwd 相対の契約は保たれている** |
+| 絶対 `<abs>` | **exit 1**（`Join-Path` が `<cwd>\C:\…` を組んだ） | **exit 0** | `Profile: …\abs-prof3`・生成確認。**直っている** |
+| 末尾セパレータ `trail-prof/` | 未測定 | **exit 0** | `Profile: …\trail-prof\`・生成確認（端から端まで実行した） |
+
+### UNC・`..`・その他（`GetFullPath(path, base)` の文字列演算を直接測った）
+
+| 入力 | 新（`GetFullPath(p, base)`） | 旧（`Join-Path base p`） |
+|---|---|---|
+| `//srv/share/p` | `\\srv\share\p`（**通る**） | `<base>\srv\share\p`（**壊れる**） |
+| `C:/abs/p` | `C:\abs\p` | `<base>\C:\abs\p`（**壊れる**） |
+| `../sibling-prof` | `…\worktrees\sibling-prof`（正規化される） | — |
+| `./a/../b` | `<base>\b`（正規化される） | — |
+| `rel-prof/` / `rel-prof\` | 末尾セパレータを保つ（実行で無害と確認） | — |
+| `C:`（ドライブ相対） | `<base>`（.NET のドライブ相対の意味論。入力として無意味なので実害なし） | — |
+| 空文字 | 到達しない（`if ($ProfileDir)` が偽） | — |
+
+**UNC は委譲元が挙げた 3 つのうち唯一「旧では壊れていた」もので、今回の修正が併せて直している。**
+（端から端までは測っていない——実 UNC 共有が要るため。**文字列演算だけの確認である**と明記する。）
+
+
+## 4. レビュー所見（Phase 6 の差分に集中）
+
+### Critical — 0 件
+
+### High
+
+**High-3: 検知器は `$repoRoot` の鎖（導出→使用点）を閉じたが、`$ExePath` の鎖は開いたままで、
+#1179 が逐語的に復活しうる**
+
+- 根拠は変異 I（`param()` の既定を直書き絶対パスへ）と変異 J（導出結果の後段上書き）。
+  **どちらも 4 つの `Should` を全部通り、vitest 901 も通り、smoke は exit 0 で緑**のまま、
+  `本体:` がメイン作業コピーを名指す。
+- **とくに I は #1179 の元の欠陥そのものである。** `scripts/smoke-startup.ps1:13` /
+  `scripts/bench-startup.ps1:32` の `[string]$ExePath = ''` を絶対パスへ戻すだけで、
+  `if (-not $ExePath)` のガードにより導出が**一度も走らなくなる**。検知器は
+  「導出がどう書かれているか」を見るので、**導出が走らない形**には原理的に届かない。
+  D / G が cwd 依存の症状だったのに対し、**I は `npm run`（cwd = repo root）でも症状が出る**——
+  つまり最も踏まれやすい経路で緑のまま壊れる。
+- **これは今回の対応が誤りだという指摘ではない。** G を塞いだのは実質的な前進である
+  （2 巡目 exit 0 → 3 巡目 exit 1 を実測）。問題は、Describe のコメントが
+  「**縛るのは 2 つで、鎖として閉じている**」「**保証は導出と使用点の両方に掛かる**」と
+  **閉包を主張している**ことで、実際に閉じているのは `$repoRoot` の鎖だけである。
+  `AGENTS.md`「保証を宣言する文の隣に、保証されていない一覧を置かない」／
+  「全称表現は『何が変わったらこの文は偽になるか』を 1 つ挙げてから確定する」に触れる。
+- **除外の列挙を足す道を採らなかった判断（「偽の全称を直した文がまた全称で偽になる」）は
+  正しい。** だから提案も列挙を増やす方向には置かない。取りうるのは:
+  1. **`$ExePath` の既定が空リテラルであること**を見る `Should` を 1 件足す
+     （`[string]$ExePath = ''` の形。鎖の入口を閉じる。**J は依然として残るが、
+     I（元の欠陥の逐語的な復活）は塞がる**）
+  2. 閉包の主張を**弱める**——「導出と使用点の**接続**を守る」であって
+     「既定 ExePath が正しいことを守る」ではない、と書く（実装を変えない）
+  3. 何もしない（**受容する残余として宣言する**）
+- **どれを採るにせよ、採用の前に変異 I で測ること。** 1 を採るなら I で赤くなり
+  かつ正当な変更で赤くならないこと、2・3 を採るならその文が I を言い当てていることを、
+  この報告の変異 I を再現して確かめてほしい。**「所見が正しくても、採るべき対処が
+  『直す』ではないことがある」**（`AGENTS.md`）——3 も真面目な選択肢である。
+
+### Medium — 0 件
+
+**何を測った上での 0 件か**: Phase 6 の 3 ファイル（`bench-startup.ps1` の `-ProfileDir` 導出、
+`SnotraSmoke.Tests.ps1` の `It` 全文、`docs/build-commands.md` の 1 文）を実読し、
+`-ProfileDir` は既定 / 相対 / 絶対 / 末尾セパレータの 4 形を端から端まで実行、UNC・`..`・
+ドライブ相対・空文字を文字列演算で評価、検知器は 4 足の変異（D / M-add / G / I）と
+4 件の誤検出プローブ（K / L / M / N）に掛けた。この範囲で Medium は出なかった。
+
+### Low
+
+**Low-1: 検知器の誤検出が 3 形あり、2 つはメッセージが原因を取り違える**
+実測は §2(c)。**すべて fail-closed**（開発者は赤を見て書き戻せる）ので
+`detector-scope-only-as-tight-as-needed` の選好には沿っており、**優先度は低い**。
+ただし **N（コメントを 1 行足しただけ）のメッセージ「本体の導出は 1 か所であるべき」は
+事実に反する**——呼び出しは 1 か所のままで、増えたのはコメントである。**赤の意味と直し方が
+一致しない**ぶん、K / L より質が悪い。直すなら `$calls` の抽出を
+「コメント行を除く」（`-notmatch '^\s*#'`）にするのが最小で、これは誤検出を 1 つ減らして
+検出力を落とさない（コメント内の呼び出しは呼び出しではない）。K / L は
+`-Because` に形の要求（「1 行で・空白区切りで書くこと」）を書く方向で足りると考える。
+
+**Low-2 は解消**（§3）。**⚠️-A も解消**——`docs/build-commands.md` に
+「明示した相対パスは、この 2 つでは（`test:powershell` と違い）cwd 相対のまま解釈される」が
+入り、`run-pester.ps1` の re-root と混同させない形になった（差分で確認・`governance:check` 緑）。
+
+### ⚠️（確信の持てないもの）
+
+**⚠️-D: `$calls.Count | Should -Be 1` は「呼び出しが 1 か所」を縛るが、その必要性の根拠が弱い**
+`-Because` は「本体の導出は 1 か所であるべき」だが、**2 か所になったときに何が壊れるのか**が
+（`$repoRoot` の Count と違って）自明でない。`$repoRoot` の Count は「片方だけ退行する」という
+具体的な退行に紐付いているが、呼び出しの Count は**むしろ N の誤検出を生んでいる**。
+`$calls[0]` を使うために 1 件へ絞りたい、という実装都合が理由なら、
+`$calls | ForEach-Object { $_ | Should -Match … }` にすれば Count 制約自体が要らなくなる。
+確信が持てないので ⚠️ に置く（意図的に置いた制約である可能性がある）。
+
+**⚠️-E: bench の `-ProfileDir` 既定の枝だけ 1 引数版 `GetFullPath` を使っている**
+`[System.IO.Path]::GetFullPath((Join-Path $repoRoot 'target/bench-startup/profile'))` の
+1 引数版は、相対パスを渡されると **`Environment.CurrentDirectory`**（PowerShell の
+カレント位置とは別物）を基準に解決する。いまは `$repoRoot` が絶対なので**実害はない**が、
+2 つの枝で `GetFullPath` の版が違うのは、将来 `$repoRoot` の導出が相対を返すようになったときに
+**PowerShell の位置ではなく .NET の cwd を見る**という、この issue と同型の罠を残す。
+既定の枝も 2 引数版（`GetFullPath('target/bench-startup/profile', $repoRoot)`）へ揃えると
+版が 1 つになる。実害が無いので ⚠️ に留める。
+
+**⚠️-F（持ち越し）**: ⚠️-B（`-ForEach` の数え上げが 3 本目に黙る）は却下に同意し**決着**。
+⚠️-1 / ⚠️-2 / ⚠️-3 は 2 巡目で決着済み。Low-3（構文エラーがどの検査にも届かない）も
+却下に同意——ハーネスを 1 回回せば落ちる fail-closed であり、対処不要。
+
+### Phase 6 が壊した既存の保証 — **0 件**
+
+**何を測った上での 0 件か**: (1) 2 巡目に生きていた 2 足（D / M-add）を書き換え後の検知器へ
+当て直して両方とも赤を確認、(2) Medium-1 の解消を LastWriteTime で測り直して維持を確認、
+(3) 明示 `-ProfileDir` の相対値という**既存の契約**が壊れていないことを実行で確認、
+(4) `smoke-startup.ps1` と `.rs` と `.github` が差分ゼロであることを確認、
+(5) `governance:check` / `npm test` / `test:powershell` の 3 つがベースラインで緑。
+
+
+## 5. パフォーマンス
+
+`.rs`・`Cargo.lock` とも不変（実測）。検知器の実行費用は 38ms + 14ms（2 巡目の 29ms + 6ms から
+使用点の 2 `Should` 分だけ増えた）で、`test:powershell` 全体に対して無視できる。
+`-ProfileDir` の変更は起動あたり 1 回の文字列演算。**懸念なし。**

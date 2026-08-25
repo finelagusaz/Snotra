@@ -145,9 +145,14 @@
       を正本として指す形へ。**参照は切り詰め形で書いた**——当該見出しは鉤括弧を入れ子に含み、
       全形で書くと照合そのものが生成されない（D-1 で直したのと同じ死角を新設しかけた）。
       前方一致で着地することは**見出し参照が 361 → 362 へ増えたことで検算した**
-- [ ] 3d: `indexer.rs`——`LoadOrScanStats`（`:419-484` の 20/23 行 2 塊）を筆頭に
-- [ ] 3e: 各 Phase 後に `cargo doc --workspace --no-deps --document-private-items` と
-      `cargo test -p snotra-core` が緑（A-8 が言うとおり **hook は沈黙する**）
+- [x] 3d: `indexer.rs`——`LoadOrScanStats` の doc から**反復 6 の経緯の写し**を外し、
+      規則（項目を必ず作る）はここが正本のまま `snotra-core/CLAUDE.md` を指す形へ。
+      **折返しで正準形参照を分断して reminder が鳴った**（A-7 の予測どおり）ので 1 物理行へ収めた。
+      **残りの写しは畳まないと判定した**——`:352`（ASCII 高速路）は両層が正当に述べる主張で、
+      実測（312,377 パス・1.7%）は寄せ先が無く A-2 の「コードの doc が正本」に当たる。
+      **機械的に畳むと既に正しく置かれた形を壊す**
+- [x] 3e: `cargo doc --workspace --no-deps --document-private-items` 緑 /
+      `cargo test -p snotra-core` 緑 / `npm run governance:check` 緑（A-8 のとおり hook は沈黙する面）
 
 ### Phase 4 — 逆向き監査（完了条件 5 の唯一の検証手段）
 

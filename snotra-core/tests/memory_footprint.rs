@@ -316,7 +316,7 @@ fn measure_real_index_footprint() {
     let cache_save_is_internal = s.cache_hit;
     println!(
         "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms{}）+ scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
-        s.total_ms,
+        s.total.as_millis(),
         s.hash_ms,
         s.cache_load_ms,
         s.cache_read_ms,
@@ -328,7 +328,7 @@ fn measure_real_index_footprint() {
         s.scan_ms,
         s.sort_ms,
         s.cache_save_ms,
-        s.total_ms.saturating_sub(
+        s.total.as_millis().saturating_sub(
             s.hash_ms
                 + s.cache_load_ms
                 + s.scan_ms

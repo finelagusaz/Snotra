@@ -182,7 +182,7 @@ fn main() {
             eprintln!(
                 "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
                 s.cache_hit,
-                s.total_ms,
+                s.total.as_millis(),
                 s.hash_ms,
                 s.cache_load_ms,
                 s.scan_ms,
@@ -192,7 +192,7 @@ fn main() {
         }
         // 内側の内訳との差が `index_load_unattributed_ms` になる——`load_or_scan_with_stats`
         // の中にある未命名の処理を、外側の計器が捕まえるための項目である。
-        startup::set_index_load_stats_ms(result.stats.total_ms as u64);
+        startup::set_index_load_stats_total(result.stats.total);
         // **枝は `LoadOrScanStats` から取る。** `initial_indexing` は first-run でしか
         // 立たないので、そこから導くと非 first-run の cache-miss が cache_hit=true に化ける。
         startup::set_branch(startup::Branch {

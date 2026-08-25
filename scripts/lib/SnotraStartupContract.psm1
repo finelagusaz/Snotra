@@ -60,7 +60,7 @@ $ErrorActionPreference = 'Stop'
   **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は同じ `outcome` から
   導かれるので、`outcome` を取り違える変異は両方が揃って動き素通りする。捕まえるのは
   `to_json`（`ok`）と `finish`（`event`）という**別の場所の導出が食い違うこと**だけである。
-- **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total_ms` の
+- **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total` の
   差である。**非負性が乗る前提と、破れたときに負値がそのまま出力へ現れることは
   `startup.rs` の `to_json` が正本**。ここはその前提が破れたことを外から捕まえる。
 #>
@@ -160,7 +160,7 @@ function Test-SnotraStartupPayload {
     # `null` は正常（first-run 枝では `LoadOrScanStats` 自体が無い）。値が在るときだけ検める。
     if ($null -ne $Data.index_load_unattributed_ms -and [long]$Data.index_load_unattributed_ms -lt 0) {
         $failures += ("index_load_unattributed_ms が負: $($Data.index_load_unattributed_ms)" +
-            "（外側の index_load が内側の LoadOrScanStats.total_ms を下回った——" +
+            "（外側の index_load が内側の LoadOrScanStats.total を下回った——" +
             "正本は startup.rs の to_json）")
     }
 

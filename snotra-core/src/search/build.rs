@@ -1,7 +1,10 @@
 //! `SearchEngine` の構築（インデックス構築時のみ実行される責務を search.rs から分離・#598）。
 //!
 //! Wave 1（文字列正規化）→ Wave 2（文字ビットマスク）→ kana マスクの並列構築と、
-//! IndexCache 復元経路（v4 ヒット時 Wave 1 スキップ / v3 fallback）を担う。全コンストラクタは
+//! IndexCache 復元経路（派生文字列が在れば Wave 1 スキップ、無ければ通常構築）を担う。
+//! **版の番号を書かない**——版と variant の対応は `CachedLower` / `DerivedStrings` が持ち、
+//! 番号を書くと版を上げるたびにこの散文だけが腐る（`indexer.rs` の `INDEX_CACHE_VERSION` の
+//! doc が名指しで禁じている）。全コンストラクタは
 //! `assemble` に集約し、並列 Vec 長・kana 系 2 本の {0, entries.len()} 不変条件を一元検証する。
 //! 検索ホットパス（`search_with_options` 系）は親 `search.rs` に残す。
 
@@ -26,15 +29,20 @@ use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 /// という危険は、判定を一元化する前の `Option<&str>` どうしの比較に固有のものだった**
 /// （2026-08-08 に、測り直す実装へ戻す実験で確かめた——検知器は落ちなかった）。
 ///
-/// 分ける実益は 2 つある: **312,690 回の比較を丸ごと省ける**こと（構築 68 → 58 ms のうち
-/// 比較ぶん）と、**呼び出し点から「この版は測り直さない」が読めること**である。
+/// 分ける実益は 2 つある: **312,690 回の比較を丸ごと省ける**ことと、**呼び出し点から
+/// 「この版は測り直さない」が読めること**である。額は
+/// `PERFORMANCE.md`「潰し済みかどうかを型で区別する」が正本——**ここへ写さない**
+/// （写していた版は開始値が向こうと食い違っていた・#1185）。**参照を切り詰め形で書いてあるのは、
+/// 見出し名が鉤括弧を入れ子に含むためである**——全形で書くと照合そのものが生成されない。
 enum DerivedStrings {
-    /// Wave 1 の出力、または v5 以下のキャッシュ。全要素が実体を持つ。`assemble` が測って潰す。
+    /// Wave 1 の出力、または**潰していない**キャッシュ（`CachedLower::Raw`）。全要素が実体を
+    /// 持つので `assemble` が測って潰す。
     Measured {
         lower_names: Vec<Box<str>>,
         lower_file_names: Vec<Option<Box<str>>>,
     },
-    /// v6 キャッシュ。記録時に `measure_derived_sharing` で測って潰してある。**測り直さない。**
+    /// **潰し済み**のキャッシュ（`CachedLower::Collapsed`）。記録時に `measure_derived_sharing` で
+    /// 測って潰してある。**測り直さない。**
     ///
     /// **列はアリーナである**（`crate::str_arena`）——ディスクから読んだ形がそのまま索引の
     /// 表現になるので、`assemble` は詰め替えない。
@@ -87,7 +95,8 @@ type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, NameArena);
 /// **木専用の導出を書き起こさない**——`lower_file_name` は `target_path` を取るので材料は
 /// フルパスを要求する。規則が 2 つになると、片方の経路だけが静かにすれる。
 ///
-/// 通るのは [`SearchEngine::new_from_tree`] と、[`SearchEngine::new_with_cached_masks`] の v3 フォールバック腕である。**1 本に寄せてあるのは、実体化するという判断を 2 部出荷しないためである**——コメントごと二重化していると、片方だけ直したときに文面の食い違いが「説明の違い」に見えてしまう。
+/// 通るのは [`SearchEngine::new_from_tree`] と、[`SearchEngine::new_with_cached_masks`] の
+/// 派生文字列を持たない腕（`cached_lower` が `None`）である。**1 本に寄せてあるのは、実体化するという判断を 2 部出荷しないためである**——コメントごと二重化していると、片方だけ直したときに文面の食い違いが「説明の違い」に見えてしまう。
 fn wave1_from_tree(tree: &IndexTree, migemo_enabled: bool) -> Wave1Strings {
     let materialized = tree.materialize();
     compute_wave1(&materialized, migemo_enabled)
@@ -424,8 +433,8 @@ impl SearchEngine {
     ///
     /// - `char_masks` / `file_name_char_masks`: Wave 2 の再計算をスキップ
     /// - `cached_lower`: `Some` なら Wave 1 の再計算もスキップ。**variant が意味を分ける**
-    ///   ——`Collapsed`（v6）は共有判定もスキップし、`Raw`（v5/v4）は `assemble` が測って潰す。
-    ///   `None`（v3 フォールバック）は Wave 1 を通常通り並列実行する
+    ///   ——`Collapsed` は共有判定もスキップし、`Raw` は `assemble` が測って潰す。
+    ///   `None`（派生文字列を持たない旧版からのフォールバック）は Wave 1 を通常通り並列実行する
     /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空、issue #337）。
     ///   **全経路で**このフラグを反映する
     ///
@@ -484,7 +493,7 @@ impl SearchEngine {
         };
 
         let (derived, kana_lower_names) = match cached_lower {
-            // v6: 潰し済み。`assemble` は測り直さない。
+            // 潰し済み。`assemble` は測り直さない。
             Some(CachedLower::Collapsed {
                 lower_names,
                 lower_file_names,
@@ -498,7 +507,7 @@ impl SearchEngine {
                     kana,
                 )
             }
-            // v5/v4: Wave 1 はスキップできるが、共有判定は `assemble` が行う。
+            // 潰していない: Wave 1 はスキップできるが、共有判定は `assemble` が行う。
             // postcard デシリアライズ後の String は capacity == len のため
             // into_boxed_str は再アロケーションを伴わない。
             Some(CachedLower::Raw {
@@ -520,11 +529,11 @@ impl SearchEngine {
                     kana,
                 )
             }
-            // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）。
+            // 派生文字列を持たない版からのフォールバック: Wave 1 を並列実行（migemo フラグを反映）。
             None => {
-                // v3 は派生文字列を一切持たないので Wave 1 を走らせる（実体へ戻す理由は
-                // [`wave1_from_tree`] の doc）。v3 は、ロードの旧版枝が現行版へ書き戻すまでの
-                // 1 回だけ通る経路である。
+                // 派生文字列が一切無いので Wave 1 を走らせる（実体へ戻す理由は
+                // [`wave1_from_tree`] の doc）。**ロードの旧版枝が現行版へ書き戻すまでの
+                // 1 回だけ通る経路である**（書き戻しの契機は `indexer` の `load_cache_in`）。
                 let (lower_names, lower_file_names, kana) = wave1_from_tree(&tree, migemo_enabled);
                 (
                     DerivedStrings::Measured {

@@ -136,12 +136,15 @@
       ディスクを通らない消費者）を `IndexTree` / `NameArena` の item doc へ**降ろした**（35 → 25 行）。
       残したのは責務・依存方向・モジュール全体の不変条件（辿る規則を 2 回書かない）・射程。
       ADR との散文の写し 1 件（`:785`）を「指す」形へ畳んだ。`cargo doc` 緑
-- [ ] 3b: `search/build.rs`——長文塊の圧縮に加え、**版リテラルを落として variant 名だけ残す**（A-3。
-      `indexer.rs:36-42` が「版のリテラルを他所へ焼き込まないこと」と名指しで禁じている）
-- [ ] 3c: `build.rs:29` の「構築 68 → 58 ms」を落として `PERFORMANCE.md` の節を指す形へ
-      （`PERFORMANCE.md:2071` は「89 → 58 ms」。**同一コミット `78650d6e` 由来ゆえ履歴では
-      どちらが正しいか決まらないが、写しを 1 つに畳むことは値の正誤と独立に正しい**。
-      値の正誤は本 issue の射程外）
+- [x] 3b: `search/build.rs`——**現在の版 ↔ variant の対応**をすべて variant 名へ寄せた
+      （`//!` / `DerivedStrings` の 2 variant / `new_with_cached_masks` の doc / match の 3 腕 /
+      `wave1_from_tree` の doc）。**残した 3 行は過去の行為**（「v5 で落とし」「v4 バイト列を読んだ
+      場合も」）で、これは腐らない形ゆえ対象外とした。**写しが `snotra-core/CLAUDE.md` にも在ったので
+      同じ変更で直した**（Phase 2 の逐語照合で発見・片方だけ直すと写しが残る）
+- [x] 3c: `build.rs` の「構築 68 → 58 ms」を落とし、`PERFORMANCE.md`「潰し済みかどうかを型で区別する」
+      を正本として指す形へ。**参照は切り詰め形で書いた**——当該見出しは鉤括弧を入れ子に含み、
+      全形で書くと照合そのものが生成されない（D-1 で直したのと同じ死角を新設しかけた）。
+      前方一致で着地することは**見出し参照が 361 → 362 へ増えたことで検算した**
 - [ ] 3d: `indexer.rs`——`LoadOrScanStats`（`:419-484` の 20/23 行 2 塊）を筆頭に
 - [ ] 3e: 各 Phase 後に `cargo doc --workspace --no-deps --document-private-items` と
       `cargo test -p snotra-core` が緑（A-8 が言うとおり **hook は沈黙する**）

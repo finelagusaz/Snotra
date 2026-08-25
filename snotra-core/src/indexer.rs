@@ -459,11 +459,17 @@ pub struct LoadOrScanStats {
     /// 通すので、**ここが丸めた値を入れると、外側と丸め方が食い違って差が負へ振れうる**（#1027）。
     ///
     /// **この要求を守る検査は見つかっていない。** 生成を四捨五入へ変える変異を入れて
-    /// `cargo clippy --workspace --all-targets`・両 crate の `cargo test`・`smoke:startup`・
-    /// `bench-startup.ps1` を回したが、どれも緑だった（2026-08-25 実測）。
-    /// `bench-startup.ps1` の `>= 0` が見るのは**症状（負値）**であり、丸めが足す高々 1 ms が
-    /// 余裕（実測した構成では 3〜4 ms）に収まると掛からない。**切り捨てで丸める形に至っては
-    /// 出力が変わらない**（`floor ∘ floor = floor`）ので、余裕がいくら小さくても発火しない。
+    /// `docs/build-commands.md` のカテゴリ A〜F を一通り（fmt・clippy `--all-targets`・両 crate の
+    /// `cargo test`・`cargo doc`・`npm test`・`governance:check`・Pester・`smoke:startup`・
+    /// `smoke:egui`）と `bench-startup.ps1` を回したが、**どれも緑だった**（2026-08-25 実測）。
+    ///
+    /// 届かない理由は層ごとに違う。**テストは構造的に見ない**——`index_load_unattributed_ms` を
+    /// 固定するテストは `Timeline` を直に組むので、この struct の生成側を一度も通らない
+    /// （ゆえに「あちらへ検知器をもう 1 本足す」では塞がらない）。**`bench-startup.ps1` の
+    /// `>= 0` が見るのは症状（負値）**であり、丸めが足す高々 1 ms が余裕（**機体依存**。
+    /// 実測した構成では 3〜4 ms）に収まると掛からない。**切り捨てで丸める形に至っては出力が
+    /// 変わらない**（`floor ∘ floor = floor`。`to_ms` が切り捨てであることは
+    /// `to_ms_truncates_toward_zero` が固定している）ので、余裕がいくら小さくても発火しない。
     /// **ゆえにこの一行は規約でしか守られていない。**
     ///
     /// **これは「この値がミリ秒へ落ちる場所は 1 つだ」という主張ではない。** 表示のために

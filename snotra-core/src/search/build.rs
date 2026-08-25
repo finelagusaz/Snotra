@@ -2,8 +2,8 @@
 //!
 //! Wave 1（文字列正規化）→ Wave 2（文字ビットマスク）→ kana マスクの並列構築と、
 //! IndexCache 復元経路（派生文字列が在れば Wave 1 スキップ、無ければ通常構築）を担う。
-//! **版の番号を書かない**——版と variant の対応は `CachedLower` / `DerivedStrings` が持ち、
-//! 番号を書くと版を上げるたびにこの散文だけが腐る（`indexer.rs` の `INDEX_CACHE_VERSION` の
+//! **版の番号を書かない**——版と variant の対応は [`CachedLower`] / [`DerivedStrings`] が持ち、
+//! 番号を書くと版を上げるたびにこの散文だけが腐る（[`crate::indexer::INDEX_CACHE_VERSION`] の
 //! doc が名指しで禁じている）。全コンストラクタは
 //! `assemble` に集約し、並列 Vec 長・kana 系 2 本の {0, entries.len()} 不変条件を一元検証する。
 //! 検索ホットパス（`search_with_options` 系）は親 `search.rs` に残す。
@@ -35,13 +35,13 @@ use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 /// （写していた版は開始値が向こうと食い違っていた・#1185）。**参照を切り詰め形で書いてあるのは、
 /// 見出し名が鉤括弧を入れ子に含むためである**——全形で書くと照合そのものが生成されない。
 enum DerivedStrings {
-    /// Wave 1 の出力、または**潰していない**キャッシュ（`CachedLower::Raw`）。全要素が実体を
+    /// Wave 1 の出力、または**潰していない**キャッシュ（[`CachedLower::Raw`]）。全要素が実体を
     /// 持つので `assemble` が測って潰す。
     Measured {
         lower_names: Vec<Box<str>>,
         lower_file_names: Vec<Option<Box<str>>>,
     },
-    /// **潰し済み**のキャッシュ（`CachedLower::Collapsed`）。記録時に `measure_derived_sharing` で
+    /// **潰し済み**のキャッシュ（[`CachedLower::Collapsed`]）。記録時に `measure_derived_sharing` で
     /// 測って潰してある。**測り直さない。**
     ///
     /// **列はアリーナである**（`crate::str_arena`）——ディスクから読んだ形がそのまま索引の

@@ -229,16 +229,45 @@ Phase 1 の新 Pester が**実際に守りたい退行へ届く**ことを測る
 
 ### Phase 4 — 実測と検証
 
-- [ ] 変異注入: psm1 の**複製**から `Push-Location`/`Pop-Location` を外し、新 `It` の入力で返り値が
+- [x] 変異注入: psm1 の**複製**から `Push-Location`/`Pop-Location` を外し、新 `It` の入力で返り値が
       期待値と一致しないこと、かつ既存 `It`（絶対値）は変わらないことを実測（ライブの木は書き換えない）
-- [ ] A 側の再現: `agent-a5b0f5810c7344357` の現行スクリプトを cwd=メインのまま引数なしで回し、`Exe:` がメインを名指すことを記録
-- [ ] Gate 1: 新 worktree（`target/` 空）で既定のまま回し、`throw` が新 worktree のパスを名指す
-- [ ] Gate 2: release 本体を複製して既定のまま `-Iterations 1`、`Exe:` が新 worktree を名指して完走
-- [ ] **取り違えの確認**: `bench` の表示パスに `release`、`smoke` の表示パスに `debug` が含まれることを実測（不変条件 5）
-- [ ] `smoke-startup.ps1` を同じ形で 1 回確認する
-- [ ] 検証用 worktree（`agent-verify-1179`）を `git worktree remove` で消す
-- [ ] `npm test` が緑
-- [ ] 実装差分を確定させる（A/B の観測値を PR 本文へ載せられる形で控える）
+- [x] A 側の再現: `agent-a5b0f5810c7344357` の現行スクリプトを cwd=メインのまま引数なしで回し、`Exe:` がメインを名指すことを記録
+- [x] Gate 1: 新 worktree（`target/` 空）で既定のまま回し、`throw` が新 worktree のパスを名指す
+- [x] Gate 2: release 本体を複製して既定のまま `-Iterations 1`、`Exe:` が新 worktree を名指して完走
+- [x] **取り違えの確認**: `bench` の表示パスに `release`、`smoke` の表示パスに `debug` が含まれることを実測（不変条件 5）
+- [x] `smoke-startup.ps1` を同じ形で 1 回確認する
+- [x] 検証用 worktree（`agent-verify-1179`）を `git worktree remove` で消す
+- [x] `npm test` が緑
+- [x] 実装差分を確定させる（A/B の観測値を PR 本文へ載せられる形で控える → 下記）
+
+### Phase 4 の実測結果（2026-08-25・PR 本文へ載せる分）
+
+**変異注入**（psm1 の複製へ当てた。ライブの木は無改変）
+
+| 版 | 新 `It`（相対値 `CARGO_TARGET_DIR` × cwd 不一致） | 既存 `It`（絶対値） |
+|---|---|---|
+| 変異体（Push/Pop 剥がし） | **不一致 → 赤**（`...\Temp\snotra-1179-elsewhere\relative-target\debug\snotra.exe`） | 一致 → 緑 |
+| 正版（パッチ済み） | 一致 → 緑（`C:\workspace\Snotra\relative-target\debug\snotra.exe`） | 一致 → 緑 |
+
+検知器は発火し、**変異の強さも正しい**（赤くなるのは新 `It` だけ＝射程が既存検査を巻き込まない）。
+
+**A/B 対照** — いずれも **cwd = メイン作業コピー**、スクリプトを絶対パスで・引数なしで起動
+
+| | スクリプトの所在 | 測った本体 | 終了 |
+|---|---|---|---|
+| **A（修正前）** | `agent-a5b0f5810c7344357` | `C:/workspace/Snotra/target/release/snotra.exe`（**メイン**） | exit 0・「起動計器 passed」 |
+| **B（修正後）** | `agent-verify-1179` | `...\agent-verify-1179\target\release\snotra.exe`（**自分のコピー**） | exit 0・「起動計器 passed」 |
+
+**両方とも緑である。** 違うのは測った対象だけであり、これが issue の主張（失敗が緑と同じ見た目をする）の実物である。
+
+- **Gate 1**（`target/` 空・ビルド無し）: `throw` が
+  `C:\workspace\Snotra\.claude\worktrees\agent-verify-1179\target\release\snotra.exe` を名指した（exit 1）
+- **Gate 2**（release 本体を複製して 1 回）: `Exe:` が worktree の絶対パス・`pre_main=43ms post_main=220ms
+  mem=70.3MB cache_hit=True first_run=False`・「起動計器 passed（1 runs）」。**スタンドインの
+  スキーマ不一致は起きず、退避（cold ビルド）は不要だった**
+- **`smoke-startup.ps1`**: `本体: ...\agent-verify-1179\target\debug\snotra.exe`・
+  「Startup smoke passed (1 runs)」。本体サイズはメイン `53,621,248` に対し worktree `53,613,568` で別物
+- **取り違えの確認**: bench の表示パスに `release`、smoke の表示パスに `debug` を実測（不変条件 5）
 
 ## 未確定（実装前に潰す）
 

@@ -1,0 +1,613 @@
+# verify-1185.txt — issue #1185 実装差分の検証・レビュー（code-reviewer 委譲）
+
+対象 worktree: C:/workspace/Snotra/.claude/worktrees/agent-a15cb550a9e60e52a
+アンカー sha: 7ae1adee6d27645d2987e4e7b6edda2f965618bc（ブランチ chore/comment-guidelines-compaction）
+比較の基点: 0e140659
+起動時の worktree HEAD は 806a9cb1 で**不一致**だったため git checkout --detach 7ae1adee で合わせた。
+その後 git rev-parse HEAD = 7ae1adee6d27645d2987e4e7b6edda2f965618bc / git status クリーンを確認済み。
+
+## 実施する項目の一覧（1 項目終えるごとに追記する）
+
+- [x] 0. アンカー合わせ・差分取得
+- [x] 1. 差分全文の読解と、委譲先（CLAUDE.md / ADR / PERFORMANCE.md）の実在確認
+- [x] 2. カテゴリ A〜F の該当判定と実行（cargo doc は必須）
+- [x] 3. Phase 1 実装検証（不変条件・契約・責務宣言の喪失／第一原則違反）
+- [x] 4. Phase 2a plan.md 不変条件照合
+- [x] 5. Phase 2b 対称パス / 2c DRY / 2d リソース / 2e SPEC 同期 / 2f 変更不要の再評価
+- [x] 6. docs/comment-guidelines.md の自己矛盾チェック
+- [x] 7. 変異注入 2 件（ハッシュ照合つき）
+- [x] 8. 最終所見の列挙
+
+## [進捗 1] 差分の把握（DONE）
+
+- git diff --stat 0e140659..7ae1adee: 8 ファイル / +161 -79
+  .claude/rules/comments.md(1) RETROSPECTIVE.md(2) docs/comment-guidelines.md(52)
+  snotra-core/CLAUDE.md(2) index_tree.rs(39) indexer.rs(7) search/build.rs(37) workspace/plan.md(100)
+- コミット 5 本（b93b0fb8 / cf3ce5fb / 47771c92 / f3372fe8 / 7ae1adee）
+
+## [進捗 2] 委譲先の実在確認（DONE・3 件すべて成立＝喪失なし）
+
+- indexer.rs LoadOrScanStats →「snotra-core/CLAUDE.md「indexer.rs の索引更新の契機」」:
+  CLAUDE.md:213 に節が在り :219 に反復 6 の経緯（「起動段の live ブロックの 1/3」まで逐語）。OK
+- index_tree.rs:783 → docs/adr/ADR-sorted-prefix-over-reflagging.md:
+  同 ADR:23-28 の「却下 1」に「既存の最大」「全ユーザーへ課す価値は無い」が在る。OK
+- build.rs → PERFORMANCE.md「潰し済みかどうかを型で区別する」:
+  PERFORMANCE.md:2057 に見出しが在る（実体は鉤括弧を入れ子に含む長い見出し）。前方一致で着地。
+  ⇒ 申し送り 3（切り詰め形は意図的）を裏取りできた。
+
+- 旧見出し名「コメントは「なぜ」を書く」の残存は workspace/plan.md と
+  workspace/plan-review-comment-compaction.md のみ（改名前を記録する計画文書）。生きた規範・コードには 0 件。
+
+## [進捗 3] カテゴリ A〜F（DONE）
+
+前提: worktree に node_modules が無く、npm 系は ERR_MODULE_NOT_FOUND で落ちる（検知器の発火と
+見分けが付かない）。C:/workspace/Snotra/node_modules へ junction を張ってから実行した。
+
+- A. Rust（*.rs）: **実行**（.rs 3 本のコメントを変更したので該当）
+  - cargo fmt --all -- --check … 出力なし・exit 0
+  - cargo check --workspace … Finished dev profile in 1m39s・exit 0
+  - cargo clippy --workspace --all-targets -- -D warnings … Finished in 8.37s・exit 0
+  - cargo test -p snotra-core -q … 605 passed / 0 failed / 11 ignored・exit 0
+  - cargo doc --workspace --no-deps --document-private-items … Generated …/target/doc・exit 0
+    （hook が走らせない面。intra-doc link の追加〔[`IndexTree`] / [`NameArena`] / [`TreeNodes`] /
+     [`Serialize`] / [`wave1_from_tree`] 等〕がすべて着地している）
+- B. TypeScript: **該当なし**（追跡下の .ts は vitest.config.ts のみで、この差分は触っていない）
+- C. ウィンドウ生成/表示順/hotkey/スラッシュコマンド: **該当なし**
+  （.rs の非コメント行の変更 0 行。trace イベント名・hotkey 登録・表示経路のいずれにも触れていない）
+- D. UI のスタイル・レイアウト・テキスト表示: **該当なし**
+  （描画を 1 ピクセルも変えない。build-commands.md:61 の「表示に関わるコードを触った」では該当しない
+   という判定条件どおり、過大な申し送りを作らない）
+- E. git hook（.githooks/**）: **該当なし**（差分に .githooks は無い）
+- F. ガバナンス文書: **実行**（docs/comment-guidelines.md / .claude/rules/comments.md /
+  RETROSPECTIVE.md / snotra-core/CLAUDE.md と、.rs の正準形見出し参照の改変を含む）
+  - npm run governance:check … 全検査 passed（検査 23 件 / 見出し参照 363 件）・exit 0
+
+## [進捗 4] Phase 1/2 の個別確認（DONE）
+
+- INDEX_CACHE_VERSION の doc（indexer.rs:35-41）は確かに「**版のリテラルを他所へ焼き込まないこと**」
+  を持つ。build.rs の //! が「名指しで禁じている」と書いたのは正しい。OK
+- 旧 //! 見出し「記憶域の並べ方は 2 通り、辿る規則は 1 つ」への外部参照は 0 件
+  （snotra-core/CLAUDE.md:58 は語句を使うだけで見出し参照ではない）。OK
+- comment-guidelines.md:30 の逐語引用「実データで根は約 200 件（0.06%）」は index_tree.rs:795 に現存。
+  「同ファイル」→ フルパスへの訂正（B-1）は正しい。OK
+- A8 の再現: grep -nE (v[3-7]) build.rs → :441 :442 :444 の 3 行のみ。いずれも過去の行為
+  （「v5 で…落とし」「v4 バイト列を読んだ場合も…スキップされたまま」）で、版を上げても腐らない。
+  申し送り 4 を裏取りできた。OK
+- 見出しの棚卸し（git show 0e140659 との比較）: 改名は「第一原則」1 件のみ（D-1 承認済み）、
+  追加は「短く保つ」「測定値の置き場」の 2 件。plan.md の不変条件「節名を変えない・例外は D-1 のみ」を守っている。OK
+- PERFORMANCE.md:2057 の当該節は「構築 89 → 58 ms」を実際に持つ。build.rs が「額は…が正本」と
+  委譲した先に中身が在り、しかも旧コメントの「68」との食い違いが正本側の値に一本化された。OK（良い変更）
+- SPEC.md: grep -nE (indexer|index_tree|search/build) SPEC.md → 0 件。Phase 2e は SPEC 対象外。OK
+- 逆向き監査の独立再実行: 消えたコメント行の不変条件（「PATH エントリは必ず途中に入る」/
+  「必ずここに並ぶ項目を作ること」/「共有しているのは表現の核だけ」/「辿る規則を 2 回書いてはならない」/
+  「v3 は 1 回だけ通る経路」）はすべて再確立地点を持つ。**喪失 0 件**を独立に確認した。
+
+## [進捗 5] 変異注入（DONE・2 件とも検知器が発火）
+
+### 変異 1: docs/comment-guidelines.md の第一原則の見出しを改名
+
+- 注入前ハッシュ: git hash-object = ac2c58b320dd72d9853d341c564d48df771b270e
+  （git rev-parse HEAD:docs/comment-guidelines.md と一致を確認）
+- 注入: sed -i で「## 第一原則: コメントは理由を書く」→「## 基本方針: コメントは理由を書く」
+  （前方一致まで壊す名前を選んだ。頭に「第一原則」を残すと切り詰め形 2 本は設計どおり緑のままで、
+   4 本すべてを動かせないため）
+- 結果: **赤（exit 1）**。4 件の不整合を報告:
+    .claude/agents/code-reviewer.md:28 「第一原則」
+    .claude/rules/comments.md:15 「第一原則」
+    RETROSPECTIVE.md:23 「第一原則: コメントは理由を書く」
+    snotra-core/src/indexer.rs:53 「第一原則: コメントは理由を書く」
+  ⇒ **D-1 の主張が実測で裏づけられた**。改名前は全形 2 本（RETROSPECTIVE.md:23 / indexer.rs:53）は
+     照合そのものが生成されず finding にも現れなかったが、鉤括弧の入れ子を外した現在は
+     4 本すべてが検査対象に入っている。死角は構造的に消えている。
+- 巻き戻し: git checkout -- → git hash-object = ac2c58b320dd72d9853d341c564d48df771b270e（**一致**）
+
+### 変異 2: snotra-core/src/search/build.rs の正準形参照の見出し名を破壊
+
+- 注入前ハッシュ: git hash-object = 2f066886e1d472fd58723e587fa1300665252f84
+  （git rev-parse HEAD:snotra-core/src/search/build.rs と一致を確認）
+- 注入: sed -i で「潰し済みかどうかを型で区別する」→「存在しない見出しXYZ」
+- 結果: **赤（exit 1）**。1 件:
+    snotra-core/src/search/build.rs:34  見出し参照が着地しない:
+    `PERFORMANCE.md`「存在しない見出しXYZ」
+  ⇒ 切り詰め形で書いた参照も検査に載っている（申し送り 3 の「全形だと照合が生成されない」を
+     回避しつつ、着地の保証は失っていない）。
+- 巻き戻し: git checkout -- → git hash-object = 2f066886e1d472fd58723e587fa1300665252f84（**一致**）
+
+- 巻き戻し後の再実行: npm run governance:check … 全検査 passed（見出し参照 363 件）・exit 0
+
+## [進捗 6] レビュー所見
+
+### Critical
+
+- **なし。**
+
+### High
+
+H1. docs/comment-guidelines.md:15 / :53 / :55 と :107 / :155 / :161 —
+    **「却下した代替案」の置き場が同一文書内で二重化しており、読者が決められない。**
+    - 壊れた不変条件: 「同じ事実の正本は 1 か所」（AGENTS.md「文書に事実の写しを増やす変更」）。
+    - この差分が新設した側: :15「**却下案の詳細な比較は ADR へ**」、:53 の表の /// 行
+      「経緯・却下案の詳細比較 → #NNN / ADR」、:55 の ADR 行「却下した代替案と、却下の理由」。
+    - 触っていない側: :107「設計判断の長文は # Why 見出しで構造化する」の模範例は
+      snotra-core/src/search.rs の SearchEngine struct doc（= ///）で、中身は
+      「試作ブランチ・issue 番号・**ベンチ結果の表**・根本原因」＝まさに却下案の詳細比較。
+      :161「**却下した代替案は「試した → 結果 → 採用理由」の順**で書く（SearchEngine doc が模範）」も同じ。
+    - さらに新設した :155 が「長さを許すのはこの節の射程——歴史メモと**却下案の記録**——に限る」と、
+      コメント側に却下案の記録を明示的に認めている。
+    - 根本原因: plan.md の 1a/1k は「第一原則」の箇条**だけ**を直し、同じ主張を別の言い方で持つ
+      :107 / :161 を母集団に入れなかった。写しを直す当のコミットが取りこぼす、既知の型である。
+    - 修正例: :161 を「**却下した代替案の詳細な比較は docs/adr/ へ置く**（書式は「試した → 結果 →
+      採用理由」）。コメントに残すのは、その却下が**現在の形へ課している制約**だけである」へ改め、
+      :107 の模範例には「引くのは # Why の**構造**であって、却下案をコメントへ置く根拠ではない」
+      と射程を添える。あるいは逆に :15 / :53 を「ADR が在る論点は ADR へ、無い論点は /// でよい」
+      と緩める——どちらでもよいが、**3 か所が同じ線を引いていること**が要件である。
+
+
+### Medium
+
+M1. snotra-core/src/search/build.rs:5-7 / :38 / :44 —
+    **版リテラルの代わりに置いた正本の名指しが、素の散文名のまま書かれている。**
+    - 壊れた不変条件: docs/comment-guidelines.md:25「名指しは書いてよい。ただし [`Type::method`]
+      の形で書く」／:91「保証が要る参照は production の doc コメント側へ置く」。
+      面は production の //! と /// なのに記法が素のバッククォートなので、**cargo doc の
+      着地検査に載らない**（規約 :85-91 の表で「○」を得られる面に居ながら、その ○ を捨てている）。
+    - 対象: :5-7 の `CachedLower` / `DerivedStrings` / `INDEX_CACHE_VERSION`、
+      :38 の `CachedLower::Raw`、:44 の `CachedLower::Collapsed`。
+    - なぜ効くか: この差分は「v6」「v5/v4」「v3」という版リテラルを外し、**意味の正本をこれらの
+      型名・variant 名へ移した**。つまり改名で静かに腐る依存を新しく作ったのはこの変更自身であり、
+      その依存だけが機構の外に置かれている。
+    - 実測（本レビューで注入し巻き戻し済み・hash 一致）: [`CachedLower`] / [`DerivedStrings`] /
+      [`crate::indexer::INDEX_CACHE_VERSION`] へ書き換えて
+      cargo doc -p snotra-core --no-deps --document-private-items → 警告 0・exit 0 で解決する。
+      **修正は 5 か所の記法変更だけで済み、副作用が無いことを実測してある。**
+    - 参考: 同じ差分の中でも docs/adr/... のパス参照と PERFORMANCE.md「…」の正準形参照は
+      機構に守られている（下の変異 2・3 で実測）。守られていないのは Rust の識別子の名指しだけである。
+
+M2. snotra-core/src/search/tests/build.rs:584 —
+    **同じ写しの片方だけが直り、テスト側に版リテラルが残った。**
+    - 現物: 「経路は `new_with_cached_masks` の **v4 ヒット枝**を選ぶ」。
+      build.rs 側は同じ対応を「潰していない（`CachedLower::Raw`）」へ寄せたのに、こちらは v4 のまま。
+      INDEX_CACHE_VERSION は 7 なので、読者は build.rs の新しい語彙と突き合わせられない。
+    - 誰も赤にしない: 規約 :88 のとおり #[cfg(test)] の doc は着地を検査されず、
+      G-stale-identifiers が見るのは .md の散文である。plan.md の Phase 2a の機械照合も
+      「.rs のコメント × 生きた .md 204 件」の重なりしか洗っておらず、**.rs × .rs の写しは
+      構造的に射程の外**だった（これが取りこぼしの機序）。
+    - 修正例: 「経路は `new_with_cached_masks` の [`CachedLower::Raw`] 腕を選ぶ」。
+
+M3. docs/comment-guidelines.md:132 — **新しく書いた一文が事実として誤っている。**
+    - 現物: 「現行リポジトリの TS は `vitest.config.ts` と `scripts/` のみ」。
+    - 実測: git ls-files (*.ts) (*.tsx) → vitest.config.ts の 1 件のみ。
+      find scripts -name (*.ts) → 0 件。**scripts/ に TypeScript は 1 本も無い。**
+    - docs/build-commands.md:40「残る .ts は vitest.config.ts のみ」とも食い違う（写しの片側が腐った形）。
+    - しかもこれは第一原則 :28 が名指しで禁じる「他所の現在形」であり、**規約自身がその条項を破った**。
+    - 修正例: 「現行リポジトリの TS は `vitest.config.ts` のみ（フロントは #532 SU7 で撤去）。
+      **`scripts/` の `.mjs` にも本書の第一原則・配置基準・短く保つは当たる。**」
+
+
+### Low
+
+L1. docs/comment-guidelines.md — 規約自身が 152 → 185 行（+21.7%）に増えた。
+    issue の非目標が hard limit を禁じているので違反ではなく、plan.md も行数を受け入れ条件から
+    外している。ただし本書 :128 が「既に守られているものへ規範を足すと、面積だけ増えて読者の
+    注意を奪う」と自ら書いており、TSDoc 節の縮小（-3 行）では相殺できていない。
+    恒久規範の面積 ratchet の対象外（本書は常時ロードではなく rules 経由の配送）なので機構は黙る。
+
+L2. docs/comment-guidelines.md:155 — 「**長さを許すのはこの節の射程…に限る**」は全称の限定だが、
+    :107 に「**長さ自体は問題ではない**（→「歴史メモの様式」）」が残っており、2 か所を
+    突き合わせないと射程が読めない。AGENTS.md「検証の作法」の作法どおり下限の主張
+    （「少なくとも item doc の契約部は短く保つ」）へ倒すほうが偽になりにくい。
+
+### 良かった点（記録）
+
+- **D-1 の死角解消は本物である。** 変異注入で、改名前は照合そのものが生成されなかった全形 2 本
+  （RETROSPECTIVE.md:23 / snotra-core/src/indexer.rs:53）が、現在は検査対象に入っていることを実測した。
+- **PERFORMANCE.md との数値の食い違いが正本側へ一本化された。** コメントの「構築 68 → 58 ms」を
+  落として PERFORMANCE.md:2057 の節（実体は「構築 89 → 58 ms」）を指す形にしたので、
+  値の正誤を決めずに写しだけが消え、食い違いが構造的に再発しない。
+- **逆向き監査（消えた不変条件の再確立地点）を独立に再実行し、喪失 0 件を確認した。**
+  「PATH エントリは必ず途中に入る」→ index_tree.rs:783（実測日付つきで現存）、
+  「必ずここに並ぶ項目を作ること」→ indexer.rs:418-420（規則は残り経緯だけ委譲）、
+  「共有しているのは表現の核だけである」→ NameArena の item doc、
+  「辿る規則そのものを 2 回書いてはならない」→ //! に短縮形で現存、
+  「v3 は 1 回だけ通る経路」→ build.rs の None 腕（太字化して強調され、書き戻しの契機も追加）。
+
+### Phase 2 の各項
+
+- 2a plan.md 不変条件照合: 「節名を変えない（例外 D-1 のみ）」= 守られている（見出し棚卸しで確認）。
+  「責務宣言は消えない」= index_tree.rs の //! に責務・依存方向・射程が残る。
+  「IndexTree::file_key_into の doc は変えない」= 差分に当該行なし・逐語引用と一致（:795）。
+  「版リテラルを新たに書かない」= build.rs の残り 3 行はすべて過去の行為。
+- 2b 対称パス: CachedLower の 3 腕（Collapsed / Raw / None）と DerivedStrings の 2 variant doc、
+  および snotra-core/CLAUDE.md の写しが**すべて同じ変更で揃っている**。
+  唯一揃わなかったのが M2（search/tests/build.rs:584）。
+- 2c DRY / 関数カバレッジ: 該当なし（関数の新規・変更が 0）。写しの観点は M2 に記載。
+- 2d リソースライフサイクル: 該当なし（生成/破棄の対を持つリソースを 1 つも足していない）。
+- 2e SPEC.md 同期: **SPEC 対象外**。grep -nE (indexer|index_tree|search/build) SPEC.md → 0 件、
+  かつ .rs の非コメント行の変更が 0 行なので文書化された挙動を 1 つも変えていない。
+- 2f 「変更不要」の再評価: 「PERFORMANCE.md を触らない」= A-2 の線引きどおりで、
+  実際に指す先（:2057）に額が在ることを確認済み。「ADR を触らない」= ADR:23-28 に却下の論証が現存。
+
+### Phase 3 パフォーマンス
+
+- **スキップ**。.rs の非コメント行の変更が 0 行であり、生成コードは 1 命令も変わらない。
+
+
+### 確信の持てない所見（意図的に列挙に含める）
+
+W1. snotra-core/CLAUDE.md — 同じファイルに「**版の番号を書かない**」（新設）と
+    「**`index.bin`（v7）も木そのものを持つ**」「**`index.bin`（v6）でも同じ潰し方を保つ**」
+    「`IndexCacheV6` も同じ列の型で読む」が併存する。新設した禁止の射程は
+    「版と variant の**対応**」に限られると読めるので**違反ではない**と判定したが、
+    禁止条項と併記されるぶん読者が過大に読む余地はある。本 issue の宣言射程の外なので所見は弱い。
+
+W2. snotra-core/src/search/build.rs:32「**312,690 回の比較を丸ごと省ける**」に日付・条件が無い
+    （規約 :160 は実測値に条件を添えよと定める）。この差分が導入した文ではなく既存文だが、
+    同じ段落から ms を PERFORMANCE.md へ寄せた際に、この数も一緒に寄せる選択肢はあった。
+    寄せなかったのが誤りとは言い切れない（規模感が説得力そのもの＝規約 :77 の但し書きに当たる）。
+
+W3. plan.md の A8 検証コマンド grep -nE (v[3-7]) は下限の主張にとどまる——
+    v8 以降・「バージョン 4」「version: 4」等の表記を落とす。今回は取りこぼしが無いことを
+    目視で確認したが、**この検証コマンドを「版リテラル 0 件」の根拠として再利用しないこと**。
+
+W4. snotra-core/src/index_tree.rs の NameArena doc へ移した「**ディスクを通らない消費者が
+    1 つある**」は数え上げである。規約 :26 の「それが無いと誤読される証拠としての列挙」に
+    当たると読めば許容だが、2 つ目の非ディスク消費者が生まれた日に腐る形ではある。
+    移動前から在った文言なので、この差分の欠陥として挙げるのは弱い。
+
+W5. snotra-core/src/search/build.rs:99 の 1 行だけが極端に長い（旧文をそのまま残したため）。
+    規約（「日本語の折返し」）は素の散文の折返しを禁じていないので違反ではないが、
+    この行だけ約 135 文字（周囲 4 行の平均は約 48 文字）で、圧縮の対象から漏れたように見える。
+
+
+## 追加の変異注入 3（射程の確認・計画外）
+
+- 対象: snotra-core/src/index_tree.rs:783 が新しく指す docs/adr/ADR-sorted-prefix-over-reflagging.md
+- 注入前ハッシュ: 5dcfe06742aa1d3e380474f440718b7479029b33（git rev-parse HEAD:… と一致）
+- 注入: sed -i で ADR-sorted-prefix-over-reflagging.md → ADR-does-not-exist-xyz.md
+- 結果: **赤（exit 1）**。index_tree.rs:746 と :784 の 2 件を「ADR の短縮引用が実在しない」で検出。
+  ⇒ **.rs から ADR ファイルへの参照は機構が守っている**（この差分で最も重い委譲＝却下の論証の
+     移送先が、名前の腐りに対して保護されていることを実測できた）。M1 の射程は Rust 識別子の
+     名指しだけに絞られる。
+- 巻き戻し: git checkout -- → git hash-object = 5dcfe06742aa1d3e380474f440718b7479029b33（**一致**）
+
+## 検証終了時の状態
+
+- git rev-parse HEAD = 7ae1adee6d27645d2987e4e7b6edda2f965618bc
+- git status --short = 空（3 件の変異はすべて内容ハッシュ一致で巻き戻し済み）
+- npm run governance:check = 全検査 passed（exit 0）
+- 追加した唯一の作業ツリー変更は node_modules の junction のみ（.gitignore 済み・追跡外）
+
+## 総括
+
+- **Critical 0 件。マージ阻止に当たる欠陥は無い。**
+- High 1 件（H1: 却下案の置き場が文書内で 3 か所ばらばら）は、この差分が**規約の整合を目的に
+  している**ゆえ本命の指摘である。修正は :107 / :161 の 2 行で閉じる。
+- Medium 3 件のうち M1（素の名指し）と M2（テスト側の版リテラル残り）は、いずれも
+  **この変更が新しく作った依存が機構の外に落ちている**形で、機序が同じである。
+- M3（TS の所在の誤り）は 1 行の事実誤りだが、規約自身が禁じる型なので直しておきたい。
+
+## H1 の一次証拠（後から付記）
+
+- snotra-core/src/search.rs:95-114 の `SearchEngine` struct doc（= /// の item doc）は現在も
+  「# Why parallel Vecs …」の下に **試作ブランチ名（refactor/cached-entry）・issue #110・
+  3 行のベンチ結果の表・根本原因・「intentional, not accidental tech debt」の明言**を持つ。
+  これはまさに新設した :53 の表が「/// に書かないもの（→ ADR）」と定めた「却下案の詳細比較」であり、
+  同時に :107 と :161 が**模範例として名指ししている**当のものである。
+- この決定に対応する ADR は存在しない（docs/adr/ に該当なし）。ゆえに新しい線引きを字義どおり
+  適用すると、**規約自身の模範例を ADR へ移す**か**模範例を取り下げる**かを迫られる。
+  ルート CLAUDE.md「意図的なリファクタリングの結果を元に戻さない」に照らせば、正しい向きは
+  「:15 / :53 の線引きの側に射程の但し書きを足す」ほうだと考える（判断はユーザーに委ねる）。
+
+## 終了時の状態（変異 3 の巻き戻し後に実測し直した）
+
+- npm run governance:check … 全検査 passed（検査 23 件 / 見出し参照 363 件）・exit 0
+- git status --short … 空
+- git rev-parse HEAD … 7ae1adee6d27645d2987e4e7b6edda2f965618bc
+  （上の「検証終了時の状態」節は変異 2 直後の測定に基づいていたので、変異 3 の後に測り直した。
+   結果は同一。）
+
+W6（弱い）。snotra-core/src/index_tree.rs:16 の //! に残した「記憶域の並べ方は **2 通り**あるが」は
+    W4 と同型の数え上げで、3 つ目の TreeNodes 実装が生まれた日に腐る。ただし要石の不変条件は
+    「規則を 2 回書かない」であって 2 ではなく、圧縮前から在った文言の短縮なので所見としては弱い。
+
+
+=======================================================================
+# ラウンド 2 — 修正差分（7ae1adee..6e75cbe3）の検算
+=======================================================================
+
+## [R2-0] アンカー合わせ（DONE）
+
+- 起動時 worktree HEAD = 7ae1adee（前回のアンカーのまま・新アンカーと不一致）
+- git checkout --detach 6e75cbe395ca53d61f7ad154f853a24e6c640a9f → git rev-parse HEAD で確認
+  = 6e75cbe395ca53d61f7ad154f853a24e6c640a9f / git status --short = 空
+- 修正差分: 3 ファイル / +9 -9
+  docs/comment-guidelines.md(8) snotra-core/src/search/build.rs(8) snotra-core/src/search/tests/build.rs(2)
+- 付随確認: 前回の変異注入 3 件が worktree 内で閉じており、メインの作業コピーに残っていないことを
+  確認した（C:/workspace/Snotra 側で第一原則の見出し 1 件・PERFORMANCE.md 参照 1 件・
+  ADR-sorted-prefix 参照 2 件がすべて原形で現存）。
+
+## [R2-1] カテゴリ A / F の再実行（DONE・すべて緑）
+
+- 該当判定: A（.rs 2 本のコメント変更）と F（.md 1 本＋ .rs の名指しの記法変更）。
+  B/C/D/E は前回と同じ理由で該当なし（非コメント行の変更 0 行は据え置き）。
+- cargo fmt --all -- --check … 出力なし・exit 0
+- cargo clippy --workspace --all-targets -- -D warnings … Finished in 4.27s・exit 0
+- cargo test -p snotra-core -q … 605 passed / 0 failed / 11 ignored・exit 0
+- **cargo doc --workspace --no-deps --document-private-items … Generated・exit 0**
+  ⇒ M1 で新設した 5 本の intra-doc link がすべて着地している（workspace 全体で実行。
+     前回の実測は -p snotra-core だけだったので、ここで正規のコマンドへ揃えた）。
+- npm run governance:check … 全検査 passed・exit 0（コードスパン 18143 → 18146 件。
+  内訳は数えていないので増分の帰属は主張しない。**折れうる位置 20 件は不変**＝この修正で折返しを新たに壊していない）
+
+## [R2-2] 指摘 4 件の解消判定（DONE・4 件とも解消）
+
+**H1 — 解消。** 却下案の置き場について、6 か所すべてが同じ線を引いていることを読んで確認した:
+  :15（第一原則）「却下案の詳細な比較は ADR へ」
+  :53（層の中の分担・/// 行）「経緯・却下案の詳細比較 → #NNN / ADR」
+  :55（同・ADR 行）「却下した代替案と、却下の理由」
+  :107（rustdoc の様式・新規括弧）「引くのは見出しで構造化するという形であって、却下案の詳細を
+        コメントへ置く根拠ではない——置き場は「歴史メモの様式」が定める」
+  :155（歴史メモ）「長さを許すのはこの節の射程——歴史メモ——に限る。…却下案の詳細な比較は docs/adr/ が持つ」
+  :161（同・箇条）「却下した代替案の詳細な比較は docs/adr/ へ置く。コメントに残すのは、その却下が
+        現在の形へ課している制約である」
+  ⇒ **線は 1 本になった**（詳細な比較 = ADR / コメント = 現在の形へ課している制約）。
+     さらに SearchEngine doc を「コメント側に残っている先例」と位置づけ「新しく書くならこの分量は
+     ADR 側」と将来の向きまで書いたのは、ルート CLAUDE.md「意図的なリファクタリングの結果を
+     元に戻さない」と両立する良い解き方である（既存の doc を動かさずに規範だけを揃えた）。
+
+**M1 — 解消。かつ「保証を得た」ことを変異注入で実測した。**
+  5 か所が [`CachedLower`] / [`DerivedStrings`] / [`crate::indexer::INDEX_CACHE_VERSION`] /
+  [`CachedLower::Raw`] / [`CachedLower::Collapsed`] へ。
+  cargo doc --workspace --no-deps --document-private-items が緑（workspace 全体で実測）。
+
+**M2 — 解消（ただし得られたのは保証ではない）。**
+  search/tests/build.rs:584 が [`CachedLower::Raw`] 腕へ。同ファイルは
+  use crate::indexer::{AppEntry, CachedLower, CachedMasks}; を持つので rust-analyzer の
+  定義ジャンプは効く。**着地の検査は効かない**——下の変異 5 で実測した。
+  これは私の提案どおりであり他に手は無い（規約 :88 の表が宣言している面である）。
+
+**M3 — 解消。事実も再測定で確認した**（git ls-files (*.ts) → vitest.config.ts の 1 件のみ）。
+  docs/build-commands.md:40 との食い違いも消えた。
+
+## [R2-3] 修正差分そのものへの新規レビュー
+
+### Critical / High — なし
+
+### Medium
+
+R2-M1（前回 W2 の格上げ）。snotra-core/src/search/build.rs:32-34 —
+  **「ここへ写さない」と宣言している同じ doc ブロックに、正本にも在る数が残っている。**
+  - 現物: 「分ける実益は 2 つある: **312,690 回の比較を丸ごと省ける**ことと、**呼び出し点から
+    「この版は測り直さない」が読めること**である。額は `PERFORMANCE.md`「潰し済みかどうかを
+    型で区別する」が正本——**ここへ写さない**」
+  - 実測: PERFORMANCE.md:2070 が「分離の実益は残る: **312,690 回の比較を丸ごと省ける**ことと、
+    呼び出し点から「この版は測り直さない」が読める」で、**ほぼ逐語で重なる**。
+    さらに PERFORMANCE.md:2104 によれば 312,690 は **v5 標本のエントリ数**であり、
+    標本・日付から切り離すと再検証できない数である。
+  - 壊れた不変条件: この差分が新設した「測定値の置き場」の第 1 項——
+    「**PERFORMANCE.md に節が在る値**——コメントはその節を正準形で指し、**値を写さない**」。
+    節は在り、正準形で指してもいるのに、値が残っている。
+    AGENTS.md「保証を宣言する文の隣に、保証されていない数や一覧を置かない」の型でもある。
+  - なぜ前回落としたか: 私は W2 で「既存文だから」と弱めたが、**正本側に同じ数が在るかを
+    測っていなかった**。測ったら写しだった（狭める根拠を測らずに所見を降格した形）。
+  - 修正例: 「分ける実益は 2 つある: **比較を丸ごと省ける**ことと、**呼び出し点から「この版は
+    測り直さない」が読めること**である。**件数も額も** `PERFORMANCE.md`「潰し済みかどうかを
+    型で区別する」が正本——**ここへ写さない**」
+
+### Low
+
+R2-L1。docs/comment-guidelines.md:132 と :134 — **修正で隣接した写しが生まれた。**
+  :132（新規リード文）「`scripts/` の `.mjs` にも「第一原則」「配置基準（3 層）」「短く保つ」は
+  そのまま当たる。」／:134（既存箇条）「- 上の「第一原則」「配置基準（3 層）」「短く保つ」は
+  そのまま当たる。TS 固有なのは次の 1 点だけである」
+  同じ 3 節名・同じ述語が 2 行差で 2 回。しかも当節の主旨は「規範も最小で残す」であり、
+  規約 :66「写しを 2 つ置くと、片方だけが直る日が来る」に自分で触れる。
+  修正例: リード文の当該一文を削り、:134 を
+  「- 上の「第一原則」「配置基準（3 層）」「短く保つ」はそのまま当たる（**`scripts/` の `.mjs`
+   にも当たる**）。TS 固有なのは次の 1 点だけである」にする。
+
+R2-L2。docs/comment-guidelines.md:155「（上の箇条）」— **参照の向きが合っていない。**
+  同じ主張を持つ箇条は 6 行**下**の :161 である。上に在るのは「配置基準（3 層）」の**表**（:53/:55）と
+  「第一原則」の箇条（:15）。読者は直上を探して見つけられない。
+  加えて :155 と :161 は同じ節の中で同じ主張を 2 回書いており、R2-L1 と同型（節内の写し）。
+  修正例: :155 を「item doc の契約部は短く保つ（**却下案の詳細な比較の置き場は下の「書くときの様式」**）」
+  とし、実体は :161 の 1 か所に留める。
+
+R2-L3（前回の指摘に触れていない既存分・この差分が編集した doc ブロック内）。
+  snotra-core/src/index_tree.rs:51-52 —
+  「反復 4・5 が観測した「共有 1 反復あたり構築 +17 ms」の傾き」は、`PERFORMANCE.md:2471` に
+  **同名の見出し**（「共有 1 反復あたり構築 +17 ms という傾向（次の候補を測るときの前提）」）が
+  実在するのに、`` `PERFORMANCE.md`「…」 `` の正準形で書かれていないため照合が生成されない。
+  **同じ doc ブロックの 1 行上（:51）には正しい正準形**
+  （`PERFORMANCE.md`「採用: 表示名を文字列アリーナで持つ」）が在り、片方だけが検査に載っている。
+  M1 と同型（保証の要る参照が検査される形になっていない）。この差分が導入した行ではないが、
+  規約冒頭「既存コメントは通常の変更でそのコードに触れたときに本書へ寄せれば足りる」の射程内で、
+  修正は前置の `` `PERFORMANCE.md` `` を足すだけ（前方一致で着地する）。
+
+## [R2-4] 変異注入（追加 2 件・修正が保証を買えたかを実測）
+
+### 変異 4: M1 で新設した intra-doc link の指す先を改名
+
+- 対象: snotra-core/src/search/build.rs:5 の [`CachedLower`] → [`CachedLowerRenamed`]
+- 注入前ハッシュ: 928d7ac6778c40c89eb09e32275b51f28758f78c
+  （git rev-parse HEAD:snotra-core/src/search/build.rs と一致を確認）
+- 結果: **赤**。cargo doc --workspace --no-deps --document-private-items が
+    error: unresolved link to `CachedLowerRenamed`
+    --> snotra-core\src\search\build.rs:5:38
+    = note: requested on the command line with -D rustdoc::broken-intra-doc-links
+    error: could not document `snotra-core`
+  ⇒ **M1 の修正は実際に保証を買っている。** 素の散文名だった前版では同じ改名が exit 0 で素通りする。
+- 巻き戻し: git checkout -- → git hash-object = 928d7ac6778c40c89eb09e32275b51f28758f78c（**一致**）
+
+### 変異 5: M2 で新設した #[cfg(test)] 側の link の指す先を存在しない型へ
+
+- 対象: snotra-core/src/search/tests/build.rs:584 の [`CachedLower::Raw`] →
+  [`CachedLowerNoSuchThing::Raw`]
+- 注入前ハッシュ: 0cb742ab2be0cf2458a7d12e4c281f233fde1dd9
+- 結果: **緑（exit 0）**。cargo doc は Generated まで通り、警告も 0。
+  ⇒ **M2 の修正で得られるのは可読性と rust-analyzer のナビゲーションだけで、着地の保証は無い。**
+     これは規約 :88 の表（#[cfg(test)] の /// は「着地を検査する」が ×）が宣言しているとおりで、
+     修正が不十分なのではなく**その面に保証を置けない**という構造である。
+     M2 の再発（テスト側だけ語彙がずれる）は、今後も人のレビューでしか捕まらない。
+- 巻き戻し: git checkout -- → git hash-object = 0cb742ab2be0cf2458a7d12e4c281f233fde1dd9（**一致**）
+
+## [R2-5] 前回 W1〜W6 の決着
+
+- **W1 → 非違反で決着。** snotra-core/CLAUDE.md の「版の番号を書かない」は「IndexCache 復元（…）」
+  の括弧の中に置かれ、理由も「対応は `CachedLower` / `DerivedStrings` が持つ」と**版↔variant の
+  対応**に限定されている。他の箇条の `index.bin`（v7）/（v6）は on-disk 形式そのものを主語に
+  する文で射程の外。矛盾ではない。
+- **W2 → ⚠️ から所見へ格上げ（R2-M1）。** 測ったら実際に写しだった。詳細は R2-M1。
+  **私が前回「既存文だから」と弱めたのは、正本側に同じ数が在るかを測らずに降格した誤りである。**
+- **W3 → 決着。** 広い式 grep -nE (v[0-9]|バージョン|version|版 [0-9]) を build.rs へ当てても
+  ヒットは :441 / :442 / :444 の同じ 3 行だけ。取りこぼしは無い。
+  A8 の式が下限の主張である点だけ記録に残す（他ファイルへ再利用しないこと）。
+- **W4 → 決着（非所見）。** NameArena 型の長命フィールドは IndexTree.names（ディスク）/
+  PathStore.names（索引）/ SearchEngine::kana_lower_names（非ディスク）で、
+  非ディスクの消費者は今日 1 つ。線上表現の制約が及ばないことを読者へ知らせる誤読予防であり、
+  規約 :26 が明示的に許容する側に当たる。
+- **W5 → 受容。** build.rs:99 は今も約 135 文字（周囲 4 行の平均は約 48 文字）だが、
+  「日本語の折返し」は素の散文の折返しを禁じていない。規範違反ではない。
+- **W6 → 決着（非所見）。** impl TreeNodes for は今日 2 件（index_tree.rs:444 の IndexTree /
+  search/path_store.rs:326 の PathStore）で「並べ方は 2 通り」は真。3 つ目を足すには
+  TreeNodes を触るので気づく契機が構造的に在る。
+
+## [R2-6] ラウンド 2 終了時の状態
+
+- git rev-parse HEAD = 6e75cbe395ca53d61f7ad154f853a24e6c640a9f
+- git status --short = 空（変異 4・5 はいずれも内容ハッシュ一致で巻き戻し済み）
+- 追加の作業ツリー変更は node_modules の junction のみ（.gitignore 済み・追跡外）
+
+## [R2-7] 総括
+
+- **前回の指摘 4 件（H1 / M1 / M2 / M3）はすべて解消。** 私が指摘に使った道具（読解・cargo doc・
+  governance:check・変異注入）で自分で測り直しており、報告の結論を受け取ってはいない。
+- **修正差分が新しく生んだ誤りは Low 2 件**（R2-L1 の隣接した写し・R2-L2 の参照の向き）。
+  どちらも「修正は指摘箇所へ注意が集中し、周辺に新しい誤りを生む」の型そのもので、
+  **2 件とも「写しを 2 つ置かない」という当の規約に自分で触れている**のが特徴である。
+- **Medium 1 件（R2-M1）は私の前回の降格ミスの回収**であり、修正差分の欠陥ではない。
+  ただし「この issue が新設した規則に、この issue が触った doc ブロックが違反している」
+  という位置なので、閉じる前に直す価値は高い。
+- Critical / High は 0 件。
+
+（R2-6 の追記）変異 4・5 の巻き戻し後に測り直した終了時の状態:
+- npm run governance:check … 全検査 passed（検査 23 件 / 見出し参照 363 件）・exit 0
+- git status --short … 空
+- git rev-parse HEAD … 6e75cbe395ca53d61f7ad154f853a24e6c640a9f
+
+
+=======================================================================
+# ラウンド 3 — 修正差分（6e75cbe3..3be75f26）の検算（射程: この差分のみ）
+=======================================================================
+
+## [R3-0] アンカー合わせ（DONE）
+
+- 起動時 worktree HEAD = 6e75cbe3（前回のアンカーのまま・新アンカーと不一致。3 回連続で不一致）
+- git checkout --detach 3be75f26 → git rev-parse HEAD で確認
+  = 3be75f264466ec178060ee928ccd9d126a034602 / git status --short = 空
+- 差分: 3 ファイル / +7 -6
+  docs/comment-guidelines.md(2 hunk) snotra-core/src/index_tree.rs(1) snotra-core/src/search/build.rs(1)
+- 射程は指示どおり 6e75cbe3..3be75f26 に限り、0e140659.. の再走査は行わない。
+
+## [R3-1] カテゴリ F（DONE・緑）
+
+- npm run governance:check … 全検査 passed・exit 0
+- **見出し参照 363 → 364 件**。R2-L3 で足した正準形参照が母集団に入り着地していることを、
+  私の側でも同じ計器で確認した（coordinator の検算と一致）。
+- 折れうる位置 20 件・コードスパン 18146 件はいずれも**不変**
+  ⇒ R2-L3 が物理改行を 1 つ入れたが、**正準形参照そのものは 1 物理行に収まっており**
+     G-folded-heading-refs / G-folded-code-spans の死角を新設していない。
+
+## [R3-2] カテゴリ A（DONE・緑）
+
+- 該当判定: A（.rs 2 本のコメント変更）と F（.md 1 本＋ .rs の正準形参照の新設）。
+  B/C/D/E は該当なし（非コメント行の変更 0 行・描画も trace も hotkey も .githooks も無関係）。
+- cargo fmt --all -- --check … 出力なし・exit 0
+- cargo doc --workspace --no-deps --document-private-items … Generated・exit 0
+- cargo clippy --workspace --all-targets -- -D warnings … Finished in 3.97s・exit 0
+- cargo test -p snotra-core -q … 605 passed / 0 failed / 11 ignored・exit 0
+
+## [R3-3] 指摘 4 件の解消判定（DONE・4 件とも解消）
+
+**R2-M1 — 解消。私の側でも測り直した。**
+  - grep -c (312,690) snotra-core/src/search/build.rs → **0**
+  - grep -n (312,690) PERFORMANCE.md → :2070 / :2104 / :2134 の 3 件（正本側は保持）
+  - 現在の文: 「分ける実益は 2 つある: **全件の比較を丸ごと省ける**ことと…**件数も額も**
+    `PERFORMANCE.md`「潰し済みかどうかを型で区別する」が正本——**ここへ写さない**」
+  - **「件数も額も…が正本」が真であることを確かめた**——sed -n (2057,2072p) PERFORMANCE.md へ
+    ^# を当てると見出しは :2057 の 1 本だけで、件数を持つ :2070 は確かにその節の中に在る。
+    （委譲先に中身が在るかを見ずに「正本はあちら」と書く形にはなっていない）
+  - 「全件の比較」は腐らない形（エントリ数が変わっても真）。規約「測定値の置き場」第 1 項に適合。
+
+**R2-L1 — 解消。** リード文から重複した一文が消え、射程は既存箇条の括弧
+  「（**`scripts/` の `.mjs` にも**）」へ 1 か所に畳まれた。同じ 3 節名が 2 回現れる形は解消。
+
+**R2-L2 — 解消。** :155 から却下案の一文と「（上の箇条）」が消え、実体は :161 の 1 か所のみ。
+  向きの合わない参照も無くなった。**H1 の「線は 1 本」も維持されている**——却下案の置き場を述べるのは
+  :15 / :53 / :55 / :107 / :161 の 5 か所で、いずれも「詳細な比較 = ADR / コメント = 現在の形へ
+  課している制約」で一致する。:107 の「置き場は「歴史メモの様式」が定める」も :161 へ着地する。
+
+**R2-L3 — 解消。かつ「保証を得た」ことを変異注入で実測した（下の変異 6）。**
+  - 見出し参照 363 → **364** 件（私の側の計器でも確認）。
+  - 物理改行は参照の**手前**に入っており、`PERFORMANCE.md`「共有 1 反復あたり構築 +17 ms」は
+    1 物理行に収まっている（折れうる位置 20 件が不変であることと整合）。
+
+## [R3-4] 変異注入 6（R2-L3 の修正が保証を買えたかの実測）
+
+- 対象: snotra-core/src/index_tree.rs:54 の `PERFORMANCE.md`「共有 1 反復あたり構築 +17 ms」
+  → `PERFORMANCE.md`「存在しない見出しQQQ」
+- 注入前ハッシュ: ff3fab85ed1bc14ed060a148ee72c0b0328aa448
+  （git rev-parse HEAD:snotra-core/src/index_tree.rs と一致を確認）
+- 結果: **赤（exit 1）**。1 件:
+    snotra-core/src/index_tree.rs:54  見出し参照が着地しない:
+    `PERFORMANCE.md`「存在しない見出しQQQ」
+  ⇒ **R2-L3 の修正は実際に保証を買っている。** 前置の無かった前版では、PERFORMANCE.md 側の
+     見出しを改題しても照合そのものが生成されず exit 0 で素通りした。
+- 巻き戻し: git checkout -- → git hash-object = ff3fab85ed1bc14ed060a148ee72c0b0328aa448（**一致**）
+- 補足: 最初 :53 へ当てた sed は一致せず**ファイルは 1 バイトも変わらなかった**（ハッシュで確認）。
+  行番号のずれを「変異を当てたのに緑」と読み違えないよう、注入後に sed -n (54p) で現物を見てから
+  検査を回している。
+
+## [R3-5] 修正差分そのものへの新規レビュー
+
+### Critical / High / Medium / Low — **すべて 0 件。新しい誤りは見つからなかった。**
+
+前回（R2）が 2 件生んだのに対し今回 0 件だったのは、修正が**削除と 1 語の置換に寄っている**ため
+と見る（+7 −6・新しく書き起こした散文はほぼ無い）。新規に書いた文が少ないほど新しい誤りは減る。
+
+### ⚠️ 残余（**いずれも直さずに閉じてよい**と判断する。理由つき）
+
+R3-W1。docs/comment-guidelines.md:130-134 — **`.mjs` の射程が「TSDoc の様式」節の箇条の括弧の中**
+  にしか無くなった。R2 の版ではリード文にも在ったので、見出しからの発見性は下がっている。
+  **直さない理由**: 発見性を戻す手は (a) リード文へ書き戻す＝R2-L1 の写しを復活させる、
+  (b) 見出しを「TSDoc / JSDoc の様式」へ改題する、の 2 つだが、(b) は AGENTS.md:18 /
+  CONTRIBUTING.md:13 / ADR-comment-guideline-delivery-by-pointer.md:14 /
+  docs/superpowers/plans/… の 4 か所が「TSDoc の様式」の語を持つため**この issue の射程を越える**
+  （実測。うち ADR は凍結文書）。(a) は今回直したばかりの誤りへ戻る。
+  ⇒ **現状が 2 案より良い。** 申し送りにも値しない程度と考えるが、記録として残す。
+
+R3-W2。docs/comment-guidelines.md:155 と :161 — 節の**射程宣言**が「歴史メモ」に限られた一方、
+  同じ節の箇条 :161 の主題は「却下した代替案」である。R2 の版では :155 が両者を橋渡ししていた。
+  **直さない理由**: 却下案の記録は歴史メモの部分集合として自然に読め、しかも :161 は
+  「詳細な比較は ADR へ」と**長さを与えない**側の条項なので、:155 の「長さを許すのは歴史メモに限る」
+  と衝突しない。橋渡しの一文を戻すと R2-L2 の写しが復活する。
+  ⇒ **現状で矛盾は生じていない。** 将来この節へ「却下案の**記録**は長くてよい」型の条項を足す日が
+     来たら、そのとき射程宣言を見直せばよい。
+
+## [R3-6] ラウンド 3 終了時の状態（変異 6 の巻き戻し後に測り直した）
+
+- npm run governance:check … 全検査 passed（検査 23 件 / 見出し参照 364 件）・exit 0
+- git status --short … 空
+- git rev-parse HEAD … 3be75f264466ec178060ee928ccd9d126a034602
+- 作業ツリーへ残した変更は node_modules の junction のみ（.gitignore 済み・追跡外）
+
+## [R3-7] 判定
+
+- **Critical 0 件 / High 0 件。** 指示の条件により Step 3 は閉じてよい。
+- **Medium 以下も 0 件**（前回 2 件生んだ「修正が生む新しい誤り」は今回ゼロ）。
+- ⚠️ 残余 2 件（R3-W1 / R3-W2）はいずれも「直さずに閉じてよい」と判断した。
+  どちらも**直す手が今回直した誤りへ戻るか、この issue の射程を越える**ためで、
+  現状が取りうる選択肢の中で最良である。申し送り issue も不要と考える。
+- ラウンド 1〜3 を通じた指摘は 計 8 件（H 1 / M 4 / L 3）で、**すべて解消済み**。
+  うち 3 件（M1 / R2-L3 の保証・M2 の保証の不在）は変異注入で「機構が実際にどう振る舞うか」まで
+  測ってあり、結論を受け取ったのではなく自分で測った形になっている。

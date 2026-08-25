@@ -270,8 +270,11 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | `npm run governance:manifest`（#1088・構造母集団の manifest 差分） | `ci.yml`（governance-check） | PR 自動のみ（step 自身が `if: github.event_name == 'pull_request'` を持つ。job 自体は push でも走るがこの step は走らない） |
 | `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
 | `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
+| `npm run smoke:startup`（**配布前の起動ゲート**） | `release.yml`（build-and-release job） | `create-release.yml` の手動 dispatch からの `workflow_call` |
 
 （注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリが trace を出し、seed 済み検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。**その帰結として、この job のバイナリだけは `[profile.release]` の `lto` / `codegen-units` を env で緩めて建てる**（`e2e.yml` の "Build release binary" ステップにコメントで根拠を置いた。`Cargo.toml` は変えないので `release.yml` が建てる配布物は fat LTO のまま）。`panic = "abort"` と `opt-level` は共有するため、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
+
+（注2）`release.yml` の同じスクリプト実行は**配布前のゲート**である。成果物の存在検証だけでは起動可否を保証しないため、build 済みの `target/release/snotra.exe`（NSIS インストーラーではない）へ同じ起動スモークを当て、アップロード前に起動失敗を検知する（**理由の正本は当該ステップのコメント**）。表の 2 行が同じコマンドを指すのは、走る局面が別だからである。
 
 - `npm test` は ubuntu（node-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きるセーフティネットであり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
 - **`skip-ci` ラベルはジョブ単位で効く** — node-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に required status checks 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**——ただしこれは job 自体の話で、job 内の `governance manifest delta` step だけは別途 `if: github.event_name == 'pull_request'` を持ち、push ではこの 1 step のみ走らない。

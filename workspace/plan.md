@@ -269,6 +269,39 @@ Phase 1 の新 Pester が**実際に守りたい退行へ届く**ことを測る
   「Startup smoke passed (1 runs)」。本体サイズはメイン `53,621,248` に対し worktree `53,613,568` で別物
 - **取り違えの確認**: bench の表示パスに `release`、smoke の表示パスに `debug` を実測（不変条件 5）
 
+### Phase 5 — 委譲レビューへの対応（実装中に判明・計画外）
+
+`workspace/verify-1179.txt`（worktree の検証・レビュー委譲・アンカー `37b49ad7`）の所見。
+
+- [x] **High-1**: `$repoRoot` の導出を cwd 起点へ戻すと **Pester 129・vitest 901・smoke 自身のすべてが
+      緑のまま** #1179 の欠陥が復活する（委譲先が変異 (D) で実測）。計画は `-Profile` の渡し忘れだけを
+      残余として宣言しており、**この足は宣言の外だった**。`.claude/rules/safety-nets.md`「壊れたとき
+      緑が緑のまま推移するか」に照らすと**推移する**ので、機構を置く条件を満たす
+      → `SnotraSmoke.Tests.ps1` へソース述語の `Describe` を 1 件追加（`$repoRoot` の導出が
+      `$PSScriptRoot` 起点であること・2 スクリプト分）。`test:powershell` は `ci.yml:239` で通常 PR CI に載る
+- [x] **High-1 の検知器を、置く前に変異で測る**（複製へ変異 (D) を当て、正版=緑 / 変異体=赤を実測）
+- [x] **Medium-1**: `bench-startup.ps1` の `-ProfileDir` 既定だけが cwd 起点で、修正後は `Exe:` が
+      worktree・`Profile:` がメイン作業コピーへ割れる（実測: メイン側に `config.toml` と `index.bin` が
+      生成された）。**差分が触っていない行だが、割れは今回の変更で初めて生きた組み合わせである**
+      → `-ExePath` と同じ判断（既定の枝だけ導出・明示値は cwd 相対のまま）へ揃える
+- [x] **Low-1**: `smoke-startup.ps1` の `throw` へ復旧手順（`cargo build -p snotra`）を足す
+      ——既定が自分のコピーを指すぶん「本体が無い」が worktree で起きやすくなった
+- [x] **Low-4**: `docs/build-commands.md` の行折れを整える
+- [x] **⚠️-2（部分採用）**: 新設段落から「`CARGO_TARGET_DIR` に追随する」の重複を外し、
+      `test:powershell` への参照へ寄せた（`.claude/rules/governance-docs.md`「かぶりなく」）
+- [x] **Low-2 / Low-3 は却下**（理由は下記「却下したレビュー所見」）
+- [x] Phase 5 の差分で `test:powershell` / `npm test` / `governance:check` が緑
+- [x] 委譲先へ新しい sha を渡して再実行させる（`/implement` 3c: 自分が出した指摘の解消は本人が検算する）
+
+### 却下したレビュー所見（理由つき）
+
+| 所見 | 却下の理由 |
+|---|---|
+| **Low-2**: 導出が抜けたとき `throw` がパスを表示できない | 到達経路が**変異注入だけ**である。導出行が在る限り `$ExePath` はこの地点で非空であり、守る退行が実在しない |
+| **Low-3**: `smoke-startup.ps1` の `Test-Path` で `-LiteralPath` が不揃い（`:71-72` / `:120`） | 挙動上の差が無く、差分が触っていない行である。ここで直すと「ついでの整形」が差分に混じり、レビューの焦点がぼやける |
+| **⚠️-1**: `Push-Location` が native 子プロセスへ効くのは実装依存では | **実リポジトリで効くことを実測済み**（相対 CTD が RepositoryRoot 配下へ解決）。委譲先自身も「この差分の妥当性を否定するものではない」と述べている。`--target-dir` 案は `CARGO_TARGET_DIR` の追随という既存の約束を壊すので採らない |
+| **⚠️-3** | 委譲先自身が「射程を `visual-check-colors.ps1` に限った判断は正しい」と結論。対応不要 |
+
 ## 未確定（実装前に潰す）
 
 *（なし——下記 3 件は調査中に解消済み。判断と根拠を残す）*

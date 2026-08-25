@@ -203,6 +203,30 @@ Describe 'Resolve-SnotraCargoExecutable' {
     }
 }
 
+Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピーから導かれる' {
+    # **この性質を守る検査が他に無い**（#1179 で実測）。`$repoRoot` の導出を cwd 起点へ戻すと、
+    # Pester も vitest も smoke 自身も**緑のまま** #1179 の欠陥（別の作業コピーを黙って測る）が
+    # 復活する。ハーネス自身を起動して確かめるには本体のビルドと実起動が要るので、ここは
+    # **ソースの形で縛る**。
+    #
+    # 縛るのは「repoRoot をスクリプト自身の位置から導くこと」だけで、導出の中身も
+    # プロファイルの置き場も射程外である（必要な分だけ縛る）。
+    # **`-ForEach` で渡す**（素の `foreach` を使わない）。Pester は discovery と run が別相で、
+    # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
+    # 正しくパラメータ化されて見える**（実測: `The variable '$harnessName' cannot be retrieved`）。
+    It '<_> は repoRoot をスクリプト自身の位置から導く（cwd に依存しない・#1179）' -ForEach @(
+        'bench-startup.ps1', 'smoke-startup.ps1'
+    ) {
+        $harnessPath = Join-Path $PSScriptRoot "../$_"
+        $assignments = @(
+            Get-Content -LiteralPath $harnessPath | Where-Object { $_ -match '^\s*\$repoRoot\s*=' }
+        )
+
+        $assignments.Count | Should -Be 1 -Because "repoRoot の導出が 2 か所に散ると片方だけ退行する"
+        $assignments[0] | Should -Match '\$PSScriptRoot' -Because "cwd 起点にすると #1179 が緑のまま復活する"
+    }
+}
+
 Describe 'Read-SnotraTraceEvents' {
     It 'trace 以外と壊れた JSON を除き、有効なイベントを順番どおり返す' {
         $tracePath = Join-Path $TestDrive 'trace.log'

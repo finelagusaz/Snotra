@@ -30,7 +30,9 @@ if (-not $ExePath) {
   $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile debug
 }
 if (-not (Test-Path -LiteralPath $ExePath)) {
-  throw "Executable not found: $ExePath"
+  # **復旧手順を文言に持たせる**（#1179）。既定が自分のコピーを指すようになったぶん、worktree では
+  # 「本体が無い」が起きやすくなった——以前は隣のコピーを拾えていたのだから。
+  throw "Executable not found: $ExePath（先に cargo build -p snotra）"
 }
 # **検査した本体のパスを絶対形で出力へ載せる**（#1179）。どのコピーを検査したかが読み手に見える形が、
 # `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。

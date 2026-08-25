@@ -36,7 +36,12 @@ param(
   # 非 first-run を再現する。**枝は出力の `first_run` / `cache_hit` に現れる**ので、
   # どちらで測ったかは読み手が毎回確かめられる。
   [switch]$UseVerificationProfile,
-  [string]$ProfileDir = "target/bench-startup/profile"
+  # 空なら**このスクリプトが住むリポジトリ**の `target/` 配下へ置く（#1179）。cwd 起点のままだと
+  # `-ExePath` が worktree の本体を指すのにプロファイルはメイン作業コピー側、という割れが起きる
+  # （実測: `Exe:` が worktree・`Profile:` がメインで、メイン側に config.toml と index.bin が出来た）。
+  # 明示された値は cwd 相対のまま——`-ExePath` と同じ判断である。姉妹の `smoke-startup.ps1` は
+  # 元から `$PSScriptRoot` 起点で、ここだけが非対称だった。
+  [string]$ProfileDir = ''
 )
 
 Set-StrictMode -Version Latest
@@ -90,7 +95,8 @@ $profileFull = $null
 if ($UseVerificationProfile) {
   # **seed は 1 回だけ**（ループ内で作り直すと毎回 first-run + cache-miss になり、
   # 測っているものが変わる）。2 回目以降の起動が `index.bin` を読む形が実運用点に近い。
-  $profileFull = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $ProfileDir))
+  $profileBase = if ($ProfileDir) { Join-Path (Get-Location) $ProfileDir } else { Join-Path $repoRoot 'target/bench-startup/profile' }
+  $profileFull = [System.IO.Path]::GetFullPath($profileBase)
   New-SnotraVerificationProfile -ProfileDir $profileFull -ShowIcons $false | Out-Null
 }
 

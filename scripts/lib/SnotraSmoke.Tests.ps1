@@ -209,22 +209,15 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # 復活する。ハーネス自身を起動して確かめるには本体のビルドと実起動が要るので、ここは
     # **ソースの形で縛る**。
     #
-    # **守るのは「既定の枝が導出を通ること」であって、`$ExePath` の最終値ではない。** 縛る 3 点は
-    # (1) `param()` の既定が空——直書きすると `if (-not $ExePath)` が偽になり**導出が一度も走らない**、
-    # (2) `$repoRoot` をスクリプト自身の位置から 1 か所で導くこと、(3) それを導出先へ**実際に渡すこと**。
-    # 3 つとも独立に必要である（実測: (2) だけのとき、導出行を無傷のまま使用点の引数を cwd 起点へ
-    # 差し替える形が素通りした。(2)(3) だけのとき、既定を直書きへ戻す形が素通りした——**しかもこちらは
-    # cwd がスクリプトと同じコピーでも症状が出る**ので D/G より悪い）。
+    # **守るのは「既定の枝が導出を通ること」であって、`$ExePath` の最終値ではない。** 入口
+    # （`param()` の既定が空リテラル）・導出（`$PSScriptRoot` 起点）・使用点（それを渡す）の 3 点を
+    # それぞれ 1 つずつ見る。3 点とも独立に必要であることは、片方だけ壊す変異が素通りすることで測った。
     #
-    # **射程の外（受容する残余）**: `$ExePath` が導出の**後で**上書きされる形には届かない。ここは
-    # 「どう書かれているか」を見る述語であって、実行時の最終値を追わない。追うには実行時の観測が要り、
-    # それには本体のビルドと実起動が要る——このハーネス自身を起動する検査は別の費用の話になる。
-    # 同じ理由で、導出式の中身（`Resolve-Path`/`Join-Path` の組み方）とプロファイルの置き場も射程外。
-    #
-    # **もうひとつの死角**: 対象を数え上げているので 3 本目の起動ハーネスには黙る。
-    # 「`Resolve-SnotraCargoExecutable` を呼ぶ `.ps1` すべて」へ広げる手はあるが、
-    # `run-pester.ps1` / `visual-input-metrics.ps1` / `visual-check-colors.ps1` は変数名も
-    # 導出の形も違うため誤検出になる。**広げずに死角として宣言して止める。**
+    # **これは下限の主張である——覆うのは各点の代表的な書き方だけで、同義の別構文は射程外。**
+    # `Set-Variable` で値を差し替える形、`$ExePath` を導出の**後で**上書きする形は通る（実測）。
+    # ソースの形を見る述語の原理的な天井であり、`Should` を足しても「その形以外」が残り続けるので
+    # ここで止める。実行時の最終値を追うにはハーネス自身を起動する検査が要り、別の費用の話になる。
+    # 導出式の中身・プロファイルの置き場・**3 本目の起動ハーネス**（対象を数え上げているため）も同じく外。
     #
     # **`-ForEach` で渡す**（素の `foreach` を使わない）。Pester は discovery と run が別相で、
     # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
@@ -236,11 +229,13 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
         # しかも文言が事実に反する（実測）。
         $harnessLines = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot "../$_") | Where-Object { $_ -notmatch '^\s*#' })
 
-        # (1) 入口——`param()` の既定が空でなければ、導出は一度も走らない
+        # (1) 入口——`param()` の既定が空でなければ、導出は一度も走らない。
+        # **「空リテラルが在る」ことを見る**（「`=` の右が空」ではない）——後者だと行継続で折って
+        # 次行へ直書きする形が素通りし、しかも cwd がスクリプトと同じコピーでも症状が出る（実測）。
         $paramDefaults = @($harnessLines | Where-Object { $_ -match '^\s*\[string\]\s*\$ExePath\s*=' })
-        $paramDefaults.Count | Should -Be 1 -Because "param() の ExePath 宣言を 1 行で書くこと"
-        ($paramDefaults[0] -split '=', 2)[1].Trim().TrimEnd(',').Trim().Trim("'", '"') |
-            Should -BeNullOrEmpty -Because "既定を空にして導出へ委ねること（パスを直書きすると導出が走らず #1179 が復活する）"
+        $paramDefaults.Count | Should -Be 1 -Because "param() の ExePath 宣言が 1 行だけ在ること"
+        ($paramDefaults[0] -split '=', 2)[1].Trim() |
+            Should -Match "^(''|`"`"|\`$null)\s*,?\s*(#.*)?$" -Because "既定を空リテラルにして導出へ委ねること（パスを直書きすると導出が走らず #1179 が復活する）"
 
         # (2) 導出
         $assignments = @($harnessLines | Where-Object { $_ -match '^\s*\$repoRoot\s*=' })
@@ -250,7 +245,9 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
         # (3) 使用点——導出しても渡さなければ意味が無い。**件数を縛らず、全件へ課す**
         # （「ちょうど 1 件」は誤検出を生むだけで、2 件になったとき何が壊れるかを言えない）。
         $calls = @($harnessLines | Where-Object { $_ -match 'Resolve-SnotraCargoExecutable' })
-        $calls.Count | Should -BeGreaterThan 0 -Because "本体の導出は Resolve-SnotraCargoExecutable へ委ねること"
+        # この件数検査が受け止めるのは「呼び出しを全部消す」形だけである（消せばハーネス自身が
+        # 即赤になるので、実質は `foreach` が空で黙るのを防ぐ保険）。
+        $calls.Count | Should -BeGreaterThan 0 -Because "導出の呼び出しが 1 つも無くなっていないこと"
         foreach ($call in $calls) {
             # `-RepositoryRoot:$repoRoot` のコロン記法も正当なので両方受ける。
             $call | Should -Match '-RepositoryRoot[:\s]\s*\$repoRoot' -Because "導出した repoRoot をそのまま渡すこと（別の値を渡すと #1179 が緑のまま復活する）"

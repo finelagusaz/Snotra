@@ -180,6 +180,87 @@ Describe 'Resolve-SnotraCargoExecutable' {
 
         $resolved | Should -Be (Join-Path $customTarget 'debug/snotra.exe')
     }
+
+    It '相対値の CARGO_TARGET_DIR でも RepositoryRoot を起点に解決する（cwd に依存しない・#1179）' {
+        # 上の It は**絶対値**を渡すので cwd の影響を受けない。ここが守るのは相対値の枝である
+        # ——cargo は相対の CARGO_TARGET_DIR を manifest ではなく**自プロセスの cwd** から解決するため、
+        # cwd を固定しないと「worktree を指したつもりでメイン作業コピーの target」を返す（#1179 実測）。
+        $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        $elsewhere = Join-Path $TestDrive 'elsewhere'
+        New-Item -ItemType Directory -Force -Path $elsewhere | Out-Null
+
+        Push-Location -LiteralPath $elsewhere
+        try {
+            $resolved = Invoke-SnotraEnvironment -Variables @{ CARGO_TARGET_DIR = 'relative-target' } -ScriptBlock {
+                Resolve-SnotraCargoExecutable -RepositoryRoot $repositoryRoot
+            }
+        } finally {
+            Pop-Location
+        }
+
+        # 期待値は**実装と同じ Join-Path の重ね方**で組む（文字列連結で組むと区切りが静かにずれる）。
+        $resolved | Should -Be (Join-Path (Join-Path $repositoryRoot 'relative-target') 'debug/snotra.exe')
+    }
+}
+
+Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピーから導かれる' {
+    # **この性質を守る検査が他に無い**（#1179 で実測）。`$repoRoot` の導出を cwd 起点へ戻すと、
+    # Pester も vitest も smoke 自身も**緑のまま** #1179 の欠陥（別の作業コピーを黙って測る）が
+    # 復活する。ハーネス自身を起動して確かめるには本体のビルドと実起動が要るので、ここは
+    # **ソースの形で縛る**。
+    #
+    # **守るのは「既定の枝が導出を通ること」であって、`$ExePath` の最終値ではない。** 入口
+    # （`param()` の既定が空リテラル）・導出（`$PSScriptRoot` 起点）・使用点（それを渡す）の 3 点を
+    # それぞれ 1 つずつ見る。3 点とも独立に必要であることは、片方だけ壊す変異が素通りすることで測った。
+    #
+    # **これは下限の主張である——覆うのは各点の代表的な書き方だけで、同義の別構文は射程外。**
+    # `Set-Variable` で値を差し替える形、`$ExePath` を導出の**後で**上書きする形は通る（実測）。
+    # ソースの形を見る述語の原理的な天井であり、`Should` を足しても「その形以外」が残り続けるので
+    # ここで止める。実行時の最終値を追うにはハーネス自身を起動する検査が要り、別の費用の話になる。
+    # 導出式の中身とプロファイルの置き場も同じく外。
+    #
+    # **対象は数え上げているので、4 本目が増えても黙る。** `Resolve-SnotraCargoExecutable` の
+    # 呼び出し元のうち残る 2 本を外しているのは、**それぞれ別の理由**による（実測で確かめた）:
+    # `run-pester.ps1` は `-ExePath` に既定値を持たない（明示 override 専用ゆえ入口の述語が当たらない）、
+    # `visual-check-colors.ps1` は変数名が `$repositoryRoot` で `-ExePath` param 自体が無い。
+    #
+    # **`-ForEach` で渡す**（素の `foreach` を使わない）。Pester は discovery と run が別相で、
+    # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
+    # 正しくパラメータ化されて見える**（実測: `The variable '$harnessName' cannot be retrieved`）。
+    It '<_> の既定 ExePath は param から導出へ通り、repoRoot はスクリプト自身の位置から来る（#1179）' -ForEach @(
+        'bench-startup.ps1', 'smoke-startup.ps1', 'visual-input-metrics.ps1'
+    ) {
+        # コメント行は除く——除かないと「関数名に触れたコメントを 1 行足す」だけで赤くなり、
+        # しかも文言が事実に反する（実測）。
+        $harnessLines = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot "../$_") | Where-Object { $_ -notmatch '^\s*#' })
+
+        # (1) 入口——`param()` の既定が空でなければ、導出は一度も走らない。
+        # **「空リテラルが在る」ことを見る**（「`=` の右が空」ではない）——後者だと行継続で折って
+        # 次行へ直書きする形が素通りし、しかも cwd がスクリプトと同じコピーでも症状が出る（実測）。
+        $paramDefaults = @($harnessLines | Where-Object { $_ -match '^\s*\[string\]\s*\$ExePath\s*=' })
+        $paramDefaults.Count | Should -Be 1 -Because "param() の ExePath 宣言が 1 行だけ在ること"
+        # **末尾のカンマと行末コメントを先に剥がしてから明示比較する**——正規表現へ畳むと
+        # PowerShell のバッククォートと正規表現のバックスラッシュが同じ位置で重なり、
+        # 将来の編集でエスケープ 1 つの付け忘れが判定を静かに変える。
+        $defaultValue = ((($paramDefaults[0] -split '=', 2)[1]) -replace '\s*,?\s*(#.*)?$', '').Trim()
+        $defaultValue | Should -BeIn @("''", '""', '$null') -Because "既定を空リテラルにして導出へ委ねること（パスを直書きすると導出が走らず #1179 が復活する）"
+
+        # (2) 導出
+        $assignments = @($harnessLines | Where-Object { $_ -match '^\s*\$repoRoot\s*=' })
+        $assignments.Count | Should -Be 1 -Because "repoRoot の導出が 2 か所に散ると片方だけ退行する"
+        $assignments[0] | Should -Match '\$PSScriptRoot' -Because "導出を 1 行で `$PSScriptRoot から書くこと（cwd 起点にすると #1179 が緑のまま復活する）"
+
+        # (3) 使用点——導出しても渡さなければ意味が無い。**件数を縛らず、全件へ課す**
+        # （「ちょうど 1 件」は誤検出を生むだけで、2 件になったとき何が壊れるかを言えない）。
+        $calls = @($harnessLines | Where-Object { $_ -match 'Resolve-SnotraCargoExecutable' })
+        # この件数検査が受け止めるのは「呼び出しを全部消す」形だけである（消せばハーネス自身が
+        # 即赤になるので、実質は `foreach` が空で黙るのを防ぐ保険）。
+        $calls.Count | Should -BeGreaterThan 0 -Because "導出の呼び出しが 1 つも無くなっていないこと"
+        foreach ($call in $calls) {
+            # `-RepositoryRoot:$repoRoot` のコロン記法も正当なので両方受ける。
+            $call | Should -Match '-RepositoryRoot[:\s]\s*\$repoRoot' -Because "導出した repoRoot をそのまま渡すこと（別の値を渡すと #1179 が緑のまま復活する）"
+        }
+    }
 }
 
 Describe 'Read-SnotraTraceEvents' {

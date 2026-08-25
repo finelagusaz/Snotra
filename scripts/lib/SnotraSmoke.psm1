@@ -382,6 +382,24 @@ function Start-SnotraProcess {
     }
 }
 
+<#
+.SYNOPSIS
+`cargo metadata` の `target_directory` から本体のパスを導く（`CARGO_TARGET_DIR` に追随する）。
+
+.DESCRIPTION
+**呼び出し側の作法の正本はここである**（#1179）。各スクリプトへ写しを置かない。
+
+- **既定値へ絶対パスを直書きしない。** worktree から既定のまま回すと別の作業コピーの本体を指し、
+  本体は実在するのでスクリプトは完走して緑になる——**失敗が緑と同じ見た目をする**。
+- **導出は `param()` の中に書けない。** 既定値の束縛は `Import-Module` より前に起きる（実測）ので、
+  既定は空リテラルにし、解決は import の後で行う。
+- **導出の起点はスクリプトが住むリポジトリ（`$PSScriptRoot` 起点）であって cwd ではない。**
+- **明示された `-ExePath` の意味は変えない**（相対パスは cwd 相対のまま）。導出するのは既定の枝だけである。
+- 解決後は絶対形へ正規化して出力へ載せる——どのコピーを測ったかが読み手に見える形が、
+  `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。
+
+この作法は `scripts/lib/SnotraSmoke.Tests.ps1` のソース述語が守っている（射程と死角はあちらの宣言が正本）。
+#>
 function Resolve-SnotraCargoExecutable {
     [CmdletBinding()]
     param(
@@ -396,9 +414,20 @@ function Resolve-SnotraCargoExecutable {
         throw "Cargo workspace の manifest がありません: $manifestPath"
     }
 
-    $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo metadata に失敗しました（exit=$LASTEXITCODE）。"
+    # **cargo の cwd を対象リポジトリへ固定する**（#1179）。相対値の `CARGO_TARGET_DIR` は
+    # manifest ではなく **cargo プロセスの cwd** を起点に解決されるため、固定しないと
+    # 「worktree の本体を導いたつもりでメイン作業コピーの target を指す」形が残る（実測）。
+    # **manifest の存在検査より後に置く**——根が不在ならそちらが先に落ち、ここへ到達しない。
+    Push-Location -LiteralPath $RepositoryRoot
+    try {
+        $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath
+        # `Pop-Location` より前に捕まえる（後続の cmdlet が $LASTEXITCODE を運ぶとは限らない）。
+        $cargoExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($cargoExit -ne 0) {
+        throw "cargo metadata に失敗しました（exit=$cargoExit）。"
     }
     try {
         $metadata = ($metadataOutput -join [Environment]::NewLine) | ConvertFrom-Json

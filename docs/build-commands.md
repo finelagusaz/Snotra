@@ -215,11 +215,18 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 気づかなければそのまま結論に使ってしまう（2026-08-07 実測。詳細は PERFORMANCE.md
 「索引の常駐の内訳」）。
 
-`npm run bench:startup` は **release 本体を測る**（既定 `target/release/snotra.exe`）。**先に
-`cargo build --release -p snotra` を打つこと**——`cargo test` はテストターゲットしかビルドせず、
+`npm run bench:startup` は **release 本体を測る**。**先に `cargo build --release -p snotra` を
+打つこと**——`cargo test` はテストターゲットしかビルドせず、
 古い本体が在ると検査は成功したまま**変更前の挙動を測る**（#835 で 2 時間前のバイナリを測った）。
 出力は区間ごとの min / p50 / max で、**最小値に畳まない**——このハーネスが答える問いは
 「起動が何 ms か」ではなく「分散がどの区間に住むか」だからである（詳細は PERFORMANCE.md）。
+
+`bench:startup` と `smoke:startup` も既定の本体を `test:powershell` と同じ形で導く。**その起点は
+スクリプトが住むリポジトリであって cwd ではない**ので、worktree から既定のまま回せば worktree の
+本体を測る（#1179。以前は絶対パスが直書きされており、**別の作業コピーを黙って測りながら緑を
+返していた**）。測った本体の絶対パスは両者とも出力の先頭に出る。別の本体を指すときだけ
+`-ExePath <path>` を渡す——明示した相対パスは、この 2 つでは（`test:powershell` と違い）
+cwd 相対のまま解釈される。
 
 ## git blame と整形コミット
 

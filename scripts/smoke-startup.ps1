@@ -6,7 +6,8 @@ param(
   # 時間、$WaitMs は最初の trace 以降にイベントを集める窓。実測分散（0.6s〜8s超）に対する
   # 余裕として 12s を既定にする。
   [int]$FirstTraceTimeoutMs = 12000,
-  [string]$ExePath = "C:\workspace\Snotra\target\debug\snotra.exe"
+  # 空なら debug 本体を導く（#1179）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
+  [string]$ExePath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -19,9 +20,17 @@ if ($Iterations -lt 1) {
 if ($WaitMs -lt 200) {
   throw "WaitMs must be >= 200"
 }
-if (-not (Test-Path $ExePath)) {
-  throw "Executable not found: $ExePath"
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if (-not $ExePath) {
+  $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile debug
 }
+if (-not (Test-Path -LiteralPath $ExePath)) {
+  # **復旧手順を文言に持たせる**（#1179）。既定が自分のコピーを指すようになったぶん、worktree では
+  # 「本体が無い」が起きやすくなった——以前は隣のコピーを拾えていたのだから。
+  throw "Executable not found: $ExePath（先に cargo build -p snotra）"
+}
+$ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は上の doc）
+Write-Host "本体: $ExePath"
 
 # Two-window architecture (main + results, #646 PR2): startup smoke only exercises
 # main show/hide timing; the results window is driven by main's update() and has

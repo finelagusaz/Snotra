@@ -206,26 +206,26 @@ Phase 1 の新 Pester が**実際に守りたい退行へ届く**ことを測る
 
 ### Phase 1 — 共有ヘルパーの cwd 固定
 
-- [ ] `SnotraSmoke.psm1` の `Resolve-SnotraCargoExecutable` を `Push-Location`/`finally Pop-Location` で囲み、`$LASTEXITCODE` を `Pop-Location` の前で捕まえる
-- [ ] 理由（相対 `CARGO_TARGET_DIR` が cwd 起点に解決される・#1179）をコメントで残す
-- [ ] `SnotraSmoke.Tests.ps1` へ相対 `CARGO_TARGET_DIR` × cwd 不一致の `It` を 1 件足す
-- [ ] `cargo build -p snotra` の後 `npm run test:powershell` が緑
+- [x] `SnotraSmoke.psm1` の `Resolve-SnotraCargoExecutable` を `Push-Location`/`finally Pop-Location` で囲み、`$LASTEXITCODE` を `Pop-Location` の前で捕まえる
+- [x] 理由（相対 `CARGO_TARGET_DIR` が cwd 起点に解決される・#1179）をコメントで残す
+- [x] `SnotraSmoke.Tests.ps1` へ相対 `CARGO_TARGET_DIR` × cwd 不一致の `It` を 1 件足す
+- [x] `cargo build -p snotra` の後 `npm run test:powershell` が緑
 
 ### Phase 2 — 2 スクリプトの配線
 
-- [ ] `bench-startup.ps1`: 既定を `''` へ、`-Profile release` で導出、絶対形へ正規化、`param()` へ理由コメント
-- [ ] `smoke-startup.ps1`: 既定を `''` へ、`-Profile debug` で導出、絶対形へ正規化、`param()` へ理由コメント
-- [ ] `smoke-startup.ps1` へ本体パスの表示行を新設する
-- [ ] 既存の `throw` 文言が残っていることを確認する（沈黙して落ちない）
+- [x] `bench-startup.ps1`: 既定を `''` へ、`-Profile release` で導出、絶対形へ正規化、`param()` へ理由コメント
+- [x] `smoke-startup.ps1`: 既定を `''` へ、`-Profile debug` で導出、絶対形へ正規化、`param()` へ理由コメント
+- [x] `smoke-startup.ps1` へ本体パスの表示行を新設する
+- [x] 既存の `throw` 文言が残っていることを確認する（沈黙して落ちない）
 
 ### Phase 3 — 文書
 
-- [ ] `docs/build-commands.md:218` の既定値の記述を導出元を名指す形へ書き換える（パス文字列の写しを置かない）
-- [ ] **`:51` と `:205` と `:267` は非該当**であることを確認して触らない（`:51` の `test:powershell` の
+- [x] `docs/build-commands.md:218` の既定値の記述を導出元を名指す形へ書き換える（パス文字列の写しを置かない）
+- [x] **`:51` と `:205` と `:267` は非該当**であることを確認して触らない（`:51` の `test:powershell` の
       `CARGO_TARGET_DIR` 追随は絶対値では元々真・相対値では cwd 非依存になり**むしろ正確になる**。
       `:205` は `smoke:egui` の既定で今回対象外。`:267` は `-Profile debug` のまま真。
       `/plan-review` が実測で確認済み——PR 本文へ「非該当」と一言残し、後続の重複調査を防ぐ）
-- [ ] `npm run governance:check` が緑
+- [x] `npm run governance:check` が緑
 
 ### Phase 4 — 実測と検証
 

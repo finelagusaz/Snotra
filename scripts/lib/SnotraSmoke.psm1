@@ -396,9 +396,20 @@ function Resolve-SnotraCargoExecutable {
         throw "Cargo workspace の manifest がありません: $manifestPath"
     }
 
-    $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo metadata に失敗しました（exit=$LASTEXITCODE）。"
+    # **cargo の cwd を対象リポジトリへ固定する**（#1179）。相対値の `CARGO_TARGET_DIR` は
+    # manifest ではなく **cargo プロセスの cwd** を起点に解決されるため、固定しないと
+    # 「worktree の本体を導いたつもりでメイン作業コピーの target を指す」形が残る（実測）。
+    # **manifest の存在検査より後に置く**——根が不在ならそちらが先に落ち、ここへ到達しない。
+    Push-Location -LiteralPath $RepositoryRoot
+    try {
+        $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath
+        # `Pop-Location` より前に捕まえる（後続の cmdlet が $LASTEXITCODE を運ぶとは限らない）。
+        $cargoExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($cargoExit -ne 0) {
+        throw "cargo metadata に失敗しました（exit=$cargoExit）。"
     }
     try {
         $metadata = ($metadataOutput -join [Environment]::NewLine) | ConvertFrom-Json

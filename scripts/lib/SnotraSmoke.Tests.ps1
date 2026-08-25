@@ -180,6 +180,27 @@ Describe 'Resolve-SnotraCargoExecutable' {
 
         $resolved | Should -Be (Join-Path $customTarget 'debug/snotra.exe')
     }
+
+    It '相対値の CARGO_TARGET_DIR でも RepositoryRoot を起点に解決する（cwd に依存しない・#1179）' {
+        # 上の It は**絶対値**を渡すので cwd の影響を受けない。ここが守るのは相対値の枝である
+        # ——cargo は相対の CARGO_TARGET_DIR を manifest ではなく**自プロセスの cwd** から解決するため、
+        # cwd を固定しないと「worktree を指したつもりでメイン作業コピーの target」を返す（#1179 実測）。
+        $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        $elsewhere = Join-Path $TestDrive 'elsewhere'
+        New-Item -ItemType Directory -Force -Path $elsewhere | Out-Null
+
+        Push-Location -LiteralPath $elsewhere
+        try {
+            $resolved = Invoke-SnotraEnvironment -Variables @{ CARGO_TARGET_DIR = 'relative-target' } -ScriptBlock {
+                Resolve-SnotraCargoExecutable -RepositoryRoot $repositoryRoot
+            }
+        } finally {
+            Pop-Location
+        }
+
+        # 期待値は**実装と同じ Join-Path の重ね方**で組む（文字列連結で組むと区切りが静かにずれる）。
+        $resolved | Should -Be (Join-Path (Join-Path $repositoryRoot 'relative-target') 'debug/snotra.exe')
+    }
 }
 
 Describe 'Read-SnotraTraceEvents' {

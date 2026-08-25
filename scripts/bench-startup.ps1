@@ -25,7 +25,11 @@ param(
   [int]$TerminalTimeoutMs = 20000,
   # 終端が出た後、メモリを測るまでの落ち着き待ち。
   [int]$SettleMs = 1500,
-  [string]$ExePath = "C:/workspace/Snotra/target/release/snotra.exe",
+  # 空なら**このスクリプトが住むリポジトリ**の release 本体を `cargo metadata` から導く（#1179）。
+  # **絶対パスを直書きしない**——worktree から既定のまま回すと別の作業コピーの本体を測り、本体は
+  # 実在するので完走して緑になる（失敗が緑と同じ見た目をする）。導出は `param()` の中に書けない
+  # ——既定値の束縛は `Import-Module` より前に起きる（実測）ので、解決は下の import 後で行う。
+  [string]$ExePath = '',
   # **検証用プロファイルを使う**（CI 等、実 config が無い環境向け）。既定は実 config で、
   # 開発機の実運用点をそのまま測る。CI では実 config が無く first-run へ落ちるため、
   # smoke 群と同じ形（`New-SnotraVerificationProfile` + `SNOTRA_CONFIG_DIR`）で
@@ -44,9 +48,18 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SnotraStartupContract.psm1') -Force
 
 if ($Iterations -lt 1) { throw "Iterations must be >= 1" }
 if ($TerminalTimeoutMs -lt 1000) { throw "TerminalTimeoutMs must be >= 1000" }
+# 明示された `-ExePath` の意味は変えない（相対パスは cwd 相対のまま・PowerShell の慣行）。
+# 導出するのは既定の枝だけである。
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if (-not $ExePath) {
+  $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile release
+}
 if (-not (Test-Path -LiteralPath $ExePath)) {
   throw "Executable not found: $ExePath（release を測るなら先に cargo build --release -p snotra）"
 }
+# **測った本体のパスを絶対形で出力へ載せる**（#1179）。どのコピーを測ったかが読み手に見える形が、
+# `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。
+$ExePath = (Resolve-Path -LiteralPath $ExePath).Path
 
 # **区間の一覧は Rust 側の `Phase` が正本である。** ここは表示順を決めるだけで、
 # 過不足はキー検査（`Test-SnotraStartupPayload`）がペイロード側と突き合わせて捕まえる。

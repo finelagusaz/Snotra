@@ -19,7 +19,7 @@ use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
@@ -414,8 +414,8 @@ fn compare_ascii_lower(lower: &str, raw: &str) -> std::cmp::Ordering {
 
 /// `load_or_scan_with_stats` の各フェーズ所要時間。
 ///
-/// **`cache_load_ms` と `total_ms` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
-/// 項目が無い処理は `total_ms` にしか効かず、差を読む者がいなければ計測上は存在しないままに
+/// **`cache_load_ms` と `total` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
+/// 項目が無い処理は `total` にしか効かず、差を読む者がいなければ計測上は存在しないままに
 /// なる。反復 6 で実際にそうなった——ロード直後に全エントリを複製する処理がここに居たが、
 /// `cache_load_ms` は複製の前で止まるため、起動段の live ブロックの 1/3 を占めたまま
 /// どのフェーズにも現れなかった（項目を足して初めて見えた）。
@@ -439,7 +439,7 @@ pub struct LoadOrScanStats {
     /// cache-miss 枝（scan して save する）では scan_ms / sort_ms に続く独立フェーズであり、
     /// フェーズの和に足す。**cache-hit 枝で旧版昇格（`upgrade_legacy_cache_in`）が走った
     /// 場合はここに昇格の save 時間が入るが、`cache_load_ms` の内数である**
-    /// （`cache_read_ms` と同じ扱い——足すと二重計上になり、`total_ms` から差し引く残余計算が
+    /// （`cache_read_ms` と同じ扱い——足すと二重計上になり、`total` から差し引く残余計算が
     /// 負に振れて `saturating_sub` に黙って潰される）。save は `load_cache_in` 呼び出しの
     /// 内側（`LegacyUpgrade::Write` で旧版を読んだとき）で起きるため、cache_load_ms の外に
     /// 出しようがない。cache-hit かつ現行版を読んだときは 0。**この 0 は「昇格が走らなかった」
@@ -452,7 +452,14 @@ pub struct LoadOrScanStats {
     /// （`LoadCacheResult::upgrade_save_ms` の doc は `Skip` 経由の `None` も併記しているが、
     /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
     pub cache_save_ms: u128,
-    pub total_ms: u128,
+    /// `load_or_scan_with_stats` 全体の所要時間。**丸めずに `Duration` で運ぶ。**
+    ///
+    /// 起動計器（`src-tauri` の `startup.rs`）はこの値と外側の区間の差を
+    /// `index_load_unattributed_ms` として出す。**両者を同じ `to_ms` に通せるよう、
+    /// ミリ秒へ落とすのは表示境界の 1 か所だけにしてある**（#1027）——ここで
+    /// `as_millis()` すると丸めが 2 か所になり、内外で丸め方が食い違ったときに
+    /// 差が黙って負へ振れる（そうならないことが、かつては規約でしか守られていなかった）。
+    pub total: Duration,
 }
 
 /// `load_or_scan_with_stats` の戻り値。
@@ -775,7 +782,7 @@ fn load_or_scan_with_stats_in(
             // `cache_load_ms` の内数——フェーズの和には足さない
             // （`LoadOrScanStats::cache_save_ms` の doc）。
             cache_save_ms: result.upgrade_save_ms.unwrap_or(0),
-            total_ms: total_started.elapsed().as_millis(),
+            total: total_started.elapsed(),
         };
         return LoadOrScanResult {
             material: result.material,
@@ -816,7 +823,7 @@ fn load_or_scan_with_stats_in(
         scan_ms,
         sort_ms,
         cache_save_ms,
-        total_ms: total_started.elapsed().as_millis(),
+        total: total_started.elapsed(),
     };
 
     LoadOrScanResult {
@@ -869,7 +876,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
                     scan_ms,
                     sort_ms,
                     cache_save_ms: 0,
-                    total_ms: total_started.elapsed().as_millis(),
+                    total: total_started.elapsed(),
                 },
             }
         }
@@ -3587,7 +3594,7 @@ mod tests {
     /// `derive_columns` の再導出 + postcard シリアライズ + 数百 ms 級の書き込み）は、呼び出し元の
     /// `cache_load_ms` 計測区間の内側で起きる。運ばずに `None` を返すと、実際に save が起きた
     /// 起動で「保存していない」という**偽の測定値**を `LoadOrScanStats::cache_save_ms` が報告する
-    /// ことになる（`LoadOrScanStats` の doc「`cache_load_ms` と `total_ms` の間に処理を足すときは
+    /// ことになる（`LoadOrScanStats` の doc「`cache_load_ms` と `total` の間に処理を足すときは
     /// 項目を作ること」が守るべき対象そのもの）。
     ///
     /// **両方向とも variant で見る**（旧版を `Write` で読んだら `Some(_)`、現行版は `None`）。

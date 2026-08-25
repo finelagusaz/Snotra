@@ -50,10 +50,10 @@
 
 ### Phase 1 — `snotra-core` の型変更
 
-- [ ] `indexer.rs:22` の import を `use std::time::{Duration, Instant};` にする
-- [ ] `LoadOrScanStats.total_ms: u128` を `pub total: Duration,` にする
-- [ ] 生成 3 か所（778・819・872）の `total_ms: total_started.elapsed().as_millis()` を `total: total_started.elapsed()` にする
-- [ ] **`cargo clippy --workspace --all-targets -- -D warnings`** を走らせ、**落ちた行を移行漏れの
+- [x] `indexer.rs:22` の import を `use std::time::{Duration, Instant};` にする
+- [x] `LoadOrScanStats.total_ms: u128` を `pub total: Duration,` にする
+- [x] 生成 3 か所（778・819・872）の `total_ms: total_started.elapsed().as_millis()` を `total: total_started.elapsed()` にする
+- [x] **`cargo clippy --workspace --all-targets -- -D warnings`** を走らせ、**落ちた行を移行漏れの
       一覧として記録する**（下流 compile-fail を検出器に使う）。
       ⚠ **`cargo check --workspace` を検出器に使ってはならない**——`tests/` 配下の統合テストは
       既定ターゲットの外であり、`cargo check --workspace -v` の出力に `memory_footprint` が
@@ -62,32 +62,41 @@
 
 ### Phase 2 — 消費側の追随と検知器
 
-- [ ] `memory_footprint.rs:319, 331` を `s.total.as_millis()` にする（残余計算の型は `u128` のまま・意味も丸めの向きも不変）
-- [ ] `main.rs:185` を `s.total.as_millis()` に、`main.rs:195` を `startup::set_index_load_stats_total(result.stats.total)` にする
-- [ ] `startup.rs` のフィールドと 2 つの関数を `Duration` 版へ改名する（`index_load_stats_total` / `set_index_load_stats_total`）
-- [ ] `to_json` のアームを `(Some(measured), Some(inner)) => json!(to_ms(measured) as i64 - to_ms(inner) as i64)` にする。**`i64` のままにする**（前提 1 が破れたときに負値が出力へ現れる性質を保つ）
-- [ ] 既存テスト `index_load_unattributed_is_the_gap_against_load_stats` の `set(42)` を `Duration::from_millis(42)` にする（期待値 8 は不変）
-- [ ] **新規テスト**を `startup.rs` の `#[cfg(test)]` へ足す:
+- [x] `memory_footprint.rs:319, 331` を `s.total.as_millis()` にする（残余計算の型は `u128` のまま・意味も丸めの向きも不変）
+- [x] `main.rs:185` を `s.total.as_millis()` に、`main.rs:195` を `startup::set_index_load_stats_total(result.stats.total)` にする
+- [x] `startup.rs` のフィールドと 2 つの関数を `Duration` 版へ改名する（`index_load_stats_total` / `set_index_load_stats_total`）
+- [x] `to_json` のアームを `(Some(measured), Some(inner)) => json!(to_ms(measured) as i64 - to_ms(inner) as i64)` にする。**`i64` のままにする**（前提 1 が破れたときに負値が出力へ現れる性質を保つ）
+- [x] 既存テスト `index_load_unattributed_is_the_gap_against_load_stats` の `set(42)` を `Duration::from_millis(42)` にする（期待値 8 は不変）
+- [x] **新規テスト**を `startup.rs` の `#[cfg(test)]` へ足す:
       `index_load_unattributed_is_zero_when_both_fall_in_the_same_millisecond`
       — `mark(Phase::IndexLoad, Duration::from_micros(50_900))` + `set_index_load_stats_total(Duration::from_micros(50_500))` → `0`
-- [ ] **新規テストが発火しうることを変異注入で実測する**——`to_json` の内側だけを
+- [x] **新規テストが発火しうることを変異注入で実測する**——`to_json` の内側だけを
       四捨五入（`(inner.as_secs_f64() * 1000.0).round() as u64`）へ変えると
       `0` が `-1` になって落ちることを確かめ、**変異を戻す**（`measure-whether-detector-can-fire`）
-- [ ] `cargo test -p snotra-core` / `cargo test -p snotra` が緑
+- [x] `cargo test -p snotra-core` / `cargo test -p snotra` が緑
 
 ### Phase 3 — doc と散文の追随（compile-fail が見ない面）
 
-- [ ] `indexer.rs` の struct doc（417-421）・442 行・3590 行の `total_ms` を `total` にする
-- [ ] `startup.rs` の `to_json` 前のコメント（392-403）を書き直す。**前提 2 の記述を消し、前提 1 だけを残す。** 主張は `index_load_unattributed_ms` の計算に限定する（§後述の不変条件）
-- [ ] `snotra-core/CLAUDE.md:219` の `total_ms` を `total` にする
-- [ ] `SnotraStartupContract.psm1:63, 163` の散文を `LoadOrScanStats.total` にする
-- [ ] `PERFORMANCE.md:1883, 2177` の `total_ms` を `total` にする（2704 行は触らない）
-- [ ] `git grep -n "total_ms"` の残りを**振り分ける**（件数を数えない）。残ったすべての出現が
+- [x] `indexer.rs` の struct doc（417-421）・442 行・3590 行の `total_ms` を `total` にする
+- [x] `startup.rs` の `to_json` 前のコメント（392-403）を書き直す。**前提 2 の記述を消し、前提 1 だけを残す。** 主張は `index_load_unattributed_ms` の計算に限定する（§後述の不変条件）
+- [x] `snotra-core/CLAUDE.md:219` の `total_ms` を `total` にする
+- [x] `SnotraStartupContract.psm1:63, 163` の散文を `LoadOrScanStats.total` にする
+- [x] `PERFORMANCE.md:1883, 2177` の `total_ms` を `total` にする（2704 行は触らない）
+- [x] `git grep -n "total_ms"` の残りを**振り分ける**（件数を数えない）。残ったすべての出現が
       次のどちらかへ入ること: (a) 凍結文書 `docs/superpowers/**`、
       (b) `SNOTRA_EGUI_PAINT_TRACE` の**別概念**（正本は `snotra-egui-runtime/src/renderer.rs`）。
       **どちらにも入らない出現だけが直す対象である。**
       ⚠ **除外リストを書き足す形で閉じない**——`renderer.rs:183` は必ずヒットするので、
       「0 件」を条件にすると実装者が**範囲外の `renderer.rs` を直してしまう**
+
+### Phase 3.5 — 実装中に判明（計画外・/symmetric-check で発見）
+
+- [x] **引き算の向きを守る責務がテストへ移ったことを書き留める**。#1027 で内側も `Duration`
+      になり `to_json` の 2 引数が同じ型になったため、**入れ替えが表現可能になった**
+      （変更前は内側が `u64` で compile-fail）。反転の変異で
+      `index_load_unattributed_is_the_gap_against_load_stats` が `-8` を出して落ちることを実測し、
+      新規テストの側は**反転を検出しない**（50.9/50.5 はどちらも 50 ms ゆえ対称）ことを
+      テストの隣へ明記した
 
 ### Phase 4 — 検証（下記「検証コマンド」を全実行）
 

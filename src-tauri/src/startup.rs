@@ -274,7 +274,7 @@ pub(crate) struct Timeline {
     /// 「害を消した」（panic しない）という主張が検査できなくなるので `Vec` を取る。
     durations: Vec<Option<Duration>>,
     branch: Branch,
-    index_load_stats_ms: Option<u64>,
+    index_load_stats_total: Option<Duration>,
 }
 
 impl Timeline {
@@ -284,7 +284,7 @@ impl Timeline {
             last: Duration::ZERO,
             durations: vec![None; Phase::COUNT],
             branch: Branch::default(),
-            index_load_stats_ms: None,
+            index_load_stats_total: None,
         }
     }
 
@@ -311,8 +311,8 @@ impl Timeline {
         self.branch = branch;
     }
 
-    pub(crate) fn set_index_load_stats_ms(&mut self, total_ms: u64) {
-        self.index_load_stats_ms = Some(total_ms);
+    pub(crate) fn set_index_load_stats_total(&mut self, total: Duration) {
+        self.index_load_stats_total = Some(total);
     }
 
     /// 検査専用のアクセサ。製品は [`Timeline::to_json`] を通る（区間を 1 本ずつ引く
@@ -391,17 +391,22 @@ impl Timeline {
         // `load_or_scan_with_stats` の中にある未命名の処理。**first-run 枝では
         // `LoadOrScanStats` 自体が存在しないので `null`**（0 にしない）。
         //
-        // **`i64` で引くので、負値は panic せず出力に現れる。** 非負であることは 2 つの前提に
-        // 乗っている: (1) 外側の区間（`ConfigLoad` のマーク 〜 `load_or_scan_with_stats` の
-        // 呼び出し後）が内側の `total_ms` を包むこと (2) 両者とも切り捨てであること
-        // （`to_ms` の除算と `Duration::as_millis`）。`a ≥ b ⇒ floor(a) ≥ floor(b)` ゆえ差は非負になる。
+        // **`i64` で引くので、負値は panic せず出力に現れる。** 非負であることは
+        // **外側の区間（`ConfigLoad` のマーク 〜 `load_or_scan_with_stats` の呼び出し後）が
+        // 内側の `total` を包むこと**に乗っている。`a ≥ b ⇒ floor(a) ≥ floor(b)` ゆえ差は非負になる。
         //
-        // **どちらの前提も機構では守られていない。** マークを呼び出しの手前へ動かす、内側を
-        // 四捨五入へ変える、のどちらでも黙って負へ振れる。**前提が動いた実例がある**——#1023 で
-        // `total_started` の起点が `load_or_scan_with_stats` から `load_or_scan_with_stats_in` の
-        // 入口へ移り、`Config::config_dir()` が内側の外へ出た（包みが広がる向きだったので
-        // 非負性は保たれた）。ゆえに **`bench-startup.ps1` が `>= 0` を検める**（負値の実ペイロードで
-        // 落ちることを実測済み・#1009）。
+        // **この前提は機構では守られていない。** マークを呼び出しの手前へ動かせば黙って負へ振れる。
+        // **前提が動いた実例がある**——#1023 で `total_started` の起点が `load_or_scan_with_stats`
+        // から `load_or_scan_with_stats_in` の入口へ移り、`Config::config_dir()` が内側の外へ出た
+        // （包みが広がる向きだったので非負性は保たれた）。ゆえに **`bench-startup.ps1` が `>= 0` を
+        // 検める**（負値の実ペイロードで落ちることを実測済み・#1009）。
+        //
+        // **かつてはもう 1 つ「内外とも切り捨てであること」という前提が要った**（内側が
+        // `as_millis()` で丸めた `u128` を運んでいたため）。#1027 で `LoadOrScanStats.total` を
+        // `Duration` にし、**両辺が同じ `to_ms` を通る形にしたので、この計算に関する丸めは
+        // 1 回だけになった**——内側だけを別の丸めへ変える経路は無い。**主張はこの計算に限る**:
+        // `LoadOrScanStats` の他の `*_ms` は今も `snotra-core` の中で生成時に丸めている。
+        // 固定するのは `index_load_unattributed_is_zero_when_both_fall_in_the_same_millisecond`。
         m.insert(
             "index_load_unattributed_ms".into(),
             match (
@@ -409,9 +414,11 @@ impl Timeline {
                     .get(Phase::IndexLoad.index())
                     .copied()
                     .flatten(),
-                self.index_load_stats_ms,
+                self.index_load_stats_total,
             ) {
-                (Some(measured), Some(inner)) => json!(to_ms(measured) as i64 - inner as i64),
+                (Some(measured), Some(inner)) => {
+                    json!(to_ms(measured) as i64 - to_ms(inner) as i64)
+                }
                 _ => serde_json::Value::Null,
             },
         );
@@ -491,8 +498,8 @@ pub(crate) fn set_branch(branch: Branch) {
     with_timeline(|_, t| t.set_branch(branch));
 }
 
-pub(crate) fn set_index_load_stats_ms(total_ms: u64) {
-    with_timeline(|_, t| t.set_index_load_stats_ms(total_ms));
+pub(crate) fn set_index_load_stats_total(total: Duration) {
+    with_timeline(|_, t| t.set_index_load_stats_total(total));
 }
 
 /// 終端。**一度だけ**出力する（2 回目以降は何もしない）。
@@ -832,9 +839,34 @@ mod tests {
     fn index_load_unattributed_is_the_gap_against_load_stats() {
         let mut t = Timeline::new(None);
         t.mark(Phase::IndexLoad, ms(50));
-        t.set_index_load_stats_ms(42);
+        t.set_index_load_stats_total(ms(42));
         let json = t.to_json(ms(50), Ok(()));
         assert_eq!(json["index_load_unattributed_ms"], 8);
+    }
+
+    // **この 2 本のうち、引き算の向きを守るのは上のテストだけである。** #1027 で内側も
+    // `Duration` になった結果、`to_json` の 2 引数は同じ型になり、**入れ替えても型が通る**
+    // （変更前は内側が `u64` だったので compile-fail だった——型が持っていた保証がここへ移った）。
+    // 向きを反転する変異で上が `-8` を出して落ちることを実測してある。**下のテストは反転を
+    // 検出しない**——外側 50.9 ms と内側 50.5 ms はどちらも 50 ms へ落ちるので差が対称になる。
+
+    #[test]
+    fn index_load_unattributed_is_zero_when_both_fall_in_the_same_millisecond() {
+        // **内外が同じ `to_ms` を通ることを固定する**（#1027）。内側が `LoadOrScanStats.total`
+        // ＝ `Duration` になったので、丸めはこの関数の 1 か所でしか起きない。
+        //
+        // **この 2 値は丸め方が食い違ったときだけ差が出る**——外側 50.9 ms / 内側 50.5 ms は
+        // どちらも切り捨てで 50 ms ゆえ差は 0 だが、内側だけを四捨五入へ変えると 51 になり
+        // `-1` が出る。変異 `(inner.as_secs_f64() * 1000.0).round() as u64` を注入して
+        // 実際に落ちることを実測してある。
+        //
+        // **前提 1（外側の区間が内側を包む）はこのテストの射程ではない**——あちらは構造では
+        // 消えず、`bench-startup.ps1` の `>= 0` が外から捕まえる（`to_json` の当該コメント）。
+        let mut t = Timeline::new(None);
+        t.mark(Phase::IndexLoad, Duration::from_micros(50_900));
+        t.set_index_load_stats_total(Duration::from_micros(50_500));
+        let json = t.to_json(Duration::from_micros(50_900), Ok(()));
+        assert_eq!(json["index_load_unattributed_ms"], 0);
     }
 
     #[test]

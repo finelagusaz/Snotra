@@ -211,6 +211,11 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     #
     # 縛るのは「repoRoot をスクリプト自身の位置から導くこと」だけで、導出の中身も
     # プロファイルの置き場も射程外である（必要な分だけ縛る）。
+    #
+    # **死角（宣言）**: 対象を数え上げているので、3 本目の起動ハーネスが増えても黙る。
+    # 「`Resolve-SnotraCargoExecutable` を呼ぶ `.ps1` すべて」へ広げる手はあるが、
+    # `run-pester.ps1` / `visual-input-metrics.ps1` / `visual-check-colors.ps1` は変数名も
+    # 導出の形も違うため誤検出になる。**広げずに死角として宣言して止める。**
     # **`-ForEach` で渡す**（素の `foreach` を使わない）。Pester は discovery と run が別相で、
     # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
     # 正しくパラメータ化されて見える**（実測: `The variable '$harnessName' cannot be retrieved`）。

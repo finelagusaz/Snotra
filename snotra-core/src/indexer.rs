@@ -414,44 +414,51 @@ fn compare_ascii_lower(lower: &str, raw: &str) -> std::cmp::Ordering {
 
 /// `load_or_scan_with_stats` の各フェーズ所要時間。
 ///
-/// **`cache_load_ms` と `total` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
+/// **`cache_load` と `total` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
 /// 項目が無い処理は `total` にしか効かず、差を読む者がいなければ計測上は存在しないままに
 /// なる。反復 6 で実際にそうなった——ロード直後に全エントリを複製する処理がここに居たが、
-/// `cache_load_ms` は複製の前で止まるため、起動段の live ブロックの 1/3 を占めたまま
+/// `cache_load` は複製の前で止まるため、起動段の live ブロックの 1/3 を占めたまま
 /// どのフェーズにも現れなかった（項目を足して初めて見えた）。
+///
+/// **全項目を丸めずに [`Duration`] で運ぶ**（#1027 で `total` だけ、#1178 で残りを移した）。
+/// ミリ秒への丸めは表示境界（`src-tauri` の `startup.rs` の `to_ms`・`main.rs` の
+/// `[index-load]` 行・`tests/memory_footprint.rs` のフェーズ内訳）でだけ行う。
 #[derive(Debug, Clone, Copy)]
 pub struct LoadOrScanStats {
     pub cache_hit: bool,
-    pub hash_ms: u128,
-    pub cache_load_ms: u128,
-    /// `index.bin` をバイト列として読む時間。**`cache_load_ms` の内数である**
+    pub hash: Duration,
+    pub cache_load: Duration,
+    /// `index.bin` をバイト列として読む時間。**`cache_load` の内数である**
     /// （他の項目と違い、フェーズの和には足さない）。
     ///
-    /// `cache_load_ms` は「読む」と「deserialize する」の 2 つを 1 つの数にしており、
+    /// `cache_load` は「読む」と「deserialize する」の 2 つを 1 つの数にしており、
     /// **両者はオンディスク形式の変更に対して逆向きに振る舞う**——読むバイトを減らせば前者は
     /// 減るが、形式を圧縮すれば後者は増えうる。分けずに測ると、どちらが効いたのか原理的に
-    /// 区別できない。cache-miss の枝では 0（読む対象が無い）。
-    pub cache_read_ms: u128,
-    pub scan_ms: u128,
-    pub sort_ms: u128,
+    /// 区別できない。cache-miss の枝では [`Duration::ZERO`]（読む対象が無い）。
+    pub cache_read: Duration,
+    pub scan: Duration,
+    pub sort: Duration,
     /// キャッシュ保存にかかった時間。**枝によって和への足し方が違う。**
     ///
-    /// cache-miss 枝（scan して save する）では scan_ms / sort_ms に続く独立フェーズであり、
+    /// cache-miss 枝（scan して save する）では `scan` / `sort` に続く独立フェーズであり、
     /// フェーズの和に足す。**cache-hit 枝で旧版昇格（`upgrade_legacy_cache_in`）が走った
-    /// 場合はここに昇格の save 時間が入るが、`cache_load_ms` の内数である**
-    /// （`cache_read_ms` と同じ扱い——足すと二重計上になり、`total` から差し引く残余計算が
-    /// 負に振れて `saturating_sub` に黙って潰される）。save は `load_cache_in` 呼び出しの
-    /// 内側（`LegacyUpgrade::Write` で旧版を読んだとき）で起きるため、cache_load_ms の外に
-    /// 出しようがない。cache-hit かつ現行版を読んだときは 0。**この 0 は「昇格が走らなかった」
-    /// と「走ったが 1 ms を切った」を区別しない**——区別が要る読み手は
-    /// `LoadCacheResult::upgrade_save_ms` の variant を見る（#1054 / #1063）。
+    /// 場合はここに昇格の save 時間が入るが、`cache_load` の内数である**
+    /// （`cache_read` と同じ扱い——足すと二重計上になり、`total` から差し引く残余計算が
+    /// 負に振れる）。save は `load_cache_in` 呼び出しの
+    /// 内側（`LegacyUpgrade::Write` で旧版を読んだとき）で起きるため、`cache_load` の外に
+    /// 出しようがない。cache-hit かつ現行版を読んだときは [`Duration::ZERO`]。
+    /// **この [`Duration::ZERO`] を「昇格が走らなかった」の判定に使ってはならない**——区別が
+    /// 要る読み手は `LoadCacheResult::upgrade_save` の variant を見る（#1054 / #1063）。
+    /// 判定を値に負わせないというこの規約は、分解能が ms から ns へ上がっても変わらない
+    /// （#1178 で型が変わり、`Instant::elapsed` が 0 を返す確率は実質消えたが、
+    /// **「昇格が走ったか」を表しているのは依然として variant のほうである**）。
     ///
     /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
     /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）専用で、
     /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
-    /// （`LoadCacheResult::upgrade_save_ms` の doc は `Skip` 経由の `None` も併記しているが、
+    /// （`LoadCacheResult::upgrade_save` の doc は `Skip` 経由の `None` も併記しているが、
     /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
-    pub cache_save_ms: u128,
+    pub cache_save: Duration,
     /// `load_or_scan_with_stats` 全体の所要時間。**丸めずに `Duration` で運ぶ。**
     ///
     /// 起動計器（`src-tauri` の `startup.rs`）はこの値と外側の区間の差を
@@ -730,34 +737,36 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
 /// 走査して正準の並びへ整列するまで（保存はしない）と、その 2 段の所要時間。
 struct Scanned {
     entries: Vec<AppEntry>,
-    scan_ms: u128,
-    sort_ms: u128,
+    scan: Duration,
+    sort: Duration,
 }
 
 /// 全走査して [`sort_entries_canonical`] を通し、2 段を測って返す。
 ///
 /// **保存する枝と保存しない枝（`Config::config_dir` が引けないとき）が同じここを通る。**
-/// 書き起こすと計器が 2 部出荷になり、片方だけが段を足したときに `scan_ms` / `sort_ms` の
+/// 書き起こすと計器が 2 部出荷になり、片方だけが段を足したときに `scan` / `sort` の
 /// 意味が枝ごとにずれる——**どちらの枝を測ったのかは `LoadOrScanStats` の値からは
 /// 区別できない**ので、ずれても数字はもっともらしいまま残る。
 ///
 /// **`INDEX_WRITE_LOCK` は取らない。** 走査は共有資源に触れないが、保存する枝は
 /// 「走査から保存までを 1 回のロック取得で覆う」ことに依存している（→
-/// [`upgrade_legacy_cache_in`] だけがその例外である理由は `LoadCacheResult::upgrade_save_ms`
+/// [`upgrade_legacy_cache_in`] だけがその例外である理由は `LoadCacheResult::upgrade_save`
 /// の doc）。ゆえにロックの範囲は呼び出し側が決める。
 fn scan_and_sort_timed(scan: &[ScanPath], show_hidden_system: bool) -> Scanned {
     let scan_started = Instant::now();
     let mut entries = scan_all(scan, show_hidden_system);
-    let scan_ms = scan_started.elapsed().as_millis();
+    let scan_took = scan_started.elapsed();
 
     let sort_started = Instant::now();
     sort_entries_canonical(&mut entries);
-    let sort_ms = sort_started.elapsed().as_millis();
+    let sort_took = sort_started.elapsed();
 
     Scanned {
         entries,
-        scan_ms,
-        sort_ms,
+        // **shorthand を使わない。** `scan` は同スコープの `scan: &[ScanPath]` 引数の名前で
+        // あり、フィールド名と衝突する（#1178）。
+        scan: scan_took,
+        sort: sort_took,
     }
 }
 
@@ -776,28 +785,26 @@ fn load_or_scan_with_stats_in(
 
     let hash_started = Instant::now();
     let current_hash = compute_config_hash(scan, show_hidden_system);
-    let hash_ms = hash_started.elapsed().as_millis();
+    let hash_took = hash_started.elapsed();
 
     let cache_load_started = Instant::now();
     // **キャッシュが読めたらそこで終わりである。** 走査は明示操作の契機でしか走らない
     // （`docs/adr/ADR-rescan-explicit-only.md`）。
     if let Some(result) = load_cache_in(dir, current_hash, LegacyUpgrade::Write) {
-        let cache_load_ms = cache_load_started.elapsed().as_millis();
+        let cache_load_took = cache_load_started.elapsed();
         let stats = LoadOrScanStats {
             cache_hit: true,
-            hash_ms,
-            cache_load_ms,
-            cache_read_ms: result.read_ms,
-            scan_ms: 0,
-            sort_ms: 0,
-            // 昇格が走らなかった枝は `None` ゆえ 0（`LoadCacheResult::upgrade_save_ms` の doc）。
-            // **ミリ秒へ戻したこの値は計器であって、昇格の有無の判定には使えない**——0 は
-            // 「昇格が走らなかった」と「走ったが 1 ms を切った」の両方を意味しうる。この値で
-            // 配線を見る `load_or_scan_with_stats_reports_upgrade_save_ms_in_cache_save_ms` は、
-            // 20,000 件の治具で仕事量を跨がせることでその曖昧さを外している（#1054 / #1063）。
-            // `cache_load_ms` の内数——フェーズの和には足さない
-            // （`LoadOrScanStats::cache_save_ms` の doc）。
-            cache_save_ms: result.upgrade_save_ms.unwrap_or(0),
+            hash: hash_took,
+            cache_load: cache_load_took,
+            cache_read: result.read,
+            scan: Duration::ZERO,
+            sort: Duration::ZERO,
+            // 昇格が走らなかった枝は `None` ゆえ `ZERO`（`LoadCacheResult::upgrade_save` の doc）。
+            // **この値は計器であって、昇格の有無の判定には使えない**——判定を負っているのは
+            // 向こうの variant であり、こちらは時間を運ぶだけである（#1054 / #1063）。
+            // `cache_load` の内数——フェーズの和には足さない
+            // （`LoadOrScanStats::cache_save` の doc）。
+            cache_save: result.upgrade_save.unwrap_or(Duration::ZERO),
             total: total_started.elapsed(),
         };
         return LoadOrScanResult {
@@ -806,16 +813,17 @@ fn load_or_scan_with_stats_in(
             stats,
         };
     }
-    let cache_load_ms = cache_load_started.elapsed().as_millis();
+    let cache_load_took = cache_load_started.elapsed();
 
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
-    let (material, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
+    let (material, scan_took, sort_took, cache_save_took) = with_index_write_lock(|| {
+        // **shorthand を使わない**（`scan` は引数名と衝突する・#1178）。
         let Scanned {
             entries,
-            scan_ms,
-            sort_ms,
+            scan: scan_took,
+            sort: sort_took,
         } = scan_and_sort_timed(scan, show_hidden_system);
 
         let cache_save_started = Instant::now();
@@ -825,20 +833,20 @@ fn load_or_scan_with_stats_in(
         // 建て直すことになる。
         let (tree, masks) = save_cache_sorted_in(dir, entries, current_hash, BuiltAt::Scanned);
         let material = IndexMaterial::derived(tree, masks);
-        let cache_save_ms = cache_save_started.elapsed().as_millis();
+        let cache_save_took = cache_save_started.elapsed();
 
-        (material, scan_ms, sort_ms, cache_save_ms)
+        (material, scan_took, sort_took, cache_save_took)
     });
 
     let stats = LoadOrScanStats {
         cache_hit: false,
-        hash_ms,
-        cache_load_ms,
+        hash: hash_took,
+        cache_load: cache_load_took,
         // cache-miss の枝は `index.bin` を読み切れていない（不在・stale・破損のいずれか）。
-        cache_read_ms: 0,
-        scan_ms,
-        sort_ms,
-        cache_save_ms,
+        cache_read: Duration::ZERO,
+        scan: scan_took,
+        sort: sort_took,
+        cache_save: cache_save_took,
         total: total_started.elapsed(),
     };
 
@@ -872,10 +880,11 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             // （→「index.bin 書き込みの排他」）が対象を持たないだけで、免除ではない。
             let total_started = Instant::now();
 
+            // **shorthand を使わない**（`scan` は引数名と衝突する・#1178）。
             let Scanned {
                 entries,
-                scan_ms,
-                sort_ms,
+                scan: scan_took,
+                sort: sort_took,
             } = scan_and_sort_timed(scan, show_hidden_system);
 
             LoadOrScanResult {
@@ -886,12 +895,12 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
                     // **照合する相手が居ないので計算しない。** `config_hash` は `index.bin` へ
                     // 焼き込んで次の起動と突き合わせるための値であり、書かない枝では
                     // 消費者が居ない（かつては捨てる前提で計算し、この項目を埋めていた）。
-                    hash_ms: 0,
-                    cache_load_ms: 0,
-                    cache_read_ms: 0,
-                    scan_ms,
-                    sort_ms,
-                    cache_save_ms: 0,
+                    hash: Duration::ZERO,
+                    cache_load: Duration::ZERO,
+                    cache_read: Duration::ZERO,
+                    scan: scan_took,
+                    sort: sort_took,
+                    cache_save: Duration::ZERO,
                     total: total_started.elapsed(),
                 },
             }
@@ -1116,26 +1125,28 @@ struct LoadCacheResult {
     /// マスクを持つ版（v3〜v7）は [`IndexMaterial::from_untrusted`]（列長を検証する）、
     /// マスクを持たない v2 だけ `from_tree` を通る。
     material: IndexMaterial,
-    /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
-    read_ms: u128,
+    /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read` へ運ぶ）。
+    read: Duration,
     /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
-    /// （`LoadOrScanStats::cache_save_ms` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
+    /// （`LoadOrScanStats::cache_save` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
     /// `LegacyUpgrade::Skip`）では `None`。
     ///
     /// **`Some` を作れるのは [`upgrade_legacy_cache_in`] の内側だけである。** ゆえに
     /// variant が「昇格 save を通ったか」そのものであり、**時間の値は判定に使わない**
-    /// ——`Some(0)` は「通ったが 1 ms を切った」を表す正当な値である。壁時計のミリ秒を
-    /// 「通った」の代理に使っていた頃は、1 件の治具で区間が時計の量子化に載り、
+    /// ——`Some(Duration::ZERO)` は「通ったが測れる時間を要さなかった」を表す正当な値である。
+    /// 壁時計のミリ秒を「通った」の代理に使っていた頃は、1 件の治具で区間が時計の量子化に載り、
     /// 検知器が確率的に落ちた（#1054 / #1063 実測）。判定を variant へ移したので、
-    /// 代理は残っていない。
+    /// 代理は残っていない。**#1178 で `u128` のミリ秒から [`Duration`] へ替えたが、
+    /// この規約は分解能の話ではない**——値が判定を負わないことが要点であり、ns へ上げても
+    /// 「`Some` かどうか」を見る読み方は変わらない。
     ///
     /// **`INDEX_WRITE_LOCK` の取得待ちを含む。** 昇格は読み終えてからロックを取りに行くので、
-    /// 計測の始点がロックの外にある——**cache-miss 枝の `cache_save_ms` とは非対称で**、
+    /// 計測の始点がロックの外にある——**cache-miss 枝の `cache_save` とは非対称で**、
     /// あちらは scan ごとロックの内側なので待ちが save の数に乗らない。**今のところ待ちは
     /// 立たない**: 製品の呼び出し元は `main` の起動段の 1 つだけで、もう一方の書き手
     /// （索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。
     /// 待ちが立ちうる書き手を足す日には、この値が「save が遅い」と読める形で嘘をつく。
-    upgrade_save_ms: Option<u128>,
+    upgrade_save: Option<Duration>,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
     /// ときは旧版であり、`Write` のときは旧版枝（`upgrade_legacy_cache_in`）がその場で
     /// 現行版へ書き戻す（[`LegacyUpgrade`] の doc）。
@@ -1188,7 +1199,7 @@ fn upgrade_legacy_cache_in(
     dir: &Path,
     mut entries: Vec<AppEntry>,
     config_hash: u64,
-    read_ms: u128,
+    read: Duration,
     version: u32,
     built_at: u64,
 ) -> LoadCacheResult {
@@ -1201,25 +1212,25 @@ fn upgrade_legacy_cache_in(
     // **`index.bin` を書く経路はすべて書き込みロックを経由する契約である。**
     //
     // **ここで測る save_ms はロック取得の待ちを含む**（`Instant::now()` が
-    // `with_index_write_lock` より前にある）。**cache-miss 枝の `cache_save_ms` とは
+    // `with_index_write_lock` より前にある）。**cache-miss 枝の `cache_save` とは
     // 非対称である**——あちらは scan + sort + save をまとめて包むロックの内側で計測を
-    // 始めるので、待ちは `scan_ms` より前に落ちて save の数には乗らない。直前の
+    // 始めるので、待ちは `scan` より前に落ちて save の数には乗らない。直前の
     // `sort_entries_canonical` を含めない点だけが両者で揃っている。
     //
     // この区間全体は呼び出し元の `cache_load_started` の計測区間の内側で起きるため、
-    // `LoadOrScanStats::cache_save_ms` へ運んだ値は `cache_load_ms` の**内数**になる
+    // `LoadOrScanStats::cache_save` へ運んだ値は `cache_load` の**内数**になる
     // （フェーズの和には足さない——doc を参照）。
     let save_started = Instant::now();
     let (tree, masks) = with_index_write_lock(|| {
         save_cache_sorted_in(dir, entries, config_hash, BuiltAt::Carried(built_at))
     });
-    // **`Some` を作るのはこの 1 行だけである**（`LoadCacheResult::upgrade_save_ms` の doc）。
+    // **`Some` を作るのはこの 1 行だけである**（`LoadCacheResult::upgrade_save` の doc）。
     // 昇格 save を通ったことは、時間の値ではなくこの variant が表す。
-    let upgrade_save_ms = Some(save_started.elapsed().as_millis());
+    let upgrade_save = Some(save_started.elapsed());
     LoadCacheResult {
         material: IndexMaterial::derived(tree, masks),
-        read_ms,
-        upgrade_save_ms,
+        read,
+        upgrade_save,
         // **`version` は「読めた」版のままにする。** 呼び出し側はこれで「旧版だった」を
         // 知る。書き戻した後の版を入れると、その事実が消える。
         version,
@@ -1244,7 +1255,9 @@ struct LegacyRead {
 fn finish_legacy_read(
     dir: &Path,
     config_hash: u64,
-    read_ms: u128,
+    // **`read_took` である**——同じ引数列に `read: LegacyRead`（読めた材料）が居るので、
+    // フィールド名 `read` をそのまま使えない（#1178）。
+    read_took: Duration,
     upgrade: LegacyUpgrade,
     read: LegacyRead,
 ) -> Option<LoadCacheResult> {
@@ -1253,7 +1266,7 @@ fn finish_legacy_read(
             dir,
             read.entries,
             config_hash,
-            read_ms,
+            read_took,
             read.version,
             read.built_at,
         )),
@@ -1266,9 +1279,9 @@ fn finish_legacy_read(
             };
             Some(LoadCacheResult {
                 material,
-                read_ms,
+                read: read_took,
                 // **`Skip` は書き戻さないので save は起きない。**
-                upgrade_save_ms: None,
+                upgrade_save: None,
                 version: read.version,
             })
         }
@@ -1290,7 +1303,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
     let bf = cache_bin_file_in(dir);
     let read_started = Instant::now();
     let bytes = bf.load_bytes()?;
-    let read_ms = read_started.elapsed().as_millis();
+    let read_took = read_started.elapsed();
 
     // v7 (現行): 木の列 + ビットマスク + **共有を潰した** lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
@@ -1324,9 +1337,9 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         };
         return Some(LoadCacheResult {
             material: IndexMaterial::from_untrusted(tree, masks)?,
-            read_ms,
+            read: read_took,
             // **現行版は昇格しないので save は起きない。**
-            upgrade_save_ms: None,
+            upgrade_save: None,
             version: INDEX_CACHE_VERSION,
         });
     }
@@ -1348,7 +1361,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         return finish_legacy_read(
             dir,
             config_hash,
-            read_ms,
+            read_took,
             upgrade,
             LegacyRead {
                 entries: cache.entries,
@@ -1376,7 +1389,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         return finish_legacy_read(
             dir,
             config_hash,
-            read_ms,
+            read_took,
             upgrade,
             LegacyRead {
                 entries: cache.entries,
@@ -1410,7 +1423,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         return finish_legacy_read(
             dir,
             config_hash,
-            read_ms,
+            read_took,
             upgrade,
             LegacyRead {
                 entries: cache.entries,
@@ -1437,7 +1450,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         return finish_legacy_read(
             dir,
             config_hash,
-            read_ms,
+            read_took,
             upgrade,
             LegacyRead {
                 entries: cache.entries,
@@ -1457,7 +1470,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         return finish_legacy_read(
             dir,
             config_hash,
-            read_ms,
+            read_took,
             upgrade,
             LegacyRead {
                 entries: cache.entries,
@@ -3386,7 +3399,8 @@ mod tests {
         let second = load_or_scan_with_stats_in(&dir, &scan, false);
         assert!(second.stats.cache_hit, "2 回目は cache-hit であること");
         assert_eq!(
-            second.stats.scan_ms, 0,
+            second.stats.scan,
+            Duration::ZERO,
             "cache-hit で走査時間が立ってはならない"
         );
         assert_eq!(
@@ -3604,13 +3618,13 @@ mod tests {
         let _ = fs::remove_dir_all(&scanned_dir);
     }
 
-    /// **旧版昇格の save 時間は `LoadCacheResult::upgrade_save_ms` として見える化されている。**
+    /// **旧版昇格の save 時間は `LoadCacheResult::upgrade_save` として見える化されている。**
     ///
     /// 昇格 save（`upgrade_legacy_cache_in` → `save_cache_sorted_in`。旧版起動 1 回だけ発生する
     /// `derive_columns` の再導出 + postcard シリアライズ + 数百 ms 級の書き込み）は、呼び出し元の
-    /// `cache_load_ms` 計測区間の内側で起きる。運ばずに `None` を返すと、実際に save が起きた
-    /// 起動で「保存していない」という**偽の測定値**を `LoadOrScanStats::cache_save_ms` が報告する
-    /// ことになる（`LoadOrScanStats` の doc「`cache_load_ms` と `total` の間に処理を足すときは
+    /// `cache_load` 計測区間の内側で起きる。運ばずに `None` を返すと、実際に save が起きた
+    /// 起動で「保存していない」という**偽の測定値**を `LoadOrScanStats::cache_save` が報告する
+    /// ことになる（`LoadOrScanStats` の doc「`cache_load` と `total` の間に処理を足すときは
     /// 項目を作ること」が守るべき対象そのもの）。
     ///
     /// **両方向とも variant で見る**（旧版を `Write` で読んだら `Some(_)`、現行版は `None`）。
@@ -3625,14 +3639,14 @@ mod tests {
     /// `load_cache_does_not_rewrite_when_the_format_is_current` の対であり、ここの射程は
     /// 「計器がその枝を通ったことを報告するか」だけである。
     #[test]
-    fn load_cache_reports_upgrade_save_ms_only_when_it_upgrades_a_legacy_format() {
+    fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
         // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
         let _guard = INDEX_LOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
 
         // 旧版（v4）: 昇格が走るので save 時間が乗る。
-        let legacy_dir = temp_dir("upgrade_save_ms_legacy");
+        let legacy_dir = temp_dir("upgrade_save_legacy");
         let entries = vec![AppEntry {
             name: "a".into(),
             target_path: "C:\\a".into(),
@@ -3658,15 +3672,15 @@ mod tests {
         let legacy_result =
             load_cache_in(&legacy_dir, 42, LegacyUpgrade::Write).expect("v4 が読めること");
         assert_eq!(legacy_result.material.tree().len(), 1, "材料が正しいこと");
-        // **速さではなく通ったかを見る**（`Some(0)` も合格。理由はこのテストの doc）。
+        // **速さではなく通ったかを見る**（`Some(Duration::ZERO)` も合格。理由はこのテストの doc）。
         assert!(
-            legacy_result.upgrade_save_ms.is_some(),
+            legacy_result.upgrade_save.is_some(),
             "旧版を Write で読んだら昇格 save の枝を通ること（`None` は\
              `upgrade_legacy_cache_in` のクロージャを一度も通っていないことを意味する）"
         );
 
         // 現行版（v7）: 昇格しないので save 時間は乗らない。
-        let current_dir = temp_dir("upgrade_save_ms_current");
+        let current_dir = temp_dir("upgrade_save_current");
         let config_hash = 42u64;
         let derived = derive_columns(entries);
         let derived_cols = derived.tree.columns();
@@ -3691,7 +3705,7 @@ mod tests {
         let current_result = load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write)
             .expect("v7 が読めること");
         assert_eq!(
-            current_result.upgrade_save_ms, None,
+            current_result.upgrade_save, None,
             "現行版は昇格しないので枝を通らないこと（`Some` は速さに関わらず\
              `upgrade_legacy_cache_in` を通ったことを意味する）"
         );
@@ -3700,15 +3714,15 @@ mod tests {
         let _ = fs::remove_dir_all(&current_dir);
     }
 
-    /// **`LoadOrScanStats::cache_save_ms` レベルで固定する。** 上のテストは
-    /// `LoadCacheResult::upgrade_save_ms`（`load_cache_in` の返り値）までしか見ておらず、
-    /// それを呼び出し元の `cache_save_ms` へ運ぶ配線（`load_or_scan_with_stats_in` の
-    /// cache-hit 枝、`cache_save_ms: result.upgrade_save_ms`）自体は固定していない
-    /// ——**最終レビュー Important 1 の実際の欠陥はこの配線が `cache_save_ms: 0` を
-    /// 焼き込んでいたことであり**、`upgrade_save_ms` 単体の検知器はこの配線を落とす
-    /// 退行（`result.upgrade_save_ms` を使わず `0` を書く）では落ちない。
+    /// **`LoadOrScanStats::cache_save` レベルで固定する。** 上のテストは
+    /// `LoadCacheResult::upgrade_save`（`load_cache_in` の返り値）までしか見ておらず、
+    /// それを呼び出し元の `cache_save` へ運ぶ配線（`load_or_scan_with_stats_in` の
+    /// cache-hit 枝、`cache_save: result.upgrade_save`）自体は固定していない
+    /// ——**最終レビュー Important 1 の実際の欠陥はこの配線が `cache_save: 0` を
+    /// 焼き込んでいたことであり**、`upgrade_save` 単体の検知器はこの配線を落とす
+    /// 退行（`result.upgrade_save` を使わず `0` を書く）では落ちない。
     #[test]
-    fn load_or_scan_with_stats_reports_upgrade_save_ms_in_cache_save_ms() {
+    fn load_or_scan_with_stats_reports_upgrade_save_in_cache_save() {
         // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
         let _guard = INDEX_LOCK_TEST_GUARD
             .lock()
@@ -3721,19 +3735,21 @@ mod tests {
         }];
         let config_hash = compute_config_hash(&scan, false);
 
-        // 旧版（v4）: cache-hit しつつ昇格が走るので cache_save_ms が非 0 になること。
-        //
-        // **母集団を 1 件にしてはならない。** 判定は `as_millis()` の整数値なので、昇格 save が
-        // 1 ms を切ると「配線は生きているのに 0」で落ちる——実際に 1 件の治具では 8 回中 3 回
-        // 落ちた（近傍のテストが先に同じ経路を通って温めた実行だけが 0 になる）。**時計を
-        // 跨がせるのは閾値ではなく仕事量である。**
+        // 旧版（v4）: cache-hit しつつ昇格が走るので cache_save が非 ZERO になること。
         //
         // **ここを `LoadCacheResult` 側と同じ variant 判定へ替えることはできない**（#1054 /
-        // #1063 で替えたのは向こうだけである）——`LoadOrScanStats::cache_save_ms` は `u128` の
-        // 外向き計器で覗く variant を持たず、しかもこの assert が「配線が `result.upgrade_save_ms`
-        // を捨てて 0 を焼き込む」退行を捕まえる唯一の検知器である。時間を見るのをやめると
+        // #1063 で替えたのは向こうだけである）——`LoadOrScanStats::cache_save` は
+        // 外向き計器で覗く variant を持たず、しかもこの assert が「配線が `result.upgrade_save`
+        // を捨てて `ZERO` を焼き込む」退行を捕まえる唯一の検知器である。時間を見るのをやめると
         // 検知器が 1 つ減る。
-        let legacy_dir = temp_dir("stats_upgrade_save_ms_legacy");
+        //
+        // **20,000 件という規模は、もはやこの検知器の必要条件ではない**（#1178）。かつては
+        // 判定が `as_millis()` の整数値だったため、昇格 save が 1 ms を切ると「配線は生きて
+        // いるのに 0」で落ちた——1 件の治具では 8 回中 3 回落ちており、**時計を跨がせるのは
+        // 閾値ではなく仕事量である**というのが規模の根拠だった。`Duration` は ns 分解能なので
+        // その量子化は消えている。**規模を据え置いたのは、縮める判断が #1178 の範囲外だから
+        // であって、跨がせる必要が残っているからではない。**
+        let legacy_dir = temp_dir("stats_upgrade_save_legacy");
         let entries: Vec<AppEntry> = (0..20_000)
             .map(|i| AppEntry {
                 name: format!("entry{i:05}"),
@@ -3760,7 +3776,7 @@ mod tests {
 
         let result = load_or_scan_with_stats_in(&legacy_dir, &scan, false);
         // **`cache_hit` を先に確かめる。** hash が合わず miss 枝へ落ちた場合も
-        // `cache_save_ms > 0` にはなりうるが、それは cache-miss 枝の独立フェーズとしての
+        // `cache_save > 0` にはなりうるが、それは cache-miss 枝の独立フェーズとしての
         // save であって、昇格 save の配線を固定したことにはならない——この assert が
         // 検知器の前提を保証する。
         assert!(
@@ -3768,13 +3784,13 @@ mod tests {
             "config_hash を揃えたので cache-hit になること（miss だとこの検知器は無意味になる）"
         );
         assert!(
-            result.stats.cache_save_ms > 0,
-            "cache-hit 枝で旧版昇格が走ったら LoadOrScanStats::cache_save_ms が非 0 になること\
-             （load_or_scan_with_stats_in の配線 result.upgrade_save_ms を落とす退行の検知器）"
+            result.stats.cache_save > Duration::ZERO,
+            "cache-hit 枝で旧版昇格が走ったら LoadOrScanStats::cache_save が非 ZERO になること\
+             （load_or_scan_with_stats_in の配線 result.upgrade_save を落とす退行の検知器）"
         );
 
-        // 現行版（v7）: cache-hit だが昇格しないので cache_save_ms は 0 のまま。
-        let current_dir = temp_dir("stats_upgrade_save_ms_current");
+        // 現行版（v7）: cache-hit だが昇格しないので cache_save は 0 のまま。
+        let current_dir = temp_dir("stats_upgrade_save_current");
         let derived = derive_columns(entries);
         let derived_cols = derived.tree.columns();
         let cache = IndexCache {
@@ -3798,8 +3814,9 @@ mod tests {
         let result = load_or_scan_with_stats_in(&current_dir, &scan, false);
         assert!(result.stats.cache_hit, "現行版も cache-hit であること");
         assert_eq!(
-            result.stats.cache_save_ms, 0,
-            "現行版は昇格しないので cache_save_ms は 0 のままであること"
+            result.stats.cache_save,
+            Duration::ZERO,
+            "現行版は昇格しないので cache_save は ZERO のままであること"
         );
 
         let _ = fs::remove_dir_all(&legacy_dir);

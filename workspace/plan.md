@@ -117,18 +117,18 @@ ms へ落としてはならない**——ゼロ方向へ切り捨てるので `-
 
 ### Phase 1 — `indexer.rs` の型と改名
 
-- [ ] `LoadOrScanStats` の 6 フィールドを改名表どおり `Duration` へ変える
-- [ ] `LoadCacheResult` の `read` / `upgrade_save` を追随させる
-- [ ] `Scanned` の 2 フィールドを追随させる。**分解時に shorthand を使わないこと**——
+- [x] `LoadOrScanStats` の 6 フィールドを改名表どおり `Duration` へ変える
+- [x] `LoadCacheResult` の `read` / `upgrade_save` を追随させる
+- [x] `Scanned` の 2 フィールドを追随させる。**分解時に shorthand を使わないこと**——
       呼び出し 3 箇所（`scan_and_sort_timed` 自身・`load_or_scan_with_stats_in` の cache-miss 枝・
       `load_or_scan_with_stats` の `None` 枝）はいずれも同スコープに `scan: &[ScanPath]` を持ち、
       `let Scanned { entries, scan, sort } = ..` と書くと**新しい `scan: Duration` が
       `scan: &[ScanPath]` を同名シャドウする**（コンパイルは通るが将来の事故の形。
       独立レビューが実測）。`let Scanned { entries, scan: scan_took, sort: sort_took } = ..`
       のように明示的に別名で束ねる
-- [ ] 生成 8 か所（`indexer.rs` の 751 / 755 / 779 / 785 / 809 / 828 / 1218 / 1293）から
+- [x] 生成 8 か所（`indexer.rs` の 751 / 755 / 779 / 785 / 809 / 828 / 1218 / 1293）から
       `.as_millis()` を落とす。`unwrap_or(0)` は `unwrap_or(Duration::ZERO)` へ
-- [ ] `cargo clippy --workspace --all-targets` を**移行漏れの列挙器として**回し、
+- [x] `cargo clippy --workspace --all-targets` を**移行漏れの列挙器として**回し、
       compile-fail が指す箇所を**すべて書き出す**（`cargo check` は使わない——`tests/` を見ない）。
       **この時点では緑にならない**——消費側の追随は Phase 2 であり、
       「新 API の導入と呼び出し点の移行は 1 タスクに束ねる」に従って Phase 1+2 を
@@ -136,22 +136,22 @@ ms へ落としてはならない**——ゼロ方向へ切り捨てるので `-
 
 ### Phase 2 — 消費側の追随
 
-- [ ] `main.rs` の `eprintln!` を `.as_millis()` 付きへ。**format 文字列は変えない**（D2）
-- [ ] `memory_footprint.rs` のフェーズ内訳を `.as_millis()` 付きへ
-- [ ] 残余算式を案 B へ（D3）: 生 `Duration` の和を作り、**符号つき**で差を取ってから
+- [x] `main.rs` の `eprintln!` を `.as_millis()` 付きへ。**format 文字列は変えない**（D2）
+- [x] `memory_footprint.rs` のフェーズ内訳を `.as_millis()` 付きへ
+- [x] 残余算式を案 B へ（D3）: 生 `Duration` の和を作り、**符号つき**で差を取ってから
       ms へ落とす（D4。`delta_mib` と同じ作りに揃える）
 - [ ] `cargo test -p snotra-core` が緑であること
 
 ### Phase 3 — 意味論が変わったコメント・doc の書き直し
 
-- [ ] `LoadOrScanStats` の各フィールド doc から ms 前提の言い回しを外す
+- [x] `LoadOrScanStats` の各フィールド doc から ms 前提の言い回しを外す
       （「走ったが 1 ms を切った」等）。**原則「variant が判定・値は計器」は残す**
-- [ ] `LoadCacheResult::upgrade_save` の doc を同様に書き直す
-- [ ] 20,000 件治具のコメント（`indexer.rs:3724-3728`）を D5 のとおり書き直す
+- [x] `LoadCacheResult::upgrade_save` の doc を同様に書き直す
+- [x] 20,000 件治具のコメント（`indexer.rs:3724-3728`）を D5 のとおり書き直す
       ——「`as_millis()` の量子化を跨がせるため」という根拠が消えたことを明示する
-- [ ] `memory_footprint.rs` の残余ブロックのコメントを案 B・D4 の意味論へ書き直す
+- [x] `memory_footprint.rs` の残余ブロックのコメントを案 B・D4 の意味論へ書き直す
       （`saturating_sub` に触れた記述が現存するので、符号つきへ変わったことを明記する）
-- [ ] `src-tauri/src/startup.rs:416-417` の「他の `*_ms` は今も生成時に丸めている」を書き直す。
+- [x] `src-tauri/src/startup.rs:416-417` の「他の `*_ms` は今も生成時に丸めている」を書き直す。
       **消すのではなく、残る主張へ弱める**——`LoadOrScanStats` は全フィールドが `Duration` に
       なるが、「生成側が丸めた `Duration` を渡す形が残り、そこに検査が届かない」という
       `total` の doc の残余は依然として真である（issue が明示するとおり、この変更でも減らない）
@@ -160,16 +160,16 @@ ms へ落としてはならない**——ゼロ方向へ切り捨てるので `-
 
 ### Phase 4 — 散文の追随
 
-- [ ] `PERFORMANCE.md` の 3 か所を新識別子へ
-- [ ] `PERFORMANCE.md:2180` の「現在の残余は 0〜1 ms である」の近傍へ、その値が**案 A の
+- [x] `PERFORMANCE.md` の 3 か所を新識別子へ
+- [x] `PERFORMANCE.md:2180` の「現在の残余は 0〜1 ms である」の近傍へ、その値が**案 A の
       意味論で測られたもの**であることを明記する
-- [ ] `snotra-core/CLAUDE.md` の 1 か所を新識別子へ
+- [x] `snotra-core/CLAUDE.md` の 1 か所を新識別子へ
 - [ ] `npm run governance:check` が緑であること
 
 ### Phase 5 — 終端の検証（受け入れ条件の実測）
 
-- [ ] `git grep -n "\.elapsed()\.as_millis()" snotra-core/src/indexer.rs` が **0 件**
-- [ ] 旧識別子の終端 grep を**除外句なしで**走らせ、生きた層の残存が 0 件であることを実測する。
+- [x] `git grep -n "\.elapsed()\.as_millis()" snotra-core/src/indexer.rs` が **0 件**
+- [x] 旧識別子の終端 grep を**除外句なしで**走らせ、生きた層の残存が 0 件であることを実測する。
       **ヒットは 2 つの箱へ仕分ける**——`docs/superpowers/`（凍結）と `workspace/`（本サイクルの
       調査・計画・レビュー成果物。旧識別子を引用しているのは正しい）。どちらでもないヒットが
       1 件でもあれば未完である

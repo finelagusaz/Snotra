@@ -39,6 +39,7 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use snotra_core::config::Config;
 use snotra_core::indexer::{self, AppEntry, LoadOrScanResult};
@@ -133,6 +134,15 @@ fn mib(bytes: usize) -> f64 {
 /// 「何も起きなかった」と読める嘘になる（実測で踏んだ）。
 fn delta_mib(after: usize, before: usize) -> f64 {
     (after as f64 - before as f64) / 1024.0 / 1024.0
+}
+
+/// 符号つきの差分（ミリ秒）。**`Duration` の `-` も `saturating_sub` も使わない**——前者は
+/// 負で panic し、後者は [`delta_mib`] と同じ理由で嘘になる（帰属の誤りが `0ms` に化け、
+/// 「名前の無い処理は居ない」と読める）。**丸めはここ 1 か所だけである**——各フェーズを個別に
+/// ミリ秒へ落としてから引くと、残余が丸め屑を吸う（#1178。原理は `src-tauri` の
+/// `startup.rs` の `//!`「丸めは表示境界でだけ行う」）。
+fn delta_ms(total: Duration, attributed: Duration) -> f64 {
+    (total.as_nanos() as f64 - attributed.as_nanos() as f64) / 1_000_000.0
 }
 
 /// 区間の差分を 1 行で報告する。`n` はエントリ数（0 なら per-entry を出さない）。
@@ -297,48 +307,54 @@ fn measure_real_index_footprint() {
     report("index.bin ロード（entries + masks）", t0, t1, n);
     // **フェーズ内訳を出す。** 製品が既に測っている（`LoadOrScanStats`）のに、ここが壁時計だけを
     // 出していたせいで「ロードのどこに時間が居るか」が見えなかった——全エントリ複製が
-    // `cache_load_ms` の外に居て、どのフェーズにも現れないまま起動段の live ブロックの 1/3 を
+    // `cache_load` の外に居て、どのフェーズにも現れないまま起動段の live ブロックの 1/3 を
     // 占めていたのはそれが理由である
     // （`PERFORMANCE.md`「採用: 背景再スキャンの比較を digest へ（ロード 395 → 312 ms・反復 6）」）。
     // **合計が `total` に届かない分は、まだ名前の付いていない処理がそこに居るということである。**
     let s = &result.stats;
-    // `cache_read_ms` は `cache_load_ms` の**内数**ゆえ、残余の計算には足さない
+    // `cache_read` は `cache_load` の**内数**ゆえ、残余の計算には足さない
     // （足すと二重計上で残余が負に振れる）。分けて出すのは、読むバイト数と deserialize が
     // オンディスク形式の変更に対して**逆向きに振る舞う**ためである。
     //
-    // `cache_save_ms` も枝によっては同じ扱いが要る（`LoadOrScanStats::cache_save_ms` の
+    // `cache_save` も枝によっては同じ扱いが要る（`LoadOrScanStats::cache_save` の
     // doc）。cache-miss 枝では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 枝で
-    // 旧版昇格が走った場合はここに入る save 時間が `cache_load_ms` の内数**——足すと
-    // 二重計上になり、残余が負へ振れて `saturating_sub` に黙って潰される（改善したはずの
-    // 計測が壊れた形と同型で、しかも符号が飽和側にしか出ないので気づけない）。cache-hit 枝は
-    // scan_ms/sort_ms が常に 0 なのでそちらは無条件のままでよく、除外が要るのは
-    // cache_save_ms だけである。
+    // 旧版昇格が走った場合はここに入る save 時間が `cache_load` の内数**——足すと
+    // 二重計上になり、残余が負へ振れる。cache-hit 枝は
+    // scan/sort が常に ZERO なのでそちらは無条件のままでよく、除外が要るのは
+    // `cache_save` だけである。
+    //
+    // **丸めは最後に 1 回だけ行う**（#1178）。かつては各フェーズが `snotra-core` の生成時に
+    // ミリ秒へ丸められており、**残余が丸め屑（最大 1 ms × 5 項）を吸っていた**。今は生の
+    // `Duration` で和を取ってから引くので、残余は「まだ名前の付いていない処理」だけを表す。
+    //
+    // **残余は符号つきで出す**（`delta_mib` と同じ理由）。飽和させると帰属の誤りが
+    // `0ms` に化けて「名前の無い処理は居ない」と読める嘘になり、しかも**符号が飽和側にしか
+    // 出ないので気づけない**。負が出たら、それは丸めではなく二重計上である。
     let cache_save_is_internal = s.cache_hit;
+    let attributed = s.hash
+        + s.cache_load
+        + s.scan
+        + s.sort
+        + if cache_save_is_internal {
+            Duration::ZERO
+        } else {
+            s.cache_save
+        };
     println!(
-        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms{}）+ scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
+        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms{}）+ scan {}ms + sort {}ms + cache_save {}ms（残余 {:+.1}ms）",
         s.total.as_millis(),
-        s.hash_ms,
-        s.cache_load_ms,
-        s.cache_read_ms,
-        if cache_save_is_internal && s.cache_save_ms > 0 {
-            format!("・旧版昇格の save {}ms を含む", s.cache_save_ms)
+        s.hash.as_millis(),
+        s.cache_load.as_millis(),
+        s.cache_read.as_millis(),
+        if cache_save_is_internal && s.cache_save > Duration::ZERO {
+            format!("・旧版昇格の save {}ms を含む", s.cache_save.as_millis())
         } else {
             String::new()
         },
-        s.scan_ms,
-        s.sort_ms,
-        s.cache_save_ms,
-        s.total.as_millis().saturating_sub(
-            s.hash_ms
-                + s.cache_load_ms
-                + s.scan_ms
-                + s.sort_ms
-                + if cache_save_is_internal {
-                    0
-                } else {
-                    s.cache_save_ms
-                }
-        ),
+        s.scan.as_millis(),
+        s.sort.as_millis(),
+        s.cache_save.as_millis(),
+        delta_ms(s.total, attributed),
     );
 
     let LoadOrScanResult { material, .. } = result;
@@ -432,7 +448,7 @@ fn measure_real_index_footprint() {
 ///
 /// **`LoadOrScanStats` をここの代理に使ってはならない。** あれはロード経路
 /// （`load_or_scan_with_stats`）の計測であり、しかも枝ごとに片方しか埋まらない——cache-hit 枝は
-/// `scan_ms` / `sort_ms` / `cache_save_ms` が 0 である（`indexer.rs` の該当分岐）。
+/// `scan` / `sort` / `cache_save` が `Duration::ZERO` である（`indexer.rs` の該当分岐）。
 /// Phase A（このハーネス）は実 `index.bin` を読むため通常 cache-hit 枝を通り、走査の区間は
 /// **1 つも埋まらない**。
 ///

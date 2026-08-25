@@ -217,13 +217,18 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # `Set-Variable` で値を差し替える形、`$ExePath` を導出の**後で**上書きする形は通る（実測）。
     # ソースの形を見る述語の原理的な天井であり、`Should` を足しても「その形以外」が残り続けるので
     # ここで止める。実行時の最終値を追うにはハーネス自身を起動する検査が要り、別の費用の話になる。
-    # 導出式の中身・プロファイルの置き場・**3 本目の起動ハーネス**（対象を数え上げているため）も同じく外。
+    # 導出式の中身とプロファイルの置き場も同じく外。
+    #
+    # **対象は数え上げているので、4 本目が増えても黙る。** `Resolve-SnotraCargoExecutable` の
+    # 呼び出し元のうち残る 2 本を外しているのは、**それぞれ別の理由**による（実測で確かめた）:
+    # `run-pester.ps1` は `-ExePath` に既定値を持たない（明示 override 専用ゆえ入口の述語が当たらない）、
+    # `visual-check-colors.ps1` は変数名が `$repositoryRoot` で `-ExePath` param 自体が無い。
     #
     # **`-ForEach` で渡す**（素の `foreach` を使わない）。Pester は discovery と run が別相で、
     # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
     # 正しくパラメータ化されて見える**（実測: `The variable '$harnessName' cannot be retrieved`）。
     It '<_> の既定 ExePath は param から導出へ通り、repoRoot はスクリプト自身の位置から来る（#1179）' -ForEach @(
-        'bench-startup.ps1', 'smoke-startup.ps1'
+        'bench-startup.ps1', 'smoke-startup.ps1', 'visual-input-metrics.ps1'
     ) {
         # コメント行は除く——除かないと「関数名に触れたコメントを 1 行足す」だけで赤くなり、
         # しかも文言が事実に反する（実測）。
@@ -234,8 +239,11 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
         # 次行へ直書きする形が素通りし、しかも cwd がスクリプトと同じコピーでも症状が出る（実測）。
         $paramDefaults = @($harnessLines | Where-Object { $_ -match '^\s*\[string\]\s*\$ExePath\s*=' })
         $paramDefaults.Count | Should -Be 1 -Because "param() の ExePath 宣言が 1 行だけ在ること"
-        ($paramDefaults[0] -split '=', 2)[1].Trim() |
-            Should -Match "^(''|`"`"|\`$null)\s*,?\s*(#.*)?$" -Because "既定を空リテラルにして導出へ委ねること（パスを直書きすると導出が走らず #1179 が復活する）"
+        # **末尾のカンマと行末コメントを先に剥がしてから明示比較する**——正規表現へ畳むと
+        # PowerShell のバッククォートと正規表現のバックスラッシュが同じ位置で重なり、
+        # 将来の編集でエスケープ 1 つの付け忘れが判定を静かに変える。
+        $defaultValue = ((($paramDefaults[0] -split '=', 2)[1]) -replace '\s*,?\s*(#.*)?$', '').Trim()
+        $defaultValue | Should -BeIn @("''", '""', '$null') -Because "既定を空リテラルにして導出へ委ねること（パスを直書きすると導出が走らず #1179 が復活する）"
 
         # (2) 導出
         $assignments = @($harnessLines | Where-Object { $_ -match '^\s*\$repoRoot\s*=' })

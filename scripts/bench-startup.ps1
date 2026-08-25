@@ -25,10 +25,7 @@ param(
   [int]$TerminalTimeoutMs = 20000,
   # 終端が出た後、メモリを測るまでの落ち着き待ち。
   [int]$SettleMs = 1500,
-  # 空なら**このスクリプトが住むリポジトリ**の release 本体を `cargo metadata` から導く（#1179）。
-  # **絶対パスを直書きしない**——worktree から既定のまま回すと別の作業コピーの本体を測り、本体は
-  # 実在するので完走して緑になる（失敗が緑と同じ見た目をする）。導出は `param()` の中に書けない
-  # ——既定値の束縛は `Import-Module` より前に起きる（実測）ので、解決は下の import 後で行う。
+  # 空なら release 本体を導く（#1179）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
   [string]$ExePath = '',
   # **検証用プロファイルを使う**（CI 等、実 config が無い環境向け）。既定は実 config で、
   # 開発機の実運用点をそのまま測る。CI では実 config が無く first-run へ落ちるため、
@@ -36,11 +33,9 @@ param(
   # 非 first-run を再現する。**枝は出力の `first_run` / `cache_hit` に現れる**ので、
   # どちらで測ったかは読み手が毎回確かめられる。
   [switch]$UseVerificationProfile,
-  # 空なら**このスクリプトが住むリポジトリ**の `target/` 配下へ置く（#1179）。cwd 起点のままだと
-  # `-ExePath` が worktree の本体を指すのにプロファイルはメイン作業コピー側、という割れが起きる
-  # （実測: `Exe:` が worktree・`Profile:` がメインで、メイン側に config.toml と index.bin が出来た）。
-  # 明示された値は cwd 相対のまま——`-ExePath` と同じ判断である。姉妹の `smoke-startup.ps1` は
-  # 元から `$PSScriptRoot` 起点で、ここだけが非対称だった。
+  # 空ならこのスクリプトが住むリポジトリの `target/` 配下へ置く（#1179）。cwd 起点のままだと
+  # `-ExePath` が worktree を指すのにプロファイルはメイン作業コピー側、という割れが起きる（実測）。
+  # **ただし追随の仕方は `-ExePath` と違う**——あちらは `CARGO_TARGET_DIR` に追随し、こちらはしない。
   [string]$ProfileDir = ''
 )
 
@@ -53,8 +48,6 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SnotraStartupContract.psm1') -Force
 
 if ($Iterations -lt 1) { throw "Iterations must be >= 1" }
 if ($TerminalTimeoutMs -lt 1000) { throw "TerminalTimeoutMs must be >= 1000" }
-# 明示された `-ExePath` の意味は変えない（相対パスは cwd 相対のまま・PowerShell の慣行）。
-# 導出するのは既定の枝だけである。
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $ExePath) {
   $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile release
@@ -62,9 +55,7 @@ if (-not $ExePath) {
 if (-not (Test-Path -LiteralPath $ExePath)) {
   throw "Executable not found: $ExePath（release を測るなら先に cargo build --release -p snotra）"
 }
-# **測った本体のパスを絶対形で出力へ載せる**（#1179）。どのコピーを測ったかが読み手に見える形が、
-# `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。
-$ExePath = (Resolve-Path -LiteralPath $ExePath).Path
+$ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は上の doc）
 
 # **区間の一覧は Rust 側の `Phase` が正本である。** ここは表示順を決めるだけで、
 # 過不足はキー検査（`Test-SnotraStartupPayload`）がペイロード側と突き合わせて捕まえる。
@@ -95,17 +86,12 @@ $profileFull = $null
 if ($UseVerificationProfile) {
   # **seed は 1 回だけ**（ループ内で作り直すと毎回 first-run + cache-miss になり、
   # 測っているものが変わる）。2 回目以降の起動が `index.bin` を読む形が実運用点に近い。
-  # `GetFullPath(path, basePath)` は絶対パスをそのまま通し、相対パスだけを基準へ解決する
-  # ——`Join-Path` は絶対値を渡されると `<cwd>\C:\…` を組んでしまう（実測で exit 1）。
-  # 明示値の基準は cwd、既定は repoRoot（`-ExePath` と同じ判断）。
-  # **両枝とも 2 引数版で書く**（基準だけが違う: 明示値は cwd、既定は repoRoot）。1 引数版は相対を
-  # `Environment.CurrentDirectory` で解決し、これは PowerShell のカレント位置とは別物である
-  # ——2 枝で版が割れていると、この issue と同型の罠を将来へ残す。
-  $profileFull = if ($ProfileDir) {
-    [System.IO.Path]::GetFullPath($ProfileDir, (Get-Location).Path)
-  } else {
-    [System.IO.Path]::GetFullPath('target/bench-startup/profile', $repoRoot)
-  }
+  # **既定は空欄を埋めてから 1 回だけ解決する**（`-ExePath` と同じ形）。既定はここで絶対パスになるので、
+  # 続く `GetFullPath` の基準（cwd）は明示された相対値にだけ効く。
+  # `GetFullPath(path, basePath)` を使うのは、`Join-Path` が絶対値を渡されると `<cwd>\C:\…` を
+  # 組んでしまうためである（実測で exit 1）。
+  if (-not $ProfileDir) { $ProfileDir = Join-Path $repoRoot 'target/bench-startup/profile' }
+  $profileFull = [System.IO.Path]::GetFullPath($ProfileDir, (Get-Location).Path)
   New-SnotraVerificationProfile -ProfileDir $profileFull -ShowIcons $false | Out-Null
 }
 

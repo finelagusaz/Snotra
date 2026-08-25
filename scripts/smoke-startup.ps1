@@ -6,10 +6,7 @@ param(
   # 時間、$WaitMs は最初の trace 以降にイベントを集める窓。実測分散（0.6s〜8s超）に対する
   # 余裕として 12s を既定にする。
   [int]$FirstTraceTimeoutMs = 12000,
-  # 空なら**このスクリプトが住むリポジトリ**の debug 本体を `cargo metadata` から導く（#1179）。
-  # **絶対パスを直書きしない**——worktree から既定のまま回すと別の作業コピーの本体を検査し、本体は
-  # 実在するので完走して緑になる（失敗が緑と同じ見た目をする）。導出は `param()` の中に書けない
-  # ——既定値の束縛は `Import-Module` より前に起きる（実測）ので、解決は下の import 後で行う。
+  # 空なら debug 本体を導く（#1179）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
   [string]$ExePath = ''
 )
 
@@ -23,8 +20,6 @@ if ($Iterations -lt 1) {
 if ($WaitMs -lt 200) {
   throw "WaitMs must be >= 200"
 }
-# 明示された `-ExePath` の意味は変えない（相対パスは cwd 相対のまま・PowerShell の慣行）。
-# 導出するのは既定の枝だけである。
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $ExePath) {
   $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile debug
@@ -34,9 +29,7 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
   # 「本体が無い」が起きやすくなった——以前は隣のコピーを拾えていたのだから。
   throw "Executable not found: $ExePath（先に cargo build -p snotra）"
 }
-# **検査した本体のパスを絶対形で出力へ載せる**（#1179）。どのコピーを検査したかが読み手に見える形が、
-# `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。
-$ExePath = (Resolve-Path -LiteralPath $ExePath).Path
+$ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は上の doc）
 Write-Host "本体: $ExePath"
 
 # Two-window architecture (main + results, #646 PR2): startup smoke only exercises

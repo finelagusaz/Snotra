@@ -183,11 +183,11 @@ fn main() {
                 "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
                 s.cache_hit,
                 s.total.as_millis(),
-                s.hash_ms,
-                s.cache_load_ms,
-                s.scan_ms,
-                s.sort_ms,
-                s.cache_save_ms,
+                s.hash.as_millis(),
+                s.cache_load.as_millis(),
+                s.scan.as_millis(),
+                s.sort.as_millis(),
+                s.cache_save.as_millis(),
             );
         }
         // 内側の内訳との差が `index_load_unattributed_ms` になる——`load_or_scan_with_stats`

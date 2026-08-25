@@ -401,12 +401,27 @@ impl Timeline {
         // （包みが広がる向きだったので非負性は保たれた）。ゆえに **`bench-startup.ps1` が `>= 0` を
         // 検める**（負値の実ペイロードで落ちることを実測済み・#1009）。
         //
-        // **かつてはもう 1 つ「内外とも切り捨てであること」という前提が要った**（内側が
-        // `as_millis()` で丸めた `u128` を運んでいたため）。#1027 で `LoadOrScanStats.total` を
-        // `Duration` にし、**両辺が同じ `to_ms` を通る形にしたので、この計算に関する丸めは
-        // 1 回だけになった**——内側だけを別の丸めへ変える経路は無い。**主張はこの計算に限る**:
-        // `LoadOrScanStats` の他の `*_ms` は今も `snotra-core` の中で生成時に丸めている。
-        // 固定するのは `index_load_unattributed_is_zero_when_both_fall_in_the_same_millisecond`。
+        // **もう 1 つの前提「内外とも切り捨てであること」は、弱くなったが消えてはいない。**
+        // かつては内側が `as_millis()` で丸めた `u128` を運んでおり、**別々に書かれた 2 つの式が
+        // たまたま一致していた**だけだった。#1027 で `LoadOrScanStats.total` を `Duration` にし、
+        // **この式の両辺が同じ `to_ms` を通るようにした**——ゆえに「この 2 行の丸め方が食い違う」
+        // 形はもう書けない。固定するのは
+        // `index_load_unattributed_is_zero_when_both_fall_in_the_same_millisecond`。
+        //
+        // **残るのは「内側が丸め済みの `Duration` を運んでくる」形である。** `indexer.rs` の生成
+        // 3 か所が `total: Duration::from_millis(四捨五入した値)` を入れれば、**この関数を 1 文字も
+        // 触らずに**内側だけ丸め方が変わる。**その変異では検査が 1 つも落ちない**（fmt / clippy /
+        // 両 crate の test / `smoke:startup` すべて緑を実測・#1027 のレビュー）——上のテストは
+        // `Timeline` を直に組むので生成側を構造的に見ない。**ゆえに `bench-startup.ps1` の `>= 0`
+        // はこちらの前提に対しても唯一の網である。**
+        //
+        // **主張はこの式に限る**: `LoadOrScanStats` の他の `*_ms` は今も `snotra-core` の中で
+        // 生成時に丸めている。
+        //
+        // **引き算の向きを守っているのはテスト 1 本だけである。** #1027 で内側も `Duration` に
+        // なった結果 2 引数が同じ型になり、**入れ替えても型が通る**（変更前は内側が `u64` で
+        // compile-fail だった——型が持っていた保証がテストへ移った）。反転させると
+        // `index_load_unattributed_is_the_gap_against_load_stats` が `-8` を出して落ちる（実測）。
         m.insert(
             "index_load_unattributed_ms".into(),
             match (

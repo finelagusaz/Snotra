@@ -100,9 +100,29 @@
 
 ### Phase 4 — 検証（下記「検証コマンド」を全実行）
 
-- [ ] カテゴリ A・F の全コマンドが緑
-- [ ] Pester が緑
-- [ ] 挙動不変の確認（下記）
+- [x] カテゴリ A・F の全コマンドが緑（委譲先が `95ae25ac` で全件 exit 0。A は fmt/check/clippy/
+      core-test 605/snotra-test 303/`cargo doc` warning 0 行、F は `governance:check` 全 23 検査）
+- [x] Pester が緑（`npm run test:powershell` exit 0・128 passed。先に `cargo build -p snotra`）
+- [x] カテゴリ C も実行（拡張子でなく意味で該当）——`smoke:startup` exit 0（5 runs）/
+      `smoke:egui` exit 0 / `npm test` exit 0（38 files・901 tests）
+- [x] 挙動不変の確認——`index_load_unattributed_is_the_gap_against_load_stats` が期待値 `8` を
+      変えないまま緑。**自明な緑ではないことを変異で確かめてある**（向きを反転すると `-8` で落ちる）
+
+### Phase 5 — レビュー指摘への fix-forward（委譲先の報告を受けて）
+
+- [x] **H-1: `startup.rs` の「内側だけを別の丸めへ変える経路は無い」が偽の全称否定だった。**
+      生成側（`indexer.rs` の 3 か所）が丸めた `Duration` を入れれば `to_json` を触らずに
+      内側だけ丸め方が変わり、**その変異では検査が 1 つも落ちない**（委譲先が実測）。
+      しかも旧コメントに在った「内側を四捨五入へ変える」という**警告を削除して**不可能性の
+      主張に置き換えていた。→ **警告を復活させ、残る経路と「検査が落ちない」実測を明記した**
+- [x] **H-2: `indexer.rs` の `total` の doc が、この計画自身が「書いてはならない」と
+      名指した形（「ミリ秒へ落とすのは表示境界の 1 か所だけ」）になっていた。**
+      実際は消費 4 か所のうち 3 か所が `as_millis()` を直呼びする。→ 主張を引き算の両辺に限定し、
+      **「1 か所だという主張ではない」ことと他の消費者 2 か所を明記した**
+- [x] **M-1: 引き算の向きの保証がテスト側にしか書かれていなかった。**
+      `to_json` を編集する人の目に入るのは `to_json` 直上である。→ そちらへも明記
+- [x] fix-forward 差分に対しカテゴリ A・F を再実行（fmt 0 / clippy 0 / `cargo doc` warning 0 /
+      snotra-test 303 passed / `governance:check` 全検査 passed）
 
 ## 不変条件と異常系
 
@@ -125,6 +145,8 @@
    `"... total_ms={:.2} ..."` を**恒久的に供給し続ける**（実測。これは
    `SNOTRA_EGUI_PAINT_TRACE` の別概念で、本 issue の範囲外ゆえ改名しない）。
    ゆえに仮に `PERFORMANCE.md` を母集団へ入れても、この検査は永久に鳴らない。
+   **これは予測ではなく実測である**——委譲先が `PERFORMANCE.md` を旧語へ戻す変異を注入し、
+   `governance:check` が exit 0（件数まで同一）で通ることを確かめた。
    **`AGENTS.md` の言う幽霊識別子そのものであり、機構ではなく Phase 3 末尾の `git grep` で閉じる**
    （独立導出 A-3 の二次機序・主エージェントが `renderer.rs:181-185` で再実測）
 2. **psm1 の散文を直しても、それを観測する検査は無い。**

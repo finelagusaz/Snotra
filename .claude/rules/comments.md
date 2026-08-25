@@ -13,6 +13,7 @@ paths:
 ## 読む正本
 
 - 何を書き、何を書かないか: `docs/comment-guidelines.md`「第一原則」
+- 長くなったコメントをどう畳むか・測定値の置き場: `docs/comment-guidelines.md`「短く保つ」
 - 名指しの記法と、面ごとの保証: `docs/comment-guidelines.md`「名指しと正本の指名」
 - `///` / `//!` の様式・見出し構造: `docs/comment-guidelines.md`「rustdoc の様式」
 - 改行位置と折返し: `docs/comment-guidelines.md`「日本語の折返し」

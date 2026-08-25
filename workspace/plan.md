@@ -99,8 +99,29 @@
 ⚠ **`grep` の否定文字クラスを日本語に使わない**——バイト単位に落ちて**静かに 0 件**を返す
 （調査中に私と敵対枠が独立に踏んだ）。リテラル照合か ripgrep を使う。
 
-- [ ] 2a: 8 シンボル＋長文塊に対して上の 3 点を実施し、結果を本節へ追記
-- [ ] 2b: 圧縮対象から外すものを確定する（既定で `file_key_into` を含む）
+- [x] 2a: 検査 1（外からの名指し）を**機械化して実施した**——手で見ると取りこぼすため、
+      3 ファイルのコメントと**生きた `.md` 204 件**の逐語の重なりを断片長 24 文字以上で洗った。
+      **重なり 30 件、うち散文の写しが 10 件**（残りは識別子名＝`G-stale-identifiers` が守る面）:
+
+  | `.rs` 側 | 写しの相手 | 断片 |
+  |---|---|---|
+  | `indexer.rs:206` | `snotra-core/CLAUDE.md` | 記録側と照合側が同じ関数を通ることがバイト一致の… |
+  | `indexer.rs:352` | `PERFORMANCE.md` | ASCII 範囲では Unicode 小文字化と ASCII 小文字化の結果が一致する |
+  | **`indexer.rs:420`** | `snotra-core/CLAUDE.md` | 起動段の live ブロックの 1/3 を占めたまま（**`LoadOrScanStats` 塊＝圧縮候補の筆頭**） |
+  | `indexer.rs:1816` | `snotra-core/CLAUDE.md` | pre-filter が false negative を出す |
+  | `indexer.rs:1912` | `snotra-core/CLAUDE.md` | こちらが消すのは「木を伸ばしたのに…」 |
+  | `indexer.rs:3880` | `PERFORMANCE.md` | 結果は正しいまま静かに遅くなるので挙動テストでは捕まらない |
+  | **`build.rs:4`** | `snotra-core/CLAUDE.md` | **v4 ヒット時 Wave 1 スキップ / v3 fallback**（版リテラル） |
+  | `build.rs:341` | `PERFORMANCE.md` | 3 本のアリーナの連結バイト列を 1 パスずつ舐める |
+  | `build.rs:369` | `snotra-core/CLAUDE.md` | migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る |
+  | `index_tree.rs:785` | `ADR-sorted-prefix-over-reflagging` | 「既存の最大」を組み立てる費用を全ユーザーへ課す価値は無い |
+
+- [x] 2b: 圧縮対象の確定
+  - **外す**: `index_tree.rs:788-804`（`file_key_into`）——規約が逐語引用しており機構は見ない（B-2）
+  - **写しは「指す」形へ畳む**: 上の 10 件。**片方を消すのではなく、`.rs` 側から正本を指す**
+  - **⚠ 計画外の発見**: **版リテラルは `snotra-core/CLAUDE.md` にも在る**（`build.rs:4` の写し）。
+    A-3 の是正を `build.rs` だけに当てると写しが残る。**`snotra-core/CLAUDE.md` 側も同じ変更で直す**
+    ⇒ 変更ファイルに `snotra-core/CLAUDE.md` を追加する
 
 ### Phase 3 — 圧縮（ファイル単位でコミット）
 
@@ -111,7 +132,10 @@
 | 順序・同期・所有権の局所制約／非自明な失敗モード | レビュー時だけ必要だった正当化 |
 | **着地済み・着地先の無い判断根拠の実測値**（A-2 の 1・2 分類） | **判断を支えていない経緯値**（A-2 の 3 分類） |
 
-- [ ] 3a: `index_tree.rs`——`//!` は**層違いの内容を item doc へ降ろす**方向で縮める（B-5）
+- [x] 3a: `index_tree.rs`——`//!` から実装詳細（SoA/AoS の並べ方・`NameArena` の共有と
+      ディスクを通らない消費者）を `IndexTree` / `NameArena` の item doc へ**降ろした**（35 → 25 行）。
+      残したのは責務・依存方向・モジュール全体の不変条件（辿る規則を 2 回書かない）・射程。
+      ADR との散文の写し 1 件（`:785`）を「指す」形へ畳んだ。`cargo doc` 緑
 - [ ] 3b: `search/build.rs`——長文塊の圧縮に加え、**版リテラルを落として variant 名だけ残す**（A-3。
       `indexer.rs:36-42` が「版のリテラルを他所へ焼き込まないこと」と名指しで禁じている）
 - [ ] 3c: `build.rs:29` の「構築 68 → 58 ms」を落として `PERFORMANCE.md` の節を指す形へ

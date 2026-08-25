@@ -140,7 +140,7 @@ ms へ落としてはならない**——ゼロ方向へ切り捨てるので `-
 - [x] `memory_footprint.rs` のフェーズ内訳を `.as_millis()` 付きへ
 - [x] 残余算式を案 B へ（D3）: 生 `Duration` の和を作り、**符号つき**で差を取ってから
       ms へ落とす（D4。`delta_mib` と同じ作りに揃える）
-- [ ] `cargo test -p snotra-core` が緑であること
+- [x] `cargo test -p snotra-core` が緑であること
 
 ### Phase 3 — 意味論が変わったコメント・doc の書き直し
 
@@ -155,7 +155,7 @@ ms へ落としてはならない**——ゼロ方向へ切り捨てるので `-
       **消すのではなく、残る主張へ弱める**——`LoadOrScanStats` は全フィールドが `Duration` に
       なるが、「生成側が丸めた `Duration` を渡す形が残り、そこに検査が届かない」という
       `total` の doc の残余は依然として真である（issue が明示するとおり、この変更でも減らない）
-- [ ] `cargo doc --workspace --no-deps --document-private-items` を**手で**走らせる
+- [x] `cargo doc --workspace --no-deps --document-private-items` を**手で**走らせる
       （intra-doc link 切れは hook が沈黙する・`.claude/rules/comments.md`）
 
 ### Phase 4 — 散文の追随
@@ -164,7 +164,7 @@ ms へ落としてはならない**——ゼロ方向へ切り捨てるので `-
 - [x] `PERFORMANCE.md:2180` の「現在の残余は 0〜1 ms である」の近傍へ、その値が**案 A の
       意味論で測られたもの**であることを明記する
 - [x] `snotra-core/CLAUDE.md` の 1 か所を新識別子へ
-- [ ] `npm run governance:check` が緑であること
+- [x] `npm run governance:check` が緑であること
 
 ### Phase 5 — 終端の検証（受け入れ条件の実測）
 
@@ -173,14 +173,14 @@ ms へ落としてはならない**——ゼロ方向へ切り捨てるので `-
       **ヒットは 2 つの箱へ仕分ける**——`docs/superpowers/`（凍結）と `workspace/`（本サイクルの
       調査・計画・レビュー成果物。旧識別子を引用しているのは正しい）。どちらでもないヒットが
       1 件でもあれば未完である
-- [ ] **`startup.rs:416-417` の書き直しは grep では検算できない**（識別子を含まないため）。
+- [x] **`startup.rs:416-417` の書き直しは grep では検算できない**（識別子を含まないため）。
       当該 2 行を目で読み、`LoadOrScanStats` の `*_ms` を現在形で語る文が残っていないことを確かめる
-- [ ] `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` /
+- [x] `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` /
       `cargo test -p snotra-core` / `cargo test -p snotra` / `cargo doc ...` / `npm test` /
       `npm run governance:check` をすべて緑にする
-- [ ] `cargo run -p snotra` を dev で 1 回起動し、`[index-load]` の行が
+- [x] `cargo run -p snotra` を dev で 1 回起動し、`[index-load]` の行が
       **変更前と同じ形**（`cache_hit=.. total=..ms hash=..ms ...`）で出ることを目視で確認する
-- [ ] 実装差分を確定させる（コミット可能な状態にする）
+- [x] 実装差分を確定させる（コミット可能な状態にする）
 
 ## テスト方針と検証コマンド
 

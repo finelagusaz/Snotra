@@ -1,0 +1,219 @@
+issue #1178 検証ログ（進行中・随時追記）
+================================================
+
+## アンカー確認
+検証対象 sha: d38393bd883fb957206a0aa15c2a8c4f17ae1f46
+`git rev-parse HEAD` 実測: d38393bd883fb957206a0aa15c2a8c4f17ae1f46 （一致・checkout --detach 後）
+worktree の元 HEAD は 1a405180（親コミット #1027 の直後）だったため checkout --detach で合わせた。
+
+## 差分の把握（完了）
+- snotra-core/src/indexer.rs: LoadOrScanStats の 6 フィールドを u128(ms) → Duration に改名
+  (hash_ms→hash, cache_load_ms→cache_load, cache_read_ms→cache_read, scan_ms→scan,
+   sort_ms→sort, cache_save_ms→cache_save)。LoadCacheResult::read_ms→read,
+   upgrade_save_ms→upgrade_save（Option<Duration>）。Scanned::scan_ms/sort_ms→scan/sort。
+  finish_legacy_read の引数 read_ms→read_took（read フィールドと衝突するため shorthand 不可）。
+  scan_and_sort_timed の Scanned 構築で scan: scan_took / sort: sort_took（scan 引数と衝突するため）。
+- src-tauri/src/main.rs: [index-load] 行、s.hash_ms → s.hash.as_millis() 等。フォーマット文字列自体は無変更。
+- src-tauri/src/startup.rs: 385 行台の saturating_sub は変更なし（別の用途、u64 出力契約）。
+  413-420 行台の doc コメントを「他の *_ms は今も丸めている」→「消えたのは実例であって形ではない」へ弱めた。
+- snotra-core/tests/memory_footprint.rs: delta_ms(total, attributed) を新設
+  (total.as_nanos() as f64 - attributed.as_nanos() as f64) / 1_000_000.0 。
+  残余表示を {}ms（saturating_sub）→ {:+.1}ms（符号つき）に変更。cache_save_is_internal 判定は
+  s.cache_hit のまま維持（意味論変わらず）。
+- PERFORMANCE.md: 旧識別子表記の更新 + 残余 0〜1ms の記述に「旧意味論で測った値」の注記を追加。
+- snotra-core/CLAUDE.md: cache_load_ms → cache_load の呼称更新。
+- workspace/plan.md: 計画ドキュメント更新（実装計画そのもの、コード変更ではない）。
+
+grep 確認: リポジトリ全体で旧識別子（hash_ms/cache_load_ms/cache_read_ms/scan_ms/sort_ms/
+cache_save_ms/read_ms/upgrade_save_ms、単語境界）の残存 0 件（*.rs 全体）。
+LoadOrScanStats / .stats.* を参照するファイルは4つ（indexer.rs, memory_footprint.rs, main.rs,
+startup.rs）のみで、変更差分に含まれる4ファイルと一致——呼び出し元の取りこぼしなし。
+
+## カテゴリ判定
+- **A（*.rs 変更）: 該当。** indexer.rs / main.rs / startup.rs / memory_footprint.rs を変更。
+- **B（TS）: 非該当**（*.ts 変更なし）。
+- **C（ウィンドウ生成・表示順・ホットキー・スラッシュコマンド）: 非該当。** trace イベント名・
+  hotkey 登録・ウィンドウ生成に触れていない（計測フィールドの型改名のみ）。主エージェントの判定を
+  自分でも確認: 該当なし。
+- **D（UI スタイル・レイアウト・表示）: 非該当。** `[index-load]` の format 文字列はバイト単位で不変
+  （`git show d38393bd -- src-tauri/src/main.rs` で確認、リテラル文字列は無変更、`s.hash_ms`→
+  `s.hash.as_millis()` のような式の書き換えのみ）。stderr の計器行のみでユーザー可視 UI ではない。
+  主エージェントの判定を追認。
+- **E（.githooks）: 非該当**（変更なし）。
+- **F（ガバナンス文書 *.md 変更）: 該当。** PERFORMANCE.md / snotra-core/CLAUDE.md / workspace/plan.md
+  を変更。主エージェントの判定どおり該当。
+
+## カテゴリ A 実行結果（すべて exit 0 / green）
+- `cargo fmt --all -- --check` → exit 0
+- `cargo check --workspace` → exit 0（Finished, warning 無し）
+- `cargo clippy --workspace --all-targets -- -D warnings` → exit 0（warning 無し）
+- `cargo test -p snotra-core --lib` → 605 passed; 0 failed; 11 ignored（commit message の主張と一致）。
+  改名後のテスト `indexer::tests::load_or_scan_with_stats_reports_upgrade_save_in_cache_save` が
+  実在し pass。
+- `cargo test -p snotra-core`（全ターゲット、--lib 以外の統合テスト含む）→ 全 green
+  （memory_footprint.rs・path_query_cost.rs 等は計測専用で ignored、期待どおり）。
+- `cargo test -p snotra` → 303 passed; 0 failed; 4 ignored（commit message の主張と一致）。
+- `cargo doc --workspace --no-deps --document-private-items` → exit 0、intra-doc link 切れなし。
+- **移行漏れ検出**: `cargo check --workspace --all-targets` → exit 0（`tests/memory_footprint.rs` の
+  13 件を含む全ターゲットがコンパイル通過）。単なる `cargo check --workspace`（--all-targets 無し）
+  ではこのファイルは対象に入らない点を指示どおり避けた。
+
+## カテゴリ F 実行結果
+- `npm run governance:check` → 全検査 passed（検査 23 件・対象文書 36 件、他）。green。
+
+## レビュー所見（code-reviewer 観点）
+
+### Critical: なし
+
+### High: なし
+
+### Medium
+- **M1（⚠️寄り・確信中程度）**: `LoadOrScanStats` は `pub struct` であり、`hash`/`cache_load`/
+  `cache_read`/`scan`/`sort`/`cache_save` という汎用的すぎるフィールド名は crate 外から見ると
+  文脈を失いやすい（例えば `stats.scan` だけを見て「何の scan か」は型名 `LoadOrScanStats` に依存する）。
+  ただし doc コメントが手厚く、`_ms` 接尾辞除去という commit message の理由（型が Duration なのに
+  名前が ms だと嘘になる）は妥当。crate 外の実際の利用は `src-tauri`（同一ワークスペース内）のみで
+  現時点では実害なし。将来 crate 外の消費者が増えたときに再検討で十分。
+
+### 所見（Info、問題ではなく確認事項）
+- **`[index-load]` 出力のバイト不変性**: 確認した。フォーマット文字列リテラルは無変更
+  （`"[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms"`）。
+  変わったのは埋め込み式のみ（`s.hash_ms` → `s.hash.as_millis()` 等）で、`u128` の値と
+  `Duration::as_millis()` の値は同じ丸め（生成時に既に ms 精度だった #1027 以前と異なり、
+  今回は ns 精度の Duration を表示時に `as_millis()` で切り捨てる）。**出力される数値自体は
+  ロード処理の実測時間に依存するため diff からは「表示形式が同一」しか保証できないが、
+  s.total.as_millis() は変更前から Duration のままだったため式の形は一貫している。** 実際に
+  `cargo run` して行を確認してはいないが、コード上の保証（フォーマット文字列不変・式が単に
+  `.as_millis()` を後付けしただけ）で十分と判断する。⚠️ 実機での目視確認はしていない
+  （カテゴリ D 非該当と判定したため）。
+- **`tests/memory_footprint.rs` の残余算式**: `cache_save_is_internal = s.cache_hit` は変更前と同一の
+  述語（変更なし）。`attributed` の組み立ては
+  `s.hash + s.cache_load + s.scan + s.sort + if cache_save_is_internal { Duration::ZERO } else { s.cache_save }`
+  で、旧版の `saturating_sub` の被減数の組み立て（`s.hash_ms + s.cache_load_ms + s.scan_ms + s.sort_ms
+  + if ... { 0 } else { s.cache_save_ms }`）と同型——除外の条件・対象は完全に一致。**唯一の違いは
+  丸めのタイミング**（旧: 各フェーズをそれぞれ ms に丸めてから整数和 → 整数引き算 saturating_sub、
+  新: Duration のまま ns 精度で和 → 引き算 → 1 回だけ ms に丸め、符号つき f64）。commit message の
+  主張（残余が旧は丸め屑を吸っていた・新は符号つきで負が見える）は算式を読んで妥当と確認した。
+  `delta_ms` の実装 `(total.as_nanos() as f64 - attributed.as_nanos() as f64) / 1_000_000.0` は
+  doc の主張（ns→f64 ms 変換、符号を保持）どおり。
+- **`upgrade_save: Option<Duration>` の Some/None 生成点**: grep で確認、3 箇所すべて変更前と同じ
+  分岐に位置する。
+  1. `upgrade_legacy_cache_in` 内: `let upgrade_save = Some(save_started.elapsed());` （Some を作る
+     唯一の行、doc の主張どおり）
+  2. `finish_legacy_read` の `LegacyUpgrade::Write` 枝: `upgrade_legacy_cache_in(...)` の戻り値を
+     そのまま返す（1 の Some を経由）
+  3. `finish_legacy_read` の `LegacyUpgrade::Skip` 枝: `upgrade_save: None`（変更前から None）
+  4. `load_cache_in` の現行版（v7）早期リターン: `upgrade_save: None`（変更前から None）
+  変更前の u128 版と比較（diff中の該当行）でも同じ 4 箇所（Some 1 + None 3）であり、分岐の追加・
+  削除・移動は無い。値の型が `Option<u128>` → `Option<Duration>` に変わっただけ。
+
+### ⚠️ 確信の持てない所見
+- **⚠️1**: `LoadOrScanStats` doc の新規追記「ミリ秒への丸めは表示境界（`src-tauri` の `startup.rs` の
+  `to_ms`・`main.rs` の `[index-load]` 行・`tests/memory_footprint.rs` のフェーズ内訳）でだけ行う」
+  という文が全称主張に近い書き方だが、AGENTS.md の規約（全称は反証可能性を書き添える）に照らすと
+  「だけ」の主張は将来 snotra-core 内で別の丸めが追加されると崩れる。ただし commit message にも
+  「残余（本 PR では塞がない）: 丸めを生成側へ戻す退行を捕まえる検査は存在しない」と明記されており、
+  弱められないことを著者自身が認めている——doc とコミットメッセージが整合しているので、これは
+  指摘に値するリスクというより著者が既に認識・記録済みの既知の残余と判断する。Critical/High には
+  格上げしない。
+- **⚠️2**: `finish_legacy_read` の引数名を `read_took`（コメントで「shorthand を使えないため」と
+  説明）にしているが、同関数内には `read: LegacyRead` パラメータもあり、可読性の観点で
+  `read_took` と `read`（LegacyRead）が並ぶのはやや紛らわしい。ただし意図的な命名の理由がコメントに
+  明記されており、DRY/命名規約違反として報告する水準ではない。
+
+## 意図的に分けた構造（DRY 違反として報告していない）
+指示で渡された 4 点（delta_ms と to_ms の非統合／delta_ms と delta_mib の非統合／
+saturating_sub と符号つき delta_ms の非統一／20,000 件治具の据え置き）はいずれも実コードを読んで
+根拠が実装に反映されていることを確認した。指摘していない。
+
+## 変異注入（すべて実施・巻き戻し済み）
+
+**巻き戻し照合はすべて sha256 で行った**（mtime ではない）。ベースライン:
+- snotra-core/src/indexer.rs: 255bb67fcc2633cfcce6ae954e035f9653bb262db6c6f4894584186e991bb65d
+- snotra-core/tests/memory_footprint.rs: 6d1b84d28736627ae04e79b1a839c1a1c96a4de1462ac2004996a39cf4df2095
+
+各変異とも注入 → cargo test 実行 → 手で revert → sha256 再照合 → 一致確認、の順で実施。
+最終確認として `cargo test -p snotra-core --lib`（605 passed）と `cargo test -p snotra`
+（303 passed）を再実行し、変異前と完全一致することを確認した。`git status --short` は
+`workspace/verify-1178.txt`（新規作成した本ログ）のみを untracked として報告し、
+`git diff --stat` は空——ソースツリーは変異前と完全一致。
+
+### 変異 1: cache-hit 枝の配線 `cache_save: result.upgrade_save.unwrap_or(Duration::ZERO)`
+→ `cache_save: Duration::ZERO` に置換
+
+**結果: 落ちた（予測どおり）。**
+```
+--- clippy: 失敗 (exit 101) ---
+snotra-core\src\indexer.rs:1149:5: error: field `upgrade_save` is never read
+--- core-test: 失敗 (exit 101) ---
+failures:
+    indexer::tests::load_or_scan_with_stats_reports_upgrade_save_in_cache_save
+test result: FAILED. 604 passed; 1 failed; 11 ignored
+```
+指示どおりの検知器（`load_or_scan_with_stats_reports_upgrade_save_in_cache_save`）がまさに
+落ちた。副作用として `LoadCacheResult::upgrade_save` が「配線先を失って未読になる」ため
+clippy の dead-code 検査も同時に落ちる（配線を捨てる退行はこの経路でも検出される、という
+追加の発見）。
+
+### 変異 2: `upgrade_legacy_cache_in` の `let upgrade_save = Some(save_started.elapsed());`
+→ `let upgrade_save = None;`
+
+**結果: 落ちた（予測どおり）。2 つの検知器が同時に落ちた。**
+```
+--- core-test: 失敗 (exit 101) ---
+failures:
+    indexer::tests::load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format
+    indexer::tests::load_or_scan_with_stats_reports_upgrade_save_in_cache_save
+test result: FAILED. 603 passed; 2 failed; 11 ignored
+```
+`LoadCacheResult` レベルの検知器（前者）と、`LoadOrScanStats` レベルまで配線を追う検知器
+（後者）の両方が独立に落ちる——commit message の主張（「最終レビュー Important 1 の実際の
+欠陥はこの配線が壊れていたことであり、`upgrade_save` 単体の検知器はこの配線を落とす退行では
+落ちない」）とは違う変異（今回は Some を作る側そのものを壊した）なので both が落ちるのは
+一貫している。
+
+### 変異 3: `snotra-core/tests/memory_footprint.rs` の `delta_ms` を saturating 相当へ変更
+`(total.as_nanos() as f64 - attributed.as_nanos() as f64) / 1_000_000.0`
+→ `total.saturating_sub(attributed).as_nanos() as f64 / 1_000_000.0`
+
+**結果: 何も落ちなかった（予測どおり「検知器は無い」）。**
+```
+cargo test -p snotra-core → 605 passed; 0 failed; 11 ignored（変異前と同数）
+```
+`delta_ms` の消費者は `measure_real_index_footprint`（`#[ignore]`、手元 release 実行専用の
+計測ハーネス）内の `println!` 1 箇所だけであり、その値に対する `assert` は存在しない。
+通常の `cargo test` では実行されず（ignored のまま）、コンパイルも通り clippy も通る
+（`saturating_sub` は `Duration` の正当な API）。**この変更に検知器は無い、と明記する。**
+これは PERFORMANCE.md への注記（残余 0〜1ms は旧意味論の値、現在の基準にしない）で人間の
+判断に委ねられている領域であり、機構的な検査は存在しない。commit message の「残余（本 PR
+では塞がない）」の記述と整合する。
+
+### 変異 4: `LoadOrScanStats` 構築点（`load_or_scan_with_stats_in` の cache-miss 枝）で
+`scan: scan_took, sort: sort_took` → `scan: sort_took, sort: scan_took`（scan と sort を入れ替え）
+
+**結果: 何も落ちなかった（主エージェントの予測どおり「落ちない＝検出手段が無い」ことを実測で
+裏取り）。**
+```
+cargo test -p snotra-core --lib → 605 passed; 0 failed; 11 ignored（変異前と同数）
+cargo test -p snotra          → 303 passed; 0 failed;  4 ignored（変異前と同数）
+```
+commit message の残余の記述「`LoadOrScanStats` の 6 フィールドは同型ゆえ取り違えを検出する
+観測も無い（変更前も u128 で同型だったので、守りは減っていない）」を実測で確認した。
+`scan` テストが唯一 assert するのは cache-hit 枝の `scan == Duration::ZERO`（値の意味には
+踏み込まない）であり、cache-miss 枝で scan と sort が入れ替わっても検出しない。
+
+## 巻き戻しの最終照合（sha256）
+```
+snotra-core/src/indexer.rs             255bb67f...991bb65d  一致
+snotra-core/tests/memory_footprint.rs  6d1b84d2...4df2095   一致
+```
+`git status --short` / `git diff --stat` でも変更なしを確認済み。
+
+## 結論の要約
+- カテゴリ A・F ともに green（詳細は上記）。カテゴリ B・C・D・E は非該当と判定（根拠は上記）。
+- レビュー: Critical/High 指摘は無し。Medium 1 件（pub フィールド名の汎用性、実害なし）。
+  ⚠️ 2 件（既に著者が認識・記録済みの残余、格上げ不要）。
+- 変異注入 4 件すべて指示どおりの結果（2 件は期待どおり検知、2 件は期待どおり無検知で
+  commit message の「残余」記述と整合）。巻き戻しは sha256 で完全一致を確認。
+
+

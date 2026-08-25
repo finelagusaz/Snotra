@@ -1,0 +1,340 @@
+# verify-1179-round2.txt — issue #1179 / 2 巡目（1 巡目の指摘への対応の検算）
+
+アンカー: `0f0c7af8055b21f3993c24c777974e508fe687c7`（最終確認時も HEAD = このsha）
+前回アンカー: `37b49ad7`（差分は 2 コミット `d3adb8c5` + `0f0c7af8`）
+worktree: `C:/workspace/Snotra/.claude/worktrees/agent-a9f0ef41cb3d195ef`
+
+## アンカー合わせ（実測）
+
+checkout は 1 度**中断した**——1 巡目で私が置いた未追跡の `workspace/verify-1179.txt` が
+`0f0c7af8` で**追跡ファイルになった**ため衝突した（`Please move or remove them before you switch
+branches. Aborting`）。scratchpad へ退避してから消して checkout した
+（`MEMORY.md` の `git-rm-refusal-is-protection-not-obstacle` と同型の局面。**退避が無ければ
+1 巡目の成果を失っていた**）。
+
+**副産物の検算**: 委譲元がコミットした `workspace/verify-1179.txt` は、私が 1 巡目に書いた版と
+**SHA256 が一致**した（改変なしで記録されている）。
+
+**最終整合**: 全変異の巻き戻し後、`git status --porcelain` は `?? workspace/verify-1179-round2.txt`
+のみ、`git diff --stat HEAD` は空、5 ファイルの SHA256 が全一致、`test:powershell` を再実行して
+131 passed / 0 failed。
+
+
+## 0. 測定環境とベースライン
+
+`git diff --stat 37b49ad7..0f0c7af8 -- '*.rs' 'Cargo.lock' '*/Cargo.toml'` は**空**なので、
+1 巡目でコールドから建てた debug（53,720,576 B）/ release（10,878,976 B）をそのまま使える
+（**再ビルドが要らない根拠**。「前と同じだろう」ではなく差分で確かめた）。
+`node_modules` の junction も継続。Windows 11 / pwsh 7.6.5 / `CARGO_TARGET_DIR` 未設定。
+
+### 巻き戻し照合用ベースライン（SHA256・`0f0c7af8` 時点／最終確認でも全一致）
+
+```
+A88F6083834E96018DA1660E91D45FFB688A0EC8A8EC5E00130C08960E9C7CB8  scripts/bench-startup.ps1
+9CB1C46B0C06E4CF9A572DE24C07BB736BDE516DBA988E9252D8ABAFEBD69D57  scripts/smoke-startup.ps1
+4F5511690AE5F3EA790C6770401AFEF11AACF10CD32B80F0C6662C3F7236E38A  scripts/lib/SnotraSmoke.psm1
+FC6596DFD6F84CE95CB30E8536E91D7B63411A162504380F6A9CDD0C9CAB0A4E  scripts/lib/SnotraSmoke.Tests.ps1
+3A86F15D951CDDE997047E41694D39CF3AD31BFE599A756830B4224061795D6E  docs/build-commands.md
+```
+
+
+## 1. カテゴリ A〜F 再判定（母集団は `0f0c7af8` の**累積**差分）
+
+Phase 5 で `scripts/lib/SnotraSmoke.Tests.ps1` / `scripts/bench-startup.ps1` /
+`scripts/smoke-startup.ps1` / `docs/build-commands.md` / `workspace/plan.md` が動いた。
+
+| カテゴリ | 判定 | 根拠 |
+|---|---|---|
+| **A. Rust** | **該当なし** | 累積差分に `.rs` は 0 件。`git diff --stat 37b49ad7..0f0c7af8 -- '*.rs' 'Cargo.lock' '*/Cargo.toml'` も**空**（＝ Rust の挙動は不変で、1 巡目のバイナリを再利用できるという判断の根拠でもある） |
+| **B. TypeScript** | **該当なし** | `.ts` に差分なし。`npm test` は C の枠で実行済み |
+| **C. 窓生成／表示順・hotkey・スラッシュコマンド** | **文面上は該当なし／実質は実行**（1 巡目より強い） | トリガー文言には当たらない（本体の挙動は不変）。**ただし Phase 5 は `scripts/lib/SnotraSmoke.Tests.ps1` を変更しており、`test:powershell` はもはや「念のため」ではなく変更したファイル自身の検査である**。`npm test` / `test:powershell` / `smoke:startup` / `bench:startup` をすべて実行。`smoke:egui` のみ非該当（`smoke-egui.ps1` は差分の外で、`Resolve-SnotraCargoExecutable` の呼び出し点も持たない） |
+| **D. UI の見た目** | **該当なし** | 描画を 1 ピクセルも変えない。`smoke:manual` はここに含まれる＝**実行不能ではない** |
+| **E. `.githooks/**`** | **該当なし** | 差分なし（`npm test` が副次的に緑） |
+| **F. ガバナンス文書** | **該当・実行** | `docs/build-commands.md` と `workspace/plan.md`（`.md`）を変更 |
+
+**「実行不能」は 0 件**（環境は Windows、対話的目視は該当なしの D の中）。
+
+### 実行結果（ベースライン・変異注入の前）
+
+| コマンド | exit | 証拠 |
+|---|---|---|
+| `npm run governance:check` | **0** | `全検査 passed（検査 23 件 / 対象文書 36 件 …）` |
+| `npm test`（vitest） | **0** | `Test Files 38 passed (38)` / `Tests 901 passed (901)` |
+| `npm run test:powershell`（Pester） | **0** | `Tests Passed: 131`（1 巡目の 129 + 新検知器 2） |
+| `npm run smoke:startup`（`-ExePath` 無し） | **0** | `本体: …\agent-a9f0ef41cb3d195ef\target\debug\snotra.exe` / `Startup smoke passed (5 runs).` |
+| `npm run bench:startup -- -UseVerificationProfile -Iterations 1` | **0** | `Exe:` / `Profile:` とも worktree・`起動計器 passed（1 runs）` |
+
+新検知器はパラメータ化が**生きている**（名前だけでなく本体も走っている・所要時間が別々）:
+```
+Describing 起動ハーネスの既定 ExePath はスクリプトの住むコピーから導かれる
+  [+] bench-startup.ps1 は repoRoot をスクリプト自身の位置から導く（…・#1179） 29ms
+  [+] smoke-startup.ps1 は repoRoot をスクリプト自身の位置から導く（…・#1179）  6ms
+```
+
+
+## 2. 私の指摘の解消を、私の道具で測った
+
+### High-1（`$repoRoot` の退行に検出器が無い）→ **解消を確認**
+
+**(a) 私の変異 (D) で本当に赤くなるか——自分の手で測った。**
+`smoke-startup.ps1` の `$repoRoot` を `(Get-Location).Path` へ戻す（1 巡目とまったく同じ変異）:
+
+| | 1 巡目（`37b49ad7`） | 2 巡目（`0f0c7af8`） |
+|---|---|---|
+| `npm run test:powershell` | **exit 0・129 passed / 0 failed** | **exit 1・130 passed / 1 failed** |
+| 失敗した It | — | **`smoke-startup.ps1` の It だけ**（`bench-startup.ps1` の It は緑） |
+| 失敗の文言 | — | `Expected regular expression '\$PSScriptRoot' to match '$repoRoot = (Get-Location).Path', because cwd 起点にすると #1179 が緑のまま復活する` |
+
+**穴は塞がった。** ついでに「smoke だけが赤・bench は緑」であることが、`-ForEach` の
+パラメータ化が**ファイルごとに弁別している**（共有本体で 1 回しか走っていない形ではない）
+ことの証拠にもなっている——委譲元が踏んだ discovery/run 相分離の事故は再発していない。
+
+**(b) 誤検出しないか → 1 件ある（Low-1）。** 下記「変異 H」。
+
+**(c) 宣言した死角のほかに穴が無いか → 1 件ある（High-2）。** 下記「変異 G」。
+
+### Medium-1（`-ProfileDir` の非対称）→ **解消を確認**
+
+1 巡目に私が症状を捕まえたのと**同じ道具**（cwd = メイン作業コピー・worktree のスクリプトを
+絶対パスで・`-ExePath` も `-ProfileDir` も渡さない）で測り直した:
+
+```
+cwd = C:\workspace\Snotra
+Exe:        C:\workspace\Snotra\.claude\worktrees\agent-a9f0ef41cb3d195ef\target\release\snotra.exe
+Profile:    C:\workspace\Snotra\.claude\worktrees\agent-a9f0ef41cb3d195ef\target\bench-startup\profile
+起動計器 passed（1 runs）。   exit 0
+```
+
+**`Exe:` と `Profile:` が揃った。** かつ、メイン作業コピー側 `C:/workspace/Snotra/target/bench-startup/`
+の `config.toml` / `index.bin` は **1 巡目の時刻（19:38:25）のまま**で、新しい書き込みが 1 件も
+起きていない（時刻で確かめた。存在の有無では 1 巡目の残骸と区別が付かない）。
+
+**明示 `-ProfileDir` の枝**（委譲元の依頼どおり相対・絶対の両方。cwd = scratchpad で書き込みを閉じ込めた）:
+
+| 入力 | exit | 結果 |
+|---|---|---|
+| 相対 `-ProfileDir 'rel-prof'` | **0** | `Profile: …\scratchpad\pdprobe\rel-prof`・`config.toml` 生成を確認。**cwd 相対という文書どおりの契約が生きている** |
+| 絶対 `-ProfileDir '<abs>'` | **1** | `New-Item: ファイル名、ディレクトリ名、またはボリューム ラベルの構文が間違っています。 : '…\pdprobe\C:\Users\…'`（**fail-closed**・ゴミディレクトリも生成されない） |
+
+→ 詳細と裁定は Low-2。**結論から言えばこれは退行ではない**（下記）。
+
+### Low-1 / Low-4 / ⚠️-2 → **解消を確認**
+
+- `smoke-startup.ps1:33` の `throw` に `（先に cargo build -p snotra）` が入った（差分を実読）
+- `docs/build-commands.md` の行折れが整った（同）
+- ⚠️-2 は**部分採用が実際に効いている**: 新設段落から
+  「`cargo metadata` の `target_directory` から導くため `CARGO_TARGET_DIR` に追随する」の重複が
+  **消えて**「`test:powershell` と同じ形で導く」への参照に置き換わった（`git diff` の逐語で確認）。
+  `:51` は未変更。残った論点は ⚠️-1（下記）。
+
+### 却下されたものへの応答
+
+- **Low-2（`throw` がパスを表示しない）**: **却下に同意する。** 導出行が在る限りこの地点で
+  `$ExePath` は非空であり、到達経路は変異注入だけ。守る退行が実在しないという判断は正しい。
+- **Low-3（`-LiteralPath` の不揃い）**: **却下に同意する。** 挙動差が無く差分の外の行であり、
+  「ついでの整形」を混ぜないという判断のほうが `AGENTS.md` の方針に沿う。
+- **⚠️-1（`Push-Location` が native 子プロセスへ効くのは実装依存では）**: **決着とする。**
+  私自身が実リポジトリで効くことを実測しており、`--target-dir` 案が `CARGO_TARGET_DIR` 追随という
+  既存の約束を壊すという反論は正しい。**この論点は閉じる。**
+
+
+## 3. 変異注入（1 巡目・委譲元の足と重複しない新しい足）
+
+巻き戻しは**全件 SHA256 で照合**（mtime は使っていない）。各アームの間で
+`git status --porcelain` が清浄であることも確認した。
+
+### 検知器の 2 つの `Should` は 2×2 で独立に効く
+
+「片方だけでは守れない足があるか」への答え: **ある。どちらも外せない。**
+
+| 変異 | 検知器そのまま | Count の `Should` を外す | Match の `Should` を外す |
+|---|---|---|---|
+| **M-replace**（= 変異 D・代入を cwd 起点へ**差し替える**） | **赤**（Match が捕まえる・exit 1 / 130 passed 1 failed） | — | **緑**（131 passed・exit 0） |
+| **M-add**（正しい行の**後ろに** `$repoRoot = (Get-Location).Path` を足す。実行時は後勝ちで #1179 が復活する） | **赤**（Count が捕まえる: `Expected 1, … but got 2`） | **緑**（131 passed・exit 0。`$assignments[0]` は正しい行のまま） | — |
+
+→ **Count は「散らばり」を、Match は「差し替え」を、それぞれ単独で担っている。**
+どちらを削っても片方の足が素通りする。**2 つとも荷重している。**
+
+### 変異 E'（`-ProfileDir` の導出を cwd 起点へ戻す）→ **黙る。ただし宣言済みの除外である**
+
+まず**失敗した変異を記録する**: 最初に書いた形は
+`Join-Path (Get-Location) (if (…) {…} else {…})` で、PowerShell では `(if …)` が式にならず
+`The term 'if' is not recognized` で exit 1 になった。**赤くなったが、これは検知器が効いた赤ではない。**
+構文的に妥当な最小形（`else` 枝だけを cwd 起点へ）で測り直した:
+
+```
+$profileBase = if ($ProfileDir) { … } else { Join-Path (Get-Location) 'target/bench-startup/profile' }
+
+cwd = C:\workspace\Snotra から bench を既定で回すと
+  Exe:      …\agent-a9f0ef41cb3d195ef\target\release\snotra.exe
+  Profile:  C:\workspace\Snotra\target\bench-startup\profile      ← Medium-1 の症状が完全に復活
+  起動計器 passed（1 runs）。 exit 0
+  メイン側 config.toml / index.bin の LastWriteTime が 19:38:25 → 19:53:07 へ更新（＝実書き込み）
+
+npm run test:powershell : exit 0 / 131 passed
+npm test                : exit 0 / 901 passed
+```
+
+**何も赤くならない。** ただしこれは**新しい死角ではない**——新検知器の doc コメントが
+「縛るのは『repoRoot をスクリプト自身の位置から導くこと』だけで、導出の中身も**プロファイルの
+置き場も射程外**である」と**名指しで除外している**。よってこれは
+**宣言が実態と一致していることの実測**であって、指摘ではない。
+（`AGENTS.md`「射程の宣言と逸脱の明記を対で書く」に沿った状態が、測って裏づいた。）
+
+### 変異 G（使用点だけ cwd 起点へ）→ **黙る。こちらは宣言に無い**（High-2）
+
+`$repoRoot` の**代入行はそのまま**にして、使用点だけを差し替えた:
+
+```
+L28: $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path     ← 無傷
+L30: $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot (Get-Location).Path -Profile debug
+
+cwd = C:\workspace\Snotra から既定で回すと
+  本体: C:\workspace\Snotra\target\debug\snotra.exe        ← #1179 の欠陥そのもの（メインのコピー）
+  Startup smoke passed (1 runs).   exit 0
+
+npm run test:powershell : exit 0 / 131 passed   ← 新検知器の 2 つの Should は両方とも通る
+npm test                : exit 0 / 901 passed
+```
+
+**検知器の宣言した除外は「導出の中身 / プロファイルの置き場 / 3 本目のハーネス」の 3 つで、
+「使用点」は入っていない。** よってこれは**宣言の外に残った穴**である（High-2）。
+
+### 変異 H（誤検出プローブ・意味を変えない整形）→ **赤くなる**（Low-1）
+
+代入を行継続で折った（PowerShell として妥当・意味不変）:
+
+```
+$repoRoot =
+  (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+```
+
+**先に実行して意味不変を確かめた**: `本体: …\agent-a9f0ef41cb3d195ef\target\debug\snotra.exe`・
+`Startup smoke passed (1 runs).`——**ハーネスは正しく動いている**。それでも:
+
+```
+npm run test:powershell : exit 1 / 130 passed 1 failed
+  Expected regular expression '\$PSScriptRoot' to match '$repoRoot =',
+  because cwd 起点にすると #1179 が緑のまま復活する
+```
+
+→ 誤検出（Low-1）。詳細と裁定は下記。
+
+### 変異の一覧（何が赤くなり、何が黙ったか）
+
+| 足 | 赤くなったもの | 黙ったもの | 巻き戻し照合 |
+|---|---|---|---|
+| **D**（代入を cwd 起点へ差し替え） | `test:powershell` exit 1（smoke の It のみ） | — | 一致 |
+| **M-add**（代入を 2 か所に散らす） | `test:powershell` exit 1（Count） | — | 一致 |
+| **D × Match 抜き** | — | Pester 131 緑 | 一致 |
+| **M-add × Count 抜き** | — | Pester 131 緑 | 一致 |
+| **E'**（ProfileDir を cwd 起点へ） | — | Pester 131 / vitest 901 / bench exit 0（**宣言済み除外**） | 一致 |
+| **G**（使用点だけ cwd 起点へ） | — | Pester 131 / vitest 901 / smoke exit 0（**宣言外の穴**） | 一致 |
+| **H**（意味不変の行折り） | `test:powershell` exit 1（**誤検出**） | — | 一致 |
+
+
+## 4. レビュー所見（Phase 5 の差分を、1 巡目と同じ枠組みで当て直した）
+
+### Critical — 0 件
+
+### High
+
+**High-2: 新検知器は `$repoRoot` の「導出」を縛るが「使用点」を縛らないため、
+#1179 の退行が 1 形だけ宣言の外を通る**
+
+- 根拠は変異 G。`scripts/smoke-startup.ps1:28` の代入を無傷のまま `:30` の
+  `-RepositoryRoot` へ `(Get-Location).Path` を渡すと、**Pester 131 / vitest 901 / smoke exit 0 が
+  すべて緑のまま**、`本体: C:\workspace\Snotra\target\debug\snotra.exe`（メインのコピー）を検査する。
+  `scripts/bench-startup.ps1:55` も同型。
+- 検知器の doc コメントが宣言している除外は
+  「導出の中身」「プロファイルの置き場」「3 本目のハーネス」の 3 つで、**使用点は名指されていない**。
+  1 巡目の High-1 に対して置かれた機構が、**守ろうとした退行クラスの一部だけを覆っている**状態である。
+- **これは「検知器が要らない」という指摘ではない**——変異 D が赤くなるようになったのは実質的な前進である。
+  問題は**宣言の射程が実態より広く読める**ことで、`AGENTS.md`「保証を宣言する文の隣に、
+  保証されていない数や一覧を置かない」に触れる。
+- 取りうる対処は 2 つあり、**どちらもチーム判断**である:
+  1. **宣言へ「使用点」を足すだけ**（実装を変えない）。`detector-scope-only-as-tight-as-needed` の
+     「塞げない迂回は死角として宣言して止める」に沿う、最も安い解。
+  2. 呼び出し行を見る述語を足す（`-RepositoryRoot \$repoRoot` の形）。ただし
+     `visual-check-colors.ps1` は `-RepositoryRoot $repositoryRoot`、`run-pester.ps1` /
+     `visual-input-metrics.ps1` は `$repoRoot` と**変数名が割れている**ので、対象を数え上げている
+     いまの 2 本に限れば書ける。
+- **1 を採るにせよ 2 を採るにせよ、採用の前に変異 G で落ちること（1 なら宣言が変異 G を
+  言い当てていること）を測ること。** この報告の変異 G がその手本である。
+
+### Medium — 0 件
+
+1 巡目の Medium-1 は解消を実測した（上記 §2）。Phase 5 の差分に新しい Medium は見つからなかった。
+
+### Low
+
+**Low-1: 検知器が意味不変の整形を赤にし、しかも `-Because` が原因を取り違える**
+根拠は変異 H。`$repoRoot =` の後で改行して折るのは PowerShell として妥当で、
+**ハーネスは正しく動く**（実行して確認済み）。それでも `$assignments[0]` が `'$repoRoot ='` に
+なるため Match が落ち、`because cwd 起点にすると #1179 が緑のまま復活する` と表示される
+——**開発者は cwd 起点になどしていない**ので、この文言は探索を誤導する。
+同じクラス: `${repoRoot} =` のブレース記法（正規表現に当たらず Count=0 → 赤）、変数名の改名。
+**fail-closed なので `detector-scope-only-as-tight-as-needed` の選好には沿っている**（この repo は
+fail-open より fail-closed を採る）ため**優先度は低い**。直すなら `-Raw` で読んで代入式全体に
+当てるか、`-Because` を「repoRoot は `$PSScriptRoot` 起点の 1 行で導くこと（行を折らない）」の
+ように**形の要求**として書くと、赤の意味と直し方が一致する。
+
+**Low-2: 明示 `-ProfileDir` に絶対パスを渡すと壊れる——ただし退行ではない（実測で確定）**
+実測は上記 §2 のとおり exit 1・fail-closed。**この式が差分の前後で同一であることを、
+推論ではなく実行で確かめた**: `git show 37b49ad7:scripts/bench-startup.ps1` を一時展開して
+同じ入力で回し、**同一のエラー・同一の exit 1** を得た（差分前の行は
+`$profileFull = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $ProfileDir))`）。
+機序は `Join-Path` が第 2 引数の絶対性を見ないこと（実測: `Join-Path 'C:\a' 'C:\b'` → `C:\a\C:\b`。
+`GetFullPath` も throw せずそのまま正規化する）。
+**報告に値するのは挙動そのものではなく、新設された param コメントである**——
+`scripts/bench-startup.ps1:39-43` は「明示された値は cwd 相対のまま——`-ExePath` と同じ判断である」と
+**`-ExePath` との等価**を謳うが、`-ExePath` は絶対値を正しく扱うのに `-ProfileDir` は扱えない。
+**コメントが挙動より一段強い。** リポジトリ内には先例がある（`scripts/run-pester.ps1:31` の
+`[IO.Path]::IsPathRooted`）。直すなら 1 行、直さないならコメントを「相対値のときは cwd 相対」へ弱める。
+
+**Low-3: ハーネスの構文エラーはどの自動検査にも届かない（変異 E の事故から派生）**
+私が最初に書いた構文的に不正な変異体（`(if …)`）のもとで、`npm run test:powershell` は
+**131 passed / exit 0**、`npm test` も **901 passed / exit 0** だった。新検知器は
+`Get-Content` で行を読むだけなので、`.ps1` が**構文として成立しているか**を一切見ない。
+実害は小さい（ハーネスを 1 回でも回せば即座に落ちる・fail-closed）ので**対処不要と考える**が、
+「ソース述語で縛る」型の検知器一般の性質として記録しておく価値がある。
+
+### ⚠️（確信の持てないもの）
+
+**⚠️-A: `docs/build-commands.md` の新しい書き方が、`test:powershell` の明示相対の挙動を
+取り違えて読ませうる**
+新段落は「`bench:startup` と `smoke:startup` **も既定の本体を** `test:powershell` と同じ形で導く」と
+**既定の枝に限って**等価を主張しており、そこは正しい。だが同じ段落の末尾が
+「明示した相対パスは cwd 相対のまま解釈される」で終わる。**これは bench / smoke については真だが、
+`test:powershell` については偽である**——`scripts/run-pester.ps1:34` は明示された相対パスを
+`$repoRoot` へ re-root する。主語は段落の主題（bench / smoke）なので**文としては正しい**が、
+直前で「`test:powershell` と同じ形」と言った直後に来るため、等価の射程を広げて読む余地がある。
+確信が持てないので ⚠️ に置く。直すなら「——明示した相対パスは（`test:powershell` と違い）
+cwd 相対のまま解釈される」で済む。
+
+**⚠️-B: `-ForEach` の対象の数え上げは、いま「弁別している」ことまでは測れたが
+「増えたときに気づく」経路が無い**
+死角として宣言されているとおり 3 本目のハーネスが増えれば黙る。この宣言自体は妥当だと思う
+（広げると `run-pester.ps1` / `visual-input-metrics.ps1` / `visual-check-colors.ps1` で誤検出になる、
+という理由も実読して裏づけた）。ただし**「数え上げは足すたびに腐る」**（`AGENTS.md`「検証の作法」）
+の典型でもある。いま踏む必要は無いが、**もし将来この宣言を強めるなら、それは
+「起動ハーネス」という母集団を誰が知っているかの問題**である。確信は持てないので ⚠️。
+
+**⚠️-C（1 巡目からの持ち越し・決着）**
+- ⚠️-1（`Push-Location` の実装依存性）: **決着**。却下理由に同意（上記 §2）
+- ⚠️-2（`CARGO_TARGET_DIR` の重複主張）: **解消を差分で確認**。新設段落から重複が消えた。
+  残ったのは上の ⚠️-A（別の論点）
+- ⚠️-3（`visual-check-colors.ps1` の残余の射程）: 1 巡目で「計画の判断は正しい」と裁定済み。
+  Phase 5 は `visual-check-colors.ps1` を触っていないので**変化なし**
+
+
+## 5. 計画判断・パフォーマンス
+
+- `SPEC.md` 非該当は引き続き妥当（製品の挙動ではなく開発用ハーネス）。
+- `workspace/plan.md` へ Phase 5 が追記されている（`+33`）。**`governance:check` は緑**。
+- Phase 5 は `.rs` を 1 行も触らず、`Cargo.lock` / `Cargo.toml` も不変（実測）。
+  **パフォーマンスへの影響はない。** 新検知器の実行費用は 29ms + 6ms（Pester の実測値）で、
+  `test:powershell` 全体（6.9s 台）に対して無視できる。
+- CI 3 経路（`e2e.yml:124,137` / `release.yml:83`）は明示 `-ExePath` かつ `-ProfileDir` を渡さず
+  cwd = repo root なので、Phase 5 でも挙動は変わらない（1 巡目に実読済み・今回も差分に
+  `.github/` が無いことを確認）。

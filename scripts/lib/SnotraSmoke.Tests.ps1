@@ -209,26 +209,34 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # 復活する。ハーネス自身を起動して確かめるには本体のビルドと実起動が要るので、ここは
     # **ソースの形で縛る**。
     #
-    # 縛るのは「repoRoot をスクリプト自身の位置から導くこと」だけで、導出の中身も
-    # プロファイルの置き場も射程外である（必要な分だけ縛る）。
+    # **縛るのは 2 つで、鎖として閉じている**: (1) `$repoRoot` をスクリプト自身の位置から 1 か所で
+    # 導くこと、(2) 導出先へ**実際に渡していること**。(1) だけでは、導出行を無傷のまま
+    # 使用点の引数を cwd 起点へ差し替える形が素通りする（実測: それでも Pester も vitest も
+    # smoke 自身も緑のまま #1179 が復活した）。**保証は導出と使用点の両方に掛かる。**
     #
-    # **死角（宣言）**: 対象を数え上げているので、3 本目の起動ハーネスが増えても黙る。
-    # 「`Resolve-SnotraCargoExecutable` を呼ぶ `.ps1` すべて」へ広げる手はあるが、
-    # `run-pester.ps1` / `visual-input-metrics.ps1` / `visual-check-colors.ps1` は変数名も
+    # 射程の外にあるのは、導出式の中身（`Resolve-Path`/`Join-Path` の組み方）と、
+    # プロファイルの置き場と、**3 本目の起動ハーネス**である。最後のものは対象を数え上げている
+    # ことに由来する死角で、「`Resolve-SnotraCargoExecutable` を呼ぶ `.ps1` すべて」へ広げる手は
+    # あるが、`run-pester.ps1` / `visual-input-metrics.ps1` / `visual-check-colors.ps1` は変数名も
     # 導出の形も違うため誤検出になる。**広げずに死角として宣言して止める。**
+    #
     # **`-ForEach` で渡す**（素の `foreach` を使わない）。Pester は discovery と run が別相で、
     # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
     # 正しくパラメータ化されて見える**（実測: `The variable '$harnessName' cannot be retrieved`）。
-    It '<_> は repoRoot をスクリプト自身の位置から導く（cwd に依存しない・#1179）' -ForEach @(
+    It '<_> は repoRoot をスクリプト自身の位置から導き、それを渡す（cwd に依存しない・#1179）' -ForEach @(
         'bench-startup.ps1', 'smoke-startup.ps1'
     ) {
-        $harnessPath = Join-Path $PSScriptRoot "../$_"
-        $assignments = @(
-            Get-Content -LiteralPath $harnessPath | Where-Object { $_ -match '^\s*\$repoRoot\s*=' }
-        )
+        $harnessLines = Get-Content -LiteralPath (Join-Path $PSScriptRoot "../$_")
 
+        # (1) 導出
+        $assignments = @($harnessLines | Where-Object { $_ -match '^\s*\$repoRoot\s*=' })
         $assignments.Count | Should -Be 1 -Because "repoRoot の導出が 2 か所に散ると片方だけ退行する"
-        $assignments[0] | Should -Match '\$PSScriptRoot' -Because "cwd 起点にすると #1179 が緑のまま復活する"
+        $assignments[0] | Should -Match '\$PSScriptRoot' -Because "導出を 1 行で `$PSScriptRoot から書くこと（cwd 起点にすると #1179 が緑のまま復活する）"
+
+        # (2) 使用点——導出しても渡さなければ意味が無い
+        $calls = @($harnessLines | Where-Object { $_ -match 'Resolve-SnotraCargoExecutable' })
+        $calls.Count | Should -Be 1 -Because "本体の導出は 1 か所であるべき"
+        $calls[0] | Should -Match '-RepositoryRoot \$repoRoot' -Because "導出した repoRoot をそのまま渡すこと（別の値を渡すと #1179 が緑のまま復活する）"
     }
 }
 

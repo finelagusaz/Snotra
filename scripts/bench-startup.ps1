@@ -95,8 +95,14 @@ $profileFull = $null
 if ($UseVerificationProfile) {
   # **seed は 1 回だけ**（ループ内で作り直すと毎回 first-run + cache-miss になり、
   # 測っているものが変わる）。2 回目以降の起動が `index.bin` を読む形が実運用点に近い。
-  $profileBase = if ($ProfileDir) { Join-Path (Get-Location) $ProfileDir } else { Join-Path $repoRoot 'target/bench-startup/profile' }
-  $profileFull = [System.IO.Path]::GetFullPath($profileBase)
+  # `GetFullPath(path, basePath)` は絶対パスをそのまま通し、相対パスだけを基準へ解決する
+  # ——`Join-Path` は絶対値を渡されると `<cwd>\C:\…` を組んでしまう（実測で exit 1）。
+  # 明示値の基準は cwd、既定は repoRoot（`-ExePath` と同じ判断）。
+  $profileFull = if ($ProfileDir) {
+    [System.IO.Path]::GetFullPath($ProfileDir, (Get-Location).Path)
+  } else {
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'target/bench-startup/profile'))
+  }
   New-SnotraVerificationProfile -ProfileDir $profileFull -ShowIcons $false | Out-Null
 }
 

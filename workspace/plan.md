@@ -76,10 +76,10 @@ issue 本文は「`ADR-main-window-clamp-on-pointer-release` の受容残余と�
 
 ## 作業項目
 
-- [ ] `clamp_main_into_work_area` の rustdoc へ、キーボード移動の実測（対照つき）・再測手順・多モニターが未測定である射程を書く
-- [ ] `SPEC.md` §8.2 へ「キーボード移動は拘束される」を as-built として追記する
-- [ ] `npm run governance:check` を実行して緑にする
-- [ ] 実装差分を確定させる（`git status` で `src-tauri/` の変更が rustdoc だけであることを確認する）
+- [x] `clamp_main_into_work_area` の rustdoc へ、キーボード移動の実測（対照つき）・再測手順・多モニターが未測定である射程を書く
+- [x] `SPEC.md` §8.2 へ「キーボード移動は拘束される」を as-built として追記する
+- [x] `npm run governance:check` を実行して緑にする（2026-08-26・全検査 passed）
+- [x] 実装差分を確定させる（`git status` で `src-tauri/` の変更が rustdoc だけであることを確認する）
 
 ## 未確定（実装前に潰す）
 

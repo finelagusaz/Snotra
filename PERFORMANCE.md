@@ -2184,9 +2184,10 @@ canonical であり、digest は忠実な代替になる。
 読む側が毎回確かめられる形にした。**
 
 **ここに出てくる `digest_ms` は #1001 で撤去済みである**——測っていた digest そのものが背景
-再スキャンごと消えたので、現在の `LoadOrScanStats` にこのフィールドは無い。**穴を塞いだ形の
-ほうは今も生きている**: `tests/memory_footprint.rs` はフェーズ内訳と残余を並べて出す形を保っており、
-digest がその内訳から抜けただけである。
+再スキャンごと消えたので、現在の `LoadOrScanStats` にこのフィールドは無い。内訳と残余を並べて
+出す形そのものは残っており、digest がその内訳から抜けただけである。ただし**その形を守る検知器は
+無い**——`tests/memory_footprint.rs` のフェーズ行は `#[ignore]` の計測専用テストが人間へ出力する
+だけで、assert を持たない（assert が在るのは同ファイルのバイト側の残余だけである）。
 
 ```
 フェーズ: total 318ms = hash 0ms + cache_load 275ms + digest 43ms + ...（残余 0ms）

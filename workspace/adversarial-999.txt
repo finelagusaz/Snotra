@@ -1,0 +1,212 @@
+# 敵対的レビュー: research.md（#999）— 最終版
+
+対象: C:\workspace\Snotra\workspace\research.md
+方針: 逐語追認しない。所見ごとに「偽にする手順」を付す。壊せた/壊せなかったを両方宣言する。
+静的証拠のみ（本体は起動していない）。読了した一次資料は末尾に列挙。
+
+====================================================================
+## 総評
+====================================================================
+
+research.md の事実主張（ファイル・行番号・関数名・env の意味論）は**検証できた範囲では全て正確**だった。
+唯一の実質的な弱点は **H1（held_since_focus_gain）の扱いが甘い**ことである——研究文書自身のヘッジ
+（「押されたまま focus が移る窓が狭い」）よりもっと強い反論がコードから直接導ける（下記「壊せた項目 1」）。
+加えて、判定表の二値（心拍あり/なし）が想定していない**中間状態**（フレームは回るが 1 枚あたり異常に
+重い）を見落としている（「壊せた項目 2」）。それ以外の主要主張（trace 3行の被覆・smoke:egui の順序・
+アイコン抽出の非メインスレッド性・ExtraVariables の到達・SNOTRA_TRACE との二重要件）はコードを読む限り
+壊せなかった。
+
+====================================================================
+## 壊せた項目（research.md の記述を弱める、または見落としを追加する所見）
+====================================================================
+
+### 壊せた-1: H1（held_since_focus_gain）は「両キー同時抑止」よりもっと弱い候補である
+**主張**: research.md は H1 への反証を「Down と Escape が同時に held へ残るには窓が狭い」という
+タイミングの問題としてのみ扱っている（L55-58）。だが `admit_key`（input.rs:98-113）を読むと、
+それより手前で 2 つの構造的制約が H1 を強く弱める。
+
+1. **release は無条件に許可・解除する**（`if !pressed { held.remove(&physical); return true; }`。
+   `is_synthetic` を見ない）。つまり「1 回 held に入った特定のキー」も、その release イベントが
+   `admit_key` へ届きさえすれば即座に解除される。ゆえに H1 が「以後そのキーの押下**だけ**」を
+   永久に抑止できるのは、**release イベント自体が admit_key へ届かない**（＝入力配送が全体的に
+   止まっている）場合だけであり、それは H1 固有の症状ではなく H2／(B) と同じ「配送停止」の帰結に
+   すぎない。
+2. **held_since_focus_gain は Focused(true) 受信の瞬間に「その時点で物理的に down なキー」しか
+   拾わない**（tao の `get_async_kbd_state()` 由来）。issue の注入は `keybd_event` の
+   down→(40ms/50ms)→up を**キーごとに直列**で行う（`Send-SnotraKey` の呼び出しパターン、
+   `smoke-egui.ps1:359-401`）ため、Down と Escape が同時に物理的に down である瞬間はまず存在しない
+   （時間的に重ならない）。**加えて**、H1 が発火するには「focus 喪失 → 再獲得」という
+   WM_KILLFOCUS/WM_SETFOCUS の往復自体が、この注入シーケンスの最中に起きる必要がある。
+   **research.md はこの往復イベントが #999 の再現手順のどこで起きるかを一度も名指ししていない**
+   ——results 窓は `focusable(false)` で focus を取らない（研究文書自身の U-3、`mod.rs:372`,
+   `runtime.rs:246-247` のコメントで確認済み）、設定窓も開いていない。往復の発生源が無ければ
+   `held_since_focus_gain` は再現シーケンス全体を通じて空のままであり、H1 は原理的に**一度も
+   発火しない**。
+
+**結論**: H1 は「issue の症状（Down と Escape の両方が、以後**すべて**沈黙し続ける）」の説明として、
+research.md 自身が書いた反証よりさらに弱い。持続的な全キー沈黙を H1 単独で説明するには、結局
+「release も届かなくなる」＝入力配送そのものの停止を仮定する必要があり、それは H1 が独自に説明する
+現象ではなくなる。**`drop_key` 行の出現だけで採否を決めてよい、という research.md の結論（L58）は
+変わらないが、その根拠は「タイミングが狭い」ではなく「focus 往復イベントの発生源が無い」および
+「release は無条件に admit される」という、より強い構造的理由に置き換えるべきである。**
+
+⚠️ 確信度: 中〜高。`admit_key` のコード（input.rs:98-113）は一次資料として確定しているが、
+「往復の発生源が無い」は "grep で見つからなかった" という不在の主張であり、全称否定の弱さを持つ
+（`.claude/rules` の「全称否定はプローブの形が違う」を踏まえ、慎重に中確信とする）。
+
+**偽にする手順**: `grep -rn "Focused" src-tauri/src/egui_shell/ snotra-egui-runtime/src/` を再実行し、
+main 窓が結果表示〜打鍵注入の間に focus を失う経路（例: アイコン抽出スレッドが COM STA 経由で
+何らかの一時的な shell dialog / hidden window を作る、Explorer アイコンオーバーレイハンドラが
+フォーカスを奪う等）が無いかを確認する。見つかれば H1 は復権する。
+
+### 壊せた-2: 判定表の「心拍あり/なし」二値は、フレームが回るが 1 枚が異常に重い中間状態を見落とす
+**主張**: research.md の判定表（L33-38）は `take` の心拍を「途切れる（=H2 系の不回転）」か「あるか」の
+二値で扱う。だが `take` の心拍は 100ms 間引きのため、**フレーム間隔が 100ms を大きく超えても
+（例: 1 フレームに数秒かかっても）「途切れていない」という誤読を招く**——heartbeat は「前回の
+`take` 呼び出しから 100ms 以上経過したら次の `take` で 1 行出す」というだけで、フレームの実周期を
+測る計器ではない。
+
+具体的な main スレッドの重さの候補: `results_view.rs:534` の `update()` は毎フレーム
+`while let Ok(msg) = self.icon_rx.try_recv()` でアイコン worker からの完了メッセージを**イベントループ
+スレッド上で**同期的にドレインし、`icon_ctx.load_texture(...)`（L579）を件数ぶん呼ぶ。抽出は別スレッド
+だが、**適用（テクスチャ生成）は main/イベントループスレッドである**。WinSxS のような重いシェル
+問い合わせ（issue が言及）で多数のアイコンがバースト的に完了すると、この drain ループ 1 回が
+長時間化しうる——research.md の H3 反論（メインスレッドで抽出しない・viewport 範囲に絞る）は
+**抽出コスト**だけを否定しており、**drain/load_texture という別の main スレッドコスト**には触れていない。
+
+この状態では: `rx_key` は届く（tao の配送自体は生きている）、`take` の心拍もいずれ出る（フレームは
+最終的に回るので heartbeat 条件は満たされる）が、**フレーム間隔が数秒〜数十秒に伸び、実質的に
+「打鍵が効かない」ように見える**——これは H2（0 フレーム）でも (A)/(B) の単純な二分でもない、
+第 4 の状態である。research.md の判定表はこれを「心拍あり」側に分類してしまい、H3 を実質的に
+過小評価する。
+
+**結論**: 判定表に「心拍はあるが著しく間隔が伸びている（`ts_ms` の差分を見る）」という中間区分を
+足すべきである。二値のままだと、実際にはこの経路が起きていても「心拍正常→H3 は無関係」と誤って
+結論しうる。
+
+⚠️ 確信度: 中。drain ループが実際にどれだけの時間を食うかは未計測（release ビルド・実 config・
+313,028 件索引 + WinSxS 級抽出でどれだけの icon が同時に完了するかに依存し、静的読解だけでは
+定量化できない）。
+
+**偽にする手順**: `SNOTRA_EGUI_INPUT_TRACE=1` に加えて `take` の `ts_ms` の差分をポスト処理で
+ヒストグラム化し、100ms を大きく超える間隔が沈黙区間の直前〜最中に集中するかを見る。
+
+====================================================================
+## 壊せなかった項目（research.md の主張を検証し、覆せなかったもの）
+====================================================================
+
+### 壊せなかった-1: smoke:egui の打鍵注入順序（争点2）
+`scripts/smoke-egui.ps1` を実読した。L367 で `Wait-SnotraTraceEvent … "egui_results:show"` により
+到達確認 → `$resultsChecked=$true`。L384 の `if ($failures.Count -eq 0 -and $resultsChecked)` ガード内、
+L388-401 で BackSpace→"c"→Shift+;→"\" を注入（**results 表示後であることがガード条件そのもの**）。
+L424 の `if ($failures.Count -eq 0)` ガード内、L426-428 で Escape 注入。分岐・early return で
+飛ばされる余地は無く、$failures が空である限り直列に進む。行番号・内容とも research.md と一致。
+偽にする手順: `Select-String -Path scripts/smoke-egui.ps1 -Pattern 'egui_results:show|resultsChecked|VK_ESCAPE'`。
+
+### 壊せなかった-2: アイコン抽出は非メインスレッド・viewport 範囲に絞られる（争点3前半）
+`results_view.rs:199-211` の `spawn_icon_load` は `std::thread::spawn` で確かに別スレッド。
+`request_icons_for_results`（L163-193）の doc が「rows は結果全件ではなく `icon_prefetch_range` で
+絞った viewport 範囲」と明記し、呼び出し側（描画後）から渡す設計になっている。
+`icon_pending`（in-flight 除外）も実在し、同一 path への重複 spawn を防ぐ（L184, L578 の
+`icon_pending.remove` と対応）。research.md の主張どおり。
+（ただし「壊せた-2」で述べた drain/load_texture の main スレッドコストは、この主張の射程外の
+別問題として残る。）
+
+### 壊せなかった-3: rx_key/drop_key/take の3行の被覆——brief が示唆した個別の盲点は盲点でない
+- **window_id_map 引き当て失敗**: `runtime.rs:210-234` を見ると、`rx_key`/`rx_text` の trace 出力は
+  `context.window_id_map.get(window_id)` による引き当て（L235）**より前**に置かれている。ゆえに
+  引き当てが失敗しても rx_key 自体は出る（window_id の値が本体の管理対象外であることが見える）。
+  これは盲点ではなく、research.md の設計（「引き当ての前に残す」というコメント自体が本体コードに
+  ある）どおりに機能する。
+- **results 窓の window_id へ配送される**: `src-tauri/src/egui_shell/mod.rs:384-402` を見ると、
+  main 窓と results 窓は**同一の `runtime`（1つの `RuntimePlugin`/tao イベントループ）に両方
+  `attach()` されている**。ゆえに results 窓が万が一 OS 上で keydown を受けても、それは同じ
+  `on_event` の `Event::WindowEvent` として rx_key trace に載る（window_id が異なるだけ）。
+  これも盲点ではない。
+- **tao より手前で落ちる／Send-SnotraKey の keybd_event が別プロセスへ行く**: これらは
+  「rx_key が一切出ない」経路であり、research.md の判定表が最初から (B) へ丸めているケースと
+  一致する（判定表の粗さであって漏れではない）。
+- **push_text が input_trace_enabled() の外側にある非対称**（brief の指摘）: `input.rs:311-318`
+  を実際に読むと、`ReceivedImeText` ハンドラは `input_trace_enabled()` の if でラップせず直接
+  `input_trace("push_text", &format!(...))` を呼ぶ。しかし `input_trace` 自体（L69-78）が
+  冒頭で `if !input_trace_enabled() { return; }` と再ガードしているため、**発火するかどうかには
+  影響しない**——影響するのは「計器を無効にしていても format! の割り当てを毎回払う」という
+  コスト面だけである（`input_trace_enabled` の doc が明言する設計意図「呼ぶ前に問えるよう外へ出す」
+  にこの 1 箇所だけ従っていない、という軽微な一貫性の欠如ではあるが、判定への影響は無い）。
+  **research.md の「判定に影響するか」という問いへの答え: 影響しない。**
+
+偽にする手順（3点共通）: `runtime.rs:205-237`, `mod.rs:361-402`, `input.rs:69-78,307-322` を
+再読し、if ガードの位置を再確認する。
+
+### 壊せなかった-4: -ExtraVariables の子プロセスへの到達（争点4・前半）
+`SnotraSmoke.psm1` の `Start-SnotraProcess`（L321-383）は `Invoke-SnotraEnvironment`
+（L280-319 付近）でカレント PowerShell プロセスの `Env:` を一時的に書き換えてから
+`Start-Process @startParameters` を呼ぶ。`$startParameters` を実読すると `-Credential` も
+`-UseNewEnvironment` も指定していない（L354-378）。PowerShell の `Start-Process` はこれらを
+指定しない限り既定で**呼び出し元プロセスの環境ブロックを継承**するため、`-ExtraVariables` で
+渡した `SNOTRA_EGUI_INPUT_TRACE=1` は子プロセスへ届くと判断できる。research.md の主張と一致。
+⚠️ 確信度: 中——これは PowerShell/Win32 の一般仕様への依拠であり、コードだけからの断定である
+（brief の制約で実機起動はしていない）。
+偽にする手順: 実機で `Start-SnotraProcess -ExtraVariables @{FOO='1'}` 相当を実行し、
+子プロセス側で `echo %FOO%`（あるいは自プロセスの env をダンプする一時コード）が見えるか確認する。
+
+### 壊せなかった、むしろ補強・具体化: SNOTRA_TRACE と SNOTRA_EGUI_INPUT_TRACE の二重要件（争点4後半）
+`src-tauri/src/trace.rs` を実読した。`window_coordinator.rs:1084` の `crate::trace_main("egui_results:show", ...)`
+は `trace.rs` の `trace()` を経由し、`trace_enabled()`（L35-38）＝ `env_flag("SNOTRA_TRACE")` の
+**許可リスト判定**（`1|true|yes|on`、trim+小文字化）でゲートされる。これは `snotra-egui-runtime/src/env.rs`
+の `trace_hatch_enabled("SNOTRA_EGUI_INPUT_TRACE")`（空文字以外なら真、という**別の意味論**）
+とは完全に独立した判定である。**確認できた**: research.md が示唆したとおり、`egui_results:show`
+「その他 issue の trace に出ている `hotkey:registered` / `egui_show:done` / `egui_input:focus_state` /
+`egui_search:dispatch` 等」（すべて `trace_main` 経由と推定される）を観測するには
+`SNOTRA_TRACE` を、`rx_key`/`drop_key`/`take` を観測するには `SNOTRA_EGUI_INPUT_TRACE` を
+**両方**立てる必要がある。`Start-SnotraProcess -Trace` スイッチは `SNOTRA_TRACE='1'` を予約名として
+自動設定するが（L351）、`SNOTRA_EGUI_INPUT_TRACE` は `-ExtraVariables` で別途明示しないと立たない。
+**この2つを両方立て忘れると**（例: `-ExtraVariables` だけ渡して `-Trace` を付け忘れる）、
+`rx_key` 等は出るが「`egui_results:show` の直後で止まった」という issue の観測基準点そのものが
+記録されず、判定表を適用できなくなる。research.md の懸念は正しく、**再測定の実務上の落とし穴として
+最重要**だと判断する。
+偽にする手順: `trace.rs:35-38`（`trace_enabled`）と `env.rs:29-32`（`trace_hatch_enabled`）を
+読み比べ、両者が別の `OnceLock`/別の env 名を参照することを確認する。
+
+### 壊せなかった-5: caret spec (U-B) と PERFORMANCE.md:2721 の引用
+`docs/superpowers/specs/2026-08-05-caret-test-mechanism-design.md` を全文読了。L17「フレーム不回転
+| 1 | 24.3 秒 1 フレームも回らない」、L114「U-B: フレーム不回転の機序...この設計の射程外」、
+L19「この 30 反復は測定ハーネスが SNOTRA_EGUI_INPUT_TRACE を空文字で漏らしていた...計器は率だけで
+なく喪失の現れ方も変える」——research.md の H2 節・測定環境の制約4の引用と完全に一致する。
+`PERFORMANCE.md:2721`「stderr 1 行が 17〜56ms...率を測る回と機序を測る回は別の回にすること」も
+一致。`ADR-egui-trace-hatch-empty-only.md` も env.rs の doc・research.md の記述と整合する
+（PowerShellの `SetEnvironmentVariable($name,$null,...)` が空文字を作る、という機序を含め正確）。
+
+====================================================================
+## 未検証のまま残した項目（時間/スコープの都合で深掘りしなかった）
+====================================================================
+
+- U-1（再現率と計器の交絡）・U-4（実ユーザー入力との非対称）は方法論的な判断であり、
+  コード読解だけでは決着しない。
+- `load_icon_pngs`（`commands/icon.rs`）の内部実装（COM STA 使用の有無・1 パスあたりのコスト）は
+  未読了。「壊せた-2」の main スレッド drain コストの定量化にはこれの実測が要る。
+- `Wait-SnotraTraceEvent` / `Wait-SnotraTraceCondition` の実装（SnotraSmoke.psm1 の該当関数本体）は
+  未読了——観測タイムアウトの扱いが research.md の「false green にはならない」主張の根拠になって
+  いるが、時間の都合で個別に検証していない（研究文書側は issue 本文の記述をそのまま引用しており、
+  一次資料としては issue 止まりである点は留意）。
+
+====================================================================
+## 読了した一次資料
+====================================================================
+- workspace/research.md（全文）
+- gh issue #999 / #996（全文）
+- snotra-egui-runtime/src/input.rs（全文）
+- snotra-egui-runtime/src/runtime.rs（L1-320付近、on_event 全体・attach 関連）
+- snotra-egui-runtime/src/env.rs（全文）
+- snotra-egui-runtime/CLAUDE.md
+- src-tauri/CLAUDE.md
+- src-tauri/src/trace.rs（全文）
+- src-tauri/src/egui_shell/window_coordinator.rs（L1069-1099 付近）
+- src-tauri/src/egui_shell/results_view.rs（L140-360付近）
+- src-tauri/src/egui_shell/mod.rs（attach 呼び出し箇所）
+- scripts/lib/SnotraSmoke.psm1（L280-420, L740-810）
+- scripts/smoke-egui.ps1（L330-440）
+- scripts/visual-check-colors.ps1（L270-310）
+- docs/superpowers/specs/2026-08-05-caret-test-mechanism-design.md（全文）
+- docs/adr/ADR-egui-trace-hatch-empty-only.md（全文）
+- PERFORMANCE.md（L2713-2729 付近）

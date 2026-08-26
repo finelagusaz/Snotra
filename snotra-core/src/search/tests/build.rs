@@ -581,7 +581,7 @@ fn owned(names: &[&str]) -> Vec<String> {
 
 /// 余剰容量は「検索は正しいが常駐だけが増える」形の劣化ゆえ、挙動テストでは捕まらない。
 ///
-/// 経路は `new_with_cached_masks` の v4 ヒット枝を選ぶ——`Vec<String>` → `Vec<Box<str>>` の
+/// 経路は `new_with_cached_masks` の [`CachedLower::Raw`] 腕を選ぶ——`Vec<String>` → `Vec<Box<str>>` の
 /// 変換が確保ブロックを再利用して余剰を持ち越すため、実運用で余剰が最も乗る経路である。
 ///
 /// **7 行のうち 6 行と `entries` の 1 行は機序が違う。** 派生文字列とマスクの 6 本は

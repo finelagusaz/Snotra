@@ -112,8 +112,24 @@
 
 ### Phase 1 — ハーネス
 
-- [ ] `workspace/repro-999.ps1` を書く（既存の `SnotraSmoke.psm1` 関数のみ・判定を持たせない・撤去理由を `.SYNOPSIS` へ）
-- [ ] ハーネスを「成功する形」で 1 回回し、`egui_hide:done` まで到達することを確認する（接地）
+- [x] `workspace/repro-999.ps1` を書く（既存の `SnotraSmoke.psm1` 関数のみ・判定を持たせない・撤去理由を `.NOTES` へ）
+  - **書きながら見つけた欠陥 1 件（修正済み）**: `Send-SnotraKey` の注入時刻は
+    **呼び出し側 PowerShell プロセスの `$env:SNOTRA_EGUI_INPUT_TRACE`** が握るが、
+    `Start-SnotraProcess` はその env を `Invoke-SnotraEnvironment` の中でだけ立てて**すぐ戻す**。
+    打鍵を撃つ時刻には消えているため、**本体側だけ計器つきで走り、注入時刻が 1 行も残らない**
+    ——沈黙が「注入していない」と見分けられなくなる形だった。ON の回は注入区間でも env を立て直す
+- [x] ハーネスを「成功する形」で 1 回回し、`egui_hide:done` まで到達することを確認する（接地）
+  - 2026-08-26 実測（`-PostShowDelayMs 800 -DownCount 10`・実索引 `rows=200`）: OFF/ON とも
+    `egui_hide:done` を観測。ON の回で `SNOTRA_SMOKE_INJECT` 28 / `rx_key` 33 / `drop_key` 2 / `take` 52 行
+    ——**4 種すべてが出た**。OFF の回は計器 0 行・`[trace]` 114 行（`SNOTRA_TRACE` は生きている）
+  - **接地で見つけたハーネスの欠陥 2 件（修正済み）**: `Get-SnotraForegroundWindowLabel` は
+    module から export されていない／`Stop-SnotraProcessAndWait` の戻り値が `finally` から
+    関数の出力へ載り、要約 CSV に空行を書いていた
+- [x] **計画からの逸脱 1 件（安全側・要報告）**: 生ログの既定の置き場を **`workspace/` から
+  `%TEMP%/snotra-evidence-999` へ移した。** `[trace]` の `icon:extract_failed` が
+  **利用者の実ファイルパスを逐語で載せる**（実測: Dropbox 配下・VS Code 拡張配下・ユーザー名を含む）。
+  このリポジトリは公開されており、`workspace/` へ置くと squash マージで**個人のディレクトリ内容が
+  main の履歴へ残る**。**コミットするのは経路を数えた派生表だけにする**
 
 ### Phase 2 — 測定
 

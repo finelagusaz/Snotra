@@ -55,7 +55,7 @@ egui のイベントへ載る `physical_key` は `key_from_key_code` が A–Z �
 | `-PostShowDelayMs 0 -DownCount 200`（スクロール量を合わせる） | 3 | 6/6 | 143〜150ms |
 | 同上 + `auto_update` を実 config の値へ戻す | 2 | 4/4 | 140〜155ms |
 
-`rx_key` のうち `physical=Numpad2` の 400 件が注入した Down 400 と一致する（総数は 408 対 413・差の 13 は起動時の合成と修飾キー）。`drop_key` は起動時の合成 2 件のみ。
+`rx_key` のうち `physical=Numpad2` の 400 件が注入した Down 400 と一致する（総数は注入 408 対 `rx_key` 413。差の 5 は起動時の合成。`Numpad2` 以外の 13 件の内訳は AltLeft 3 / ControlLeft 2 / KeyA 2 / Escape 2 / KeyK 2 / Unidentified 2 で、hotkey・クエリ 1 文字・Escape を含む）。`drop_key` は起動時の合成 2 件のみ。
 
 **490ms の階差は重いフレームではない**——`-PostShowDelayMs 800` の待ちの中で、
 **入力も再描画要求も無いために `take` が呼ばれていないだけ**である。

@@ -228,7 +228,7 @@ worker が撃つ `egui_ctx.request_repaint()` の頻度もこの経路に載る�
 | 同上 + `auto_update` を実 config の値へ戻す（D-2 の逸脱を戻す） | 2 組 | **4/4 到達** | 140〜155ms |
 
 **合計 10 組 20 回**（OFF 10 / ON 10。`%TEMP%` の run ディレクトリを数え直した）。
-`rx_key` のうち `physical=Numpad2` の 400 件が注入した Down 400 と一致する（総数は 408 対 413・差の 13 は起動時の合成と修飾キー）。`drop_key` は起動時の合成 2 件のみ。
+`rx_key` のうち `physical=Numpad2` の 400 件が注入した Down 400 と一致する（総数は注入 408 対 `rx_key` 413。差の 5 は起動時の合成。`Numpad2` 以外の 13 件の内訳は AltLeft 3 / ControlLeft 2 / KeyA 2 / Escape 2 / KeyK 2 / Unidentified 2 で、hotkey・クエリ 1 文字・Escape を含む）。`drop_key` は起動時の合成 2 件のみ。
 
 **H2（フレーム不回転）も H3′（重いフレーム）も、この標本には現れていない。**
 ⚠️ ただし**計器なしの 10 回は H2 に対して構造的に盲目である**（`take` 行が出ない）。

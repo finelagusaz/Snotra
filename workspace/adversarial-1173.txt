@@ -1,0 +1,94 @@
+# #1173 敵対的レビュー（research.md への反証試行）
+
+## 総評（先出し）
+
+**最大の破壊は (e) と、それに依存する「技術的制約 1」の実測値そのものである。** research.md が「実測」と書いた単一モニターの bounds/work area (`1536x864` / `0,0,1536,816`) は、**DPI awareness を通していないプロセスが見た仮想化値**であり、実機は 125% スケーリング (AppliedDPI=120) の 1920x1080、DPI-aware work area は `0,0,1920,1020` である。これは `SnotraSmoke.psm1` 自身の `Get-SnotraWindowDpi` doc コメントが名指しで警告している罠（「2026-08-16 に実測した 125% の機体では…物理 1920x1080 を 1536x864 と報告した」）と**寸分違わず同型**で、おそらく同一機体で再発している。他の命題 (a)(b)(c)(d)(f)(g) はソース根拠・config 実測とも整合しており、壊せなかった。
+
+---
+
+## (a) `WS_SYSMENU` は decorations:false でも残る
+
+**判定: 壊せなかった。追加根拠で補強。**
+
+- 一次証拠: `window_state.rs:244` (`style |= WS_CAPTION | WS_CLIPSIBLINGS | WS_SYSMENU` 無条件)、`:307` (`to_adjusted_window_styles` で decorations 無しのとき落とすのは `WS_CAPTION | WS_THICKFRAME` のみ、`WS_SYSMENU` は対象外)。CHILD 分岐 (`:270-272`) は `main` 窓に無関係（`CHILD` フラグを立てていない）。
+- `src-tauri/src/egui_shell/mod.rs:347-355` の builder は `.decorations(false).resizable(false).skip_taskbar(true).always_on_top(true)` のみで、`WS_SYSMENU` を落とす経路は tao 側にも呼び出し側にも無い。
+- 偽にする手順: `window_state.rs` の `to_window_styles` / `to_adjusted_window_styles` 全文を grep し `WS_SYSMENU` を落とす分岐が無いことを確認済み（両関数を全文読んだ）。他に `WINDOW_STYLE` を直接いじる箇所（`SetWindowLongW`）が `mod.rs` に無いことも確認（`grep -rn "SetWindowLong" src-tauri/src/egui_shell/` で 0 件）。
+- 確信度: 高。
+
+## (b) `WM_SYSCHAR` の握り潰しにより `Alt+Space` はシステムメニューを開かない（見込み）
+
+**判定: 壊せなかった。機序をより具体的に裏付けた（ただし研究文書と同じく「見込み」の域を出ない）。**
+
+- `keyboard.rs:111-113`: `WM_SYSKEYDOWN` は `msg_kind == WM_SYSKEYDOWN` のとき `*result = ProcResult::DefSubclassProc` を立てる——**この投げっぱなしの結果、`WM_SYSKEYDOWN` 自体は `DefWindowProc` へ届く**。
+- 同ハンドラ内 (`:127-149`): `PeekMessageW(..., WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE)` で次メッセージを覗き、`next_belongs_to_this = !matches!(next_msg_kind, WM_KEYDOWN|WM_SYSKEYDOWN|WM_KEYUP|WM_SYSKEYUP)` が真なら（＝次が `WM_CHAR`/`WM_SYSCHAR` 系のとき）`self.event_info = finished_event_info.take()` で **event_info を `Some` のまま持ち越す**。
+- `Alt+Space` の実際の Win32 メッセージ列は「`WM_SYSKEYDOWN(VK_SPACE)` → `TranslateMessage` が `WM_SYSCHAR(' ')` をキューへ post」であり、`event_loop.rs:266/405/411/815` に `TranslateMessage` 呼び出しが実在するため、この列が成立する。ゆえに `WM_SYSKEYDOWN(VK_SPACE)` の時点で `PeekMessage` は `WM_SYSCHAR` を見つけ、`event_info` が `Some` のまま `WM_SYSCHAR` のハンドラへ渡る。
+- `WM_CHAR | WM_SYSCHAR` 枝 (`:162-172`): `event_info.is_none()` が偽（＝ `Some`）なら `*result = ProcResult::Value(LRESULT(0))` を立てて `DefSubclassProc` を呼ばない（呼び出し元の match 後の分岐で `DefWindowProc` へ回るのは `ProcResult::DefWindowProc`/`DefSubclassProc` のときだけであり、`Value(...)` は握り潰しを意味する——他のハンドラでの同じパターン、例えば `WM_DEADCHAR` の握り潰しと同型）。
+- **Win32 の一般知識として**、`Alt+Space` によるシステムメニュー表示は `DefWindowProc` の `WM_SYSCHAR` ハンドラが空白キーを認識して `WM_SYSCOMMAND SC_KEYMENU` を発火させる経路に依る（これはソースでは検証できない OS 側の既知動作であり、research.md も「予測」と明記している）。この経路が `DefWindowProc` に届かない以上、開かないという予測は筋が通る。
+- **ただし verdict は依然「見込み」に留まる**——`ProcResult` が `DefSubclassProc` でないときに呼び出し元が本当に `DefWindowProc` を呼ばないかは、`event_loop.rs` の match 後処理まで追う必要があり（今回は時間の制約で確認していない）。**これは research.md の Q1 の位置づけ（測って裁定する）と整合し、research.md の主張を弱めない。**
+- 偽にする手順: 実機で `Alt+Space` を注入し `WM_SYSCOMMAND` トレース or 目視でメニューが開くか確認する。開けば (b) は誤り。
+- 確信度: 中（機序は精査したが実機未検証、`ProcResult::Value` の握り潰しが呼び出し元でどう扱われるか最終段を追っていない）。⚠️
+
+## (c) クランプの発火条件は `view.rs:1279` の `!any_down()` だけである
+
+**判定: 壊せなかった。**
+
+- `grep -rn "clamp_main_into_work_area" src-tauri/src/` の全 6 件を確認: 定義 2 件（`#[cfg(windows)]` 実装 + `#[cfg(not(windows))]` no-op スタブ、`window_coordinator.rs:778`/`802`）、re-export 1 件（`mod.rs:44`）、呼び出し 1 件（`view.rs:1280`、条件は `:1279` の `!ui.input(|i| i.pointer.any_down())` のみ）、コメント内言及 2 件。**呼び出しは 1 箇所しかない。**
+- ADR の却下 4/5 も同じ前提（「ポインタ非押下の全フレーム」が唯一の発火条件）で書かれており、独立した記述と一致する。
+- 偽にする手順: 上記 grep を再実行し、`clamp_main_into_work_area(` を呼ぶ 2 つ目の呼び出し箇所が無いことを確認する（今回 0 件）。
+- 確信度: 高。
+
+## (d) tao はモーダルループ中に描画イベントを流す機構を持つ
+
+**判定: 壊せなかった。**
+
+- `event_loop.rs` の thread-target `WM_PAINT` ハンドラ (該当箇所を読了) は「nested win32 event loop」中に `flush_paint_messages` → `redraw_events_cleared()` → `process_control_flow` を回すコメント付き実装を持つ。`WM_ENTERSIZEMOVE`/`WM_EXITSIZEMOVE` (`:1028`/`:1036`) が `MARKER_IN_SIZE_MOVE` を出し入れする実装も実在。
+- **追加確認: `WM_SYSCOMMAND` はほぼ全 variant で `result = ProcResult::DefWindowProc` に落ちる**（`event_loop.rs:1273` 付近、`SC_RESTORE`/`SC_MINIMIZE`/`SC_SCREENSAVE` は状態追跡のみで `return` せず、最終的に全ケース `DefWindowProc` へ通す）。これは research.md の Q2 フォールバック（`SendMessage(WM_SYSCOMMAND, SC_MOVE, 0)` を直接撃つ）が tao 側でブロックされないことの**追加の裏付け**であり、研究文書の主張をむしろ補強する。
+- research.md 自身が言う通り「回る機構が在る」までしか言えず、「実際に回るか」は repaint 要求次第——この留保は正しく、研究文書はここを過大主張していない。
+- 偽にする手順: 実機でモーダル移動ループに入り、trace の `redraw_events_cleared` 等のイベントが移動中に複数回出るか確認する。
+- 確信度: 高（ソースの読みとしては）。実機未検証。
+
+## (e) 単一モニター前提と「技術的制約 1」の実測値
+
+**判定: 壊せた。数値が誤っている。**
+
+- 一次証拠（本レビューで実施した測定）:
+  - DPI-awareness を通さない `[System.Windows.Forms.Screen]::AllScreens`: `\\.\DISPLAY1 Bounds={0,0,1536,864} WorkingArea={0,0,1536,816}` — **research.md の「実測」と完全に一致**。
+  - `HKCU:\Control Panel\Desktop\WindowMetrics\AppliedDPI` = `120`（120/96 = 1.25 = 125% スケーリング）。
+  - `SetProcessDpiAwarenessContext(-4)`（PER_MONITOR_AWARE_V2、`SnotraSmoke.psm1::Initialize-SnotraDpiAwareness` と同じ値）を適用した**後**の `GetMonitorInfo` 実測: `rcMonitor = 0,0,1920,1080`、`rcWork = 0,0,1920,1020`。適用前は `Graphics.DpiX=96`、適用後は `120`。
+  - **`SnotraSmoke.psm1:180-187` の doc コメント自身がこの罠を名指ししている**: 「awareness を通さずに DPI を読むと 96 が返る…2026-08-16 に実測した 125% の機体では、`GetDeviceCaps(LOGPIXELSX)` が 96 を、`System.Windows.Forms.Screen` が物理 1920x1080 を 1536x864 と報告した——どちらも真っ当な見た目で、倍率を 1 段読み違えさせる」。**今回の実測値は一言一句この記述と一致する。**
+  - `main` 窓は `tauri::Window::builder` 経由・tao は `PER_MONITOR_AWARE_V2` で動く（`SnotraSmoke.psm1:186` 「本体は PER_MONITOR_AWARE_V2 で動くため」の記述、および tao がデフォルトで per-monitor awareness を設定することは tao の一般的挙動）。**実機のクランプ判定 (`WorkArea::clamp`) は物理ピクセルで動く**（`window_coordinator.rs:778` の `outer_bar_height_phys` 等）ため、アプリが実際に見る work area は `0,0,1920,1020` であり、research.md が「実測」と書いた `0,0,1536,816` ではない。
+- **これが測定計画にどう効くか**: research.md の技術的制約 1 は「単一モニターで測れるのは『移動モード中に、バー矩形を作業領域の外へ出せるか』」という**判別子自体は生き残る**（相対的な判定であり絶対座標に依存しない）。しかし「開発機は単一モニターである（実測: work `0,0,1536,816`）」という**文の「実測」というラベルが誤り**であり、もし後続の実装や治具がこの数値を絶対値として使えば（例: 「x=1536 に達したら」のような判定）、**実際の work area (1920,1020) と 384px/204px ずれる**。現状の research.md の散文は絶対値をロジックへ使う記述をしていないため実害は今のところ無いが、**この数値を裏取りせず引用した箇所自体が「代理ではなく対象そのもので測る」（`AGENTS.md`「検証の作法」）に違反している**。
+- 偽にする手順: 上記の DPI-aware `GetMonitorInfo` 呼び出しを別セッションで再実行し、`1536x864`/`0,0,1536,816` が返れば私が誤り（この機体が実は 100% スケーリングであるか、モニターが真に 1536x864 の解像度である場合）。
+- 確信度: 高（自分で両方の経路を実測し、`SnotraSmoke.psm1` の既知の罠と一致することまで確認した）。
+
+## (f) 実 config: hotkey `Ctrl+K`、`follow_cursor_monitor=true`、`window_width=300`
+
+**判定: 壊せなかった。**
+
+- `C:/Users/Eoh/AppData/Roaming/Snotra/config.toml` を実読した。`[hotkey] modifier="Ctrl" key="K"`、`[general] follow_cursor_monitor=true`、`[appearance] window_width=300` すべて逐語一致。
+- 確信度: 高。
+
+## (g) `GetGUIThreadInfo` の `GUI_INMOVESIZE` は wndproc サブクラス化なしで問える
+
+**判定: 壊せなかった（ただし裏取りは間接的）。**
+
+- `grep -rn "GetGUIThreadInfo" tao-0.35.3/src/` は 0 件（research.md の主張どおり tao はこの API を使っていない）——これは「tao が使っていない」ことの確認であり、「呼び出し側が任意に呼べる」ことの直接証明ではないが、`GetGUIThreadInfo` は Win32 の任意プロセス/スレッドに対して呼べる標準 API（`user32.dll`、対象は `hwnd` から `GetWindowThreadProcessId` で得たスレッド ID）であり、ADR 却下 1 が問題にした「tao の wndproc を **サブクラス化する必要**」（＝ tao の内部メッセージ処理へ割り込む必要）とは無関係な**外部からのポーリング**である。この点で ADR 却下 1 の却下理由（wndproc サブクラス化の負債）には当たらない、という research.md の推論は構造的に正しい。
+- ただし `GetGUIThreadInfo` が要求する「対象スレッドとの同期」「別プロセスから呼んだときの制限（同一デスクトップが必要、など）」は未検証で、smoke スクリプト（別プロセスの PowerShell）から呼ぶ場合に権限面の制約が無いかは確認していない。
+- 偽にする手順: PowerShell から実際に `GetGUIThreadInfo` を対象 hwnd のスレッド ID に対して呼び、`GUI_INMOVESIZE` ビットが移動モーダルループ中に立つか確認する。
+- 確信度: 中（API の一般的な可用性は妥当だが、別プロセスからの実呼び出しは未検証）。⚠️
+
+---
+
+## 測定環境そのものへの追加の疑い（研究文書が触れていない/薄い点）
+
+1. **`Send-SnotraKeyChord` の存在。** `SnotraSmoke.psm1:787-803` に `Send-SnotraKeyChord`（複数 VK を順に down → 逆順で up）が**既に実装済み**である。`keybd_event` はグローバル入力注入（対象窓を選ばない）なので、`Alt`(VK_MENU=0x12) を down のまま `Space`(VK_SPACE=0x20) を down すれば `WM_SYSKEYDOWN(VK_SPACE)` を Alt 押下状態で発生させられる可能性が高い。research.md は Q1 の実施手段を明記しておらず、「モジュールに無い操作」への警戒（制約 5、マウス注入不在）は書いているが、**`Send-SnotraKeyChord` が Alt+Space の注入に使える候補であることには触れていない**——見落としではなく単に手段選定が Step 3b 以降に持ち越されている体裁だが、計画を書くならここを明示すべきである。
+2. **`event_info.is_none()` の早期 `return vec![]`** (`keyboard.rs:163-166`) は `*result` を一切セットしない。呼び出し元での `result` の初期値・デフォルト分岐（`DefSubclassProc` か `DefWindowProc` か）を今回は追い切れていない。(b) の確信度を「中」に留めた主因はここ。
+3. **ビルド構成（debug/release）による repaint 頻度の差**は research.md も `SnotraSmoke.psm1:361-369` のコンソール窓問題（debug がコンソール窓を連れてきて前面化を阻害する）を通じて間接的に触れているが、Q2（モーダルループ中に repaint が回るか）への影響は明記されていない。debug ビルドは JIT やデバッグオーバーヘッドで repaint タイミングが変わりうるため、**Q2 の測定は release ビルドで行うべき**——research.md はこの指定をしていない。⚠️
+
+---
+
+## 壊せた項目 / 壊せなかった項目（宣言）
+
+- **壊せた**: **(e)** — 「単一モニター、work area `0,0,1536,816`」という実測値のラベルが誤り。実機は DPI-aware で見ると 1920x1080、work area `0,0,1920,1020`（125% スケーリングを非対応プロセスで測った結果、仮想化値を実測値と取り違えた。`SnotraSmoke.psm1` 自身が警告する既知の罠と一致）。「単一モニターの判別子で代替する」という**方針**自体は生き残るが、根拠として引用した数値は裏取り不十分だった。
+- **壊せなかった**: (a)（`WS_SYSMENU` 保持）、(c)（クランプ発火条件は唯一）、(f)（config 実測）——いずれも高確信度で一次証拠と完全一致。
+- **壊せなかったが確信度を下げて残す（⚠️）**: (b)（`WM_SYSCHAR` 握り潰し——機序はより具体的に裏付けたが `ProcResult` の最終処理まで追い切れていない）、(d)（モーダルループ中の repaint 機構は実在するが実際に回るかは未検証、これは research.md 自身も明言している留保と同じ）、(g)（`GetGUIThreadInfo` の外部プロセスからの利用可否は未検証）。

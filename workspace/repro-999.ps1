@@ -125,6 +125,10 @@ function Invoke-Repro999Run {
     # ——生成と破棄の間に早期脱出がある形である（`/symmetric-check` の「生成→登録の間に早期リターン」）。
     # `$proc` は throw の位置によって未束縛でありうるので、`finally` 側で存在を見る。
     $proc = $null
+    # **`finally` が読む変数は try より前で束縛する。** `Copy-Item` が途中で失敗すると
+    # `$configPath` は未束縛のままで、StrictMode 下の `finally` の読みが throw する
+    # ——**元の例外を隠したうえに削除まで飛ばす**（`/symmetric-check` 再実行で発見・実測）。
+    $configPath = $null
     # **呼び出し元の env を保存する。** `Invoke-SnotraEnvironment` は保存して戻すが、
     # こちらは `Remove-Item` で消すだけだった——外側で計器を立てている呼び出し元がいると、
     # この関数が黙ってそれを落とす。
@@ -273,7 +277,7 @@ function Invoke-Repro999Run {
             # **`config.toml` の不在で throw した経路がある**（複製先に config.toml が無い場合）。
             # ここで無条件に `Copy-Item` すると `finally` の中で新しい例外が起き、
             # **元の例外を隠したうえに下の削除まで飛ばす**——16.5 MB が残る。
-            if (Test-Path -LiteralPath $configPath) {
+            if ($null -ne $configPath -and (Test-Path -LiteralPath $configPath)) {
                 Copy-Item -LiteralPath $configPath -Destination (Join-Path $RunDir 'config.toml') -Force
             }
             Remove-Item -LiteralPath $profileDir -Recurse -Force -ErrorAction SilentlyContinue

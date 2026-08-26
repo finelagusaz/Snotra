@@ -16,24 +16,35 @@
 3. `smoke:egui` / `check:colors` が同じ条件へ入りうるかの判定
 4. 製品の欠陥か注入経路固有かの結論
 
-## 計器: 1 回の実行が 3 層を同時に割る
+## 計器: 1 回の実行が配送〜適用の各層を同時に割る
 
-`SNOTRA_EGUI_INPUT_TRACE` は既に実装されており、**コード変更なしで (A)/(B) より細かい 4 分類まで届く**。
-行の種類と出所（すべて grep 実測）:
+`SNOTRA_EGUI_INPUT_TRACE` は既に実装されており、**コード変更なしで (A)/(B) より細かく割れる**。
+行の種類と出所（すべて grep 実測）。
+
+> **訂正（2026-08-26）**: 当初この表は 4 行で、**`push_key` を落としていた**。
+> **その 1 行が「打鍵が egui へ実ったか」を答える最も内側の計器であり、
+> 落としたまま機序を書いたせいで §「実測」の結論を 1 度誤った。**
+> 計器の一覧は `input.rs` の `input_trace(` 呼び出しを grep して作ること——散文から写さない。
+
+母集団は `grep -oE 'input_trace\(\s*"[a-z_]+"' snotra-egui-runtime/src/{input,runtime}.rs` の 6 種**すべて**である
+（`drop_key` / `push_key` / `push_text` / `rx_key` / `rx_text` / `take`）。
 
 | 行 | 出所 | 何を言うか |
 |---|---|---|
 | `SNOTRA_SMOKE_INJECT` | `scripts/lib/SnotraSmoke.psm1:780-784`（`Send-SnotraKey`） | PowerShell が `keybd_event` を**呼んだ**時刻（成否は返らない） |
-| `SNOTRA_EGUI_INPUT rx_key` | `snotra-egui-runtime/src/runtime.rs:215-227` | tao が窓イベントとして**配送した**。`window_id` / `state` / `physical` / `synthetic` つき |
-| `SNOTRA_EGUI_INPUT drop_key` | `snotra-egui-runtime/src/input.rs:293-302` | 配送されたが `admit_key` が**抑止した**。`reason=held_since_focus_gain` |
-| `SNOTRA_EGUI_INPUT take` | `snotra-egui-runtime/src/input.rs:149-166` | egui へフレームを渡した。`frame=` / `events=` / `focused=`。100ms の心拍に間引くが、**入力を積んだフレームは必ず出る** |
+| `rx_key` | `runtime.rs:215-227` | tao が窓イベントとして**配送した**。`window_id` / `state` / `physical` / `synthetic` つき |
+| `rx_text` | `runtime.rs:228-231` | `ReceivedImeText` が届いた（WM_CHAR 側）。`chars=` |
+| `drop_key` | `input.rs:293-302` | 配送されたが `admit_key` が**抑止した**。`reason=held_since_focus_gain` |
+| `push_key` | `input.rs:346-356` | **egui へ積んだか**。`mapped=` が `active_key.is_some()`＝「打鍵が実ったか」を答える**最も内側の層** |
+| `push_text` | `input.rs:311-318` | 文字として積んだか。`committed=` |
+| `take` | `input.rs:149-166` | egui へフレームを渡した。`frame=` / `events=` / `focused=`。100ms の心拍に間引くが、**入力を積んだフレームは必ず出る** |
 
 ### 判定表（実行前に確定させる）
 
 | 観測 | 結論 |
 |---|---|
 | `take` の心拍が途切れる | フレーム不回転。(A) のうち「イベントループが回っていない」 |
-| **心拍は出るが `ts_ms` の間隔が数秒へ伸びている** | **フレームが重い**（下の H3′）。二値では「正常」に落ちる第 4 の状態 |
+| **心拍は出るが `ts_ms` の間隔が数秒へ伸びている**、**かつ同じ区間に入力か再描画要求が在る** | **フレームが重い**（下の H3′）。二値では「正常」に落ちる第 4 の状態 |
 | 心拍あり・間隔も正常・`rx_key` 無し | issue の **(B)**。`keybd_event` の打鍵がそもそもアプリへ配送されていない |
 | `rx_key` あり・`drop_key` あり | #927 の `held_since_focus_gain` による抑止（後述） |
 | `rx_key` あり・`drop_key` 無し・下流の trace 無し | egui／アプリ層。`take` の `events=` が 0 か否かでさらに割れる |
@@ -42,6 +53,11 @@
 「前回の `take` から 100ms 以上経っていたら次の `take` で 1 行出す」でしかなく、**フレームの実周期を
 測る計器ではない**——1 フレームが数秒かかっても心拍は「途切れていない」ように見える。
 ゆえに**判定は行の有無ではなく `ts_ms` の階差**で行う。
+
+**ただし階差だけでは重さを名乗れない**（2026-08-26 実測で自分が踏んだ）。`-PostShowDelayMs 800` の
+待ちの区間で階差 **490ms** が出たが、これは**入力も再描画要求も無いので `take` が呼ばれていない**だけである。
+**「階差が伸びる → フレームが重い」は偽陽性を持つ**——重さの証拠にするには、
+同じ区間に入力か再描画要求が在ることを併せて示すこと。
 
 **`take` の行は 2 つの窓が混ざる。** `InputState` は窓ごとに 1 つで（`runtime.rs:363,389`）、
 `take` は `window_id` を出さず `frame=` は各窓の独立カウンタである（自分で実測）。
@@ -196,47 +212,67 @@ worker が撃つ `egui_ctx.request_repaint()` の頻度もこの経路に載る�
 
 ### 判定表のどの行にも当たらなかった——**沈黙が再現しない**
 
-| 形 | 組数 | `egui_hide:done` |
-|---|---|---|
-| `-PostShowDelayMs 800 -DownCount 10`（#996 の diag＝通った側） | 1 組（OFF/ON） | **2/2 到達** |
-| `-PostShowDelayMs 0 -DownCount 10`（#996 の測定＝沈黙した側の形） | 4 組 | **8/8 到達** |
-| `-PostShowDelayMs 0 -DownCount 200`（スクロール量を #996 に合わせる） | 3 組 | **6/6 到達** |
+| 形 | 組数 | `egui_hide:done` | ON 側の `take` 階差 max |
+|---|---|---|---|
+| `-PostShowDelayMs 800 -DownCount 10`（#996 の diag＝通った側） | 1 組（OFF/ON） | **2/2 到達** | 490ms（**待ちの区間・重さではない**） |
+| `-PostShowDelayMs 0 -DownCount 10`（#996 の測定＝沈黙した側の形） | 4 組 | **8/8 到達** | 129〜142ms |
+| `-PostShowDelayMs 0 -DownCount 200`（スクロール量を #996 に合わせる） | 3 組 | **6/6 到達** | 143〜150ms |
+| 同上 + `auto_update` を実 config の値へ戻す（D-2 の逸脱を戻す） | 2 組 | **4/4 到達** | 155ms |
 
-計器つきの回はいずれも健全だった: `take` の階差 max **129〜150ms**（心拍の間引き 100ms のすぐ上＝
-**重いフレームは無い**）、`rx_key` は注入数と一致、`drop_key` は起動時の合成 2 件のみ。
+**合計 10 組 20 回**（OFF 10 / ON 10。`%TEMP%` の run ディレクトリを数え直した）。
+`rx_key` は注入数と一致し、`drop_key` は起動時の合成 2 件のみ。
+
 **H2（フレーム不回転）も H3′（重いフレーム）も、この標本には現れていない。**
+⚠️ ただし**計器なしの 10 回は H2 に対して構造的に盲目である**（`take` 行が出ない）。
+言えるのは**計器つきの 10 回について**である。
 
-### 代わりに確定したこと: **Down キーは届いていた。ただし `ArrowDown` としてではない**
+### 代わりに確定したこと: **Down キーは届き、`ArrowDown` として egui へ積まれていた**
 
-`-DownCount 200` の計器つき 3 回で、注入 400 に対し `rx_key` は 413 行（＝**全部届いている**）。
-しかし physical の内訳は:
+> **訂正（2026-08-26）**: ここには当初「ただし `ArrowDown` としてではない」と書き、
+> 「アプリがどう解釈したかは決まらない」と結んでいた。**どちらも誤りである。**
+> 同じログの `push_key` が `mapped=true` を 400/400 出しており、機序は下に書き直した。
+> 経緯と教訓は `workspace/followup-issue-draft.md`。
+
+`-DownCount 200` の計器つきの回で、注入 408（`SNOTRA_SMOKE_INJECT`）に対し `rx_key` 413 行
+（＝**全部届いている**。差の 5 は起動時の合成と修飾キー）。physical の内訳は:
 
 ```
 400 physical=Numpad2      ← 注入した VK_DOWN (0x28)
   3 physical=AltLeft / 2 ControlLeft / 2 KeyA / 2 Escape / 2 KeyK / 2 Unidentified(Windows(0))
 ```
 
-**機序**（自分で対照を取って確定した）。`Send-SnotraKey` は
+**physical が `Numpad2` になる理由**: `Send-SnotraKey` は
 `keybd_event($VirtualKey, 0, $flags, 0)` と撃つ（`SnotraSmoke.psm1:772-773`）——**`bScan` が 0 である**。
-矢印キーは scancode と拡張ビットで numpad と区別されるため、`bScan=0` では numpad 側に落ちる。
+矢印キーは scancode で numpad と区別されるため、`bScan=0` では numpad 側に落ちる。
 
-| probe | 撃ち方 | 届いた physical |
-|---|---|---|
-| 現状 | `keybd_event(0x28, 0x00, 0/2)` | `Numpad2` 400/400 |
-| 拡張フラグだけ | `keybd_event(0x28, 0x00, 0x1/0x3)` | **`Numpad2` 40/40**（変わらない） |
-| scancode も渡す | `keybd_event(0x28, 0x50, 0x1/0x3)` | **`ArrowDown` 40/40** |
+| probe | 撃ち方 | 届いた physical | egui が受けた key |
+|---|---|---|---|
+| 現状 | `keybd_event(0x28, 0x00, 0/2)` | `Numpad2` 400/400 | **`ArrowDown`**（`mapped=true`） |
+| scancode も渡す | `keybd_event(0x28, 0x50, 0x1/0x3)` | **`ArrowDown` 40/40** | `ArrowDown` |
 
-**issue の (A)/(B) はどちらでもない。** 打鍵は配送されており（(B) は偽）、配送が止まってもいない（(A) も偽）。
-**別人格として届いていた**というのが実際である。#996 がこれを区別できなかったのは、
-issue 自身が書いたとおり**選択の移動を出す trace イベントが無い**からである。
+⚠️ 「拡張フラグだけ立てても `Numpad2` のまま（40/40）」も実測したが、**その枝はコミットした script に
+残っていない**（`bScan` を渡す形へ上書きした）ため、**この 1 行だけ再現手順が無い**。判定には要らない。
 
-⚠️ **`Numpad2` として届いた打鍵をアプリがどう解釈したかは、この標本では決まらない**——
-`rx_key` は physical しか出さず、logical は載らない。`egui_input:changed` は 1 件（最初の `A`）だけなので
-**文字としては入っていない**が、選択が動いたかは観測点が無い。
+**しかし physical は挙動を決めていない。** `push_key`（`input.rs:346-356`）が
+`physical=Numpad2 repeat=false mapped=true` を **400/400** 出している。4 段で確かめた:
+
+1. `active_key = key_from_tao(&event.logical_key).or_else(|| key_from_key_code(event.physical_key))`（`input.rs:336-337`）
+2. `key_from_key_code` は KeyA–KeyZ しか map しない（`input.rs:435-468`）→ `Numpad2` では `None`。
+   ゆえに `mapped=true` は **logical 側**から来ている
+3. logical が `Character("2")`（NumLock ON の姿）なら WM_CHAR が伴い `rx_text` が 400 行出るが、**実測 2 行**
+4. **NumLock を実測して OFF**（`GetKeyState(0x90)`）→ Numpad2 の logical は `ArrowDown`
+
+**issue の (A)/(B) はどちらでもない——打鍵は届き、`ArrowDown` として実っていた。**
+#996 が区別できなかったのは、issue 自身が書いたとおり**選択の移動を出す trace が無い**からで、
+`push_key` の `mapped=` がその代わりになる。
+
+⚠️ physical を読む消費者は `admit_key` の `held_since_focus_gain` だけであり、
+押下と解放が同じ physical で対になる限り破れない。**注入と物理キーボードが混ざる状況では対にならない**が、
+矢印を撃つ検査は現時点で 0 件である。
 
 ### #996 の全キー沈黙については
 
-**18 回（OFF 9 / ON 9）回して 1 度も再現しなかった。** OFF 側＝ #996 と同じ計器なしの条件でも 0/9 なので、
+**20 回（OFF 10 / ON 10）回して 1 度も再現しなかった。** OFF 側＝ #996 と同じ計器なしの条件でも 0/10 なので、
 「計器が現象を消した」ではない。`plan.md` D-1 の指示に従い、既知の逸脱（`auto_update` の無効化）を
 戻した回（実 config の `auto_update = "full"`・`-DownCount 200`）も 2 組測ったが **4/4 とも到達**した
 ——**逸脱は原因ではない**。
@@ -245,7 +281,7 @@ issue 自身が書いたとおり**選択の移動を出す trace イベント�
 `show_icons = true` / `font_family = "Segoe UI"` / `font_size = 13` / `max_results = <既定>`。
 
 ⚠️ **`p_lo` は計算しない。** `plan.md` D-4 の規則は「OFF 側が m 回中 k 回再現したら」を前提にしており、
-**k = 0 ではその式が定義されない**。18 回 0 件から言えるのは
+**k = 0 ではその式が定義されない**。20 回 0 件から言えるのは
 「**この機体・この日・この形では再現しない**」という下限の主張だけであり、
 「#996 の観測が誤りだった」も「現在の main では起きない」も**これより強い**（#996 は 6/6 で観測している）。
 

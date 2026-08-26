@@ -21,7 +21,7 @@
 | ファイル | 種別 | 内容 |
 |---|---|---|
 | `workspace/repro-999.ps1` | 新規（足場） | 再現ハーネス。`SnotraSmoke.psm1` を import して使う |
-| `workspace/evidence-999/` | 新規（生ログ） | 実行ごとの stderr / ホスト出力 / 突き合わせ表 |
+|  `%TEMP%/snotra-evidence-999*` | 新規（生ログ） | 実行ごとの stderr / ホスト出力 / 突き合わせ表 |
 | `workspace/research.md` | 更新 | 判定表のどの行に当たったか、契機、⚠️ 付きの残余 |
 | `workspace/conclusion-999.md` | 新規 | issue へ貼る 4 点の結論（**貼るのは別の指示を待つ**） |
 | `workspace/plan.md` | 更新 | 判定が出た時点で、消えた枝を削除して書き換える |
@@ -51,12 +51,12 @@
   **`release` は小文字で渡す**——`$Profile` は `Join-Path <target_dir> "$Profile/snotra.exe"` の
   パス片としてそのまま使われる（既定は `'debug'`・実読）
 - プロファイル用意: **実 config ディレクトリを丸ごと複製し、`auto_update = "disabled"` へ倒す**（D-2）。
-  **窓の高さに効くキーを `evidence-999/<run>/profile.txt` へ書き出してから起動する**
+  **窓の高さに効くキーを `<evidence>/<run>/profile.txt` へ書き出してから起動する**
 - `Start-SnotraProcess -Trace -ExtraVariables @{ SNOTRA_EGUI_INPUT_TRACE = '1' } -StandardErrorPath <log>`
   **両系統を同時に立てる**（`research.md` 制約 2b）
 - `Set-SnotraForegroundWindow` → hotkey → 1 文字クエリ → `Wait-SnotraTraceEvent "egui_results:show"`
 - 直後に Down×N → Escape。**#996 の測定スクリプトの形（表示直後に本番操作へ入る）を再現する**
-- 生ログとホスト側出力の両方を `workspace/evidence-999/<run>/` へ落とす。
+- 生ログとホスト側出力の両方を `%TEMP%/snotra-evidence-999*/<run>/` へ落とす。
   注入時刻は `Send-SnotraKey ... 6>> $injectLog`（情報ストリーム・D-3 で実測済み）
 - `finally` で `Stop-SnotraProcessAndWait`
 
@@ -70,7 +70,7 @@
   （`ab-baseline-needs-drift-control` / `PERFORMANCE.md:2721`「率を測る回と機序を測る回は別の回に」）
 - **`SNOTRA_TRACE`（`-Trace`）は OFF の回も常時立てる。** トグルするのは `SNOTRA_EGUI_INPUT_TRACE` だけである
   ——両方切ると OFF 回が盲目になり、`egui_results:show` で止まったことすら見えない
-- 各実行の生ログを `evidence-999/` へ残す。**測る前に、いま持っている分を出力先へ書く**
+- 各実行の生ログを `<evidence>/` へ残す。**測る前に、いま持っている分を出力先へ書く**
 
 ### Phase 3 — 判定して書く
 
@@ -134,23 +134,30 @@
 ### Phase 2 — 測定
 
 - [x] 計器 OFF / ON を交互に回し、各回の生ログを残す（**置き場は `%TEMP%/snotra-evidence-999*`**・上の逸脱）
-  — 計 18 回（OFF 9 / ON 9）を 4 形で実施
+  — 計 20 回（OFF 10 / ON 10）を 4 形で実施
 - [x] `SNOTRA_SMOKE_INJECT` と `rx_key` / `drop_key` / `take` を突き合わせる
-  — **1 行ごとの時系列マージではなく、件数と physical の内訳で決着した**（注入 400 に対し `rx_key` 413・
-  うち `physical=Numpad2` が 400）。**沈黙が無かったので区間を測る必要が消え、identity の内訳が答えになった**
+  — **1 行ごとの時系列マージではなく、件数と内訳で決着した**（注入 408 に対し `rx_key` 413・
+  うち `physical=Numpad2` が 400、`push_key` の `mapped=true` が 400）。
+  **沈黙が無かったので区間を測る必要が消え、identity と `mapped` の内訳が答えになった**
 - [x] `take` の `ts_ms` 階差を出し、100ms を大きく超える間隔が集中するかを見る
-  — max 129〜150ms（間引き 100ms のすぐ上）。**重いフレームは無い**
+  — 無印/d200/au は max 129〜155ms。**接地の回だけ 490ms** だが、これは
+  `-PostShowDelayMs 800` の**待ちの区間**であって重さではない（`take` が呼ばれていないだけ）。
+  **「階差が伸びる → 重い」は偽陽性を持つ**と判定表へ書き足した
 
 ### Phase 3 — 判定
 
 - [x] 判定表のどの行に当たったかを `workspace/research.md` へ記録する
-  — **どの行にも当たらなかった**（沈黙が 18 回とも再現せず）。H2 も H3′ も標本に現れていない。
+  — **どの行にも当たらなかった**（沈黙が 20 回とも再現せず）。H2 も H3′ も標本に現れていない。
   **仮説は削除せず「この標本には現れていない」として残す**——再現していない以上、否定もできていない
 - [x] `smoke:egui` / `check:colors` が同じ条件へ入りうるかに答えを付ける
   — **どちらも影響を受けない**。`scripts/` の `*.ps1` / `*.psm1` を `0x25`〜`0x28` で走査して
   **矢印キーを注入する既存の検査は 0 件**（`visual-check-colors.ps1:86` の色定数 1 件のみが一致）
 - [x] 製品の欠陥か注入経路固有かの帰属を、根拠つきで書く
-  — **1（`ArrowDown` として届かない）は注入経路固有**（`bScan=0`）。**2（全キー沈黙）は帰属を決められない**（再現せず）
+  — **製品の欠陥も注入経路の欠陥も見つからなかった。** 打鍵は届き `ArrowDown` として egui へ実っていた
+  （`push_key` の `mapped=true` 400/400 + NumLock 実測 OFF）。**2（全キー沈黙）は帰属を決められない**（再現せず）
+  - **⚠️ この項は 1 度誤って確定させた。** 当初「`ArrowDown` として届かない＝注入経路固有」と書いたが、
+    `rx_key` の physical だけを見て `push_key` の `mapped=` を見ていなかった。
+    **委譲したレビューの C-1 が反証し、機序を自分で 4 段確かめて訂正した**（経緯は `followup-issue-draft.md`）
 - [x] `workspace/conclusion-999.md`（issue へ貼る 4 点）を書く
 - [x] 結論の着地先を決める — **`workspace/conclusion-999.md` と、R-1 のフォローアップ issue の草案**。
   **投稿・起票はこの計画の所有外である**（コミット以降と同じ扱い）——草案まで書き、実行はユーザーの指示を待つ
@@ -175,7 +182,7 @@
   **OFF 側でも再現しなかったときは、まずこの 1 行を戻す**
 
   **同じ理由で、複製した config のうち窓の高さに効くキーは暗黙にしない**——実測に入る前に
-  `evidence-999/<run>/profile.txt` へ値を書き出す（`auto_update` / `[appearance]` の
+  `<evidence>/<run>/profile.txt` へ値を書き出す（`auto_update` / `[appearance]` の
   `window_width`・`show_icons`・フォント関係）。**丸ごと複製は「何が効いているか」を隠す形なので、
   高さを動かす入力だけは明示的に読める形で残す。**
 - [x] **D-3: `SNOTRA_SMOKE_INJECT` の捕まえ方** — 決定: **`Send-SnotraKey` の呼び出し点で

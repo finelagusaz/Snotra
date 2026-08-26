@@ -5,7 +5,7 @@ const repo = process.argv[2];
 const rev = process.argv[3];
 const libUrl = process.argv[4];
 const {
-  REF_HEAD, isRefTargetSpelling, refScanLines,
+  REF_HEAD, HEADING_REF, isRefTargetSpelling, refScanLines,
   collectAnchors, normAnchor, resolveRefTarget, allHeadingRefDocs,
 } = await import(libUrl);
 
@@ -28,8 +28,12 @@ const snapshot = {
   },
 };
 
+// OLD は #1188 以前の形。**実装から取れないのでハードコードするしかない**（歴史側のベースライン）。
 const OLD = () => new RegExp(`${REF_HEAD}「([^「」\\n]+)」`, "g");
-const NEW = () => new RegExp(`${REF_HEAD}「((?:[^「」\\n]|「[^「」\\n]*」)+)」`, "g");
+// NEW は**出荷される実装そのもの**を使う。ここをハードコードすると、`lib.mjs` を 1 文字も
+// 編集しなくても差が出て、この測定は自明に緑になる（#922 型の「観測形が対象を含まない」）。
+// `matchAll` は内部で複製するので `g` フラグの共有は安全（`lib.mjs` の同定数の doc が保証）。
+const NEW = () => HEADING_REF;
 
 function scan(docs, mk) {
   const rows = [];

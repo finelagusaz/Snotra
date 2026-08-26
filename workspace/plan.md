@@ -81,13 +81,13 @@ import していないから**である（`G-near-heading-refs.mjs:2` の import
 
 ### Phase 1 — 機構（`lib.mjs` + fixture）
 
-- [ ] `lib.mjs:177` を次へ置き換える（**`REF_HEAD` は 1 文字も触らない**）
+- [x] `lib.mjs:177` を次へ置き換える（**`REF_HEAD` は 1 文字も触らない**）
 
   ```js
   export const HEADING_REF = new RegExp(`${REF_HEAD}「((?:[^「」\\n]|「[^「」\\n]*」)+)」`, "g");
   ```
 
-- [ ] `HEADING_REF` の JSDoc へ次を足す（既存の 3 段落は残す）
+- [x] `HEADING_REF` の JSDoc へ次を足す（既存の 3 段落は残す）
   - **1 段の入れ子まで受け入れる**こと、その理由（見出し名の入れ子は死角ではなく実在の形であり、
     #1188 の時点で 18 日間・独立 2 エピソードの沈黙が実在した）
   - **⚠ doc に書く例が検出器を赤にしないこと**（#1155 の再演を避ける）。`lib.mjs` は
@@ -106,7 +106,7 @@ import していないから**である（`G-near-heading-refs.mjs:2` の import
     「**1 段までは照合される**」へ動く。深さ 2 を書いた者はより強く動くと期待する。
     ゆえに死角は**宣言する**形で書く（`isRefTargetSpelling` が `.ps1` 等に採ったのと同じ形）
   - 決定と却下 3 案の所在として `ADR-nested-quote-heading-ref-labels` を**短縮名で**引く
-- [ ] `G-heading-refs.test.mjs` へ fixture 3 件を足す
+- [x] `G-heading-refs.test.mjs` へ fixture 3 件を足す
   - **緑**: 入れ子を含む見出しを全形で指す参照が着地する
     （アンカー `## 第一原則: コメントは「なぜ」を書く` ／ 参照
     `` `docs/c.md`「第一原則: コメントは「なぜ」を書く」 ``）
@@ -117,20 +117,32 @@ import していないから**である（`G-near-heading-refs.mjs:2` の import
     「照合していない」と区別が付かない）
   - **死角の固定**: 深さ 2 の入れ子（`「A「B「C」D」E」`）は一致を生成しない（findings 0・checked 0）
 
-- [ ] **`workspace/measure-heading-ref-nesting.mjs:32` の `NEW` を、`lib.mjs` から import した
+- [x] **`workspace/measure-heading-ref-nesting.mjs:32` の `NEW` を、`lib.mjs` から import した
       `HEADING_REF` そのものへ差し替える**（`` () => HEADING_REF ``。`matchAll` は内部で複製するので
       `g` フラグの共有は安全——`lib.mjs:174` の doc が保証している）。
       **これをしないと V3/V4 は自明に緑である**——現行の script は OLD も NEW も**両方ハードコード**しており
       （31-32 行で確認）、`lib.mjs` から取るのは `REF_HEAD` だけなので、**`lib.mjs` を 1 文字も
       編集しなくても +2 が出る**（#922 型の「観測形が対象を含まない」）。
       `OLD` はハードコードのまま残す（歴史側のベースラインであり、実装から取れない）
-- [ ] `snotra-core/src/search/build.rs` の 35-36 行（回避策の理由を書いた 2 行）を消す。
+- [x] `snotra-core/src/search/build.rs` の 35-36 行（回避策の理由を書いた 2 行）を消す。
       **切り詰め形の参照そのものは触らない**。`.rs` の編集なので PostToolUse hook が
       fmt / clippy / test を走らせる（沈黙 = 合格。ただしその沈黙は見出し参照の着地を含まない）
 
+- [x] **（実装中に判明・計画外）fixture を 4 件目まで足す**——死角 4（他の参照のラベルの内側に
+      置かれた正準形参照）は**唯一の挙動変化**（OLD は内側を拾い、NEW は外側 1 件へ統合する）なので、
+      これだけは fixture が変更前後で結果を変える。実測: 変更前は findings 1（内側が着地しない）、
+      変更後は findings 0 / checked 1
+- [x] **（実装中に判明・計画外）自分のテストコメントが #1155 の罠を踏んだ**——`.mjs` のコメント行は
+      照合母集団なので、fixture の説明に書いた正準形が実在しない `docs/inner.md` を指して
+      `governance:check` を赤にした。コメントから正準形を外し、その旨を注記した
+- [x] **（実装中に判明・計画外）probe が自己汚染する**——`probe-heading-ref-blind-spots.mjs` は
+      除外を掛けずに全追跡ファイルを走るので、**この測定を記録した `workspace/research.md` 自身**が
+      「深さ 2 以上 2 件」として数え上げられた。`workspace/` は `WALK_EXCLUDE_PATHS` に入っており
+      照合母集団の外である。probe のヘッダへ読み捨ての指示を書いた
+
 ### Phase 2 — 記録（ADR 2 枚）
 
-- [ ] `docs/adr/ADR-nested-quote-heading-ref-labels.md` を新設する。1 行目は
+- [x] `docs/adr/ADR-nested-quote-heading-ref-labels.md` を新設する。1 行目は
       `# ADR-nested-quote-heading-ref-labels: <題>`（`G-adr-file-names` が stem と見出しの一致を見る）
   - **文脈**: 18 日間・独立 2 エピソード・2 つの別の見出し・2 つの別の引用元（うち 1 件は
     `snotra-core/src/indexer.rs` の rustdoc）。`b93b0fb8` の掃除は 1 見出しへ手で適用しただけで機構は無い
@@ -150,7 +162,7 @@ import していないから**である（`G-near-heading-refs.mjs:2` の import
     （今日 0 件・実測）。**安全性の根拠は「頭を共有しているから」ではなく
     「`HEADING_REF` を import していないから」である**——この区別を書かないと、
     次に `REF_HEAD` を触る者が誤った安心を得る
-- [ ] `docs/adr/ADR-folded-canonical-reference-detector.md` へ
+- [x] `docs/adr/ADR-folded-canonical-reference-detector.md` へ
       **`## 追記（2026-08-26・#1188）— 帰結「`HEADING_REF` の意味論は変わらない」は覆った`** を足す
   - **本文は 1 文字も書き換えない**（`ADR-adr-frozen-history` の凍結規約）
   - 追記の中身は「ラベルの文字クラスが 1 段の入れ子まで広がった。**却下 1 が挙げた 3 つの理由は

@@ -32,4 +32,8 @@
 
 - **`physical=Numpad2` を見ても、それだけでは「Down が効いていない」と読まないこと。** `push_key` の `mapped=` を併せて見る。`rx_key` は配送を、`push_key` は適用を答える別々の層である。
 - **計器の一覧を散文へ写さない。** #999 は `research.md` に 4 種の表を作り、その表を母集団として扱ったせいで `push_key` を見に行かなかった。実際の `input_trace(` は 6 種（`drop_key` / `push_key` / `push_text` / `rx_key` / `rx_text` / `take`）である。母集団はソースを走査して得ること——`grep -h -A 1 'input_trace(' …`（rustfmt が種別のリテラルを次行へ折るため `-A 1` が要る。1 行前提の式は 0 件を返す）。
-- **#999 が報告した「results 表示後の全キー沈黙」は、この ADR の射程外である。** 20 回（計器なし 10 / あり 10）測って 1 度も再現せず、帰属は決まっていない。
+- **#999 が報告した「results 表示後の全キー沈黙」は、この ADR の射程外である。** 20 回（計器なし 10 / あり 10）測って 1 度も再現せず、帰属は決まっていない。**次に遭遇したときの測り方だけをここへ残す**——再現ハーネス自体は `workspace/` に住んでいてサイクル末に消えるため:
+  - `Start-SnotraProcess -Trace -ExtraVariables @{ SNOTRA_EGUI_INPUT_TRACE = '1' }` で**2 系統を同時に立てる**（`SNOTRA_TRACE` と `SNOTRA_EGUI_INPUT_TRACE` は独立で、前者が `egui_results:show`、後者が `rx_key` / `push_key` / `take` を出す）
+  - **注入側の計器は呼び出し側 PowerShell の env が握る**。`Start-SnotraProcess` は env をその中でだけ立てて戻すので、打鍵を撃つ区間で `$env:SNOTRA_EGUI_INPUT_TRACE` を立て直さないと `SNOTRA_SMOKE_INJECT` が 1 行も出ない
+  - 注入時刻は情報ストリームへ出るので `Send-SnotraKey ... 6>> $log` で拾う（本体の `rx_key` は子プロセスの stderr で別ストリーム。時計はどちらも epoch ms）
+  - 判定は `take` の**行の有無ではなく `ts_ms` の階差**で行い、**階差が伸びただけでは重さを名乗らない**（待ちの区間でも伸びる）

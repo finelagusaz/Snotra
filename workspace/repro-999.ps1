@@ -120,6 +120,17 @@ function Invoke-Repro999Run {
     $outPath = Join-Path $RunDir 'stdout.log'
     $injectLog = Join-Path $RunDir 'inject.log'
 
+    # **複製から破棄までを 1 つの try で囲う。** 複製は 16.5 MB の実索引を持ち込むので、
+    # ここから `Start-SnotraProcess` までの間で throw すると**削除されないまま %TEMP% に残る**
+    # ——生成と破棄の間に早期脱出がある形である（`/symmetric-check` の「生成→登録の間に早期リターン」）。
+    # `$proc` は throw の位置によって未束縛でありうるので、`finally` 側で存在を見る。
+    $proc = $null
+    # **呼び出し元の env を保存する。** `Invoke-SnotraEnvironment` は保存して戻すが、
+    # こちらは `Remove-Item` で消すだけだった——外側で計器を立てている呼び出し元がいると、
+    # この関数が黙ってそれを落とす。
+    $priorTrace = [Environment]::GetEnvironmentVariable('SNOTRA_EGUI_INPUT_TRACE', 'Process')
+    try {
+
     # **使い捨てプロファイルは実 config の複製である**（#996 と同じ条件・実索引を持ち込む）。
     Copy-Item -LiteralPath $SourceConfigDir -Destination $profileDir -Recurse -Force
     $configPath = Join-Path $profileDir 'config.toml'
@@ -147,7 +158,7 @@ function Invoke-Repro999Run {
 
     $proc = Start-SnotraProcess -ConfigDir $profileDir -FilePath $exe -Trace `
         -ExtraVariables $extra -StandardErrorPath $errPath -StandardOutputPath $outPath -NoNewWindow
-    try {
+
         # **注入側の計器は、この PowerShell プロセスの env が握っている。**
         # `Start-SnotraProcess` は `Invoke-SnotraEnvironment` の中でだけ env を立てて**すぐ戻す**ので、
         # 打鍵を撃つ時刻には消えている——ここで立て直さないと `Send-SnotraKey` の
@@ -188,6 +199,19 @@ function Invoke-Repro999Run {
         $VK_ESCAPE = 0x1B
         for ($i = 0; $i -lt $DownCount; $i++) {
             if ($ExtendedDown) {
+                # **この枝は `Send-SnotraKey` の写しではないが、副作用を 1 つ欠く**（`/dry-check` 実測）:
+                # `SNOTRA_SMOKE_INJECT` の行を出さないので、**probe の回は `inject.log` に Down が載らない**。
+                # 意図的である——ここで `Write-Host` を書くと注入ログの生成点が 2 か所になり、
+                # 「打鍵の実装は 1 か所」という `Send-SnotraKey` の doc の主張が偽になる。
+                # **この枠は identity（physical の内訳）だけを見る**ので、注入時刻は要らない。
+                # 恒久的な直し方は `Send-SnotraKey` へ `-Extended` を足すこと（`workspace/followup-issue-draft.md`）。
+                #
+                # **`[SnotraSmokeInterop.Native]` の初期化に依存する。** それを行う
+                # `Initialize-SnotraNativeInterop` は **module から export されていない**ので、
+                # ここから呼べない（実測。`Get-SnotraForegroundWindowLabel` と同じ）。依存は満たされている
+                # ——この行に来るまでに hotkey chord とクエリ 1 文字を `Send-SnotraKey` が撃っており、
+                # あちらが先頭で初期化する。**Down 以外の注入を消すときは、この前提も一緒に消える。**
+                #
                 # `KEYEVENTF_EXTENDEDKEY = 0x1` / `KEYEVENTF_KEYUP = 0x2`。
                 # **`bScan` も渡す**——フラグだけ立てて `bScan=0` のままでは
                 # `physical=Numpad2` が変わらなかった（実測 2026-08-26・40/40）。
@@ -229,17 +253,29 @@ function Invoke-Repro999Run {
             Error = ''
         }
     } finally {
-        # **`$null` を代入すると空文字が残る**（`Remove-Item` で消す・ADR-egui-trace-hatch-empty-only）。
-        Remove-Item -LiteralPath 'Env:SNOTRA_EGUI_INPUT_TRACE' -ErrorAction SilentlyContinue
+        # **消すのではなく、呼び出し元の値へ戻す。**
+        # `$null` を代入すると空文字が残るので、不在は `Remove-Item` で表す
+        # （ADR-egui-trace-hatch-empty-only）。
+        if ($null -eq $priorTrace) {
+            Remove-Item -LiteralPath 'Env:SNOTRA_EGUI_INPUT_TRACE' -ErrorAction SilentlyContinue
+        } else {
+            Set-Item -LiteralPath 'Env:SNOTRA_EGUI_INPUT_TRACE' -Value $priorTrace
+        }
         # **`[void]` で捨てる**——`finally` の中でも出力は関数の出力ストリームへ載るので、
         # 戻り値の `$true` が要約の行に混ざり、`Export-Csv` が空行を書いた（実測）。
-        [void](Stop-SnotraProcessAndWait -Process $proc)
+        # **`$proc` は未束縛でありうる**（起動より前で throw した場合）。
+        if ($null -ne $proc) { [void](Stop-SnotraProcessAndWait -Process $proc) }
 
         # **複製したプロファイルは残さない。** `index.bin` は実測 16.5 MB で、しかも
         # **利用者の実ファイルパスそのもの**である——証拠として git に載せてよいものではない。
         # 残すのは `config.toml` と `profile.txt`（高さに効く入力の実効値）だけにする。
         if (Test-Path -LiteralPath $profileDir) {
-            Copy-Item -LiteralPath $configPath -Destination (Join-Path $RunDir 'config.toml') -Force
+            # **`config.toml` の不在で throw した経路がある**（複製先に config.toml が無い場合）。
+            # ここで無条件に `Copy-Item` すると `finally` の中で新しい例外が起き、
+            # **元の例外を隠したうえに下の削除まで飛ばす**——16.5 MB が残る。
+            if (Test-Path -LiteralPath $configPath) {
+                Copy-Item -LiteralPath $configPath -Destination (Join-Path $RunDir 'config.toml') -Force
+            }
             Remove-Item -LiteralPath $profileDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

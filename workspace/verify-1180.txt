@@ -1,0 +1,208 @@
+# verify-1180.txt — sha f2ac33de049d2878070fd897bfce551f0e425eb4 の検証・レビュー
+
+注記: 指定された出力先 C:/workspace/Snotra/workspace/verify-1180.txt は worktree 分離により
+Write が拒否された（"This agent is isolated in the worktree ... Edit the worktree copy"）。
+実際の出力先は
+C:/workspace/Snotra/.claude/worktrees/agent-af03f5139390ade10/workspace/verify-1180.txt
+
+## アンカー照合
+
+- 開始時 `git rev-parse HEAD` = 16f43fcaed52f18bbeae070bac2c2732e3111cfe（アンカーより古い。
+  ブランチ名も表示されず `worktree-agent-af03f5139390ade10` 状態だった）
+- `git checkout --detach f2ac33de049d2878070fd897bfce551f0e425eb4` を実行
+  → `git rev-parse HEAD` = f2ac33de049d2878070fd897bfce551f0e425eb4（アンカーと一致）
+- 直後の `git status --porcelain` = 空（作業ツリー清浄）
+- 作業ディレクトリ: C:/workspace/Snotra/.claude/worktrees/agent-af03f5139390ade10
+- 差分の実測: `git show f2ac33de --numstat` = `11  1  PERFORMANCE.md` / `10  9  workspace/plan.md`
+  → PERFORMANCE.md の削除行は **1 行のみ**（設計どおり）
+
+## カテゴリ A〜F
+
+SSOT は `docs/build-commands.md`「変更後の検証チェックリスト」。判定は拡張子ではなく
+「変更が触れるコードパスの意味」で行った（`.claude/rules/src-tauri.md`・#558）。
+
+| カテゴリ | 判定 | 根拠 / コマンドと結果 |
+|---|---|---|
+| A. Rust ファイル（`*.rs`） | 該当なし | `git show f2ac33de --numstat` が挙げるファイルは PERFORMANCE.md と workspace/plan.md の 2 枚だけで `.rs` / `Cargo.toml` / doc コメント（`///` `//!`）を含まない。**拡張子だけを根拠にしていない**——A の実体は「Rust のコンパイル単位・rustdoc の入力が変わったか」であり、`PERFORMANCE.md` が Rust のビルドに入る経路（`include_str!` / `#[doc = include_str!]`）が在るかを実測した: `include_str!` の全 13 出現（grep 実測）はいずれも `.rs` 自身を読むもので、`PERFORMANCE.md` を読む行は無い。ゆえに `cargo fmt/check/clippy/test/doc` の判定器の入力は 1 バイトも変わらない |
+| B. TypeScript（`vitest.config.ts` 等） | 該当なし | 差分に `.ts` が無い。`vitest.config.ts` も未変更 |
+| C. ウィンドウ生成／表示順・ホットキー・スラッシュコマンド | 該当なし | 散文のみの変更で、trace イベント名・hotkey 登録・`.claude/skills/` / `.claude/commands/` のいずれにも触れていない。C は A／B への「追加」カテゴリであり、A/B が非該当な散文差分では起動する対象そのものが変わらない |
+| D. UI のスタイル・レイアウト・テキスト表示 | 該当なし | D 節自身が「**変えたのが表示の見た目かどうかで決める**」「該当判定は広げる方向にも外れ、そちらは安全側ではない」（#1106）と規定している。本差分は製品のバイナリを 1 バイトも変えないので、`smoke:manual` の申し送りを作るのは過大な該当判定に当たる |
+| E. git hook（`.githooks/**`） | 該当なし | 差分に `.githooks/` 配下のファイルが無い |
+| F. ガバナンス文書（`*.md` 等） | **実行** | `npm run governance:check` → **exit 0・全検査 passed**。出力: 「検査 23 件 / 対象文書 36 件 / rules 8 件 / skills 12 件 / … / 見出し参照 365 件を md 48 件 + .rs 102 件 + スクリプトのコメント 116 件から照合 / … / 散文の識別子 421 件を 34 文書から照合 / 近傍の見出し参照 19 件 / 折れうる位置 20 件 / コードスパン 18175 件 / …」 |
+
+補足（F に関わる母集団の実測・変異注入の解釈に使う）:
+
+- `PERFORMANCE.md` は `headingRefDocs`（`scripts/governance/lib.mjs`）に**入る**
+  （`.md` かつ `docs/superpowers/` / `workspace/` / `docs/adr/` のいずれでもない）
+  → G-heading-refs / G-near-heading-refs / G-folded-code-spans の**走査元である**
+- `PERFORMANCE.md` は `governanceDocs` に**入らない** → G-references / G-spec-sections の射程外
+- `PERFORMANCE.md` は `staleIdentifierTargets`（`STALE_EXTRA_DOCS` = SPEC.md / CLAUDE.md /
+  AGENTS.md / snotra-settings/SETTINGS-DESIGN.md ＋ `.claude/**` ＋ `docs/**`）に**入らない**
+  → **G-stale-identifiers の射程外**。コミットメッセージの「PERFORMANCE.md は
+  G-stale-identifiers の母集団外」という主張は実測で真である
+
+## レビュー所見
+
+修正は一切当てていない（報告のみ）。
+
+### Critical
+
+なし。
+
+### High
+
+なし。
+
+### Medium
+
+- **M-1（⚠️ に近い設計上の非対称。指摘であって欠陥ではない可能性が高い）**:
+  新しく書いた `:2298` の「後日（#1001）」注記は、**撤去済みの識別子 2 件を
+  コードスパンで書いている**（`` `entries_equal` `` / `` `try_background_rescan` ``）。
+  ブリーフの「意図的に分けた構造」は「他は**原文を残した**」と説明しているが、
+  この 2 件は原文ではなく**この差分が新規に書いた**テキストである。ゆえに
+  「原文を残した」という理由はこの箇所を覆っていない。
+  ただし当の文が「も撤去された」と同じ行で明示しているため、差分自身が採る基準
+  （「読者が今在るものとして探しに行くか」）では非該当と読める。**採否は著者の判断で足りる。**
+  - この所見を偽にする手順: `.claude/rules/governance-docs.md` の当該条項が対象とするのは
+    「消滅した**節の名前**の正準形」だけであり識別子一般ではないことを示す（実際そう読める）。
+    加えて `:1943` の既存注記「**この消費者は #1001 で消えた**（再スキャンも digest も撤去した）」が
+    同じ形（撤去宣言 + 直後に撤去済み語をコードスパンではなく散文で書く）を先例として
+    持っていないことを示せば、逆に所見は補強される。
+
+### ⚠️（確信の持てない所見）
+
+- **W-1**: 新しい `:2186` の注記が、**その直後にあるコードフェンス**
+  ```
+  フェーズ: total 318ms = hash 0ms + cache_load 275ms + digest 43ms + ...（残余 0ms）
+  ```
+  の**手前**に置かれている。フェンスは反復 6 当時の出力標本であって現在の出力ではないが、
+  注記 → フェンス（digest を含む）の順で読むと、読者はフェンスを「現在の出力」と読み違えうる。
+  注記の最後の一文「digest がその内訳から抜けただけである」がその誤読を打ち消す設計と読めるので、
+  欠陥と断定はしない。
+  - この所見を偽にする手順: フェンスの直上の既存文（「この値を現在の基準として引かないこと」）が
+    既にフェンスを歴史として枠づけていることを示す。実際その文は在るので、
+    この所見は「注記の位置が最善か」という美学の問題に縮む可能性が高い。
+
+- **W-2**: 新しい `:2301` の「同じ節の**「再構築は 2 種類要る」**が名指す消費者」という参照は、
+  **見出しではなく太字の段落冒頭**を指している。`` `<対象>`「<見出し>」 `` の正準形ではないため
+  G-heading-refs の照合に載らず（実測: governance:check は緑）、**この参照は機構で守られていない**。
+  当該段落の文言が将来書き換わっても誰も赤にしない。ただし正準形にすると
+  「見出しでないものを見出しとして指した」ことになり G-heading-refs が赤になるので、
+  **現状が正しい書き方であり、守られないことは受容された残余**と読むのが妥当。
+  - **【後刻の実測で確定】** 変異注入 (d)（下記）で当該フレーズを実在しない文字列へ差し替えても
+    `governance:check` は緑のままで、「近傍の見出し参照 19 件」も動かなかった。
+    **この参照は G-heading-refs にも G-near-heading-refs にも見られていない**——⚠️ ではなく確定。
+    ただし所見の帰結は変わらず「受容された残余」であり、修正は当てていない。
+  - この所見を偽にする手順: (d) の変異で赤が出ることを示す（実測では出なかった）。
+
+- **W-3**: `:1954` の `` `digest_ms` `` は差分の宣言どおり手つかずで残っている。
+  最寄りの撤去注記（`:1943`「**この消費者は #1001 で消えた**（再スキャンも digest も撤去した）」）は
+  `entries_digest` について書かれており、**`digest_ms` というフィールド名を名指してはいない**。
+  同じ差分が `:2186` では「フィールドは無い」と名指す注記を必要と判断しているので、
+  基準の当て方に幅がある。ブリーフが受容済み残余として宣言している範囲なので**指摘ではなく記録**。
+  - この所見を偽にする手順: `:1954` の文脈（「払い戻しは 7.5 ms である（`digest_ms` は 8〜17 ms
+    なので…）」）が値の引用＝引き合いであって指示的でないことを示す。実際そう読める。
+
+- **W-4（計画との乖離。実装のほうが正しい）**:
+  `workspace/plan.md` の Phase 3 は、新しい注記の内容として
+  「`PERFORMANCE.md`「`IndexCache` v7」節が名指す `with_normalized_key` の小文字キー・
+  tie-break（`ScoredEntry::cmp`）・`SearchResult.path` の clone」と**正準形の見出し参照**を
+  指定していた。実装はこれを採らず「同じ節の「再構築は 2 種類要る」が名指す消費者のほう」へ
+  置き換えている。**計画どおりに書いていたら赤になっていた**——`PERFORMANCE.md` に
+  「`IndexCache` v7」という見出しは無く（実在するのは
+  `### 採用: \`target_path\` の木表現をディスクへ（\`index.bin\` 51.34 → 16.52 MiB・IndexCache v7・反復 10）`）、
+  G-heading-refs が着地不能として落とす。また 3 つの消費者名を写すのは
+  `AGENTS.md`「文書に事実の写しを増やす変更」に当たる。**実装の判断は妥当**だが、
+  結果としてこの参照は無検知になった（W-2 と同じ帰結・変異 (d) で実測）。
+  「計画書を忠実に実装する」原則からの逸脱ではあるので記録する。
+  - この所見を偽にする手順: `PERFORMANCE.md` に「`IndexCache` v7」という見出しかリード文が
+    実在することを示す（`grep -n '^#.*IndexCache' PERFORMANCE.md` の実測では無い）。
+
+### 裁定した個別項目（すべて「真」）
+
+1. **現存する識別子を「撤去済み」と書いていないか** — 書いていない。
+   - `measure_raw_path_rebuild_cost_over_real_index`: `*.rs` に 0 件（`\b…\b` の Grep 実測。
+     ヒットは PERFORMANCE.md / workspace/ の 3 枚のみ）→ 「#1001 で撤去済み」は真
+   - `entries_equal` / `try_background_rescan` / `BackgroundRescanTask` / `entries_digest`:
+     いずれも `*.rs` に 0 件（ヒットは `docs/superpowers/` の凍結資料と PERFORMANCE.md / workspace/）
+     → 「残る 2 者も撤去された」は真
+   - 「上の注記が挙げる 3 者は現在ひとりも残っていない」の 3 人目（アイコンキャッシュの剪定キー）:
+     `src-tauri/src/icon.rs:39`「#996 で索引照合の剪定を撤去した」で裏が取れる → 真
+   - 逆向き（撤去済みのものを現在形で書いた箇所）: 表の 1 行上の
+     `path_store_raw_matches_target_path_over_real_index` は**現存する**
+     （`snotra-core/src/search/tests/path.rs` ほか 5 つの `.rs`）ので、コードスパンのまま
+     残しているのは正しい
+2. **日付を持つ測定記録を書き換えていないか** — 書き換えていない。
+   `git show f2ac33de --numstat` = PERFORMANCE.md `11 追加 / 1 削除`。削除された 1 行は
+   `:1951` の表のセルのみで、値の欄（28.0 ms）も他の行も 1 文字も動いていない。
+   「後日（#996）」注記も 1 文字も変わっていない（diff に現れない）。
+   もう 1 枚の `workspace/plan.md`（10 追加 / 9 削除）も本文を実測した: 9 件の
+   `- [ ]` → `- [x]` の消し込み、最終チェックボックス 1 件の文言修正
+   （「PR 本文へ…書く」→「コミットメッセージへ書く（PR 本文へはそこから運ぶ）」）、
+   空行 1 行の追加のみで、**測定記録も新しい未チェック項目も含まない**。
+   `grep -c '^\s*- \[ \]' workspace/plan.md` = **0** なので、`pre-bash.mjs` の
+   `gh pr create` ゲート（未チェック `- [ ]` で拒否・#749）にも掛からない。
+3. **写しを増やしていないか** — ブリーフが宣言する意図的分離（局所注記を 6 例で確立）の範囲内。
+   新しい 2 つの注記は同じ事実を述べるが、**それぞれ別の節の別の主張に括り付いている**
+   （`:2186` は「`LoadOrScanStats` に `digest_ms` を足し」という在る前提の文、
+   `:2298` は「残る 2 者は今もフルパスを要求する」という在る前提の文）。
+   DRY 違反としては報告しない。
+4. **コードスパンが物理行をまたいでいないか** — またいでいない。
+   追加された 12 行のコードスパンはすべて 1 物理行内で開閉している（目視 + governance:check の
+   G-folded-code-spans が緑）。変異注入 (a) でこの検査が実際に効くことを実測する（下記）。
+5. **`tests/memory_footprint.rs` はフェーズ内訳と残余を並べて出し続けており、digest が
+   その内訳から抜けただけである** — **真**。一次証拠:
+   `snotra-core/tests/memory_footprint.rs:343-357` の `println!` が
+   `"  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms{}）+ scan {}ms + sort {}ms + cache_save {}ms（残余 {:+.1}ms）"`
+   を出しており、内訳（hash / cache_load / cache_read / scan / sort / cache_save）と
+   `delta_ms(s.total, attributed)` による**残余**を並べて出している。digest はこの列に無い。
+   また `snotra-core/src/indexer.rs:426` の `struct LoadOrScanStats` に `digest` 系フィールドは
+   実在しない（`cache_hit` / `hash` / `cache_load` / `cache_read` / `scan` / `sort` /
+   `cache_save` / `total`）ので、「現在の `LoadOrScanStats` にこのフィールドは無い」も真。
+   - 弱い留保: この `println!` は Phase A（実運用点）の内側にあり、実 config に scan パスが
+     無ければ Phase A ごとスキップされる（`:254`）。「出し続けており」は**コードとして在り続ける**
+     の意味では真、**毎回必ず出力される**の意味では条件付き。注記の主張の趣旨は前者なので真と裁定した。
+
+## 変異注入
+
+ベースライン: `sha256sum PERFORMANCE.md` = `7cd03b6511573f6f605d0422aa16ef7584efb75f83b5fc14a99da440b27b3fe3`
+（アンカーの木・変異前）。`npm run governance:check` = **exit 0・全検査 passed**。
+
+変異はすべて `PERFORMANCE.md` に限り、Edit → 測定 → Edit で戻す形で行った
+（`git restore` / `git checkout --` の類は一切使っていない）。
+巻き戻しの照合は**内容ハッシュ**（mtime ではない）と `git status --porcelain PERFORMANCE.md` の両方で行った。
+
+| # | 変異 | 挿入位置 | governance:check | PostToolUse の reminder | 巻き戻し照合 |
+|---|---|---|---|---|---|
+| (a) | コードスパンを物理行またぎに（`` `measure_raw_ `` + 改行 + `` path_rebuild` ``） | `:2189`（今回追加した注記の末尾） | **赤（exit 1）**「PERFORMANCE.md:2189 コードスパンが物理改行を跨いでいる（開いたまま行が終わる: 「measure_raw_」）— grep で辿れなくなる。1 物理行に収めること」 | 鳴った（同文言） | hash 一致・`git status --porcelain PERFORMANCE.md` 空 |
+| (b) | 存在しない見出しへの正準形参照（`` `PERFORMANCE.md`「存在しない見出し」 ``） | `:2189` | **赤（exit 1）**「PERFORMANCE.md:2189 見出し参照が着地しない: `PERFORMANCE.md`「存在しない見出し」（PERFORMANCE.md に該当する見出し・リード文が無い）」 | 鳴った（同文言） | hash 一致・`git status --porcelain PERFORMANCE.md` 空 |
+| (c) | 実在しない識別子（`` `totally_fake_identifier_xyz` ``） | `:2189` | **緑（exit 0）** | 鳴らなかった | hash 一致・`git status --porcelain PERFORMANCE.md` 空 |
+| (d)（追加・W-2 の裁定用） | `:2304` の「再構築は 2 種類要る」を「まったく存在しないリード文である」へ差し替え（`:2301` から始まる「後日（#1001）」注記の最終行） | `:2304` | **緑（exit 0）** | 鳴らなかった | hash 一致・`git status --porcelain PERFORMANCE.md` 空 |
+
+読み取り:
+
+- **(a)(b) は効いている。** `PERFORMANCE.md` は `headingRefDocs`（= G-heading-refs /
+  G-near-heading-refs / G-folded-code-spans の走査元）に入るので、この差分が触った面の
+  「コードスパンの折れ」と「正準形の見出し参照の着地」は機構で守られている。
+  ローカルでは PostToolUse の reminder も同じ 2 件で鳴った（**ただし reminder は検査ではない**——
+  沈黙を緑と読んではならないことは (c)(d) が実証している）。
+- **(c) は緑＝この変更の受容された残余の実測である。** G-stale-identifiers の母集団
+  （`staleIdentifierTargets`）に `PERFORMANCE.md` は入らない。実測の裏づけ: 変異ありでも
+  「散文の識別子 **421 件を 34 文書から**照合」は 1 件も動かず、一方「コードスパン」は
+  18175 → **18176** と 1 件増えた——**スパンとしては見えているが、実在は問われていない。**
+  よって「`PERFORMANCE.md` に実在しない識別子をコードスパンで書いても機構は黙る」。
+  コミットメッセージの同趣旨の主張（「PERFORMANCE.md は G-stale-identifiers の母集団外」）は真。
+  **この差分の中核（撤去済み識別子の振り分け）を守る機構は存在しない**——正しさの根拠は
+  人手のレビューと `.claude/rules/governance-docs.md`「書く約束」(3) だけである。
+- **(d) も緑＝ W-2 を確定させた。** 新しい注記の「同じ節の**「再構築は 2 種類要る」**が名指す
+  消費者」は正準形ではないため走査に載らない。「近傍の見出し参照 **19 件**」は変異ありでも
+  動かなかったので、G-near-heading-refs もこの行を見ていない。**この参照は無検知である。**
+  ただし (b) の失敗メッセージが「該当する見出し・**リード文**が無い」と言っているとおり、
+  G-heading-refs の着地先には太字リード文も含まれる——つまり正準形
+  `` `PERFORMANCE.md`「再構築は 2 種類要る」 `` へ書き換えれば**着地して守られる可能性がある**
+  （未測定。同一ファイル内の自己参照が許されるかは測っていない）。**修正は当てていない。**
+
+最終状態: `sha256sum PERFORMANCE.md` = `7cd03b65…3fe3`（ベースラインと一致）。
+`git status --porcelain` = `?? workspace/verify-1180.txt` の 1 行のみ（本報告書。追跡外）。
+巻き戻し後の `npm run governance:check` = **exit 0・全検査 passed**（ベースラインと同一出力）。
+`git rev-parse HEAD` は f2ac33de のまま（detached）。

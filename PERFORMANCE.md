@@ -2185,7 +2185,7 @@ canonical であり、digest は忠実な代替になる。
 
 **ここに出てくる `digest_ms` は #1001 で撤去済みである**——測っていた digest そのものが背景
 再スキャンごと消えたので、現在の `LoadOrScanStats` にこのフィールドは無い。**穴を塞いだ形の
-ほうは今も生きている**: `tests/memory_footprint.rs` はフェーズ内訳と残余を並べて出し続けており、
+ほうは今も生きている**: `tests/memory_footprint.rs` はフェーズ内訳と残余を並べて出す形を保っており、
 digest がその内訳から抜けただけである。
 
 ```

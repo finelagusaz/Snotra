@@ -26,8 +26,16 @@
 > 落としたまま機序を書いたせいで §「実測」の結論を 1 度誤った。**
 > 計器の一覧は `input.rs` の `input_trace(` 呼び出しを grep して作ること——散文から写さない。
 
-母集団は `grep -oE 'input_trace\(\s*"[a-z_]+"' snotra-egui-runtime/src/{input,runtime}.rs` の 6 種**すべて**である
-（`drop_key` / `push_key` / `push_text` / `rx_key` / `rx_text` / `take`）。
+母集団は次で導く 6 種**すべて**である（`drop_key` / `push_key` / `push_text` / `rx_key` / `rx_text` / `take`）。
+
+```bash
+grep -h -A 1 'input_trace(' snotra-egui-runtime/src/input.rs snotra-egui-runtime/src/runtime.rs \
+  | grep -oE '^\s*"[a-z_]+",' | tr -d ' ",' | sort -u
+```
+
+**`-A 1` が要る**——rustfmt が種別のリテラルを次の行へ折るため、`grep -oE 'input_trace\(\s*"[a-z_]+"'`
+のような 1 行前提の式は**0 件を返す**（2026-08-26 実測。最初にここへ書いたのがまさにその式で、
+**「grep して作れ」という教訓の隣に、走らせると 0 を返すコマンドを置いていた**）。
 
 | 行 | 出所 | 何を言うか |
 |---|---|---|
@@ -217,10 +225,10 @@ worker が撃つ `egui_ctx.request_repaint()` の頻度もこの経路に載る�
 | `-PostShowDelayMs 800 -DownCount 10`（#996 の diag＝通った側） | 1 組（OFF/ON） | **2/2 到達** | 490ms（**待ちの区間・重さではない**） |
 | `-PostShowDelayMs 0 -DownCount 10`（#996 の測定＝沈黙した側の形） | 4 組 | **8/8 到達** | 129〜142ms |
 | `-PostShowDelayMs 0 -DownCount 200`（スクロール量を #996 に合わせる） | 3 組 | **6/6 到達** | 143〜150ms |
-| 同上 + `auto_update` を実 config の値へ戻す（D-2 の逸脱を戻す） | 2 組 | **4/4 到達** | 155ms |
+| 同上 + `auto_update` を実 config の値へ戻す（D-2 の逸脱を戻す） | 2 組 | **4/4 到達** | 140〜155ms |
 
 **合計 10 組 20 回**（OFF 10 / ON 10。`%TEMP%` の run ディレクトリを数え直した）。
-`rx_key` は注入数と一致し、`drop_key` は起動時の合成 2 件のみ。
+`rx_key` のうち `physical=Numpad2` の 400 件が注入した Down 400 と一致する（総数は 408 対 413・差の 13 は起動時の合成と修飾キー）。`drop_key` は起動時の合成 2 件のみ。
 
 **H2（フレーム不回転）も H3′（重いフレーム）も、この標本には現れていない。**
 ⚠️ ただし**計器なしの 10 回は H2 に対して構造的に盲目である**（`take` 行が出ない）。
@@ -243,7 +251,9 @@ worker が撃つ `egui_ctx.request_repaint()` の頻度もこの経路に載る�
 
 **physical が `Numpad2` になる理由**: `Send-SnotraKey` は
 `keybd_event($VirtualKey, 0, $flags, 0)` と撃つ（`SnotraSmoke.psm1:772-773`）——**`bScan` が 0 である**。
-矢印キーは scancode で numpad と区別されるため、`bScan=0` では numpad 側に落ちる。
+⚠️ **`bScan=0` で撃つと physical が `Numpad2` になる**、という**現象までが実測である**。
+「scancode と拡張ビットのどちらが効いたか」は**確定していない**——それを分ける probe の枝は
+コミットした script に残っていない（下表の⚠️）。理由を断定形で書かないこと。
 
 | probe | 撃ち方 | 届いた physical | egui が受けた key |
 |---|---|---|---|
@@ -256,7 +266,7 @@ worker が撃つ `egui_ctx.request_repaint()` の頻度もこの経路に載る�
 **しかし physical は挙動を決めていない。** `push_key`（`input.rs:346-356`）が
 `physical=Numpad2 repeat=false mapped=true` を **400/400** 出している。4 段で確かめた:
 
-1. `active_key = key_from_tao(&event.logical_key).or_else(|| key_from_key_code(event.physical_key))`（`input.rs:336-337`）
+1. `active_key = key_from_tao(&event.logical_key).or_else(|| key_from_key_code(event.physical_key))`（`input.rs:339-340`）
 2. `key_from_key_code` は KeyA–KeyZ しか map しない（`input.rs:435-468`）→ `Numpad2` では `None`。
    ゆえに `mapped=true` は **logical 側**から来ている
 3. logical が `Character("2")`（NumLock ON の姿）なら WM_CHAR が伴い `rx_text` が 400 行出るが、**実測 2 行**
@@ -266,9 +276,16 @@ worker が撃つ `egui_ctx.request_repaint()` の頻度もこの経路に載る�
 #996 が区別できなかったのは、issue 自身が書いたとおり**選択の移動を出す trace が無い**からで、
 `push_key` の `mapped=` がその代わりになる。
 
-⚠️ physical を読む消費者は `admit_key` の `held_since_focus_gain` だけであり、
-押下と解放が同じ physical で対になる限り破れない。**注入と物理キーボードが混ざる状況では対にならない**が、
-矢印を撃つ検査は現時点で 0 件である。
+**physical の違いが下流へ効かない理由**（当初ここに書いた「`admit_key` が唯一の消費者で、
+押下と解放が対になる限り破れない」は**二重に誤りだった**ので書き直した）:
+
+- `event.physical_key` は `input.rs` の **288 / 299 / 340 / 351 / 386** で読まれる（実測）。
+  「消費者は 1 か所」は偽である
+- `admit_key` の `held.insert` は **`if is_synthetic` の枝にしか無い**（`input.rs:109`）ので、
+  **通常の押下はそもそも集合へ入らない**。「対になる限り」は的外れな条件だった
+- **条件の要らない理由**: egui のイベントへ載る `physical_key` は `key_from_key_code` 経由であり
+  （`input.rs:386`）、A–Z しか map しないので **`Numpad2` でも `ArrowDown` でも等しく `None`** になる。
+  下流に区別する材料が無い
 
 ### #996 の全キー沈黙については
 

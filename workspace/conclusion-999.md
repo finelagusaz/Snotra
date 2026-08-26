@@ -17,17 +17,20 @@
 
 **その `active_key` は `ArrowDown` である**（自分で 4 段確かめた）:
 
-1. `active_key = key_from_tao(&event.logical_key).or_else(|| key_from_key_code(event.physical_key))`（`input.rs:336-337`）
+1. `active_key = key_from_tao(&event.logical_key).or_else(|| key_from_key_code(event.physical_key))`（`input.rs:339-340`）
 2. `key_from_key_code` は **KeyA–KeyZ しか map しない**（`input.rs:435-468`）ので `Numpad2` では `None`
    ——ゆえに `mapped=true` は **logical 側**から来ている
 3. logical が `Character("2")`（NumLock ON の姿）なら WM_CHAR が伴い `rx_text` が 400 行出るはずだが、
    **実測は 2 行**である
 4. **NumLock を実測して OFF**（`GetKeyState(0x90)`）——NumLock OFF の Numpad2 の logical は `ArrowDown`
 
-**`physical=Numpad2` は挙動に影響しない見かけである。** 原因は `Send-SnotraKey` の
-`keybd_event($VirtualKey, 0, $flags, 0)`（`SnotraSmoke.psm1:772-773`）で `bScan` が 0 なことだが、
-tao の logical 解決がこれを吸収している。physical を読む消費者は
-`admit_key` の `held_since_focus_gain` だけであり、そこは押下と解放が同じ physical で対になるので破れない。
+**`physical=Numpad2` は挙動に影響しない見かけである。** `Send-SnotraKey` が
+`keybd_event($VirtualKey, 0, $flags, 0)`（`SnotraSmoke.psm1:772-773`）と `bScan=0` で撃つと
+physical が `Numpad2` になる（実測）——⚠️ **scancode と拡張ビットのどちらが効いたかは確定していない**
+（それを分ける probe の枝はコミットした script に残っていない）。
+**確定しているのは現象と、それが挙動に効かないことである**: tao の logical 解決が `ArrowDown` を返し、
+egui のイベントへ載る `physical_key` は `key_from_key_code` が A–Z しか map しないため
+（`input.rs:386`）**`Numpad2` でも `ArrowDown` でも等しく `None` になる**。
 
 | probe | 撃ち方 | 届いた physical | egui が受けた key |
 |---|---|---|---|
@@ -50,9 +53,9 @@ tao の logical 解決がこれを吸収している。physical を読む消費�
 | `-PostShowDelayMs 800 -DownCount 10`（#996 diag＝通った側） | 1 | 2/2 | **490ms** |
 | `-PostShowDelayMs 0 -DownCount 10`（#996 測定＝沈黙した側の形） | 4 | 8/8 | 129〜142ms |
 | `-PostShowDelayMs 0 -DownCount 200`（スクロール量を合わせる） | 3 | 6/6 | 143〜150ms |
-| 同上 + `auto_update` を実 config の値へ戻す | 2 | 4/4 | 155ms |
+| 同上 + `auto_update` を実 config の値へ戻す | 2 | 4/4 | 140〜155ms |
 
-`rx_key` は注入数と一致し、`drop_key` は起動時の合成 2 件のみ。
+`rx_key` のうち `physical=Numpad2` の 400 件が注入した Down 400 と一致する（総数は 408 対 413・差の 13 は起動時の合成と修飾キー）。`drop_key` は起動時の合成 2 件のみ。
 
 **490ms の階差は重いフレームではない**——`-PostShowDelayMs 800` の待ちの中で、
 **入力も再描画要求も無いために `take` が呼ばれていないだけ**である。
@@ -93,11 +96,16 @@ tao の logical 解決がこれを吸収している。physical を読む消費�
 - **R-1 は取り下げた。** 当初「`Send-SnotraKey` の `bScan=0` が矢印キーを numpad として配送する欠陥である」と
   書いたが、**`push_key` の `mapped=true` と NumLock の実測で前提が崩れた**（§1）。
   `Send-SnotraKey` を直す理由は**この調査からは出ていない**
-  - ⚠️ **残る小さな含み**: `physical` を読む唯一の消費者である `admit_key` の
-    `held_since_focus_gain` は、`Numpad2` と `ArrowDown` を**別のキーとして数える**。
-    押下と解放が同じ physical で対になる限り破れないが、
-    **「注入は `Numpad2`・物理キーボードは `ArrowDown`」が混ざる状況では対にならない**。
-    今そういう検査は無い（下の 3 のとおり矢印を撃つ検査が 0 件）ので、**issue にはしない**
+  - **「issue にしない」の理由を書き直した。** 当初は「`physical` を読む唯一の消費者である
+    `admit_key` が、押下と解放が対になる限り破れない」と書いたが、**その条件は的外れだった**
+    ——`held.insert` は `if is_synthetic` の枝にしか無く（`input.rs:109`）、
+    **通常の押下はそもそも集合へ入らない**。ゆえに「注入と物理キーボードが混ざる」筋書きでも
+    集合は埋まらない。
+  - **条件の要らない理由がある**: `key_from_key_code` は A–Z しか map しないので、
+    egui のイベントへ載る `physical_key` は（`input.rs:386`）
+    **`Numpad2` でも `ArrowDown` でも等しく `None`** である。下流に区別する材料が無い
+  - **「physical を読む消費者は 1 か所」も強すぎた**——`event.physical_key` は
+    `input.rs` の 288 / 299 / 340 / 351 / 386 で読まれる（実測）。挙動に効かないのは上の理由による
 - **R-2（2 の扱い）**: 再現しないものを追い続けない。**次に遭遇したときに一撃で割れる状態は既に作った**
   ——`workspace/repro-999.ps1` の形（`SNOTRA_TRACE` と `SNOTRA_EGUI_INPUT_TRACE` を併用し、
   注入時刻を `6>>` で拾う）と、`research.md` の判定表がそれである

@@ -100,7 +100,7 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
     expect(scanHeadingRefs(s, ["docs/y.md"])).toEqual({ findings: [], checked: 1 });
   });
 
-  // **この変更が作った唯一の観測性の後退**（正本は `lib.mjs` の doc の死角 5）。
+  // 観測性の後退の 2 つ目（正本は `lib.mjs` の doc。1 つ目は上の「ラベルの内側」の fixture）。
   // 外側の対象綴りが無効だと、内側の正当な参照ごと沈黙する——旧実装では内側が独立に照合され、
   // 着地しなければ赤になっていた。**`checked: 0` なので evidence 行からも読めない。**
   it("外側の対象綴りが無効だと内側の正当な参照ごと沈黙する（宣言する死角）", () => {

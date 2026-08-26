@@ -100,6 +100,17 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
     expect(scanHeadingRefs(s, ["docs/y.md"])).toEqual({ findings: [], checked: 1 });
   });
 
+  // **この変更が作った唯一の観測性の後退**（正本は `lib.mjs` の doc の死角 5）。
+  // 外側の対象綴りが無効だと、内側の正当な参照ごと沈黙する——旧実装では内側が独立に照合され、
+  // 着地しなければ赤になっていた。**`checked: 0` なので evidence 行からも読めない。**
+  it("外側の対象綴りが無効だと内側の正当な参照ごと沈黙する（宣言する死角）", () => {
+    const s = snap({
+      "docs/y.md": "`HEADING_REF`「外側の語 `docs/inner.md`「消えた見出し」の話」\n",
+      "docs/inner.md": "## 別の見出し\n",
+    });
+    expect(scanHeadingRefs(s, ["docs/y.md"])).toEqual({ findings: [], checked: 0 });
+  });
+
   it("md の腕の母集団は履歴資料・作業バッファ・凍結された歴史（docs/adr/）を除く全 md", () => {
     const s = snap({
       "PERFORMANCE.md": "",

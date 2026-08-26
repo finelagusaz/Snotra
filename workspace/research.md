@@ -189,6 +189,66 @@ worker が撃つ `egui_ctx.request_repaint()` の頻度もこの経路に載る�
 **機序の説明までは写していない。** 壊せた 1 の「focus 往復の発生源が無い」は全称否定であり、
 敵対枠自身が確信中と申告した——research.md 側でも⚠️付きで、偽になる形を書いて残した。
 
+## 実測（2026-08-26・`workspace/repro-999.ps1`・release `d913a775` 時点のビルド）
+
+すべて実 config を複製した使い捨てプロファイル（`egui_results:show rows=200`）。生ログは
+`%TEMP%/snotra-evidence-999*`（**リポジトリへ入れない**——`icon:extract_failed` が利用者の実パスを逐語で載せる）。
+
+### 判定表のどの行にも当たらなかった——**沈黙が再現しない**
+
+| 形 | 組数 | `egui_hide:done` |
+|---|---|---|
+| `-PostShowDelayMs 800 -DownCount 10`（#996 の diag＝通った側） | 1 組（OFF/ON） | **2/2 到達** |
+| `-PostShowDelayMs 0 -DownCount 10`（#996 の測定＝沈黙した側の形） | 4 組 | **8/8 到達** |
+| `-PostShowDelayMs 0 -DownCount 200`（スクロール量を #996 に合わせる） | 3 組 | **6/6 到達** |
+
+計器つきの回はいずれも健全だった: `take` の階差 max **129〜150ms**（心拍の間引き 100ms のすぐ上＝
+**重いフレームは無い**）、`rx_key` は注入数と一致、`drop_key` は起動時の合成 2 件のみ。
+**H2（フレーム不回転）も H3′（重いフレーム）も、この標本には現れていない。**
+
+### 代わりに確定したこと: **Down キーは届いていた。ただし `ArrowDown` としてではない**
+
+`-DownCount 200` の計器つき 3 回で、注入 400 に対し `rx_key` は 413 行（＝**全部届いている**）。
+しかし physical の内訳は:
+
+```
+400 physical=Numpad2      ← 注入した VK_DOWN (0x28)
+  3 physical=AltLeft / 2 ControlLeft / 2 KeyA / 2 Escape / 2 KeyK / 2 Unidentified(Windows(0))
+```
+
+**機序**（自分で対照を取って確定した）。`Send-SnotraKey` は
+`keybd_event($VirtualKey, 0, $flags, 0)` と撃つ（`SnotraSmoke.psm1:772-773`）——**`bScan` が 0 である**。
+矢印キーは scancode と拡張ビットで numpad と区別されるため、`bScan=0` では numpad 側に落ちる。
+
+| probe | 撃ち方 | 届いた physical |
+|---|---|---|
+| 現状 | `keybd_event(0x28, 0x00, 0/2)` | `Numpad2` 400/400 |
+| 拡張フラグだけ | `keybd_event(0x28, 0x00, 0x1/0x3)` | **`Numpad2` 40/40**（変わらない） |
+| scancode も渡す | `keybd_event(0x28, 0x50, 0x1/0x3)` | **`ArrowDown` 40/40** |
+
+**issue の (A)/(B) はどちらでもない。** 打鍵は配送されており（(B) は偽）、配送が止まってもいない（(A) も偽）。
+**別人格として届いていた**というのが実際である。#996 がこれを区別できなかったのは、
+issue 自身が書いたとおり**選択の移動を出す trace イベントが無い**からである。
+
+⚠️ **`Numpad2` として届いた打鍵をアプリがどう解釈したかは、この標本では決まらない**——
+`rx_key` は physical しか出さず、logical は載らない。`egui_input:changed` は 1 件（最初の `A`）だけなので
+**文字としては入っていない**が、選択が動いたかは観測点が無い。
+
+### #996 の全キー沈黙については
+
+**18 回（OFF 9 / ON 9）回して 1 度も再現しなかった。** OFF 側＝ #996 と同じ計器なしの条件でも 0/9 なので、
+「計器が現象を消した」ではない。`plan.md` D-1 の指示に従い、既知の逸脱（`auto_update` の無効化）を
+戻した回（実 config の `auto_update = "full"`・`-DownCount 200`）も 2 組測ったが **4/4 とも到達**した
+——**逸脱は原因ではない**。
+
+複製したプロファイルの実効値（`profile.txt`）: `auto_update = "full"`（戻した回）/ `window_width = 300` /
+`show_icons = true` / `font_family = "Segoe UI"` / `font_size = 13` / `max_results = <既定>`。
+
+⚠️ **`p_lo` は計算しない。** `plan.md` D-4 の規則は「OFF 側が m 回中 k 回再現したら」を前提にしており、
+**k = 0 ではその式が定義されない**。18 回 0 件から言えるのは
+「**この機体・この日・この形では再現しない**」という下限の主張だけであり、
+「#996 の観測が誤りだった」も「現在の main では起きない」も**これより強い**（#996 は 6/6 で観測している）。
+
 ## 未解決の疑問
 
 - **U-1**: 6/6 の再現は計器なしの条件で得られたものである。計器を立てた回で再現率が落ちたとき、

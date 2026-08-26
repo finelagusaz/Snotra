@@ -49,7 +49,16 @@ param(
     [string]$ExePath = '',
     # 複製元。既定は実 config（`%APPDATA%\Snotra`）。**読むだけで、書き換えない。**
     [string]$SourceConfigDir = (Join-Path $env:APPDATA 'Snotra'),
-    [string]$EvidenceRoot = ''
+    [string]$EvidenceRoot = '',
+    # **D-2 の逸脱を戻す枝。** 既定は `auto_update = "disabled"` へ倒すが、再現しなかったときは
+    # まずここを実 config の値へ戻して測り直す（`workspace/plan.md` D-1 の指示）。
+    [switch]$KeepAutoUpdate,
+    # **probe: Down を「拡張キー」として撃つ。**
+    # `Send-SnotraKey` は `keybd_event(vk, bScan=0, flags=0)` で撃つため
+    # `KEYEVENTF_EXTENDEDKEY (0x1)` が立たず、VK_DOWN が **`Numpad2` として配送される**（実測）。
+    # このスイッチはその 1 点だけを変えて対照を取るためにある。**`Send-SnotraKey` の写しではない**
+    # ——写しにならないよう、注入するのは Down だけで、他のキーは今までどおり `Send-SnotraKey` が撃つ。
+    [switch]$ExtendedDown
 )
 
 Set-StrictMode -Version Latest
@@ -120,7 +129,9 @@ function Invoke-Repro999Run {
     # 持ち込むうえ、**toast は窓の高さを変え**、**toast 窓それ自体が focus 事象の発生源**であり、
     # H1（`held_since_focus_gain`）の検定を汚す。**再現しなかったときは、まずこの 1 行を戻す。**
     $raw = Get-Content -LiteralPath $configPath -Raw
-    $raw = if ($raw -match '(?m)^\s*auto_update\s*=') {
+    $raw = if ($KeepAutoUpdate) {
+        $raw   # D-2 の逸脱を戻した回。実 config の値をそのまま使う
+    } elseif ($raw -match '(?m)^\s*auto_update\s*=') {
         [regex]::Replace($raw, '(?m)^\s*auto_update\s*=.*$', 'auto_update = "disabled"')
     } elseif ($raw -match '(?m)^\s*\[general\]\s*$') {
         [regex]::Replace($raw, '(?m)^(\s*\[general\]\s*)$', "`$1`r`nauto_update = `"disabled`"")
@@ -176,9 +187,19 @@ function Invoke-Repro999Run {
         $VK_DOWN = 0x28
         $VK_ESCAPE = 0x1B
         for ($i = 0; $i -lt $DownCount; $i++) {
-            Send-SnotraKey -VirtualKey $VK_DOWN 6>> $injectLog
-            Start-Sleep -Milliseconds $DownHoldMs
-            Send-SnotraKey -VirtualKey $VK_DOWN -Up 6>> $injectLog
+            if ($ExtendedDown) {
+                # `KEYEVENTF_EXTENDEDKEY = 0x1` / `KEYEVENTF_KEYUP = 0x2`。
+                # **`bScan` も渡す**——フラグだけ立てて `bScan=0` のままでは
+                # `physical=Numpad2` が変わらなかった（実測 2026-08-26・40/40）。
+                # `0x50` は Down の scancode（拡張側は lParam の bit24 で区別される）。
+                [SnotraSmokeInterop.Native]::keybd_event($VK_DOWN, 0x50, 0x1, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds $DownHoldMs
+                [SnotraSmokeInterop.Native]::keybd_event($VK_DOWN, 0x50, 0x3, [UIntPtr]::Zero)
+            } else {
+                Send-SnotraKey -VirtualKey $VK_DOWN 6>> $injectLog
+                Start-Sleep -Milliseconds $DownHoldMs
+                Send-SnotraKey -VirtualKey $VK_DOWN -Up 6>> $injectLog
+            }
             Start-Sleep -Milliseconds $DownIntervalMs
         }
 

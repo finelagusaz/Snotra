@@ -1,8 +1,9 @@
 # パフォーマンス最適化プレイブック
 
 > **この節の具体例は WebView2 期のものである（#532 SU7 でフロント撤去済み）。** `clearTimeout`・
-> `invoke<ArrayBuffer>`・`URL.createObjectURL`・`results-sync`・`Promise.allSettled` は現行構成に
-> 対応物を持たない。**着手の順序（待ち時間 → 転送量 → 描画）は現行でも生きている**——
+> `invoke<ArrayBuffer>`・`URL.createObjectURL`・`results-sync`・`Promise.allSettled`
+> **だけではなく**、フロント / IPC / WebView2 を名指す記述はいずれも現行構成に対応物を持たない
+> （この列挙は網羅ではない）。**着手の順序（待ち時間 → 転送量 → 描画）は現行でも生きている**——
 > 個々の手段は egui 経路の対応物へ読み替える。
 
 検索/表示の体感遅延を改善するときは、次の順で着手すると最短で効果が出やすい。
@@ -2659,7 +2660,7 @@ CJK を覆わないため jp_font 13.26 MiB が併載され、font だけで 14.
 
 ## 試みたが機能しない手法
 
-- **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。
+- **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。**後日（#532 SU7）: この項目全体が WebView2 期のものであり、代替として指した `tauri::ipc::Response` にも現行構成の呼び出し点は無い**——アイコンの PNG は `commands::load_icon_pngs` がプロセス内で egui のテクスチャへ渡す。
 
 - **`SearchEngine` の並列 Vec を `CachedEntry` 構造体に統合**（issue #110、branch `refactor/cached-entry`）:
   保守性改善を目的に、8本の並列 Vec をフィールドごとにまとめた `CachedEntry` 構造体への移行を試みた。

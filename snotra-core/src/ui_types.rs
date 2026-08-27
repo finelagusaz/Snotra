@@ -2,17 +2,13 @@
 //!
 //! `snotra-core` の内部表現（`indexer::Entry` 等）とは別に、表示に必要な最小の形を定義する。
 //!
-//! **serde 派生と `#[serde(rename_all = "camelCase")]` は消費者を失っている**（#836 で実測）。
-//! これらは WebView2 フロントへの IPC 形式のためのもので、#532 SU7 の撤去で相手が消えた
-//! ——`SearchResult` を実際にシリアライズする呼び出し点はリポジトリに 1 つも無く、永続形式
-//! （`index.bin` / `history.bin` 等）にも入らない。**撤去は別作業**（同じ SU7 残滓のクラスとして
-//! `FolderExpansionState` は #836 で消した）。**「IPC 形式ゆえ変更しない」という旧記述は
-//! 撤回済みである**——保護する理由が既に無いものを保護していた。
+//! **プロセス内で UI 層へ渡すだけの型であり、線上表現もオンディスク表現も持たない。**
+//! 消費者は同一プロセスの egui view（`src-tauri/src/egui_shell/`）だけで、永続形式
+//! （`index.bin` / `history.bin` 等）はこの型を通らない。**ゆえに serde を派生させないこと**
+//! ——派生させた瞬間に、フィールド名・enum variant 名が「外から見える形式」に見え始めるが、
+//! それを読む相手はどこにも居ない。
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {
     pub name: String,
     pub path: String,
@@ -29,10 +25,9 @@ pub struct SearchResult {
 /// 表すと、平文検索の全行（`result_limit` は既定 200・設定次第 1000）に `String` の確保が
 /// もう 1 本乗る——行はフレームごとに snapshot へ複製されるので、そこは足してよい場所ではない。
 ///
-/// derive は [`SearchResult`] と同じ集合を保つこと（あちらが `PartialEq` / `Eq` を
-/// `RowsSnapshot` の行比較に使い、`Serialize` / `Deserialize` を #836 の残滓として持つ）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+/// derive は [`SearchResult`] を含むこと（`Default` を足すのはこちらだけ）。あちらの
+/// `PartialEq` / `Eq` は `RowsSnapshot` の行比較が使うので、この enum が落とすと行全体で落ちる。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum IconSource {
     /// `path` をそのままキーにする（`path` がファイルを指す行の既定）。
     #[default]

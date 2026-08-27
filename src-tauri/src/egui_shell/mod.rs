@@ -320,9 +320,10 @@ pub(crate) struct EguiShellHandles {
     pub(crate) results_waker: snotra_egui_runtime::WindowWaker,
 }
 
-/// フラグ ON の窓生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
-/// 宣言窓の全プロパティ（52px 高は初期値〔SU3 で show 前折り畳み + 結果表示時に動的リサイズ・view.rs〕・width は config の window_width・skipTaskbar・
-/// alwaysOnTop・decorations:false・resizable:false・visible:false）を再現する（codex #11・(B)#1）。
+/// main 窓の生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
+/// **窓のプロパティを決めるのはここだけである**——`tauri.conf.json` の `app.windows` は空であり、
+/// 宣言による窓は 1 つも無い。ここが与える全プロパティ（52px 高は初期値〔SU3 で show 前折り畳み + 結果表示時に動的リサイズ・view.rs〕・width は config の window_width・skipTaskbar・
+/// alwaysOnTop・decorations:false・resizable:false・visible:false）が窓の姿である（codex #11・(B)#1）。
 /// `background_color_hex`: config `visual.background_color`（`#RRGGBB`）。過渡/リサイズ下地の
 /// SU2 ハードコード 0x282828 を config へ差し替える（§11・#532 SU4 Task 2）。パース失敗時は
 /// パース失敗時は `VisualConfig::default()` の背景色へ fallback（`visual::background_color` =

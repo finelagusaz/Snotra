@@ -9,7 +9,7 @@ pub(crate) enum HotkeyPlan {
     ShowNow,
 }
 
-/// Alt+Q 押下時の分岐（製品 WebView2 経路と同じ意味論）。表示中かつ hotkey_toggle=true なら
+/// Alt+Q 押下時の分岐（意味論は #532 SU7 で撤去した旧 UI 経路から引き継いだ）。表示中かつ hotkey_toggle=true なら
 /// 即 hide。それ以外（非表示、または表示中でも hotkey_toggle=false ＝ 既に見えている窓を
 /// 再フォーカス/再配置）は show 側へ回り、Alt が押されている限り解放を待ってから show する。
 pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool) -> HotkeyPlan {

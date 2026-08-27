@@ -1,0 +1,173 @@
+# 検証・レビュー: issue #1201 / sha 631a6d559f6a8471b231a99f707043085a64b1ab
+
+対象の確認: worktree は開始時 `6344d8b8` だったため `git checkout --detach 631a6d55` で
+アンカーへ合わせた（`git rev-parse HEAD` で確認済み）。以下すべてその木で実測。
+出力先: 指定の `C:/workspace/Snotra/workspace/verify-1201.txt`（Write は worktree 分離で拒否されたため worktree 側へ書き、Bash の cp で共有チェックアウトへ配置した。両方に同一内容が在る）。
+
+---
+
+## 1. カテゴリ A〜F
+
+| カテゴリ | 判定 | コマンドと exit code |
+|---|---|---|
+| A. Rust ファイル | **実行・全緑** | `cargo fmt --all -- --check` → 0 / `cargo check --workspace` → 0 / `cargo clippy --workspace --all-targets -- -D warnings` → 0 / `cargo test -p snotra -q` → 0（307 passed・4 ignored）/ **`cargo doc --workspace --no-deps --document-private-items` → 0** |
+| B. TypeScript | 該当なし | `.ts` を 1 行も触っていない |
+| C. 窓生成/表示順・hotkey・slash | 該当なし | production の実行経路を 1 行も変えていない（activation.rs の差分は `//!` のみ、残りは `#[cfg(test)] mod tests` の中身と `*.md`）。trace イベント名・hotkey 登録・表示経路のいずれにも触れない |
+| D. UI スタイル・レイアウト・表示 | 該当なし | 描画を 1 ピクセルも変えない。同カテゴリの「該当判定は広げる方向にも外れ、そちらは安全側ではない」に従い申し送りを出さない |
+| E. git hook | 該当なし | `.githooks/` を触っていない |
+| F. ガバナンス文書 | **実行・緑** | `npm run governance:check` → 0（「全検査 passed（検査 23 件 / 対象文書 36 件 …）」）。worktree に node_modules が無いため共有チェックアウトから junction を張って実行 |
+
+`cargo test -p snotra-core` / `-egui-runtime` / `-settings` は当該 crate 未変更のため該当なし
+（PR CI の rust-check が workspace 全 crate を回す）。
+
+---
+
+## 2. 変異注入（メインの表に無い角度のみ・すべて実測）
+
+| # | 変異 | 結果 | 読み |
+|---|---|---|---|
+| (h) | tests.rs の `//!` へ壊れた intra-doc link を 1 行挿し、activation.rs を touch して `cargo doc` | **緑（exit 0・診断 0 行）** | tests.rs は `#[cfg(test)] mod tests;` ゆえ **rustdoc の視界に無い**。#1201 が新設した `[\`sources\`]` / `[\`sole_file_with\`]` / `[\`owners_of_all\`]` 等の intra-doc link は **どの機械検査も見ていない**（cargo doc も clippy も） |
+| (h2) | tests.rs の見出し参照（正準形）を存在しない見出しへ差し替え | **赤**（governance:check exit 1・2 件を行番号つきで名指し） | 見出し参照の側は tests.rs も母集団に入る。射程の穴は rustdoc の intra-doc link に限られる |
+| (i) | **CRLF の作業ツリー**（直下の子 6 枚を LF→CRLF へ変換。手元 `core.autocrlf=input` で CI の `true` を再現） | **緑（14 tests passed）** | `fs::read_to_string` へ移しても CRLF 非依存は保たれている。復帰後 sha256 が baseline と全一致 |
+| (j) | `owners_of_all` を「連結して 1 回呼ぶ」形へ戻す | **緑** | doc が挙げる壊れ方は**条件付き**であり、現在のツリーでは発火しない＝**「ファイルごとに呼ぶ」不変条件に検知器が無い** |
+| (j2) | (j) ＋ `folder_nav.rs` の `//!` へ `read_config(` を 1 語植える（対照） | **赤**：`fn on_enter( が \`read_config(\` を呼んでいる` | doc の機序（activation.rs の最後のヘッダ `on_enter` が隣接ファイル冒頭の出現を横取りする）が**逐語で再現**した |
+| (j3) | (j2) から連結だけ戻す（＝現行のファイルごと呼び出し・禁止語は植えたまま） | **緑** | A/B が揃い、doc の機序主張は裏づけられた |
+| (k) | 母集団ディレクトリへ**非 UTF-8 の `zzz_probe.rs`** を置く（`mod` 宣言なし） | **3 本とも赤**（`read_to_string` の panic・パス入りメッセージ） | 失敗経路 3（`read_to_string`）が実測で赤。死角 (2)「`mod` を見ない＝誤爆＝赤」も同時に確認 |
+| (l) | `files.sort_by` を**逆順**へ | **緑** | 順序非依存が肯定的に確認できた反面、**sort を壊しても誰も落とさない**（防御的な余剰） |
+| (n) | `folder_nav.rs` の末尾へ **自由関数 `fn on_enter(_hint: u8) {}`** を足す（`#[allow(dead_code)]`） | **赤**（`該当: ["activation.rs", "folder_nav.rs"]`・2 本の検査が落ちる） | **コンパイルは通る**（E0592 は同一型の inherent メソッドにしか出ない）。→ `sole_file_with` の doc「2 枚以上になる形は、実は散文からしか作れない」は**偽**。向きは赤（安全側）ゆえ穴ではなく過大主張 |
+| (o) | `sources()` の `.rs` フィルタを `"n.rs"` へ狭める（母集団＝`activation.rs` 1 枚＝#1201 以前と同じ） | **緑** | **黙って狭まる変異は落ちない**——ただし下界はアンカーごとに `sole_file_with` が持つので、3 本の述語にとっては無害（下記 ⚠️4） |
+| (o2) | 同フィルタを `"v.rs"` へ（`activation.rs` を落とす） | **赤**（`該当: []`） | アンカー保持ファイルを落とす狭まりは 2 段 assert が捕まえる。狭まりの検知は「母集団の大きさ」ではなく「アンカーの所在」で決まる |
+
+**変異はすべて `git checkout --` で巻き戻し、`sha256sum -c` で baseline と全一致を確認した**
+（mtime ではなく内容ハッシュ）。巻き戻し後に `cargo test -p snotra -q` を再実行し 307 passed。
+コンパイルエラーで終わった変異は 1 件も無い（(n) は `#[allow(dead_code)]` を付けて
+warning も出ないようにしたうえで**検知**として赤になった）。
+
+---
+
+## 3. 指摘
+
+### Critical — 0 件
+
+沈黙して空／欠けた母集団を返す経路は、3 本の検査に関しては見つからなかった。
+`read_dir` / `DirEntry` / `read_to_string` は `expect` で赤、フィルタで黙って落ちる経路
+（下記 High-3）が在っても、起動の入口 3 本は `sole_file_with` が 0 枚で赤にするため
+沈黙にはならない（(o)/(o2) で両方向を実測）。
+
+### High
+
+**H1. `launcher_controller.rs:42-43` の散文が偽になったまま残っている（差分の取りこぼし）**
+```
+//! **起動の入口を `activation.rs` から動かす前に、そのファイルの `//!` を読むこと**——
+//! ソーステキスト検査の母集団がそこに縛られている（理由と死角の正本は `activation.rs` の `//!`）。
+```
+「母集団がそこに縛られている」は #1201 が消した当の前提である。しかもこの行は読者を
+`activation.rs` の `//!` へ**送る導線**であり、送り先はいま正反対（「その規範は要らなくなった」）を
+書いている。`src-tauri/CLAUDE.md` と `activation.rs` の `//!` は直したのに、**親モジュールの
+`//!` だけが漏れた**——皮肉なことに、この親モジュールは tests.rs の `//!` が
+「母集団に入らないもの」として名指している当のファイルである。
+
+**H2. `sole_file_with` の doc「2 枚以上になる形は、実は散文からしか作れない」は偽**（変異 (n) で実測）
+E0592 は**同一型の inherent メソッド**の重複にしか出ない。自由関数・別型のメソッド・trait impl は
+どれもコンパイルが通り、`src.contains("fn on_enter(")` は 2 枚を数える。実測では
+`folder_nav.rs` へ自由関数 `fn on_enter(_hint: u8) {}` を足すだけで 2 本の検査が赤になった。
+向きは赤（誤爆）なので**穴ではない**が、doc はこの前提から
+「ゆえにここが赤にするのは doc コメントや文字列リテラルへ綴りが入った場合であり、**その 1 形で
+足りる**」と結論しており、**結論の根拠が偽である**。実際の誤爆面は「兄弟に同名の何かを置くこと」
+まで広い（`on_enter` / `activate_or_execute` / `shift_activate` はどれも一般名である）。
+
+**H3. `sources` の doc 見出し「# 失敗はすべて赤へ倒す」「3 経路とも `expect` で panic させる」に
+4 経路目が入っていない**
+```rust
+.filter(|entry| {
+    entry.file_type().is_ok_and(|t| t.is_file())   // ← Err のとき黙って落とす
+        && entry.file_name().to_string_lossy().ends_with(".rs")
+})
+```
+`is_ok_and` は `Err` で `false` を返すので、`file_type()` が失敗したエントリは
+**沈黙して母集団から欠ける**。同じ形で、`.rs` で終わる**シンボリックリンク**も
+（std の `DirEntry::file_type` はリンクを辿らないので `is_file()` が false）沈黙して落ちる。
+向きは「狭まる」で、3 本の述語にとっては `sole_file_with` が受け止めるため無害だが、
+**doc は「すべて」「3 経路とも」と書いており実装より強い**。当リポジトリの
+`AGENTS.md`「検証の作法」の「全称表現は…何が増えたらこの文は偽になるか」に直接当たる。
+
+### ⚠️（確信の持てない／裁定を仰ぎたい所見）
+
+**⚠️1. tests.rs の doc の大半は、どの機械検査も見ていない**（変異 (h) で実測）
+`#[cfg(test)] mod tests;` ゆえ rustdoc は tests.rs をドキュメント化しない。壊れた
+`[\`no_such_symbol_xyz\`]` を植えても `cargo doc` は exit 0・診断 0 行だった。#1201 は
+tests.rs へ約 150 行の doc（`[\`sources\`]` / `[\`sole_file_with\`]` / `[\`owners_of_all\`]` /
+`[\`method_body\`]` …）を新設しており、その intra-doc link は**誰も検算していない**。
+見出し参照（正準形）だけは governance:check が見る（変異 (h2) で確認）。
+**#1201 が作った欠陥ではなく既存の性質**だが、この差分で露出が大きく増えたので申し送る。
+（メインの依頼が「今回 doc コメントを大量に書き換えているので cargo doc を必ず含めよ」だったが、
+**その cargo doc は書き換えた doc のほとんどを見ていない**、というのが実測の答えである。）
+
+**⚠️2. `owners_of_all` の「ファイルごとに呼ぶことが不変条件である」に検知器が無い**
+（変異 (j)/(j2)/(j3) で実測）。連結形へ戻しても現在のツリーでは緑で、赤にするには
+`folder_nav.rs` の `//!` へ禁止語を植える必要があった。doc の機序主張は A/B で裏づけられたが、
+不変条件そのものは散文契約である。**塞ぐべきかは裁定を仰ぎたい**——塞ぐ道具
+（連結を型で表現不能にする等）は検査対象より複雑になり、`owners_of` の残余節が
+同じ判断を「塞がない」側で記録しているので、**死角として宣言するだけで足りる可能性が高い**。
+
+**⚠️3. tests.rs の `//!`「母集団に入らないもの」の 2 項列挙は、腐る時点が確定している**
+```
+//! **母集団に入らないもの**——名指せないなら測っていない: **このファイル自身**（`activation/`
+//! サブディレクトリに在り、`read_dir` は再帰しない）と、**親モジュール …**（ディレクトリの外）。
+```
+`activation/` へファイルを 1 枚足せば「このファイル自身」は不足になる。同じ文書の
+line 553-554 に**腐らない書き方**（「`read_dir` が返すのは直下のエントリだけで、ディレクトリは
+フィルタで落ちる」）が既に在り、冒頭の列挙はその派生コピーである。当リポジトリの
+「正しい直し方は数を直すことではなく、列挙をやめて正本を指すことである」に当たる。
+
+**⚠️4. 母集団が「黙って狭まる」変異は落ちない**（変異 (o) で実測）
+`.rs` フィルタを `"n.rs"` へ狭めて母集団を `activation.rs` 1 枚（＝#1201 以前）に戻しても
+3 本とも緑だった。`owners_of_all` の doc は「**下界（`P ⊇ B`）は構成から満たされる**」と書くが、
+「構成から」が保証しているのは**ファイル内で切り詰めが起きないこと**であって、
+**そのファイルが母集団に入っていること**ではない。後者を持っているのは `sources()` ではなく
+アンカーごとの `sole_file_with` である（(o2) で、アンカー保持ファイルを落とす狭まりは赤に
+なることを確認）。**欠陥ではないが、doc は読者に「構成から下界が満たされる」と読ませる**。
+射程を 1 文で明示するのが妥当かどうか、裁定を仰ぎたい。
+
+**⚠️5. `sources` の doc「ファイルごとに配れば 3 つとも起こりえない」・死角(1) の「倒れ方は 3 通りで、
+沈黙するのは 1 形だけである」はどちらも閉じた全称**
+前者は構造ではなく呼び出し側の契約に依存する（⚠️2 と同根）。後者は inline `#[cfg(test)]` の
+倒れ方を 3 通りに数え上げているが、母集団は「将来書かれうる inline test の形」なので
+数え上げは原理的に閉じない。どちらも向きは無害で、書き方の問題である。
+
+**⚠️6. `files.sort_by` は load-bearing でない**（変異 (l) で実測）
+逆順にしても 14 本すべて緑。doc は「[\`sole_file_with\`] の一意性 assert と**合わせて**」と
+書いているので過大主張ではないが、防御的な余剰であることは記録に値する。
+
+**⚠️7. `docs/adr/ADR-source-text-probe-helper-locality.md` の「文脈」節が、
+ソーステキスト検査を「`include_str!` で自分のソースを読み…」と定義したまま**
+ADR は凍結された歴史なので通常は触らない面だが、この ADR は `src-tauri/CLAUDE.md` と
+tests.rs の両方から**生きた正本として名指されている**。裁定を仰ぎたい（触らない方が
+ADR の性格には合う、という判断もありうる）。
+
+### 意図的分離の 5 件について
+
+渡された 5 件（`method_body`/`owners_of` の並置・`top_level_fn_body` と統合しない・
+他 3 サイトを揃えない・母集団を連結しない・helper 本体を 1 バイトも変えない）は
+**1 件も指摘していない**。加えて (j2)/(j3) の A/B は 4 件目（連結しない）の理由を
+実測で裏づける結果になった。
+
+### パフォーマンス
+
+`sources()` は検査 3 本でそれぞれ 1 回、`read_dir` + 6 ファイルの `read_to_string`（計 ~150 KB）。
+当該モジュール 14 テストの実行時間は 0.00〜0.01 s、`cargo test -p snotra` 全体は 6.67〜6.75 s で
+`include_str!` 期と体感差なし。**指摘なし。**
+
+---
+
+## 4. 検算の作法についての自己申告
+
+- `git diff main...631a6d55` の作業記録ファイル（`workspace/*.md`・`workspace/adversarial-1201.txt`）は
+  指示どおりレビュー対象から外した。
+- doc の主張のうち、自分で grep して確かめたもの: 「母集団に字下げ 0 / 8 の `fn ` 行が 1 本も無い」
+  （子 6 枚で 0 件を実測）・「`activation.rs` の最後のヘッダは `on_enter`」（589 行が最終）・
+  「`pub(super)` を持つのは `drain_launch` / `execute_slash`」「入口 2 本は `pub(in crate::egui_shell)`、
+  `shift_activate` は素の `fn`」（ヘッダ一覧で全一致）。
+- `git grep include_str` / `起動の入口` / `母集団` を生きた層へ当てて散文の腐りを走査し、
+  H1 の 1 件を得た。他 3 サイト（icon_textures.rs / view.rs / indexing.rs）の `include_str!` 残存は
+  意図的な非追随（渡された 3 件目）なので指摘していない。

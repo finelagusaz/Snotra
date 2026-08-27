@@ -39,8 +39,10 @@
 //! `launcher_controller` までしか届かない。同じ綴りが親子で別のスコープを指すので、子を読む
 //! ときは「`view.rs` へ届くのは `pub(in crate::egui_shell)` と書いてあるものだけ」と読むこと。
 //!
-//! **起動の入口を `activation.rs` から動かす前に、そのファイルの `//!` を読むこと**——
-//! ソーステキスト検査の母集団がそこに縛られている（理由と死角の正本は `activation.rs` の `//!`）。
+//! **起動の入口は `launcher_controller/` の直下に置くこと**——ソーステキスト検査の母集団が
+//! そのディレクトリであり、入口がどの子モジュールに在っても射程は付いていく（#1201）。
+//! **このファイル自身は母集団の外である**（ディレクトリの外に在る）。残る死角の正本は
+//! `activation.rs` の `//!`。
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};

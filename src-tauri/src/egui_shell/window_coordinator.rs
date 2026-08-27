@@ -765,44 +765,61 @@ fn derive_bar_rect_phys(
 /// そのまま現実になった**（backstop 無し: ドラッグ中 top=1050 のまま／有り: 956 へ引き戻される）。
 /// 固着は**受容残余**である（理由と再測の手順は `ADR-main-window-clamp-on-pointer-release`）。
 ///
-/// **キーボードによる窓移動（`Alt+Space` → `M`）は、この保証の外にある**（#1173・実測
-/// 2026-08-26）。OS のモーダル移動ループ中もフレームは回り、**ポインタが押されていないので
-/// 回ったフレームでは必ず発火する**（ループ中に何枚回るかは測っていない）——マウスドラッグ
-/// では除外される経路が、ここでは除外されない。
-/// 対照実験（クランプ行を落としたローカルビルド）で分離した:
+/// # キーボードによる窓移動（`Alt+Space` → `M`）
 ///
-/// 条件: 2026-08-26・release・単一モニター 1920x1080（125%・作業領域の下端 1020 物理 px）・
-/// 5 反復 × `↓` 200 回。窓の bottom（物理 px）:
+/// **移動中は拘束されない。復帰は確定（`Enter`）後の最初のフレームで 1 度だけ働く**
+/// ——マウスドラッグと同じ保証だが、**除外している機構が違う**。ドラッグは `!any_down()` が
+/// 除外するが、キーボード移動にポインタ押下は伴わない。除外しているのは**フレームが来ない
+/// こと**である: OS のモーダル移動ループ中、本体はイベント駆動で待つため通常フレームが回らない
+/// （`src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件（#532 SU5）」）。
 ///
-/// | | 移動中に落ち着く値 | 一時的な逸脱 | 外に留まれるか |
+/// **これは機構による保証ではない。** ループ中にフレームが走る条件が生じれば、そのフレームでは
+/// `!any_down()` が真なのでクランプが発火し、移動中も引き戻されうる。
+///
+/// ## 実測が 2 つあり、食い違っている（未解決）
+///
+/// **#1194（2026-08-27・本記述の根拠）**: GPDWINMINI・release・単一モニター 1920x1080
+/// （`GetDpiForWindow` = 120 ＝ 125%・作業領域の下端 1020 物理 px）・使い捨てプロファイル
+/// （既定 seed ＝ `font_size = 15` / `bar_height = 43.0` 論理・窓の outer 高 64 物理 px）。
+/// **3 条件 13 反復**（`↓`×200 ／ toast 有り ／ `↓`×200 + `↑`×80）:
+///
+/// | | 移動中の最大 bottom | `Enter` 直前 | 確定後 |
 /// |---|---|---|---|
-/// | クランプ有効 | **1020**（＝作業領域の下端ちょうど） | 5 反復中 4 回、1132〜1133 まで出てから戻る | 留まれない（`Enter` の**前に**戻る） |
-/// | クランプ無効 | 1133〜1134（カーソルが画面下端で止まる位置） | 無し | 留まる（確定後も 1106） |
+/// | クランプ有効 | 1130〜1132（カーソル限界） | **外に留まる** | 1 度だけ 1020 へ |
 ///
-/// **落ち着く値が作業領域の下端ちょうどであること**が、止めているのがカーソルの限界ではなく
-/// `WorkArea::clamp` であることを示す。**「移動中は外へ出られない」ではない**——外に出た状態が
-/// 数十回の打鍵にわたって観測される反復があり、出入りを 2 度繰り返す反復もある。
-/// **その遅れがなぜ生じるかは測っていない**（ループ側の位置更新と
-/// クランプの `set_position` を順序つきで観測する計器が無く、「競り合っている」と「フレームが
-/// 疎で戻りが遅い」を系列だけでは分離できない）。**多モニターでの封鎖そのものも未測定である**
-/// ——測ったのは「クランプが発火する」ところまでで、封鎖は上の作業例からの演繹にとどまる。
+/// **モーダルループ中の `egui_frame` は 0 枚**（5/5・移動区間 3 秒・フレーム間隔の最大 5.9 秒）。
+/// `egui_main:clamp` の発火は反復あたりちょうど 1 回で、すべて `Enter` の後である。
 ///
-/// ⚠️ 対照側は確定後に 27〜28 px 上がる（5/5・1133〜1134 → 1106）。**理由は特定していない**——
-/// クランプ以外にも確定後の位置を動かす経路があることを意味するが、外側で落ち着く事実
-/// （1106 > 1020）は変わらないので上の分離は保たれる。
+/// **#1173 / PR #1193（2026-08-26）は逆を記録している**: 「クランプ有効なら移動中に 1020 で
+/// 落ち着き、`Enter` の前に戻る（外に留まれない）」。**条件の違いは特定できていない**——
+/// あちらの記録に arrow の cadence・クエリの有無・index build の進行中か・hide/show を挟んだかが
+/// 残っていない。**どちらかが誤りとは判定していない**: 上のとおり挙動はフレームの有無で
+/// 分かれうるので、両方が別条件の真でありうる。
 ///
-/// **代替判定（`any_down()` に代わる「移動中である」）はまだ無い。** 候補は
-/// `GetGUIThreadInfo` の `GUI_INMOVESIZE`（tao の wndproc サブクラス化を要さないので
-/// `ADR-main-window-clamp-on-pointer-release` の却下 1 には当たらない見込み・**実呼び出しは
-/// 未検証**）である。
+/// ⚠️ **確定後に窓が上へ動く経路が在り、それはクランプではない**（#1194 で名指した）。
+/// 反復 1: `Enter` 直前 top=1066 → 確定直後 top=1042（高さ 64 は不変＝**純平行移動**）。
+/// **クランプが観測した `pre` は 1042 であって 1066 ではなく、1066 を見たサンプルが 1 つも無い。**
+/// その区間のフレームも 0 枚ゆえ製品コードでもない——残るのは OS の確定処理である。
+/// #1173 が 27〜28 px、#1194 が 24 px を観測しており、**値は条件に依存するので定数として
+/// 書かない**。
+///
+/// ## 代替判定を却下した
+///
+/// `GetGUIThreadInfo` の `GUI_INMOVESIZE` でクランプを抑止する案は**実装可能だが no-op である**
+/// ——クランプがモーダルループ中に走らない以上、抑止する対象が無い。述語自体は
+/// [`main_in_modal_move_loop`] として**観測専用**で残してある（`egui_main:clamp` の
+/// `in_move_size` 欄。この doc が言う「フレームが回らない」の検知手段がそれである）。
+/// 却下の全文は `ADR-modal-move-loop-clamp-suppression`。
 ///
 /// **再測の手順**: release ビルドを使い捨てプロファイル（`SNOTRA_CONFIG_DIR`）で起動し、
 /// `Alt+Space` → `M` → `↓` の反復 → `Enter` を `Send-SnotraKey` で注入して `GetWindowRect` の
-/// `bottom` を刻む。**DPI awareness を先に確立する**（通さないと作業領域が論理値で返り、
-/// `GetWindowRect` の物理座標と土俵が合わない）。**対照が要る**——単独の系列では頭打ちが
-/// クランプかカーソル限界かを分離できない。対照は `view.rs` の `any_down()` を見る分岐を
-/// 短絡させて呼び出しごと殺したローカルの 1 行パッチで作り、測り終えたら戻して release を
-/// ビルドし直す（戻さないと次に実バイナリを測る検査がクランプ無効の版を見る）。
+/// `top` / `bottom` を刻む。**`SNOTRA_TRACE` を立てる**——`egui_frame` と `egui_main:clamp` の
+/// 系列が無いと「クランプが動かした」と「他が動かした」を分離できない。**DPI awareness を
+/// 先に確立する**（通さないと矩形が論理値で返る。exported な入口は `Get-SnotraWindowDpi` で、
+/// `Initialize-SnotraDpiAwareness` は export されていない）。**窓は不可視で作られるので、
+/// ホットキーで出すまで `Wait-SnotraWindow` は通らない。** 対照が要るなら
+/// **クランプの効果だけを殺す**（`fired = false` と `post = pre`）——呼び出しごと殺すと
+/// `egui_main:clamp` が 1 行も出ず、「誰が動かしたか」を観測する経路まで失われる。
 ///
 /// **`show_egui_main` の `position_on_target_monitor` とは基準モニターの決め方が違う。**
 /// あちらは「これから出す窓をどこへ置くか」ゆえカーソル/プライマリを見るが、こちらは
@@ -844,6 +861,15 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 }
 
 /// main の窓が OS のモーダル move/size ループの最中か（#1194）。
+///
+/// **観測専用である——クランプの発火条件には入らない。** 唯一の消費者は
+/// [`trace_clamp_sample`]（`egui_main:clamp` の `in_move_size` 欄）であり、
+/// [`clamp_main_into_work_area`] の doc が言う「モーダルループ中はフレームが回らない」を
+/// **後から偽にできるようにする検知手段**がこの欄である。ゆえに `trace_enabled()` を抜けた
+/// 後でしか呼ばない（費用の射程は呼ぶ位置が決める）。
+///
+/// クランプの抑止条件へ入れる案は**実測により却下した**——抑止する対象（ループ中に走る
+/// クランプ）が存在しない。経緯は `ADR-modal-move-loop-clamp-suppression`。
 ///
 /// **`GUI_INMOVESIZE` **かつ** `hwndMoveSize == main` の連言である。** フラグ単独では
 /// 「このスレッドの**何か**が move/size 中」しか言えず、settings 窓のループでも真になる。
@@ -919,12 +945,7 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
             nx, ny,
         )));
     }
-    trace_clamp_sample(ClampSample {
-        in_move_size: main_in_modal_move_loop(&main),
-        pre: (a.pos.x, a.pos.y),
-        fired,
-        post: (nx, ny),
-    });
+    trace_clamp_sample(&main, (a.pos.x, a.pos.y), fired, (nx, ny));
 }
 
 /// [`ClampSample`] を `egui_main:clamp` として出す（出す条件は [`clamp_trace_should_emit`]）。
@@ -933,8 +954,12 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
 /// `thread_local!` で足り、`AppState` を 1 つも太らせない。**挙動を決める値ではない**
 /// ——trace の行数を事象の数まで絞るためだけに在るので、reset-on-show でクリアする必要も無い
 /// （hide を跨いで古い `post` が残っても、次に出る 1 行が余分に出るだけである）。
+///
+/// **[`main_in_modal_move_loop`] を呼ぶのは `trace_enabled()` を抜けた後である。** あの述語は
+/// #1194 の測定で**観測専用**になった（クランプの発火条件には入らない）ので、trace を切った
+/// 実運用で毎フレーム Win32 を 1 回払う理由が無い。**呼ぶ位置がそのまま費用の射程である。**
 #[cfg(windows)]
-fn trace_clamp_sample(now: ClampSample) {
+fn trace_clamp_sample(window: &tauri::Window, pre: (i32, i32), fired: bool, post: (i32, i32)) {
     use std::cell::Cell;
     thread_local! {
         static LAST: Cell<Option<ClampSample>> = const { Cell::new(None) };
@@ -942,6 +967,12 @@ fn trace_clamp_sample(now: ClampSample) {
     if !crate::trace::trace_enabled() {
         return;
     }
+    let now = ClampSample {
+        in_move_size: main_in_modal_move_loop(window),
+        pre,
+        fired,
+        post,
+    };
     LAST.with(|last| {
         if !clamp_trace_should_emit(last.get(), &now) {
             return;

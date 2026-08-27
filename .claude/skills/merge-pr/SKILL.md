@@ -51,13 +51,19 @@ squash マージでは常にこの順で行う。`<PR>` は PR 番号、`<issue>
 
 ### 3. squash commit のメッセージを整える
 
-`--subject` / `--body-file` はこのためだけに使う。
+打つ: `--body-file <tmp>` だけを渡す。
+
+⚠ **`--subject` を渡してはならない。** 件名は渡した文字列が**逐語で**使われ、リポジトリ設定 `squash_merge_commit_title: PR_TITLE` が組む `タイトル (#N)` の `(#N)` が付かない。**main は保護されていて amend も force-push もできないので、マージした瞬間に恒久的に失われる**——`git log` から PR を辿る手掛かりはこれしか無い。**件名も CI もすべて緑のまま起きる**（2026-08-27 実測: `--subject` を渡した `5a30985d` だけが直前の 2 コミットの `(#1194)` `(#1193)` に相当する参照を持たない。同時に `gh api repos/<owner>/<repo> --jq .squash_merge_commit_title` がその設定値を返すことを確認した）。
+
+件名を変えたいなら **PR タイトルの方を直す**（`gh pr edit <PR> --title`）。それが `(#N)` を保つ唯一の経路である。
 
 ⚠ **closing keyword を書いてはならない。** 散文の "partially fixes #N" も効く。書くと手順 1 の一覧に現れないまま閉じる。
 
-⚠ **conventional commit の型名も keyword になる。** `fix: #985 …` のように `fix` / `close` / `resolve` 系の型の直後へ issue 番号を置くと閉じる——GitHub は `Closes: #10` のようにコロンを挟む形も認識し、**commit message 経由の close は PR を linked pull request に載せない**ので手順 1 の一覧にも現れない（GitHub docs「Linking a pull request to an issue」）。番号は末尾へ回すか括弧で包む。**`chore:` / `refactor:` の前例を根拠にしてはならない**——それらが安全なのは型名が keyword でないからであって、形が安全だからではない。
+⚠ **conventional commit の型名も keyword になる。この警告が当たるのは PR タイトルである。** `fix: #985 …` のように `fix` / `close` / `resolve` 系の型の直後へ issue 番号を置くと閉じる——GitHub は `Closes: #10` のようにコロンを挟む形も認識し、**commit message 経由の close は PR を linked pull request に載せない**ので手順 1 の一覧にも現れない（GitHub docs「Linking a pull request to an issue」）。番号は末尾へ回すか括弧で包む。**`chore:` / `refactor:` の前例を根拠にしてはならない**——それらが安全なのは型名が keyword でないからであって、形が安全だからではない。
 
-省けば squash 本文は **PR 説明文そのもの**になる（表・チェックリスト込みで冗長）。
+**PR タイトルが当たる面である、というのは上の 2 つからの導出であって別に測ってはいない**（件名が PR タイトルから組まれること・commit message の keyword が閉じること）。ゆえに **PR タイトルは手順 1 の一覧に現れない経路を持ちうる**と読み、型名の直後へ番号を置かない。
+
+`--body-file` を省けば squash 本文は **PR 説明文そのもの**になる（表・チェックリスト込みで冗長）。
 
 ### 4. マージ後に 3 点を確認する
 

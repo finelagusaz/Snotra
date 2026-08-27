@@ -196,7 +196,7 @@ mod tests {
     /// system 既定 `core.autocrlf=true`）で改行が食い違う**。**原則の正本は
     /// `docs/development-principles.md`「検証の層と、層と層の隙間」**（ここに写しを置かない）。
     ///
-    /// `launcher_controller.rs` の `method_body` とは**終端の形が違う**（あちらはメソッドゆえ
+    /// `launcher_controller/activation/tests.rs` の `method_body` とは**終端の形が違う**（あちらはメソッドゆえ
     /// 4 スペース字下げの `}`）。共通化を却下した判断と反転条件は
     /// `docs/adr/ADR-source-text-probe-helper-locality.md`。
     ///

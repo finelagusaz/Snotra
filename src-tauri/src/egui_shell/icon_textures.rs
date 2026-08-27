@@ -393,7 +393,8 @@ mod tests {
     /// **意味論のまま**立っていることを、**ソーステキストで**固定する（#1133）。
     ///
     /// **述語のテストでは呼び出し点の脱落を捕まえられない**（この規範の正本は
-    /// `launcher_controller.rs` の `activation_entry_points_consult_the_display_gate` の doc）。
+    /// `launcher_controller/activation/tests.rs` の
+    /// `activation_entry_points_consult_the_display_gate` の doc）。
     /// `input_idle` が運ぶのは「main の `search_debounce` が予約を持っていないか」だけで、
     /// `ResultsView` にはテスト席が無い（構築が `AppHandle` を要求する）——ソーステキスト検査は
     /// そのどちらも要らない。

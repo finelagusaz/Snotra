@@ -1,6 +1,6 @@
 //! 通知 primitive の純粋核（#532 SU5）。一時レーン（検索バー overlay・launchNotice parity の
 //! 単一スロット上書き + 自動クリア）と、updater 持続レーン（toast 行の状態機械）を egui/Win32
-//! 非依存で持つ。時刻は driver（launcher_controller.rs）が単調 `Duration`（基準 Instant からの経過）で注入する
+//! 非依存で持つ。時刻は driver（launcher_controller）が単調 `Duration`（基準 Instant からの経過）で注入する
 //! （layout.rs Debouncer と同じ流儀）。`UpdaterUi<U>` の payload generic はテスト容易性のため:
 //! 製品は `U = Box<tauri_plugin_updater::Update>`（テストで構築不能）、テストは `U = ()`。
 

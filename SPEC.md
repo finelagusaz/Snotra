@@ -755,7 +755,7 @@ shell が可視性を**変える**ために設けた経路（`main` の show / h
 
 ### 15.3 即実行仕様
 
-- コマンド文字列（例: `/o`）が完全一致した時点で、検索の debounce をキャンセルして即座にそのコマンドの動作を実行する（実装は `src-tauri/src/egui_shell/launcher_controller.rs` のクエリ変化時のコマンド分岐）
+- コマンド文字列（例: `/o`）が完全一致した時点で、検索の debounce をキャンセルして即座にそのコマンドの動作を実行する（実装は `src-tauri/src/egui_shell/launcher_controller/` のクエリ変化時のコマンド分岐）
 - 実行後はクエリをクリアし、結果を空にする
 - コマンドモード中は通常検索（インデックス検索）を実行しない
 
@@ -1091,7 +1091,7 @@ query = "%SYSTEMROOT%"
 - フォルダ展開中はインスタントコマンドを無視し、通常のフォルダフィルタとして処理する（スラッシュコマンドと同じ）
 - ツール選択中はインスタントコマンドを無視する
 - インデックス構築中でもインスタントコマンドは使用可能（インデックスに依存しないため）
-  - indexing ガードはプレフィックス判定より**後**に置く（プレフィックスが付いていればバイパスする）。実装は `src-tauri/src/egui_shell/search_state.rs` のクエリ解釈と `src-tauri/src/egui_shell/launcher_controller.rs` のインスタント分岐（indexing を読まない）
+  - indexing ガードはプレフィックス判定より**後**に置く（プレフィックスが付いていればバイパスする）。実装は `src-tauri/src/egui_shell/search_state.rs` のクエリ解釈と `src-tauri/src/egui_shell/launcher_controller/` のインスタント分岐（indexing を読まない）
   - インスタントコマンドモード中の結果表示はインデックス構築中かどうかを見ない（`SPEC.md`「4.7 結果表示制御（2 窓構成）」の 2 軸モデルから導出）
 - ホットキーによる再表示でインスタントコマンドモードはリセットされる（実装は `src-tauri/src/egui_shell/search_state.rs`）
 - インスタントコマンドモード中の Enter / クリックは、通常の検索結果の起動ではなくインスタントコマンドの実行へディスパッチする

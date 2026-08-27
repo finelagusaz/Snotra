@@ -135,7 +135,7 @@ pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
 /// **reset-on-show はこれを触らない**——ゆえに hide を跨いで残り、通常は show 後の最初の
 /// フレームでも同じ値になる（`launcher_controller` の reset 消費のコメントが明記している）。
 /// **ただし別スレッドからの更新は排除できない**——`spawn_update_check` の完了・
-/// `spawn_install` の失敗腕（`mod.rs` / `launcher_controller.rs`）は非同期に `phase` を
+/// `spawn_install` の失敗腕（`mod.rs` / `launcher_controller`）は非同期に `phase` を
 /// 書き換えて `wake_main` するため、この読みと最初のフレームの間に値が変わりうる。
 /// そのときも 1 フレームだけ高さがずれるにとどまり、`view.rs` の reset-on-show による
 /// memo リセットが同じフレームの動的高さ算出で直す（固着しない）。
@@ -321,7 +321,7 @@ pub(crate) fn show_egui_main(
         // **一時通知については「消えている」が唯一の前提ではない**——`view.rs` の
         // `consume_reset_pending` は通知をクリアするが、直後の `consume_external_pending`
         // が同じフレームで hotkey 登録失敗の pending 通知を新たに立てうる
-        // （`launcher_controller.rs` の同関数 doc「hidden 中の失敗は次 show のこの消費で
+        // （`launcher_controller` の同関数 doc「hidden 中の失敗は次 show のこの消費で
         // 表示される」）。ここでは常に `false` を渡すため、その場合 1 フレームだけ高さが
         // 実際より低く畳まれるが、`view.rs` の reset-on-show が memo を 0 へ戻しているので
         // 同じフレームの動的高さ算出が直す（固着はしない・修正前より悪化もしない）。

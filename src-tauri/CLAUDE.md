@@ -31,13 +31,20 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計器（責務は `//!`）。**終端（`startup:ready` / `startup:failed`）を `platform/mod.rs` の `RegisterInitialHotkey` の arm だけに閉じてはならない**——bridge の初期化失敗・窓の生成失敗のように arm 自体が走らない経路が実在し、そこで終端を出さないとハーネスの「タイムアウト」に化ける（**呼び出し点の列挙・分類・一度きり性・受容する残余は `//!` が正本**——数をここへ写すと経路を足したときにこの行だけが腐る）
 - `monitor.rs`: マルチモニター対応の Win32 ヘルパー（`GetCursorPos` / `MonitorFromPoint` / `GetMonitorInfoW`）。物理座標ベースで作業領域を取得し、ウィンドウ位置のクランプ・中央配置を提供。**基準モニターは必ず点から決める**（`MonitorFromWindow` を使う `window_monitor_work_area` は #835 で消えた）
 - `working_set.rs` — 非表示アイドル時のプロセスツリー working set 回収（Windows のみ・非 Windows は no-op。責務は `//!`、適用の詳細は本ファイル「working set の能動回収（EmptyWorkingSet）」）
-- `commands/`: ディレクトリモジュール（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）。egui view・トレイが共有する core 関数群（旧 `#[tauri::command]` ラッパーと `search.rs` / `config.rs` は #532 SU7 のフロント撤去で消滅）。`launch.rs` は `launch_item_core` / `launch_with_tool_core`（いずれも `pub(crate)`、`instant.rs`・`egui_shell/launcher_controller.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub` で公開
+- `commands/`: ディレクトリモジュール（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）。egui view・トレイが共有する core 関数群（旧 `#[tauri::command]` ラッパーと `search.rs` / `config.rs` は #532 SU7 のフロント撤去で消滅）。`launch.rs` は `launch_item_core` / `launch_with_tool_core`（いずれも `pub(crate)`、`instant.rs`・`egui_shell/launcher_controller/activation.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub` で公開
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ。`hotkey.rs` は core の `ParsedHotkey` だけを Win32 modifier/VKへ変換し、永続文字列を再解釈しない。登録と smoke 注入用 `vks` は同じ変換結果から導く
 - `egui_shell/`: ディレクトリモジュール（`mod.rs` + `lifecycle.rs` / `search_state.rs` / `layout.rs` / `icon_textures.rs` / `notify.rs` / `strings.rs` / `view.rs` / `launcher_controller.rs` / `results_view.rs` / `results_window.rs` / `visual.rs` / `window_coordinator.rs` / `font_stack.rs` / `search_dispatch.rs` / `search_worker.rs`）。製品メインウィンドウ（egui/softbuffer）の外殻 + 検索体験（#532 SU2〜SU7・flip 済みで唯一の UI 経路）。以下はファイル別の索引（`//!` に収まらない横断不変条件は本節の `###` 各項）:
   - `font_stack.rs` — フォント解決と `set_fonts` 登録（責務は `//!`）
   - `search_dispatch.rs` — 検索 dispatch の同一性の純粋核（責務は `//!`）
   - `search_worker.rs` — 検索を実行する単一 worker（責務は `//!`）
-  - `launcher_controller.rs` — 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（責務は `//!`）
+  - `launcher_controller.rs` — 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（責務は `//!`）。型・構築・読み口（`&self`）だけを持ち、遷移は責務ごとの子モジュールが `impl` を分けて持つ（子は private・`view.rs` へ届く名前は `pub(in crate::egui_shell)` と本ファイルの re-export が決める）
+    - `launcher_controller/activation.rs` — 起動の入口（Enter / クリック / Shift+Enter）と dispatch・in-flight 回収・slash の即実行（責務は `//!`）。**起動の入口をこのファイルの外へ出さないこと**——ソーステキスト検査の母集団がここに縛られている（制約と死角の正本は同ファイルの `//!`）
+    - `launcher_controller/search_flow.rs` — 検索の発行と採り込み、打鍵の処置（責務は `//!`）
+    - `launcher_controller/folder_nav.rs` — folder の突入/深掘り/折り返し、列挙の別スレッドロードと drain（責務は `//!`）
+    - `launcher_controller/hide_request.rs` — hide 要求の経路（Escape ラダー・blur 猶予・多重防止）（責務は `//!`）
+    - `launcher_controller/frame_stages.rs` — フレーム毎の消費と回収（reset-on-show・外部 pending・非同期の到着物）（責務は `//!`）
+    - `launcher_controller/updater_toast.rs` — 更新 toast のボタン処置と install の spawn（責務は `//!`）
+    - ソーステキスト検査は対象モジュールの子として置く（`launcher_controller/activation/tests.rs`）——`include_str!("../activation.rs")` が母集団であり、切り出しの helper はこの 1 か所に閉じる（`docs/adr/ADR-source-text-probe-helper-locality.md`）
   - `lifecycle.rs` は純粋核（`plan_hotkey` / `blur_should_hide`）
   - `search_state.rs` は検索状態の純粋核（`SearchState` / `interpret` / `QueryIntent`）
   - `layout.rs` は高さ算出 + results 可視性の導出 + 幾何 + debounce + テキストの中間省略の純粋核（`Metrics` / `results_window_height` / `present_results` / `results_top_y` / `size_delta_exceeds` / `icon_prefetch_range` / `Debouncer` / `truncate_middle_chars` / `fit_middle_by_measure`。旧 `compute_window_height` / `HeightParams` は #646 PR2 で撤去済み・旧 `results_should_show` は #752 で `present_results` へ吸収・旧 `clamp_results_height` / `available_below` は #835 で撤去〔`ADR-results-fixed-height`〕）

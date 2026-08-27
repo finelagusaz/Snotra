@@ -65,7 +65,7 @@ let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/egui_shell/launcher_controll
 
 - **4 本目の入口の新設は沈黙する**——対象の正本が `entry_points` 配列で、母集団の側から導かれていない。**#1201 が消したのは「移動で射程が黙って狭まる」側だけである**
 - **inline `#[cfg(test)] mod tests` の混入**——`read_to_string` は属性を解釈しない。曝露面が 1 枚から直下の子全部へ広がる
-- **`owners_of_all` を「ファイルごとに呼ぶ」ことに検知器は無い**（散文の契約）
+- ~~**`owners_of_all` を「ファイルごとに呼ぶ」ことに検知器は無い**（散文の契約）~~ — **`/simplify` の altitude 枠の指摘で閉じた**（合成 fixture の回帰テストを置いた。`owners_of_all` / `sole_file_with` は `&[(String, String)]` 上の純関数なので fixture が当たる——実ディレクトリを読む `sources` とは違う。この区別を当初せず 3 関数まとめて「fixture では測れない」と判じていた）
 - **`file_type` の `Err` 枝は発火を実測していない**——Windows の `DirEntry::file_type` は `FindNextFileW` のデータから組み追加 I/O をしないため、壊れた junction を置いても `Ok` が返る
 
 ## 実測した機構（フォールトインジェクション）

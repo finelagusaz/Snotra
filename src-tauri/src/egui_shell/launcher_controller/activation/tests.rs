@@ -79,6 +79,12 @@
 /// **塞がない**——`#[cfg(test)]` から先を読み飛ばす述語は道具立てが検査対象より複雑になる
 /// （[`owners_of`] の残余節が同じ判断を記録している）。
 ///
+/// **(1b) ソースツリーが実行時に在ることへ依存する。** `include_str!` 期はソースが
+/// バイナリへ埋め込まれていたが、いまは `env!("CARGO_MANIFEST_DIR")` の絶対パスを**実行時に**
+/// 読む。ソースツリーの無い場所へバイナリだけ持って行くと落ちる。**向きは沈黙ではなく即赤**
+/// であり、このリポジトリの実運用（checkout したツリーでビルドしてそのままテスト）では
+/// 発火しない。
+///
 /// **(2) `mod` 宣言を見ない。** 母集団はファイルシステムが正本なので、`mod` を書き忘れた
 /// `.rs` はコンパイルされないまま母集団へ入る。向きは**誤爆＝赤**であり、`governance:check` の
 /// `G-module-linkage` が別に捕まえる。
@@ -135,8 +141,12 @@ fn sources() -> Vec<(String, String)> {
 /// 最初のヘッダより前に出た出現が、前のファイルの最後のヘッダへ帰属する**。ファイルごとに
 /// 呼べば帰属は境界でリセットされ、この形は起こりえない（[`sources`] の doc が機序の正本）。
 ///
-/// **これは散文の契約であって、検知器を持たない**（#1201 で宣言した死角）——ここを連結形へ
-/// 書き換えても、**それだけでは全緑のままである**（実測）。赤が出るには**もう 1 つ条件が要る**:
+/// **この不変条件には検知器が在る**——[`owners_of_all_resets_attribution_at_file_boundaries`]
+/// が合成 fixture で固定しており、連結形へ書き換えると落ちる（#1201。当初は散文の契約だけで
+/// 置き、`/simplify` の altitude 枠が「機構自身の正しさを守る層が 1 段浅い」と指摘した）。
+///
+/// **実母集団の側は別である。** そちらでは連結形へ書き換えても**それだけでは全緑のままである**
+/// （実測）。赤が出るには**もう 1 つ条件が要る**:
 /// 禁止語より前に**最後に認識されたヘッダ行が、起動の入口の綴りを含む**こと。**「入口である
 /// こと」ではない**——述語は `!owner.contains(anchor)` であって同一性ではないので、入口でない
 /// メソッドのヘッダ行の**行末コメント**にアンカーの綴りが在るだけで赤になる（2026-08-27 に
@@ -193,24 +203,20 @@ fn owners_of_all(sources: &[(String, String)], needle: &str) -> Vec<String> {
 /// （こちらも #1201 で実測——当初この形で変異を書き、検知ではなくコンパイルエラーが返った）。
 /// **どの形であれ倒れる向きは赤である**ため、ここで形を数え上げる必要はない。
 fn sole_file_with<'a>(sources: &'a [(String, String)], anchor: &str) -> &'a str {
-    let hits: Vec<&str> = sources
+    let hits: Vec<(&str, &str)> = sources
         .iter()
         .filter(|(_, src)| src.contains(anchor))
-        .map(|(name, _)| name.as_str())
+        .map(|(name, src)| (name.as_str(), src.as_str()))
         .collect();
+    let names: Vec<&str> = hits.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         hits.len(),
         1,
-        "{anchor} を含むファイルが母集団にちょうど 1 枚ではない（該当: {hits:?}）——0 枚なら\
+        "{anchor} を含むファイルが母集団にちょうど 1 枚ではない（該当: {names:?}）——0 枚なら\
          改名・移設・母集団の消失であり、2 枚以上ならどちらを測るかが read_dir の順序で決まる。\
          どちらも以下の検査を空虚にする"
     );
-    let name = hits[0];
-    sources
-        .iter()
-        .find(|(n, _)| n == name)
-        .map(|(_, src)| src.as_str())
-        .expect("直前の絞り込みで存在を確かめている")
+    hits[0].1
 }
 
 /// メソッドの本体を切り出す（終端は 4 スペース字下げの閉じ括弧・内側のブロックはより深い）。
@@ -572,6 +578,65 @@ fn owners_of_is_line_ending_agnostic() {
     for (label, src) in [("LF", lf), ("CRLF", crlf.as_str())] {
         assert_eq!(owners_of(src, "forbidden("), expected, "{label}");
     }
+}
+
+/// [`owners_of_all`] が**帰属をファイル境界でリセットする**ことを固定する（#1201）。
+///
+/// **これが「ファイルごとに呼ぶ」という不変条件の検知器である。** 連結して 1 回呼ぶ形へ
+/// 書き換えると、2 枚目の最初のヘッダより前に出た禁止語が **1 枚目の最後のヘッダへ帰属して**
+/// この assert が落ちる。fixture の 1 枚目は最後のヘッダを `fn entry(` にしてあり、実母集団で
+/// `activation.rs` の最後のヘッダが起動の入口であるのと同じ配置を再現している。
+///
+/// **合成 fixture で測れるのは、[`owners_of_all`] が `&[(String, String)]` 上の純関数だから
+/// である**——実ディレクトリを読む [`sources`] とは違う（あちらを fixture で測ると「fixture を
+/// 読めること」しか測れない）。#1201 は当初この区別をせず 3 関数まとめて「合成 fixture では
+/// 測れない」と判じていたが、`/simplify` の altitude 枠がその混同を指摘した。
+#[test]
+fn owners_of_all_resets_attribution_at_file_boundaries() {
+    let first = "impl C {\n    fn entry(&self) {\n        ok();\n    }\n}\n".to_string();
+    let second = "//! forbidden(\nimpl D {\n    fn later(&self) {}\n}\n".to_string();
+    let sources = vec![
+        ("first.rs".to_string(), first),
+        ("second.rs".to_string(), second),
+    ];
+    assert_eq!(
+        owners_of_all(&sources, "forbidden("),
+        Vec::<String>::new(),
+        "2 枚目の最初のヘッダより前の出現が 1 枚目の最後のヘッダへ帰属した——連結して \
+         1 回呼ぶ形へ退行している"
+    );
+}
+
+/// [`sole_file_with`] が**0 枚**を赤にすることを固定する（#1201）。
+///
+/// 母集団が空になる形と、アンカーが母集団の外へ出る形の両方がここへ落ちる。
+/// **[`method_body`] の canary に相当する沈黙の栓である。**
+#[test]
+#[should_panic(expected = "ちょうど 1 枚ではない")]
+fn sole_file_with_rejects_an_empty_population() {
+    sole_file_with(&[], "fn entry(");
+}
+
+/// [`sole_file_with`] が**2 枚以上**を赤にすることを固定する（#1201）。
+///
+/// どちらを測るかが `read_dir` の順序で決まる状態を拒む。**アンカーの綴りは実定義とは
+/// 限らない**——この fixture の 2 枚目は doc コメントに綴りを持つだけである（同じ型の
+/// inherent メソッドを 2 つ置く形は rustc が E0592 で先に落とすので、この検査が実際に
+/// 当たるのは散文やリテラルから綴りが入る形である）。
+#[test]
+#[should_panic(expected = "ちょうど 1 枚ではない")]
+fn sole_file_with_rejects_an_ambiguous_population() {
+    let sources = vec![
+        (
+            "a.rs".to_string(),
+            "impl C {\n    fn entry(&self) {}\n}\n".to_string(),
+        ),
+        (
+            "b.rs".to_string(),
+            "//! `fn entry(` と綴るだけの doc\n".to_string(),
+        ),
+    ];
+    sole_file_with(&sources, "fn entry(");
 }
 
 /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。

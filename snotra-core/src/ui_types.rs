@@ -25,7 +25,7 @@ pub struct SearchResult {
 /// 表すと、平文検索の全行（`result_limit` は既定 200・設定次第 1000）に `String` の確保が
 /// もう 1 本乗る——行はフレームごとに snapshot へ複製されるので、そこは足してよい場所ではない。
 ///
-/// derive は [`SearchResult`] を含むこと（`Default` を足すのはこちらだけ）。あちらの
+/// derive は [`SearchResult`] と同じ集合を保つこと（`Default` を足すのはこちらだけ）。あちらの
 /// `PartialEq` / `Eq` は `RowsSnapshot` の行比較が使うので、この enum が落とすと行全体で落ちる。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum IconSource {

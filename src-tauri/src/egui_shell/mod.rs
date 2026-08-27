@@ -325,7 +325,7 @@ pub(crate) struct EguiShellHandles {
 /// 宣言による窓は 1 つも無い。ここが与える全プロパティ（52px 高は初期値〔SU3 で show 前折り畳み + 結果表示時に動的リサイズ・view.rs〕・width は config の window_width・skipTaskbar・
 /// alwaysOnTop・decorations:false・resizable:false・visible:false）が窓の姿である（codex #11・(B)#1）。
 /// `background_color_hex`: config `visual.background_color`（`#RRGGBB`）。過渡/リサイズ下地の
-/// SU2 ハードコード 0x282828 を config へ差し替える（§11・#532 SU4 Task 2）。パース失敗時は
+/// SU2 ハードコード 0x282828 を config へ差し替える（§11・#532 SU4 Task 2）。
 /// パース失敗時は `VisualConfig::default()` の背景色へ fallback（`visual::background_color` =
 /// `Color32::from_hex` 1 本・spec 決定 4。リテラルを再手打ちしない）。
 ///

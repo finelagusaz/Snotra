@@ -330,3 +330,195 @@ node_modules は共有チェックアウトからの junction を張って gover
   `universal-claim-fix-regenerates-itself`（偽の全称を直した文がまた全称で偽になる・#1091 で
   3 連鎖）と同型で、**止め方も同じ**（数え上げ・「だけ」・無条件の断定をやめ、
   「〜だけではない」「〜のときに」の下限・条件付きへ倒す）。
+
+
+================================================================================
+# ラウンド 3 — 6 文の反証試行 / アンカー 4c392ae87cbe76ef465cc4df95116bc9db3b5f02
+================================================================================
+
+枠組み: 差分レビューではなく「6 文を偽にする入力・状態を探す」ことだけを行った。
+判定は 真 / 偽（反例つき）/ 測れない の 3 値。「たぶん真」は 測れない へ入れる規約に従った。
+
+対象の確認: HEAD は `91d7ca82` だったため `git checkout --detach 4c392ae8` で合わせた
+（`git rev-parse HEAD` で確認）。カテゴリ A / F は依頼どおり再実行していない。
+
+## 判定表
+
+| # | 文 | 判定 |
+|---|---|---|
+| 1 | governance:check は見出し参照と ADR の短縮引用を見る（素のパス参照は見ない） | **真** |
+| 2 | 赤が出るには「直前のファイルの最後のヘッダが起動の入口であるような」ファイルの最初のヘッダより前に禁止語が現れること | **偽**（反例を実測） |
+| 3 | `sole_file_with` が効くのはアンカー保持ファイルが落ちたときだけ／無関係なファイルだけの狭まりは緑 | **真** |
+| 4 | `cargo test -p snotra` を走らせる CI job は `windows-latest` の 1 本だけ | **真** |
+| 5 | この `mod tests` の中に、狭まること自体を見ている検査は無い | **偽**（反例 3 本を所在つきで列挙） |
+| 6 | `sources()` 内で `Result` を返すものは read_dir / DirEntry / file_type / read_to_string で尽きる | **真** |
+
+---
+
+## 1. 【真】 governance:check の射程
+
+**確かめ方**——tests.rs へ 3 種の変異を注入し、対照つきで測った（すべて 4c392ae8 上）。
+
+- **見出し参照**: 「検証の層と、層と層の隙間」→「存在しない見出しABC」
+- **ADR 短縮引用**: `docs/adr/ADR-source-text-probe-helper-locality.md` →
+  `docs/adr/ADR-nonexistent-abc.md`
+- 両方同時に注入 → `npm run governance:check` **exit 1・3 件**:
+  `tests.rs:23 ADR の短縮引用が実在しない` / `tests.rs:154`・`tests.rs:548 見出し参照が着地しない`
+  → **両方見ている**（肯定側 2 つとも確認）
+
+**否定側（「素のパス参照は見ない」）は 3 通りの反証を試み、いずれも緑だった**:
+
+| 植えたもの | 結果 |
+|---|---|
+| `.claude/rules/no-such-rule-xyz.md`（ラウンド 2 で実測） | 緑 |
+| `docs/no-such-doc-xyz.md`（`docs/` 配下でも見ないか） | 緑 |
+| `src-tauri/src/egui_shell/no_such_file_xyz.rs` ＋ `scripts/no-such-script-xyz.mjs` | 緑 |
+
+**偽にできなかった。** ただし文が主張するのは射程の**下限 2 つと、素のパス参照という 1 形の否定**
+だけであり、doc 自身が「**「これだけ」と読まないこと**」を添えている。その形なら反証は
+「素のパス参照が見られる例」に限られ、3 通り試して出なかった。
+
+## 2. 【偽】 赤の条件（十分条件としては真・必要条件としては偽）
+
+**まず十分性を確認**（step A）: 連結形へ戻し `folder_nav.rs` の `//!` へ `read_config(` を植える
+→ **赤**（`fn on_enter( が read_config( を呼んでいる`）。条件を満たす入力は赤になる。
+
+**反例（必要条件として偽）**——**母集団へ、字下げ 4 の `fn ` 行を 1 本も持たないファイルを
+1 枚差し込むと、条件を満たさないのに赤になる。**
+
+手順（step B）:
+1. 連結形へ戻す
+2. `folder_nav.rs` の `//!` へ `read_config(` を植える（step A と同じ）
+3. `launcher_controller/` へ **`azz.rs`** を新設する。中身は module doc と
+   `pub const PROBE_MARKER: u8 = 0;` だけで、**字下げ 4 の `fn ` 行を 1 本も持たない**
+   （名前順で `activation.rs` < `azz.rs` < `folder_nav.rs`。'c'(0x63) < 'z'(0x7a) と 'a' < 'f' から）
+
+この状態で `folder_nav.rs` の**直前のファイルは `azz.rs`** であり、`azz.rs` は
+**ヘッダを 1 本も持たない**ので「直前のファイルの最後のヘッダが起動の入口である」は**偽**である。
+にもかかわらず——
+
+```
+cargo test -p snotra -q launcher_controller::activation::tests  → exit 101
+fn on_enter( が `read_config(` を呼んでいる
+```
+
+**A/B 対照（step C）**——`azz.rs` に字下げ 4 のヘッダを 1 本だけ持たせる
+（`impl Dummy { fn azz_header(&self) {} }`）と、同じ状態で **緑（14 passed）** になった。
+これは同時に「`azz.rs` が確かに母集団に入っている」ことの証拠でもある（入っていなければ
+step B と step C で結果が変わらない）。
+
+**機序**: `owners_of` の `current` は**ファイル境界ではなくヘッダの出現でしか更新されない**。
+ヘッダを持たないファイルを跨いで持ち越されるので、効いているのは「直前のファイルの最後の
+ヘッダ」ではなく「**禁止語より前に最後に認識されたヘッダ**」である。
+正しい条件文は「禁止語より前に最後に認識されたヘッダが起動の入口であること」。
+（現ツリーでは両者が一致するので実害は無い。**偽になる時点が確定している**型の主張である
+——母集団へヘッダの無い `.rs` を 1 枚足せば偽になる。`mod` 宣言は不要＝死角 (2) の経路で入る。）
+
+## 3. 【真】 `sole_file_with` が効く範囲
+
+**構造**: 狭まり（ファイルが落ちること）は `hits` を増やせないので `sole_file_with` が
+2 枚以上で赤になる経路には触れない。落ちたのがアンカーを含まないファイルなら
+`hits.len()` は 1 のまま。`method_body` はアンカー保持ファイルだけを見る。`owners_of_all` は
+走査対象が減る＝owner が減る方向なので、赤を増やせない。
+
+**実測 2 件（どちらも「アンカーを保持しないファイルだけを落とす」狭まり）**:
+
+| 落としたファイル | 結果 |
+|---|---|
+| `updater_toast.rs`（禁止語も持たない） | **緑（14 passed）** |
+| `search_flow.rs`（`self.indexing()` と `read_config(` を現に持つ） | **緑（14 passed）** |
+
+**対照（前段までに実測済み）**: アンカー保持ファイル（`activation.rs`）が落ちる狭まりは
+**赤**（`該当: []`）。
+
+**偽にできなかった。**
+
+## 4. 【真】 `cargo test -p snotra` を走らせる CI job
+
+**確かめ方**——ワークフロー全数から数え上げた（1 ファイルだけを見ていない）:
+
+```
+ls .github/workflows/  → ci.yml / create-release.yml / label-sync.yml / release.yml / smoke.yml（5 本）
+grep -rn "cargo test" .github/workflows/  → 4 hit・すべて ci.yml:195/198/201/204
+```
+
+`cargo test -p snotra` は `ci.yml:201` の 1 か所のみ。ジョブ境界は
+`ci.yml` に 3 job（`node-check`:25 / `governance-check`:58 / `rust-check`:131）で、
+201 行は最後の `rust-check` の中。`rust-check` の `runs-on:` は 135 行の `windows-latest` で、
+**`strategy:` / matrix は無い**（`grep -nE "^  [a-z0-9_-]+:|^    runs-on:|^    strategy:"` で確認）。
+`smoke.yml` を含む他 4 本に `cargo test` は 1 件も無い。**偽にできなかった。**
+
+## 5. 【偽】 「この `mod tests` の中に、狭まること自体を見ている検査は無い」
+
+**探し方を変えた**——全称否定なので、`#[test]` を全数列挙して 1 本ずつ当たった
+（`grep -nE "^#\[test\]|^#\[should_panic|^fn [a-z_]+\("` で 14 本を確定）。
+
+**反例 3 本**（いずれも同じ `mod tests` の中に在る）:
+
+1. **`method_body_rejects_a_population_without_the_canary`（tests.rs:344-348）**
+   ——**狭まりを見ることだけが存在理由の検査である**。doc は「[`method_body`] が
+   **canary を含まない母集団を拒む**ことを固定する」と書き、`method_body` 自身の doc は
+   「**母集団は狭すぎても広すぎても壊れる。両方を assert する。**——**狭すぎる（空）**: 目印
+   （`canary`）が本体に在ることで確かめる」と明記している
+2. **`method_body_rejects_an_anchor_at_the_wrong_indent`（tests.rs:285-298）**
+   ——doc が「アンカーの字下げがずれると母集団は黙って**狭まる**（列 0 のアンカーは内側
+   ブロックの `    }` で切れる）か、黙って広がる」と両方向を名指している
+3. **`activation_uses_frame_values_not_live_reads`（tests.rs:623-）ほか 2 本**
+   ——`sole_file_with` を通すので、**ファイル集合の母集団が狭まってアンカー保持ファイルが
+   落ちた場合に赤になる**（`該当: []` で実測済み）。**これは文の 2 つ手前の節が自分で
+   書いていることである**（「それが効くのはアンカーを保持するファイルが落ちたときだけである」）
+
+**すなわちこの文は、同じ段落の直前の文と矛盾している。** 意図した射程は
+「**ファイル集合の狭まりのうち、アンカー保持ファイルが落ちないもの**」だと読めるが、
+文はそう限定していない。しかも `tests.rs` の中で「母集団」は 2 つの水準
+（`sources()` が返すファイル集合／`method_body` が切り出すメソッド本体）で使われており、
+**限定しない「狭まること自体」は後者の水準の検査 2 本を確実に含んでしまう。**
+
+正確に書くなら「ファイル集合の母集団が狭まる形のうち、**アンカーを保持するファイルが
+落ちないもの**を見ている検査は無い」。
+
+## 6. 【真】 `sources()` 内の `Result` の数え上げ
+
+**4c392ae8 の本文を読み直して全呼び出しを列挙した**（前ラウンドの結果を写していない）:
+
+| 呼び出し | 戻り値 | 扱い |
+|---|---|---|
+| `std::fs::read_dir(dir)` | `io::Result<ReadDir>` | `unwrap_or_else(panic!)` |
+| `ReadDir` の Item（`entry`） | `io::Result<DirEntry>` | `unwrap_or_else(panic!)` |
+| `entry.file_type()` | `io::Result<FileType>` | `unwrap_or_else(panic!)` |
+| `std::fs::read_to_string(&path)` | `io::Result<String>` | `unwrap_or_else(panic!)` |
+| `concat!` / `env!` | マクロ | Result ではない |
+| `entry.path()` | `PathBuf` | 〃 |
+| `path.display()` | `Display` | 〃 |
+| `file_type.is_file()` | `bool` | 〃 |
+| `entry.file_name()` | `OsString` | 〃 |
+| `.to_string_lossy()` | `Cow<str>` | 〃（**下記の注**） |
+| `.ends_with(".rs")` | `bool` | 〃 |
+| `.into_owned()` | `String` | 〃 |
+| `.collect()` | `Vec<(String,String)>`（Result 収集ではない） | 〃 |
+| `files.sort_by(…)` / `a.cmp(b)` | `()` / `Ordering` | 〃 |
+
+**偽にできなかった。** 4 つで尽きている。
+
+**注（S6 を偽にはしないが、隣に在る形）**: `to_string_lossy()` は `Result` を返さないが
+**沈黙して不正 UTF-8 を U+FFFD へ置換する**唯一の経路である。ファイル名が不正 UTF-8 でも
+拡張子はどれも ASCII なので `ends_with(".rs")` の判定は変わらず、影響は
+`sole_file_with` の失敗メッセージに出る名前の見え方だけである。**「`Result` を返すもの」
+という文の射程の外なので S6 は真のままである**——射程を「黙って情報が変わる経路」まで
+広げるなら 5 つ目になる、という関係。
+
+---
+
+## 6 文の外で見つけた重大な誤り
+
+**無し。** 6 文の外は今回の枠組みの対象外としたため、能動的な走査は行っていない
+（S2 の反例づくりで `azz.rs` を母集団へ入れたとき、`mod` 宣言の無い `.rs` が母集団へ入る
+死角 (2) が実際に発火することを副産物として確認した——これは doc が既に「向きは誤爆＝赤」
+として記録している通りの挙動だった）。
+
+## 巻き戻しの証明
+
+全変異を `git checkout --` で戻し、追加した `azz.rs` は `rm` で削除。
+`sha256sum -c` で 7 ファイル全一致（mtime は見ていない）。`git status --porcelain` は空。
+巻き戻し後に `cargo test -p snotra -q` を再実行して **307 passed**。
+node_modules は共有チェックアウトからの junction を張って governance を回し、終了後に撤去。

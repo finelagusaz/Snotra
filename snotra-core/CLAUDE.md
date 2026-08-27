@@ -52,7 +52,14 @@
   - **剪定容量 `top_n` は焼き込まず `prepare_save_if_dirty`/`prepare_flush`/`prune` の引数で受け取る（live-read）**: `Engine` が呼び出し時に現在の config（`effective_result_limit()`）を渡すため、`result_limit` 設定変更が再起動なしで反映される（#348）
   - **`HistoryStore` に `top_n` フィールドを再導入しないこと** — 焼き込むと設定変更が反映されないドリフトが復活する
 - `folder.rs` — フォルダ内エントリの列挙とフィルタ/ソート（責務は `//!`）
-- `indexer.rs` — スキャン対象の列挙・重複排除とインデックスキャッシュ（責務は `//!`）
+- `indexer.rs` — 索引の材料（木と派生データの組）を運ぶ `IndexMaterial` と、責務別サブモジュールの索引・re-export（責務は `//!`）。**crate の外から見える名前はこのファイルの re-export が決める**ため、子モジュールを private にしたまま `snotra_core::indexer::X` の呼び出し形が保たれる
+  - `indexer/scan.rs` — スキャン対象の列挙・走査中の重複排除・正準整列（責務は `//!`。下の「`scan_all` の重複排除」「エントリ名の導出ルール」）
+  - `indexer/keys.rs` — パスキーの正規化（責務は `//!`。契約は下の「`normalize_entry_key` の冪等性契約」）
+  - `indexer/columns.rs` — 派生データ（マスク 2 本・派生文字列 2 本）の型と導出（責務は `//!`）
+  - `indexer/cache.rs` — `index.bin` の入出力・版のフォールバック鎖・書き込みの排他（責務は `//!`。下の「index.bin 書き込みの排他」「IndexCache バージョン変更チェックリスト」「indexer.rs の索引更新の契機」）
+  - `indexer/cache/breakdown.rs` — 計測専用: `index.bin` のオンディスク内訳（責務は `//!`）
+  - `indexer/path_env.rs` — `PATH` 環境変数からの追加スキャン（責務は `//!`）
+  - ユニットテストは対象モジュールの子として置く（`indexer/tests.rs` / `indexer/scan/tests.rs` / `indexer/columns/tests.rs` / `indexer/cache/tests.rs` / `indexer/path_env/tests.rs`）——親の private を直接読むため、テストのために製品側の可視性を広げなくてよい。共有治具（直列化ガードと作業ディレクトリ）は `indexer/test_support.rs` に 1 つだけ持つ（ガードを写すと相互排除が消える）
 - `query.rs` — クエリ/履歴キーの正規化と文字ビットマスク（責務は `//!`）
 - `str_arena.rs` — 疎な派生文字列の列（`lower_names` / `lower_file_names`）を、要素ごとの確保を持たない表現で保つ（責務は `//!`）。**線上表現は `Vec<Option<String>>` / `Vec<LowerFileName>` のままである**——その一致を守るのは同ファイルの `*_wire_format_is_identical_to_*` 2 本であって golden bytes ではない（射程は `//!`）
 - `index_tree.rs` — `target_path` をフォルダ木の接頭辞共有で表す、オンディスクと索引が共有する表現（責務は `//!`）。**辿る規則（`walk_to_root` / `raw_path_into`）はここが唯一持ち、記憶域の並べ方だけを `TreeNodes` が抽象化する**——`indexer` の並列 Vec と `search` の構造体の列が同じ実装を通ることが、ディスクと索引で木がずれないことの根拠である
@@ -97,25 +104,25 @@
 
 `indexer::normalize_entry_key` は「小文字化 + `/` → `\\`」の正規化関数。**2回適用しても1回と同じ結果になる（冪等）** ことが設計契約であり、`migrate_normalize_keys_is_idempotent` テストで保証されている。以下の3モジュールが依存する:
 
-- `indexer.rs`: スキャン時の重複排除キー
+- `indexer/scan.rs`: スキャン時の重複排除キー
 - `history.rs`: 全記録・参照・マイグレーションのキー正規化
 - `search.rs` / `search/scoring.rs`: 履歴照合とパスマッチのキー（索引には持たず `with_normalized_key` が導出する）
 
 **規則の定義は `normalize_entry_key_into` 1 つである**（`normalize_entry_key` はその薄い包み）。記録側と照合側が同じ関数を通ることがバイト一致の根拠なので、**この関数を迂回する畳み込み比較を書かないこと**。ASCII 高速路は分岐しても結果が変わらない（ASCII 範囲では Unicode 小文字化と ASCII 小文字化が一致する）ことに依存しており、実インデックスの全パスでの一致を `tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key` が固定する。
 
-**同じ関数に「末尾セグメントだけ」を通す派生が 1 つある**（`indexer.rs` の `normalize_file_name_key_into`・反復 9）。PATH スキャンが既存エントリを素通しするための**篩**であり、判定ではない。照合する両辺が同じ手順を通ることだけが「偽陰性を出さない」の根拠なので、**ここでも別実装を書き起こしてはならない**（規則の全文と健全性の論証はその関数の doc）。
+**同じ関数に「末尾セグメントだけ」を通す派生が 1 つある**（`indexer/keys.rs` の `normalize_file_name_key_into`・反復 9）。PATH スキャンが既存エントリを素通しするための**篩**であり、判定ではない。照合する両辺が同じ手順を通ることだけが「偽陰性を出さない」の根拠なので、**ここでも別実装を書き起こしてはならない**（規則の全文と健全性の論証はその関数の doc）。
 
 この関数の正規化ルールを変更する場合は、3モジュール全てへの影響と冪等性テストを確認する。
 
 ### `char_bitmask` は `query.rs` に一元化済み
 
-`query::char_bitmask()` が唯一の定義（bits 0-25 = a-z, bits 26-35 = 0-9）。`search.rs` と `indexer.rs` の両方がこの関数を import して使用する。ロジックを変更する場合は `query.rs` の1箇所のみ修正すればよい。
+`query::char_bitmask()` が唯一の定義（bits 0-25 = a-z, bits 26-35 = 0-9）。`search.rs` と `indexer/columns.rs` の両方がこの関数を import して使用する。ロジックを変更する場合は `query.rs` の1箇所のみ修正すればよい。
 
-**エントリ単位のマスク導出・file_name 導出も `query.rs` に集約済み**（issue #437）: 「ascii なら `char_bitmask`、非 ascii なら `u64::MAX`」は `query::name_char_mask()`、file_name 側の `None→0` を含む版は `query::file_char_mask()`、`target_path` から小文字 file_name を導出する処理は `query::lower_file_name()` に一元化。`search.rs`（Wave 2 / Wave 1）と `indexer.rs`（`save_cache_sorted_in` / `extend_cached_masks`）が共有する。検索ホットパスのため3関数とも `#[inline]`。
+**エントリ単位のマスク導出・file_name 導出も `query.rs` に集約済み**（issue #437）: 「ascii なら `char_bitmask`、非 ascii なら `u64::MAX`」は `query::name_char_mask()`、file_name 側の `None→0` を含む版は `query::file_char_mask()`、`target_path` から小文字 file_name を導出する処理は `query::lower_file_name()` に一元化。`search.rs`（Wave 2 / Wave 1）と `indexer/columns.rs`（`derive_columns` / `extend_cached_masks`）が共有する。検索ホットパスのため3関数とも `#[inline]`。
 
 ### hidden/system 判定は `indexer::is_hidden_or_system` に一元化済み
 
-`indexer.rs` の `is_hidden_or_system(meta) -> bool`（true = hidden または system）が唯一の定義。`folder.rs::read_dir_entries` はこれを import して使う（旧 `folder.rs::is_hidden_or_system` は逆極性の別定義だったため削除・統合済み、issue #437）。
+`indexer/scan.rs` の `is_hidden_or_system(meta) -> bool`（true = hidden または system）が唯一の定義。`folder.rs::read_dir_entries` はこれを import して使う（旧 `folder.rs::is_hidden_or_system` は逆極性の別定義だったため削除・統合済み、issue #437）。
 
 ### `query.rs` の正規化と `Cow<str>` 遅延アロケーション
 
@@ -167,7 +174,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ## IndexCache バージョン変更チェックリスト
 
-`indexer.rs` の `IndexCache` にフィールドを追加する場合、以下を全て更新する:
+`indexer/cache.rs` の `IndexCache` にフィールドを追加する場合、以下を全て更新する:
 
 1. **`IndexCache<'a>` 構造体**: 新フィールドを `Cow<'a, [T]>` で追加（owned/borrowed は #461 で `Cow` 統合済み。save は `Cow::Borrowed` で全件 clone 回避、load は `IndexCache<'static>` へ Owned deserialize）
 2. **バージョン番号**: `INDEX_CACHE_VERSION` をバンプ
@@ -199,7 +206,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ## index.bin 書き込みの排他（INDEX_WRITE_LOCK）
 
-`index.bin` を scan+save する経路は**すべて `INDEX_WRITE_LOCK`（`indexer.rs` の module-level `static Mutex<()>`）を経由する**。`BinFile::save` の tmp→rename は固定 tmp 名（`index.bin.tmp`）での原子的置換であり、単一書き手が前提。複数経路が同時に書くと tmp ファイルを食い合い破損する。
+`index.bin` を scan+save する経路は**すべて `INDEX_WRITE_LOCK`（`indexer/cache.rs` の module-level `static Mutex<()>`）を経由する**。`BinFile::save` の tmp→rename は固定 tmp 名（`index.bin.tmp`）での原子的置換であり、単一書き手が前提。複数経路が同時に書くと tmp ファイルを食い合い破損する。
 
 - 走査して書く経路（`rebuild_and_save` / `load_or_scan_with_stats` の cache-miss 枝）: `with_index_write_lock`（blocking）で取得
 - 走査せずに書く経路（ロードの旧版枝からの形式昇格・`upgrade_legacy_cache_in`）: 同じく `with_index_write_lock`。読めた旧版の走査結果をそのまま現行版で書き直すだけで、索引の中身は変えない
@@ -227,13 +234,13 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ## エントリ名の導出ルール
 
-`indexer.rs` のスキャンでは:
+`indexer/scan.rs` のスキャンでは:
 - **ファイル**: `file_stem()` を `name` に使用（拡張子なし）。例: `firefox.lnk` → `name: "firefox"`
 - **フォルダ**: `file_name()` を `name` に使用（そのまま）。例: `Projects/` → `name: "Projects"`
 
 `folder.rs` のフォルダ内列挙では `file_name()` をそのまま使う（拡張子付き）。この違いは意図的で、フォルダ展開時にはファイル拡張子がフィルタリングの手がかりになるため。
 
-**エントリ名導出は共通関数へ括り出さない**（issue #997）: #995 で生じた `index_tree.rs` の fixture は `0bb7b11` で利用対象と一緒に撤去済み。現行の導出は `indexer.rs` 内で拡張子照合・空名除外・再帰継続・重複排除の各処理に隣接し、共通関数はそれらを束ねないためインラインを維持する。別モジュールに実行可能な消費者が再び生じたら再検討する。
+**エントリ名導出は共通関数へ括り出さない**（issue #997）: #995 で生じた `index_tree.rs` の fixture は `0bb7b11` で利用対象と一緒に撤去済み。現行の導出は `indexer/scan.rs` 内で拡張子照合・空名除外・再帰継続・重複排除の各処理に隣接し、共通関数はそれらを束ねないためインラインを維持する。別モジュールに実行可能な消費者が再び生じたら再検討する。
 
 ## Config のデシリアライズ経路
 

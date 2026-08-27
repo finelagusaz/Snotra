@@ -834,6 +834,12 @@ fn derive_bar_rect_phys(
 /// **`pre` と `post` を両方持つことが要点である**——「main の位置を動かしたのは誰か」は、
 /// *前フレームの `post`* と *今フレームの `pre`* を突き合わせて初めて名指せる。食い違い、
 /// かつ間に自分の `set_position` が無ければ、動かしたのは自分ではない。
+///
+/// **`#[cfg(windows)]` を付けるのは、production の消費者が [`trace_clamp_sample`] だけであり、
+/// それが Windows 限定だからである**——付けないと非 Windows ビルドで `dead_code` になり
+/// `-D warnings` で落ちる（同ファイルが `clamp_main_into_work_area` を cfg の対で維持しているのと
+/// 同じ理由。CI の Rust ジョブは `windows-latest` 限定なので、今日は顕在化しない）。
+#[cfg(windows)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct ClampSample {
     /// 窓の所有スレッドが OS のモーダル move/size ループ中か（`main_in_modal_move_loop`）。
@@ -852,6 +858,7 @@ struct ClampSample {
 /// である。** ゆえに `pre != last.post` を条件へ**必ず含める**——含めないと、位置だけが変わった
 /// フレームで黙り、[`ClampSample`] の doc が言う「他人が動かした」の証拠がまさにその瞬間に
 /// 系列から消える。**行数を絞るのは事象の数までであって、事象そのものを削ってはならない。**
+#[cfg(windows)]
 fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool {
     let Some(last) = last else {
         // 最初の観測は必ず出す——系列の起点が無いと以降の差分が読めない。
@@ -862,11 +869,12 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 
 /// main の窓が OS のモーダル move/size ループの最中か（#1194）。
 ///
-/// **観測専用である——クランプの発火条件には入らない。** 唯一の消費者は
-/// [`trace_clamp_sample`]（`egui_main:clamp` の `in_move_size` 欄）であり、
+/// **観測専用である——クランプの発火条件には入らない。** 消費者は
+/// [`trace_clamp_sample`] だけであり（`egui_main:clamp` の `in_move_size` 欄）、
 /// [`clamp_main_into_work_area`] の doc が言う「モーダルループ中はフレームが回らない」を
 /// **後から偽にできるようにする検知手段**がこの欄である。ゆえに `trace_enabled()` を抜けた
-/// 後でしか呼ばない（費用の射程は呼ぶ位置が決める）。
+/// 後でしか呼ばない（費用の射程は呼ぶ位置が決める）。**消費者が 2 つ目になった時点で、この
+/// 「trace を切れば費用は 0」は偽になる**——増やすなら呼ぶ位置を測り直すこと。
 ///
 /// クランプの抑止条件へ入れる案は**実測により却下した**——抑止する対象（ループ中に走る
 /// クランプ）が存在しない。経緯は `ADR-modal-move-loop-clamp-suppression`。
@@ -1320,6 +1328,7 @@ mod tests {
         assert_eq!((c.0, c.1, c.2, c.3), (0x12, 0x34, 0x56, 0xff));
     }
 
+    #[cfg(windows)]
     fn sample(in_move_size: bool, pre: (i32, i32), fired: bool, post: (i32, i32)) -> ClampSample {
         ClampSample {
             in_move_size,
@@ -1335,6 +1344,7 @@ mod tests {
     /// **位置だけが前フレームの `post` から動いている**——これが「main を動かしたのはクランプでは
     /// ない」の唯一の証拠であり、Q2（確定後の 27〜28 px の書き手を名指す）はこの 1 行に懸かる。
     /// `fired` と `in_move_size` の変化だけを見る述語はこのフレームで沈黙する。
+    #[cfg(windows)]
     #[test]
     fn clamp_trace_emits_when_only_the_position_moved() {
         let last = sample(false, (100, 200), false, (100, 200));
@@ -1347,6 +1357,7 @@ mod tests {
     }
 
     /// 沈黙の意味を固定する: 位置が動いておらず、撃たず、ループ状態も変わらないフレーム。
+    #[cfg(windows)]
     #[test]
     fn clamp_trace_stays_silent_when_nothing_changed() {
         let last = sample(false, (100, 200), false, (100, 200));
@@ -1355,6 +1366,7 @@ mod tests {
     }
 
     /// 系列の起点は必ず出す——前の観測が無ければ以降の差分が読めない。
+    #[cfg(windows)]
     #[test]
     fn clamp_trace_emits_the_first_sample() {
         let now = sample(false, (100, 200), false, (100, 200));
@@ -1363,6 +1375,7 @@ mod tests {
 
     /// 撃ったフレームと、モーダルループの出入りは必ず出す（`/symmetric-check`: 真偽の両向きが
     /// 系列に現れることが「移動中である」の検知手段そのものである）。
+    #[cfg(windows)]
     #[test]
     fn clamp_trace_emits_on_fire_and_on_both_edges_of_the_move_loop() {
         let rest = sample(false, (100, 200), false, (100, 200));

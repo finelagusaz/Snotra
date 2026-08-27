@@ -1,12 +1,223 @@
-//! `activation.rs` の呼び出し点をソーステキストで固定する検査（#1077 / #1106 / #1112）。
+//! 起動の入口の呼び出し点をソーステキストで固定する検査（#1077 / #1106 / #1112 / #1201）。
 //!
-//! **母集団は `activation.rs` 1 枚である**——`include_str!("../activation.rs")`。起動の入口が
-//! 別の子モジュールへ移れば母集団は割れるが、各検査はアンカーが 4 スペース字下げのメソッド
-//! ヘッダとして見つかることを先に assert するので**沈黙ではなく赤になる**。
+//! **母集団は `launcher_controller/` の直下にある子 `*.rs` である**——[`sources`] が実行時に
+//! `read_dir` で列挙する。**入口がどの子モジュールに在っても検査は生き続ける**ので、「入口を
+//! 1 ファイルへ集める」という規範は要らない（#1201。それ以前は `include_str!("../activation.rs")`
+//! で 1 枚に縛り、規範を `activation.rs` の `//!` が担っていた）。
+//!
+//! **母集団に入らないもの**——名指せないなら測っていない
+//! （`docs/development-principles.md`「列挙の完全性」）。**規則の側で読むこと**: 直下でない
+//! ものはすべて外である。**ディレクトリの外**（親モジュール `egui_shell/launcher_controller.rs`）
+//! も、**サブディレクトリの中**（`read_dir` は再帰しないので、このファイル自身を含む
+//! `activation/` の全部）も入らない。**規則で書くのは、`activation/` へ 1 枚足したときに
+//! 数え上げだけが腐るのを避けるためである。**
+//!
+//! **この `//!` と以下の doc は、`cargo doc` の視界の外にある。** `mod tests` は
+//! `#[cfg(test)]` 配下ゆえ rustdoc がコンパイルせず、**壊れた intra-doc link を植えても
+//! `cargo doc --document-private-items` は exit 0・診断 0 行である**（#1201 で実測）。
+//! `.claude/rules/comments.md` は doc を触ったら `cargo doc` を走らせよと言うが、**ここでは
+//! それが緑でも何も測っていない**。一方 `npm run governance:check` は、**見出し参照
+//! （`docs/…`「…」の形）と ADR の短縮引用を見る**（素のパス参照は見ない——2026-08-27 に
+//! 対照で実測）。**「これだけ」と読まないこと**——見る側の母集団はあちらが持つ。
 //!
 //! **切り出しの helper はこの 1 か所に閉じる**（`docs/adr/ADR-source-text-probe-helper-locality.md`）
 //! ——存在形が使う [`method_body`] と否定形が使う [`owners_of`] を並べて持つのは、極性が違えば
-//! 要る不変条件が違うからであって写しではない。
+//! 要る不変条件が違うからであって写しではない。**#1201 はこの 2 つの本体を 1 バイトも変えて
+//! いない**——変えたのは母集団の配り方だけであり、それが当該 ADR の却下理由 1（稼働中のガードへ
+//! 爆風が及ぶ）の半径を、helper の合成 fixture の外へ押し出している。
+
+/// 母集団を `(ファイル名, 中身)` の組で返す（`launcher_controller/` 直下の `*.rs`・名前順）。
+///
+/// **連結しない。** 子を 1 本の文字列へ繋ぐと、この検査が新しく 3 つの壊れ方を得る
+/// （#1201 で測って避けた）:
+///
+/// - [`owners_of`] の帰属が**ファイル境界を越える**。`current` が持ち越されるため、次のファイルの
+///   最初のヘッダより前に出た禁止語が**前のファイルの最後のヘッダ**へ帰属する。現に
+///   `activation.rs` の最後のヘッダは起動の入口 `on_enter` であり、隣接ファイルの `//!` に
+///   禁止語が 1 語現れるだけで恒久的な偽陽性になる
+/// - [`method_body`] の `split_once` が**並び順に依存する**。前のファイルの doc コメントに
+///   アンカーの綴りが先行すると、そこで割れて別ファイルの本体を切り出す（同 doc が認めている
+///   「同じ字下げの doc 行は通る」形が、**ファイルをまたいで**効くようになる）
+/// - 連結の**境目**が改行コードの新しい依存点になる
+///
+/// ファイルごとに配れば、**上に挙げた 3 つはいずれも起こりえない**（尽くしてはいない——
+/// 連結が作る壊れ方が他にも在りうる。**採るべき読みは「連結しない」であって「3 つを塞いだ」
+/// ではない**）。1 つ目は #1201 で A/B で実測した——連結形へ戻し `folder_nav.rs` の `//!` へ
+/// 禁止語を 1 語植えると、`fn on_enter(` へ帰属して赤になる。名前順に並べるのは `read_dir` の
+/// 順序が OS・ファイルシステム依存だからで、[`sole_file_with`] の一意性 assert と合わせて
+/// 「順序を変えると結果が変わる」経路を消してある（**現時点では sort 単独は load-bearing では
+/// ない**——逆順にしても全緑である。効いているのは一意性 assert の側で、sort は
+/// 失敗メッセージの再現性のために置く）。
+///
+/// # I/O の失敗は赤へ倒す
+///
+/// **この関数の中で `Result` を返すものは、どれも握り潰さず panic させる**——`read_dir`・
+/// `DirEntry`・`file_type`・`read_to_string`。**どれも「母集団が取れていない」を意味し、黙って
+/// 空や欠落として通せば検査が空虚に緑になる。** とくに `file_type` を `is_ok_and` で書くと
+/// `Err` が「ファイルではない」と読まれて**母集団が音もなく狭まる**（#1201 のレビューが指摘）。
+/// **数え上げずに「`Result` を返すものはすべて」と読むこと**——経路を 1 つ足したときにこの
+/// 行だけが腐らないようにするためである。
+///
+/// **ただし `file_type` の `Err` 枝は、発火することを実測していない**（構造的にそう書いた
+/// だけである）。Windows の [`std::fs::DirEntry::file_type`] は `FindNextFileW` が返した
+/// データから組むので追加 I/O をせず、壊れた junction を母集団へ置いても `Ok` が返って
+/// 静かに濾過された（2026-08-27 実測）。**`cargo test -p snotra` を走らせる CI job は
+/// `windows-latest` の 1 本だけである**（`.github/workflows/ci.yml`。非 Windows で走らせる
+/// job を足せば、この枝の到達可能性は変わりうる）。消した沈黙は「起こったら黙って狭まる」
+/// 形であって、「起きている」ものではない。
+///
+/// # 受容する死角
+///
+/// **(1) `#[cfg(test)]` を見ない。** `read_to_string` は属性を解釈しないので、将来どれかの子へ
+/// inline の `#[cfg(test)] mod tests { … }` を書けばその中身が母集団へ入る（`include_str!` 期も
+/// `activation.rs` 1 枚について同じ性質を持っていたが、**曝露面は 1 枚から直下の子全部へ広がる**）。
+/// 観測した倒れ方は 3 通りで、**そのうち沈黙するのは 1 形だけである**（尽くしてはいない）
+/// ——inline test がアンカーの綴りを持てば
+/// [`sole_file_with`] が 2 枚を見つけて赤、禁止語を持てばその test 関数へ帰属して緑（無害）、
+/// **production の入口が消えて同名のアンカーを持つ inline test だけが残った場合**にテスト側の
+/// コピーを測る。3 つ目は入口の削除を伴うので、rustc が先に落とす経路が別に在る。
+/// **塞がない**——`#[cfg(test)]` から先を読み飛ばす述語は道具立てが検査対象より複雑になる
+/// （[`owners_of`] の残余節が同じ判断を記録している）。
+///
+/// **(1b) ソースツリーが実行時に在ることへ依存する。** `include_str!` 期はソースが
+/// バイナリへ埋め込まれていたが、いまは `env!("CARGO_MANIFEST_DIR")` の絶対パスを**実行時に**
+/// 読む。ソースツリーの無い場所へバイナリだけ持って行くと落ちる。**向きは沈黙ではなく即赤**
+/// であり、このリポジトリの実運用（checkout したツリーでビルドしてそのままテスト）では
+/// 発火しない。
+///
+/// **(2) `mod` 宣言を見ない。** 母集団はファイルシステムが正本なので、`mod` を書き忘れた
+/// `.rs` はコンパイルされないまま母集団へ入る。向きは**誤爆＝赤**であり、`governance:check` の
+/// `G-module-linkage` が別に捕まえる。
+///
+/// # 再帰させないこと
+///
+/// **非再帰は意図であって偶然ではない。** `read_dir` を再帰へ広げるとこのファイル自身が
+/// 母集団へ入り、**倒れ方が非対称になって気づけない**——[`method_body`] 側はここに在る字下げ 8 の
+/// アンカー文字列で字下げ assert が落ちて赤（安全側）だが、[`owners_of`] 側はここの `fn` が
+/// すべて字下げ 0 でヘッダとして認識されないため、**リテラルで綴った禁止語が帰属先を持たず
+/// 黙って捨てられて緑になる**。
+fn sources() -> Vec<(String, String)> {
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/egui_shell/launcher_controller"
+    );
+    let mut files: Vec<(String, String)> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| {
+            panic!(
+                "母集団のディレクトリ {dir} を読めない（{e}）——母集団が空でも\
+             検査は沈黙しうるので、ここは赤にする"
+            )
+        })
+        .map(|entry| {
+            entry.unwrap_or_else(|e| panic!("{dir} の要素を読めない（{e}）——母集団が黙って欠ける"))
+        })
+        .filter(|entry| {
+            // `is_ok_and` にしてはならない——`Err` を黙って「ファイルではない」と読み、
+            // 母集団が音もなく狭まる（#1201 のレビューが指摘した 4 つ目の I/O 経路）。
+            let file_type = entry.file_type().unwrap_or_else(|e| {
+                panic!(
+                    "{} の file_type を読めない（{e}）——母集団が黙って欠ける",
+                    entry.path().display()
+                )
+            });
+            file_type.is_file() && entry.file_name().to_string_lossy().ends_with(".rs")
+        })
+        .map(|entry| {
+            let path = entry.path();
+            let src = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!("{} を読めない（{e}）——母集団が黙って欠ける", path.display())
+            });
+            (entry.file_name().to_string_lossy().into_owned(), src)
+        })
+        .collect();
+    files.sort_by(|(a, _), (b, _)| a.cmp(b));
+    files
+}
+
+/// [`owners_of`] を母集団の**ファイルごとに**呼び、結果を連ねる。
+///
+/// **ファイルごとに呼ぶことが不変条件である。** [`owners_of`] は帰属先（直前のヘッダ）を
+/// 走査中ずっと持ち越すので、母集団を 1 本の文字列へ連結して 1 回呼ぶと、**あるファイルの
+/// 最初のヘッダより前に出た出現が、前のファイルの最後のヘッダへ帰属する**。ファイルごとに
+/// 呼べば帰属は境界でリセットされ、この形は起こりえない（[`sources`] の doc が機序の正本）。
+///
+/// **この不変条件には検知器が在る**——[`owners_of_all_resets_attribution_at_file_boundaries`]
+/// が合成 fixture で固定しており、連結形へ書き換えると落ちる（#1201。当初は散文の契約だけで
+/// 置き、`/simplify` の altitude 枠が「機構自身の正しさを守る層が 1 段浅い」と指摘した）。
+///
+/// **実母集団の側は別である。** そちらでは連結形へ書き換えても**それだけでは全緑のままである**
+/// （実測）。赤が出るには**もう 1 つ条件が要る**:
+/// 禁止語より前に**最後に認識されたヘッダ行が、起動の入口の綴りを含む**こと。**「入口である
+/// こと」ではない**——述語は `!owner.contains(anchor)` であって同一性ではないので、入口でない
+/// メソッドのヘッダ行の**行末コメント**にアンカーの綴りが在るだけで赤になる（2026-08-27 に
+/// 対照つきで実測——行末コメントだけを変えると緑へ戻る）。向きは過剰発火＝赤であり、
+/// [`sole_file_with`] の doc が持つ「部分文字列の一致であって、ヘッダの認識ではない」と
+/// 同じ性質がこちらにも在る。**「直前のファイルの最後の
+/// ヘッダ」と読んではならない**——[`owners_of`] の `current` はヘッダ行でしか更新されず、
+/// **ファイル境界では戻らない**ので、字下げ 4 のヘッダを 1 本も持たない `.rs` が間に挟まれば
+/// 帰属はさらに前のファイルから届く（2026-08-27 に、ヘッダの無い `.rs` を 1 枚差し込む反例と、
+/// そこへヘッダを 1 本足すと緑へ戻る対照の両方を実測した）。**機序で読むこと**——ファイルの
+/// 隣接関係で読むと、母集団にそういう 1 枚が増えた時点で条件の側が腐る。塞ぐ道具立ては検査対象
+/// より複雑になるので置かない（[`owners_of`] の残余節が同じ判断を記録している）。
+///
+/// **下界（`P ⊇ B`）は構成から満たされる。ただし「B の在るファイルが母集団に入っている」
+/// ことは前提であって、ここが保証するものではない。** 否定形の検査が要求するのは「守りたい
+/// 本体を取りこぼさないこと」であり、**母集団に入ったファイルは全体が走査される**ので、
+/// その中での切り詰めは起こらない。**母集団そのものが狭まる形**（[`sources`] のフィルタが
+/// 変わる等）に対して赤を出すのは [`sole_file_with`] の側だが、**それが効くのはアンカーを
+/// 保持するファイルが落ちたときだけである**——無関係なファイルだけが落ちる狭まり方は
+/// **緑のまま通る**（2026-08-27 に `.rs` フィルタを狭めて実測）。
+///
+/// **「母集団」はこのファイルで複数の水準に使う語であり、狭まりの見られ方は水準ごとに違う。**
+/// **数えないこと**——水準を数え上げると、語を 1 つの水準で使い足したときにこの行だけが腐る
+/// （#1201 で「2 水準」と書いて実際に腐らせた）。**水準を決めるのは、その母集団を返す関数で
+/// ある**: [`sources`] ならファイル集合、[`owners_of`] なら 1 ファイルの全文、[`method_body`]
+/// ならメソッド本体。狭まりの見られ方もそこから読む——[`method_body`] の水準は canary の
+/// assert が狭まりそのものを見るのに対し、[`sources`] の水準はアンカー保持ファイルが落ちる
+/// 場合だけが赤になる（`docs/development-principles.md`「検証の層と、層と層の隙間」）。
+fn owners_of_all(sources: &[(String, String)], needle: &str) -> Vec<String> {
+    sources
+        .iter()
+        .flat_map(|(_, src)| owners_of(src, needle))
+        .collect()
+}
+
+/// `anchor` を含むファイルが**ちょうど 1 枚**であることを assert し、その中身を返す。
+///
+/// **0 枚と 2 枚以上の両方を赤にすることが役目である。**
+///
+/// - **0 枚**: 改名したか、母集団の外へ移ったか、**母集団そのものが空**である。[`sources`] が
+///   ディレクトリを実行時に読む以上、「1 枚も返らない」は起こりうる状態であり、ここが
+///   [`method_body`] の canary に相当する沈黙の栓になる
+/// - **2 枚以上**: どちらを測るかが `read_dir` の順序で決まってしまう。[`method_body`] の
+///   `split_once` は先頭の出現を採るので、**並べ替えただけで対象が変わる**経路を消す
+///
+/// **これは部分文字列の一致であって、ヘッダの認識ではない。** doc コメントや文字列リテラルに
+/// アンカーの綴りが在るファイルも「含む」と数える——その場合は 2 枚以上になって赤へ倒れるので、
+/// **曖昧さは沈黙ではなく失敗として出る**。
+///
+/// **2 枚以上になる形は 1 つではない。** 散文（doc コメント・文字列リテラル）へ綴りが入る形も、
+/// **自由関数・別の型のメソッド・trait impl として同名を定義する形**も 2 枚にする（#1201 の
+/// レビューが `folder_nav.rs` へ `fn on_enter(_hint: u8) {}` を置いて実測した）。**塞がるのは
+/// 同じ型の inherent メソッドを 2 つ置く形だけで、そこは rustc が E0592 で先に落とす**
+/// （こちらも #1201 で実測——当初この形で変異を書き、検知ではなくコンパイルエラーが返った）。
+/// **どの形であれ倒れる向きは赤である**ため、ここで形を数え上げる必要はない。
+fn sole_file_with<'a>(sources: &'a [(String, String)], anchor: &str) -> &'a str {
+    let hits: Vec<(&str, &str)> = sources
+        .iter()
+        .filter(|(_, src)| src.contains(anchor))
+        .map(|(name, src)| (name.as_str(), src.as_str()))
+        .collect();
+    let names: Vec<&str> = hits.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "{anchor} を含むファイルが母集団にちょうど 1 枚ではない（該当: {names:?}）——0 枚なら\
+         改名・移設・母集団の消失であり、2 枚以上ならどちらを測るかが read_dir の順序で決まる。\
+         どちらも以下の検査を空虚にする"
+    );
+    hits[0].1
+}
 
 /// メソッドの本体を切り出す（終端は 4 スペース字下げの閉じ括弧・内側のブロックはより深い）。
 ///
@@ -69,7 +280,7 @@ fn method_body(src: &str, anchor: &str, canary: &str) -> String {
 }
 
 /// [`method_body`] が改行コードに依存しないことを、**この作業ツリーの改行コードによらず**
-/// 固定する（#1077）。`include_str!` は checkout された実ファイルを読むため、
+/// 固定する（#1077）。[`sources`] は checkout された実ファイルを読むため、
 /// LF の環境で `cargo test` が緑でも CRLF の環境で母集団が壊れうる——実際に CI でそうなった。
 #[test]
 fn method_body_is_line_ending_agnostic() {
@@ -252,8 +463,9 @@ fn owners_of(src: &str, needle: &str) -> Vec<String> {
 
 /// [`method_header`] が**字下げ 4 ちょうど**を要求することを固定する（#1112）。
 ///
-/// **コーパスからは測れない。** `include_str!` が読む `activation.rs` には字下げ 0 / 8 の
-/// `fn ` 行が 1 本も無く（分割の前後で不変・2026-08-27 に再測）、述語を `>= 4` へ緩めても
+/// **コーパスからは測れない。** [`sources`] が読む母集団には字下げ 0 / 8 の
+/// `fn ` 行が 1 本も無く（**#1200 の分割前後でも、#1201 で母集団をディレクトリへ広げた後でも
+/// 不変**——2026-08-27 に子 6 枚すべてで再測）、述語を `>= 4` へ緩めても
 /// 字下げを見なくしても、認識される
 /// ヘッダの集合が変わらない——2026-08-17 に鏡の実装で 3 通りを実測し、いずれも
 /// ヘッダ数が同数で [`activation_uses_frame_values_not_live_reads`] は緑のままだった。
@@ -294,8 +506,14 @@ fn method_header_requires_exactly_four_spaces_of_indent() {
 }
 
 /// [`method_header`] が **`fn` の前の可視性修飾と `async` を読み飛ばす**ことを固定する
-/// （#1112）。現に `pub(super) ` が挟まる定義が起動の入口に在り、読み飛ばしが壊れると
-/// [`activation_uses_frame_values_not_live_reads`] の入口が 1 本認識されなくなる。
+/// （#1112）。現に `pub(in crate::egui_shell) ` が挟まる定義が起動の入口に在り（`on_enter` と
+/// `activate_or_execute` の 2 本。`shift_activate` は素の `fn`）、読み飛ばしが壊れると
+/// [`activation_uses_frame_values_not_live_reads`] の入口が認識されなくなる。
+///
+/// **fixture に `pub(in …)` の形を持つ**——**load-bearing なのはこちらである**。かつてこの doc は
+/// `pub(super) ` を名指していたが、それは誤りだった（`pub(super)` を持つのは入口ではない
+/// `drain_launch` / `execute_slash` である）。誤った名指しの下では、fixture が
+/// 実際に効いている形を 1 つも含まないまま「読み飛ばしを固定した」と読めてしまう（#1201）。
 #[test]
 fn method_header_accepts_visibility_and_async_before_fn() {
     for line in [
@@ -305,6 +523,8 @@ fn method_header_accepts_visibility_and_async_before_fn() {
         "    async fn d(&self) {",
         "    pub(crate) async fn e(&self) {",
         "    pub(super) async fn f(&self) {",
+        // 起動の入口 2 本が現に取る形（`(` から `)` までに `::` を含む）。
+        "    pub(in crate::egui_shell) fn g(&self) {",
     ] {
         assert_eq!(method_header(line), Some(line.trim_start()), "{line}");
     }
@@ -360,6 +580,65 @@ fn owners_of_is_line_ending_agnostic() {
     }
 }
 
+/// [`owners_of_all`] が**帰属をファイル境界でリセットする**ことを固定する（#1201）。
+///
+/// **これが「ファイルごとに呼ぶ」という不変条件の検知器である。** 連結して 1 回呼ぶ形へ
+/// 書き換えると、2 枚目の最初のヘッダより前に出た禁止語が **1 枚目の最後のヘッダへ帰属して**
+/// この assert が落ちる。fixture の 1 枚目は最後のヘッダを `fn entry(` にしてあり、実母集団で
+/// `activation.rs` の最後のヘッダが起動の入口であるのと同じ配置を再現している。
+///
+/// **合成 fixture で測れるのは、[`owners_of_all`] が `&[(String, String)]` 上の純関数だから
+/// である**——実ディレクトリを読む [`sources`] とは違う（あちらを fixture で測ると「fixture を
+/// 読めること」しか測れない）。#1201 は当初この区別をせず 3 関数まとめて「合成 fixture では
+/// 測れない」と判じていたが、`/simplify` の altitude 枠がその混同を指摘した。
+#[test]
+fn owners_of_all_resets_attribution_at_file_boundaries() {
+    let first = "impl C {\n    fn entry(&self) {\n        ok();\n    }\n}\n".to_string();
+    let second = "//! forbidden(\nimpl D {\n    fn later(&self) {}\n}\n".to_string();
+    let sources = vec![
+        ("first.rs".to_string(), first),
+        ("second.rs".to_string(), second),
+    ];
+    assert_eq!(
+        owners_of_all(&sources, "forbidden("),
+        Vec::<String>::new(),
+        "2 枚目の最初のヘッダより前の出現が 1 枚目の最後のヘッダへ帰属した——連結して \
+         1 回呼ぶ形へ退行している"
+    );
+}
+
+/// [`sole_file_with`] が**0 枚**を赤にすることを固定する（#1201）。
+///
+/// 母集団が空になる形と、アンカーが母集団の外へ出る形の両方がここへ落ちる。
+/// **[`method_body`] の canary に相当する沈黙の栓である。**
+#[test]
+#[should_panic(expected = "ちょうど 1 枚ではない")]
+fn sole_file_with_rejects_an_empty_population() {
+    sole_file_with(&[], "fn entry(");
+}
+
+/// [`sole_file_with`] が**2 枚以上**を赤にすることを固定する（#1201）。
+///
+/// どちらを測るかが `read_dir` の順序で決まる状態を拒む。**アンカーの綴りは実定義とは
+/// 限らない**——この fixture の 2 枚目は doc コメントに綴りを持つだけである（同じ型の
+/// inherent メソッドを 2 つ置く形は rustc が E0592 で先に落とすので、この検査が実際に
+/// 当たるのは散文やリテラルから綴りが入る形である）。
+#[test]
+#[should_panic(expected = "ちょうど 1 枚ではない")]
+fn sole_file_with_rejects_an_ambiguous_population() {
+    let sources = vec![
+        (
+            "a.rs".to_string(),
+            "impl C {\n    fn entry(&self) {}\n}\n".to_string(),
+        ),
+        (
+            "b.rs".to_string(),
+            "//! `fn entry(` と綴るだけの doc\n".to_string(),
+        ),
+    ];
+    sole_file_with(&sources, "fn entry(");
+}
+
 /// Enter の判定と表示ゲートが**同一フレームの同じ値**を見ることを固定する（#1077 / #1106）。
 ///
 /// 対象は表示ゲートの入力 2 つである。`AppState.indexing` は `AtomicBool` の live-read で
@@ -381,9 +660,11 @@ fn owners_of_is_line_ending_agnostic() {
 ///
 /// **対象外へ落ちる経路は 2 通りあり、機序が違う。** 帰属で落ちる（母集団の中に在るが、
 /// 帰属先が起動の入口ではない）ものと、**母集団の外に在って初めから見えない**ものである。
-/// 後者は分割で生まれた——`run_search_with` の `indexing` の live-read（あちらは用途が違い、
-/// 行をクリアするかを到達経路ごとに判断するのが正しい）と `lang()` の `read_config` は
-/// `search_flow.rs` と `launcher_controller.rs` に在り、**この検査はもう見ていない**。
+/// 後者に落ちるのは**母集団の外**、すなわち親モジュール `launcher_controller.rs` と
+/// `activation/` サブディレクトリだけである（#1201 で母集団がディレクトリになり、**兄弟の子
+/// モジュールは後者から前者へ移った**——`run_search_with` の `indexing` の live-read は
+/// `search_flow.rs` に在って**今は見えており、帰属で落ちている**。`lang()` の `read_config` は
+/// 親に在るので依然として見えていない）。
 /// **受け入れ条件はどちらの規則も「起動の入口が自分の中で読み直さない」ことであって、
 /// 対象外の件数ではない**——件数を書くと、正当な読みを 1 つ足すたびにこの散文だけが黙って
 /// 腐る（#1076 で `read_config` を使うヘルパーが増えたときに実際に腐った）。
@@ -396,43 +677,59 @@ fn owners_of_is_line_ending_agnostic() {
 /// インライン展開しないこと**（展開した瞬間に帰属が入口へ移り、この検査は赤になる）。
 ///
 /// **この検査は禁止語と needle を自分のソースへリテラルで綴るが、それは母集団の外に在る。**
-/// 母集団は production 1 枚（`activation.rs`）で、この `mod tests` は別ファイルだからである
-/// ——**それが構造で保証されていた時期と、帰属の副作用で緑だった時期がこの検査にはある**
-/// （#1112 で母集団をファイル全体へ広げたとき、テスト側のリテラルは自分のテスト関数の
-/// ヘッダへ帰属することで通っていた。分割で母集団が production だけになり構造へ戻った）。
+/// **それを保証しているのは、このファイルが `activation/` サブディレクトリに在り
+/// [`sources`] が再帰しないことである**——`read_dir` が返すのは直下のエントリだけで、
+/// ディレクトリはフィルタで落ちる。**「別ファイルだから」ではもう足りない**（#1201 以降、
+/// 兄弟の子モジュールは別ファイルでも母集団の中に在る）。**この検査には、構造で保証されて
+/// いた時期と帰属の副作用で緑だった時期がある**（#1112 で母集団をファイル全体へ広げたとき、
+/// テスト側のリテラルは自分のテスト関数のヘッダへ帰属することで通っていた。#1200 の分割で
+/// 母集団が production だけになり構造へ戻り、#1201 で保証の載り先が「別ファイル」から
+/// 「非再帰」へ移った）。
 /// **帰属の濾過が要らなくなったわけではない**——母集団には起動の入口の外で `read_config(` を
 /// 正当に呼ぶ production の行が在り、それを通しているのは今も帰属である（どこが該当するかは
-/// 数えない。母集団は `grep 'read_config(' activation.rs` が持つ）。
+/// 数えない。母集団は `grep -r 'read_config(' launcher_controller/*.rs` が持つ）。
 ///
 /// **禁止語の中には、母集団での出現が今 0 件のものもある。それでも検知器は空虚ではない**
 /// ——塞いでいるのは「入口が読み直す形が**足された**とき」であって現存の出現ではない。
 /// 発火することは変異注入で実測した（`on_enter` へ `self.indexing()` を 1 行挿すと赤になる）。
 ///
-/// **母集団は `activation.rs` 1 枚である。** 起動の入口 3 本がそこに在ることは冒頭の
-/// ヘッダ assert が測るので、入口が別の子モジュールへ移れば**沈黙ではなく赤になる**。
-/// そのとき直すのは母集団であって assert ではない（`activation.rs` の `//!` が正本）。
+/// **母集団は `launcher_controller/` 直下の子 `*.rs` である**（[`sources`] が正本）。
+/// 起動の入口が**どの子モジュールに在っても**この検査は生き続ける——冒頭の 2 段 assert が
+/// 「アンカーを含むファイルはちょうど 1 枚」と「そこでヘッダとして認識される」を測るので、
+/// 入口が移っても射程は付いていく（#1201 で移設して実測した）。**入口が母集団の外——親
+/// `launcher_controller.rs` か `activation/` の中——へ出た場合だけは 0 枚で赤になる。**
 #[test]
 fn activation_uses_frame_values_not_live_reads() {
-    let src = include_str!("../activation.rs");
+    let sources = sources();
     let entry_points = [
         "fn on_enter(",
         "fn activate_or_execute(",
         "fn shift_activate(",
     ];
-    // **canary の代役はここである。** 切り出しを無くしたので「母集団が空」は起こりえないが、
-    // 「対象が 1 つも認識されていない」なら検査は同じように沈黙する。3 本のアンカーは
-    // 可視性修飾の有無で 2 形（`pub(super) fn` / 素の `fn`）に分かれるので、この assert は
-    // 改名だけでなく [`method_header`] の修飾読み飛ばしが壊れた場合にも赤になる。
-    // **消さないこと**——これが沈黙を塞いでいる唯一の assert である。
-    let headers: Vec<&str> = src.lines().filter_map(method_header).collect();
+    // **canary の代役はここである。** 切り出しを無くしたので「母集団が空」は起こりえない——
+    // と言えたのは母集団が `include_str!` だった頃で、いまは [`sources`] が実行時にディレクトリを
+    // 読むので**空も起こりうる**。ゆえに 2 段で塞ぐ。
+    //
+    // 1. [`sole_file_with`] が「アンカーを含むファイルはちょうど 1 枚」を要求する。0 枚
+    //    （母集団が空・改名・母集団の外へ移設）でも 2 枚以上（どちらを測るかが read_dir の
+    //    順序で決まる）でも赤になる
+    // 2. そのうえで、そのファイルの中でアンカーが**字下げ 4 のメソッドヘッダとして**認識される
+    //    ことを要求する。3 本のアンカーは可視性修飾の有無で 2 形
+    //    （`pub(in crate::egui_shell) fn` / 素の `fn`）に分かれるので、この assert は改名だけで
+    //    なく [`method_header`] の修飾読み飛ばしが壊れた場合にも赤になる
+    //
+    // **どちらも消さないこと**——これが沈黙を塞いでいる 2 つの assert である。
     for anchor in entry_points {
+        let src = sole_file_with(&sources, anchor);
         assert!(
-            headers.iter().any(|header| header.contains(anchor)),
+            src.lines()
+                .filter_map(method_header)
+                .any(|header| header.contains(anchor)),
             "{anchor} が字下げ 4 のメソッドヘッダとして見つからない——改名したかヘッダの\
              認識が壊れており、以下の検査は 1 つも発火しない（沈黙する検知器は検知器ではない）"
         );
     }
-    for owner in owners_of(src, "self.indexing()") {
+    for owner in owners_of_all(&sources, "self.indexing()") {
         for anchor in entry_points {
             assert!(
                 !owner.contains(anchor),
@@ -447,7 +744,7 @@ fn activation_uses_frame_values_not_live_reads() {
     // 引く形の 2 つである（後者は `lang()` が同じ関数を正当に使うので、起動の入口へ
     // 帰属する出現だけを見るこの検査でしか禁止にできない）。
     for forbidden in ["read_visible_rows(", "read_config("] {
-        for owner in owners_of(src, forbidden) {
+        for owner in owners_of_all(&sources, forbidden) {
             for anchor in entry_points {
                 assert!(
                     !owner.contains(anchor),
@@ -492,14 +789,14 @@ fn activation_uses_frame_values_not_live_reads() {
 /// 方である。
 #[test]
 fn activation_entry_points_consult_the_display_gate() {
-    let src = include_str!("../activation.rs");
+    let sources = sources();
     // (アンカー, 母集団が空でないことを示す目印)
     let targets = [
         ("fn activate_or_execute(", "execute_tool_selected("),
         ("fn shift_activate(", "folder_load_pending("),
     ];
     for (anchor, canary) in targets {
-        let body = method_body(src, anchor, canary);
+        let body = method_body(sole_file_with(&sources, anchor), anchor, canary);
         assert!(
             body.contains("plain_results_hidden("),
             "{anchor} が §4.7 の表示ゲート（連言③）を見ていない——index 再構築中に\
@@ -562,8 +859,13 @@ fn activation_entry_points_consult_the_display_gate() {
 /// 合わせて綴りを更新すること）。
 #[test]
 fn on_enter_delegates_the_flush_decision_to_the_predicate() {
-    let src = include_str!("../activation.rs");
-    let body = method_body(src, "fn on_enter(", "self.activate_or_execute(");
+    let sources = sources();
+    let anchor = "fn on_enter(";
+    let body = method_body(
+        sole_file_with(&sources, anchor),
+        anchor,
+        "self.activate_or_execute(",
+    );
     assert!(
         body.contains("if crate::egui_shell::should_flush_on_enter("),
         "on_enter が `should_flush_on_enter` を分岐の条件式として呼んでいない——#631 の\

@@ -38,13 +38,13 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
   - `search_dispatch.rs` — 検索 dispatch の同一性の純粋核（責務は `//!`）
   - `search_worker.rs` — 検索を実行する単一 worker（責務は `//!`）
   - `launcher_controller.rs` — 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（責務は `//!`）。型・構築・読み口（`&self`）だけを持ち、遷移は責務ごとの子モジュールが `impl` を分けて持つ（子は private・`view.rs` へ届く名前は `pub(in crate::egui_shell)` と本ファイルの re-export が決める）
-    - `launcher_controller/activation.rs` — 起動の入口（Enter / クリック / Shift+Enter）と dispatch・in-flight 回収・slash の即実行（責務は `//!`）。**起動の入口をこのファイルの外へ出さないこと**——ソーステキスト検査の母集団がここに縛られている（制約と死角の正本は同ファイルの `//!`）
+    - `launcher_controller/activation.rs` — 起動の入口（Enter / クリック / Shift+Enter）と dispatch・in-flight 回収・slash の即実行（責務は `//!`）。**起動の入口は `launcher_controller/` の直下に置くこと**——ソーステキスト検査の母集団がそのディレクトリであり、どの子モジュールに在っても射程は付いていく（#1201 で移設して実測）。**残る死角（4 本目の入口の新設は沈黙する）の正本は同ファイルの `//!`**
     - `launcher_controller/search_flow.rs` — 検索の発行と採り込み、打鍵の処置（責務は `//!`）
     - `launcher_controller/folder_nav.rs` — folder の突入/深掘り/折り返し、列挙の別スレッドロードと drain（責務は `//!`）
     - `launcher_controller/hide_request.rs` — hide 要求の経路（Escape ラダー・blur 猶予・多重防止）（責務は `//!`）
     - `launcher_controller/frame_stages.rs` — フレーム毎の消費と回収（reset-on-show・外部 pending・非同期の到着物）（責務は `//!`）
     - `launcher_controller/updater_toast.rs` — 更新 toast のボタン処置と install の spawn（責務は `//!`）
-    - ソーステキスト検査は対象モジュールの子として置く（`launcher_controller/activation/tests.rs`）——`include_str!("../activation.rs")` が母集団であり、切り出しの helper はこの 1 か所に閉じる（`docs/adr/ADR-source-text-probe-helper-locality.md`）
+    - ソーステキスト検査は対象モジュールの子として置く（`launcher_controller/activation/tests.rs`）——母集団は `launcher_controller/` 直下の子 `*.rs` を実行時に `read_dir` で列挙したものであり（#1201。**非再帰ゆえ検査自身は母集団に入らない**）、切り出しの helper はこの 1 か所に閉じる（`docs/adr/ADR-source-text-probe-helper-locality.md`）
   - `lifecycle.rs` は純粋核（`plan_hotkey` / `blur_should_hide`）
   - `search_state.rs` は検索状態の純粋核（`SearchState` / `interpret` / `QueryIntent`）
   - `layout.rs` は高さ算出 + results 可視性の導出 + 幾何 + debounce + テキストの中間省略の純粋核（`Metrics` / `results_window_height` / `present_results` / `results_top_y` / `size_delta_exceeds` / `icon_prefetch_range` / `Debouncer` / `truncate_middle_chars` / `fit_middle_by_measure`。旧 `compute_window_height` / `HeightParams` は #646 PR2 で撤去済み・旧 `results_should_show` は #752 で `present_results` へ吸収・旧 `clamp_results_height` / `available_below` は #835 で撤去〔`ADR-results-fixed-height`〕）

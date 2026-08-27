@@ -945,7 +945,14 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
             nx, ny,
         )));
     }
-    trace_clamp_sample(&main, (a.pos.x, a.pos.y), fired, (nx, ny));
+    trace_clamp_sample(
+        &main,
+        ClampPositions {
+            pre: (a.pos.x, a.pos.y),
+            post: (nx, ny),
+        },
+        fired,
+    );
 }
 
 /// [`ClampSample`] を `egui_main:clamp` として出す（出す条件は [`clamp_trace_should_emit`]）。
@@ -958,8 +965,20 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
 /// **[`main_in_modal_move_loop`] を呼ぶのは `trace_enabled()` を抜けた後である。** あの述語は
 /// #1194 の測定で**観測専用**になった（クランプの発火条件には入らない）ので、trace を切った
 /// 実運用で毎フレーム Win32 を 1 回払う理由が無い。**呼ぶ位置がそのまま費用の射程である。**
+/// **`pre` / `post` は名前つきで受け取る**（`/symmetric-check` 2c）。両者は同じ `(i32, i32)` で
+/// 隣り合うため、位置引数だと**取り違えてもコンパイルが通り、テストも通る**——
+/// [`clamp_trace_should_emit`] を測る単体テストは構造体を直に組むので呼び出し側を見ない。
+/// 構造体リテラルにすると唯一の構築点で両者が名指しになる。
 #[cfg(windows)]
-fn trace_clamp_sample(window: &tauri::Window, pre: (i32, i32), fired: bool, post: (i32, i32)) {
+struct ClampPositions {
+    /// クランプを撃つ**前**に OS から読んだ outer 位置。
+    pre: (i32, i32),
+    /// クランプ後の outer 位置（撃たなければ `pre` と同値）。
+    post: (i32, i32),
+}
+
+#[cfg(windows)]
+fn trace_clamp_sample(window: &tauri::Window, at: ClampPositions, fired: bool) {
     use std::cell::Cell;
     thread_local! {
         static LAST: Cell<Option<ClampSample>> = const { Cell::new(None) };
@@ -969,9 +988,9 @@ fn trace_clamp_sample(window: &tauri::Window, pre: (i32, i32), fired: bool, post
     }
     let now = ClampSample {
         in_move_size: main_in_modal_move_loop(window),
-        pre,
+        pre: at.pre,
         fired,
-        post,
+        post: at.post,
     };
     LAST.with(|last| {
         if !clamp_trace_should_emit(last.get(), &now) {

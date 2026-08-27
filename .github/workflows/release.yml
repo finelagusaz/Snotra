@@ -75,7 +75,7 @@ jobs:
           if (!$nsis) { Write-Error "NSIS installer not found"; exit 1 }
           if (!(Test-Path "$($nsis.FullName).sig")) { Write-Error "NSIS .sig not found"; exit 1 }
 
-      # 成果物の存在検証だけでは実際の起動可否は保証されない。e2e.yml の "Run startup smoke" ステップが
+      # 成果物の存在検証だけでは実際の起動可否は保証されない。smoke.yml の "Run startup smoke" ステップが
       # release バイナリに対して行っている起動スモークと同じスクリプトを、ビルド済み
       # exe（NSIS インストーラーではなく target/release/snotra.exe）に対して実行し、
       # アップロード前に起動失敗を検知するゲートとする。

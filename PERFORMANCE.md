@@ -1,8 +1,9 @@
 # パフォーマンス最適化プレイブック
 
 > **この節の具体例は WebView2 期のものである（#532 SU7 でフロント撤去済み）。** `clearTimeout`・
-> `invoke<ArrayBuffer>`・`URL.createObjectURL`・`results-sync`・`Promise.allSettled` は現行構成に
-> 対応物を持たない。**着手の順序（待ち時間 → 転送量 → 描画）は現行でも生きている**——
+> `invoke<ArrayBuffer>`・`URL.createObjectURL`・`results-sync`・`Promise.allSettled`
+> **だけではなく**、フロント / IPC / WebView2 を名指す記述はいずれも現行構成に対応物を持たない
+> （この列挙は網羅ではない）。**着手の順序（待ち時間 → 転送量 → 描画）は現行でも生きている**——
 > 個々の手段は egui 経路の対応物へ読み替える。
 
 検索/表示の体感遅延を改善するときは、次の順で着手すると最短で効果が出やすい。
@@ -2659,7 +2660,7 @@ CJK を覆わないため jp_font 13.26 MiB が併載され、font だけで 14.
 
 ## 試みたが機能しない手法
 
-- **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。
+- **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。**後日（#532 SU7）: この項目全体が WebView2 期のものであり、代替として指した `tauri::ipc::Response` にも現行構成の呼び出し点は無い**——アイコンの PNG は `commands::load_icon_pngs` がプロセス内で egui のテクスチャへ渡す。
 
 - **`SearchEngine` の並列 Vec を `CachedEntry` 構造体に統合**（issue #110、branch `refactor/cached-entry`）:
   保守性改善を目的に、8本の並列 Vec をフィールドごとにまとめた `CachedEntry` 構造体への移行を試みた。
@@ -2763,12 +2764,12 @@ CJK を覆わないため jp_font 13.26 MiB が併載され、font だけで 14.
 - **debug は別の運用点である**（同日・同機で 327 ms: pre_main 120 / windows_create 66 /
   index_load 47 / path_merge 41 / hotkey_register 21）。**release と 4 倍違うので混ぜて読まない**
 - **「あちらは debug ビルドだから条件が違う」と書いてはならない**（一度そう書いた）。
-  `e2e.yml` の当該 job は `-ExePath target/release/snotra.exe` を渡しており、**どちらも
+  `smoke.yml` の当該 job は `-ExePath target/release/snotra.exe` を渡しており、**どちらも
   release である**。違うのは開発機か runner かであって、ビルドプロファイルではない
 
 ### runner での内訳 — 分散は `RegisterHotKey` に集中していた（2026-08-09・CI 実測・7 標本）
 
-`e2e.yml` の "Measure startup timeline"（`-UseVerificationProfile`・検証用プロファイルゆえ
+`smoke.yml` の "Measure startup timeline"（`-UseVerificationProfile`・検証用プロファイルゆえ
 索引は極小・`include_path_env = false`）。**`smoke-startup.ps1` が `first_trace_ms` として
 0.6s / 5.2s / 8s超 を記録しながら原因未解明だった分散の、最初の内訳である。**
 

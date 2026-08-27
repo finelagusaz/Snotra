@@ -133,7 +133,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # 前に置いているので踏まないはずだが、イベント名の汎用的な失敗分類には頼らない
   # ——実際のイベント名は :not_found / :spawned / :already_running / :exited で
   # （commands/window.rs:53,74,87,123）どれも :error で終わらない。
-  # CI（e2e）は snotra だけをビルドするので :not_found に留まり **false green のまま通る**が、
+  # CI（Smoke workflow）は snotra だけをビルドするので :not_found に留まり **false green のまま通る**が、
   # release.yml は snotra-settings.exe を同じ target/release/ へ置くため、**そこでだけ設定 GUI が
   # 実際に spawn されて 5 起動ぶん残る**（Get-Process snotra は完全一致ゆえ snotra-settings を
   # kill しない）。この肯定的検査はその最悪ケースを想定して置いている。

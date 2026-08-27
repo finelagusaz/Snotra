@@ -136,7 +136,8 @@ impl SearchWindowView {
     /// 旧実装の inner_size() 読みは「幅を維持」だったが、config_watcher（notify スレッド）の幅
     /// set_size と 2 次元 read-modify-write で潰し合う race の片翼だった——config を正本にすれば
     /// cross-thread writer 自体が消える（初版 spec の watcher flag 分岐案は却下・並行性レビュー）。
-    /// なお flag ON では config_watcher の幅 set_size は get_webview_window=None で元々 no-op。
+    /// **その cross-thread writer は現在いない**——`config_watcher` は幅を適用せず、
+    /// config-applied wake で本 view に読み直させるだけである（`config_watcher.rs` の当該コメント）。
     fn window_width(&self) -> f64 {
         super::window_coordinator::read_window_width(self.controller.app())
     }

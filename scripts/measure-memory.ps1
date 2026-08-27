@@ -6,8 +6,10 @@
 .DESCRIPTION
   採用ゲート（issue #532 comment 5011127487）と同じ手法を再現する:
   - 本命軸は Win32_PerfFormattedData_PerfProc_Process.WorkingSetPrivate（PrivWS）。
-    WorkingSet64 は共有 Edge ページをツリー合算で二重計上するため**出力しない**。
-  - 子孫プロセス（msedgewebview2 等）を BFS で辿って合算する。
+    WorkingSet64 は共有ページをツリー合算で二重計上するため**出力しない**（採用ゲート当時に
+    それを最も大きく歪めていたのは撤去済み WebView2 の共有ページだった）。
+  - 子孫プロセスを BFS で辿って合算する。**現構成でツリーに乗りうる子は設定サイドカー
+    snotra-settings だけである**（存命中のみ）。
   - **プロセス件数を必ず出力する**。BFS が沈黙して 0 件を返す罠（#532 SU2 実測: CIM の
     ParentProcessId は uint32 で返り、int の PID 集合との比較が一致しない）を出力から
     検知できるようにするため——「測れなかった」と「0 だった」を区別できない測定器は使えない。
@@ -16,7 +18,7 @@
   ルートプロセス名（既定 snotra）。
 
 .PARAMETER Label
-  出力に付ける見出し（例 "egui-visible" / "webview2-hidden"）。
+  出力に付ける見出し（例 "egui-visible" / "egui-hidden"）。
 
 .PARAMETER DelaySeconds
   サンプリング前の待機秒数。可視状態を測るときに使う（このスクリプトを起動した端末が

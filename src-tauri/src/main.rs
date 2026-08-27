@@ -371,8 +371,9 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-/// Spawn the Win32 platform thread early to parallelize its init with WebView
-/// creation, and manage the resulting `PlatformBridge` once ready. The tray
+/// Spawn the Win32 platform thread early to parallelize its init with window
+/// creation (`egui_shell::create`), and manage the resulting `PlatformBridge`
+/// once ready. The tray
 /// is NOT created here; `setup_tray` sends `SetTrayVisible` later, after all
 /// windows and listeners are ready (SPEC §7.5).
 fn setup_platform_thread(

@@ -125,8 +125,10 @@ mod tests {
     }
 
     #[test]
-    fn webview_tree_shape() {
-        // snotra(1) -> browser(2) -> {renderer(3), gpu(4), utility(5)}, crashpad(6) も browser の子
+    fn fans_out_below_an_intermediate_node() {
+        // 1 -> 2 -> {3, 4, 5, 6}（中間ノードからの多分岐）。**現行のプロセスツリーはこの形を
+        // 持たない**——設定サイドカーが居ても snotra(1) -> snotra-settings(2) の 2 段までである。
+        // 孫以降と多分岐を測るのはここだけなので、実ツリーが浅いことを理由に消さないこと。
         let pairs = [(2, 1), (3, 2), (4, 2), (5, 2), (6, 2)];
         assert_eq!(
             sorted(collect_descendant_pids(&pairs, 1)),

@@ -18,7 +18,7 @@ on:
       # runtime の *.rs だけを触る PR で smoke が回らなかった（#660 の PR は manifest 経由で
       # 偶然発火していた＝「緑」が「検査が走った」を意味しない形の一種・#686 と同族）
       - 'snotra-egui-runtime/**'
-      - '.github/workflows/e2e.yml'
+      - '.github/workflows/smoke.yml'
       # workflow の各ステップが直接呼ぶスクリプト（変更で自己検証する）
       - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ
       - 'scripts/smoke-egui.ps1'         # "Run egui smoke" ステップ（#532 SU7）
@@ -45,7 +45,7 @@ on:
       - main
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: smoke-${{ github.ref }}
   # **main ではキャンセルしない**。main の run は rust-cache を main スコープへ書くために在るが、
   # **キャンセルされた run で保存の Post ステップが走る保証は無い**（未実測ゆえ「走らない」とは
   # 書かない。保証が無い側へ倒すのが安全側である）。**これは理屈上の心配ではない**——main へは

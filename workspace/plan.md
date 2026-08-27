@@ -112,45 +112,63 @@ fn sole_file_with<'a>(sources: &'a [(String, String)], anchor: &str) -> &'a str
 
 > **変異 (e) は `sources()` 自身を壊す形だが、「稼働中のガードを弱めない」に違反しない。** 壊すのは**まだ構築中の版**であって、main に在る稼働中のガードは依然 `include_str!` の形である（`.claude/rules/safety-nets.md`「複製に変異を当てる」の趣旨は満たされる——複製を作る代わりに、まだ稼働していない実装を測っている）。
 
+**実測は 2026-08-27・ハーネスは `scratchpad/mutate.mjs`**（適用 → `cargo test` → 原文の書き戻し → **内容ハッシュで復元を照合**。`git checkout` 系は未コミットの記録を巻き込むので使わない）。**9 件すべてで復元 OK。**
+
 再実測（既存の守りが同じ強さで残ること）:
 
-- [ ] (a) `on_enter` の本体へ `self.indexing()` を 1 行挿す → **赤**
-- [ ] (b) `activate_or_execute` から `plain_results_hidden(` の呼び出しを消す → **赤**
-- [ ] (c) `on_enter` から `if crate::egui_shell::should_flush_on_enter(` の行を消す → **赤**
+- [x] (a) `on_enter` の本体へ `self.indexing()` を 1 行挿す → **赤**（`activation_uses_frame_values_not_live_reads`）
+- [x] (b) `activate_or_execute` から `plain_results_hidden(` の**ガードを丸ごと**消す → **赤**（`activation_entry_points_consult_the_display_gate`）
+- [x] (c) `on_enter` から `should_flush_on_enter` の **`if` ブロックを丸ごと**消す → **赤**（`on_enter_delegates_the_flush_decision_to_the_predicate`）
 
 新機構の証明（ディレクトリ化で初めて生きる枝）:
 
-- [ ] (d) `shift_activate` を丸ごと `folder_nav.rs` へ移す → **3 本とも緑**。続けて移した先で `results_area_collapsed(` を落とす → **赤**
-- [ ] (e) 母集団を空にする（`sources()` のフィルタを一時的に不成立にする）→ **3 本とも赤**
-- [ ] (f) 2 枚目のファイルの最初のヘッダより前へ `read_config(` を置く → **緑**（`owners_of` が帰属先の無い出現を捨てる。`fn on_enter(` へ跨いで帰属しないことの実測）
-- [ ] (g) 2 枚のファイルへ同じアンカー（`fn shift_activate(`）を置く → **`sole_file_with` が赤**
-- [ ] 各変異について「本来の回帰と同じ強さか」を 1 行で判定し、結果を PR 本文へ書ける形でメモする
+- [x] (d) `shift_activate` を丸ごと `folder_nav.rs` へ移す → **3 本とも緑**
+- [x] **(d0) 対照**: 同じ移設を **main の `include_str!` 版 tests.rs** に当てる → **赤 2 本**（`method_body` が `fn shift_activate(` を見つけられず panic ／ ヘッダ assert が落ちる）。**この差が機構の証拠であって、(d) が緑になったこと自体は証拠ではない**
+- [x] (d2) 移した先の `shift_activate` から `results_area_collapsed(` を落とす → **赤**。**射程が入口に付いていった**
+- [x] (e) `sources()` のフィルタを不成立にして母集団を空にする → **3 本とも赤**（`sole_file_with` が「該当: []」で落ちる。3 本目は名前フィルタが効かないので別途 `on_enter_delegates_…` を名指して測った）
+- [x] (f) `folder_nav.rs` の最初のヘッダより前（`//!` の中）へ `read_config(` を置く → **緑**（`owners_of` が帰属先の無い出現を捨てる。**`activation.rs` の最後のヘッダ `fn on_enter(` へ跨いで帰属しない**ことの実測）
+- [x] (g) `frame_stages.rs` の doc へ `fn shift_activate(` の綴りを置く → **赤**（`sole_file_with` が「該当: ["activation.rs", "frame_stages.rs"]」）
+- [x] 各変異について「本来の回帰と同じ強さか」を判定した（下記）
+
+#### 変異の強さの判定（`.claude/rules/safety-nets.md`「変異が本来の回帰より強いと、検査が縛れていなくても赤くなる」）
+
+**最初に書いた (b) / (c) / (g) は強すぎた**——いずれも `COMPILE-ERROR` を返し、**それは検知ではない**。書き直して測り直した。
+
+| 変異 | 最初の形 | なぜ強すぎたか | 測り直した形 |
+|---|---|---|---|
+| (b) | 綴りを `no_gate(` へ差し替え | 存在しない関数名で **E0425**。rustc が先に落とすので、検査が縛れているかを観測できない | ガードの `if` ブロックを丸ごと削除（#1077 が実機再現した回帰の姿そのもの） |
+| (c) | 綴りを `inline_flush_decision(` へ差し替え | 同上（E0425） | `if` ブロックを丸ごと削除（検査自身の doc が「保証するのは 1 つだけ」として名指す形） |
+| (g) | `frame_stages.rs` へ 2 本目の**実定義**を置く | **E0592（duplicate definitions）**。同じ inherent impl なので rustc が先に落とす | doc コメントへ綴りを置く |
+
+**(g) の測り直しは設計上の発見でもある**——**アンカーが 2 枚に現れる状況は、実定義からは作れない**（rustc が同じ inherent impl の重複を拒む）。`sole_file_with` が曖昧さとして赤にするのは**散文（doc コメント・文字列リテラル）から生じる形だけ**である。これを `sole_file_with` の doc へ書いた。
+
+**(d) は可視性の引き上げを伴う**（`shift_activate` → `pub(super)`、呼ばれる `resolve_tools` → `pub(super)`）。兄弟モジュールから呼ぶために実際の移設が必ず伴うものであり、**アンカーの綴り `fn shift_activate(` は保たれる**（`method_header` の修飾読み飛ばしが効いていることの副次的な実測でもある）。
 
 ### Phase 3 — doc 整合
 
-- [ ] `activation.rs` の `//!` の規範 2 段落を書き換える（残る死角＝4 本目の入口の新設は**残す**）
-- [ ] `tests.rs` の `//!` を新しい母集団へ書き換える
-- [ ] **今日すでに偽の 2 か所を直す**（独立導出 P4 / P8。自分で実測して確認した）: `method_header_accepts_visibility_and_async_before_fn` の doc（295〜297）と `activation_uses_frame_values_not_live_reads` の内部コメント（424〜425）が「起動の入口に `pub(super) ` が挟まる」「2 形は `pub(super) fn` / 素の `fn`」と書くが、**実際の入口は `pub(in crate::egui_shell) fn`（`activation.rs:397,589`）と素の `fn`（:472）**で、`pub(super)` を持つのは入口ではない `drain_launch`(:247) / `execute_slash`(:294) である。**機構（2 形に分かれるのでヘッダ assert が読み飛ばしの破損を捕まえる）は真のまま、名指しだけが誤っている**
-- [ ] **`method_header_accepts_visibility_and_async_before_fn` の fixture へ `pub(in crate::egui_shell) fn` を 1 本足す**（独立導出 M2）——上の訂正で「load-bearing な形が fixture に無い」ことが露見したため。**helper の本体は変えない**（受け入れ条件 4 は維持される。増えるのは fixture の行だけ）。**これは issue #1201 の射程からの拡張なので、人間レビューで明示的に承認を得る**
-- [ ] `activation_uses_frame_values_not_live_reads` の doc の 3 点を書き換える（`search_flow.rs` の live-read が母集団へ復帰したこと・`read_dir` 非再帰という新しい構造的根拠・末尾の「1 枚」）
-- [ ] `method_header_requires_exactly_four_spaces_of_indent` の doc の射程をディレクトリへ書き換える
-- [ ] `method_body` / `method_body_is_line_ending_agnostic` の doc の `include_str!` 言及を `fs::read_to_string` へ改め、CRLF 非依存の根拠が変わらないことを明記する
-- [ ] 受容する死角 2（inline `#[cfg(test)]` の曝露面拡大）を `sources()` の doc へ宣言する
-- [ ] **母集団を散文で名乗るとき、「この母集団に入らないもの」を同時に名指す**（`docs/development-principles.md`「列挙の完全性」——名指せないなら測っていない）。名指すのは **`activation/tests.rs`（サブディレクトリ・`read_dir` は非再帰）** と **親 `launcher_controller.rs`（ディレクトリの外）** の 2 つ
-- [ ] **再帰化したときの倒れ方が非対称であることを `sources()` の doc へ書く**（独立導出 R4）——将来 `read_dir` を再帰へ広げると、`method_body` 側は `tests.rs` の字下げ 8 のアンカー文字列で字下げ assert が落ちて**赤**（安全側）、`owners_of` 側は `tests.rs` の `fn` が字下げ 0 でヘッダを持たずリテラル出現が**黙って捨てられて緑**になる。**片側だけが気づけるので、非再帰であることは意図であって偶然ではないと書く**
-- [ ] `src-tauri/CLAUDE.md` の 2 行（モジュール索引の `activation.rs` 行と「ソーステキスト検査は対象モジュールの子として置く」行）を整合させる。**41 行の「このファイルの外へ出さないこと」は降格される規範そのもの**なので、`launcher_controller/` の中に置くこと＋残る死角（4 本目の新設）へ書き換える
-- [ ] `docs/development-principles.md`「検証の層と、層と層の隙間」の 3 文を上表のとおり整合させる（**「本体が別ファイルへ移りうる検査ではこの前提が外れる」の但し書きを消さない**——今回の変更はこの但し書きを**発火させる**側であり、下界の根拠がファイル単位から母集団単位へ移ることを書く）
-- [ ] **全称表現を検算する**——書いた doc の各断定について「何が増えたら偽になるか」を 1 つ挙げ、挙がったら下限の主張へ弱める
+- [x] `activation.rs` の `//!` の規範 2 段落を書き換える（残る死角＝4 本目の入口の新設は**残す**）
+- [x] `tests.rs` の `//!` を新しい母集団へ書き換える
+- [x] **今日すでに偽の 2 か所を直す**（独立導出 P4 / P8。自分で実測して確認した）: `method_header_accepts_visibility_and_async_before_fn` の doc（295〜297）と `activation_uses_frame_values_not_live_reads` の内部コメント（424〜425）が「起動の入口に `pub(super) ` が挟まる」「2 形は `pub(super) fn` / 素の `fn`」と書くが、**実際の入口は `pub(in crate::egui_shell) fn`（`activation.rs:397,589`）と素の `fn`（:472）**で、`pub(super)` を持つのは入口ではない `drain_launch`(:247) / `execute_slash`(:294) である。**機構（2 形に分かれるのでヘッダ assert が読み飛ばしの破損を捕まえる）は真のまま、名指しだけが誤っている**
+- [x] **`method_header_accepts_visibility_and_async_before_fn` の fixture へ `pub(in crate::egui_shell) fn` を 1 本足す**（独立導出 M2）——上の訂正で「load-bearing な形が fixture に無い」ことが露見したため。**helper の本体は変えない**（受け入れ条件 4 は維持される。増えるのは fixture の行だけ）。**これは issue #1201 の射程からの拡張なので、人間レビューで明示的に承認を得る**
+- [x] `activation_uses_frame_values_not_live_reads` の doc の 3 点を書き換える（`search_flow.rs` の live-read が母集団へ復帰したこと・`read_dir` 非再帰という新しい構造的根拠・末尾の「1 枚」）
+- [x] `method_header_requires_exactly_four_spaces_of_indent` の doc の射程をディレクトリへ書き換える
+- [x] `method_body` / `method_body_is_line_ending_agnostic` の doc の `include_str!` 言及を `fs::read_to_string` へ改め、CRLF 非依存の根拠が変わらないことを明記する
+- [x] 受容する死角 2（inline `#[cfg(test)]` の曝露面拡大）を `sources()` の doc へ宣言する
+- [x] **母集団を散文で名乗るとき、「この母集団に入らないもの」を同時に名指す**（`docs/development-principles.md`「列挙の完全性」——名指せないなら測っていない）。名指すのは **`activation/tests.rs`（サブディレクトリ・`read_dir` は非再帰）** と **親 `launcher_controller.rs`（ディレクトリの外）** の 2 つ
+- [x] **再帰化したときの倒れ方が非対称であることを `sources()` の doc へ書く**（独立導出 R4）——将来 `read_dir` を再帰へ広げると、`method_body` 側は `tests.rs` の字下げ 8 のアンカー文字列で字下げ assert が落ちて**赤**（安全側）、`owners_of` 側は `tests.rs` の `fn` が字下げ 0 でヘッダを持たずリテラル出現が**黙って捨てられて緑**になる。**片側だけが気づけるので、非再帰であることは意図であって偶然ではないと書く**
+- [x] `src-tauri/CLAUDE.md` の 2 行（モジュール索引の `activation.rs` 行と「ソーステキスト検査は対象モジュールの子として置く」行）を整合させる。**41 行の「このファイルの外へ出さないこと」は降格される規範そのもの**なので、`launcher_controller/` の中に置くこと＋残る死角（4 本目の新設）へ書き換える
+- [x] `docs/development-principles.md`「検証の層と、層と層の隙間」の 3 文を上表のとおり整合させる（**「本体が別ファイルへ移りうる検査ではこの前提が外れる」の但し書きを消さない**——今回の変更はこの但し書きを**発火させる**側であり、下界の根拠がファイル単位から母集団単位へ移ることを書く）
+- [x] **全称表現を検算する**——書いた doc の各断定について「何が増えたら偽になるか」を 1 つ挙げ、挙がったら下限の主張へ弱める
 
 ### Phase 4 — 検証
 
-- [ ] `cargo test -p snotra` 緑
-- [ ] `cargo clippy --all-targets -- -D warnings` 緑（`docs/build-commands.md` カテゴリ A）
-- [ ] `cargo fmt --check` 緑
-- [ ] **`cargo doc` を手で走らせる**（`docs/build-commands.md` カテゴリ A）——**intra-doc link 切れは CI でのみ発火し PostToolUse hook は沈黙する**（`partial-automation-habituates` の実測）。`tests.rs` の doc は `[`method_body`]` 等の intra-doc link が密で、今回そこを大量に書き換える
-- [ ] `npm run governance:check` 緑（`.rs` の見出し参照と `src-tauri/CLAUDE.md` を触るため・カテゴリ F）
-- [ ] **撤去の語彙を数え上げる**（`AGENTS.md`「機構・層・ファイル群を撤去する」）——規範 1 本を撤去するので、`git grep` で「外へ出」「1 枚」「母集団がここに縛られている」「移動は赤・追加は沈黙」「`include_str!("../activation.rs")`」を数え、残った出現を「撤去を描写している / 撤去されたものが在る前提で書いている」へ振り分ける。**識別子の残存 0 件を根拠にしない**（散文の語彙が射程外に落ちる）
-- [ ] 実装差分を確定させる
+- [x] `cargo test -p snotra` 緑
+- [x] `cargo clippy --all-targets -- -D warnings` 緑（`docs/build-commands.md` カテゴリ A）
+- [x] `cargo fmt --check` 緑
+- [x] **`cargo doc` を手で走らせる**（`docs/build-commands.md` カテゴリ A）——**intra-doc link 切れは CI でのみ発火し PostToolUse hook は沈黙する**（`partial-automation-habituates` の実測）。`tests.rs` の doc は `[`method_body`]` 等の intra-doc link が密で、今回そこを大量に書き換える
+- [x] `npm run governance:check` 緑（`.rs` の見出し参照と `src-tauri/CLAUDE.md` を触るため・カテゴリ F）
+- [x] **撤去の語彙を数え上げる**（`AGENTS.md`「機構・層・ファイル群を撤去する」）——規範 1 本を撤去するので、`git grep` で「外へ出」「1 枚」「母集団がここに縛られている」「移動は赤・追加は沈黙」「`include_str!("../activation.rs")`」を数え、残った出現を「撤去を描写している / 撤去されたものが在る前提で書いている」へ振り分ける。**識別子の残存 0 件を根拠にしない**（散文の語彙が射程外に落ちる）
+- [x] 実装差分を確定させる
 
 ## テスト方針と検証コマンド
 

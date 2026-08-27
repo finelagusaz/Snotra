@@ -124,6 +124,12 @@ fn owners_of_all(sources: &[(String, String)], needle: &str) -> Vec<String> {
 /// **これは部分文字列の一致であって、ヘッダの認識ではない。** doc コメントや文字列リテラルに
 /// アンカーの綴りが在るファイルも「含む」と数える——その場合は 2 枚以上になって赤へ倒れるので、
 /// **曖昧さは沈黙ではなく失敗として出る**。
+///
+/// **そして 2 枚以上になる形は、実は散文からしか作れない。** 起動の入口はどれも
+/// `impl LauncherController` の inherent メソッドなので、**同じ名前の実定義を 2 つ置くと
+/// rustc が E0592（duplicate definitions）で先に落とす**（#1201 で変異注入して実測——
+/// 当初この形で測ろうとして、検知ではなくコンパイルエラーが返った）。ゆえにここが赤にするのは
+/// **doc コメントや文字列リテラルへ綴りが入った場合**であり、その 1 形で足りる。
 fn sole_file_with<'a>(sources: &'a [(String, String)], anchor: &str) -> &'a str {
     let hits: Vec<&str> = sources
         .iter()
@@ -206,7 +212,7 @@ fn method_body(src: &str, anchor: &str, canary: &str) -> String {
 }
 
 /// [`method_body`] が改行コードに依存しないことを、**この作業ツリーの改行コードによらず**
-/// 固定する（#1077）。`include_str!` は checkout された実ファイルを読むため、
+/// 固定する（#1077）。[`sources`] は checkout された実ファイルを読むため、
 /// LF の環境で `cargo test` が緑でも CRLF の環境で母集団が壊れうる——実際に CI でそうなった。
 #[test]
 fn method_body_is_line_ending_agnostic() {
@@ -389,8 +395,9 @@ fn owners_of(src: &str, needle: &str) -> Vec<String> {
 
 /// [`method_header`] が**字下げ 4 ちょうど**を要求することを固定する（#1112）。
 ///
-/// **コーパスからは測れない。** `include_str!` が読む `activation.rs` には字下げ 0 / 8 の
-/// `fn ` 行が 1 本も無く（分割の前後で不変・2026-08-27 に再測）、述語を `>= 4` へ緩めても
+/// **コーパスからは測れない。** [`sources`] が読む母集団には字下げ 0 / 8 の
+/// `fn ` 行が 1 本も無く（**#1200 の分割前後でも、#1201 で母集団をディレクトリへ広げた後でも
+/// 不変**——2026-08-27 に子 6 枚すべてで再測）、述語を `>= 4` へ緩めても
 /// 字下げを見なくしても、認識される
 /// ヘッダの集合が変わらない——2026-08-17 に鏡の実装で 3 通りを実測し、いずれも
 /// ヘッダ数が同数で [`activation_uses_frame_values_not_live_reads`] は緑のままだった。
@@ -431,8 +438,14 @@ fn method_header_requires_exactly_four_spaces_of_indent() {
 }
 
 /// [`method_header`] が **`fn` の前の可視性修飾と `async` を読み飛ばす**ことを固定する
-/// （#1112）。現に `pub(super) ` が挟まる定義が起動の入口に在り、読み飛ばしが壊れると
-/// [`activation_uses_frame_values_not_live_reads`] の入口が 1 本認識されなくなる。
+/// （#1112）。現に `pub(in crate::egui_shell) ` が挟まる定義が起動の入口に在り（`on_enter` と
+/// `activate_or_execute` の 2 本。`shift_activate` は素の `fn`）、読み飛ばしが壊れると
+/// [`activation_uses_frame_values_not_live_reads`] の入口が認識されなくなる。
+///
+/// **fixture に `pub(in …)` の形を持つ**——**load-bearing なのはこちらである**。かつてこの doc は
+/// `pub(super) ` を名指していたが、それは誤りだった（`pub(super)` を持つのは入口ではない
+/// `drain_launch` / `execute_slash` である）。誤った名指しの下では、fixture が
+/// 実際に効いている形を 1 つも含まないまま「読み飛ばしを固定した」と読めてしまう（#1201）。
 #[test]
 fn method_header_accepts_visibility_and_async_before_fn() {
     for line in [
@@ -442,6 +455,8 @@ fn method_header_accepts_visibility_and_async_before_fn() {
         "    async fn d(&self) {",
         "    pub(crate) async fn e(&self) {",
         "    pub(super) async fn f(&self) {",
+        // 起動の入口 2 本が現に取る形（`(` から `)` までに `::` を含む）。
+        "    pub(in crate::egui_shell) fn g(&self) {",
     ] {
         assert_eq!(method_header(line), Some(line.trim_start()), "{line}");
     }
@@ -518,9 +533,11 @@ fn owners_of_is_line_ending_agnostic() {
 ///
 /// **対象外へ落ちる経路は 2 通りあり、機序が違う。** 帰属で落ちる（母集団の中に在るが、
 /// 帰属先が起動の入口ではない）ものと、**母集団の外に在って初めから見えない**ものである。
-/// 後者は分割で生まれた——`run_search_with` の `indexing` の live-read（あちらは用途が違い、
-/// 行をクリアするかを到達経路ごとに判断するのが正しい）と `lang()` の `read_config` は
-/// `search_flow.rs` と `launcher_controller.rs` に在り、**この検査はもう見ていない**。
+/// 後者に落ちるのは**母集団の外**、すなわち親モジュール `launcher_controller.rs` と
+/// `activation/` サブディレクトリだけである（#1201 で母集団がディレクトリになり、**兄弟の子
+/// モジュールは後者から前者へ移った**——`run_search_with` の `indexing` の live-read は
+/// `search_flow.rs` に在って**今は見えており、帰属で落ちている**。`lang()` の `read_config` は
+/// 親に在るので依然として見えていない）。
 /// **受け入れ条件はどちらの規則も「起動の入口が自分の中で読み直さない」ことであって、
 /// 対象外の件数ではない**——件数を書くと、正当な読みを 1 つ足すたびにこの散文だけが黙って
 /// 腐る（#1076 で `read_config` を使うヘルパーが増えたときに実際に腐った）。
@@ -533,21 +550,27 @@ fn owners_of_is_line_ending_agnostic() {
 /// インライン展開しないこと**（展開した瞬間に帰属が入口へ移り、この検査は赤になる）。
 ///
 /// **この検査は禁止語と needle を自分のソースへリテラルで綴るが、それは母集団の外に在る。**
-/// 母集団は production 1 枚（`activation.rs`）で、この `mod tests` は別ファイルだからである
-/// ——**それが構造で保証されていた時期と、帰属の副作用で緑だった時期がこの検査にはある**
-/// （#1112 で母集団をファイル全体へ広げたとき、テスト側のリテラルは自分のテスト関数の
-/// ヘッダへ帰属することで通っていた。分割で母集団が production だけになり構造へ戻った）。
+/// **それを保証しているのは、このファイルが `activation/` サブディレクトリに在り
+/// [`sources`] が再帰しないことである**——`read_dir` が返すのは直下のエントリだけで、
+/// ディレクトリはフィルタで落ちる。**「別ファイルだから」ではもう足りない**（#1201 以降、
+/// 兄弟の子モジュールは別ファイルでも母集団の中に在る）。**この検査には、構造で保証されて
+/// いた時期と帰属の副作用で緑だった時期がある**（#1112 で母集団をファイル全体へ広げたとき、
+/// テスト側のリテラルは自分のテスト関数のヘッダへ帰属することで通っていた。#1200 の分割で
+/// 母集団が production だけになり構造へ戻り、#1201 で保証の載り先が「別ファイル」から
+/// 「非再帰」へ移った）。
 /// **帰属の濾過が要らなくなったわけではない**——母集団には起動の入口の外で `read_config(` を
 /// 正当に呼ぶ production の行が在り、それを通しているのは今も帰属である（どこが該当するかは
-/// 数えない。母集団は `grep 'read_config(' activation.rs` が持つ）。
+/// 数えない。母集団は `grep -r 'read_config(' launcher_controller/*.rs` が持つ）。
 ///
 /// **禁止語の中には、母集団での出現が今 0 件のものもある。それでも検知器は空虚ではない**
 /// ——塞いでいるのは「入口が読み直す形が**足された**とき」であって現存の出現ではない。
 /// 発火することは変異注入で実測した（`on_enter` へ `self.indexing()` を 1 行挿すと赤になる）。
 ///
-/// **母集団は `activation.rs` 1 枚である。** 起動の入口 3 本がそこに在ることは冒頭の
-/// ヘッダ assert が測るので、入口が別の子モジュールへ移れば**沈黙ではなく赤になる**。
-/// そのとき直すのは母集団であって assert ではない（`activation.rs` の `//!` が正本）。
+/// **母集団は `launcher_controller/` 直下の子 `*.rs` である**（[`sources`] が正本）。
+/// 起動の入口が**どの子モジュールに在っても**この検査は生き続ける——冒頭の 2 段 assert が
+/// 「アンカーを含むファイルはちょうど 1 枚」と「そこでヘッダとして認識される」を測るので、
+/// 入口が移っても射程は付いていく（#1201 で移設して実測した）。**入口が母集団の外——親
+/// `launcher_controller.rs` か `activation/` の中——へ出た場合だけは 0 枚で赤になる。**
 #[test]
 fn activation_uses_frame_values_not_live_reads() {
     let sources = sources();

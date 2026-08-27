@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 # **module に置くのは検査自身を測るためである**（#1009）。Pester の探索は `scripts/lib` に
 # 限られ（`run-pester.ps1`）、`.ps1` の中の関数はテストを書けない——`SnotraTraceInvariants.psm1`
 # が同型の判定を module + Tests + blocking CI で持つのに対し、この検査群だけが
-# `e2e.yml` の `continue-on-error: true` なステップからしか走らず、**壊れても誰も気づかない**
+# `smoke.yml` の `continue-on-error: true` なステップからしか走らず、**壊れても誰も気づかない**
 # 位置に居た。
 #
 # **検査を序数で指してはならない**（`.claude/rules/governance-docs.md`「序数で他を指してはならない」——検査 ID は

@@ -2764,12 +2764,12 @@ CJK を覆わないため jp_font 13.26 MiB が併載され、font だけで 14.
 - **debug は別の運用点である**（同日・同機で 327 ms: pre_main 120 / windows_create 66 /
   index_load 47 / path_merge 41 / hotkey_register 21）。**release と 4 倍違うので混ぜて読まない**
 - **「あちらは debug ビルドだから条件が違う」と書いてはならない**（一度そう書いた）。
-  `e2e.yml` の当該 job は `-ExePath target/release/snotra.exe` を渡しており、**どちらも
+  `smoke.yml` の当該 job は `-ExePath target/release/snotra.exe` を渡しており、**どちらも
   release である**。違うのは開発機か runner かであって、ビルドプロファイルではない
 
 ### runner での内訳 — 分散は `RegisterHotKey` に集中していた（2026-08-09・CI 実測・7 標本）
 
-`e2e.yml` の "Measure startup timeline"（`-UseVerificationProfile`・検証用プロファイルゆえ
+`smoke.yml` の "Measure startup timeline"（`-UseVerificationProfile`・検証用プロファイルゆえ
 索引は極小・`include_path_env = false`）。**`smoke-startup.ps1` が `first_trace_ms` として
 0.6s / 5.2s / 8s超 を記録しながら原因未解明だった分散の、最初の内訳である。**
 

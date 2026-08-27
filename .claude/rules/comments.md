@@ -22,3 +22,4 @@ paths:
 ## トリガー → 検査
 
 - doc コメント（`///` / `//!`）を追加・変更したら `docs/build-commands.md`「変更後の検証チェックリスト」カテゴリ A の `cargo doc` 行を手で走らせる（intra-doc link 切れは **CI でのみ発火し PostToolUse hook は沈黙する**。コマンド本体を写さないのは、フラグが SSOT 側で変わったとき**古い形を走らせて「済んだ」と読む**経路を作らないため）
+  - **ただし `#[cfg(test)]` 配下の doc は `cargo doc` の視界の外である。** rustdoc がコンパイルしないため、壊れた intra-doc link を植えても **exit 0・診断 0 行**で通る（#1201 で対照つきに実測。`--document-private-items` を付けても変わらない）。**そこでの緑は「link が健全」ではなく「何も走らなかった」である**——ソーステキスト検査のように doc の厚い `mod tests` を触ったときに効く。**確かめたいなら壊れた link を 1 本植えて診断が出ることを見る**（出なければその経路は測っていない）。見出し参照と ADR の短縮引用だけは `npm run governance:check` が別に見る

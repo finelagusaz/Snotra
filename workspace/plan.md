@@ -99,7 +99,10 @@ if !crate::egui_shell::main_in_modal_move_loop(&app) {
 
 ### Phase 1 — 計装と測定（Q2・Q3 を 1 つの系列で答える）
 
-- [ ] `window_coordinator.rs` に `egui_main:clamp` trace を足す（1 フレーム 1 組・出力条件は「設計」節。フィールド: `in_move_size` / `hwnd_is_main` / クランプ前の位置 / `fired` / クランプ後の位置）
+- [x] `window_coordinator.rs` に `egui_main:clamp` trace を足す（1 フレーム 1 組・出力条件は「設計」節）
+  - **計画からの逸脱（実装中に判明）**: `main_in_modal_move_loop` を **Phase 2 ではなく Phase 1 で実装した**。trace のフィールドに `in_move_size` が入っている以上 Phase 1 で述語が要り、**かつ観測専用で先に置けば Phase 1 の測定 1 回が「`GUI_INMOVESIZE` が実機で両向きに立つか」（最大の未検証項目）も同時に answer する**。ガードへの結線は Phase 2 のまま
+  - **フィールドから `hwnd_is_main` を落とした**——述語の中で `hwndMoveSize == hwnd` を連言に畳んだので、外へ出すと同じ事実の 2 つ目の綴りになる
+  - 出力条件は純粋核として TDD した（`clamp_trace_should_emit`）。**Red を実測**: `pre != last.post` の項を欠いた実装に当てて `clamp_trace_emits_when_only_the_position_moved` だけが落ちた（306 passed / 1 failed）
 - [ ] 測定スクリプトを**リポジトリの外**（`C:/tmp/snotra-1194/`）に書く。`SnotraSmoke.psm1` の関数だけで組み、`Alt+Space` → `M` → `↓`×200 → `Enter` を注入しながら `GetWindowRect` の `top`/`bottom` と `DwmGetWindowAttribute` の `EXTENDED_FRAME_BOUNDS` を epoch ms つきで刻む
 - [ ] 対照ビルド（クランプ呼び出しを殺した 1 行パッチ）と本体ビルドの両方で 5 反復以上を測る。**測り終えたらパッチを戻して release を再ビルドする**
 - [ ] **U1 を裁定する**: `top` が動いたのか高さが縮んだのか。「窓高は不変の純平行移動」は #1173 が測っていない前提であり、この 1 回の系列で真偽が決まる

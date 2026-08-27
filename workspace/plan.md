@@ -100,11 +100,11 @@ fn sole_file_with<'a>(sources: &'a [(String, String)], anchor: &str) -> &'a str
 
 ### Phase 1 — 母集団の差し替え（挙動を変えない）
 
-- [ ] `sources()` / `sole_file_with()` を `activation/tests.rs` へ新設する（helper 3 本には触れない）
-- [ ] `activation_entry_points_consult_the_display_gate` を `sole_file_with` 経由へ差し替える
-- [ ] `on_enter_delegates_the_flush_decision_to_the_predicate` を `sole_file_with` 経由へ差し替える
-- [ ] `activation_uses_frame_values_not_live_reads` を、`sole_file_with` の一意性 assert ＋ ファイルごとの `owners_of` の `flat_map` へ差し替える
-- [ ] `cargo test -p snotra` が緑であることを確認する（3.3 の帰属表どおり、入口へ帰属する needle は 0 件のはず）
+- [x] `sources()` / `sole_file_with()` を `activation/tests.rs` へ新設する（helper 3 本には触れない）
+- [x] `activation_entry_points_consult_the_display_gate` を `sole_file_with` 経由へ差し替える
+- [x] `on_enter_delegates_the_flush_decision_to_the_predicate` を `sole_file_with` 経由へ差し替える
+- [x] `activation_uses_frame_values_not_live_reads` を、`sole_file_with` の一意性 assert ＋ ファイルごとの `owners_of` の `flat_map` へ差し替える
+- [x] `cargo test -p snotra` が緑であることを確認する（3.3 の帰属表どおり、入口へ帰属する needle は 0 件のはず）
 
 ### Phase 2 — 変異注入の実測（`.claude/rules/safety-nets.md`）
 

@@ -156,15 +156,15 @@ if !crate::egui_shell::main_in_modal_move_loop(&app) {
 
 - [x] カテゴリ A: `fmt --check` / `check --workspace` / `clippy --workspace --all-targets -- -D warnings` / `test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
 - [x] カテゴリ F: `npm run governance:check`（`SPEC.md`・新 ADR・rustdoc の見出し参照）
-- [ ] **`main_in_modal_move_loop` を `trace_enabled()` の内側へ移したあと、trace を立てた実行で `egui_main:clamp` の `in_move_size` が今までどおり出ることを確かめる**——移設で観測が黙れば、この計装の唯一の消費者が壊れる
-- [ ] `/symmetric-check` を**修正差分にも**再実行する（`AGENTS.md` の fix-forward 行）
+- [x] **`main_in_modal_move_loop` を `trace_enabled()` の内側へ移したあと、trace を立てた実行で `egui_main:clamp` の `in_move_size` が今までどおり出ることを確かめる**——移設で観測が黙れば、この計装の唯一の消費者が壊れる
+- [x] `/symmetric-check` を**修正差分にも**再実行する（`AGENTS.md` の fix-forward 行）
 
 ### Phase 4 — 文書の同期
 
 - [x] `clamp_main_into_work_area` の rustdoc の「キーボード移動は保証の外にある」ブロックを実測へ差し替える（#1173 の表は**残す**——測定条件つきで両論を併記し、食い違いが未解決であることを明示する）
 - [x] `docs/adr/ADR-modal-move-loop-clamp-suppression.md` を書く。**含める節**: 却下した `GUI_INMOVESIZE` ガード（動機・実装可能性まで確かめた上で、測定により no-op と判明したこと）／`WM_MOVING` フック＝サブクラス化の却下理由の再測結果／`.claude/rules/src-tauri.md:21` の `PlatformBridge` 既定に逆らう判断（観測専用として残す分）／**#1173 との食い違いが未解決であること**
 - [x] **`src-tauri/CLAUDE.md:51` と `scripts/manual-smoke.ps1:114` は変えない**——ガードを変えないので「ポインタ非押下のフレームに限る」は今も真である（当初計画の変更ファイル一覧から外す）
-- [ ] `npm run governance:check` を通す
+- [x] `npm run governance:check` を通す
 
 ## 不変条件と異常系
 

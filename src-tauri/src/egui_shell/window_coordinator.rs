@@ -847,6 +847,12 @@ struct ClampSample {
     /// クランプを撃つ**前**の outer 位置（物理 px）。
     pre: (i32, i32),
     /// このフレームで `set_position` を撃ったか。
+    ///
+    /// **いまは `pre != post` から導出できるが、束ねてはならない——別概念である。**
+    /// こちらは「撃ったか」（副作用の有無）、あちらは「撃つべきだったか」（判定の結果）で、
+    /// **片方だけが変わる将来が挙がる**: `set_position` は `Result` を返すのに現在は
+    /// `let _ =` で捨てており、その戻り値を見るようにした瞬間、`fired`（撃って成功した）と
+    /// `pre != post`（撃つべきだった）は乖離する。
     fired: bool,
     /// クランプを撃った**後**の outer 位置（撃たなければ `pre` と同値）。
     post: (i32, i32),
@@ -873,8 +879,19 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 /// [`trace_clamp_sample`] だけであり（`egui_main:clamp` の `in_move_size` 欄）、
 /// [`clamp_main_into_work_area`] の doc が言う「モーダルループ中はフレームが回らない」を
 /// **後から偽にできるようにする検知手段**がこの欄である。ゆえに `trace_enabled()` を抜けた
-/// 後でしか呼ばない（費用の射程は呼ぶ位置が決める）。**消費者が 2 つ目になった時点で、この
-/// 「trace を切れば費用は 0」は偽になる**——増やすなら呼ぶ位置を測り直すこと。
+/// 後でしか呼ばない——**trace を切れば Win32 の費用は 0 になる**（呼び出し側に残るのは
+/// [`ClampPositions`] の構築と `trace_enabled()` の `OnceLock` 読みだけで、**「費用 0」ではない**）。
+/// **消費者が 2 つ目になった時点でこの射程は偽になる**ので、増やすなら呼ぶ位置を測り直すこと。
+///
+/// # 撤去条件を持たない（`AGENTS.md` の足場トリガーとの関係）
+///
+/// **これは「測り終わったら消す足場」ではない**（`heap_trace.rs` はそちらで、撤去条件を
+/// `//!` に持つ）。この欄は上の前提が偽になった瞬間に真を出す**番人**であり、真を出したときに
+/// 起きるのは撤去ではなく**用途変更**である——前提が偽なら、そのときこの述語は観測専用から
+/// クランプの抑止条件へ昇格する（`ADR-modal-move-loop-clamp-suppression` 却下 1 が
+/// 「効かない」を理由に却下しているので、効くと分かれば却下が覆る）。
+/// **ゆえに「いつ消すか」の合図は存在しない。** 消えるとすれば、クランプそのものか
+/// モーダル移動ループの扱いが作り直されるときである。
 ///
 /// クランプの抑止条件へ入れる案は**実測により却下した**——抑止する対象（ループ中に走る
 /// クランプ）が存在しない。経緯は `ADR-modal-move-loop-clamp-suppression`。
@@ -901,7 +918,7 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 /// ——`ADR-main-window-clamp-on-pointer-release` 却下 5 が「検知手段が無い」と記録した形に
 /// 戻ってしまう（いまは `egui_main:clamp` の系列が検知手段である）。
 #[cfg(windows)]
-pub(crate) fn main_in_modal_move_loop(window: &tauri::Window) -> bool {
+fn main_in_modal_move_loop(window: &tauri::Window) -> bool {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         GUI_INMOVESIZE, GUITHREADINFO, GetGUIThreadInfo, GetWindowThreadProcessId,
@@ -925,7 +942,7 @@ pub(crate) fn main_in_modal_move_loop(window: &tauri::Window) -> bool {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn main_in_modal_move_loop(_window: &tauri::Window) -> bool {
+fn main_in_modal_move_loop(_window: &tauri::Window) -> bool {
     false
 }
 
@@ -970,9 +987,9 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
 /// ——trace の行数を事象の数まで絞るためだけに在るので、reset-on-show でクリアする必要も無い
 /// （hide を跨いで古い `post` が残っても、次に出る 1 行が余分に出るだけである）。
 ///
-/// **[`main_in_modal_move_loop`] を呼ぶのは `trace_enabled()` を抜けた後である。** あの述語は
-/// #1194 の測定で**観測専用**になった（クランプの発火条件には入らない）ので、trace を切った
-/// 実運用で毎フレーム Win32 を 1 回払う理由が無い。**呼ぶ位置がそのまま費用の射程である。**
+/// **[`main_in_modal_move_loop`] を呼ぶのは `trace_enabled()` を抜けた後である**——理由と
+/// 費用の射程は同関数の doc が正本。
+///
 /// **`pre` / `post` は名前つきで受け取る**（`/symmetric-check` 2c）。両者は同じ `(i32, i32)` で
 /// 隣り合うため、位置引数だと**取り違えてもコンパイルが通り、テストも通る**——
 /// [`clamp_trace_should_emit`] を測る単体テストは構造体を直に組むので呼び出し側を見ない。
@@ -1005,7 +1022,7 @@ fn trace_clamp_sample(window: &tauri::Window, at: ClampPositions, fired: bool) {
             return;
         }
         last.set(Some(now));
-        crate::trace::trace(
+        crate::trace_main(
             "egui_main:clamp",
             serde_json::json!({
                 "in_move_size": now.in_move_size,
@@ -1342,7 +1359,7 @@ mod tests {
     ///
     /// クランプは撃たず（`fired = false`）、ループ状態も変わっていない（`in_move_size` 同値）が、
     /// **位置だけが前フレームの `post` から動いている**——これが「main を動かしたのはクランプでは
-    /// ない」の唯一の証拠であり、Q2（確定後の 27〜28 px の書き手を名指す）はこの 1 行に懸かる。
+    /// ない」の唯一の証拠であり、Q2（確定後に窓を上へ動かす経路を名指す）はこの 1 行に懸かる。
     /// `fired` と `in_move_size` の変化だけを見る述語はこのフレームで沈黙する。
     #[cfg(windows)]
     #[test]

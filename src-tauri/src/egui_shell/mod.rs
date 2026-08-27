@@ -107,7 +107,7 @@ pub(crate) use layout::FrameTimer;
 // `SearchDispatch` / `is_unsettled` はここから re-export しない（#1039）——前者は `SearchState` の
 // private フィールド、後者はそのメソッドになり、**controller から名前で届かないことが受け入れ条件
 // である**。seq の発行・採り込み・flush 判定はすべて `SearchState` の面を通る。
-// launcher_controller.rs が Plain 検索の要求送信・結果受信（`drain_search`）で消費する（#1004 PR 2）。
+// launcher_controller が Plain 検索の要求送信・結果受信（`drain_search`）で消費する（#1004 PR 2）。
 pub(crate) use search_worker::{SearchMsg, SearchRequest, spawn_search_worker};
 // view.rs が UI 文言（hint/overlay/toast）で、launcher_controller.rs が通知文言（起動失敗・
 // 結果不明・hotkey 登録失敗）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。

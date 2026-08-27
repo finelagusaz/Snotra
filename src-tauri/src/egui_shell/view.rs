@@ -921,7 +921,7 @@ impl EguiView for SearchWindowView {
         //
         // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
         // 射程が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
-        // 腐る。正本は `indexing_raw` の参照そのもの（`launcher_controller.rs` の
+        // 腐る。正本は `indexing_raw` の参照そのもの（`launcher_controller/activation/tests.rs` の
         // `activation_uses_frame_values_not_live_reads` が、起動側で読み直しが
         // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
         // `indexing` 読みは用途が違い（行をクリアするか）、到達経路ごとにその時点で判断するのが

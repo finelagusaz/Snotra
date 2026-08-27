@@ -133,7 +133,7 @@ pub(crate) enum BlurGrace {
 
 impl BlurGrace {
     /// 段 3: reset-on-show。**呼び出し点は `LauncherController::consume_reset_pending` である。**
-    /// この呼び出しが消えると #745 が再発する。`launcher_controller.rs` は `AppHandle` に縛られて
+    /// この呼び出しが消えると #745 が再発する。`launcher_controller` は `AppHandle` に縛られて
     /// ユニットテストを持てないが、**呼び出し点がこの 1 つである限り、削除は `-D warnings` 下の
     /// `dead_code` でコンパイルが落ちる**（#930 で実測。CI も同じ形で走る）。**2 つ目の非テスト
     /// 呼び出し点を足すとこの検知は消える。**

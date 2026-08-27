@@ -64,7 +64,7 @@ pub fn interpret(raw_query: &str, prefix: &str, view_kind: ViewKind) -> QueryInt
 /// フォルダ展開直後、列挙結果（cache）も失敗行（error）も未着の間は true（#636 レビュー Finding A）。
 /// この窓では `results` が展開前ビューの残存物なので、driver は起動（Enter/クリック）を抑止する
 /// ——dead/slow UNC でロードが滞留すると、前ビューの誤項目を起動しうるため。前フレーム結果の保持は
-/// フリッカ回避の意図的設計（launcher_controller.rs run_search）ゆえ温存し、不可逆な起動だけを止める。Results
+/// フリッカ回避の意図的設計（`launcher_controller` の `run_search`）ゆえ温存し、不可逆な起動だけを止める。Results
 /// モードや列挙完了（cache/error いずれか到着）後は false で、通常どおり起動できる。
 pub fn folder_load_pending(
     view_kind: ViewKind,
@@ -722,7 +722,7 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
 /// 来歴で判定するのは prefix hot-change の stale 行対策（#637 finding 0）と同じ理由。
 ///
 /// **表示だけでなく起動もこの述語で決める**（#1077）。`view.rs` の表示ゲート（`present_results` の
-/// 連言③）と、`launcher_controller.rs` の `activate_or_execute` / `shift_activate` の起動ガードが
+/// 連言③）と、`launcher_controller` の `activate_or_execute` / `shift_activate` の起動ガードが
 /// **同じ述語を共有する**——別式を書けば「画面に出ていない行を Enter が起動する」が再び生まれる
 /// （2026-08-16 に実機再現済み）。**行を消すのはこの述語の仕事ではない**: §4.7 は
 /// 「データと選択は保持——クリアしない」と定めており、起動側は不可逆な起動だけを止める。
@@ -1460,7 +1460,7 @@ mod tests {
     //
     // **この 5 本が固定するのは状態核の合成である**——`parent_dir` → `navigate_folder` の連鎖と、
     // 行の差し替えが選択に与える影響。**キー割り当て（`view.rs` の読み）と driver の分岐
-    // （`launcher_controller.rs` の `on_nav_keys`）は射程外**であり、`←` の分岐を丸ごと殺しても
+    // （`launcher_controller` の `on_nav_keys`）は射程外**であり、`←` の分岐を丸ごと殺しても
     // この 5 本は緑のままである（実測）。分岐が正しく Folder 側へ落ちることの証拠は実機トレース
     // 計測であってこのテストではない——「緑だから ← の分岐も守られている」と読まないこと。
     //
@@ -1561,7 +1561,7 @@ mod tests {
     // あちらの冒頭は本数を名指ししており、内側へ足すとその記述が stale になる。
     //
     // **射程は状態核だけである**——打鍵から `set_folder_filter` への配線（`view.rs` の
-    // `changed()` エッジと `launcher_controller.rs` の `on_input_changed`）は射程外で、
+    // `changed()` エッジと `launcher_controller` の `on_input_changed`）は射程外で、
     // その呼び出しを消してもこのテストは緑のままである（#743 ブロックの冒頭と同じ性質の限界）。
 
     /// フォルダ内の絞り込みの打鍵は選択を 1 行目へ戻す。正本は `SPEC.md`「4.9 入力と選択」で、
@@ -1844,9 +1844,9 @@ mod tests {
     }
 
     /// **この表は表示と起動の両方を決める**（#1077）。`view.rs` の表示ゲートに加えて
-    /// `launcher_controller.rs` の `activate_or_execute` / `shift_activate` が同じ述語を呼ぶため、
+    /// `launcher_controller` の `activate_or_execute` / `shift_activate` が同じ述語を呼ぶため、
     /// ここで偽になる組（instant 行・folder・tool・非 indexing）は**起動できることの固定**でもある。
-    /// 呼び出し点が在ることは `launcher_controller.rs` の
+    /// 呼び出し点が在ることは `launcher_controller/activation/tests.rs` の
     /// `activation_entry_points_consult_the_display_gate` が別に測る——この表だけでは測れない。
     #[test]
     fn plain_results_hidden_only_for_plain_results_view() {

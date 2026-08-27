@@ -32,19 +32,15 @@
 //! 子モジュールが `impl` を分けて持つ。**子は private のままにし、`view.rs` へ届く名前は
 //! `pub(in crate::egui_shell)` と本ファイルの re-export が決める**（`indexer.rs` の分割と同じ
 //! 流儀）。子どうしで呼び合うものは `pub(super)`（＝このモジュール内）に留める。
+//! 子モジュールの責務はそれぞれの `//!` が正本であり、ここでは数え上げない（下の `mod` 宣言が
+//! 一覧である）。
 //!
-//! - `activation.rs` — 起動の入口（Enter / クリック / Shift+Enter）と dispatch・in-flight 回収・
-//!   slash の即実行
-//! - `search_flow.rs` — 検索の発行（debounce・worker への要求）と採り込み、打鍵の処置
-//! - `folder_nav.rs` — folder の突入/深掘り/折り返し、列挙の別スレッドロードと drain
-//! - `hide_request.rs` — hide 要求の経路（Escape ラダー・blur 猶予・`emit_hide` の多重防止）
-//! - `frame_stages.rs` — フレーム毎の消費と回収（reset-on-show・外部 pending・非同期の到着物）
-//! - `updater_toast.rs` — 更新 toast のボタン処置と install の spawn
+//! **`view.rs` から見た `pub(super)` はこのファイルのものだけである**——子の `pub(super)` は
+//! `launcher_controller` までしか届かない。同じ綴りが親子で別のスコープを指すので、子を読む
+//! ときは「`view.rs` へ届くのは `pub(in crate::egui_shell)` と書いてあるものだけ」と読むこと。
 //!
-//! **ソーステキスト検査（`activation/tests.rs`）は `activation.rs` を母集団に取る。**
-//! 起動の入口 3 本を 1 ファイルへ集めてあるのはそのためでもある——入口を別の子へ移すと母集団が
-//! 割れる。**割れても沈黙はしない**（検査はアンカーがヘッダとして見つかることを先に assert する）
-//! が、赤を消すために検査だけを直すと射程が黙って狭まる。移すなら母集団も一緒に動かすこと。
+//! **起動の入口を `activation.rs` から動かす前に、そのファイルの `//!` を読むこと**——
+//! ソーステキスト検査の母集団がそこに縛られている（理由と死角の正本は `activation.rs` の `//!`）。
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
@@ -111,7 +107,7 @@ impl LauncherController {
             app_handle,
             blur_grace: crate::egui_shell::BlurGrace::default(),
             state: SearchState::new(),
-            search_debounce: Debouncer::new(Duration::from_millis(50), true),
+            search_debounce: Self::new_search_debounce(),
             last_input_at: Instant::now(),
             folder_tx,
             folder_rx,
@@ -125,6 +121,17 @@ impl LauncherController {
             search_tx,
             search_rx,
         }
+    }
+
+    /// 検索 debounce を建てる唯一の口（構築時と reset-on-show の 2 か所が共有する）。
+    ///
+    /// **窓の長さ（interval）の正本はここである**——[`crate::egui_shell::search_state`] の
+    /// `is_unsettled` の doc が「`LauncherController` が `Debouncer::new` へ渡す値」と名指して
+    /// いる先がこの関数である。分割で 2 か所がファイルをまたいだため、値を綴る点を 1 つに戻した。
+    /// 第 2 引数は `leading`（バースト先頭で即発火するか）であって `armed` ではない——
+    /// [`crate::egui_shell::Debouncer::new`] は常に `armed: false` で建てる。
+    fn new_search_debounce() -> Debouncer {
+        Debouncer::new(Duration::from_millis(50), true)
     }
 
     // ---- view へ公開する読み口（すべて `&self`）------------------------------------------

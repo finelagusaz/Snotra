@@ -1,5 +1,5 @@
 //! egui 検索ウィンドウの純粋状態核（#532 SU3）。query/選択/結果と 2 軸モード導出・遷移を
-//! egui/Win32 非依存で持ち、driver（launcher_controller.rs）から駆動される。ユニットテスト対象。
+//! egui/Win32 非依存で持ち、driver（launcher_controller）から駆動される。ユニットテスト対象。
 
 use std::time::Instant;
 
@@ -107,7 +107,7 @@ pub struct FolderFrame {
 /// restore_query を持たない——tool 中は入力無効（§18.5）で query 不変ゆえ復元不要
 /// （SolidJS popView の tool 段も query を復元しない）。launch_query は起動 API へ渡す
 /// 元クエリで復元には使わない（SolidJS #538 の launchQuery / restoreQuery 型分離）。
-/// target_path/target_is_folder/tools/launch_query は driver（launcher_controller.rs）が
+/// target_path/target_is_folder/tools/launch_query は driver（launcher_controller）が
 /// tool_frame() 越しに読む（`shift_activate` / `execute_tool_selected`・#532 SU3.5 Task 3）。
 #[derive(Debug, Clone)]
 pub struct ToolFrame {
@@ -140,7 +140,7 @@ pub enum EscapeOutcome {
 
 /// slash コマンドの写像（§15.2）。History(`/r`) だけは結果注入型（履歴を表示して留まる）で、
 /// driver が run_search の Command 分岐へ振る。他 3 つは fire-once の副作用型。
-/// driver（launcher_controller.rs）が消費する（#532 SU3 M3 Task 2）。
+/// driver（launcher_controller）が消費する（#532 SU3 M3 Task 2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashCmd {
     History,
@@ -151,7 +151,7 @@ pub enum SlashCmd {
 
 /// trim 後の完全一致で slash コマンドを引く（§15.3 即実行の判定・commands.ts findCommand parity・
 /// 大文字小文字は区別する）。部分入力・引数付きは None（候補表示なし・§15.3）。
-/// driver（launcher_controller.rs）が消費する（#532 SU3 M3 Task 2）。
+/// driver（launcher_controller）が消費する（#532 SU3 M3 Task 2）。
 pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
     match query.trim() {
         "/r" => Some(SlashCmd::History),
@@ -373,7 +373,7 @@ impl SearchState {
 
     /// folder 中の現在ディレクトリ（フルパス）。消費者は `view.rs` の入力欄プレースホルダで、
     /// フォルダ展開中の現在地を示す（#836・`SPEC.md`「6.7 フォルダ展開中の現在地表示」）。
-    /// driver（`launcher_controller.rs`）は別途 `parent_dir()` 越しにも current_dir を使う。
+    /// driver（`launcher_controller`）は別途 `parent_dir()` 越しにも current_dir を使う。
     ///
     /// **「消費者はこれ 1 つ」とは書かない。** `#[allow(dead_code)]` を外したことでコンパイラが
     /// 証明するのは**消費者が 1 つ以上ある**ことだけで、2 つ目が増えても何も落ちない。
@@ -486,6 +486,10 @@ impl SearchState {
     /// **2026-08-14 時点で** `launcher_controller.rs` には `#[cfg(test)]` が 1 つも無く（`tests/` も
     /// tauri の test feature も無い）、**修正が効いたことを測る検知器を置けない**のが却下の理由である:
     /// (A) ここで `run_search()` を撃つ、(B) `on_nav_keys` の 2 箇所で flush を挟む。
+    /// **この前提は 2026-08-27 の分割で変わった**——`launcher_controller/activation/tests.rs` が
+    /// 入り、呼び出し点が在ることをテスト席なしで固定できることが実証された。却下理由が
+    /// 今も成り立つかは、(A)/(B) を再検討するときに測り直すこと（挙動そのものを測る席が
+    /// できたわけではない点は不変である）。
     /// **#1079 の issue 本文が (A) の費用として書く「Escape のたびに同期 `engine.search` をフレームへ
     /// 乗せる」は現在のコードに当たらない**——`run_search_with` の Plain 腕は #1004 の worker 化以降
     /// **同期 `engine.search` を含まない**（`search_tx.send` か、空クエリ・`indexing()`・送信失敗での
@@ -733,7 +737,7 @@ pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: b
 /// #633 世代トリガ（SU6 spec 決定 3）: index build 完了で bump される世代が last-seen と
 /// 異なれば再検索。bool エッジ検出と違い、started/complete の repaint が 1 フレームに合流して
 /// パルスが見えなくても累積カウンタは差分が残るため取りこぼさない。
-/// driver（launcher_controller.rs）は Task 4 で再検索トリガに組み込む（#532 SU6 Task 1）。
+/// driver（launcher_controller）は Task 4 で再検索トリガに組み込む（#532 SU6 Task 1）。
 pub fn needs_index_refresh(last_seen: u64, current: u64) -> bool {
     last_seen != current
 }

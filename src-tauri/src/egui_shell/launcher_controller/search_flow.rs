@@ -1,8 +1,11 @@
 //! 検索の発行（打鍵 → debounce → worker への要求）と、その結果の採り込み（#1004 PR 2）。
 //!
-//! **行を差し替える点はここに集める**——`run_search_with` の view_kind 分岐と `drain_search` の
-//! 2 つが、`SearchState` の `set_results` / `accept_worker_rows` を呼ぶ唯一の面である
-//! （`on_enter` の flush だけが例外で、理由は当該 doc が持つ）。
+//! **行を差し替える点の主たる面はここである**——`run_search_with` の view_kind 分岐・
+//! `drain_search`・`clear_search` が `SearchState` の `set_results` / `accept_worker_rows` を呼ぶ。
+//! **ここだけではない**: `activation.rs` も撃つ（`start_launch` の in-flight 失効と `on_enter` の
+//! flush。どちらも理由は当該 doc が持ち、前者は `layout.rs` の表示ゲートの導出根拠でもある）。
+//! **差し替え点を数え上げないこと**——足すたびにこの行だけが腐る。母集団は
+//! `git grep 'state\.set_results('` が持つ。
 //!
 //! ここに**無いもの**:
 //!

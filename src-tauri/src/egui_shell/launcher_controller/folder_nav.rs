@@ -2,8 +2,10 @@
 //!
 //! **channel は view の寿命で共有し、staleness は世代 token で判定する**——per-nav に channel を
 //! 建てる形（起動側の `LaunchInFlight`）とは逆の選択であり、その非対称は意図である
-//! （理由は `activation.rs` の `LaunchInFlight` の doc）。[`FolderMsg`] をこのファイルへ閉じる
-//! ため、drain は `poll_async` から `drain_folder` として切り出してある。
+//! （理由は `activation.rs` の `LaunchInFlight` の doc）。drain を `poll_async` から
+//! `drain_folder` として切り出してあるのは、`frame_stages.rs` が [`FolderMsg`] を名指さずに
+//! 済ませるためである（**「このファイルへ閉じた」ではない**——親が `Sender` / `Receiver` の
+//! 型引数として綴る）。
 //!
 //! ここに**無いもの**:
 //!
@@ -96,7 +98,7 @@ impl LauncherController {
     ///
     /// **前後関係は両側とも他所にある**（前は `folder_gen` の bump、後ろは #699 の世代照合）
     /// ——内訳は親モジュールの `//!`「ここに無いもの」が正本である。**`poll_async` から切り出して
-    /// あるのは [`FolderMsg`] をこのファイルに閉じるためであって、呼ぶ位置に自由度が生まれた
+    /// あるのは呼び出し側に [`FolderMsg`] を名指させないためであって、呼ぶ位置に自由度が生まれた
     /// わけではない**（`drain_launch` → 通知の期限 → ここ、の並びは `poll_async` が持つ）。
     pub(super) fn drain_folder(&mut self, ctx: &egui::Context) {
         // ナビ結果を drain し、現行 folder_gen と一致する最新のものだけ適用する（stale 破棄・滞留 drain）。

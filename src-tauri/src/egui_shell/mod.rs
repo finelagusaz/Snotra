@@ -12,9 +12,9 @@ mod notify;
 mod search_dispatch;
 mod search_state;
 mod search_worker;
-// launcher_controller.rs が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
+// launcher_controller が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
-// NOTICE_HOTKEY は launcher_controller.rs（hotkey 失敗通知の duration）が、OverlayKind /
+// NOTICE_HOTKEY は launcher_controller（hotkey 失敗通知の duration）が、OverlayKind /
 // overlay_kind は view.rs（status 行の優先ラダー）が消費する（#532 SU6 Task 7・#666 段 3 で
 // 消費者が 2 モジュールへ割れた）。status_row_present は毎フレーム側（view.rs）と
 // show 経路（window_coordinator.rs）の両方が消費する（共有の実体の正本は
@@ -22,7 +22,7 @@ pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind, status_row_present};
 // mod.rs の spawn_update_check が phase 書き込みで、UpdaterUiState が Default で消費する
 // （#532 SU5 Task 6）。toast 描画は view.rs が、UpdaterPhase の遷移（install 失敗）は
-// launcher_controller.rs が消費する。
+// launcher_controller が消費する。
 pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
 mod font_stack;
 mod launcher_controller;
@@ -33,7 +33,7 @@ mod view;
 mod visual;
 mod window_coordinator;
 
-// main.rs（hotkey / tray / setup）・view.rs（結果窓の駆動と wake）・launcher_controller.rs
+// main.rs（hotkey / tray / setup）・view.rs（結果窓の駆動と wake）・launcher_controller
 // （updater install 失敗の wake_main）・results_view.rs（クリック逆流）が
 // 消費する。窓操作の実体は window_coordinator.rs へ移した（#749 段 1）。**モジュール外に
 // 消費者があるものだけを re-export する**——`read_placement_relative` / `read_metrics` /
@@ -72,18 +72,18 @@ pub(crate) use icon_textures::{
 // **ただし表現不能化ではない**——Rust は enum の variant 単位の可視性を持たないため、
 // `self.blur_grace = BlurGrace::Focused;` のような**状態の直接代入は crate 内でコンパイルが
 // 通る**（`wake_main` / `wake_results` と同じ性格で、そこは規範が守る）。
-// blur 猶予の 2 件は launcher_controller.rs が、plan_hotkey は main.rs 側が消費する。
+// blur 猶予の 2 件は launcher_controller が、plan_hotkey は main.rs 側が消費する。
 pub(crate) use lifecycle::{BlurAction, BlurGrace, HotkeyPlan, plan_hotkey};
-// launcher_controller.rs が folder 展開（#532 SU3 M2）・Escape ラダー・Enter flush で消費する。
+// launcher_controller が folder 展開（#532 SU3 M2）・Escape ラダー・Enter flush で消費する。
 // ViewKind だけは view.rs も読む（入力欄の編集可否と status 行の分岐・#666 段 3）。
 pub(crate) use search_state::{
     EscapeOutcome, QueryIntent, SearchState, ViewKind, compute_parent_dir, folder_load_pending,
     should_flush_on_enter,
 };
-// SlashCmd/find_slash_command は launcher_controller.rs が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
+// SlashCmd/find_slash_command は launcher_controller が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
 pub(crate) use search_state::{SlashCmd, find_slash_command};
-// needs_index_refresh は launcher_controller.rs（世代検知 → 再検索）が、plain_results_hidden は
-// view.rs（表示ゲート）と launcher_controller.rs（起動ガード・#1077）が消費する
+// needs_index_refresh は launcher_controller（世代検知 → 再検索）が、plain_results_hidden は
+// view.rs（表示ゲート）と launcher_controller（起動ガード・#1077）が消費する
 // （#532 SU6 Task 1・#666 段 3 で消費者が割れた）。**表示と起動が同じ述語を通ることが
 // #1077 の受け入れ条件そのものである**——同義の別式を足さないこと。
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
@@ -92,7 +92,7 @@ pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
 // ④は tool 選択・instant 行・フォルダ展開を含む**すべてのビュー**を隠す（`SPEC.md`「4.5 最大列挙数」）。
 pub(crate) use layout::results_area_collapsed;
 // FrameIndexing は `window_coordinator::read_indexing` の返り値型で、view.rs が 1 フレーム
-// 1 回だけ読み、launcher_controller.rs の起動判定がそれを受け取る（#1077）。**構築子を
+// 1 回だけ読み、launcher_controller の起動判定がそれを受け取る（#1077）。**構築子を
 // 読み点の側に置いてあるのが要点である**——別の `bool` を包む書き方をコンパイル不能にする。
 pub(crate) use window_coordinator::FrameIndexing;
 // FrameVisibleRows も同じ形である（#1106）——`window_coordinator::read_visible_rows` が唯一の
@@ -100,7 +100,7 @@ pub(crate) use window_coordinator::FrameIndexing;
 // 連言③（`plain_results_hidden`）と連言④（`layout::results_area_collapsed`）は独立した規則で、
 // **どちらか一方でも隠していれば起動しない**。
 pub(crate) use window_coordinator::FrameVisibleRows;
-// launcher_controller.rs が検索 debounce（leading + trailing）で消費する。
+// launcher_controller が検索 debounce（leading + trailing）で消費する。
 pub(crate) use layout::Debouncer;
 // view.rs が `update()` のフレーム所要と間隔の計器として消費する（#1004 PR 1）。
 pub(crate) use layout::FrameTimer;
@@ -109,7 +109,7 @@ pub(crate) use layout::FrameTimer;
 // である**。seq の発行・採り込み・flush 判定はすべて `SearchState` の面を通る。
 // launcher_controller が Plain 検索の要求送信・結果受信（`drain_search`）で消費する（#1004 PR 2）。
 pub(crate) use search_worker::{SearchMsg, SearchRequest, spawn_search_worker};
-// view.rs が UI 文言（hint/overlay/toast）で、launcher_controller.rs が通知文言（起動失敗・
+// view.rs が UI 文言（hint/overlay/toast）で、launcher_controller が通知文言（起動失敗・
 // 結果不明・hotkey 登録失敗）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
 pub(crate) use strings as ui_strings;
 

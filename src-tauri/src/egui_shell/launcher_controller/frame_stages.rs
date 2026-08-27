@@ -1,24 +1,35 @@
-//! フレーム毎に呼ばれる消費と回収の段（reset-on-show・外部 pending・非同期の到着物）。
+//! `update()` の段のうち、**入力を読むより前**に走る消費と回収（reset-on-show・外部 pending・
+//! 非同期の到着物）。
+//!
+//! **「毎フレーム呼ばれるもの」の集合ではない**——毎フレーム呼ばれる遷移は他の子にも在る
+//! （`on_focus_changed` は `hide_request.rs`、`drain_search` / `poll_search_debounce` は
+//! `search_flow.rs`）。ここに在るのは責務ではなく**位置**で括られた 3 つで、`view.rs` の段 3 /
+//! 5–6 / 10–12 という連続した塊がそれである（`consume_external_pending` の doc が「両者に
+//! 関係があるからではない」と書くのはこの意味である）。
 //!
 //! **並びを決めるのは `view.rs` である**（親モジュールの `//!`「フレームを所有しない」）。
 //! ここに在る 3 メソッドは呼ばれる側だが、**互いの順序に不変条件を持つ**——`poll_async` は
-//! `consume_reset_pending` の**後**でなければならない（前に置くと show 直後フレームで stale な
-//! 起動結果が reset より先に処理され、再 show した窓を hide で撃つ・spec C 節 不変条件 2）。
+//! `consume_reset_pending` の**後**でなければならない（機序と帰結は `activation.rs` の
+//! `drain_launch` の doc と spec C 節 不変条件 2 が正本）。**この順序を固定する検知器は無い**
+//! ——守っているのは `view.rs` の行順だけである（`#[must_use]` は返り値を見て順序を見ない）。
+//! 逆にしたときの症状は実機で即座に出るので検知器を置いていない。
 //!
 //! ここに**無いもの**:
 //!
 //! - **回収そのもの**は各責務の子が持つ（`drain_launch` は `activation.rs`、`drain_folder` は
 //!   `folder_nav.rs`）。`poll_async` はそれらを 1 フレームへ束ねる並びだけを持つ
+//! - **非同期の到着物を回収する 4 つ目（`drain_search`）はここに無い**（`search_flow.rs`）。
+//!   `poll_async` へ束ねられないのは、行の差し替えがクリック消費より前でなければならない
+//!   という #699 の順序不変条件を持ち、`view.rs` から直接その位置で呼ばれるためである。
+//!   **新しい非同期源を足すとき、`poll_async` が既定とは限らない**
 //! - **`reset()` が何をクリアするか**は [`crate::egui_shell::search_state`]。ここはそこへ
 //!   届かないフィールド（cache・in-flight 起動・通知・blur 猶予）を並べて消す側である
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use tauri::Manager;
 
 use super::LauncherController;
-use crate::egui_shell::Debouncer;
 
 impl LauncherController {
     /// 段 3: show 直後の resetForShow を消費し、**今フレームが reset フレームなら `true`**。
@@ -39,7 +50,7 @@ impl LauncherController {
             self.folder_cache = None;
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
-            self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
+            self.search_debounce = Self::new_search_debounce();
             // scroll gate（#632: 再表示後に確実に一度 scroll し直す）は results 窓の
             // ResultsView::update() 側（実ゲート）に移設済み——main はもう読み書きしない。
             // icon パイプライン（icon_textures/icon_missing/icon_pending）も Task 5 で
@@ -110,7 +121,7 @@ impl LauncherController {
 
     /// 段 10–12: 非同期の到着物を回収する（起動結果 → 通知期限 → folder 列挙）。
     /// **この 3 者が同じフレームで呼ばれることが `drain_launch` の通知の期限を成立させている**
-    /// （`drain_launch` の `notice.set` 3 分岐は自前の repaint を持たない・`//!` 参照）。
+    /// （`drain_launch` の `notice.set` の分岐は自前の repaint を持たない・親モジュールの `//!` 参照）。
     pub(in crate::egui_shell) fn poll_async(&mut self, ctx: &egui::Context) {
         // 起動結果の回収（#631）。reset_pending 消費の後に置くこと（spec C 節 不変条件 2）。
         self.drain_launch(ctx);

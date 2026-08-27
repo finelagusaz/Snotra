@@ -122,7 +122,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 
 - 純ロジック: `snotra-core/src/instant.rs` — 変数展開 `{query}` / `{clip}` / `{date:書式}` / `{uuid}`（修飾子パイプ `{name | lower|upper|trim|default:x|raw}` 対応）+ `{{…}}` リテラルエスケープ + 前方一致フィルタと結果行の組み立て（`description` 優先・`display` 導出。#1124 で UI 層から移設）。date は strftime（不正書式は空文字でフォールバック＝panic 回避）、uuid は v4。`{{X}}` は literal `{X}`（変数名と衝突する literal の opt-out）。エンコードはシンク（種別）責務で URL 判定時に自動付与、`raw` で抑止。不明修飾子は `Config::validate` が保存時に拒否
 - 実行分岐: `src-tauri/src/commands/instant.rs` の `execute_instant_action_core` — 種別分岐で実行（URL/Legacy は `expand_instant_command` → `launch_item_core`（ShellExecuteW）、Exec は `launch_exec_core`（exe + args 起動））。clipboard は呼び出し側がエンジンロック外で読む
-- UI: `src-tauri/src/egui_shell/`（search_state.rs の `interpret` でモード判定・launcher_controller.rs が直呼び実行・#532 SU7 で WebView2 UI 撤去）。indexing 中でも使用可能
+- UI: `src-tauri/src/egui_shell/`（search_state.rs の `interpret` でモード判定・launcher_controller が直呼び実行・#532 SU7 で WebView2 UI 撤去）。indexing 中でも使用可能
 - 設定 GUI: `snotra-settings/src/tabs/instant.rs` — プレフィックス設定 + コマンド CRUD + 展開プレビュー
 - プレフィックス変更は egui が `config-applied` wake 後の live-read で拾う
 
@@ -153,7 +153,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 ```mermaid
 sequenceDiagram
     participant User
-    participant View as view.rs・launcher_controller.rs（main 窓の 1 フレーム）
+    participant View as view.rs・launcher_controller（main 窓の 1 フレーム）
     participant State as search_state.rs（純粋核・seq も内側に持つ）
     participant W as search_worker.rs（プロセス寿命 1 本）
     participant Eng as Engine / SearchEngine (snotra-core)

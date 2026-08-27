@@ -2,8 +2,10 @@
 //!
 //! **toast の状態は managed state（[`crate::egui_shell::UpdaterUiState`]）が持ち、
 //! [`LauncherController`] は持たない**——ここに在るのはクリックを borrow の外で捌く遅延 dispatch
-//! （[`ToastAction`]）と、その処置だけである。ゆえに `consume_reset_pending` の reset は toast を
-//! 触らない（show を跨いで残るのは意図）。
+//! （[`ToastAction`]）と、その処置だけである。**帰結として、この子は
+//! [`LauncherController`] のフィールドを 1 つも読み書きしない**（使うのは `app_handle` だけで、
+//! 両メソッドとも `&self`）。reset が toast を触らないことは `frame_stages.rs` の
+//! `consume_reset_pending` 本体のコメントが正本である。
 //!
 //! ここに**無いもの**: toast の描画とボタンの当たり判定は `view.rs`、`phase` の遷移規則は
 //! [`crate::egui_shell::UpdaterUi`] が持つ。
@@ -22,12 +24,12 @@ impl LauncherController {
     /// toast ボタンの処理（#532 SU5）。install は Update を原子取得して async へ（Task 8）。
     ///
     /// **状態を変えたら `ctx.request_repaint()` する**（Task 10 実機スモークで発見・
-    /// `spawn_folder_load` の egui_ctx wake（本ファイル該当箇所のコメント参照）と同じ理由）:
+    /// `folder_nav.rs` の `spawn_folder_load` の egui_ctx wake（同 doc 参照）と同じ理由）:
     /// このランタイムはイベント駆動で、click を処理したこのフレームの描画は toast_action の
     /// 遅延 dispatch より前に完了している。ここで状態を変えても誰も次のフレームを起こさないため、
     /// 無関係な入力（マウス移動等）が来るまで旧 toast が画面に残る（dismiss 後の stale 表示）。
     pub(in crate::egui_shell) fn handle_toast_action(
-        &mut self,
+        &self,
         action: ToastAction,
         ctx: &egui::Context,
     ) {

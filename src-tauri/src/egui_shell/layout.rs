@@ -266,8 +266,38 @@ pub fn results_size_phys(
     (width, results_height_phys(height_logical, scale))
 }
 
+/// 窓の外形に含まれる**不可視枠**の厚み（物理 px）。
+///
+/// Windows は装飾を消した窓にも不可視枠を持たせる。`GetWindowRect`（tauri の
+/// `outer_position` / `outer_size` が返す座標系）はこの枠を**含み**、`DwmGetWindowAttribute`
+/// の `DWMWA_EXTENDED_FRAME_BOUNDS` は含まない。ゆえに外形どうしを突き合わせて隙間を作ると、
+/// 枠の厚みがそのまま**見た目の隙間**へ乗る。
+///
+/// **上辺が 0 であることを前提にしてはならない。** DPI 125% の機体では上 0 / 下 8 / 左右 8 と
+/// 実測したが、それは観測値であって述語ではない——[`results_top_y`] の呼び出し元は両辺とも
+/// 窓から読む。
+///
+/// **`window_coordinator::FrameGeom` の `inset_h`（外形 − 内形）とは別の量である。** 同じ機体で
+/// こちらは 8、あちらの doc が記録する実測は 10 で、混ぜれば 2 px ずれる。内形（クライアント
+/// 領域）と拡張フレーム境界は別々の矩形であり、一致を測ったことは無い。
+///
+/// **差し引けば外形どうしは重なる。** その帯のマウス入力を main が受ける件は受容する残余で、
+/// 正本は `window_coordinator::position_results_below_main` の「受容する残余」節である。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InvisibleBorders {
+    /// main 窓の**下辺**の厚み。
+    pub main_bottom: i32,
+    /// results 窓の**上辺**の厚み。
+    pub results_top: i32,
+}
+
 /// results 窓の上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
 /// の算術部（#749 で `mod.rs` から移設）。
+///
+/// **隙間は見えるものどうしの間隔である**（`SPEC.md`「11. ビジュアル」の
+/// 「`window_gap`（既定 4px・`[visual]` の config キー・live-read）だけ離して配置し」）。ゆえに `main_y + main_height_phys` が指す外形の下端を
+/// そのまま基準にせず、[`InvisibleBorders`] の分を両側から差し引く。差し引かなかった頃は
+/// 見た目の隙間が DPI 125% で 13 物理 px あり、意図した 5 物理 px の 2 倍を超えていた。
 ///
 /// **算出と適用（`set_position`）を分けるために出したのではない**——ここへ出すのは**式を
 /// テスト可能にするため**であり、`mod.rs` 側は Win32 を 1 回だけ読んでこの式を呼ぶ薄い
@@ -290,8 +320,11 @@ pub fn results_top_y(
     main_height_phys: u32,
     gap_logical: u32,
     main_scale: MainScale,
+    borders: InvisibleBorders,
 ) -> i32 {
-    main_y + main_height_phys as i32 + (f64::from(gap_logical) * main_scale.0).round() as i32
+    main_y + main_height_phys as i32 - borders.main_bottom
+        + (f64::from(gap_logical) * main_scale.0).round() as i32
+        - borders.results_top
 }
 
 /// 論理 px を物理 px へ直す（#878）。**丸め規則の唯一の置き場である。**
@@ -1020,18 +1053,75 @@ mod tests {
     /// テストになる。Rust の `f64::round` は half を 0 から遠い側へ倒す。
     #[test]
     fn results_top_y_rounds_gap_at_half_boundary() {
+        let none = InvisibleBorders::default();
         // scale 1.0: 換算なし
-        assert_eq!(results_top_y(100, 43, 4, MainScale::new(1.0)), 147);
+        assert_eq!(results_top_y(100, 43, 4, MainScale::new(1.0), none), 147);
         // 積がちょうど x.5（丸めの境界）
-        assert_eq!(results_top_y(0, 0, 3, MainScale::new(1.5)), 5); // 4.5 → 5
-        assert_eq!(results_top_y(0, 0, 1, MainScale::new(1.5)), 2); // 1.5 → 2
-        assert_eq!(results_top_y(0, 0, 3, MainScale::new(0.5)), 2); // 1.5 → 2
+        assert_eq!(results_top_y(0, 0, 3, MainScale::new(1.5), none), 5); // 4.5 → 5
+        assert_eq!(results_top_y(0, 0, 1, MainScale::new(1.5), none), 2); // 1.5 → 2
+        assert_eq!(results_top_y(0, 0, 3, MainScale::new(0.5), none), 2); // 1.5 → 2
         // x.5 未満は切り捨て側へ
-        assert_eq!(results_top_y(0, 0, 2, MainScale::new(1.2)), 2); // 2.4 → 2
+        assert_eq!(results_top_y(0, 0, 2, MainScale::new(1.2), none), 2); // 2.4 → 2
         // 高 DPI
-        assert_eq!(results_top_y(100, 43, 4, MainScale::new(2.0)), 151);
+        assert_eq!(results_top_y(100, 43, 4, MainScale::new(2.0), none), 151);
         // main が負座標のモニターにいる（マルチモニターで左/上に並べた配置）
-        assert_eq!(results_top_y(-1080, 43, 4, MainScale::new(1.0)), -1033);
+        assert_eq!(
+            results_top_y(-1080, 43, 4, MainScale::new(1.0), none),
+            -1033
+        );
+    }
+
+    /// 不可視枠は**両側から**差し引く（見た目の隙間を `window_gap` に一致させる）。
+    ///
+    /// **上辺 0 を前提にした片側だけの補正では通らない入力を含める。** 実測した機体は
+    /// main 下 8 / results 上 0 だったが、その組だけを検査すると `results_top` を無視する
+    /// 実装が緑のまま通る——**測った値がたまたま 0 である辺こそ、独立に効くことを示す**。
+    #[test]
+    fn results_top_y_subtracts_invisible_borders_on_both_sides() {
+        let scale = MainScale::new(1.25);
+        // 実測した機体（DPI 125%・main 下 8 / results 上 0）。外形の下端 542 に対し
+        // 見える下端は 534 で、そこから gap 5 物理 px 下が results の外形上端になる。
+        assert_eq!(
+            results_top_y(
+                478,
+                64,
+                4,
+                scale,
+                InvisibleBorders {
+                    main_bottom: 8,
+                    results_top: 0,
+                }
+            ),
+            539
+        );
+        // results 側にだけ枠がある機体（main 側を 0 にしても results 側が効く）
+        assert_eq!(
+            results_top_y(
+                478,
+                64,
+                4,
+                scale,
+                InvisibleBorders {
+                    main_bottom: 0,
+                    results_top: 6,
+                }
+            ),
+            541
+        );
+        // 両側に枠がある機体
+        assert_eq!(
+            results_top_y(
+                478,
+                64,
+                4,
+                scale,
+                InvisibleBorders {
+                    main_bottom: 8,
+                    results_top: 6,
+                }
+            ),
+            533
+        );
     }
 
     // ---- 中間省略（#870） --------------------------------------------------

@@ -700,6 +700,59 @@ fn read_frame_geom(window: &tauri::Window) -> Option<FrameGeom> {
     })
 }
 
+/// 窓 1 つぶんの**不可視枠**の厚み（物理 px）。上辺と下辺を取り違えないための型。
+///
+/// 概念と、隙間へ効く理由は [`layout::InvisibleBorders`] の doc が正本である。こちらは
+/// 「窓 1 つの上下」、あちらは「main の下辺と results の上辺」という別の組を運ぶ。
+pub(super) struct WindowBorders {
+    pub(super) top: i32,
+    pub(super) bottom: i32,
+}
+
+/// 窓の外形と、実際に見えている矩形との差を読む。
+///
+/// **位置を引数で受け取らず自分で読む。** [`position_results_below_main`] は main の
+/// `outer_position` を既に読んでいるが、その値を渡す形にはしない——**厚みは窓の位置に対して
+/// 不変である**（窓が動けば外形も可視矩形も同じだけ動く）ため、2 つの読みの間に窓が動いても
+/// 差は狂わない。逆に外形だけを呼び出し側の時刻から、可視矩形をここの時刻から取ると、
+/// ドラッグ中に**両者が別の位置を指して差が化ける**。ゆえに「同じ値の一貫性が要る読み」
+/// （`egui_shell::read_config` の doc）には当たらない。
+///
+/// **読めなければ 0 を返す**——補正なし＝この関数を入れる前と同じ配置である。
+#[cfg(windows)]
+pub(super) fn read_window_borders(window: &tauri::Window) -> WindowBorders {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+
+    let none = WindowBorders { top: 0, bottom: 0 };
+    let (Ok(hwnd), Ok(pos), Ok(size)) =
+        (window.hwnd(), window.outer_position(), window.outer_size())
+    else {
+        return none;
+    };
+    let mut visible = RECT::default();
+    let read = unsafe {
+        DwmGetWindowAttribute(
+            HWND(hwnd.0),
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            std::ptr::from_mut(&mut visible).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+    };
+    if read.is_err() {
+        return none;
+    }
+    WindowBorders {
+        top: visible.top - pos.y,
+        bottom: (pos.y + size.height as i32) - visible.bottom,
+    }
+}
+
+#[cfg(not(windows))]
+pub(super) fn read_window_borders(_window: &tauri::Window) -> WindowBorders {
+    WindowBorders { top: 0, bottom: 0 }
+}
+
 #[cfg(windows)]
 fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor> {
     let (Ok(pos), Some(geom)) = (window.outer_position(), read_frame_geom(window)) else {
@@ -1145,6 +1198,18 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// あり、読み戻しが移動するだけである、(3) 書き手が 2 人（show と毎フレーム）の memo を
 /// フレーム跨ぎで持つ形は #878 の継ぎ目 1 そのもので、results 側には補正フレームの
 /// 相当物が無い。
+///
+/// # 受容する残余: 外形の重なりと、その帯のマウス入力
+///
+/// 不可視枠を差し引く以上、**外形どうしはその厚みのぶん重なる**（DPI 125% の機体で 3 物理
+/// px と実測）。重なった帯では main の枠が前に居るため、`WindowFromPoint` は results ではなく
+/// main を返す——**results の先頭行の上端 3 物理 px はクリックに応じない**（2026-08-28 実測）。
+///
+/// **直さずに残す。** z-order で results を上げる案は、この関数の管轄外（z-order は
+/// `commands/window.rs` と `ResultsWindow` が持つ）である上に、topmost どうしの順序を恒常的に
+/// 固定する不変条件を `Moved` 追従と show/hide の全経路へ足すことになる。main 側の枠を消す案は
+/// [`FrameGeom`] の `inset_h`・バーのクランプ・hide の位置保存（#755 / #801）へ波及する。
+/// **どちらも 2.4 論理 px に対して釣り合わない。**
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {
@@ -1166,7 +1231,20 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     // **`main` から読んだ scale をその場で `MainScale` へ包む**（`layout::MainScale` の doc）
     // ——results 窓の scale（`ResultsWindow::set_size` が読む）と型で分かれており、
     // 取り違えはコンパイルが通らない。
-    let top = layout::results_top_y(pos.y, size.height, gap, layout::MainScale::new(scale));
+    // **不可視枠を両側から差し引く。** 外形どうしを突き合わせると、不可視枠がそのまま
+    // 見た目の隙間へ乗る（実測: DPI 125% で意図した 5 物理 px に対し 13 物理 px）。
+    // 概念は `layout::InvisibleBorders`、読みは `read_window_borders` の doc。
+    let borders = layout::InvisibleBorders {
+        main_bottom: read_window_borders(&main).bottom,
+        results_top: results.top_border_phys(),
+    };
+    let top = layout::results_top_y(
+        pos.y,
+        size.height,
+        gap,
+        layout::MainScale::new(scale),
+        borders,
+    );
     results.set_position(pos.x, top);
 }
 

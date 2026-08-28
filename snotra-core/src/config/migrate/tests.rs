@@ -515,11 +515,16 @@ fn apply_migrations_normalizes_additional() {
 /// なので、入れ替えると前者は重複が残り、後者は前後の空白が落ちない。空白の残る `scan` は
 /// 存在しないディレクトリを指し、indexer は**静かに何も索引しない**。
 ///
-/// **死角: 照合の実装を同時に変える複合の変異までは見ない。** 照合を正規化キーへ替えると
-/// マージ枝は入れ替えても成立してしまい、そのとき落ちるのは push 枝の assert だけになる。
+/// 2 種の変異でそれぞれ別の assert が落ちることを実測してある——入れ替えだけならマージ枝が、
+/// 照合を正規化キーへ替えて入れ替えると（マージ枝が成立してしまうので）push 枝が落ちる。
 ///
-/// この形でしか落ちない——`migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので
-/// 並びを通らず、並びを通る `apply_migrations_normalizes_additional` は綴りを見ない。
+/// **見ているのは順序制約そのものではなく、それが守っている 2 つの帰結である。** 両方の帰結を
+/// 別経路で埋め合わせる変異——たとえば `migrate_additional_to_scan` 側が照合も trim も自分で
+/// 済ませる形——はここを通る。そこまで縛ると (1) の実装を正当に変えるときも赤になるので、
+/// 死角として宣言して止めてある。
+///
+/// なお `migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので並びを通らず、並びを
+/// 通る `apply_migrations_normalizes_additional` は綴りを見ない。
 #[test]
 fn legacy_additional_moves_into_scan_before_scan_paths_are_normalized() {
     let mut config = Config::default();

@@ -1199,17 +1199,28 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// フレーム跨ぎで持つ形は #878 の継ぎ目 1 そのもので、results 側には補正フレームの
 /// 相当物が無い。
 ///
+/// # 補正するのは縦だけである
+///
+/// x と幅は外形どうしのまま渡す。**両窓の左右の枠が等しいことに依存している**——等しければ
+/// 誤差が打ち消し合って左端が揃う。等しくない状況（main と results が別 DPI のモニターへ
+/// 跨る配置）では横がずれるが、その実測はしていない。**この前提は観測値であって述語ではない。**
+///
 /// # 受容する残余: 外形の重なりと、その帯のマウス入力
 ///
-/// 不可視枠を差し引く以上、**外形どうしはその厚みのぶん重なる**（DPI 125% の機体で 3 物理
-/// px と実測）。重なった帯では main の枠が前に居るため、`WindowFromPoint` は results ではなく
-/// main を返す——**results の先頭行の上端 3 物理 px はクリックに応じない**（2026-08-28 実測）。
+/// 不可視枠を差し引く以上、**外形どうしは重なりうる**。厚みは
+/// `main_bottom + results_top − round(window_gap × scale)` であり、**`window_gap` を小さくする
+/// ほど増える**——利用者が変えられる config キーなので、ここに px の定数を書かない。DPI 125% の
+/// 機体で `window_gap = 4` のとき 3 物理 px、`0` なら 8 物理 px である。
 ///
-/// **直さずに残す。** z-order で results を上げる案は、この関数の管轄外（z-order は
-/// `commands/window.rs` と `ResultsWindow` が持つ）である上に、topmost どうしの順序を恒常的に
-/// 固定する不変条件を `Moved` 追従と show/hide の全経路へ足すことになる。main 側の枠を消す案は
-/// [`FrameGeom`] の `inset_h`・バーのクランプ・hide の位置保存（#755 / #801）へ波及する。
-/// **どちらも 2.4 論理 px に対して釣り合わない。**
+/// 重なった帯では main の枠が前に居るため、`WindowFromPoint` は results ではなく main を返す
+/// ——**results の先頭行の上端がその厚みぶんクリックに応じない**（2026-08-28 実測）。
+/// **リサイズは始まらない**——両窓とも `resizable(false)` で生成する（`super::create`）。
+///
+/// **直さずに残す。** z-order で results を上げる案は、この関数の管轄外である上に（所在の正本は
+/// このモジュールの `//!`）、topmost どうしの順序を恒常的に固定する不変条件を `Moved` 追従と
+/// show/hide の全経路へ足すことになる。main 側の枠を消す案は [`FrameGeom`] の `inset_h`・
+/// バーのクランプ・hide の位置保存（#755 / #801）へ波及する。**既定値のもとで失うのは先頭行の
+/// 上端 3 物理 px であり、どちらの案もそれに釣り合わない。**
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {
@@ -1381,7 +1392,7 @@ pub(crate) fn drive_results_window(
         }
         layout::ResultsPresentation::Visible { desired_height } => desired_height,
     };
-    // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。無ガードの
+    // 位置: main の見える下端 + gap(物理座標。式の正本は layout::results_top_y)。無ガードの
     // 単一点(position_results_below_main)へ委譲——Moved リスナーと共用する
     // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
     position_results_below_main(app);

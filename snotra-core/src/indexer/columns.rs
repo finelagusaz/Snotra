@@ -134,7 +134,7 @@ impl DerivedColumns {
 
 /// エントリから木と派生 4 本を導出する。**I/O を持たない。**
 pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
-    // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（運ぶ器は [`IndexMaterial`] であり、受け取る経路をここで数えない）。
+    // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（運ぶ器は [`crate::indexer::IndexMaterial`] であり、受け取る経路をここで数えない）。
     //
     // **per-entry の導出そのものは [`derive_entry_collapsed`] が持つ。** 追記側
     // （`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方と

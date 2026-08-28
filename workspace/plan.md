@@ -50,6 +50,10 @@ issue #988 を、現在の正本（#1176 が定めた「名指しと正本の指
 | `src-tauri/.../activation/tests.rs:719` | `method_header` | 有り | ○ | **対象外**（同上） |
 | `src-tauri/src/egui_shell/view.rs:1357` | `assert_read_once_in_this_file` | 有り | ○ | **対象外**（テストモジュール内） |
 
+**「着地」列は書いた時点では判別式からの導出だった（＝代理条件）。Step 3 の委譲が実測へ上げた。** `snotra-core` の production 側でプローブに載る名指しを独立に投げ、`cargo doc` が error 0 / warning 0 で**全件着地**することを測っている。**実測の外に残るのは 3 群である**——`Self::sorted_prefix_len`（impl スコープが要る）・`Timeline::mark`（別 crate）・`#[cfg(test)]` の 5 件（`cargo doc` が原理的に見ない）。
+
+**フラグと可視性の関係も測れた。** 公開ドキュメントに出ないアイテム（private / `pub(crate)` / private mod 配下）の `///` では、壊れたリンクはフラグ無しの `cargo doc` に映らない（実測: 無フラグ緑・`--document-private-items` 付きで赤）。公開アイテムでは無フラグでも赤くなる（実測）。**そして `//` に在る当の欠陥は、どちらのフラグでも見えない。**
+
 ⚠️ `path_store.rs:277` の `Self::sorted_prefix_len` は field（124 行）と `pub(super) fn`（308 行）が同名である。rustdoc が曖昧さを警告する形かどうかは測っていない。(b) 非該当なので doc へ移さず、この曖昧さは顕在化しない。
 
 ### issue の予想と食い違う 1 箇所（ユーザーの裁定を仰ぐ）
@@ -101,15 +105,20 @@ issue 本文は次を (b) の候補として名指している。
 
 ### Phase 1 — 着地しない 2 件の修正
 
-- [ ] `snotra-core/src/indexer/columns.rs` の `derive_columns` 冒頭の `` [`IndexMaterial`] `` を完全修飾へ書き換える
-- [ ] `snotra-core/src/indexer/cache.rs` の `` [`DerivedColumns::into_cached_masks`] `` を完全修飾へ書き換える
-- [ ] 2 箇所を一時的に doc コメントの位置へ写して `cargo doc` が `unresolved link` を出さないことを測り、元へ戻す
-- [ ] `cargo doc --workspace --no-deps --document-private-items` exit 0
-- [ ] `cargo build --workspace --all-targets` exit 0
+- [x] `snotra-core/src/indexer/columns.rs` の `derive_columns` 冒頭の `` [`IndexMaterial`] `` を完全修飾へ書き換える → `` [`crate::indexer::IndexMaterial`] ``
+- [x] `snotra-core/src/indexer/cache.rs` の `` [`DerivedColumns::into_cached_masks`] `` を完全修飾へ書き換える → `` [`crate::indexer::columns::DerivedColumns::into_cached_masks`] ``
+- [x] 2 箇所を一時的に doc コメントの位置へ写して `cargo doc` が `unresolved link` を出さないことを測り、元へ戻す
+  - **Red**（旧形を `///` のプローブへ写して `cargo doc -p snotra-core --no-deps --document-private-items`）: `error: unresolved link to 'DerivedColumns::into_cached_masks'` / `error: unresolved link to 'IndexMaterial'` の 2 件で失敗した
+  - **Green**（新形の完全修飾で同じ測定）: error / warning ともに 0 件
+  - プローブを戻して `git status --porcelain` が空であることを確認した
+- [x] `cargo doc --workspace --no-deps --document-private-items` exit 0
+- [x] `cargo build --workspace --all-targets` exit 0（初回は `target/debug/snotra.exe` の削除がファイルロックで拒否され exit 101。実行中プロセスは無く、再実行で exit 0。コードに由来しない）
 
 ### Phase 2 — 記録
 
-- [ ] `workspace/research.md` と本計画の triage 表が、実装後の実際の行内容と一致することを grep で確かめる
+- [x] `workspace/research.md` と本計画の triage 表が、実装後の実際の行内容と一致することを grep で確かめる
+  - 実データの 20 行のパスと行番号を計画本文へ突き合わせ、**16 件が逐語で一致**。残る 4 件（`activation/tests.rs` の 251 / 710 / 713 / 719）は表でパスを `src-tauri/.../` と省略しているための不一致であり、行番号は 4 件とも一致する
+  - 件数は**予告どおり 20 のまま**である（完全修飾でもリンク形ゆえ issue の grep 述語に一致し続ける）
 
 ## 未確定（実装前に潰す）
 

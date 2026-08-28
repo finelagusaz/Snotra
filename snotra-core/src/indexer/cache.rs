@@ -631,7 +631,7 @@ fn save_cache_sorted_in(
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
     }
-    // **畳むのは書き終えた後である**（借用の順序・[`DerivedColumns::into_cached_masks`] の doc）。
+    // **畳むのは書き終えた後である**（借用の順序・[`crate::indexer::columns::DerivedColumns::into_cached_masks`] の doc）。
     // `clone` は挟まない——上の `Cow::Borrowed` の借用は `bf.save` を最後に終わる（NLL）。
     derived.into_cached_masks()
 }

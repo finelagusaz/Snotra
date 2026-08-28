@@ -3,6 +3,10 @@
 //! 正規化の 2 つ（[`normalize_scan_path_key`] / [`normalize_extensions`]）は
 //! `crate::opener::normalize_opener_target` が opener ターゲットの正規化として共有するため
 //! `pub(crate)` で出す（依存の向きの取り決めは `snotra-core/CLAUDE.md` の `opener.rs` 節）。
+//!
+//! **[`Config::default_scan_paths`] は環境を読む。** `ProgramData` と `dirs::desktop_dir()` の
+//! 実在を見て既定のシードを組み立てるので、このファイルの正規化・マージ（純粋関数）とは
+//! 決定性が違う。保存先ディレクトリの解決は別の話で、`super::location` が持つ。
 
 use std::path::PathBuf;
 

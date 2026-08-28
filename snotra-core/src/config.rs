@@ -7,6 +7,12 @@
 //!
 //! ここに置くのは集約型 [`Config`] とその [`Default`] だけである——セクションごとの型は
 //! [`schema`]、それを読み書き・移行・検証する側はそれぞれの子モジュールが持つ。
+//!
+//! **死角: re-export の脱落を赤にする層は無い。** 子で `pub` のまま到達不能になっても
+//! `dead_code` は鳴らず（子モジュールの中で使われている）、`unreachable_pub` も既定 allow
+//! である。落としても無音なのは**下流 crate が呼んでいない名前だけ**で、それ以外は下流の
+//! compile-fail が捕まえる。`#![warn(unreachable_pub)]` は crate 全体を縛るので置かず、
+//! 死角として宣言するに留めてある。
 
 use serde::{Deserialize, Serialize};
 

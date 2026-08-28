@@ -506,6 +506,62 @@ fn apply_migrations_normalizes_additional() {
     assert!(!config.paths.scan.is_empty());
 }
 
+/// `apply_migrations` の並びのうち**唯一の真の順序依存**を pin する——(1) `additional` → `scan`
+/// の追加は、(5) `scan` の正規化・dedup より前に来なければならない。
+///
+/// 入れ替えると `C:/Tools/` が正規化されないまま push され、`migrate_additional_to_scan` の
+/// 照合は生の小文字比較なので既存の `C:\Tools` と一致せず、重複が残る。**この形でしか落ちない**
+/// ——`migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので並びを通らず、並びを
+/// 通る `apply_migrations_normalizes_additional` は件数を見ないため入れ替えても真のままである。
+#[test]
+fn legacy_additional_moves_into_scan_before_scan_paths_are_normalized() {
+    let mut config = Config::default();
+    config.paths.scan = vec![ScanPath {
+        path: "C:\\Tools".to_string(),
+        extensions: vec![".lnk".to_string()],
+        include_folders: false,
+    }];
+    // 同じディレクトリを、正規化しないと一致しない綴りで legacy 側へ置く。
+    config.paths.additional.push("C:/Tools/".to_string());
+
+    assert!(config.apply_migrations());
+
+    assert_eq!(
+        config.paths.scan.len(),
+        1,
+        "legacy エントリが正規化より後に push され、重複が残った"
+    );
+}
+
+#[test] // T15 + T17: legacy → Url 移行（自動分割しない）・冪等
+fn instant_legacy_migrates_to_url_idempotently() {
+    let mut cfg = Config {
+        instant_commands: vec![InstantCommand {
+            name: "ev".into(),
+            description: String::new(),
+            action: InstantAction::Legacy {
+                command: "C:\\tools\\editor.exe".into(),
+            },
+        }],
+        ..Default::default()
+    };
+    assert!(cfg.apply_migrations());
+    assert_eq!(
+        cfg.instant_commands[0].action,
+        InstantAction::Url {
+            url: "C:\\tools\\editor.exe".into()
+        }
+    ); // Exec にしない
+    // 冪等: 2回目は Legacy が残っていないので action は Url のまま
+    cfg.apply_migrations();
+    assert_eq!(
+        cfg.instant_commands[0].action,
+        InstantAction::Url {
+            url: "C:\\tools\\editor.exe".into()
+        }
+    );
+}
+
 #[test]
 fn dedup_instant_commands_first_wins_and_keeps_order() {
     // #638: 重複名は先勝ち（実行時 first-match と同じ行が残る＝挙動変化なし）。

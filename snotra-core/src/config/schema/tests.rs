@@ -210,32 +210,6 @@ fn instant_legacy_command_deserializes() {
     ));
 }
 
-#[test] // T15 + T17: legacy → Url 移行（自動分割しない）・冪等
-fn instant_legacy_migrates_to_url_idempotently() {
-    let mut cfg = cfg_with_instant(vec![InstantCommand {
-        name: "ev".into(),
-        description: String::new(),
-        action: InstantAction::Legacy {
-            command: "C:\\tools\\editor.exe".into(),
-        },
-    }]);
-    assert!(cfg.apply_migrations());
-    assert_eq!(
-        cfg.instant_commands[0].action,
-        InstantAction::Url {
-            url: "C:\\tools\\editor.exe".into()
-        }
-    ); // Exec にしない
-    // 冪等: 2回目は Legacy が残っていないので action は Url のまま
-    cfg.apply_migrations();
-    assert_eq!(
-        cfg.instant_commands[0].action,
-        InstantAction::Url {
-            url: "C:\\tools\\editor.exe".into()
-        }
-    );
-}
-
 #[test] // T1: Config 全体の serialize 往復で変種が保たれる
 fn instant_exec_roundtrip_preserves_variant() {
     let cfg = cfg_with_instant(vec![InstantCommand {

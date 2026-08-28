@@ -27,7 +27,7 @@
   - `config/migrate.rs` — デシリアライズ後の後処理（責務は `//!`）。以下は設定移行の不変条件:
     - **旧キーの後方互換移行**: 旧キー（`max_results`/`top_n_history`/`max_history_display`）は `apply_migrations()` が `skip_serializing` の legacy フィールド経由で移行する（2層レガシー: `result_limit` ← `[search].top_n_history` ← `[appearance].top_n_history`）
     - **migration を足すときは系統ごとの private fn として書く**（issue #435）: `apply_migrations()` は段階分解済みで、`migrate_legacy_additional_paths` / `migrate_legacy_count_params` / `resolve_count_param_defaults` / `sanitize_fuzzy_history_cap_ratio` / `migrate_instant_legacy_commands` / `fallback_invalid_hotkey` を持つ
-    - **migration の呼び出し順は元と同一に固定する**: `migrate_legacy_additional_paths`（`paths.additional`→`scan` 追加）→ `paths.normalize_scan_paths()`（dedup）の順序だけが真の依存（先に追加されたエントリを後続の正規化がまとめて dedup する）。他のステップは独立だが diff 最小化のため元の並びを保つ
+    - **migration の呼び出し順は元と同一に固定する**: `migrate_legacy_additional_paths`（`paths.additional`→`scan` 追加）→ `paths.normalize_scan_paths()`（dedup）の順序だけが真の依存（先に追加されたエントリを後続の正規化がまとめて dedup する）。他のステップは独立だが diff 最小化のため元の並びを保つ。**この 1 対だけは検知器が守る**（`legacy_additional_moves_into_scan_before_scan_paths_are_normalized`・入れ替える変異で落ちることを実測）——`migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので並びを通らない
   - `config/validate.rs` — 保存前の整合性検証（責務は `//!`）。**検出だけを行い、補正はしない**——不正値を既定値へ戻すのは `config/migrate.rs` の責務である（#437）
   - ユニットテストは対象モジュールの子として置く（`config/tests.rs` は `Config` 全体の serde、責務ごとの分は `config/schema/tests.rs` / `config/paths/tests.rs` / `config/location/tests.rs` / `config/io/tests.rs` / `config/migrate/tests.rs` / `config/validate/tests.rs`）——親の private を直接読むため、テストのために製品側の可視性を広げなくてよい
 - `opener.rs` — 外部ツール起動ルールの解析・正規化・マッチングと Win プリセット検出（責務は `//!`、公開 API 契約は各 `///` を正とする。`config.rs` から分離・#435）

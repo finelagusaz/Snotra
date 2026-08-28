@@ -5,7 +5,8 @@
 //! `snotra-core/CLAUDE.md`「Config のデシリアライズ経路」）。
 //!
 //! 移行は系統ごとの private fn へ分けてあり、**呼び出し順は [`Config::apply_migrations`] が
-//! 持つ**（真の順序依存はそこのコメントが名指しする 1 対だけである）。
+//! 持つ**。順序依存を持つステップはそこの行末コメントが依存先を名指しするので、依存の一覧を
+//! ここへ写さない。
 //!
 //! **検出はここの責務ではない**——不正値を見つけて報告するのは `super::validate` で、ここは
 //! 補正する側である（責務分離の経緯は #437）。
@@ -56,9 +57,9 @@ impl Config {
     /// Returns true if any changes were applied.
     /// Called by `load()` (auto-save on change) and import (caller decides when to save).
     pub fn apply_migrations(&mut self) -> bool {
-        // 呼び出し順は挙動不変のため元のまま固定する。(1)→(5) は真の順序依存
-        // （additional→scan で追加された scan エントリを scan 正規化がまとめて dedup する必要がある）。
-        // それ以外は独立だが、diff 最小化のため元の並びを保つ。
+        // 呼び出し順は挙動不変のため元のまま固定する。**順序依存を持つステップは、その行の
+        // 末尾コメントが依存先を名指しする**（`(5) の normalize より先` / `(2) より後` の形）。
+        // 名指しの無いステップは独立だが、diff 最小化のため元の並びを保つ。
         let mut changed = false;
         changed |= self.migrate_legacy_additional_paths(); // (1) additional → scan（(5) の normalize より先）
         changed |= self.migrate_legacy_count_params(); // (2) #388 改名マイグレーション

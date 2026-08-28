@@ -506,13 +506,20 @@ fn apply_migrations_normalizes_additional() {
     assert!(!config.paths.scan.is_empty());
 }
 
-/// `apply_migrations` の並びのうち**唯一の真の順序依存**を pin する——(1) `additional` → `scan`
-/// の追加は、(5) `scan` の正規化・dedup より前に来なければならない。
+/// `apply_migrations` の順序依存のうち 1 つを pin する——(1) `additional` → `scan` の追加は、
+/// (5) `scan` の正規化・dedup より前に来なければならない。
 ///
-/// 入れ替えると `C:/Tools/` が正規化されないまま push され、`migrate_additional_to_scan` の
-/// 照合は生の小文字比較なので既存の `C:\Tools` と一致せず、重複が残る。**この形でしか落ちない**
-/// ——`migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので並びを通らず、並びを
-/// 通る `apply_migrations_normalizes_additional` は件数を見ないため入れ替えても真のままである。
+/// **`migrate_additional_to_scan` が作る 2 つの枝を両方通す。** legacy パスは、既存 `scan` の
+/// エントリへマージされるか、新しいエントリとして push されるかのどちらかで、**どちらも
+/// 綴りを直さずに置く**（照合は生の小文字比較、push は原文のまま）。整えるのは後続の (5) だけ
+/// なので、入れ替えると前者は重複が残り、後者は前後の空白が落ちない。空白の残る `scan` は
+/// 存在しないディレクトリを指し、indexer は**静かに何も索引しない**。
+///
+/// **死角: 照合の実装を同時に変える複合の変異までは見ない。** 照合を正規化キーへ替えると
+/// マージ枝は入れ替えても成立してしまい、そのとき落ちるのは push 枝の assert だけになる。
+///
+/// この形でしか落ちない——`migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので
+/// 並びを通らず、並びを通る `apply_migrations_normalizes_additional` は綴りを見ない。
 #[test]
 fn legacy_additional_moves_into_scan_before_scan_paths_are_normalized() {
     let mut config = Config::default();
@@ -521,15 +528,27 @@ fn legacy_additional_moves_into_scan_before_scan_paths_are_normalized() {
         extensions: vec![".lnk".to_string()],
         include_folders: false,
     }];
-    // 同じディレクトリを、正規化しないと一致しない綴りで legacy 側へ置く。
+    // 既存エントリと同じディレクトリを、正規化しないと一致しない綴りで置く（マージされる枝）。
     config.paths.additional.push("C:/Tools/".to_string());
+    // どの既存エントリとも一致しない綴りを置く（新規に push される枝）。
+    config.paths.additional.push("  D:\\Bin  ".to_string());
 
     assert!(config.apply_migrations());
 
     assert_eq!(
         config.paths.scan.len(),
-        1,
-        "legacy エントリが正規化より後に push され、重複が残った"
+        2,
+        "マージされるはずの legacy エントリが正規化より後に push され、重複が残った"
+    );
+    assert!(
+        config.paths.scan.iter().any(|sp| sp.path == "D:\\Bin"),
+        "push された legacy エントリが正規化を通っていない: {:?}",
+        config
+            .paths
+            .scan
+            .iter()
+            .map(|sp| &sp.path)
+            .collect::<Vec<_>>()
     );
 }
 

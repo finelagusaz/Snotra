@@ -1201,9 +1201,12 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 ///
 /// # 補正するのは縦だけである
 ///
-/// x と幅は外形どうしのまま渡す。**両窓の左右の枠が等しいことに依存している**——等しければ
-/// 誤差が打ち消し合って左端が揃う。等しくない状況（main と results が別 DPI のモニターへ
-/// 跨る配置）では横がずれるが、その実測はしていない。**この前提は観測値であって述語ではない。**
+/// x は main の外形左端をそのまま渡す。**両窓の左右の枠が等しいことに依存している**——等しければ
+/// 誤差が打ち消し合って見える左端が揃う。**幅はそれとは別の経路で決まる**（results の外形幅は
+/// `layout::results_size_phys` が論理幅と results 窓の scale から独立に導く）ので、**右端まで
+/// 揃う条件は「両窓の scale が等しく、かつ左右の枠が等しい」である**。どちらも破れるのは main と
+/// results が別 DPI のモニターへ跨る配置で、そこでは横がずれる。その実測はしていない。
+/// **これらの前提は観測値であって述語ではない。**
 ///
 /// # 受容する残余: 外形の重なりと、その帯のマウス入力
 ///
@@ -1213,14 +1216,17 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// 機体で `window_gap = 4` のとき 3 物理 px、`0` なら 8 物理 px である。
 ///
 /// 重なった帯では main の枠が前に居るため、`WindowFromPoint` は results ではなく main を返す
-/// ——**results の先頭行の上端がその厚みぶんクリックに応じない**（2026-08-28 実測）。
+/// （2026-08-28 実測）。**ただしクリックが失われるのは重なり全体ではない**——重なりのうち
+/// `results_top` の分は results 自身の不可視枠であって元から中身が無い。**失うのは
+/// `main_bottom − round(window_gap × scale)`**、すなわち results の先頭行の上端のその厚みである
+/// （実測機体は `results_top = 0` ゆえ重なりと一致するが、それは一致であって同じ式ではない）。
 /// **リサイズは始まらない**——両窓とも `resizable(false)` で生成する（`super::create`）。
 ///
 /// **直さずに残す。** z-order で results を上げる案は、この関数の管轄外である上に（所在の正本は
 /// このモジュールの `//!`）、topmost どうしの順序を恒常的に固定する不変条件を `Moved` 追従と
 /// show/hide の全経路へ足すことになる。main 側の枠を消す案は [`FrameGeom`] の `inset_h`・
-/// バーのクランプ・hide の位置保存（#755 / #801）へ波及する。**既定値のもとで失うのは先頭行の
-/// 上端 3 物理 px であり、どちらの案もそれに釣り合わない。**
+/// バーのクランプ・hide の位置保存（#755 / #801）へ波及する。**DPI 125% の実測機体が既定値
+/// （`window_gap = 4`）で失うのは先頭行の上端 3 物理 px であり、どちらの案もそれに釣り合わない。**
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {

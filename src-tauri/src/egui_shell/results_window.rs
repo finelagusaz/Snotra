@@ -283,6 +283,20 @@ impl ResultsWindow {
         let _ = self.window.set_position(tauri::PhysicalPosition::new(x, y));
     }
 
+    /// 自窓の外形に含まれる**不可視枠**の上辺の厚み（物理 px）。
+    ///
+    /// `set_position` が置くのは外形の上端であり、見えている上端はこの厚みだけ下にある。
+    /// main の下端との隙間を意図どおりにするために [`window_coordinator::position_results_below_main`]
+    /// が引く（概念は `layout::InvisibleBorders`、読みは `window_coordinator::read_window_borders`）。
+    ///
+    /// **窓のハンドルを外へ出さないための口である。** この型は raw 操作の所有点であり、
+    /// `window` を借せば「ガードの内側でだけ撃つ」不変条件が型の外で破れる（`show` の doc）。
+    ///
+    /// [`window_coordinator::position_results_below_main`]: super::window_coordinator::position_results_below_main
+    pub(crate) fn top_border_phys(&self) -> i32 {
+        super::window_coordinator::read_window_borders(&self.window).top
+    }
+
     #[cfg(windows)]
     fn raw_show(&self) {
         use windows::Win32::Foundation::HWND;

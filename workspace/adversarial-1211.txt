@@ -1,0 +1,245 @@
+敵対的レビュー — research.md（issue #1211）
+対象: C:/workspace/Snotra/workspace/research.md
+実施: 2026-09-02
+
+方針: 同意ではなく反証を求められた。5 命題 + 測定環境を中心に、一次資料
+（installer.nsi 実物・utils.nsh・updater.rs・tauri.conf.json・release.yml・
+package-lock.json・git tag・SPEC.md・issue #1211 本文）を自分で読み直した。
+
+=====================================================================
+命題1: DeleteRegValue の値名は RUN_VALUE_NAME と逐語一致するか
+=====================================================================
+
+結論: 崩せなかった。一致する。
+
+- `${PRODUCTNAME}` は installer.nsi:35 `!define PRODUCTNAME "Snotra"` で展開される。
+  `tauri.conf.json` の `productName: "Snotra"` から来ており、autostart.rs:41
+  `RUN_VALUE_NAME = "Snotra"` とバイト単位で一致（大文字小文字含め完全一致、
+  末尾空白等の混入もない）。
+- 大文字小文字: Windows レジストリの値名比較は大文字小文字を区別しない
+  （Win32 の一般知識。ローカルで反証する術は無いが、逐語一致な以上そもそも
+  この論点は発火しない）。
+- レジストリビュー（WOW64）: `SetContext` マクロ（utils.nsh:3-18）は
+  `RunningX64` かつ `INSTALLMODE==currentUser` のとき `SetRegView 64` を呼ぶ。
+  **しかし `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` は WOW64 の
+  リダイレクト/リフレクション対象キーではない**（リダイレクトは
+  `HKLM\Software\...` と `HKCU\Software\Classes\...` に限定され、
+  `HKCU\...\Run` はプロセスのビット数によらず単一の実体）。ゆえに
+  `SetRegView` の値は本命題に影響しない。アプリ側 `win_registry.rs::open_hkcu`
+  も `KEY_WOW64_64KEY`/`32KEY` を指定せずデフォルトのまま `HKEY_CURRENT_USER`
+  を開いており、インストーラ側と食い違うレジストリビューを見に行く経路も無い。
+
+偽にする手順: `target/debug/nsis/x64/installer.nsi:35` と
+`snotra-core/src/autostart.rs:41` を diff。値が違えば命題は崩れる
+（現状は "Snotra" == "Snotra"）。
+
+=====================================================================
+命題2: INSTALLMODE=currentUser ゆえ非昇格・HKCU=利用者ハイブ
+=====================================================================
+
+結論: 崩せなかった。
+
+- installer.nsi:103-104 `!if "${INSTALLMODE}" == "currentUser" /
+  RequestExecutionLevel user` を実測。マニフェストで管理者権限を要求しない。
+- `SetContext`（utils.nsh:4-8）は `currentUser` のとき
+  `SetShellVarContext current` を呼ぶ（`all` ではない）——`$APPDATA` 等の
+  シェル変数を「現在のユーザー」に固定する側で、これも HKCU 前提と整合する。
+- アンインストーラの `un.onInit`（installer.nsi:727-745）も同じ `SetContext`
+  を呼んでおり、インストール時と実行時で文脈が食い違わない。
+
+偽にする手順: `RequestExecutionLevel admin` が currentUser 分岐に紛れて
+いないか、または un.onInit が別の SetContext 変種を呼んでいないかを grep。
+現状は 1 系統のみ。
+
+=====================================================================
+命題3: 「値が残る利用者は 0 人」
+=====================================================================
+
+結論: 崩せなかったが、根拠の組み立て方に補足が要る。
+
+- `git merge-base --is-ancestor 63236153 v0.19.2` を再実行 → 偽（ANCESTOR=false）。
+  `v0.19.2` の HEAD は `11828aab`（PR #1215 のスタートアップ機能はまだ未マージ
+  のタグに含まれない）を実測で確認。
+- v0.18.3 / v0.19.0 / v0.19.1 / v0.19.2 の 4 タグすべてで
+  `package-lock.json` の `@tauri-apps/cli` は 2.11.4 に固定（実測）。
+  ローカル `node_modules/@tauri-apps/cli/package.json` も 2.11.4 で一致。
+  `.github/workflows/release.yml:42` は `npm ci`（lockfile 厳密固定）。
+- **この結論は「#1210/#1215 がまだリリースされていない」ことだけで閉じており、
+  CLI バージョンの一致は実は主張の必要条件ではない**——スタートアップ登録
+  機能そのものが存在しないタグには、そもそも「値を残す」余地が無い。
+  ゆえに v0.18.3 以前の旧タグの CLI バージョンを調べる必要は無い
+  （research.md は調べていないが、調べなくても結論は成立する。ただし
+  research.md 自身がこの独立性を明記しておらず、CLI バージョン一致を
+  「根拠」として書いている点はやや過剰——本質的な根拠は「機能が存在
+  しない」の 1 点のみ）。
+- 配布経路: ポータブル ZIP（`Compress-Archive` で `snotra.exe`/
+  `snotra-settings.exe` のみ、release.yml:73-76）にはアンインストーラが
+  無く、この経路は最初から issue の対象外（issue 本文にも明記）。
+  winget/choco 等の別マニフェストはリポジトリ内に見当たらない
+  （`find . -iname "*.yaml" -path "*winget*"` 等 0 件、目視確認）。
+
+⚠️ 残る不確実性: 「#1215 を含む最初のリリース」が**将来**どの CLI
+バージョンでビルドされるかは今の lockfile が保証する話であって、
+未来の `npm ci`/依存更新で変わりうる。これは research.md も認めている
+射程（「まだリリースされていない」の裏返し）であり、崩し方は無いが
+"今後も 0 人であり続ける" という全称ではなく "現時点のリリース計画では
+0 人" という限定つきで読むべき。
+
+偽にする手順: v0.18.3 より前のタグで既にスタートアップ相当の機能が
+存在した形跡がないか `git log -S RUN_VALUE_NAME --all` で確認
+（今回未実施・下記「壊せなかった項目」に計上）。
+
+=====================================================================
+命題4: updater 経由では消えない
+=====================================================================
+
+結論: 崩せなかった。経路は実在し、必ず通る。
+
+- `tauri-plugin-updater-2.10.1/src/updater.rs:801-817` を実測。
+  `WindowsUpdaterType::Nsis` 分岐は `install_mode.nsis_args()`
+  （passive のとき `["/P","/R"]`）に**無条件で** `.chain(once("/UPDATE"))`
+  する。config 分岐（`update.windows.installMode`）が何であっても
+  `/UPDATE` は必ず付く——`/UPDATE` の有無は install_mode と独立。
+- `extract()`（同ファイル:882-929）: `bundle.targets: ["nsis"]` のみ・
+  `createUpdaterArtifacts: true`・release.yml の `latest.json` url は
+  `.exe` 直リンク（zip ではない）なので `extract_exe` → `infer::app::is_exe`
+  → 必ず `WindowsUpdaterType::Nsis` に解決する。Msi 分岐へ落ちる経路は
+  このアプリの構成に存在しない。
+- `un.onInit`（installer.nsi:727-745）が `/UPDATE` を `$UpdateMode` へ
+  読み取り、`Section Uninstall` の削除ブロック（:816）がそれを見て
+  スキップする。`$UpdateMode` を読む箇所は installer.nsi 全体で 2 箇所
+  （:478 の `.onInit`／:741 の `un.onInit`）のみで、いずれも `${GetOptions}`
+  経由の同じ読み取り。
+
+偽にする手順: `tauri.conf.json` の `bundle.targets` に `"msi"` を足すと
+updater が Msi 型を選びうる経路が開く（現状は未使用）。または
+`updater.rs` の該当バージョンが変わり `.chain(once("/UPDATE"))` の
+無条件性が失われていないかを都度確認する。
+
+=====================================================================
+命題5: `.nsh` を足すと更新退行になる（却下理由が強すぎないか）
+=====================================================================
+
+結論: 「未対策のまま足せば退行する」は崩せない。ただし
+**却下理由そのものはやや強すぎる**——ガード付きなら回避可能。
+
+- `NSIS_HOOK_PREUNINSTALL` は `Section Uninstall` の最上部（:749-751、
+  `CheckIfAppIsRunning` より前）で `!insertmacro` される。`$UpdateMode`
+  を見る削除ブロック（:816）より確実に**前**に走る。
+- **ただし `$UpdateMode` は `un.onInit`（Function、Section より必ず先に
+  実行される NSIS の標準順序）で既に設定済み**。つまりフックのコード内で
+  `${If} $UpdateMode <> 1` を自分で書けば、上流と同じガードを再現でき、
+  更新退行を回避できる。research.md §5 は「ガードを持たない削除を重ねる」
+  としか書いておらず、これは issue が提示した**素朴な実装**（無条件
+  `DeleteRegValue`）を却下する理由としては正しいが、**「.nsh 案は必ず
+  退行になる」という強い主張ではなく「素朴に書けば退行する」という
+  限定つきの主張として読むべき**。この区別は research.md の文面からは
+  やや読み取りにくい（結論の§2でも「足すと更新のたびに…退行になる」と
+  断定的に書かれており、「ガード無しなら」の限定が明示されていない）。
+  もっとも、§6・§9で「写しの結合」「issue の確認事項」を論じている以上、
+  .nsh 案自体は「不要な写しを増やす」という**実装しなくてよい理由**が
+  本筋であり、退行リスクは補助的な理由に留まる。結論（.nsh 不要）は
+  揺るがない。
+
+偽にする手順: `NSIS_HOOK_PREUNINSTALL` を実際に定義し、ガード無し版と
+ガード付き版をそれぞれビルドして `/UPDATE` 付き起動で挙動を比較する
+（未実施・下記「壊せなかった項目」に計上——ローカルで実インストーラを
+2種ビルドして起動検証するのは本レビューの権限・時間の外）。
+
+=====================================================================
+測定環境そのものを疑う
+=====================================================================
+
+1. **debug ビルドと release ビルドの installer.nsi の差分** ⚠️
+   実際に差分の存在を確認した: `installer.nsi:10` に `SetCompress off`
+   （debug 固有と推測される。release は圧縮ありのはず）。この 1 点は
+   実測で「debug と release の installer.nsi は同一ではない」ことを
+   示している。**しかし release 版の installer.nsi 自体をローカルで
+   生成して比較することはしていない**（`npx tauri build --bundles nsis`
+   に `--debug` を付けない実行は時間がかかる上、`target/` を触るなと
+   指示されているため未実施）。よって「Autostart 削除ブロック
+   （:812-818）が debug 限定ではなく release にも存在する」という
+   research.md の暗黙の前提は、**この installer.nsi 単体だけでは
+   証明されていない**。ただし該当ブロックは `!if`/`!ifdef` 等の
+   条件コンパイルで囲まれておらず、`SetCompress off` のような
+   明示的な debug 分岐とは書かれ方が違う（tauri-bundler 側で
+   `--debug` フラグが変えるのは主に圧縮設定・ログ出力であり、
+   アンインストール手順のテンプレートを丸ごと変える形跡は
+   このファイル内には無い）。**確信度: 中**——render soft evidence
+   のみで、release テンプレートの直接確認はできていない。
+
+2. **ローカル `node_modules/@tauri-apps/cli` と CI (`npm ci`) のバージョン一致**
+   実測: 両方とも 2.11.4（node_modules/@tauri-apps/cli/package.json の
+   version フィールドと package-lock.json の resolved version が一致）。
+   `package.json` の `^2.0.0` は範囲指定だが、`npm ci` は
+   package-lock.json を厳密に使うため決定的。崩せなかった。
+
+3. **tauri.conf.json の実値** 実測: `productName: "Snotra"`・
+   `bundle.targets: ["nsis"]`（他ターゲット無し）・
+   `plugins.updater.windows.installMode: "passive"`。
+   research.md の前提と完全一致。崩せなかった。
+
+=====================================================================
+その他の全主張の点検（母集団は research.md 全体）
+=====================================================================
+
+- §7 の表: `SPEC.md` §7.7 L457「アンインストールしても値が残る
+  （#1211 で扱う）」の実在を確認した（`SPEC.md` の該当行に確認済み・
+  現在も残存＝research.md の指摘どおり「偽の残余」）。
+- §7 の表: `scripts/governance/checks/G-clippy-disallowed.mjs` が
+  「非 md（TOML）を読み 2 ファイルの整合を見る先例」であることを
+  ソースで確認。`id`/`run` export・ファイル名 == id のパターンも
+  同ファイルで確認。ただし research.md の「`registry.mjs`」への
+  括弧書き参照はディレクトリを明示していない——実体は
+  `scripts/governance/registry.mjs`（`checks/` の**外**）であり
+  `checks/registry.mjs` ではない。research.md の文はこの点で
+  誤読を誘う書き方だが、明示的な誤り（パスの断定）ではないため
+  ⚠️扱いとする。
+- issue #1211 本文の要約（`gh issue view 1211`で再取得）は
+  research.md §1 の要約と一致した。「確認すること」の2項目
+  （写しのずれ検知・ポータブル版は塞げない）も逐語で一致。
+- `MAIN_EXE_FILE_NAME`/`MAINBINARYNAME` の結合（§6 隣接論点）:
+  `src-tauri/Cargo.toml` の package name "snotra" と
+  `installer.nsi:46 MAINBINARYNAME "snotra"` が一致することを確認。
+
+=====================================================================
+返り値サマリ
+=====================================================================
+
+(a) 壊せた項目（research.md の記述を修正すべき点）:
+  1. §7 の表の「registry.mjs」括弧参照はパスを明示しておらず、
+     実体は `scripts/governance/registry.mjs`（`checks/` 配下ではない）。
+     誤読を誘う（軽微）。
+  2. §5 の却下理由は「.nsh 案は素朴に実装すれば退行する」に留まり、
+     「.nsh 案は本質的に不可能/常に危険」と読めるほど強く書かれて
+     いる（結論は変わらないが、論拠の強さの記述は修正の余地あり）。
+
+(b) 壊せなかった項目（一次証拠で再確認・反証できず）:
+  - 命題1（値名の逐語一致・WOW64非該当）
+  - 命題2（currentUser・非昇格・SetContext の一貫性）
+  - 命題3（0人という結論——ただし CLI バージョン一致は結論の必要条件
+    ではないという構造上の指摘つき）
+  - 命題4（updater は必ず /UPDATE を付け、Msi 分岐には落ちない）
+  - issue 本文の要約の正確性
+  - SPEC.md §7.7 の残存記述
+  - MAIN_EXE_FILE_NAME/MAINBINARYNAME の一致
+  - tauri.conf.json の実値
+  - node_modules と CI の CLI バージョン一致
+
+(c) ⚠️ 一覧（確信の持てない所見）:
+  1. release ビルドの installer.nsi をローカルで生成・diff していない
+     ため、「Autostart 削除ブロックが debug/release で同一」は
+     間接証拠（条件コンパイルの不在）のみに基づく。確信度: 中。
+  2. 「値が残る利用者 0 人」の将来にわたる保証は今の lockfile 依存
+     であり、将来の依存更新で崩れうる全称ではない限定つき主張として
+     読むべき（research.md 自身は明示していない）。
+  3. v0.18.3 より前の全タグでの CLI バージョンおよび
+     スタートアップ相当機能の不在は `git log -S` 等で走査しておらず、
+     「そもそも調べる必要が無い」という論拠に依拠している
+     （論拠自体は健全と判断するが、実地の裏取りは未実施）。
+  4. §7 の govern check 表参照のパス誤読の程度（意図的な省略か
+     単なる不精確かは判定できない）。
+
+いずれの ⚠️ も research.md の中心結論
+（「issue の前提は偽・.nsh は不要・updater 経由では安全」）を
+覆すものではない。

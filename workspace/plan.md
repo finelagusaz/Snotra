@@ -110,35 +110,35 @@ pub fn disable() -> Result<(), AutostartError>;
 
 ### Phase 1 — `snotra-core`（レジストリ層）
 
-- [ ] `snotra-core/src/win_registry.rs` を新設し、`RegKeyGuard` を `path_env.rs` から移設する。`open_hkcu(subkey: PCWSTR, access: REG_SAM_FLAGS) -> Option<RegKeyGuard>` を置く
-- [ ] `path_env.rs` の `read_user_path` を `open_hkcu` 経由へ書き換え、`RegKeyGuard` の定義を削除する
-- [ ] `snotra-core/src/autostart.rs` を新設し、上のインターフェースを実装する。`//!` に責務・受容する残余（OS I/O 部は untested・その理由）を書く
-- [ ] `snotra-core/src/autostart/tests.rs` に純粋部のテストを書く（下の「テスト方針」）
-- [ ] `lib.rs` に `pub mod autostart;` / `mod win_registry;` を追加する
-- [ ] `cargo test -p snotra-core` と `cargo clippy --workspace --all-targets -- -D warnings` が緑
+- [x] `snotra-core/src/win_registry.rs` を新設し、`RegKeyGuard` を `path_env.rs` から移設する。`open_hkcu(subkey: PCWSTR, access: REG_SAM_FLAGS) -> Option<RegKeyGuard>` を置く
+- [x] `path_env.rs` の `read_user_path` を `open_hkcu` 経由へ書き換え、`RegKeyGuard` の定義を削除する
+- [x] `snotra-core/src/autostart.rs` を新設し、上のインターフェースを実装する。`//!` に責務・受容する残余（OS I/O 部は untested・その理由）を書く
+- [x] `snotra-core/src/autostart/tests.rs` に純粋部のテストを書く（下の「テスト方針」）
+- [x] `lib.rs` に `pub mod autostart;` / `mod win_registry;` を追加する
+- [x] `cargo test -p snotra-core` と `cargo clippy --workspace --all-targets -- -D warnings` が緑
 
 ### Phase 2 — `snotra-settings`（UI）
 
-- [ ] `i18n.rs` に `TrKey` の 6 variant と `ja()` / `en()` の行を追加する（文言は下の表）
-- [ ] `general.rs` に `GeneralTabState`（`enabled: bool` / `message: String` / `message_is_error: bool`）を定義し、`ui()` の引数へ追加する
-- [ ] `general.rs` に「スタートアップ」節とチェックボックスを追加し、`.changed()` で `enable()` / `disable()` を呼び、**その直後に `is_enabled()` を読み直して `state.enabled` を更新する**（失敗時に UI が嘘をつかないため）
-- [ ] `app.rs` の `SettingsApp::new` に **`autostart_enabled: bool` 引数を足し**、`general_state` をその値で初期化する。**`new()` の中で `autostart::is_enabled()` を呼んではならない**（下記）
-- [ ] `app.rs` の `run()` が `autostart::is_enabled()` を読み、`SettingsApp::new` へ渡す。**実レジストリを読む地点は `run()` の 1 箇所だけにする**
-- [ ] 既存 kittest の `en_harness` は `SettingsApp::new(config, false, None, LoadOutcome::Loaded, /* autostart_enabled */ false)` と固定値で構築する
-- [ ] `cargo test -p snotra-settings` と clippy が緑
+- [x] `i18n.rs` に `TrKey` の 6 variant と `ja()` / `en()` の行を追加する（文言は下の表）
+- [x] `general.rs` に `GeneralTabState`（`enabled: bool` / `message: String` / `message_is_error: bool`）を定義し、`ui()` の引数へ追加する
+- [x] `general.rs` に「スタートアップ」節とチェックボックスを追加し、`.changed()` で `enable()` / `disable()` を呼び、**その直後に `is_enabled()` を読み直して `state.enabled` を更新する**（失敗時に UI が嘘をつかないため）
+- [x] `app.rs` の `SettingsApp::new` に **`autostart_enabled: bool` 引数を足し**、`general_state` をその値で初期化する。**`new()` の中で `autostart::is_enabled()` を呼んではならない**（下記）
+- [x] `app.rs` の `run()` が `autostart::is_enabled()` を読み、`SettingsApp::new` へ渡す。**実レジストリを読む地点は `run()` の 1 箇所だけにする**
+- [x] 既存 kittest の `en_harness` は `SettingsApp::new(config, false, None, LoadOutcome::Loaded, /* autostart_enabled */ false)` と固定値で構築する
+- [x] `cargo test -p snotra-settings` と clippy が緑
 
 ### Phase 3 — 文書
 
-- [ ] `SPEC.md` §7.7 を新設し、§7.2 / §7.3 / §7.5 / §13.3 に参照行を置く
-- [ ] `docs/architecture.md`「設定管理」に 1 行追加する
-- [ ] `snotra-core/CLAUDE.md` の索引に 3 行追加し、「Win32 非依存」の一句を直す
-- [ ] `snotra-settings/CLAUDE.md` に 1 行追加する
-- [ ] `npm run governance:check` が緑
+- [x] `SPEC.md` §7.7 を新設し、§7.2 / §7.3 / §7.5 / §13.3 に参照行を置く
+- [x] `docs/architecture.md`「設定管理」に 1 行追加する
+- [x] `snotra-core/CLAUDE.md` の索引に 3 行追加し、「Win32 非依存」の一句を直す
+- [x] `snotra-settings/CLAUDE.md` に 1 行追加する
+- [x] `npm run governance:check` が緑
 
 ### Phase 4 — 検証
 
 - [ ] カテゴリ A のコマンドをすべて実行する
-- [ ] `/symmetric-check` を実行する（登録/解除の対称ペア）
+- [x] `/symmetric-check` を実行する（登録/解除の対称ペア）
 - [ ] カテゴリ D の目視を実施し、結果を PR 本文に残す（下の「目視項目」）
 
 ## 文言（i18n）

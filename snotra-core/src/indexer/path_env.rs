@@ -15,19 +15,6 @@ use super::scan::is_hidden_or_system;
 #[cfg(test)]
 mod tests;
 
-/// レジストリキーの RAII ガード。Drop 時に自動で RegCloseKey を呼ぶ。
-#[cfg(windows)]
-struct RegKeyGuard(windows::Win32::System::Registry::HKEY);
-
-#[cfg(windows)]
-impl Drop for RegKeyGuard {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = windows::Win32::System::Registry::RegCloseKey(self.0);
-        }
-    }
-}
-
 /// ユーザー環境変数の PATH を読み取る（HKCU\Environment\Path）。
 /// システム PATH（System32 等）は含まない。
 /// REG_EXPAND_SZ の場合は環境変数を展開して返す。
@@ -37,25 +24,15 @@ fn read_user_path() -> Option<String> {
     use windows::Win32::System::Registry::*;
     use windows::core::w;
 
-    unsafe {
-        let mut raw_key = HKEY::default();
-        RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            w!("Environment"),
-            Some(0),
-            KEY_READ,
-            &mut raw_key,
-        )
-        .ok()
-        .ok()?;
-        let key = RegKeyGuard(raw_key);
+    let key = crate::win_registry::open_hkcu(w!("Environment"), KEY_READ)?;
 
+    unsafe {
         let mut data_type = REG_VALUE_TYPE::default();
         let mut buf_size: u32 = 0;
 
         // サイズ取得
         let status = RegQueryValueExW(
-            key.0,
+            key.key(),
             w!("Path"),
             None,
             Some(&mut data_type),
@@ -69,7 +46,7 @@ fn read_user_path() -> Option<String> {
         // 値取得
         let mut buf = vec![0u16; (buf_size as usize) / 2];
         RegQueryValueExW(
-            key.0,
+            key.key(),
             w!("Path"),
             None,
             Some(&mut data_type),

@@ -7,6 +7,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 ## アーキテクチャ
 
 - 本体との連携は `config.toml` ファイル1点のみ。IPC は使わない
+  - **射程は「本体との連携」である。** スタートアップ登録（`HKCU\...\Run`）はこの射程の外で、設定アプリが `config.toml` 以外へ書く唯一の永続状態である——本体は読まず、読むのは Windows のサインイン処理だけなので連携先は増えていない。正本は `SPEC.md` §7.7、機構は `snotra_core::autostart`
 - 7タブの設定エディタ（General / Search / Index / Visual / Opener / Instant Command / Backup）。バージョン情報はサイドバーに表示
 - 設定の読み書きは `snotra-core::Config` を直接使用。本体は `notify` クレートで変更を検知する
 

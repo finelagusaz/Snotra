@@ -6,6 +6,7 @@
 //! 共有する理由は [`RegKeyGuard`] が `RegCloseKey` を呼ぶだけの型であり、**片方だけが変わる将来を
 //! 挙げられない**ことによる（`AGENTS.md`「検証の作法」の重複排除の判定）。
 
+use windows::Win32::Foundation::WIN32_ERROR;
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, REG_SAM_FLAGS, RegCloseKey, RegOpenKeyExW,
 };
@@ -29,17 +30,21 @@ impl Drop for RegKeyGuard {
     }
 }
 
-/// `HKEY_CURRENT_USER\<subkey>` を `access` で開く。開けなければ `None`。
+/// `HKEY_CURRENT_USER\<subkey>` を `access` で開く。
+///
+/// **失敗は Win32 のエラーコードを持って返る**——`Option` にすると呼び出し側が「開けなかった」を
+/// 表す番号を自分で作ることになり、`0`（`ERROR_SUCCESS`）を失敗として利用者へ見せる形になる。
 ///
 /// **キーを作らない。** 作成には `RegCreateKeyExW` が要るが、あれは `windows` crate の
 /// `Win32_Security` feature を要求する（`SECURITY_ATTRIBUTES` を引数に取るため・実測）。
 /// この crate の呼び出し先はいずれも Windows が用意する既存キーなので、開くだけで足りる。
-pub(crate) fn open_hkcu(subkey: PCWSTR, access: REG_SAM_FLAGS) -> Option<RegKeyGuard> {
+pub(crate) fn open_hkcu(subkey: PCWSTR, access: REG_SAM_FLAGS) -> Result<RegKeyGuard, WIN32_ERROR> {
     unsafe {
         let mut raw_key = HKEY::default();
-        RegOpenKeyExW(HKEY_CURRENT_USER, subkey, Some(0), access, &mut raw_key)
-            .ok()
-            .ok()?;
-        Some(RegKeyGuard(raw_key))
+        let status = RegOpenKeyExW(HKEY_CURRENT_USER, subkey, Some(0), access, &mut raw_key);
+        if status.is_err() {
+            return Err(status);
+        }
+        Ok(RegKeyGuard(raw_key))
     }
 }

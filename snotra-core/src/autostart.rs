@@ -15,6 +15,14 @@
 //! - **タスクマネージャーで無効化されても検知しない。** Windows は `Run` 値を消さず
 //!   `Explorer\StartupApproved\Run` へ無効マークを置く。[`is_enabled`] の意味論は
 //!   「`Run` 値が存在する」であって「実効的に有効」ではない
+//! - **「テストが実 `HKCU` を触らない」を守る機構は無い。** `snotra-settings` 側は構築時の読みを
+//!   引数化して構造的に塞いである（`SettingsApp::new` の doc）が、**操作の経路は塞げていない**
+//!   ——将来この機能のチェックボックスを kittest でクリックすると、開発機と CI の実レジストリへ
+//!   書き込む。規範として止めるほかない（`snotra-settings/CLAUDE.md`「ヘッドレス UI テスト」）
+//! - **非 Windows では [`enable`] / [`disable`] が `Ok(())` を返すのに [`is_enabled`] は常に
+//!   `false` である。** UI は「登録しました」と出した直後にチェックが外れる。このリポジトリが
+//!   配布するのは Windows 版だけなので到達しないが、**スタブの組が意味として揃っていないこと**は
+//!   宣言しておく（揃えるには非 Windows 側に状態を持たせることになり、持つ意味が無い）
 
 use std::path::{Path, PathBuf};
 
@@ -67,7 +75,11 @@ fn main_exe_from(settings_exe: &Path) -> Option<PathBuf> {
     Some(dir.join(MAIN_EXE_FILE_NAME))
 }
 
-/// `snotra-settings.exe` の隣にある `snotra.exe` の絶対パス。実在しなければ `None`。
+/// **呼び出し元の実行ファイルと同じディレクトリにある** [`MAIN_EXE_FILE_NAME`] の絶対パス。
+/// 実在しなければ `None`。
+///
+/// この crate は `snotra.exe` にもリンクされるので、「設定アプリの隣」とは書かない——
+/// 隣を決めるのは `current_exe()` であって呼び出し元の種類ではない。
 pub fn main_exe_path() -> Option<PathBuf> {
     let settings_exe = std::env::current_exe().ok()?;
     let main_exe = main_exe_from(&settings_exe)?;
@@ -83,14 +95,32 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// `Run` キーを `access` で開く。**バッファをローカルへ束縛する唯一の地点**であり、
-/// 3 つの公開関数はここを通ることで [`wide`] の寿命の落とし穴を避ける。
+/// `Run` キーを `access` で開く。サブキー名のバッファをローカルへ束縛してから [`wide`] の
+/// 寿命の落とし穴を避ける——**値名の側は各呼び出し側が同じことをする**（ここを通っても
+/// 束縛されるのはサブキー名だけである）。
 #[cfg(windows)]
 fn open_run_key(
     access: windows::Win32::System::Registry::REG_SAM_FLAGS,
-) -> Option<crate::win_registry::RegKeyGuard> {
+) -> Result<crate::win_registry::RegKeyGuard, AutostartError> {
     let subkey = wide(RUN_SUBKEY);
     crate::win_registry::open_hkcu(windows::core::PCWSTR::from_raw(subkey.as_ptr()), access)
+        .map_err(|status| AutostartError::Registry(status.0))
+}
+
+/// UTF-16 バッファを、`RegSetValueExW` が要求するバイト列として借りる。
+///
+/// **戻り値の寿命が引数に結びつく**ことが要点である。`from_raw_parts` を呼び出し側へ直接書くと
+/// 生存期間が推論されない（unbounded lifetime）ため、**将来 `value` の位置を動かす整理が
+/// 黙って UB へ落ちる**。ここで借用として畳んでおけば借用検査がそれを止める。
+///
+/// **借用検査が守るのは寿命だけである——長さの正しさは射程の外にある。** `REG_SZ` の `cbData` は
+/// null 終端込みの**バイト数**でなければならず、要素数を渡すと値が途中で切れる。そちらを守るのは
+/// `as_bytes_counts_utf16_bytes_including_the_null_terminator` である（変異注入で実測）。
+#[cfg(windows)]
+fn as_bytes(value: &[u16]) -> &[u8] {
+    // 安全性: `u16` の並びを `u8` として読むだけ（アライメントは 2 → 1 で緩む向き）。
+    // 長さは同じ確保の内側であり、`value` の生存期間が戻り値へそのまま乗る。
+    unsafe { std::slice::from_raw_parts(value.as_ptr() as *const u8, std::mem::size_of_val(value)) }
 }
 
 /// 値名 [`RUN_VALUE_NAME`] が `Run` に存在するか。**読み取り失敗は `false` として扱う。**
@@ -102,7 +132,7 @@ pub fn is_enabled() -> bool {
     use windows::Win32::System::Registry::{KEY_READ, RegQueryValueExW};
     use windows::core::PCWSTR;
 
-    let Some(key) = open_run_key(KEY_READ) else {
+    let Ok(key) = open_run_key(KEY_READ) else {
         return false;
     };
     let name = wide(RUN_VALUE_NAME);
@@ -133,10 +163,10 @@ pub fn enable() -> Result<(), AutostartError> {
 
     let exe = main_exe_path().ok_or(AutostartError::MainExeNotFound)?;
     let value = wide(&command_line_for(&exe));
-    let key = open_run_key(KEY_WRITE).ok_or(AutostartError::Registry(0))?;
+    let key = open_run_key(KEY_WRITE)?;
     let name = wide(RUN_VALUE_NAME);
     // `RegSetValueExW` はバイト列を取るので、UTF-16 のバッファを null 終端込みでそのまま渡す。
-    let bytes = unsafe { std::slice::from_raw_parts(value.as_ptr() as *const u8, value.len() * 2) };
+    let bytes = as_bytes(&value);
     let status = unsafe {
         RegSetValueExW(
             key.key(),
@@ -167,7 +197,7 @@ pub fn disable() -> Result<(), AutostartError> {
     use windows::Win32::System::Registry::{KEY_WRITE, RegDeleteValueW};
     use windows::core::PCWSTR;
 
-    let key = open_run_key(KEY_WRITE).ok_or(AutostartError::Registry(0))?;
+    let key = open_run_key(KEY_WRITE)?;
     let name = wide(RUN_VALUE_NAME);
     let status = unsafe { RegDeleteValueW(key.key(), PCWSTR::from_raw(name.as_ptr())) };
     if status.is_err() && status != ERROR_FILE_NOT_FOUND {

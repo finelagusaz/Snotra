@@ -24,7 +24,7 @@ fn read_user_path() -> Option<String> {
     use windows::Win32::System::Registry::*;
     use windows::core::w;
 
-    let key = crate::win_registry::open_hkcu(w!("Environment"), KEY_READ)?;
+    let key = crate::win_registry::open_hkcu(w!("Environment"), KEY_READ).ok()?;
 
     unsafe {
         let mut data_type = REG_VALUE_TYPE::default();

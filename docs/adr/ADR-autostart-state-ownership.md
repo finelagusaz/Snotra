@@ -1,0 +1,97 @@
+# ADR-autostart-state-ownership: スタートアップ登録の状態を `Config` に持たせない
+
+- 状態: 採択（2026-09-01・#1210）
+- 文脈: 設定アプリから Windows のログオン時自動起動を登録・解除できるようにするにあたり、
+  「状態を誰が所有するか」「どの OS 機構を使うか」で複数の案を検討して却下した。
+  採用案そのもの（レジストリ `HKCU\...\Run` を正本とし、Save を経由せず即時適用する）は
+  コードと `SPEC.md` §7.7 が持つので、ここには**却下した案と理由だけ**を残す。
+
+## 1. `Config`（`config.toml`）に `general.launch_at_logon` を持たせる
+
+**却下。** 一見これが素直な形で、設定アプリの他の全項目と揃う。しかし 4 つの帰結がある。
+
+1. **`SPEC.md` §13.3 のバックアップが機体ローカルの OS 状態を持ち運ぶ。** import は
+   `config.toml` を逐語で上書きし、`app.rs` が `saved` を丸ごと差し替える。別マシンで
+   import すると、そのマシンのスタートアップ登録が反転する。登録に要る exe の絶対パスは
+   機体ごとに違うので、値としても意味を持たない
+2. **`SPEC.md` §7.3「初期設定に戻す」が登録解除の副作用を持つ。** `reset_to_default` は
+   既定値相当をドラフトへ入れるので、Save すれば登録が消える。ドラフトが汚れれば
+   タイトルの `*` とフッターで可視化されるため「黙って」ではないが、**利用者が
+   「設定を初期化した」つもりの操作が OS のログオン挙動を変える**筋の悪さは残る
+3. **`config.toml` ↔ レジストリの乖離を誰も調停しない。** タスクマネージャーや
+   レジストリエディタで外から変わる状態であり、config 側の値は「最後に設定アプリが
+   書いた値」でしかない。どちらを勝たせる規則を選んでも別の失敗モードが残る
+4. **この案はレジストリ実装を省かない——厳密な上位集合である。** 得るのは Save フローの
+   一貫性だけで、代わりに schema・`field_mutations()`・`SECTION_TABLE`・`/persistence-check`
+   の 4 点セット・§7.5 の反映経路・バックアップ汚染を追加で背負う
+
+**この却下には独立導出の裏づけがある**——`workspace/plan.md` を読ませない枠が、
+コードと規範だけから同じ 4 点に到達した（#1210 の Step 2b）。
+
+## 2. チェックボックスを Save ボタンのフローに載せる
+
+**却下。** 案 1 を却下した時点で構造的に選べない。`app.rs` の `has_changes()` は
+`draft != saved`（`Config` 単独の `PartialEq`）であり、タブ点灯を導く `SECTION_TABLE` の
+型は `fn(&Config, &Config) -> bool` である——**`Config` の外にある値はそもそも表現できない**。
+
+載せるには、`has_changes()`・`SECTION_TABLE`・Discard・Reset・×ボタンガード・
+`section_table_*` と kittest の不変条件すべてへ非 `Config` の dirty 源を配線することになり、
+チェックボックス 1 個に対して費用が釣り合わない。
+
+**副作用として、この却下が「即時適用が既存機構と衝突しない」ことの根拠にもなっている**
+——衝突しないのは偶然ではなく、状態を `Config` の外へ置いた帰結である。
+
+先例は `snotra-settings/src/tabs/backup.rs` の `//!`（「他タブと異なり Save/Discard ボタンを
+表示しない（即時操作のため）」）。**受容する残余**は、[全般] タブ内で「Save が要る項目」と
+「即時に効く項目」が混在すること。節見出しを分け、操作直後にインライン status を出す。
+
+## 3. `tauri-plugin-autostart` を使う
+
+**却下。構造的に当たらない。** プラグインは本体（`src-tauri`）のランタイムに属するが、
+**設定アプリは Tauri を持たない別プロセスである**。使えば「設定アプリ → `config.toml` →
+本体が適用」の形に固定され、案 1 で却下した設計を強制されるうえ、**本体が動いていないと
+適用されない**。`snotra-settings/CLAUDE.md`「本体との連携は `config.toml` ファイル1点のみ」
+とも衝突する。
+
+## 4. 他の OS 機構
+
+- **スタートアップフォルダの `.lnk`**: 却下。生成に COM（`IShellLinkW` + `IPersistFile`）が
+  要り、`snotra-core` は `Win32_System_Com` / `Win32_UI_Shell` を持たない（`src-tauri` は
+  持つが core には無い）。`Run` 値は REG_SZ 1 本で読み・書き・削除が閉じる
+- **`RunOnce`**: 却下。1 回実行して値が消える機構であり、「毎回のログオンで起動する」という
+  要求と意味が違う
+- **タスクスケジューラ（ログオントリガー）**: 却下。COM（`ITaskService`）か `schtasks.exe` の
+  起動が要り、`Run` 値 1 本に対して機構が重い。遅延起動・最上位特権という追加の利得は
+  今回の要求（チェックボックス 1 個）に含まれない
+- **`HKLM\...\Run`（per-machine）**: 却下。昇格が要る。設定アプリは非昇格で動き、実際の
+  インストールも per-user（`%LOCALAPPDATA%\Snotra`）である
+- **インストーラのオプションとして提供する**: 却下。ポータブル ZIP に効かず、
+  「設定アプリから削除できること」という要求も満たさない
+
+## 5. `RegCreateKeyExW` でキーを開く
+
+**却下（使えない）。** `windows` 0.62.2 では `RegCreateKeyExW` に
+`#[cfg(feature = "Win32_Security")]` が付く（`SECURITY_ATTRIBUTES` を引数に取るため。
+ソースを直接読んで実測）。`RegOpenKeyExW` / `RegQueryValueExW` / `RegSetValueExW` /
+`RegDeleteValueW` にはゲートが無い。
+
+`Run` は Windows が用意する well-known key で**作成の必要が無い**ので、
+`RegOpenKeyExW(KEY_WRITE)` で足りる。結果として `Cargo.toml` の変更はゼロになった。
+
+## 6. `win_registry::open_hkcu` が失敗を `Option` で返す
+
+**却下（実装中に差し戻した）。** 呼び出し側が「開けなかった」を表す番号を自分で作ることになり、
+実際に `AutostartError::Registry(0)` を返して**利用者に「コード 0」（＝`ERROR_SUCCESS`）という
+自己矛盾した診断**を見せていた。`Result<_, WIN32_ERROR>` にして実コードを載せる。
+
+## 帰結
+
+- `snotra-settings` は `config.toml` 以外へ書く永続状態を 1 つ持つことになった。
+  `snotra-settings/CLAUDE.md`「アーキテクチャ」に射程の注記を置いた
+- `snotra-core` は「Win32 非依存の純ロジック層」ではなくなった——**正確には変更前から
+  そうではなかった**（`indexer/path_env.rs` が既にレジストリを読んでいた）。今回 2 つ目の
+  Win32 モジュールが増えたのを機に、同 `CLAUDE.md` の記述を実態へ合わせた。
+  「UI 表示文字列を持たない」という規範は UI 非依存が理由なので、独立に成り立つ
+- 案 1 を却下した結果、`/persistence-check` の 4 点セット・`migrate.rs`・serde 既定値の面が
+  **足されるのではなく消えた**。残る永続識別子は `Run` の値名 `Snotra` 1 つで、これは
+  `SPEC.md` §7.7 が凍結する

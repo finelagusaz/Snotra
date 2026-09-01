@@ -19,7 +19,7 @@ use crate::style;
 #[derive(Default)]
 pub struct GeneralTabState {
     /// 直近に観測したスタートアップ登録の有無。
-    pub enabled: bool,
+    enabled: bool,
     /// 操作結果のインラインメッセージ（次の操作まで表示を維持する）。
     message: String,
     message_is_error: bool,

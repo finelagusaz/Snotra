@@ -151,6 +151,11 @@ OpenerRule のターゲットは文字列プレフィックスで種別を表現
 - **言語は `Language::En` に固定する**: `default_language()` は OS 依存でラベルが非決定的になる。
 - **重複させない——kittest は「実 UI 操作でしか検証できない wiring」に絞る**: dirty-dot 導出
   （`section_table_*`）とモーダル状態機械（`tabs::common::tests`）は純ロジックテスト済みである。
+- **[全般] タブ「スタートアップ」節のチェックボックスをクリックさせない**: あれは draft ではなく
+  **実レジストリ**（`HKCU\...\Run`）へ即時に書くので、クリックする kittest は開発機と CI の
+  スタートアップ登録を書き換える。**構築時の読みは `SettingsApp::new` の `autostart_enabled` 引数で
+  構造的に塞いであるが、操作の経路を塞ぐ機構は無い**——この一行が唯一の歯止めである
+  （機構が無いことの宣言は `snotra_core::autostart` の `//!`「受容する残余」が正本）。
 
 ### 境界（kittest で検証できないもの）
 

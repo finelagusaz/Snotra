@@ -1,0 +1,324 @@
+敵対的レビュー — research.md (#1210 スタートアップ登録/削除機能)
+開始: 調査中（随時追記）
+
+対象: C:\workspace\Snotra\workspace\research.md
+一次資料: gh issue 1210, scratchpad/probe-run-key.ps1
+
+=== 事前確認 ===
+
+probe-run-key.ps1 の内容を読んだ。research.md §2 の実測結果（書き込み成功・引用符込み逐語保存・
+StartupApproved レコード ABSENT・削除失敗時の例外・Startup フォルダパス）はこのスクリプトの
+出力形と一致する構造。ただし実行結果そのもの（このセッションでの再実行ログ）はまだ持っていない
+ので、これから再現する。
+
+gh issue view 1210 の本文は research.md §1 の要約と一致（チェックボックス形式・登録/削除のみ、
+スコープ拡張なしという記述も本文の短さと整合）。
+
+
+=== 争点1: 「windows crate の Win32_System_Registry feature が既に有効なので依存追加が 0」 ===
+
+重大度: ❌（部分的に偽。列挙した3 API のうち1つは追加 feature が要る）
+
+一次証拠:
+  snotra-core/Cargo.toml:23-29 で `windows 0.62.2` が
+  `["Win32_Storage_FileSystem", "Win32_System_Environment", "Win32_System_Registry",
+    "Win32_System_Threading"]` を持つことを確認（Win32_Security は無い）。
+
+  snotra-core/src/_probe_registry_write.rs（一時ファイル。検証後に削除・lib.rs の mod 宣言も
+  revert 済み・`git status --short snotra-core/` で汚れが無いことを確認済み）で
+  RegCreateKeyExW / RegSetValueExW / RegDeleteValueW / RegCloseKey を呼ぶコードを書き、
+  `cargo check -p snotra-core` を実行した。
+
+  1回目（RegCreateKeyExW 使用）:
+    error[E0425]: cannot find function, tuple struct or tuple variant `RegCreateKeyExW` in this scope
+       --> snotra-core\src\_probe_registry_write.rs:14:17
+    help: a function with a similar name exists: RegCreateKeyW
+
+  windows-0.62.2 のソース（$CARGO_HOME/registry/.../windows-0.62.2/src/Windows/Win32/System/Registry/mod.rs）
+  を確認すると、RegCreateKeyExW の直上に `#[cfg(feature = "Win32_Security")]` が付いている
+  （SECURITY_ATTRIBUTES 引数を持つため）。この cfg が付くのは RegCreateKeyExA/W・
+  RegCreateKeyTransactedA/W・RegGetKeySecurity・RegSaveKey*・RegSetKeySecurity の10箇所のみで、
+  RegOpenKeyExW / RegSetValueExW / RegDeleteValueW / RegCreateKeyW（Ex 無し版）は
+  ゲート無しでコンパイルできる。
+
+  2回目（RegOpenKeyExW(KEY_WRITE) + RegSetValueExW + RegDeleteValueW + RegCloseKey に差し替え）:
+    Checking snotra-core v0.1.0 (C:\workspace\Snotra\snotra-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.83s
+  → 成功。
+
+結論: research.md 本文 (行48) は「書き込み系 API（RegSetValueExW / RegDeleteValueW /
+RegCreateKeyExW）」の3つを名指しして「既存 feature だけで閉じる」と述べているが、
+このうち RegCreateKeyExW は Win32_Security feature の追加なしにはコンパイルできない
+（Win32_System_Registry feature だけでは不足）。ただし——実装上は RegCreateKeyExW は不要である
+可能性が高い。`HKCU\...\CurrentVersion\Run` キー自体は既存の well-known key（`CurrentVersion`
+の子）なので、新規作成の必要が無く RegOpenKeyExW(KEY_WRITE) で開けば足りる
+（path_env.rs の read_user_path が使うのと同じ RegOpenKeyExW。今回 KEY_WRITE でも成功を確認）。
+その経路なら claim は実質的に正しい結論（feature 追加 0）へ着地するが、**根拠として明示的に
+名指しした3つの API のうち1つは、そのままでは成立しない**——「既存 feature で閉じる」という
+主張の論証には瑕疵があり、計画には「RegCreateKeyExW ではなく RegOpenKeyExW を使う」という
+1行の訂正が要る。
+
+これを偽にする手順: 別の windows crate バージョンで Win32_Security 抜きでも RegCreateKeyExW が
+コンパイルできることを示す（現行 lockfile のピン止めバージョン 0.62.2 では上記の通り不可能）。
+
+
+=== 争点2: 「current_exe() の兄弟ディレクトリに snotra.exe が居る」（externalBin 配置） ===
+
+重大度: ✅（壊せなかった。実機で確認、むしろ research.md の前提を裏付ける追加証拠を得た）
+
+一次証拠:
+  src-tauri/tauri.conf.json:15-17: `"externalBin": ["binaries/snotra-settings"]`
+  src-tauri/binaries/ に `snotra-settings-x86_64-pc-windows-msvc.exe` が実在（target triple 付き、
+  Tauri externalBin の命名規則どおり）。
+
+  この機体に **Snotra が実際にインストールされている**ことを確認した（未確認のまま research.md が
+  前提にしていた点。争点5-1 でもある）:
+    winget list --name Snotra
+      名前   ID                          バージョン
+      Snotra ARP\User\X64\Snotra 0.19.0
+    ls "C:/Users/<user>/AppData/Local/Snotra"
+      snotra-settings.exe   snotra.exe   uninstall.exe
+  → NSIS インストール後の実配置で、`snotra.exe` と `snotra-settings.exe`（target triple サフィックス
+  無し = Tauri がリネームして同梱）が**同一ディレクトリに同居している**ことを実機で確認した。
+  cargo build 後の target/debug 配置（src-tauri/target/debug/snotra.exe と、externalBin が
+  target/debug 直下へ triple サフィックス付きでコピーされる形）とは別物だが、
+  window.rs:66-73 の `current_exe().parent().join("snotra-settings.exe")` という**鏡像**
+  （snotra-settings 側から見て `current_exe().parent().join("snotra.exe")`）は、
+  実インストール環境でもビルド環境でも「同じ親ディレクトリに拡張子付きファイル名で兄弟が居る」
+  という前提を満たす。research.md の設計判断はこの点で成立する。
+
+これを偽にする手順: NSIS インストーラのログ・ビルド設定を変更してインストール先のディレクトリ構造が
+将来変わらないことを保証する記述は無い（インストーラの決定は tauri-bundler 側にあり、このリポジトリの
+設定変更だけでは分離しない限り安定している）。今回の実測はこの機体の v0.19.0 インストールに対する
+ものであり、将来のバージョンで自明に保たれる保証はコード上に存在しない——ただし現時点の判断を
+覆す証拠にもならない。
+
+
+=== 争点2 派生: NSIS インストール先のパスに空白が含まれるという前提 ===
+
+重大度: ⚠️（具体例が実測と食い違う。ただし擁護している設計判断＝引用符付けは無傷）
+
+一次証拠:
+  実機の実際のインストール先: `C:\Users\<user>\AppData\Local\Snotra\snotra.exe`（空白を含まない）。
+  research.md 行84 が挙げる具体例: `"C:\Program Files\Snotra\snotra.exe"`（空白を含む・per-machine
+  install の場合の慣習パス）。
+  tauri.conf.json は `bundle.windows.nsis.installMode` を明示しておらず、per-user/per-machine の
+  既定値をこのリポジトリの設定からは断定できない。実機の観測（%LOCALAPPDATA%\Snotra、
+  非昇格インストール）は per-user 既定を示唆する。
+
+  → research.md が挙げた「NSIS の既定インストール先は空白を含みうる」の**具体例**は、この機体の
+  実際の既定インストール先とは一致しない（空白は無い）。ただし主張の骨子（値を引用符で括るべき、
+  という防御的コーディング判断）自体は、ユーザー名にスペースが含まれるケース
+  （`C:\Users\John Doe\AppData\...`）や per-machine install（`C:\Program Files\...`）を選んだ場合に
+  依然として成立するため、**結論（引用符で括る）は生き残るが、根拠として挙げた実例は不正確**。
+
+これを偽にする手順: `installMode: "perMachine"` を明示した別ビルドで実際に `C:\Program Files\Snotra\`
+へインストールされることを実測すれば、この具体例は正しくなる（今回は未実施——current install が
+それを使っていないため）。
+
+
+=== 争点3: 「Config のフィールドにしない」却下理由4点の検算 ===
+
+理由1（Backup import が saved を丸ごと差し替える）
+重大度: ✅（壊せなかった。逐語で確認）
+一次証拠: snotra-settings/src/app.rs:612-613
+    self.draft = result.imported_config.clone();
+    self.saved = result.imported_config;
+  BackupResult は import 成功時のみ Some を返す（tabs/backup.rs:30-33 の struct doc）。
+  → import 成功で draft と saved の**両方**が丸ごと imported_config に置き換わる。もし
+  `launch_at_logon: bool` が Config フィールドなら、別マシンで export した config.toml を import
+  した瞬間、この機体のスタートアップ登録状態が黙って import 元の値に反転する、という claim は
+  コードの読み通りに成立する。
+
+理由2（reset_to_default が既定値をドラフトへ入れる）
+重大度: ✅（ほぼ壊せなかったが「黙って」の強さは要修正・⚠️寄り）
+一次証拠: snotra-settings/src/app.rs:237-246
+    fn reset_to_default(&mut self) {
+        self.draft = Config::normalized_default();
+        ...
+    }
+  → draft**だけ**が既定値に置き換わり、saved は変更されない。claim「reset_to_default は
+  Config::default() 相当をドラフトへ入れる」は逐語で正しい。
+  ただし claim の前段（SPEC §7.3 節見出しで「黙って登録解除する」と評した表現）は精度に欠ける：
+  draft の変更は即座に画面上で dirty 状態（タイトル末尾 `*`・フッター「未保存の変更があります」・
+  ×ボタンで閉じられなくなる CloseRequested ガード）として現れる（app.rs:196 has_changes / 384-396
+  CloseRequested 節・CLAUDE.md「ウィンドウの閉じ操作と変更保護」）。実際に登録解除が有効になるのは
+  ユーザーが Save を押した後であり、「黙って」というほど不可視ではない。**却下理由の骨子（Reset が
+  意図せぬ副作用として登録解除を引き起こしうる）自体は生きているが、「黙って」の形容は言い過ぎ**。
+
+理由3（config.toml ↔ レジストリの乖離を誰も調停しない）
+重大度: ✅（壊せなかった。設計論としては筋が通る。ただしコードでは直接検証できない将来予測）
+検証: この主張はまだ存在しないコード（launch_at_logon フィールドを実際に足した場合の挙動）に
+関する予測であり、現行コードには反証も支持も無い。ただし类似の「外部で変更されうる状態を config に
+持たせる」ケースが本リポジトリに前例として存在するかを grep したところ、無かった
+（config.toml の全フィールドはこのアプリ自身が唯一の書き手という前提で設計されている——
+snotra-core/CLAUDE.md「データ永続化の注意」に見る通り、全体が「アプリが最後に書いた値」という
+セマンティクスを前提にしている）。この点は理由3を補強する状況証拠であり、否定する証拠は見つからな
+かった。
+
+理由4（新規 config キーを作らなければ persistence-check 等の面が丸ごと消える）
+重大度: ✅（壊せなかった。トートロジーに近いが偽ではない）
+検証: 新規 config キーを追加する場合 `/persistence-check`・`migrate.rs`・serde 既定値の考慮が
+必要になる（AGENTS.md「条件別チェック」表「永続形式・識別子/キー形式を変更」の行、
+snotra-core/CLAUDE.md「Config のデシリアライズ経路」節と符合）。フィールドを足さない設計なら
+これらの面は文字通り生じない。壊せなかった。
+
+
+=== 争点4: 「即時適用」判断と app.rs のガード・status 表示との衝突 ===
+
+重大度: ✅（壊せなかった。むしろ設計の自己整合性を裏付けたが、research.md 自身はこの結線を
+明示していない——⚠️ 寄りの ✅）
+
+一次証拠:
+  backup.rs:1-3 の `//!`: 「他タブと異なり Save/Discard ボタンを表示しない（即時操作のため）」
+  → claim「backup.rs が即時操作ゆえ Save/Discard を出さない先例」は逐語で正しい。
+
+  app.rs の × ボタンガード（CloseRequested, 393-396）と Escape ガード（384-386）は
+  `self.has_changes()`（= `self.draft != self.saved`、SettingsApp 全体の Config PartialEq、
+  app.rs:196）を判定に使う。
+
+  research.md §4 の設計（launch_at_logon を Config フィールドにしない）と整合させると：
+  新しい即時適用チェックボックスの状態は Config の外（BackupTabState 相当の tab-local state か、
+  レジストリ読み取りの都度反映）に持つことになる。Config フィールドでないなら draft/saved の
+  PartialEq には一切現れず、has_changes() の判定に影響しない——つまり ×ボタンガードや
+  「未保存の変更があります」status とは**構造的に衝突しない**。これはレジストリ SSOT 設計
+  （§4 の判断）が持つ副次的な整合性であり、Save が要る項目と即時反映項目が同じ General タブに
+  同居しても技術的な二重管理は生じない。
+
+  ただし research.md 本文（§4「適用タイミング」節）はこの結線（Config フィールドでないこと自体が
+  ×ボタンガード衝突を回避する根拠になっている）を明示的には書いていない——「残余」として書いている
+  のは UX 上の見出し分離の話だけで、この技術的な非衝突の論証は本文に無い。**争点2の設計判断
+  （§4「中核の設計判断」）と争点4（即時適用の判断）の間の依存関係が、research.md 本文では
+  暗黙のままになっている**——将来 launch_at_logon を Config フィールドへ変更する判断がもし
+  下されたら、即時適用の非衝突性も同時に崩れることになるが、その依存はどこにも明記されていない。
+
+これを偽にする手順: 実際に即時適用チェックボックスを実装し、Config フィールドとして持たせた版で
+kittest ハーネスを走らせ、has_changes() が予期せず true になることを再現すれば、この所見（衝突なし）
+は反証される。今回はコード変更を伴わない検証のため未実施——ただし現行コードの構造（Config が
+draft/saved 比較の唯一の入力）から論理的に導ける。
+
+
+=== 争点5-1: この機体に Snotra は実際にインストールされているか ===
+
+重大度: ✅（壊せなかった。research.md が暗黙に前提していた事実そのものを実測で裏付けた）
+
+一次証拠:
+  winget list --name Snotra
+    名前   ID                          バージョン
+    Snotra ARP\User\X64\Snotra 0.19.0
+  ls "C:/Users/<user>/AppData/Local/Snotra"
+    snotra-settings.exe(6,121,984 B, 2026-08-11)  snotra.exe(9,649,664 B)  uninstall.exe
+  ls "C:/Program Files/Snotra" → No such file or directory（per-machine 側には無い）
+
+結論: Snotra は**実際にインストールされている**（per-user、%LOCALAPPDATA%\Snotra、v0.19.0）。
+したがって研究文書 §2 の「HKCU\...\Run に Snotra が居ない」という観測は「そもそも
+インストールされていないから」ではなく、「インストール済みだが未登録だから」である——
+research.md が測定環境について暗黙に前提していた解釈（登録機能が無いことの反映）が正しかったことを
+実機で確認した。**これは research.md 自身が明示的に検証していなかった前提**（instructions の
+争点5冒頭が疑っていた点）だが、実測の結果は research.md 側の解釈を支持する。
+
+
+=== 争点5-2: HKCU\...\Run 以外の経路（RunOnce・Startup フォルダ・タスクスケジューラ）の比較検討 ===
+
+重大度: ⚠️（研究文書は Startup フォルダ(.lnk)だけを明示的に検討・却下しているが、
+タスクスケジューラと RunOnce は一度も言及していない——却下ですらなく、無評価）
+
+一次証拠:
+  research.md 全文を grep した（git grep 相当で該当ファイルを Read 済み）——
+  「タスクスケジューラ」「Task Scheduler」「schtasks」という語は §2 の実測表 1 行
+  （「タスクマネージャーの『無効化』」という文脈、これはスタートアップアプリの一覧 UI の話で
+  タスクスケジューラ機構そのものとは別物）を除き、本文のどこにも現れない。
+  「RunOnce」という語も本文に一度も現れない（§2 実測表にも§4 却下代替案にも無い）。
+  §4「却下する代替案」に明示的に挙げられているのは `.lnk`（Startup フォルダ・COM 経由）・
+  `tauri-plugin-autostart`・`HKLM\...\Run`（per-machine）の3つだけである。
+
+  RunOnce を検討しなかったこと自体は妥当と考えられる（一度だけ実行して自己削除する値であり、
+  「毎回ログオン時に起動する」という issue の要件に構造的に合わない——削除するまでもなく
+  不適合であることが RunOnce の仕様から自明）。
+  タスクスケジューラは「昇格不要」「遅延起動が不要」という issue のスコープ（#1210 は
+  「遅延起動・最小化起動・per-machine 登録などの追加要求は無い」と research.md 自身が明記）
+  に照らすと、Run キーに対して機能的な優位（起動遅延・条件付きトリガー・ログ）を持つが
+  実装コストが Run キーより高く（`ITaskService` COM インターフェース、または `schtasks.exe`
+  呼び出し）、「値1本の CRUD で完結する」という研究文書の設計方針とは相容れない。
+  却下の**結論**は恐らく変わらないが、**却下理由が本文に一度も書かれていない**——
+  「却下理由が実測ではなく思い込みでないか」という争点の問いに対しては、「思い込み」ですら
+  なく「無評価」だった、というのが正確な所見である。
+
+これを偽にする手順: research.md の版が更新されて RunOnce・タスクスケジューラへの言及が
+追加されていれば、この所見は覆る（今回読んだ版には無い）。
+
+
+=== 争点5-3: StartupApproved\Run のレコード ABSENT 実測が測定タイミングに依存していないか ===
+
+重大度: ⚠️（否定も肯定もできない。意図的にテストを避けた——理由を明記する）
+
+検討: probe-run-key.ps1 は Run 値を書いた**直後**、同一 PowerShell セッション内で
+StartupApproved\Run の GetValueNames() を読んでいる。一般に知られている Windows の挙動として、
+StartupApproved のレコードは Explorer（`explorer.exe`）が起動時（ログオン時）に Run/RunOnce の
+現在値を走査して未記録の値へ「有効（02...）」のレコードを補完する、という説がある（公式文書での
+断定は見つからなかった）。これが事実なら、「新規 Run 値に対するレコードが自動生成されない」という
+research.md の実測は「まだ Explorer が次のログオン走査を行っていない」窓の中でだけ真であり、
+次回ログオン（または `explorer.exe` の再起動）後には記録が現れる可能性がある。
+
+**この可能性を実機で検証するには explorer.exe の再起動、または実際のログオフ/ログオンが要る。**
+今回はどちらも実施しなかった——explorer.exe の再起動はタスクバー・デスクトップアイコン・
+開いているエクスプローラーウィンドウを巻き込む破壊的操作であり、ユーザーの実セッションに
+影響するため、明示的な許可なく実行すべきでないと判断した（「やらないこと」に列挙された
+「実レジストリの Run キーへ恒久的な値を書かない」の精神に照らし、同程度に破壊的な操作は
+慎重側に倒した）。
+
+結論: research.md の記述「新規に作った Run 値に対する StartupApproved\Run のレコード:
+ABSENT（自動生成されない）」は、**「値作成直後の同一セッション内では」という条件付きでのみ
+確認されている**。research.md 自身もこの限定を暗黙に認識しているように見える
+（§2 「逆に、レコードが無いこと（**新規作成直後**）は『有効』を意味する」と書いており、
+「新規作成直後」という時間限定の語を使っている）。ただし §7「未解決の疑問」には
+「タスクマネージャーの『無効化』が Run 値を消すか、StartupApproved にマークを置くだけか」
+という関連する疑問は明記されているが、**「StartupApproved レコードが後から遅延生成されうるか」
+という疑問そのものは明記されていない**——これは research.md の未解決疑問リストに追加すべき
+項目である可能性がある。
+
+これを偽にする手順: 実際にログオフ→ログオンする（または明示的な許可を得て explorer.exe を
+再起動する）前後で StartupApproved\Run のレコードを比較する。今回は未実施。
+
+
+=== その他の細かい照合 ===
+
+✅ RegKeyGuard は path_env.rs:20 で `struct RegKeyGuard(...)`（pub 無し）——private の claim は正しい。
+✅ read_user_path (path_env.rs:33-110) は RegOpenKeyExW 2段読み + w!() + cfg(not(windows)) スタブ
+   ——claim の形と一致。
+⚠️ scan_path_dirs のテスト可能性 doc の引用行番号「path_env.rs:262」は実際には267行目
+   （`/// read_user_path から分離することでテスト可能性を確保`）。内容は正しいが行番号が
+   5行ずれている——軽微（コード変更で頻繁にずれる性質の引用であり、内容の正しさに影響しない）。
+✅ window.rs:66-73 の current_exe() → 兄弟 exe 組み立てパターンは実コードと一致（争点2参照）。
+✅ CbShowOnStartup（i18n.rs:59,259,475、general.rs:61）は「起動時にウィンドウを表示」
+   / "Show window on startup" として実在し、claim「新キーの文言でこれを取り違えさせない」は
+   正当な懸念——直訳が非常に近い日本語になりうる（例:「スタートアップに登録」との混同）。
+✅ TrKey の網羅性強制（i18n.rs:207 `#[deny(clippy::wildcard_enum_match_arm)]` + `match key { ... }`
+   に `_` 無し）——claim「非網羅コンパイルエラーになる」の機序と一致（clippy deny + `-D warnings`）。
+✅ SPEC.md §7.2 / §7.3 / §13.1 の見出しは実在（行320, 373, 682）。§7.2 の [全般] タブ項目一覧に
+   「スタートアップ登録」に相当する既存項目は無い——新規追加であり重複の懸念は無い。
+✅ ADR-no-test-only-injection-in-product-code.md は実在する
+   （docs/adr/ADR-no-test-only-injection-in-product-code.md）。
+✅ smoke-egui.ps1 / smoke-startup.ps1 は実在し（scripts/）、Run キー・autostart・logon への
+   言及は無い——「この変更の射程外」という claim と矛盾しない。
+✅ snotra-core/Cargo.toml・snotra-settings/Cargo.toml の両方に `[lints]\nworkspace = true` があり
+   `-D warnings` の claim と一致（root Cargo.toml の workspace.lints は今回未確認だが、
+   両クレートの `workspace = true` 参照自体は確認した）。
+✅ 争点3理由1の裏付けとして: BackupResult は import 成功時のみ Some（backup.rs:30-33 の doc
+   「Returned to app.rs only when import succeeds」）——「別マシンで import すると...反転する」
+   という因果の流れ全体が実コードで追跡できる。
+
+
+=== 壊せなかった項目のまとめ（前提の再確認） ===
+
+以下は明示的に反証を試みたが崩せなかった、または反証手段が無かった（後者は⚠️扱いにして上に列挙済み）:
+- externalBin による兄弟配置（争点2）
+- Backup import の saved 差し替え（争点3理由1）
+- reset_to_default の draft-only 書き換え（争点3理由2、ただし「黙って」の形容は要修正）
+- config.toml↔レジストリ非調停・新規キー面の消滅（争点3理由3・4、設計論のため直接反証不可）
+- 即時適用と app.rs ガードの非衝突（争点4、ただし依存関係が本文未記載）
+- Snotra 実インストール済み（争点5-1、research.md の暗黙の前提を裏付け）
+- 各種ファイル/シンボル/ADR/SPEC 節の実在（「その他の細かい照合」の✅群）
+
+=== 完了 ===
+

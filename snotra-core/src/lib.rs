@@ -11,6 +11,7 @@
 // 抑止の射程を「この crate のこの lint だけ」に閉じるのが、あの ∀ と両立する唯一の置き場である。
 #![allow(rustdoc::private_intra_doc_links)]
 
+pub mod autostart;
 pub mod binfmt;
 pub mod config;
 pub mod engine;
@@ -26,4 +27,6 @@ pub mod query;
 pub mod search;
 pub mod str_arena;
 pub mod ui_types;
+#[cfg(windows)]
+mod win_registry;
 pub mod window_data;

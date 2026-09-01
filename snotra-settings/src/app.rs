@@ -146,6 +146,9 @@ struct SettingsApp {
     opener_state: tabs::opener::OpenerTabState,
     instant_state: tabs::instant::InstantTabState,
     backup_state: tabs::backup::BackupTabState,
+    /// 全般タブのうち `Config` に属さない状態（スタートアップ登録）。
+    /// **`draft` / `saved` に参加しない**——正本はレジストリであり、Save を経由しない。
+    general_state: tabs::general::GeneralTabState,
     font_list: Vec<String>,
     hotkey_state: crate::hotkey_input::HotkeyInputState,
     last_position: Option<WindowPlacement>,
@@ -158,11 +161,22 @@ struct SettingsApp {
 }
 
 impl SettingsApp {
+    /// `autostart_enabled` は**呼び出し側が読んで渡す**——ここで
+    /// [`snotra_core::autostart::is_enabled`] を呼ぶと、`en_harness` 経由でヘッドレス UI テストが
+    /// 開発機の実レジストリを読み、初期状態が開発者のマシン状態に依存する（#963 で
+    /// `HistoryStore::load()` を fixture に使うのを禁じたのと同型で、**食い違いは CI では緑のまま
+    /// 開発機でだけ現れる**）。**スタートアップ登録を読むのは [`run`] だけである。**
+    ///
+    /// **`new()` がホスト状態を読まないという意味ではない**——`OpenerTabState::new()` は
+    /// `detect_opener_presets()` で PATH を走査し、`font::list_system_fonts()` は Win32 を呼ぶ。
+    /// あちらを引数化していないのは、**読み取り専用の列挙**であって、UI から直接トグルされて
+    /// 書き込みの副作用を持つこの値とはリスクが違うためである。
     fn new(
         config: Config,
         first_run: bool,
         initial_tab: Option<String>,
         load_outcome: LoadOutcome,
+        autostart_enabled: bool,
     ) -> Self {
         let tab = initial_tab
             .as_deref()
@@ -183,6 +197,7 @@ impl SettingsApp {
             opener_state: tabs::opener::OpenerTabState::new(),
             instant_state: tabs::instant::InstantTabState::default(),
             backup_state: tabs::backup::BackupTabState::default(),
+            general_state: tabs::general::GeneralTabState::new(autostart_enabled),
             font_list: crate::font::list_system_fonts(),
             hotkey_state: Default::default(),
             last_position: None,
@@ -591,9 +606,13 @@ impl SettingsApp {
             }
 
             match self.active_tab {
-                TabId::General => {
-                    tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state, &self.tr)
-                }
+                TabId::General => tabs::general::ui(
+                    ui,
+                    &mut self.draft,
+                    &mut self.hotkey_state,
+                    &mut self.general_state,
+                    &self.tr,
+                ),
                 TabId::Search => tabs::search::ui(ui, &mut self.draft, &self.tr),
                 TabId::Index => {
                     tabs::index::ui(ui, &ctx, &mut self.draft, &mut self.index_state, &self.tr)
@@ -674,11 +693,13 @@ pub fn run(
             let heading_semibold = crate::font::configure_fonts(&cc.egui_ctx);
             apply_win11_theme(&cc.egui_ctx);
             style::apply_type_ramp(&cc.egui_ctx, heading_semibold);
+            // **実レジストリを読む唯一の地点。** `SettingsApp::new` の doc を見よ。
             Ok(Box::new(SettingsApp::new(
                 config,
                 first_run,
                 initial_tab,
                 load_outcome,
+                snotra_core::autostart::is_enabled(),
             )))
         }),
     )
@@ -824,7 +845,9 @@ mod tests {
 
     /// En 言語の SettingsApp を Harness に載せる（未編集 = clean 状態）。
     fn en_harness(config: Config) -> Harness<'static, SettingsApp> {
-        let app = SettingsApp::new(config, false, None, LoadOutcome::Loaded);
+        // スタートアップ登録は固定値で構築する。**実 OS を読ませない**——読ませると
+        // このハーネスを使う全テストの初期状態が開発機のレジストリに依存する。
+        let app = SettingsApp::new(config, false, None, LoadOutcome::Loaded, false);
         Harness::new_ui_state(|ui, app: &mut SettingsApp| app.ui_impl(ui), app)
     }
 

@@ -1,8 +1,13 @@
-//! index / opener / instant の3タブが共有するモーダル Create/Edit 状態と
-//! 非同期ファイルピッカーの共通実装（#439）。
+//! 複数のタブが共有する状態と、その最小限の描画。
 //!
-//! UI（egui の描画呼び出し列）はタブごとに固有のまま各タブに残し、ここには
-//! 状態遷移・境界チェック・ポーリングといった純ロジックだけを置く。
+//! モーダル Create/Edit 状態と非同期ファイルピッカーは index / opener / instant の 3 タブが
+//! 共有し（#439）、[`InlineMessage`] は draft/saved を経由しないタブ（general の
+//! 「スタートアップ」節・backup）が共有する。
+//!
+//! UI（egui の描画呼び出し列）は原則タブごとに固有のまま各タブに残し、ここには
+//! 状態遷移・境界チェック・ポーリングといった純ロジックを置く。**例外は
+//! [`InlineMessage::show`] の 1 行**——色分けは `style` のトークンを通す規約があり、
+//! 状態と色の対応をタブごとに書き写すと片方だけ古い見た目になるため。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -87,6 +92,50 @@ pub fn delete_entry<T>(vec: &mut Vec<T>, editing: Option<usize>) {
         && idx < vec.len()
     {
         vec.remove(idx);
+    }
+}
+
+/// draft/saved を経由しないタブの、即時操作の結果メッセージ。
+///
+/// フッターの `status` / `status_timer` は draft/saved ワークフロー用で、永続性の要件
+/// （エラーは消えてほしくない）と衝突する——この使い分けの規範は
+/// `snotra-settings/CLAUDE.md`「フッター vs インラインの使い分け」が正本である。
+///
+/// **持つのは状態と色分けだけで、周囲の余白や区切りは呼び出し側に残す**（backup は結果領域の
+/// 境界として `separator` を挟むが、general の「スタートアップ」節は挟まない）。
+#[derive(Default)]
+pub struct InlineMessage {
+    text: String,
+    is_error: bool,
+}
+
+impl InlineMessage {
+    /// 直近の操作結果で置き換える。**次の操作まで表示を維持する**（タイマーで消さない）。
+    pub fn set(&mut self, text: String, is_error: bool) {
+        self.text = text;
+        self.is_error = is_error;
+    }
+
+    pub fn clear(&mut self) {
+        self.text.clear();
+    }
+
+    /// 空でなければ、成否に応じた色でラベルを 1 行描く。
+    pub fn show(&self, ui: &mut egui::Ui) {
+        if self.text.is_empty() {
+            return;
+        }
+        let color = if self.is_error {
+            crate::style::STATUS_ERROR
+        } else {
+            crate::style::STATUS_SUCCESS
+        };
+        ui.label(egui::RichText::new(&self.text).color(color));
+    }
+
+    /// 表示すべきメッセージを持っているか（呼び出し側が区切りを出すかの判定に使う）。
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
     }
 }
 

@@ -25,6 +25,8 @@
 //!   宣言しておく（揃えるには非 Windows 側に状態を持たせることになり、持つ意味が無い）
 
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use windows::core::PCWSTR;
 
 #[cfg(test)]
 mod tests;
@@ -103,7 +105,7 @@ fn open_run_key(
     access: windows::Win32::System::Registry::REG_SAM_FLAGS,
 ) -> Result<crate::win_registry::RegKeyGuard, AutostartError> {
     let subkey = wide(RUN_SUBKEY);
-    crate::win_registry::open_hkcu(windows::core::PCWSTR::from_raw(subkey.as_ptr()), access)
+    crate::win_registry::open_hkcu(PCWSTR::from_raw(subkey.as_ptr()), access)
         .map_err(|status| AutostartError::Registry(status.0))
 }
 
@@ -130,7 +132,6 @@ fn as_bytes(value: &[u16]) -> &[u8] {
 #[cfg(windows)]
 pub fn is_enabled() -> bool {
     use windows::Win32::System::Registry::{KEY_READ, RegQueryValueExW};
-    use windows::core::PCWSTR;
 
     let Ok(key) = open_run_key(KEY_READ) else {
         return false;
@@ -159,7 +160,6 @@ pub fn is_enabled() -> bool {
 #[cfg(windows)]
 pub fn enable() -> Result<(), AutostartError> {
     use windows::Win32::System::Registry::{KEY_WRITE, REG_SZ, RegSetValueExW};
-    use windows::core::PCWSTR;
 
     let exe = main_exe_path().ok_or(AutostartError::MainExeNotFound)?;
     let value = wide(&command_line_for(&exe));
@@ -195,7 +195,6 @@ pub fn enable() -> Result<(), AutostartError> {
 pub fn disable() -> Result<(), AutostartError> {
     use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
     use windows::Win32::System::Registry::{KEY_WRITE, RegDeleteValueW};
-    use windows::core::PCWSTR;
 
     let key = open_run_key(KEY_WRITE)?;
     let name = wide(RUN_VALUE_NAME);

@@ -219,6 +219,8 @@ wgpu スナップショット比較は評価の結果**採用しない**（フ�
 
 フッターの `status` / `status_timer` は draft/saved ワークフロー（保存成功・バリデーションエラー等）に適する。draft/saved に参加しないタブ（Backup、About 等）でフィードバックが必要な場合は、タブ固有の state にメッセージを持たせてタブ内にインライン表示する。フッターを流用すると、永続性の要件（エラーは消えてほしくない）や複数行エラーとの衝突が起きる。
 
+- **インライン表示の実装は `tabs/common.rs` の `InlineMessage` を使う**——状態（文言 + 成否）と色分けを持つ。周囲の余白・区切りは呼び出し側に残す（backup は結果領域の境界として `separator` を挟み、general の「スタートアップ」節は挟まない）。写しを各タブへ置くと、色やアイコンを変えたとき片方だけ古い見た目になる
+
 ## ウィンドウ位置の永続化
 
 毎フレーム `ctx.input().viewport().outer_rect` からウィンドウ位置を `last_position` に記録し、`on_exit()` で `window_data::save_settings_placement()` に保存する。次回起動時に `load_settings_placement()` で復元する。

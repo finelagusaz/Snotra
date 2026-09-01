@@ -21,8 +21,7 @@ pub struct GeneralTabState {
     /// 直近に観測したスタートアップ登録の有無。
     enabled: bool,
     /// 操作結果のインラインメッセージ（次の操作まで表示を維持する）。
-    message: String,
-    message_is_error: bool,
+    status: super::common::InlineMessage,
 }
 
 impl GeneralTabState {
@@ -46,26 +45,25 @@ fn apply_autostart(state: &mut GeneralTabState, desired: bool, tr: &Tr) {
     } else {
         autostart::disable()
     };
-    match result {
-        Ok(()) => {
-            state.message_is_error = false;
-            state.message = if desired {
-                tr.t(TrKey::StatusAutostartEnabled).to_string()
-            } else {
-                tr.t(TrKey::StatusAutostartDisabled).to_string()
-            };
-        }
-        Err(AutostartError::MainExeNotFound) => {
-            state.message_is_error = true;
-            state.message = tr.t(TrKey::ErrAutostartExeNotFound).to_string();
-        }
-        Err(AutostartError::Registry(code)) => {
-            state.message_is_error = true;
-            state.message =
-                tr.t_params(TrKey::ErrAutostartRegistry, &[("code", &code.to_string())]);
-        }
-    }
+    let (message, is_error) = autostart_message(result, desired, tr);
+    state.status.set(message, is_error);
     state.enabled = autostart::is_enabled();
+}
+
+/// 操作結果を表示文言へ写す。`(メッセージ, エラーか)` を返す形は `backup.rs` の
+/// `handle_export_result` / `handle_import_result` に揃えてある。
+fn autostart_message(result: Result<(), AutostartError>, desired: bool, tr: &Tr) -> (String, bool) {
+    match result {
+        Ok(()) if desired => (tr.t(TrKey::StatusAutostartEnabled).to_string(), false),
+        Ok(()) => (tr.t(TrKey::StatusAutostartDisabled).to_string(), false),
+        Err(AutostartError::MainExeNotFound) => {
+            (tr.t(TrKey::ErrAutostartExeNotFound).to_string(), true)
+        }
+        Err(AutostartError::Registry(code)) => (
+            tr.t_params(TrKey::ErrAutostartRegistry, &[("code", &code.to_string())]),
+            true,
+        ),
+    }
 }
 
 pub fn ui(
@@ -155,14 +153,7 @@ pub fn ui(
             apply_autostart(state, desired, tr);
         }
 
-        if !state.message.is_empty() {
-            let color = if state.message_is_error {
-                style::STATUS_ERROR
-            } else {
-                style::STATUS_SUCCESS
-            };
-            ui.label(egui::RichText::new(&state.message).color(color));
-        }
+        state.status.show(ui);
 
         style::section_gap(ui);
 

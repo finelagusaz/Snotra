@@ -165,7 +165,12 @@ impl SettingsApp {
     /// [`snotra_core::autostart::is_enabled`] を呼ぶと、`en_harness` 経由でヘッドレス UI テストが
     /// 開発機の実レジストリを読み、初期状態が開発者のマシン状態に依存する（#963 で
     /// `HistoryStore::load()` を fixture に使うのを禁じたのと同型で、**食い違いは CI では緑のまま
-    /// 開発機でだけ現れる**）。実 OS を読む地点は [`run`] 1 箇所に閉じる。
+    /// 開発機でだけ現れる**）。**スタートアップ登録を読むのは [`run`] だけである。**
+    ///
+    /// **`new()` がホスト状態を読まないという意味ではない**——`OpenerTabState::new()` は
+    /// `detect_opener_presets()` で PATH を走査し、`font::list_system_fonts()` は Win32 を呼ぶ。
+    /// あちらを引数化していないのは、**読み取り専用の列挙**であって、UI から直接トグルされて
+    /// 書き込みの副作用を持つこの値とはリスクが違うためである。
     fn new(
         config: Config,
         first_run: bool,

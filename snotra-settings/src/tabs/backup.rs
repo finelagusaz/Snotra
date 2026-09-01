@@ -23,8 +23,7 @@ pub struct BackupTabState {
     import_active: bool,
     import_result: PickerResult,
     /// Inline message shown on the tab (persists until next operation).
-    message: String,
-    message_is_error: bool,
+    status: super::common::InlineMessage,
 }
 
 /// Returned to app.rs only when import succeeds (to update draft/saved).
@@ -48,8 +47,7 @@ pub fn ui(
         state.export_active = false;
         let (msg, is_err) = handle_export_result(picker_path, tr);
         if let Some(m) = msg {
-            state.message = m;
-            state.message_is_error = is_err;
+            state.status.set(m, is_err);
         }
     }
 
@@ -61,8 +59,7 @@ pub fn ui(
         state.import_active = false;
         let (msg, is_err, config) = handle_import_result(picker_path, tr);
         if let Some(m) = msg {
-            state.message = m;
-            state.message_is_error = is_err;
+            state.status.set(m, is_err);
         }
         if let Some(c) = config {
             result = Some(BackupResult { imported_config: c });
@@ -81,7 +78,7 @@ pub fn ui(
             )
             .clicked()
         {
-            state.message.clear();
+            state.status.clear();
             start_export(ctx, state, tr);
         }
 
@@ -98,7 +95,7 @@ pub fn ui(
             )
             .clicked()
         {
-            state.message.clear();
+            state.status.clear();
             start_import(ctx, state, tr);
         }
 
@@ -120,16 +117,11 @@ pub fn ui(
 
         // インラインメッセージ（次の操作まで表示を維持する）。
         // 結果領域の境界として水平 separator を残す（セクション間の区切りとは別の用途）。
-        if !state.message.is_empty() {
+        if !state.status.is_empty() {
             ui.add_space(style::SPACE_GROUP);
             ui.separator();
             ui.add_space(style::SPACE_GROUP);
-            let color = if state.message_is_error {
-                style::STATUS_ERROR
-            } else {
-                style::STATUS_SUCCESS
-            };
-            ui.label(egui::RichText::new(&state.message).color(color));
+            state.status.show(ui);
         }
     });
 

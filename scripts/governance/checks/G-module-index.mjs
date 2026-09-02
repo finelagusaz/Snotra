@@ -12,6 +12,12 @@ export function run(snapshot, ctx) {
 // G-module-index — 各サブディレクトリ CLAUDE.md「モジュール構成」↔ 実ファイルの双方向照合。
 // basename 包含方式: ディレクトリ集約行（`commands/` のベア名列挙）・`tabs/` プレフィックス省略・
 // 1 行複数バッククォートをパースせずに済ませる意図的な弱化（wrong-directory 検出は放棄）。
+// **ゆえに索引行かどうかは見ない。** 照合先は「モジュール構成」節であって索引行ではないので、
+// 集約行でも別ファイルの索引行の説明文でも、同じ節の中にバッククォート付きで在れば緑になる
+// ——ある索引行が消えても、同じ節に他の言及が残っていれば赤くならない（#1214 で実際に踏んだ）。
+// **同じ理由で、crate 内に同名のファイルが複数あるとき、それらは 1 回の言及でまとめて覆われる。**
+// 所有関係をパースする案を却下した理由・照合先を `text` 全体からこの節へ絞ったときの実測・
+// 受容する残余は `ADR-module-index-reverse-scope`。
 // ---------------------------------------------------------------------------
 // ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
 // snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
@@ -75,8 +81,8 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
       continue;
     }
     // 本文が空の節は有効（`""` を「節が無い」と読まない）——逆方向の照合が実ファイルの側を赤にする。
-    // **「全件」ではない**——逆方向が見るのは `section` ではなく `text` 全体なので、節を空にしても
-    // 本文の他所でバッククォート付きで言及されているファイルは緑のまま残る（2026-08-17 実測）
+    // **節を空にすれば全件が赤になる**（`"".includes(x)` は常に false）。順方向・逆方向とも見るのは
+    // `section` だけであり、文書の他所の言及は索引の代わりにならない（#1214 で `text` 全体から絞った）
     const section = sec.body;
     // 順方向: 節内のバッククォート付きソースファイル名 → basename がリポジトリに実在。
     // **見るのは直下の正規表現が挙げる拡張子だけである**——`` `foo.mjs` `` のような他種の
@@ -90,12 +96,17 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
         findings.push(finding(mdPath, 1, `索引に記載の \`${token}\` に対応する実ファイル（basename: ${base}）が無い`));
       }
     }
-    // 逆方向: production ファイルの basename が CLAUDE.md 本文に出現
+    // 逆方向: production ファイルの basename が「モジュール構成」節に出現。
+    // **索引行かどうかは見ない**——同じ節の中なら集約行でも別ファイルの索引行の説明文でも通る
+    // （残る死角。閉じない理由と実測は `ADR-module-index-reverse-scope`）
     const production = moduleIndexSources(snapshot, [crate]);
     for (const f of production) {
       const base = f.split("/").pop();
-      if (!text.includes(`\`${base}\``) && !text.includes(`/${base}\``)) {
-        findings.push(finding(mdPath, 1, `実ファイル ${f} が索引（本文のバッククォート）に見当たらない`));
+      if (!section.includes(`\`${base}\``) && !section.includes(`/${base}\``)) {
+        // **`実ファイル ${f}` の逐語のパスを外さないこと**——`edit-findings.mjs` の `attributesTo` が
+        // このメッセージの中のパスで編集ファイルへの帰属を作っており、消すと reminder が
+        // 静かに 0 件へ倒れる（同ファイルの doc がその沈黙経路を宣言している）
+        findings.push(finding(mdPath, 1, `実ファイル ${f} が索引（「モジュール構成」節のバッククォート）に見当たらない`));
       }
     }
   }

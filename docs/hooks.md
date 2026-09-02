@@ -104,7 +104,7 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 
 | 発火条件 | 出るもの | 判定 |
 |---|---|---|
-| `.rs` を編集し（**Edit / Write の別を問わない**）、そのファイルが所属 crate の `CLAUDE.md` の索引に無い | そのファイルの索引漏れ（#629/#630 → #1139） | `checkModuleIndex` |
+| `.rs` を編集し（**Edit / Write の別を問わない**）、そのファイルの basename が所属 crate のモジュール構成節（`<crate>/CLAUDE.md`）にバッククォート付きで現れない | そのファイルの索引漏れ（#629/#630 → #1139） | `checkModuleIndex` |
 | `<crate>/CLAUDE.md` を編集した | その crate の索引と実ファイルの**双方向**の不整合 | `checkModuleIndex` |
 | ガバナンス文書（`governanceDocs()` が返すもの）の `.md` を編集し、**その文書の中に**実在しない参照がある | 実在しない参照 | `checkReferences` |
 | 見出し参照の走査元（`allHeadingRefDocs()`。`.md` ・`.rs` ・コメント記法を持つスクリプト）を編集し、**その中に**着地しない正準形がある | 参照の書き方 | `checkHeadingRefs` |
@@ -132,6 +132,7 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
   - **`docs/adr/**` で編集時に出るのはファイル名と冒頭見出しの形だけである。** 本文の参照は凍結された歴史として腐るに任せる（`ADR-adr-frozen-history`）。
 - **索引側の順方向（索引に書かれた実在しないファイル名）は、その `CLAUDE.md` を編集したときにしか出ない**——`.rs` の編集では「編集した当のファイルに帰属する分」だけへ絞るためで、絞らないと未解消の債務が在る間その crate への無関係な編集のたびに同じ報告が並ぶ。
 - **`mod` 宣言は見ない**（`G-module-linkage` は前倒ししていない）。**索引だけが編集時に見えて `mod` は見えない**——`.rs` を追加したときの `mod` 忘れは今も `governance:check` だけが赤にする。
+- **索引の判定は索引行の所有関係を見ない。** 上の表のとおり見るのは節の中のバッククォート付きの basename なので、**同名のファイルが同じ節で既に言及されていれば、索引行を持たない `.rs` を足しても鳴らない**（#1214 実測。`governance:check` の側も同じ述語ゆえ同じだけ黙る——ここは「編集時だけの穴」ではない）。射程と受容する残余は `ADR-module-index-reverse-scope`。
 
 **鳴ったときにだけ意味がある**——沈黙は検査のときと同じく「何も走らなかった」側である。
 

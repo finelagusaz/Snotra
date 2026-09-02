@@ -1,0 +1,40 @@
+敵対的検証: workspace/research.md（issue #1234 plan:ledger 撤去調査）
+検証環境: chore/retire-plan-ledger, HEAD=6850855, git status clean（workspace/ のみ untracked、research.md 自体は無変更として読んだ）
+ベースライン: npm test → 39 files / 923 tests passed。npm run governance:check → 全24検査 passed（対象文書36・rules8・skills12・見出し参照375等）
+
+## 骨組み（測定前）
+1. F1 撤去対象4ファイル+1行 — 要検算
+2. F1 ADR被参照 script:20のみ — 要検算
+3. F2 台帳/ledger語彙の他概念振り分け — 要検算
+4. F4 各検査が撤去で赤にならない根拠 — 要検算（G-adr-citationsは要注意：同時削除必須の主張）
+5. F5 build-commands/hooks 0件 — 要検算
+6. safety-nets paths 変更不要 — 要検算
+7. U1 解消 — 要検算
+
+## 壊せなかった項目（読んで確認できた）
+
+- **F1 呼び出し0件**: `git grep -n` を "plan:ledger" "plan-review-ledger" "ledger.mjs" "npm run plan" の4綴りで実行。`.claude/skills/**`・`.claude/hooks/**`・`.claude/settings.json`・`.github/workflows/**` を含め検索したが、生きた層でのヒットは package.json:14 の1行と script自身/testのみ。壊せず。
+- **F1 ADR被参照**: `git grep -n "ADR-plan-ledger-population-persistence"` の結果は ADR自身のタイトル行と `scripts/plan-review-ledger.mjs:20` のみの2件。壊せず。
+- **F2 「台帳」汎用名詞1件**: `.claude/skills/start-issue/SKILL.md:110`「別の台帳・スナップショット…」のみ。文脈は「plan.md以外の一切」を指す汎用語で、台帳機構の存在を前提にした文ではない。壊せず。
+- **F2 ledgerの別概念**: `git grep -ni ledger` で全件確認。`index_stale` ledger系（architecture.md:100, snotra-core/CLAUDE.md:15, engine.rs:549, src-tauri/CLAUDE.md:14,20）はconfig↔index文脈で別概念。加えて `docs/superpowers/plans/*.md` に "ledger" という語（作業記録の意味、SU6/SU6.5 ledger、番号参照）が複数あるが、これらは historical plans（docs/superpowers/）であり、いずれの走査元（headingRefDocs/governanceDocs/adrCitationDocs）からも除外されると確認済み。撤去対象の台帳機構とは無関係。壊せず。
+- **F3 docs/superpowers 除外の一貫性**: `governanceDocs`（lib.mjs:559）、`headingRefDocs`（lib.mjs:610付近）、`adrCitationDocs` のコメント（`docs/superpowers/` は#589で非規範化、母集団外）ですべて `!f.startsWith("docs/superpowers/")` を確認。design docの `npm run plan:ledger` 言及はどの機械照合にも入らない。壊せず。
+- **F4 G-rules-script-coverage**: 個別ファイル名やカウント固定は見当たらず（`scripts/governance/checks/G-rules-script-coverage.mjs:65` 付近、母集団は動的列挙SCRIPT_EXT）。壊せず。
+- **F4 G-heading-refs**: script冒頭コメントの「Step 2」「Step 3」正準形参照は `headingRefCommentDocs`（`.mjs`もコメント記法対象、lib.mjs:671）経由で `allHeadingRefDocs` に含まれ、実際に走査されている（governance:check出力「スクリプトのコメント118件」に寄与）。ただしファイルごと削除すれば参照自体が消えるため赤にならない、という研究文書の結論は正しい。壊せず（研究文書の推論経路はやや単純化されているが結論は誤っていない: 「そもそも走査対象外」ではなく「ファイルごと消えるので対象があってもヒットしない」）。
+- **F4 G-adr-citations「同時削除必須」**: `G-adr-citations.mjs` の `nonDocSources` が `.mjs`（`.test.mjs`除く）を対象に含む（`/\.(rs|mjs)$/` かつ `!f.endsWith(".test.mjs")`）ため、script（`.mjs`, non-test）内のADR引用は実際に照合される。ADRだけ消してscriptを残すと `exists(slug)` が false になり赤。両方消せば引用ごと消えるので緑。研究文書の主張どおり。壊せず。
+- **F4 npm test / package.json scripts数え上げ**: `G-build-commands.mjs`・`G-ci-table.mjs` を読んだ。どちらも「`docs/build-commands.md` に書かれた `npm run X` が package.json に実在するか」の一方向照合であり、package.json側のscriptが減っても文書側に言及が無ければ検知されない（build-commands.mdに元々plan:ledgerの記載が無いため、この撤去では発火し得ない）。逆方向（package.jsonの各scriptがdocに存在するか）を強制する検査は見つからず。`governance-check.test.mjs`・`governance-manifest.mjs` にも `plan:ledger` や scripts件数の固定は無し。壊せず。
+- **F5 build-commands.md / hooks.md 0件**: `git grep -n "plan:ledger" docs/build-commands.md docs/hooks.md` 相当を上記4綴り検索に含めて確認、ヒット0。壊せず。
+- **safety-nets.md paths 変更不要**: frontmatterの`paths`を確認、個別ファイル名なし（`.claude/hooks/**`, `.githooks/**`, `.claude/settings.json`, `.claude/lsp/**`, `.github/workflows/**`, `.claude/rules/**`, `.claude/skills/**`, `scripts/**`のみ）。`scripts/**`のglobは残存ファイルを引き続き覆う。壊せず。
+- **U1解消**: `双方向照合|配送欄|配送の照合|台帳` を AGENTS.md/CLAUDE.md/docs/hooks.md/docs/build-commands.md/docs/development-principles.md/.claude/{skills,rules,agents} に対しgrep。ヒットは start-issue SKILL.md:110の1件のみ（F2で確認済みの汎用名詞）。壊せず。
+- **RETROSPECTIVE.md 0件**: `git grep` で確認、ヒットなし。壊せず。
+- **plan-review SKILL.mdの独立確認**: `.claude/skills/plan-review/SKILL.md` を実際に読み、Step 2/2b/3の本文にledger/台帳/plan-review-ledgerの言及が無いことを確認（scriptの冒頭コメントの「撤去済み」自己申告を鵜呑みにせず呼び出し側から検算）。壊せず。
+
+## 壊せた項目 / 追加で見つけた懸念
+
+- ⚠ **ADR本文の「採った形はコードと `.claude/skills/plan-review/SKILL.md` が持つ」という一文の含意**: research.mdはこの一文を明示的に扱っていない。ADR削除後、この一文自体が消えるので実害はない（ADRごと削除するのでF1の裁定と矛盾しない）が、研究文書のF1根拠表に「ADR本文が他の生きた層への言及を含む」という事実への言及が無い。実害なしだが、記述の完全性としては軽微な抜け。壊した、とまでは言えない（結論に影響しないため⚠に留める）。
+- ⚠ **`docs/adr/ADR-plan-ledger-population-persistence.md:45` の追記が `.claude/rules/safety-nets.md` の `paths` glob化（#837）に言及**: この追記は「`scripts/*.mjs` へ広がった」という历史的事実を記録しているだけで、現行pathsが`scripts/**`（更に広い）である事実と矛盾しない。ADR自体を削除するので現行の記述に影響なし。実害なし。
+- 大きな反証は見つからなかった。事前に疑っていた「G-adr-citationsが同時削除を要求する」という一見鋭い主張は、他の検査（G-build-commands等が一方向照合であること）と合わせて研究文書の記述と完全に一致し、むしろ研究文書の中で最も正確に機構を追った箇所だった。
+
+## 総括
+壊せた項目: 0（結論を覆すものなし）
+壊せなかった項目: 15
+⚠（確信の持てない付随所見、結論に影響しない）: 2

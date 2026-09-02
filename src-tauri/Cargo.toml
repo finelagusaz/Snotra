@@ -24,7 +24,7 @@ tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = "0.18"
-fontdb = "0.23"
+fontdb = "0.24"
 # cmap 実測で user_font が CJK をカバーするかを判定する（jp_font fallback の要否）。
 # fontdb が内部で使う版と同一ゆえ、直接依存にしてもビルドツリーは増えない。
 ttf-parser = "0.25"

@@ -1,0 +1,114 @@
+敵対的検証 — workspace/research.md (issue #761)
+検証日: 2026-09-02 / HEAD: 35f02aeb8b99c58a47c3b6044a9c828950d799a6 (main, working tree clean except workspace/)
+
+方針: 全主張を一次資料で読み直し、偽にできるかを試した。壊せた項目/壊せなかった項目を両方書く。
+
+---
+
+## 争点1: 「/plan-review は通常リスクで委譲0体・高リスクで1体（Step2かStep2bどちらか一方）」
+
+壊せず。`.claude/skills/plan-review/SKILL.md` を全文読んだ。
+「通常リスクでは Step 1 の自己レビューだけで Step 3 へ進む。高リスクでは Step 2 または Step 2b の
+**どちらか一方**を実行する」と逐語で書かれている(SKILL.md 該当節)。
+`/start-issue` Step 5a (.claude/skills/start-issue/SKILL.md:106-134) も
+「`/plan-review` は常時実行しない。高リスク条件に該当する場合だけ1回実行する」で整合しており、
+両文書の記述は食い違っていない。
+偽にする手順: `cat .claude/skills/plan-review/SKILL.md` の「リスク判定」節と
+`.claude/skills/start-issue/SKILL.md` の 106-134 行を突き合わせる。
+
+## 争点2: 「4型のうち実行可能性と内部矛盾には受け皿があり、節間の覆いとMECEには無い」
+
+壊せず（部分的に強く裏付けが取れた）。
+- 実行可能性の受け皿=#914: `gh issue view 914` の本文が research.md の要約と一致する。
+  項目6・7の文言、根拠（#755/#801 のトランスクリプト横断分析）、コスト記述まで完全一致。
+- 内部矛盾の受け皿=AGENTS.md「検証の作法」: 該当条項の存在を確認済み（AGENTS.md本文に実在、
+  research.md がシステムプロンプト経由でも確認できる）。
+- 節間の覆い/MECEの受け皿が無いこと: SKILL.md Step1の7項目・Step2の記述を通読したが、
+  「節どうしの整合」「責務のMECE性」を名指しで扱う条項は無かった。
+  ただし ⚠ `docs/adr/ADR-window-coordinator-split-rule.md` に「MECE レビュー」という語が
+  実在する(1件)。これは#749の別の計画(window_coordinator分割)に対する個別MECEレビューの記録であり、
+  SKILL.md本体の恒常的な受け皿ではない。research.mdは「無し」を"SKILL.mdに恒常条項が無い"の意味で
+  使っており、この用法では破れない。過去に一度アドホックにMECEレビューを行った実例がある、という
+  点は補足として書く価値がある。
+偽にする手順: `gh issue view 914 --json body` と `.claude/skills/plan-review/SKILL.md` Step1を照合、
+`git grep -n "MECE\|節間の覆い" -- docs .claude AGENTS.md CLAUDE.md`
+
+## 争点3: 「4レンズの定義は5ef346fのworkspace/plan-review/4ファイルにだけ在り、生きた層のどこにも無い」
+
+壊せず、ただし語彙の字面一致で1件ヒットがある(⚠として明記)。
+`git grep -n "内部矛盾"` は docs/build-commands.md と
+docs/superpowers/specs/2026-08-07-index-memory-footprint-design.md に、
+`git grep -n "実行可能性"` は複数のADR (ADR-check-skill-skeleton, ADR-race-check-predicate-and
+-norm-hardening, ADR-race-check-simplification, ADR-two-class-reader-discrimination) にヒットする。
+だがこれらは全て文脈が異なる別概念(「規範の実行可能性=読者が規則に従えるか」「測定値の内部矛盾
+=規模に対する非単調性」)であり、#761の4レンズ(「文書内の記述同士の食い違いのみ」等)の定義そのもの
+ではない。research.mdの主張は「定義」の不在であって「語」の不在ではなく、この読みでは破れない。
+`git show 5ef346f --stat` は該当コミットが実在し、windows_coordinator分割のPRであることを確認した
+(4ファイルの中身までは今回読んでいないため、定義文言の逐語一致は未確認 — ⚠)。
+偽にする手順: `git show 5ef346f:workspace/plan-review/consistency-internal.md` 等4ファイルを
+実際に読み、冒頭定義の文言を確認する(未実施)。
+
+## 争点4: 「被参照ゼロのADRは#895で削除された前例があり、ADR-risk-tiered-plan-reviewを引くのは
+superseded済み設計書の注記だけ」
+
+壊せず、完全一致。
+`gh pr view 895 --json body` は「どこからも参照されていない6本」削除・「全拡張子grepで6本とも
+自分自身以外のヒットなし」の検証チェックリストを含み、research.mdの要約と一致。
+`git grep -ln "ADR-risk-tiered-plan-review"` の結果は
+`docs/adr/ADR-risk-tiered-plan-review.md`（自分自身）と
+`docs/superpowers/specs/2026-07-28-plan-review-loop-design.md` の2件のみ。
+後者冒頭に `> **Superseded:** 常時fan-outと最大3ラウンドの自動レビューは
+ADR-risk-tiered-plan-review.md で廃止した。` とあり、research.mdの記述と完全一致。
+偽にする手順: 上記2コマンドをそのまま実行。
+
+## 争点5: F6「ADRの書式・命名・凍結の契約」とdocs/superpowers/がG-adr-citationsの母集団外
+
+壊せず、完全一致（最も強く裏付けが取れた項目）。
+`scripts/governance/checks/G-adr-citations.mjs` のコメントに逐語で
+「**受容する残余**: `docs/superpowers/` は歴史資料（#589 で非規範化）ゆえ母集団外である。」とある。
+`scripts/governance/lib.mjs:544` にも同旨のコメント「docs/superpowers/ は歴史資料（#589 で非規範化）
+ゆえ除外」がある。ADR名の連番禁止(G-adr-file-names)、ADR-adr-frozen-history.mdの実在も確認した。
+偽にする手順: `cat scripts/governance/checks/G-adr-citations.mjs` の冒頭コメント欄。
+
+## 争点6: F7「計器分割設計書は#761を機械可読性と読み替え、spikeは未実施」
+
+壊せず。
+`git log --all --oneline --grep="761"` は `5e7288a docs(spec): /plan-review の計器分割 — 問いを
+計器で分けて配り直す設計 (#846)` の1件のみを返す（research.mdの「#846のみ」と一致）。
+scripts/ 配下と package.json を「呼び出し元」「call-site」「callers」「references」で検索したが、
+「呼び出し元grepの道具化」に相当する専用ツールは見つからなかった（既存のgrep利用はG-references等の
+既存ガバナンス検査であり、#761/#846のspikeとは無関係）。
+偽にする手順: `git log --all --grep=761`、`grep -rn "呼び出し元\|call-site\|callers" scripts/`
+（今回は複数の綴りで確認済み、追加で英語表記のみの道具が無いかは package.json のscriptsセクション
+も見たが該当なし）。
+
+## 争点7: issue #761本文とresearch.mdの要約の一致
+
+壊せず。`gh issue view 761 --json body` を読んだ。「レイヤー別スカウト3+独立導出1」「4レンズ」
+「15件超」「考えどころ」の記述はresearch.mdの要約と一致する。
+⚠ 気づいた点（research.mdは触れていないが矛盾ではない）: issue本文中に
+`docs/adr/0008-window-coordinator-split-rule.md`という**旧番号形式のファイル名**への言及がある。
+現在のリポジトリでは`docs/adr/ADR-window-coordinator-split-rule.md`(slug形式、番号無し)のみが
+実在する。これはissue執筆時点(番号制だった頃)からADRの命名規約が変わった結果と見られ、
+research.mdの主張を破る材料ではないが、リンク切れの実例として記録しておく。
+
+## 測定環境そのものへの疑い
+
+- `git rev-parse HEAD` = 35f02aeb8b99c58a47c3b6044a9c828950d799a6、`git status --short`は
+  `workspace/`のuntrackedのみ(research.md自体を含む)。research.mdが引用する各ファイルは
+  現在のcheckoutと一致する版で読めた。
+- `5ef346f`・`90f67c2`は`git show --stat`で実測した。5ef346fは22ファイル変更(新規: window_coordinator.rs,
+  manual-smoke.ps1, workspace/plan-review/配下8本 ≒ 10本相当)、90f67c2は13ファイル変更(workspace/を
+  ごと削除、RETROSPECTIVE.mdとdevelopment-principles.mdへ追記、docs/adr/0008-window-coordinator-
+  split-rule.md新設)。件数は概ね一致し、research.mdの記述(該当コミットの実在・workspace/削除)を
+  裏付ける。
+- issue本文とresearch.mdの「考えどころ4点」の内容は一致確認済み(争点7)。
+
+## 集計
+
+壊せた項目: 0
+壊せなかった項目: 7（争点1〜7、いずれも一次資料で裏付け完了）
+⚠ (確信の持てない所見・未検証を含む): 3
+  - 争点3: 4ファイルの定義文言そのものの逐語確認は未実施
+  - 争点7: ADR旧ファイル名(0008-...)への言及がissue本文にあるが評価に影響せず
+  - 争点2: MECEレビューの過去実例(ADR-window-coordinator-split-rule)は補足に留まる

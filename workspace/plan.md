@@ -96,9 +96,10 @@ const ANY_PAIR = /[\[［][^\[\]［］\n]*[\]］]/g;
 
 ### Phase 3 — 実測
 
-- [ ] production `///` へ注入して `governance:check` が exit 1 で当該行を名指すことを確認し、SHA256 照合で巻き戻す
-- [ ] `#[cfg(test)]` 内の `///` へ注入しても赤になることを確認し、同様に巻き戻す
-- [ ] `npm test` と `npm run governance:check` が緑で、現行ツリーの finding が 0 件・`checked` が 0 でないことを確認する
+- [x] production `///` へ注入して `governance:check` が exit 1 で当該行を名指すことを確認し、SHA256 照合で巻き戻す（worktree 委譲・アンカー `3dd3cf4`: `window_coordinator.rs:650` のインデント済み `///` へ注入 → exit 1・当該 file:line を名指し・巻き戻し SHA256 一致。記録は委譲先の `workspace/verify-1172.txt`）
+- [x] `#[cfg(test)]` 内の `///` へ注入しても赤になることを確認し、同様に巻き戻す（同上: `#[cfg(test)]` 直下 1448 行へ注入 → exit 1・SHA256 一致。追加で `trimStart()` を外す変異は fixture 1 本だけが赤にし `governance:check` は 755 → 446 件へ減るだけで緑のまま——検知器は fixture 側にしか無いことを実測）
+- [x] `npm test` と `npm run governance:check` が緑で、現行ツリーの finding が 0 件・`checked` が 0 でないことを確認する（主ツリー: 922 passed / 全検査 passed・doc の角括弧対 755 件。委譲先でも同値）
+- [x] （委譲レビュー Low 3 件への対処）L1 `////` を doc と誤認 → `isDocLine` で外し fixture 追加。L2 コードスパン内に角括弧を持つリンクの沈黙 → 死角として宣言。L3 `comment-guidelines.md` の「production の」が `#[cfg(test)]` 免除と読める → 文言を正す
 
 ## 未確定（実装前に潰す）
 

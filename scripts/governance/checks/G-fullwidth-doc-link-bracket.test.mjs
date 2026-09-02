@@ -59,6 +59,10 @@ describe("G-fullwidth-doc-link-bracket checkFullwidthDocLinkBrackets（intra-doc
       expect(run("// 消費者は [`read_bar_anchor`］ を通る\n")).toEqual([]);
     });
 
+    it("`////`（4 本以上）は Rust の doc ではないので見ない", () => {
+      expect(run("//// see [`X`］\n")).toEqual([]);
+    });
+
     it("コード行（文字列リテラル）は見ない", () => {
       expect(run('fn f() { let s = "[`x`］"; }\n')).toEqual([]);
     });

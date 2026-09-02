@@ -83,6 +83,7 @@
 | 2026-08-27 | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（906 件 green） | **0 件** |
 | 2026-08-27（#1201 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（906 件 green） | **0 件** |
 | 2026-09-02（#1211 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（906 件 green） | **0 件** |
+| 2026-09-02（#1214 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0・格下げ中のメタ層の印字なし）と `npm test`（908 件 green） | **0 件** |
 
 **まだ撤去は来ない——ただし理由が変わった。** 記録された観測はいずれもゼロだが、**その間に観測の無いサイクル末が挟まっている**（#1167・#1174 の振り返りに加え、2026-08-25 の行と 2026-08-27 の行のあいだにも `RETROSPECTIVE.md` の更新が 1 回ある——`73703a36`・2026-08-26 20:57）。上の規則が数えるのは連続する**サイクル**であって記録の行数ではないので、**これらの行から「連続 2 回」は導けない**。撤去が来るのは、サイクル末ごとに漏れなく観測した結果が連続 2 回ゼロになったときであり、**その時点で初めて「効いていなかった」と言える**（`ADR-retire-area-budget` が積んだ観測と同じ作法）。発火が出た項目は、その項目だけがゲートへ戻る。
 

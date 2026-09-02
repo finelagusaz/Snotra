@@ -151,13 +151,17 @@ $env:SNOTRA_EGUI_FAKE_UPDATE_FAILED = "1"; cargo run -p snotra
 
 両方立てたときは `FAILED` が勝つ（先に `return` する）。
 
-### E. git hook（`.githooks/**`）を変更した場合
+### E. セーフティネットの実装（`.githooks/**`・`.claude/hooks/**`・`scripts/**`）を変更した場合
 
 ```bash
-npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/githooks.test.mjs）
+npm test    # 必須: セーフティネット自身の回帰テスト（使い捨て repo での hook 実測を含む）
 ```
 
-- PostToolUse フックが `.githooks/**` の編集で `vitest run .githooks` を自動発火する（#484）。`.claude/hooks/**` と同じ理由 — セーフティネットそのものを編集したら、セーフティネットが生きているか確かめる
+**母集団の正本は `vitest.config.ts` の `include` である**——上の 3 つは索引であって、そこから写した一覧ではない。**`npm test` が何を走らせるかを決めるのはあの `include` だけ**なので、木が増減したらここの索引ではなくあちらを見る。
+
+- **`scripts/**` はここでしか拾われない**（#1220）。PostToolUse は `scripts/` に検査を割り当てず（`selectChecks` が SSOT）、他のカテゴリの引き金にも当たらないため、**このカテゴリを飛ばすとガバナンス検査自身の回帰テストが 1 度も走らない**。`governance:check` は代わりにならない——あれはリポジトリの現状に対する照合であって、判定を壊しても現行ツリーがたまたま緑なら通る
+- **`scripts/lib/**` の PowerShell を触ったら `npm run test:powershell` も打つ**（母集団は `scripts/run-pester.ps1` が `scripts/lib` を見る）。`npm test` の vitest は `.ps1` を見ない
+- PostToolUse フックが `.githooks/**` の編集で `vitest run .githooks` を、`.claude/hooks/**` の編集で hook-selftest を自動発火する（#484/#497）。**この 2 つは沈黙が合格を意味するが、`scripts/**` は沈黙が「何も走らなかった」である**（ルート `CLAUDE.md`「フック」）
 - `.githooks/` は **main 保護のローカル層**。commit / merge / rebase / push の各操作で git が直接呼ぶため、ツール・シェル・worktree・`git -C` のいずれにも依存しない
 - **bootstrap**: `npm install` / `npm ci` が `prepare` スクリプトで `git config core.hooksPath .githooks` を実行する。worktree は `.git/config` を共有するため一度で全 worktree に効く
 - この層は best-effort。`core.hooksPath` が外れても **GitHub ruleset（`default`）が main への直接 push を拒否する**ため、外れたことを検知する仕組みは意図的に設けていない

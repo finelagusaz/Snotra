@@ -84,6 +84,7 @@
 | 2026-08-27（#1201 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（906 件 green） | **0 件** |
 | 2026-09-02（#1211 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（906 件 green） | **0 件** |
 | 2026-09-02（#1214 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0・格下げ中のメタ層の印字なし）と `npm test`（908 件 green） | **0 件（(b) 露出なし）** |
+| 2026-09-02（#1225 サイクル末・`/retrospective` から） | 同上（exit 0・`npm test` 908 件 green） | **0 件。面積計器の入力ガードは (a)**（#1222 が `.claude/skills/health-check/SKILL.md` を変更し、`checkNormativeAreaInstrument` が読む面に届いた）／**evidence の供給断検知は (b)**（袋の組み立てにも `ctx.record` の供給側にも触れていない） |
 
 **追記（2026-09-02・#1214 サイクル末）— 撤去を見送り、判定規則の側を直した。**
 

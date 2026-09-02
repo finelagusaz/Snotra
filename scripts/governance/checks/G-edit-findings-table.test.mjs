@@ -22,6 +22,7 @@ const ALL = [
   "checkNearHeadingRefs",
   "checkFoldedHeadingRefs",
   "checkFoldedCodeSpans",
+  "checkFullwidthDocLinkBrackets",
   "checkStaleIdentifiers",
   "checkAdrFileNames",
   "reportFor",

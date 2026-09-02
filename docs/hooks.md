@@ -111,6 +111,7 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 | 同じ走査元を編集し、**その中に**助詞が挟まった近傍形がある | 同上 | `checkNearHeadingRefs` |
 | 同じ走査元を編集し、**その中に**物理改行で折れた正準形がある | 同上 | `checkFoldedHeadingRefs` |
 | 同じ走査元を編集し、**その中に**物理改行を跨いだコードスパンがある（#992） | 折れたコードスパン | `checkFoldedCodeSpans` |
+| `.rs` を編集し、**その doc コメント（`///` / `//!`）の中に**半角と全角が混在した intra-doc link の角括弧がある（#1172） | 角括弧の混在 | `checkFullwidthDocLinkBrackets` |
 | `staleIdentifierTargets()` の文書を編集し、**その中に**現行語彙に無い識別子がある | 語彙の腐り | `checkStaleIdentifiers` |
 | `docs/adr/` 直下の `.md` を編集し、ファイル名か冒頭見出しが `ADR-<slug>` 形でない | ADR の命名 | `checkAdrFileNames` |
 | `.md` を編集し、**依存を持つ節の本文が変わった** | その節に依存する参照の一覧（#1140） | `reportFor`（`dependents.mjs`） |

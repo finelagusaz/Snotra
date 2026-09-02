@@ -157,6 +157,14 @@ describe("scopedFindings — 参照の書き方（heading-refs 3 種）の帰属
     expect(f[0].message).toContain("コードスパンが物理改行を跨いでいる");
   });
 
+  it("赤: doc コメントの intra-doc link の角括弧が半角と全角で混在する（G-fullwidth-doc-link-bracket）", () => {
+    // 配線されていることの固定（上と同じ理由で 1 形だけ）。母集団は `.rs` 全件なので `.rs` を編集した形で見る
+    const s = snap({ ...refDocs, "src/a.rs": "/// 合成は [`FrameGeom::bar_height_phys`］ が持つ\n" });
+    const f = scopedFindings(s, "src/a.rs");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("半角と全角で混在");
+  });
+
   it("**帰属**: 他の文書の壊れた参照は混じらない", () => {
     const s = snap({ ...refDocs, "docs/other.md": "# o\n`AGENTS.md`「無い節」\n" });
     expect(scopedFindings(s, "docs/guide.md")).toEqual([]);

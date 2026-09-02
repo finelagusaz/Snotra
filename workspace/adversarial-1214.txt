@@ -1,0 +1,99 @@
+# 壊せた項目
+
+- [争点1] 「索引行を削る変異に対し、現行判定も案 A も沈黙する」は autostart.rs 以外へは一般化できない。
+  実物の `checkModuleIndex` / `moduleIndexSources`（`scripts/governance/checks/G-module-index.mjs` を file:// import・複製メモリ上でのみ変異）で、「行頭が `- \`file\`` 形」で個別の索引行を持つ全 86 ファイル（母集団 131 件中）に対し、その 1 行だけを削る変異を当てて `checkModuleIndex` を再実行した。
+  結果: **caught（赤くなる）38 件 / silent（緑のまま）48 件**。
+  根拠（実行結果の逐語）:
+  ```
+  caught(赤くなった) 件数: 38
+  silent(緑のまま) 件数: 48
+  noIndexLineFound(そもそも単独の索引行が見つからない) 件数: 45
+  ```
+  caught の例: `snotra-core/src/lib.rs`, `snotra-core/src/binfmt.rs`, `snotra-core/src/error.rs`, `snotra-egui-runtime/src/proof.rs`, `src-tauri/src/startup.rs`, `snotra-settings/src/main.rs` ほか（全 38 件はログ参照）。
+  これらのファイルは basename が同一 crate の CLAUDE.md 本文の**どこにも**再出現しないため、逆方向 `text.includes` が偽になり finding が出る。research.md は autostart.rs 1 件だけを実測し「issue の 3 つの主張はすべて自分の測定で再現した」と結論しているが、**「索引行削除は常に沈黙する」という一般化はしていない**（そこは正確）——しかし読み手がそう誤読しうる書きぶりであり、「32 件」の死角実寸（下記）と合わせて「死角は広い」という印象を与える一方、**実際には索引行を持つファイルの 44%（38/86）は今日でも単独削除だけで赤くなる**。案 C（死角を受容する）の判断材料としては、死角の広さを過大評価させうる書き方である。
+  この所見を偽にする手順: 上と同じスクリプトを再実行し（`test-blindspot.mjs`、内容は本ファイル末尾の付録に転記可）、`caught` の件数が 0 件（＝全ファイルが沈黙）であることを示せれば偽になる。
+
+- [争点3・独立] research.md 自身に算術の食い違いがある（自己言及の全称/数え上げ規範への違反）。
+  見出し「### (1) 索引行が所有しないファイルは 32 件ある（母集団 131 件）」（research.md:27）に対し、直後の表の該当 2 列（集約行に載る + それ以外）を合計すると **45 件**（0+28 / 0+0 / 7+1 / 9+0 → 28+0+8+9=45）であり、後段の文章では「それ以外」だけで **29 件**と述べている（research.md:38）。**「32」はどちらの部分和とも一致しない**。表の各行内の合計は正しい（31+0+28=59・12+0+0=12・37+7+1=45・6+9+0=15、母集団 131 と一致——実測で検算済み、下記「壊せなかった項目」参照）。ゆえに崩れているのは見出しの「32」という数字そのものである。
+  根拠: research.md 本文の逐語引用（上記）+ 自分の実測（`test-collisions.mjs`／`test-blindspot.mjs` で 131/86/45 を独立に再導出し、表の内訳と一致することを確認）。
+  この所見を偽にする手順: research.md の「32」が指す母集団を別に定義した記述が本文のどこかにあり、それが 32 と正しく符合することを示せれば偽になる（見つからなかった）。
+  **なお**: この報告作成中に `git status` で `workspace/research.md` が編集中（未コミットの差分あり）であることを検知した——この指摘は自分が読んだ版（レビュー開始時点）に基づくため、最新版では既に直っている可能性がある。転記・修正前に現物を再読すること。
+
+- [争点3] 「逆方向が basename で照合する限り、`` `tests.rs` `` の 1 回の言及が 14 枚を緑にする」（research.md:55）という言い回しは、機序としては成立するが**「1 回」という数え方が crate 横断で誤解を招く**。
+  `checkModuleIndex` は crate ごとに**別々の** `<crate>/CLAUDE.md` の `text` を読む（同関数 58-100 行目のループ）。basename 衝突 14 種のうち **12 種が複数 crate にまたがる**（`tests.rs` は snotra-core 13 件 + src-tauri 1 件、`mod.rs` は 3 crate、`instant.rs` は 3 crate 等）。単一 crate に閉じるのは `build.rs`（snotra-core のみ）と `icon.rs`（src-tauri のみ）の 2 種だけ。
+  根拠（`test-collisions.mjs` 実行結果の逐語）:
+  ```
+  tests.rs x14  crates=snotra-core,src-tauri  ★複数crateにまたがる
+  mod.rs x5  crates=snotra-core,src-tauri,snotra-settings  ★複数crateにまたがる
+  instant.rs x3  crates=snotra-core,src-tauri,snotra-settings  ★複数crateにまたがる
+  ...(以下省略・全14種中12種が★)
+  build.rs x2  crates=snotra-core  (単一crate)
+  icon.rs x2  crates=src-tauri  (単一crate)
+  ```
+  ゆえに「`tests.rs` の 1 回の言及が 14 枚を緑にする」は不正確——正しくは「**同一 crate の CLAUDE.md 内の 1 回の言及が、その crate に属する同名ファイル群を緑にする**」であり、`tests.rs` を 14 枚すべて緑にするには **最低 2 回**（snotra-core 側に 1 回・src-tauri 側に 1 回）の言及が要る。案 B の費用見積もり（「29 件へ索引行を新設」）には影響しないが、案 C のヘッダへこの性質を追記する場合に「1 回」という書き方をそのまま使うと不正確な記述が固定化される。
+  この所見を偽にする手順: `checkModuleIndex` が実際には crate 横断で 1 つの `text` を共有していることを示せれば偽になる（コードを読む限りそうではない——58 行目のループが crate ごとに `mdPath` を作り直し `snapshot.read(mdPath)` している）。
+
+# 壊せなかった項目
+
+- [争点2] 4 つの `CLAUDE.md`「モジュール構成」節を全文読み、かつ `grep -nE '^\s*-\s+\*\*\`|^\s*[0-9]+[.)]\s|^\s*\|'` で番号付きリスト・表セル・`**\`file.rs\`**` 形の太字索引行を機械的に探索した。**該当なし**（`section-snotra-egui-runtime.txt` は完全ヒットなし、他 3 crate はいずれも「太字プレフィックスの識別子」であって太字で包んだファイル名索引行ではなかった）。引用ブロック（`>`）も 4 節とも 0 件。研究の「行頭がバッククォートなら索引行」という単純な読み方は、この 4 文書の実際の書式（一貫して `- \`file.rs\` — 説明` の形）に対しては**取りこぼしを生んでいない**——32/29/44/14 の内訳の**分類方法**自体は壊せなかった（ただし見出しの「32」という数字自体は上記の通り壊れている）。
+
+- [争点3] 「母集団 131 件・相異なる basename 101・衝突 14 種・44 件」という数字は、`moduleIndexSources` を実物のまま呼んで独立に再導出し、全項目が一致した。
+  根拠（`test-collisions.mjs` 実行結果の逐語）:
+  ```
+  total population: 131
+  distinct basenames: 101
+  collision basenames count: 14
+  ...
+  collisions total files covered: 44
+  ```
+  crate 別内訳（snotra-core 59 / snotra-egui-runtime 12 / src-tauri 45 / snotra-settings 15）も一致。research.md は「自前で再帰走査した」と書いているが、実物の `moduleIndexSources`（`MODULE_INDEX_CRATES` の `src`/`exts`/`excludeTest` を経由）で出した値と**完全一致**しており、母集団のずれは無かった。
+
+- [争点3] `MODULE_INDEX_CRATES` の 4 crate は `Cargo.toml` の `[workspace] members` と完全一致（snotra-core / snotra-egui-runtime / src-tauri / snotra-settings）。crate 一覧の水準ではずれていない。
+
+- [争点4] 「編集時 reminder も同じ理由で鳴らない」を、実物の `scopedFindings` / `reportFor`（`scripts/governance/edit-findings.mjs`）で実測して確認した。
+  autostart.rs の索引行を削った複製スナップショットに対し:
+  - `scopedFindings(mutatedSnap, "snotra-core/CLAUDE.md")`（`<crate>/CLAUDE.md` 自身を編集した扱い＝`whole: true` 経路）→ **0 件**
+  - `reportFor(mutatedSnap, "snotra-core/CLAUDE.md")` → **空文字列**（hook は何も出力しない）
+  - `scopedFindings(mutatedSnap, "snotra-core/src/autostart.rs")`（`.rs` 自身を編集した扱い＝`attributesTo` フィルタ経由）→ **0 件**
+  コード読解でも裏付く: `<crate>/CLAUDE.md` を編集した場合 `crate.whole === true` となり `attributesTo` フィルタを一切通さず `checkModuleIndex(snapshot, [crate.name])` の結果をそのまま返す（`edit-findings.mjs:134-135`）——`governance:check` と**文字どおり同じ関数呼び出し**なので、片方だけが索引行の消失を見る余地は構造的に無い。「さらに狭い」でも「別経路で鳴る」でもなく、**完全に同一の結果**である。
+
+- [争点5] `crateSourceFiles`（`G-module-linkage` の母集団・`workspaceMembers` 由来）と `moduleIndexSources` の全 crate 合算（`MODULE_INDEX_CRATES` 由来）は、**今日は完全に一致**する（131 件 = 131 件、差分 0 件・双方向）。
+  根拠（実行結果の逐語）:
+  ```
+  crateSourceFiles 件数: 131
+  moduleIndexSources 合計: 131
+  linkage にのみ在る（module-index の母集団から漏れる）: 0 []
+  moduleIndex にのみ在る（linkage の母集団から漏れる）: 0 []
+  G-module-linkage ベースライン findings: 0
+  ```
+  ゆえに「索引行が消えても mod 宣言の到達性と実在は G-module-linkage が守ったままである」という案 C の残余記述は、**今日の実データに対しては**正しい——ただし `lib.mjs` の `crateSourceFiles` 自身の doc が明記する通り、この一致は**構造的な保証ではなく「今日たまたま同じ」**であり（「2 本の導出が食い違わないことを、今日は誰も見ていない」）、将来 `MODULE_INDEX_CRATES` の `exts`/`excludeTest` を狭めれば母集団は静かにずれうる。これは既存の doc が自ら宣言している残余であり、今回の変異注入で新たに見つかった欠陥ではない。
+
+# ⚠️ 確信の持てない所見
+
+- 案 A（`text` → `section` へ絞る）を全 86 ファイルへ機械的に適用したところ、**caught 50 件 / silent 36 件**となり、現行判定（caught 38 / silent 48）より **12 件多く赤くなる**。
+  根拠（`test-plan-a.mjs` 実行結果の逐語）:
+  ```
+  案A ベースライン findings: 0
+  === 案A: 索引行を削る変異の結果 ===
+  caught: 50 silent: 36 noIndexLineFound: 45
+  ```
+  autostart.rs 単体では issue/research の主張どおり現行・案 A とも沈黙を再現した（個別に再実測し確認済み・双方 0 件）。**issue が案 A を却下した根拠（autostart.rs で効かない）はそのまま正しい**が、**「案 A は死角を閉じない」という結論を全体へ一般化するのは言い過ぎ**になりうる——集合全体で見ると案 A は現行より 14%（12/86）多くのケースを捕まえる。案 C を選ぶ判断そのもの（索引行の網羅性を諦める）に影響する数字ではないが、将来「案 A も検討したが効果ゼロだった」と書くと不正確になる。
+  この所見の確信度が低い理由: 「案 A の効果」を測る変異（索引行 1 本だけを消す）が、実際に issue が問題にした回帰の形（#1210 のように**索引行と同時に別ファイルの索引行や散文でも同名に触れる**形）を代表しているかは検証していない。もっと重ね塗りした変異（同時に複数の言及を消す）では案 A の優位性が消える可能性がある。
+
+- この作業中に `git status --porcelain` で `workspace/plan.md` と `workspace/research.md` の両方に**自分が行っていない**変更（未コミット差分）を検出した（`git diff --stat` で `plan.md` 156 行・`research.md` 187 行の差分）。本レビューは委譲メッセージが指示した対象（読了時点の research.md）に基づいており、この差分は委譲元セッション（または並行する別エージェント）による編集と推測されるが、確証は無い。**上の「32 件」の指摘を含め、research.md の最新版は本レポートが引用した版と異なりうる**——転記前に現物を再読すること。
+
+---
+## 付録: 使用した検証スクリプト（複製への変異のみ・実物の import・追跡ファイル無改変）
+配置: C:/Users/Eoh/AppData/Local/Temp/claude/C--workspace-Snotra/c0cdf77b-622a-42fc-88c7-6294a1f534af/scratchpad/
+- test-blindspot.mjs（争点1: 全86ファイルへ索引行削除の変異注入・現行判定）
+- test-plan-a.mjs（争点1: 同じ変異を案A判定で再実行）
+- test-collisions.mjs（争点3: 母集団・basename衝突の独立再導出）
+- test-edit-and-linkage.mjs（争点4・5: edit-findings実測・crateSourceFiles/moduleIndexSources母集団突き合わせ）
+
+## git status（本レポート作成後）
+```
+ M workspace/plan.md          ← 自分は編集していない（委譲元/並行エージェントによるものと推測）
+ M workspace/research.md      ← 同上
+?? workspace/adversarial-1214.txt   ← 本ファイル
+```
+`C:/workspace/Snotra` の追跡ファイルは 1 バイトも書き換えていない（`workspace/adversarial-1214.txt` の新規作成のみ）。`git checkout` / `git reset` / `git commit` / ブランチ操作は一切行っていない。

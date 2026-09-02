@@ -35,6 +35,32 @@ describe("G-module-index checkModuleIndex", () => {
     expect(f.every((x) => !x.message.includes("見出しが見つからない"))).toBe(true);
     expect(f.some((x) => x.message.includes("lib.rs"))).toBe(true);
   });
+  it("赤（逆方向）: 節の外の言及では緑にならない（照合先は `text` 全体ではなく「モジュール構成」節）", () => {
+    // #1214: 逆方向が `text` 全体を見ていた頃、索引行を消しても**文書の他所**（開発ルールの散文・
+    // 別の crate へ言及する箇所）にバッククォート付きで名前が在れば緑のまま通った。
+    // 節へ絞ったことで、索引の外の言及は索引の代わりにならない
+    const s = snap({
+      "snotra-core/CLAUDE.md": "# x\n## モジュール構成\n- `lib.rs` — エントリ\n\n## 開発ルール\n`search.rs` は散文でだけ触れている\n",
+      "snotra-core/src/lib.rs": "",
+      "snotra-core/src/search.rs": "",
+    });
+    const f = checkModuleIndex(s, ["snotra-core"]);
+    expect(f.some((x) => x.message.includes("search.rs"))).toBe(true);
+  });
+
+  it("緑: 同じ節の中の言及は索引として通る（受容する残余——索引行かどうかは見ない）", () => {
+    // #1214 の残る死角。**索引行の所有関係はパースしない**ので、集約行でも別ファイルの索引行の
+    // 説明文でも、同じ節の中にバッククォート付きで在れば緑になる。閉じない理由は
+    // `ADR-module-index-reverse-scope`
+    const s = snap({
+      "snotra-core/CLAUDE.md":
+        "# x\n## モジュール構成\n- `lib.rs` — エントリ（`search.rs` が消費する）\n\n## 次節\n",
+      "snotra-core/src/lib.rs": "",
+      "snotra-core/src/search.rs": "",
+    });
+    expect(checkModuleIndex(s, ["snotra-core"])).toEqual([]);
+  });
+
   it("集約行のベア名列挙（`mod.rs` 等）は basename 照合で誤検出しない", () => {
     const s = snap({
       "src-tauri/CLAUDE.md": "## モジュール構成\n- `commands/`: 分割（`mod.rs` + `search.rs`）\n## 次節\n",

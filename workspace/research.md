@@ -1,137 +1,149 @@
-# 調査 — issue #1211（アンインストール時にスタートアップのレジストリ値を消す）
+# 調査 — issue #1214: G-module-index の索引行が実質無防備である
 
-## 1. issue の要約
+## issue の要約
 
-`HKCU\...\Run` の値名 `Snotra`（#1210 で設定アプリから登録・解除できるようにしたもの）が、
-アンインストール後に残らないようにしたい。issue の案は `tauri.conf.json` の
-`bundle.windows.nsis.installerHooks` へ `.nsh` を渡し、`NSIS_HOOK_PREUNINSTALL` で
-`DeleteRegValue` を呼ぶこと。
+`<crate>/CLAUDE.md`「モジュール構成」の**索引行**を消しても `governance:check` が緑のまま通る。`G-module-index` の逆方向の照合が「索引行に載っているか」ではなく「文書のどこかにバッククォート付きで現れるか」を見ているため。#1210 で `autostart.rs` を足したとき、索引行のほかに開発ルールの散文と `win_registry.rs` の索引行でも同名に触れており、索引行だけを削る変異が exit 0 になった。
 
-## 2. 結論（先に書く）: issue の前提は偽である
+issue は 3 案を挙げ、**案 A（`text` → `section` へ絞る）は実測で効かないと自ら却下済み**。判断を求めているのは案 B（索引行の所有関係をパースする）と案 C（死角として宣言し止める）のどちらを採るか。
 
-**Tauri 2.11.4 の NSIS テンプレートは、この値の削除を既に持っている。** ゆえに `.nsh` を足す
-必要は無く、足すと**更新のたびにスタートアップ登録が消える退行**になる（→ §5）。
+**判定は 2 段で決まった（2026-09-02・いずれも AskUserQuestion で明示的に選択）。**
 
-一次証拠は**レンダリング済みの成果物**である（テンプレートの推測ではない）。
-`npx tauri build --debug --bundles nsis` を実行し、生成された
-`target/debug/nsis/x64/installer.nsi` を読んだ（2026-09-02 実測）:
+1. **まず案 C**（死角として宣言し止める）。案 A は issue が実測で却下済み、案 B は費用が大きい、という前提だった。
+2. **敵対的調査（3b）が前提を崩し、案 A＋宣言へ変わった。** issue の案 A 却下は `snotra-core/autostart.rs` **1 例だけ**の実測だった。索引行を持つ全 86 本へ 1 本ずつ削る変異を当て直すと、案 A は現行より **12 件多く捕まえ、現行ツリーへの掃除の費用は 0 件**である。この再測をユーザーへ提示して選び直してもらった。
 
-```
- 35: !define PRODUCTNAME "Snotra"
- 39: !define INSTALLMODE "currentUser"
- 46: !define MAINBINARYNAME "snotra"
-...
-812:   ; Removes the Autostart entry for ${PRODUCTNAME} from the HKCU Run key if it exists.
-813:   ; This ensures the program does not launch automatically after uninstallation if it exists.
-814:   ; If it doesn't exist, it does nothing.
-815:   ; We do this when not updating (to preserve the registry value on updates)
-816:   ${If} $UpdateMode <> 1
-817:     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
-```
+**後から読む者へ**: 「なぜ issue が却下した案 A を採ったのか」の答えは下の「敵対的調査（3b）の所見と採否」の ⚠️ 節にある。
 
-- `${PRODUCTNAME}` は `"Snotra"` に展開される。`snotra_core::autostart::RUN_VALUE_NAME`（`"Snotra"`）と**逐語で一致する**
-- `INSTALLMODE` は `currentUser` ゆえアンインストーラは昇格せず、`HKCU` は利用者自身のハイブである
-- 削除は `Section Uninstall` の末尾側（`UNINSTKEY` 削除の直後）に置かれ、`$UpdateMode <> 1` で守られている
+## 自分で測った実測（複製への変異注入・稼働中のガードは 1 バイトも触っていない）
 
-## 3. 母集団（誰の機体に残るのか）
+`scripts/governance/checks/G-module-index.mjs` の `checkModuleIndex` を実物のまま import し、`snotra-core/CLAUDE.md` の**メモリ上の複製**へ変異を当てた。ファイルは読むだけで、作業ツリーは変更していない。
 
-**結論は 1 本の論拠だけで閉じる**——余分な根拠を積むと、そのどれかが腐ったときに結論ごと腐る。
+| 測ったこと | 結果 |
+|---|---|
+| ベースライン `npm run governance:check` | **exit 0**（全検査 passed・検査 23 件） |
+| `autostart.rs` の索引行だけを削る変異 → 現行判定（`text` 包含） | ベースライン 0 件 → 変異後も **0 件**（★ 沈黙・死角を再現） |
+| 同じ変異 → 案 A（`section` 包含へ絞った版） | ベースライン 0 件 → 変異後も **0 件**（★ 案 A も沈黙） |
+| 案 A の「掃除の費用」 | 現行ツリーで新たに赤になるファイル **0 件** |
+| 変異後も本文に残る `` `autostart.rs` `` の言及 | **2 件**（散文 1・`win_registry.rs` の索引行 1。issue の経緯 1/2 と一致） |
 
-- **荷重を持つ唯一の論拠**: スタートアップ登録ができるのは #1210（PR #1215, `63236153`）以降であり、**この機能はまだリリースされていない**（`git merge-base --is-ancestor 63236153 v0.19.2` が偽・v0.19.2 の HEAD は `11828aab`）。登録し得た利用者が居ない以上、**残り得る値も存在しない**
-- ゆえに「登録済みの値を持つ利用者」は、#1215 を含む最初のリリース以降にしか現れない。そのリリースをビルドする CLI は `package-lock.json` で 2.11.4 に固定されている（`npm ci` を使う `.github/workflows/release.yml:42`）
+**issue の 3 つの主張はすべて自分の測定で再現した。** 逐語追認ではない。
 
-**傍証（結論の必要条件ではない）**: v0.18.3 / v0.19.0 / v0.19.1 / v0.19.2 の各タグでも `@tauri-apps/cli` は 2.11.4 だった（`git show <tag>:package-lock.json` で実測）。**v0.18.3 より前のタグは走査していない**——機能が存在しないタグは母集団の外なので、上の論拠には要らない。
+## 死角の実寸 — issue が書いていない 2 つの事実
 
-## 4. 更新経路では消えない（＝守られている）
+### (1) 索引行が所有しないファイルは 45 件ある（母集団 131 件）
 
-`tauri-plugin-updater` 2.10.1 は NSIS インストーラを**必ず `/UPDATE` 付きで**起動する
-（`updater.rs:812` `.chain(once(OsStr::new("/UPDATE")))`）。
-テンプレート側は `un.onInit` で `/UPDATE` を `$UpdateMode` へ読み、上記 §2 の削除を飛ばす。
-`installMode` は `passive`（`tauri.conf.json`）なので `/P` も付く。
+母集団は**実物の `moduleIndexSources`** で取り、節の切り出しも**実物の `sectionOf`（`ending: "heading"`）**を使って数え直した（初版は自前の再帰走査と自前の節切り出しで数えており、見出しの件数が表と食い違っていた——敵対枠 [争点3・独立] が指摘。訂正済み）。
 
-**scope**: 「更新で消えない」と言えるのは**この updater 経路だけ**である。利用者が新しい
-インストーラ exe を手で実行して既存インストールに重ねた場合、再インストールページで
-「先にアンインストールする」枝（`reinst_uninstall`）へ進むと、`$UpdateMode = 0` のまま
-旧アンインストーラが呼ばれ、**そこでは値が消える**（`installer.nsi:340-352` 実測）。
-これは上流の挙動であり本リポジトリの変更対象ではないが、**「更新では消えない」を全称で書かない**。
+| crate | 実ファイル | 行頭が所有 | 集約行に載る | それ以外 |
+|---|---|---|---|---|
+| snotra-core | 59 | 31 | 0 | **28** |
+| snotra-egui-runtime | 12 | 12 | 0 | 0 |
+| src-tauri | 45 | 37 | 7（`commands/` `platform/`） | 1 |
+| snotra-settings | 15 | 6 | 9（`tabs/`） | 0 |
+| **合計** | **131** | **86** | **16** | **29** |
 
-## 5. issue の案（`.nsh`）を採らない理由
+「それ以外」29 件の内訳（snotra-core 28 + src-tauri 1）はすべて**散文か別ファイルの索引行にしか現れない**:
 
-**第一の理由は「不要だから」である**（§2）。削除は既に在り、`.nsh` は同じ削除を二重に書く写しになる。
+- `tests.rs` × 13（`autostart/` `config/` `config/io/` `config/location/` `config/migrate/` `config/paths/` `config/schema/` `config/validate/` `indexer/` `indexer/cache/` `indexer/columns/` `indexer/path_env/` `indexer/scan/`）
+- `search/tests/*.rs` × 9（`basic` `build` `common` `incremental` `migemo` `mod` `path` `performance` `ranking`）
+- `indexer/test_support.rs`
+- `search/{build,footprint,path_store,query_plan,scoring}.rs` × 5
+- `src-tauri/src/egui_shell/launcher_controller/activation/tests.rs`
 
-**第二の理由は、issue が書いたとおりに素朴に実装すると退行することである。**
-`NSIS_HOOK_PREUNINSTALL` は `Section Uninstall` の**先頭**で `!insertmacro` される
-（`installer.nsi` の `Section Uninstall` 直下）。上流の削除を守る `$UpdateMode <> 1` は
-その先にあるので、フックの中で**無条件に** `DeleteRegValue` すれば
-**updater 経由の更新でも消える**——#1210 の登録が更新のたびに失われる。
+### (2) basename 衝突は crate 単位で 4 種 20 件（初版の「14 種 44 件」は判定単位と合っていなかった）
 
-**ただしこの退行は回避可能である**（敵対的枠の所見 (a)2 を採用・断定を弱めた）。
-`$UpdateMode` は `un.onInit`（`Section Uninstall` より前に走る）で `/UPDATE` から設定済みなので、
-フック内に `${If} $UpdateMode <> 1` を自分で書けば同じガードを再現できる。
-**ゆえに「`.nsh` は必ず退行する」とは言えない**——言えるのは「issue の案文どおりに書けば退行する」
-までであり、`.nsh` を採らない判断は §2 の「不要」と §6 の「写しが増える」で独立に立つ。
+**`checkModuleIndex` は crate ごとに別々の `<crate>/CLAUDE.md` を読む。** ゆえにリポジトリ全体で数えた衝突（14 種 44 件）は判定の単位ではない——crate を跨ぐ同名は、それぞれの crate で別々に言及が要る。**crate 内**で数え直すと:
 
-## 6. 残る本当の論点: 写しの結合
-
-削除が効くのは `RUN_VALUE_NAME == tauri.conf.json の productName` である間だけである。
-
-| 側 | 場所 | 値 |
+| crate | crate 内で同名が複数ある basename | 覆うファイル |
 |---|---|---|
-| Rust | `snotra-core/src/autostart.rs:41` `RUN_VALUE_NAME` | `"Snotra"` |
-| インストーラ | `src-tauri/tauri.conf.json` `productName` → `${PRODUCTNAME}` | `"Snotra"` |
+| snotra-core | 2 種（`tests.rs`×13 / `build.rs`×2） | 15 |
+| src-tauri | 2 種（`mod.rs`×3 / `icon.rs`×2） | 5 |
+| snotra-egui-runtime / snotra-settings | 0 | 0 |
 
-- どちらかがずれても**コンパイルは通り、テストも緑のまま**、アンインストール時の削除だけが静かに空振りする。issue の「確認すること」が問うていた写しの問題は、`.nsh` を書かなくても**この形で残る**
-- **隣接する第 2 の結合（射程外だが記録する）**: `MAIN_EXE_FILE_NAME`（`"snotra.exe"`）と
-  `${MAINBINARYNAME}`（`"snotra"`・`src-tauri` の Cargo package 名から来る）。ずれると
-  autostart が存在しない exe のパスを書く。**#1210 由来であって #1211 の削除経路とは別の命題**
+**`snotra-core/CLAUDE.md` に `` `tests.rs` `` が 1 回あれば、同 crate の 13 枚が緑になる。** これは節の内外という切り口とは独立の天井であり、案 B をどれだけ深くしても basename 方式のままでは閉じない。
 
-## 7. 関連ファイル・シンボル（実在を確認済み）
+**この 2 つは、案 B の費用が issue の見立てより大きいことを示す**——素直に採ると 29 件へ索引行を新設する話になり、うち 22 件はチームが意図して索引していないテストモジュールである。**案 B が最後まで採られなかった根拠はこれである**（案 A への転換とは独立に成立する）。
+
+## 敵対的調査（3b）の所見と採否
+
+`workspace/adversarial-1214.txt`（general-purpose / sonnet 1 体）。**所見はすべて自分で再測して裁定した**（`m6.mjs`・実物の `makeSnapshot` / `moduleIndexSources` / `sectionOf` / `checkModuleIndex`）。
+
+### 壊せた項目（3 件・すべて採用）
+
+| # | 所見 | 自分の再測 | 採否 |
+|---|---|---|---|
+| 争点1 | 「索引行の削除に沈黙する」は `autostart.rs` から一般化できない。索引行を持つ全 86 本へ 1 本ずつ削る変異を当てると **赤 38 / 緑 48** | **完全一致**（赤 38 / 緑 48。crate 別: core 15/19・egui 8/4・tauri 12/22・settings 3/3） | **採用。** 初版は 4 crate の 1 本ずつしか測っておらず、死角の広さを過大評価していた |
+| 争点3・独立 | research.md の「32 件」が表の合計（45）とも後段（29）とも一致しない | **一致**。正しくは 45 件（86 + 16 + 29 = 131） | **採用**（上で訂正済み） |
+| 争点3 | 「`tests.rs` の 1 回の言及が 14 枚を緑にする」は不正確。判定は crate ごと | **一致**。crate 内衝突は 4 種 20 件 | **採用**（上で訂正済み） |
+
+### 壊せなかった項目（4 件）
+
+- **争点2**（分類方法）: 4 つの節を全文読み、番号付きリスト・表セル・太字ラップの索引行は 0 件。分類の regex は壊れていない
+- **争点3**（母集団）: 131 件・`MODULE_INDEX_CRATES` の 4 crate が `Cargo.toml` members と一致
+- **争点4**（reminder）: `scopedFindings` は `governance:check` と**文字どおり同一関数**を呼ぶ。「さらに狭い」でも「別経路で鳴る」でもない
+- **争点5**（残余）: `crateSourceFiles` と `moduleIndexSources` は今日 131 = 131 で一致。ただし構造的保証ではない（`lib.mjs` の doc が自ら警告）
+
+### ⚠️（確信の持てない所見）— **これが最も重い**
+
+**案 A（`text` → `section`）は死んでいない。** 同じ 86 本の変異へ当てると **赤 50 / 緑 36** で、現行より **12 件多く捕まえる**。しかも**現行ツリーへ当てたときの掃除の費用は 0 件**である（issue の実測と一致）。
+
+自分の再測でも同じ（赤 50 / 緑 36 / 差 +12 / 費用 0 件）。crate 別の内訳:
+
+| crate | 索引行 | 現行 赤/緑 | 案 A 赤/緑 |
+|---|---|---|---|
+| snotra-core | 34 | 15 / 19 | **23 / 11** |
+| snotra-egui-runtime | 12 | 8 / 4 | **9 / 3** |
+| src-tauri | 34 | 12 / 22 | 12 / 22 |
+| snotra-settings | 6 | 3 / 3 | **6 / 0** |
+
+**issue の「案 A は実測で消えました」は、#1210 が踏んだ形（同じ節の中の別の索引行が同名に言及している）についてだけ正しい。** その 1 例で却下したため、**費用 0 で 12 件ぶん強くなる面が見落とされていた**。
+
+**機序は自分で裁定した**（採るのは所見であって説明ではない）: 差が出るのは `snotra-core` / `snotra-settings` / `snotra-egui-runtime` で、いずれも**節の外の散文**が basename に触れている crate である。`src-tauri` で差が 0 なのは、言及が節の中に在るためで、#1210 の形はこちらに当たる。
+
+**ただし費用 0 は今日の値であり、将来の下界ではない**——節の外の散文だけが触れているファイルが現れれば、そのとき新たに赤くなる。
+
+## 残る死角 — 編集時 reminder も同じ述語を使う（検算済み）
+
+issue の「あれも同じ判定を使うので、同じ理由で鳴りません」は正しい。
+
+`scripts/governance/edit-findings.mjs:134` が `checkModuleIndex(snapshot, [crate.name])` を実物のまま呼び、結果を編集ファイルへ帰属させている（同ファイル `//!` が「**判定を再実装しない**」と宣言）。ゆえに逆方向の述語は編集時経路と `governance:check` で共有され、片方だけが索引行の消失を見ることはない。
+
+**受容する残余（案 A を入れた後も残る分）**: 索引行の消失・不記載は、**その basename が同じ「モジュール構成」節の他所に現れるときだけ**検知されない（案 A の前は「同じ `CLAUDE.md` の他所」だった。狭まるが消えない）（実測では索引行 86 本のうち 48 本がこの側で、38 本は今日でも赤くなる）。「索引行の消失は誰も検知しない」は**偽である**。ファイルそのものは `G-module-linkage`（`mod` 宣言の到達性）と順方向（索引に書かれた名前の実在）に守られたままで、失われるのは**索引の網羅性の一部**である。
+
+## 関連ファイル・シンボル（すべて grep で実在確認済み）
 
 | パス | 役割 |
 |---|---|
-| `snotra-core/src/autostart.rs` | `RUN_VALUE_NAME` / `MAIN_EXE_FILE_NAME` / `enable` / `disable` / `is_enabled` |
-| `src-tauri/tauri.conf.json` | `productName`・`bundle.windows` 未設定（`nsis` 節そのものが無い） |
-| `SPEC.md` §7.7 L457 | 「アンインストールしても値が残る（#1211 で扱う）」——**偽の残余** |
-| `scripts/governance/checks/` | 検査の置き場。各モジュールは `id` と `run` を export し、ファイル名 == id |
-| `scripts/governance/registry.mjs` | 検査を**ディレクトリ走査から導出**する（`checks/` の**外**にある。忘れうる登録行は存在しない） |
-| `scripts/governance/checks/G-clippy-disallowed.mjs` | 再利用できる先例: 非 md（TOML）を読み、2 ファイルの整合を見る検査 |
-| `.github/workflows/release.yml:42,64` | `npm ci` → `npx tauri build --bundles nsis` |
+| `scripts/governance/checks/G-module-index.mjs` | 機序の正本。`MODULE_INDEX_CRATES` / `moduleIndexSources` / `checkModuleIndex` |
+| `scripts/governance/checks/G-module-index.test.mjs` | 46 行・6 ケース。集約行のベア名列挙が誤検出しないことを固定するケースが既に在る |
+| `scripts/governance/edit-findings.mjs` | 編集時 reminder。`checkModuleIndex` をそのまま呼ぶ |
+| `scripts/governance/checks/G-module-linkage.mjs` | `mod` 宣言の到達性。「G-module-index が塞がない足を塞ぐ」と自称 |
+| `scripts/governance/checks/G-adr-file-names.mjs` | `docs/adr/` のファイル名が `ADR-<slug>.md` 形で、本文の見出しと stem が一致するか |
+| `scripts/governance/checks/G-adr-citations.mjs` | `ADR-<slug>` の短縮引用が実在の ADR を指すか。母集団は governance 文書 + skills + 製品ソース + ADR 同士 |
+| `docs/adr/ADR-governance-meta-demotion.md` | 段を増やす判断の正本 |
+| `docs/adr/ADR-stale-identifier-detector-scope.md` | **形の先例**——「採った述語と理由はコード側、却下した案は ADR」 |
+| `.claude/rules/safety-nets.md` | フォールトインジェクションの作法（`scripts/**` を触ると自動配送） |
 
-## 8. 再利用できる既存パターン
+## 再利用できる既存パターン
 
-- **検査の追加は `checks/` にファイルを置くだけ**（登録行は無い・`registry.mjs` の `//!`）。`snapshot.read(rel)` で任意ファイルを読める
-- `G-clippy-disallowed` が TOML を正規表現で近似パースする作法（`stripTomlComment` / `tomlLine`）を持つ。今回は**片側が JSON** なので `JSON.parse` が使える（`snapshot.read` は文字列を返す）
-- 検査を足すと `governance:manifest` の `checks` 列が動く → PR 本文へ `+G-<id>` の逐語宣言が要る（`governance-manifest.mjs`）
+1. **`ADR-stale-identifier-detector-scope` の分担**: 採用した述語の理由は検査ファイルのヘッダコメント、**却下した案は ADR**。#1214 は「案 A を実測して却下」「案 B を費用で却下」という否定の知識を持つので、この分担がそのまま当たる。
+2. **検査ヘッダの自己申告スコープ**: `G-module-index` のヘッダは既に「意図的な弱化」を宣言しており、逆方向の直前のコメントも 2026-08-17 の実測を持つ。**追記する場所は既に在る**——新しい様式を作らない。
+3. **`G-module-linkage` の「受容する残余」節**: 残余を箇条書きで列挙し、向き（沈黙側 / 赤に倒れる側）を明記する書式。
 
-## 9. 技術的制約
+## 技術的制約
 
-- `governance-check.mjs` の契約は「依存ゼロ・決定的（ネットワーク・時刻・環境変数に非依存）」。検査は Node 標準のみで書く
-- 検査ファイルには `<id>.test.mjs` が対になっている。新設時もテストを対で置く
-- セーフティネットの新設は `.claude/rules/safety-nets.md` の対象——**フォールトインジェクションで一度は実測する**（片側をずらして赤になることを確かめる）
-- ポータブル版（ZIP）にアンインストーラは無い（issue 記載どおり）。この経路は塞げない
+- **検査ヘッダに数え上げを書かない。** ルート `AGENTS.md`「検証の作法」——「数え上げは偽になる時点が確定している。足すたびに腐る。数ではなく正本（分岐そのもの）を指す」。上の「44 件」「14 種」「29 件」は**ファイルを 1 枚足せば偽になる**。日付つきの実測として ADR（凍結された歴史）へ置き、検査ヘッダには**性質**（basename 照合ゆえ同名のファイル群は 1 回の言及で覆われる）だけを書く。
+- **全称表現を検査ヘッダへ持ち込まない。** 「索引行の消失を見る層は無い」は現時点の主張であり、`G-module-linkage` や順方向が別の足を守っている事実と併記しないと過剰に強い。
+- **ADR を新設するなら `ADR-<slug>.md` 形で、H1 見出しの stem と一致させる**（`G-adr-file-names`）。引用は `G-adr-citations` が実在照合する。
+- **`docs/adr/` は凍結された歴史である**（`ADR-adr-frozen-history`）。後から本文を書き換えず、追記で読み替えを与える。
+- **`.md` と `scripts/` を触るので `npm run governance:check` が要る**（`AGENTS.md` カテゴリ F。PR では CI の governance-check job が常時実行）。
+- **`scripts/**` を触るので `.claude/rules/safety-nets.md` が自動配送される。** 案 A は**検知器の走査元を絞る**変更（`AGENTS.md`「ガバナンス機構自身の…母集団の切り出しの変更」に当たる）なので、**フォールトインジェクションは省けない**——強くなった側と残る死角の両方を測る（`plan.md` Phase 2）。
+- **セーフティネットの変更はユーザーの合意が要る**（ルート `CLAUDE.md` 最重要ルール 2）。案 A＋宣言の選択は取得済み。**規範文書 3 枚（`AGENTS.md` / `docs/hooks.md` / `.claude/skills/implement/SKILL.md`）を同じ PR で直すかは未取得**（`plan.md` の未確定欄）。
 
-## 10. 未解決の疑問
+## 調査時点の未解決（すべて `workspace/plan.md` で決着済み）
 
-- なし（§2〜§5 はすべて一次証拠で決着済み）。判断が要るのは「検査を置くか、両側のコメントで済ませるか」——`plan.md` の未確定欄で潰す
-
-## 11. 敵対的調査（3b）の所見と採否
-
-全文と「偽にする手順」は `workspace/adversarial-1211.txt`。
-
-**壊せなかった項目**（＝反証されず残った主張）: §2 の値名の逐語一致と WOW64 非該当・
-`currentUser` ゆえ非昇格・§3 の「0 人」の骨格・§4 の updater が必ず `/UPDATE` を付け Msi 分岐へ
-落ちないこと・issue 本文要約の正確性・`SPEC.md` §7.7 の残存記述・`MAIN_EXE_FILE_NAME` と
-`${MAINBINARYNAME}` の一致・`tauri.conf.json` の実値・`node_modules` と CI の CLI 版一致（ともに 2.11.4）。
-
-**壊せた項目と採否**:
-
-| # | 所見 | 採否 | 理由 |
-|---|---|---|---|
-| (a)1 | §7 の `registry.mjs` の参照がパスを明示せず、`checks/registry.mjs` と誤読させる | **採用** | 実体は `scripts/governance/registry.mjs`（`checks/` の外）。§7 の表を 2 行に割った |
-| (a)2 | §5 の却下理由が強すぎる。`.nsh` 内で `$UpdateMode` を自前ガードすれば更新退行は避けられる | **採用** | 機序を一次証拠で自分で裁定した——`un.onInit` は `Section Uninstall` より前に走り `$UpdateMode` を設定済み（`installer.nsi` 実測）。ゆえに所見は正しい。§5 を「案文どおりに書けば退行する」へ弱め、却下の荷重を §2・§6 へ移した |
-| ⚠️1 | release ビルドの `installer.nsi` と debug 版の差を測っていない | **採用し、自分で潰した** | テンプレート側の当該ブロックには handlebars の条件節も `!if` も**無く**、置換は `${PRODUCTNAME}` のみ（CLI バイナリ内のテンプレート実測）。この define の入力は `product_name` であり、ビルドプロファイルは入力に入らない。**ゆえに debug/release で分岐する経路が存在しない**——release ビルドは不要 |
-| ⚠️2 | 「0 人」の根拠として CLI 版一致を積んでいるが、結論は「機能が未リリース」の 1 点で閉じる | **採用** | 余分な根拠は腐る側になる。§3 を「荷重を持つ唯一の論拠」と「傍証」へ分けた |
-| ⚠️3 | v0.18.3 より前のタグを走査していない | **採用（射程の宣言として）** | 論拠自体は健全（機能が存在しないタグは母集団の外）。§3 に走査していない事実を明記した |
-| ⚠️4 | (a)1 と同一 | — | (a)1 で処理済み |
-
-**採らなかった機序の説明**: なし（各所見の機序は上表のとおり自分で一次証拠に当てて裁定した）。
+| 問い | 決着 |
+|---|---|
+| ADR を新設するか | **新設する**（`plan.md` 未確定欄）。案 B の費用却下と、**案 A を 1 例で却下してから覆した**経緯は再導出が困難 |
+| 宣言の追記先 | ヘッダの「basename 包含方式」段落＋逆方向直前のコメント（`plan.md` Phase 1・5） |
+| 規範文書へ波及するか | **する。** grep で 3 枚を特定した——`AGENTS.md:73` / `docs/hooks.md:107` / `.claude/skills/implement/SKILL.md:77` がいずれも「`.rs` を編集すれば索引漏れの reminder が鳴る」を**無条件で**主張しており、案 A を入れても偽のまま残る（`plan.md` Phase 6。**この PR に含めるかはユーザーの裁定待ち**） |
+| テストへ死角を固定するか | **しない。** 固定するのは**強くなった側**だけにする。死角側を `toEqual([])` で固定すると仕様へ昇格し、将来閉じるときにテストを消す作業が要る（`plan.md` 未確定欄） |

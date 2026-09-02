@@ -35,7 +35,7 @@
 
 ### Phase 1 — ADR の作成
 
-- [ ] `docs/adr/ADR-plan-document-lens-not-permanent.md` を書く。構成:
+- [x] `docs/adr/ADR-plan-document-lens-not-permanent.md` を書く。構成:
   1. 見出し `# ADR-plan-document-lens-not-permanent: 「文書としての plan.md」レンズを /plan-review へ常設しない`。日付 2026-09-02 ／ 状態: 承認
   2. **決定**（1 段落）
   3. **経緯（実測）**: #749 の 4 レンズ・15 件超・所見の 4 型と重み（issue の表を要約。数値は issue の引用として書き、現在形の主張にしない）。標準構成の撤去（#849）——issue が引く「Step 2b をトリガ列挙 0% で常時実施へ倒した前例」（#495/#502）も同じ決定で高リスク限定へ戻っている。受け皿の現状: 実行可能性 → `/plan-review` Step 1 の「タスク分割の境界が既存トリガーを跨いでいない」〔#914〕、内部矛盾 → `AGENTS.md`「検証の作法（全タスク共通）」の「数ではなく正本を指す」、節間の覆い → 同 Step 1 の概念ラベル grep〔#914〕が**部分的に**（変更ファイル一覧と散文の照合であって、計画内の節どうしは見ない）、責務分割 MECE → 個別 ADR（`ADR-window-coordinator-split-rule` 規則 R）に成果だけが着地し汎用の受け皿は無い
@@ -45,18 +45,18 @@
   7. **却下 4: 内部矛盾の機械化**——`AGENTS.md` の「数ではなく正本を指す」の下では計画が数を運ばないため、突き合わせる対象が消える
   8. **受容する残余**: 節間の覆い・責務分割 MECE を見る検知手段は無い（主エージェントの自己照合と人間レビューが残余の受け皿）。レンズ 4 本の定義は `git show 5ef346f:workspace/plan-review/<name>.md`（4 ファイル名を列挙）にだけ在る——**生きた層へ写さない**理由（書く約束の「必要なことだけ」——常設しないレンズの定義は生きた層の誰も読まない・`ADR-doc-promise-over-area-ratchet`）
   9. **関連**: 計器分割設計書が #761 を「plan.md の機械可読性」と読み替えていること、その問いは本 ADR の対象外であり spike が支持した時点で別 issue を起こすこと
-- [ ] 序数参照・消滅した節の正準形・全称表現を自分で grep して検算する（`grep -nE "項目 [0-9]|ADR-[0-9]{4}|どこにも|唯一|すべて" docs/adr/ADR-plan-document-lens-not-permanent.md`）
+- [x] 序数参照・消滅した節の正準形・全称表現を自分で grep して検算する（`grep -nE "項目 [0-9]|ADR-[0-9]{4}|どこにも|唯一|すべて" docs/adr/ADR-plan-document-lens-not-permanent.md`）
 
 ### Phase 2 — 生きた層からの引用と歴史資料への注記（U1/U2 の裁定済み）
 
-- [ ] `docs/development-principles.md`「検証の層と、層と層の隙間」の「ゆえに層を選ぶときは 2 つ問う」段落の直後へ 1 文を足す。趣旨: 「計画文書そのものの内部整合（節どうしの覆い・責務分割の判別規則）を見る層は常設しない——要る計画では臨時に回し、常設しない判断と観点の索引は `ADR-plan-document-lens-not-permanent`」。序数・件数を書かない。書く約束（かぶりなく・必要なことだけ・古い情報を残さない）に照らし、同 doc 内に同趣旨の文が無いことを grep で確かめてから足す
-- [ ] `docs/superpowers/specs/2026-07-29-plan-review-instrument-split-design.md` の冒頭（見出し直下）へ注記 1 行: `> **注記（2026-09-02）:** #761 は「文書としての plan.md」レンズの常設可否を扱い、常設しない決定で閉じた（` `ADR-plan-document-lens-not-permanent` `）。本設計書が #761 に置いた「plan.md の機械可読性」の問いは未着手のままであり、§5 の spike が仮説を支持した時点で別 issue を起こす`。本文は変えない
+- [x] `docs/development-principles.md`「検証の層と、層と層の隙間」の「ゆえに層を選ぶときは 2 つ問う」段落の直後へ 1 文を足す。趣旨: 「計画文書そのものの内部整合（節どうしの覆い・責務分割の判別規則）を見る層は常設しない——要る計画では臨時に回し、常設しない判断と観点の索引は `ADR-plan-document-lens-not-permanent`」。序数・件数を書かない。書く約束（かぶりなく・必要なことだけ・古い情報を残さない）に照らし、同 doc 内に同趣旨の文が無いことを grep で確かめてから足す
+- [x] `docs/superpowers/specs/2026-07-29-plan-review-instrument-split-design.md` の冒頭（見出し直下）へ注記 1 行: `> **注記（2026-09-02）:** #761 は「文書としての plan.md」レンズの常設可否を扱い、常設しない決定で閉じた（` `ADR-plan-document-lens-not-permanent` `）。本設計書が #761 に置いた「plan.md の機械可読性」の問いは未着手のままであり、§5 の spike が仮説を支持した時点で別 issue を起こす`。本文は変えない
 
 ### Phase 3 — 検証
 
-- [ ] `npm run governance:check`（カテゴリ F）全検査 passed
-- [ ] `git diff --check` が空
-- [ ] `git grep -n "ADR-plan-document-lens-not-permanent"` で引用が ADR 自身・`docs/development-principles.md`・計器分割設計書の 3 か所に在ることを確認
+- [x] `npm run governance:check`（カテゴリ F）全検査 passed
+- [x] `git diff --check` が空
+- [x] `git grep -n "ADR-plan-document-lens-not-permanent"` で引用が ADR 自身・`docs/development-principles.md`・計器分割設計書の 3 か所に在ることを確認
 
 ## 不変条件と異常系
 

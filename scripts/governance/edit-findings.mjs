@@ -59,6 +59,10 @@ import { checkAdrFileNames } from "./checks/G-adr-file-names.mjs";
  * この配列と釣り合っているかを見る——**判定を再実装せず、この配列そのものを読む**
  * （`G-hook-fires` が `selectChecks` を import して呼ぶのと同じ理由。抽出で近似すると、
  * 閉じたい写しを一段下で作り直すことになる）。**要素を足すときは表にも行を足す。**
+ * **`G-edit-findings-table.test.mjs` の `ALL` にも判定名を足す**——あちらは fixture の表を組むための
+ * 手書きの一覧で、足し忘れると 9 本が赤になる（機構が捕まえるので沈黙はしないが、#1172 では
+ * 敵対的調査も独立導出も「検査 ID の列挙は無い」と結論していた——検査 ID で grep しており、
+ * 判定**関数名**の写しは別の綴りだった）
  */
 export const SCAN_SCOPED = [
   { population: allHeadingRefDocs, check: checkHeadingRefs },

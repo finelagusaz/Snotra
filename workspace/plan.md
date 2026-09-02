@@ -83,15 +83,16 @@ const ANY_PAIR = /[\[［][^\[\]［］\n]*[\]］]/g;
 
 ### Phase 1 — 検査本体
 
-- [ ] `G-fullwidth-doc-link-bracket.test.mjs` に issue の実例 fixture を置いた赤テストを書き、落ちることを確認する
-- [ ] `G-fullwidth-doc-link-bracket.mjs` を実装し、単体テスト全件を緑にする
-- [ ] ヘッダに守る表の行・`#[cfg(test)]` を絞らない理由・沈黙側と赤側の死角を書く
+- [x] `G-fullwidth-doc-link-bracket.test.mjs` に issue の実例 fixture を置いた赤テストを書き、落ちることを確認する（スタブ実装に対し 6 failed / 7 passed を実測）
+- [x] `G-fullwidth-doc-link-bracket.mjs` を実装し、単体テスト全件を緑にする（13 passed）
+- [x] ヘッダに守る表の行・`#[cfg(test)]` を絞らない理由・沈黙側と赤側の死角を書く
 
 ### Phase 2 — 配線
 
-- [ ] `assembleEvidence` に `docLinkBrackets` の 1 句を足し、`evidence.test.mjs` の `complete()` fixture へ同じキーを足し、`governance:check` の要約に件数が出ることを確認する
-- [ ] `SCAN_SCOPED` へ 1 行、`docs/hooks.md` の表へ 1 行、`edit-findings.test.mjs` へ配線固定 1 本を同じ変更で足し、`G-edit-findings-table` が緑であることを確認する
-- [ ] `docs/comment-guidelines.md`「名指しと正本の指名」に機構の名指しを 1 文足す
+- [x] `assembleEvidence` に `docLinkBrackets` の 1 句を足し、`evidence.test.mjs` の `complete()` fixture へ同じキーを足し、`governance:check` の要約に件数が出ることを確認する（「doc の角括弧対 755 件」）
+- [x] `SCAN_SCOPED` へ 1 行、`docs/hooks.md` の表へ 1 行、`edit-findings.test.mjs` へ配線固定 1 本を同じ変更で足し、`G-edit-findings-table` が緑であることを確認する（「reminder 表 11 行」）
+- [x] `docs/comment-guidelines.md`「名指しと正本の指名」に機構の名指しを 1 文足す
+- [x] （実装中に判明）`G-edit-findings-table.test.mjs` の `ALL` 配列は判定名の手書きの写しで、`SCAN_SCOPED` へ足すと 9 本落ちる。新判定名を追加した（独立導出も敵対的調査もこのファイルは挙げていない——「写し」は検査本体ではなくテストの fixture 側に居た）
 
 ### Phase 3 — 実測
 

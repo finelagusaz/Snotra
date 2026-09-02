@@ -26,6 +26,7 @@ import {
   governanceDocs,
   gitIgnoredPaths,
   allHeadingRefDocs,
+  headingRefSourceDocs,
   staleIdentifierTargets,
 } from "./lib.mjs";
 import { checkModuleIndex, MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
@@ -34,6 +35,7 @@ import { checkHeadingRefs } from "./checks/G-heading-refs.mjs";
 import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkFoldedHeadingRefs } from "./checks/G-folded-heading-refs.mjs";
 import { checkFoldedCodeSpans } from "./checks/G-folded-code-spans.mjs";
+import { checkFullwidthDocLinkBrackets } from "./checks/G-fullwidth-doc-link-bracket.mjs";
 import { checkStaleIdentifiers } from "./checks/G-stale-identifiers.mjs";
 import { checkAdrFileNames } from "./checks/G-adr-file-names.mjs";
 
@@ -66,6 +68,8 @@ export const SCAN_SCOPED = [
   // こちらは編集した 1 枚の中で完結する——前倒しの条件（`ADR-edit-time-check-scope`「決定」）を
   // 既存より強く満たす形であり、**書いた瞬間に鳴ることが #992 の動機そのものである**
   { population: allHeadingRefDocs, check: checkFoldedCodeSpans },
+  // 同じく編集した 1 枚の中で完結する。母集団は検査の射程（`.rs` の doc 行）と一致させて `.rs` 全件にする（#1172）
+  { population: headingRefSourceDocs, check: checkFullwidthDocLinkBrackets },
   { population: staleIdentifierTargets, check: checkStaleIdentifiers },
 ];
 

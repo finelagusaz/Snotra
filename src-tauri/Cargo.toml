@@ -26,10 +26,6 @@ serde_json = "1"
 png = "0.18"
 fontdb = "0.24"
 # cmap 実測で user_font が CJK をカバーするかを判定する（jp_font fallback の要否）。
-# **共有を当てにしない。** fontdb 0.24 は ttf-parser への依存をやめ、最小サブセットを内蔵した。
-# 0.23 までは同じ crate を共有しており、「直接依存にしてもビルドツリーは増えない」という根拠が
-# ここに書かれていたが、その前提は上流の変更で消えた。**必要性は上の 1 行が単独で支える。**
-# いま誰が ttf-parser を引くかは `cargo tree -i ttf-parser` が答える（ここへ書き写さない）。
 ttf-parser = "0.25"
 rayon = "1"
 notify = "8"

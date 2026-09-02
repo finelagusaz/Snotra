@@ -11,7 +11,6 @@
     "governance:check": "node scripts/governance-check.mjs",
     "governance:manifest": "node scripts/governance-manifest.mjs",
     "race:boundaries": "node scripts/race-boundaries.mjs",
-    "plan:ledger": "node scripts/plan-review-ledger.mjs",
     "smoke:startup": "pwsh -NoProfile -File scripts/smoke-startup.ps1",
     "smoke:egui": "pwsh -NoProfile -File scripts/smoke-egui.ps1",
     "smoke:manual": "pwsh -NoProfile -File scripts/manual-smoke.ps1",

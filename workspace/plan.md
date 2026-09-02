@@ -35,21 +35,21 @@
 
 ### Phase 1 — 撤去（1 コミット）
 
-- [ ] `git rm scripts/plan-review-ledger.mjs scripts/plan-review-ledger.test.mjs docs/adr/ADR-plan-ledger-population-persistence.md`
-- [ ] `package.json` から `"plan:ledger": "node scripts/plan-review-ledger.mjs",` の行を削除（前後の行の JSON カンマを壊さない——`node -e "require('./package.json')"` で parse を確かめる）
+- [x] `git rm scripts/plan-review-ledger.mjs scripts/plan-review-ledger.test.mjs docs/adr/ADR-plan-ledger-population-persistence.md`
+- [x] `package.json` から `"plan:ledger": "node scripts/plan-review-ledger.mjs",` の行を削除（前後の行の JSON カンマを壊さない——`node -e "require('./package.json')"` で parse を確かめる）
 
 ### Phase 2 — 撤去の作法（数え上げ）
 
-- [ ] 削除ファイル名の残存: `git grep -n -i "plan-review-ledger\|plan:ledger\|ADR-plan-ledger-population-persistence" -- . ':!docs/superpowers'` が 0 件（歴史資料の出現は別に数えて「撤去を描写している／当時の事実」と記録）
-- [ ] 語彙の残存: `git grep -n "台帳" -- AGENTS.md CLAUDE.md .claude docs scripts ':!docs/adr' ':!docs/superpowers'` と `git grep -n -i "ledger" -- . ':!docs/adr' ':!docs/superpowers' ':!package-lock.json'` を打ち、各ヒットを「撤去を描写 / 別概念（`index_stale`）/ 汎用名詞 / 在る前提」へ振り分けて `workspace/plan.md` 末尾へ表で残す。「在る前提」が 1 件でもあれば直す
+- [x] 削除ファイル名の残存: `git grep -n -i "plan-review-ledger\|plan:ledger\|ADR-plan-ledger-population-persistence" -- . ':!docs/superpowers'` が 0 件（歴史資料の出現は別に数えて「撤去を描写している／当時の事実」と記録）
+- [x] 語彙の残存: `git grep -n "台帳" -- AGENTS.md CLAUDE.md .claude docs scripts ':!docs/adr' ':!docs/superpowers'` と `git grep -n -i "ledger" -- . ':!docs/adr' ':!docs/superpowers' ':!package-lock.json'` を打ち、各ヒットを「撤去を描写 / 別概念（`index_stale`）/ 汎用名詞 / 在る前提」へ振り分けて `workspace/plan.md` 末尾へ表で残す。「在る前提」が 1 件でもあれば直す
 
 ### Phase 3 — 検証
 
-- [ ] `npm test` 緑（ベースライン 39 ファイル / 923 テストから、テストファイルが 1 本減ることを summary 行で確認）
-- [ ] `npm run governance:check` 全検査 passed（ADR 82 → 81 本）
-- [ ] `git diff --check` 空
-- [ ] `npm run plan:ledger` が `Missing script` で落ちる（exit 非 0）——`package.json` の行の削り忘れはどの検査も鳴らない（独立導出が使い捨て worktree で実測）ため、手で 1 度打つ
-- [ ] `node -e "require('./package.json')"` が通る（JSON の壊れ）
+- [x] `npm test` 緑（ベースライン 39 ファイル / 923 テストから、テストファイルが 1 本減ることを summary 行で確認）
+- [x] `npm run governance:check` 全検査 passed（ADR 82 → 81 本）
+- [x] `git diff --check` 空
+- [x] `npm run plan:ledger` が `Missing script` で落ちる（exit 非 0）——`package.json` の行の削り忘れはどの検査も鳴らない（独立導出が使い捨て worktree で実測）ため、手で 1 度打つ
+- [x] `node -e "require('./package.json')"` が通る（JSON の壊れ）
 
 ## 不変条件と異常系
 
@@ -77,6 +77,19 @@
 - [x] **敵対的調査（`workspace/adversarial-1234.txt`）の所見を反映した** — 壊せた 0 / 壊せなかった 15 / ⚠ 2（採否は `research.md`「敵対的調査（3b）の所見と採否」・どちらも採らない）。争点 4 の結果: ファイル数・ファイル名を固定する検査やテストは無く、G-build-commands は文書 → `package.json` の一方向照合。Phase 3 の期待値は変わらない。ベースライン（変更前）: `npm test` 39 ファイル / 923 テスト、`governance:check` 24 検査 passed・ADR 82 本
 
 - [x] **U2. `/plan-review` の `allowed-tools` から `Write` を外した理由の行き先** — 裁定（2026-09-02・ユーザー）: **足さない**。スキルは触らない。以下は裁定前の検討: 削除する ADR の「受容する残余」が「成果物の偽造に加えて母集団の偽造も防ぐ」と書いており、#849 が SKILL.md の当該段落を消したため、削除後は凍結 ADR `ADR-norm-review-seeding` の引用にしか残らない。**推奨: 足さない**——2 つ目の職務（母集団の偽造防止）は台帳とともに消え、1 つ目（成果物の偽造防止）は `allowed-tools` の実体と Step 2/2b の「呼び出し側が指定した絶対パスへ書き出す」形が守っている。理由の 1 文を SKILL.md へ足すのはスキル変更ゆえ、人間レビューで裁定
+
+## 撤去後の数え上げ（Phase 2 の実測・2026-09-03）
+
+| 綴り | 母集団 | ヒット | 振り分け |
+|---|---|---|---|
+| `plan-review-ledger` / `plan:ledger` / `ADR-plan-ledger-population-persistence` | 全ファイル（`docs/superpowers`・`workspace` 除く） | 0 件 | — |
+| 同上 | `docs/superpowers` | 計器分割設計書の 2 行（既に入っているものとして台帳を挙げる） | 歴史資料・当時の事実。凍結 |
+| `台帳` | `AGENTS.md`・`CLAUDE.md`・`.claude`・`docs`（adr / superpowers 除く）・`scripts` | `start-issue` SKILL.md の「別の台帳・スナップショット・会話履歴を…判定根拠にしない」1 件 | 汎用名詞。撤去後も真 |
+| `ledger` | 全ファイル（adr / superpowers / lock / workspace 除く） | `docs/architecture.md`・`docs/design/2026-05-31-coherence-staleset.md`（8 行）・`snotra-core/CLAUDE.md`・`snotra-core/src/engine.rs`・`src-tauri/CLAUDE.md`（2 行） | すべて `index_stale` ledger（config↔index コヒーレンシ）。別概念 |
+
+「在る前提」で書かれた出現: 0 件。幽霊識別子（別名で在る実体）: 0 件。
+
+検証の実測: `npm test` 38 ファイル / 886 テスト passed（exit 0）・`governance:check` 全検査 passed・ADR 81 本（exit 0）・`git diff --check` 空・`npm run plan:ledger` exit 1（Missing script）・`node -e "require('./package.json')"` ok。
 
 ## plan-review 結果
 

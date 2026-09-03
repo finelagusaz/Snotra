@@ -38,7 +38,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 - `egui::Key::ALL` は `&[Key]`（`&&[Key]` ではない）。`for &key in egui::Key::ALL` が正しい
 - `color_edit_button_srgba` は `&mut Color32` を取る。一時変数に変換して渡すと変更が反映されない。`let mut color = Color32::from_hex(hex)` のように変数を作り、変更後に hex 文字列に書き戻す
-- `egui::Stroke::new(width, color)` は 2 引数で動作する（egui 0.35 現在）。`StrokeKind` enum は 0.35 で追加されたが、`Stroke::new` と `Visuals` の stroke フィールドはこれを要求しない。egui をバージョンアップする際は `Stroke::new` が `StrokeKind` を取るようになっていないか確認する
+- `egui::Stroke::new(width, color)` は 2 引数で動作する（現行の固定版は `Cargo.toml`）。`StrokeKind` enum は 0.35 で追加されたが、`Stroke::new` と `Visuals` の stroke フィールドはこれを要求しない。egui をバージョンアップする際は `Stroke::new` が `StrokeKind` を取るようになっていないか確認する
 - `ThemePreset` は `Copy`。`.clone()` ではなく値コピーで渡す（clippy `clone_on_copy`）
 
 ### ウィジェット id のフレーム間安定性（`warn_if_rect_changes_id`）

@@ -77,7 +77,7 @@
 - `autostart.rs` — Windows のログオン時自動起動（`HKCU\...\Run`）の登録・解除・状態取得（責務は `//!`）。**状態の正本は OS であり `Config` に対応するフィールドを持たない**（`SPEC.md` §7.7）。ユニットテストは `autostart/tests.rs`（純粋部のみ——OS I/O を測ると開発機の実スタートアップ登録を書き換えるため）
 - `win_registry.rs` — Win32 レジストリの `HKEY` の RAII と `HKCU` 配下のキー開き（責務は `//!`）。`indexer/path_env.rs` と `autostart.rs` が共有する
 - `instant.rs` — インスタントコマンド（プレフィックス起動の URL/コマンド）の展開。公開関数の署名・契約と変数展開の中核（修飾子パイプ・encoding-as-sink・`{{X}}` エスケープ・date/uuid 純粋性・`format_date` の panic 安全 #394）は `//!` と各 `///` を正とする
-- `ui_types.rs`
+- `ui_types.rs` — 検索結果として UI 層へ渡すデータ型（責務は `//!`）
 - `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）
 - `tests/memory_footprint.rs`（crate ルート統合テスト）: 索引の常駐ヒープをアロケータ実測で取るハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）
 - `tests/path_query_cost.rs`（crate ルート統合テスト）: パスクエリ（`has_path_sep`）全走査のコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）。**`normalized_keys` を保持するか導出するかの差を測る唯一の計器**であり、既存の bench 群はパス区切りを含むクエリを 1 つも持たない
@@ -103,9 +103,9 @@
 - **`kana_lower_names` / `kana_char_masks` は条件付き構築（migemo 有効時のみ）で長さ `{0, entries.len()}` の例外**:
   - `assemble` の `debug_assert!` は他 5 Vec を `== entries.len()` で検証するが、kana 系 2 Vec は「両方空 or 両方 `== entries.len()`」を許す
   - `kana_lower_names.get(i)` / `kana_char_masks[i]` へアクセスする全箇所は `is_empty()` ガードを通す（`kana_char_masks` は `kana_lower_names` から `compute_kana_char_masks` で導出し、3 コンストラクタ全経路で `assemble` 直前に構築する）
-  - 条件分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の v4/v3 両パスに**同時に**入れる（片方だけだと migemo ON でも空になる）
+  - 条件分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の `CachedLower` variant で分かれる両パスに**同時に**入れる（片方だけだと migemo ON でも空になる）
   - migemo は index 構築入力なので、engine の `IndexInputs`（`config_watcher` の kick 判定と `complete_index_drain` の re-diff が共有する**単一定義**）に含める（#347 Phase 2 で `needs_reindex` / in-flight `needs_rebuild` を `IndexInputs` に統合・削除済み）
-- incremental search キャッシュに述語や状態を追加するとき: 状態は `IncrementalCache` 型に集約済み（#601。`prev_query` / `prev_candidates` / `prev_mode` / `prev_kana_query`）。read（`can_reuse`）と write（`update`）を**対で**変更し、`/cache-check` で単調性を検証する。read が参照する全フィールドを `update` が書くこと（型に閉じたので対称更新漏れは起きにくいが、フィールド追加時は両メソッドを同時に触る）
+- incremental search キャッシュに述語や状態を追加するとき: 状態は `IncrementalCache` 型に集約済み（#601。`prev_query` / `prev_candidates` / `prev_mode` / `prev_kana_query`）。read（`can_reuse`）と write（`update`）を**対で**変更し、`.claude/rules/snotra-core-search.md` の手順で単調性を検証する（旧 `/cache-check` は #894 で同 rule へ吸収）。read が参照する全フィールドを `update` が書くこと（型に閉じたので対称更新漏れは起きにくいが、フィールド追加時は両メソッドを同時に触る）
 - `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
 - `folder.rs` のソート順変更時: 順序（先頭要素が最良）と 2 段階の構造（O(N) 平均の top-k 選択 ＋ 安定ソート）は `//!` が正本——崩さない。入力順に依存しないことを確認するテスト（`score_entries_top_k_order_independent_of_input_order`）を通す
 

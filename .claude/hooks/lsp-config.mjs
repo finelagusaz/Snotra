@@ -138,9 +138,10 @@ export function checkLspConfig(rootDir) {
   // ——inline table（`toolchain = { components = [...] }`）・引用キー・dotted key は TOML として正当だが
   // この判定は読まず「無い」と報告する（安全側の偽陽性。rustup は読むので、その書式へ変えるなら
   // ここも変える）。
-  const table = /^\s*\[toolchain\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toolchain);
+  // 見出しの括弧内空白（`[ toolchain ]`）と、rustup が別名として解決する `rust-analyzer-preview` は受理する。
+  const table = /^\s*\[\s*toolchain\s*\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toolchain);
   const components = table && /^\s*components\s*=\s*\[([^\]]*)\]/m.exec(table[1]);
-  if (!components || !/["']rust-analyzer["']/.test(components[1])) {
+  if (!components || !/["']rust-analyzer(-preview)?["']/.test(components[1])) {
     violations.push(
       `${toolchainRel} の components に rust-analyzer が無い — toolchain が入れ替わるたびに` +
         " Claude Code の LSP が沈黙で落ちる（cargo / clippy / test は緑のまま）",

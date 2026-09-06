@@ -8,28 +8,22 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 責務を持つ個別モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする（薄いラッパーを集約記述する `commands/`・`platform/` は責務を本節に直接記す例外）。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す（#562）。
 
-- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録（責務は `//!`）。**背景再スキャンの spawn と結果適用（`apply_rescanned_index`）は #1001 で撤去済み**——索引の更新は明示操作（`start_index_build` の kick）だけを経路とする
-- `state.rs` — Tauri managed state `AppState`（責務・構成は `//!`）。以下はビルドフラグの規律:
-  - **インデックスビルドの開始/終了は `try_begin_index_build()` / `finish_index_build()` メソッド経由で行う** — `indexing`・`index_build_started` を coherent に更新する
+- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録（責務は `//!`）
+- `state.rs` — Tauri managed state `AppState`（責務・構成は `//!`）。以下は横断の規律（フラグの更新経路は「実装パターン」が正本）:
   - **config 変更→index 再構築のコヒーレンシ判断をこの 2 AtomicBool から導かない** — 判断は engine の `index_stale` ledger（軸1）に閉じており、2 つは二重ビルド防止（CAS）と UI 表示専用に純化されている（#347/#348-A）
-- `icon.rs` — アイコンのオンデマンド抽出とキャッシュ永続化（責務は `//!`）。**`invalidate_icon_cache` はメモリ内 `IconCacheState` と `icons.bin` を単一 lock 内で両方無効化する** — lock 外でファイル削除すると、並行ロード（None 検知 → `icons.bin` 再ロード）が削除直前の旧ファイルをメモリへ戻す TOCTOU が起きる（#522、実測 17/2000 回）。片方だけだと終了時 `save_if_dirty` で古いアイコンが復活する
-- `indexing.rs` — バックグラウンドインデックス構築（責務は `//!`）。以下は drain / panic 戦略の不変条件:
+- `icon.rs` — アイコンのオンデマンド抽出とキャッシュ永続化（責務は `//!`）
+- `indexing.rs` — バックグラウンドインデックス構築（責務は `//!`）。以下は 2 経路にまたがる不変条件（panic 戦略・finish 後の再チェックは `start_index_build` の doc と本体のコメントが正本）:
   - **`start_index_build` は `mark_index_stale`（CAS の前）→ CAS → spawn の順で呼ぶ**。**drain ループ**（`begin_index_drain` で現在 config の `IndexInputs` snapshot → ロック外で `rebuild_and_save` → `build_index_from_material` → `complete_index_drain` で swap + re-diff）は stale が消えるまで回す。**索引を建てる手順（PATH マージ + `PrebuiltIndex::from_material`）を共有する呼び出し点は `build_index_from_material` の 1 関数に閉じている——この drain ループの 1 か所である**（背景再スキャンの適用〔`apply_rescanned_index`〕は #1001 で撤去済み）。手順を書き写すと片方だけ PATH マージを忘れる欠陥が沈黙で起きる（PATH のコマンドが検索から消えるが結果自体は出るので気づく手段が無い。詳細は同関数の doc）。**起動時のロード直後（`main.rs` の PATH エントリのスキャン + マージ、`startup::mark(Phase::PathMerge)` を含む区間）は同じ手順を別に持つ**——そこは `PrebuiltIndex` ではなく `Engine` を直接建てるため `build_index_from_material` を呼べない。PATH マージの規則を変えるときはこの起動経路も忘れないこと。**保存が返した派生データをそのまま索引の表現に使う**——木とマスクは `IndexMaterial` が組のまま運ぶので、**片方だけ伸ばす形はこの crate からは書けない**（正本は `indexer::IndexMaterial` の doc）
-  - **ビルド本体は `catch_unwind` で包む（panic 戦略依存）**: unwind ビルド=debug/test では panic を捕捉し `finish_index_build` で flag 固着 wedge を防ぐ。release は Cargo.toml で `panic="abort"` のため build panic はプロセス abort＝ここに来ないが silent wedge にもならず、再起動で fresh build される。どちらでも UI 永久構築中は起きない
-  - **finish 後に `is_index_stale` を再チェック**し、finish 窓で刺さった変更を再 kick で拾う。**unwind の panic 経路では再 kick しない**（決定論 panic の無限リトライ回避）
-  - config 変更→index 再構築のコヒーレンシは engine の `index_stale` ledger に一元化（#347/#348-A）
-- `config_watcher.rs` — `config.toml` 監視（100ms debounce）と `apply_config_change()` による反映（責務は `//!`）。以下は適用の不変条件と発火イベント:
-    - **不変条件: `LoadOutcome::ReadFailed`（一時的・環境的な read 失敗）では `apply_config_change` は何も適用せず早期 return する**（`should_apply_config_change()` で判定）。fallback-default を実行中エンジンへ適用すると、live-read 化した履歴剪定が `history.bin` をデータ損失させ、index 再構築判定（`IndexInputs` 差分）が default scan で誤再構築を起こすため。`Config::load` の「一時的失敗は退避も上書きもしない」保全を適用側にも揃える（#348）
-    - ただし早期 return の前に短いバウンドリトライ（`load_with_read_failed_retry`、既定 3 回 × 150ms）で一時的ロック解除を待ち、解ければ正規の変更を取りこぼさず適用する（予算超過時のみ skip。リトライ中は適用しないのでデータ損失安全は不変）
+- `config_watcher.rs` — `config.toml` 監視（100ms debounce）と `apply_config_change()` による反映（責務は `//!`）。以下は複数ファイルにまたがる適用の不変条件と発火イベント（読込失敗時のデータ保全は `//!` と `should_apply_config_change` の doc が正本）:
   - **不変条件: アイコンキャッシュの破棄（`icons_turned_off` → `icon::drop_icon_cache`）は `update_config` より後に撃つ**——判定は old/new が要るので前、破棄は後、と分かれる。**前で撃つと config がまだ `show_icons=true` を返す隙に icon worker（`ensure_icon_cache_loaded_if_enabled` → `IconCache::load`）がキャッシュを建て直し、無効なのに常駐したまま次のトグルか終了まで残る**（#996 follow-up の `/race-check` で発見）。**窓は閉じない**——`update_config` の直前に真を読んだ worker はこの破棄の後に挿入しうる（`ensure_…` は config 読みと icon lock を別々に取る）。**受容する残余であり、`show_icons` を `IndexInputs` に載せて drain 上で撃っていた頃から在る**
   - **不変条件: index 再構築の要否は `IndexInputs::from_config(old) != IndexInputs::from_config(new)` で判定し、ビルド進行中（`indexing`）でも `!indexing` ゲートなしで常に `start_index_build` を kick する**（`start_index_build` が `mark_index_stale` で stale を立て、in-flight ビルドの drain / finish 後再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。#347/#348-A）
   - 発火するイベント: `hotkey-registration-failed` / `indexing-started`（indexing.rs から）/ `indexing-complete`（indexing.rs から）/ `config-applied`（egui wake・値なし・SU6）。旧フロント向けの値運搬 emit 群（language-changed 等 7 本）は #532 SU7 で削除——egui は config-applied wake + 毎フレーム live-read で値を拾う
 - `events.rs` — アプリ内 Tauri イベント名の定数（責務は `//!`）
 - `ime.rs` — IME をオフにする Win32 IMM API の薄いラッパー（責務は `//!`）
 - `trace.rs` — `SNOTRA_TRACE` 環境変数ゲートの構造化トレースログ（責務は `//!`）
-- `heap_trace.rs` — Rust ヒープ常駐の計装（`heap-trace` feature でのみ有効・責務と撤去条件は `//!`）。**既定ビルドには入らない**——feature 無しでは `#[global_allocator]` を差し替えず `snapshot()` が `None` を返し、`trace.rs` は `heap` 欄を出さない（**欄の不在が「測っていない」であり、0 ではない**）
-- `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計器（責務は `//!`）。**終端（`startup:ready` / `startup:failed`）を `platform/mod.rs` の `RegisterInitialHotkey` の arm だけに閉じてはならない**——bridge の初期化失敗・窓の生成失敗のように arm 自体が走らない経路が実在し、そこで終端を出さないとハーネスの「タイムアウト」に化ける（**呼び出し点の列挙・分類・一度きり性・受容する残余は `//!` が正本**——数をここへ写すと経路を足したときにこの行だけが腐る）
-- `monitor.rs`: マルチモニター対応の Win32 ヘルパー（`GetCursorPos` / `MonitorFromPoint` / `GetMonitorInfoW`）。物理座標ベースで作業領域を取得し、ウィンドウ位置のクランプ・中央配置を提供。**基準モニターは必ず点から決める**（`MonitorFromWindow` を使う `window_monitor_work_area` は #835 で消えた）
+- `heap_trace.rs` — Rust ヒープ常駐の計装（`heap-trace` feature でのみ有効・責務と撤去条件は `//!`）
+- `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計器（責務は `//!`）
+- `monitor.rs` — マルチモニター対応の Win32 ヘルパー（物理座標の作業領域取得・クランプ・中央配置。基準モニターを点から決める規則は `point_monitor_work_area` の doc が正本）
 - `working_set.rs` — 非表示アイドル時のプロセスツリー working set 回収（Windows のみ・非 Windows は no-op。責務は `//!`、適用の詳細は本ファイル「working set の能動回収（EmptyWorkingSet）」）
 - `commands/`: ディレクトリモジュール（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）。egui view・トレイが共有する core 関数群（旧 `#[tauri::command]` ラッパーと `search.rs` / `config.rs` は #532 SU7 のフロント撤去で消滅）。`launch.rs` は `launch_item_core` / `launch_with_tool_core`（いずれも `pub(crate)`、`instant.rs`・`egui_shell/launcher_controller/activation.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub` で公開
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ。`hotkey.rs` は core の `ParsedHotkey` だけを Win32 modifier/VKへ変換し、永続文字列を再解釈しない。登録と smoke 注入用 `vks` は同じ変換結果から導く
@@ -38,7 +32,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
   - `search_dispatch.rs` — 検索 dispatch の同一性の純粋核（責務は `//!`）
   - `search_worker.rs` — 検索を実行する単一 worker（責務は `//!`）
   - `launcher_controller.rs` — 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（責務は `//!`）。型・構築・読み口（`&self`）だけを持ち、遷移は責務ごとの子モジュールが `impl` を分けて持つ（子は private・`view.rs` へ届く名前は `pub(in crate::egui_shell)` と本ファイルの re-export が決める）
-    - `launcher_controller/activation.rs` — 起動の入口（Enter / クリック / Shift+Enter）と dispatch・in-flight 回収・slash の即実行（責務は `//!`）。**起動の入口は `launcher_controller/` の直下に置くこと**——ソーステキスト検査の母集団がそのディレクトリであり、どの子モジュールに在っても射程は付いていく（#1201 で移設して実測）。**残る死角（4 本目の入口の新設は沈黙する）の正本は同ファイルの `//!`**
+    - `launcher_controller/activation.rs` — 起動の入口（Enter / クリック / Shift+Enter）と dispatch・in-flight 回収・slash の即実行（責務は `//!`）
     - `launcher_controller/search_flow.rs` — 検索の発行と採り込み、打鍵の処置（責務は `//!`）
     - `launcher_controller/folder_nav.rs` — folder の突入/深掘り/折り返し、列挙の別スレッドロードと drain（責務は `//!`）
     - `launcher_controller/hide_request.rs` — hide 要求の経路（Escape ラダー・blur 猶予・多重防止）（責務は `//!`）
@@ -47,7 +41,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
     - ソーステキスト検査は対象モジュールの子として置く（`launcher_controller/activation/tests.rs`）——母集団は `launcher_controller/` 直下の子 `*.rs` を実行時に `read_dir` で列挙したものであり（#1201。**非再帰ゆえ検査自身は母集団に入らない**）、切り出しの helper はこの 1 か所に閉じる（`docs/adr/ADR-source-text-probe-helper-locality.md`）
   - `lifecycle.rs` は純粋核（`plan_hotkey` / `blur_should_hide`）
   - `search_state.rs` は検索状態の純粋核（`SearchState` / `interpret` / `QueryIntent`）
-  - `layout.rs` は高さ算出 + results 可視性の導出 + 幾何 + debounce + テキストの中間省略の純粋核（`Metrics` / `results_window_height` / `present_results` / `results_top_y` / `size_delta_exceeds` / `icon_prefetch_range` / `Debouncer` / `truncate_middle_chars` / `fit_middle_by_measure`。旧 `compute_window_height` / `HeightParams` は #646 PR2 で撤去済み・旧 `results_should_show` は #752 で `present_results` へ吸収・旧 `clamp_results_height` / `available_below` は #835 で撤去〔`ADR-results-fixed-height`〕）
+  - `layout.rs` — 高さ算出・results 可視性の導出・幾何・debounce・テキストの中間省略の純粋核（責務は `//!`）
   - `icon_textures.rs` — アイコン・テクスチャ層の純粋核（責務は `//!`）
   - `notify.rs` — 通知 primitive の純粋核（責務は `//!`）
   - `strings.rs` — UI 文言テーブル（責務は `//!`）

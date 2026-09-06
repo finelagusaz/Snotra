@@ -160,14 +160,14 @@ Phase 1（機構・独立）→ Phase 2 → Phase 3 → Phase 4。Phase ごと�
 - [x] `cargo doc`（exit 0）と `governance:check`（24 件緑・入れ子 80503 字）が緑。snotra-core/CLAUDE.md 38,664 → 30,573 字
 
 ### Phase 3 — src-tauri 索引節
-- [ ] 上表の行を処置し、対応表へ追記
-- [ ] `cargo doc` と `governance:check` が緑
+- [x] 上表の行を処置し、対応表へ追記（icon.rs の実測 17/2000 回・indexing.rs の panic 戦略は既在で写し。新規は `start_index_build` の再チェック段落と `config_watcher.rs` `//!` の反転）
+- [x] `cargo doc`（1 回目は `CONFIG_READ_RETRY_ATTEMPTS` の誤リンクを deny が捕捉 → `CONFIG_READ_RETRY_MAX` へ直して exit 0）と `governance:check`（24 件緑・入れ子 78217 字）。src-tauri/CLAUDE.md 31,782 → 29,496 字
 
 ### Phase 4 — 付け替え・逆向き監査
-- [ ] D-1 の 7 件を付け替える（`rules/snotra-core-search.md` は変更なしを確認）
-- [ ] 索引節に残る太字 bullet がすべて横断か名前の索引であることを対応表で確認（受け入れ条件 2）
-- [ ] 逆向き監査を 1 体起動し、`workspace/reverse-audit-1240.txt` で全行「見つかった」になるまで戻す
-- [ ] 文字数を実測して対応表に記す
+- [x] D-1 の 7 件を付け替える——schema.rs / path_query_cost.rs / performance.rs / breakdown.rs / config_watcher.rs / docs/design を付け替え、str_arena.rs:116 と paths.rs:5 は指し先が残るので変更なし。`rules/snotra-core-search.md` L17 は L39（残す）を指すので変更なし
+- [x] 索引節に残る太字 bullet がすべて横断か名前の索引であることを対応表で確認（snotra-core 9 群・src-tauri 5 群 + `###` 7 項。`migration-1240.md`「残した太字 bullet」）
+- [ ] 逆向き監査——`/implement` Step 3 の worktree 委譲 1 体へ束ねて渡す（同じ sha を対象にし、`workspace/reverse-audit-1240.txt` へ書かせる。Agent の起動は Step 3 の 1 体だけ）。全行「見つかった」になるまで戻す
+- [x] 文字数を実測して対応表に記す（38,664 → 30,573 / 31,782 → 29,496）
 
 ## 未確定（実装前に潰す）
 

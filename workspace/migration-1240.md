@@ -65,11 +65,42 @@
 
 ## src-tauri/CLAUDE.md「モジュール構成」
 
-（Phase 3 で追記）
+| 元 L | 文の先頭 | 判定 | 再確立地点 | 足した差分 |
+|---|---|---|---|---|
+| 11 | 背景再スキャンの spawn と結果適用は #1001 で撤去済み | 写し | `main.rs` `//!` L4〜5・`ADR-rescan-explicit-only` | なし |
+| 13 | インデックスビルドの開始/終了は `try_begin_index_build()` / `finish_index_build()` 経由 | 写し（同文書内） | `src-tauri/CLAUDE.md`「実装パターン」の同文（`rules/src-tauri.md` L12 が指す）・`state.rs` の両メソッドの `///` L106〜123 | なし（索引側を消して 1 か所に） |
+| 15 | `invalidate_icon_cache` はメモリ内と `icons.bin` を単一 lock 内で無効化 | 写し | `icon.rs` `//!` L5〜6・`invalidate_icon_cache` の `///`・`invalidate_icon_cache_with` の doc（実測 17/2000 回まで既在・L200/L493） | なし |
+| 18 | ビルド本体は `catch_unwind` で包む（panic 戦略依存） | 写し | `indexing.rs` `//!` L5・`start_index_build` 本体の catch_unwind 直前のコメント（unwind / abort の両戦略まで同文） | なし |
+| 19 | finish 後に `is_index_stale` を再チェック・unwind の panic 経路では再 kick しない | 単一 | `indexing.rs` `start_index_build` の `///`（新設段落） | 全文 |
+| 20 | コヒーレンシは engine の `index_stale` ledger に一元化 | 写し（同文書内） | 同節 L14（残した横断 bullet） | なし |
+| 22 | `LoadOutcome::ReadFailed` では適用せず早期 return | 写し | `config_watcher.rs` `should_apply_config_change` の `///` L179〜186 | `//!` の「跨る不変条件は CLAUDE.md」を「読込失敗の保全は本ファイルが正本」へ反転 |
+| 23 | 早期 return の前にバウンドリトライ（既定 3 回 × 150ms） | 写し | `config_watcher.rs` `load_with_read_failed_retry` の `///` L212〜219・定数 `CONFIG_READ_RETRY_MAX` / `CONFIG_READ_RETRY_BACKOFF` | `//!` に定数への intra-doc link を足した（数を散文に写さない） |
+| 30 | `heap_trace.rs` 既定ビルドには入らない・欄の不在は「測っていない」 | 索引（写し） | `heap_trace.rs` `//!` L3〜4 | なし |
+| 31 | `startup.rs` 終端を `RegisterInitialHotkey` の arm だけに閉じない | 索引（写し・bullet 自身が「正本は `//!`」） | `startup.rs` `//!`（失敗経路と一度きり性の節） | なし |
+| 32 | `monitor.rs` 基準モニターは必ず点から決める | 索引（写し） | `monitor.rs` `point_monitor_work_area` の `///` L77〜86 | なし |
+| 41 | 起動の入口は `launcher_controller/` の直下に置くこと | 写し（`//!` の方が新しい） | `activation.rs` `//!` L3〜13（「集める規範は要らなくなった」・受容する死角まで） | なし |
+| 50 | `layout.rs` の撤去済み一覧（#646 PR2 / #752 / #835） | 経緯 | `#646` / `#752` / `#835`・`ADR-results-fixed-height`（現在形は `layout.rs` `//!`） | なし |
+
+### 残した太字 bullet（横断）と根拠
+
+| 元 L | 文の先頭 | 残す理由 |
+|---|---|---|
+| 14 | コヒーレンシ判断を 2 AtomicBool から導かない | `state.rs` ↔ `snotra-core` `engine.rs`（crate 越し） |
+| 17 | `start_index_build` の順序・`build_index_from_material` に閉じる・起動経路は別 | `indexing.rs` ↔ `main.rs` の 2 経路 |
+| 24 | アイコンキャッシュの破棄は `update_config` より後 | `config_watcher.rs` / `icon.rs` / `commands/icon.rs` |
+| 25 | index 再構築の要否は `IndexInputs::from_config` の差分 | `config_watcher.rs` ↔ `engine.rs` |
+| 58〜62 | `window_coordinator.rs` の 4 規則 | `window_coordinator` / `layout` / `notify` / `view` / `monitor`。参照 5 本が「の項」を名指す |
+| 65〜114 | `###` 7 項 | L36 が「横断不変条件は本節の `###` 各項」と宣言済み |
+
+### 付け替えた指し先
+
+| ファイル:行 | 前 | 後 |
+|---|---|---|
+| `src-tauri/src/config_watcher.rs:5` | 多サブシステムに跨る不変条件は `src-tauri/CLAUDE.md` を正とする | 読込失敗の保全は本ファイル、跨るもの（破棄の順序・再構築判定）は CLAUDE.md |
 
 ## 文字数（コードポイント・CR 除く）
 
 | ファイル | 前 | 後 |
 |---|---|---|
 | snotra-core/CLAUDE.md | 38,664 | 30,573 |
-| src-tauri/CLAUDE.md | 31,782 | （Phase 3 末尾で実測） |
+| src-tauri/CLAUDE.md | 31,782 | 29,496 |

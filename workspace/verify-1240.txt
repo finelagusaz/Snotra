@@ -1,0 +1,110 @@
+# verify-1240（worktree: C:/workspace/Snotra/.claude/worktrees/agent-ab6c8a5bb7c6e27b3）
+
+## アンカー確認
+- 初期 HEAD は d2e9804（main）だったため `git checkout --detach 174b81c` で合わせた。以降の全測定は HEAD = 174b81cc3c5a1f312ca6db68fe614fabae1a713c で行った
+- `git diff d2e9804..174b81c --stat`: 26 files, +1021/-74（workspace/ の 5 ファイルを含む）
+- 終了時の作業ツリー: 変異注入は 3 件とも `git checkout --` で戻し、`git hash-object` が注入前の値（3c281a4 / 16f9ecc / fc1008c）と一致。追跡外は workspace/verify-1240.txt・reverse-audit-1240.txt と作業ログ（`workspace/_*.log`・`_cat-a.sh`・`_hashes-before.txt`）のみ
+
+## 検証（カテゴリ A〜F・SSOT は docs/build-commands.md）— 該当分はすべて exit 0
+| カテゴリ | 該当判定 | 実行したコマンド | 結果 |
+|---|---|---|---|
+| A Rust | 該当（snotra-core / src-tauri の `//!` / `///` を変更） | `cargo fmt --all -- --check` / `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra-core` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items` | すべて exit 0。core 613 passed（統合 1 passed・ignored 計 20）、snotra 311 passed。cargo doc は warning 0（hook が走らせない検査を手で実施） |
+| B TS | 該当なし（`vitest.config.ts` を触っていない） | — | — |
+| C 窓生成・ホットキー・slash | 該当なし（製品コードの実行文は 1 行も変えていない。diff はコメント行のみ） | — | — |
+| D UI の見た目 | 該当なし（描画に触れていない） | — | — |
+| E セーフティネット実装（`scripts/**`） | 該当（instrument.mjs / evidence.mjs / governance-check.mjs と各テスト） | `npm test` | exit 0（Test Files 38 passed / Tests 891 passed） |
+| F ガバナンス文書 | 該当（2 つの CLAUDE.md・docs/design・`.rs` の正準形参照の付け替え） | `npm run governance:check` | exit 0・24 件緑。成功行に `入れ子 CLAUDE.md 78217 字（報告のみ）` が出る。`.rs 137 件` は main と同数（main の値は workspace/plan-review-1240-derivation.md:82 が「本日の成功行 .rs 137 件」として記録）で減っていない。見出し参照 370 件・md 48 件・コードスパン 19012 件・角括弧対 769 件（main 側の値は手元に記録が無く比較不能） |
+
+- 成功行の 78217 字は 4 crate の CLAUDE.md（snotra-core 30573 + snotra-egui-runtime 5097 + src-tauri 29496 + snotra-settings 13051）の CR 除くコードポイント合計と一致し、前 2 者は対応表の「後」の数字と一致した（自分で数え直した）
+- 成功行全文: governance:check — 全検査 passed（検査 24 件 / 対象文書 36 件 / rules 8 件 / skills 12 件 / 恒久規範 常時ロード 19708 字・rules 15865 字・入れ子 CLAUDE.md 78217 字（報告のみ） / 見出し参照 370 件を md 48 件 + .rs 137 件 + スクリプトのコメント 116 件から照合 / workspace member 4 件の lints opt-in / clippy 禁止 8 件 / 散文の識別子 430 件を 34 文書から照合 / 近傍の見出し参照 20 件 / 折れうる位置 20 件 / コードスパン 19012 件 / doc の角括弧対 769 件 / reminder 表 11 行 / ADR 81 本の名前 / ADR の短縮引用 463 件）
+
+## レビュー所見（code-reviewer の 3 フェーズの観点・対象はコミット済み diff）
+
+### Critical
+なし
+
+### High
+なし
+
+### Medium
+1. **消した bullet を指していた散文が 2 件、付け替えられていない**（対応表「付け替えた指し先」6 件の外。逆向き監査で発見）
+   - `docs/adr/ADR-path-query-forward-single-pass.md:15` 「パスクエリは Fuzzy ビットマスク pre-filter をスキップする…唯一の経路である（`snotra-core/CLAUDE.md` の search.rs 節）」— この主張は `snotra-core/src/search/query_plan.rs` の `//!`（L9-11）へ移った。search.rs 節にはもう無い
+   - `.claude/rules/snotra-core-search.md:17` 「横断不変条件（並列 Vec レイアウト・ビットマスク一元化・has_path_sep 非互換）: `snotra-core/CLAUDE.md` の search.rs 節」— 「has_path_sep 非互換」は search.rs 節から消え、query_plan.rs の `//!` に在る（「並列 Vec レイアウト」は残っているので行全体は生きている）
+   - どちらも G-heading-refs は捕まえない（「モジュール構成」見出し自体は残るため）。修正案: ADR は `（`snotra-core/src/search/query_plan.rs` の `//!`）` へ、rules は「has_path_sep 非互換」の指し先だけ query_plan.rs へ付け替える（`docs/design/2026-05-31-coherence-staleset.md:15` で行ったのと同じ形）
+2. **対応表の記述と実体の食い違い 1 件**: migration-1240.md の core L25 行「Windows の `dirs` 同一性の実測は判定核の結線と同じ段落に含めた」は偽。消した bullet にあった「**Windows では `dirs::config_dir()` と `dirs::data_dir()` は同一**（RoamingAppData・dirs 6.0.0 で実測）なので危険な取り違えは `config_local_dir()` / `data_local_dir()`」は `snotra-core/src/config/location.rs` のどこにも無い（`grep -n "data_dir\|config_local_dir"` は 0 件。`config_local_dir` の名は `location/tests.rs:72` の検知器 doc に残るだけ）。主張の内容自体は「経緯」ではなく取り違えの警告なので、`location.rs` の `//!` の結線段落へ 1 文足すか、対応表を「経緯として捨てた」へ直すかのどちらかに揃える
+
+### Low
+3. `src-tauri/src/config_watcher.rs` の `//!` が private const（`CONFIG_READ_RETRY_MAX` / `CONFIG_READ_RETRY_BACKOFF`）へ intra-doc link を張った。`--document-private-items` 付きの正規コマンドと CI では緑（実測）。bin crate ゆえ `private_intra_doc_links` の警告経路は現状無いが、公開 lib へ移すことがあれば鳴る形。対処不要（記録のみ）
+4. 対応表 src-tauri L30（heap_trace）「写し」は逐語では一部欠落: 「**欄の不在が『測っていない』であり、0 ではない**」の逐語は `heap_trace.rs` の `//!` L3-4 に無く、「`trace.rs` の出力も従来どおり」までしか無い（含意は保たれる）。足すなら `heap_trace.rs` の `//!` に 1 句
+5. `snotra-core/src/search/footprint.rs:17` の「`CLAUDE.md` のチェックリストではなくコンパイラが漏れを捕まえる」は、今回消した CLAUDE.md 側の「走査は `..` を書かない」bullet を暗に対比していた文。消した後も修辞としては成立するので変更不要
+
+### ⚠️（確信の持てない所見）
+- ⚠️ `snotra-core/CLAUDE.md` の search.rs 行が「以下は複数ファイルにまたがる不変条件（単一ファイルのものは各 `//!` / `///` が正本・#1240）」と宣言したが、その直下に残る「**ユニットテストは `search/tests/` へ機能別に置く**」bullet は不変条件というよりファイル一覧である（表は「6 basename の唯一の言及」を残す理由にしており、G-module-index の basename 照合上は必要）。宣言と中身のずれは軽微で、直すなら宣言側を「横断不変条件とファイル一覧」へ
+- ⚠️ 対応表の core L19（件数パラメータ）の残す根拠「L5 が宣言する『名前の索引』」— schema.rs 行の導入文を「以下は名前の索引:」へ変えて整合させてあるが、この bullet の中身（`Engine::search` の fetch_limit）は engine.rs と schema.rs の 2 ファイルにまたがるので横断としても残せる。判定は変わらない
+- ⚠️ `snotra-core/src/search/build.rs:446` の新設 `///` は「ここはキャッシュヒット起動が毎回通る経路」と書き、CLAUDE.md 側にあった `kana_for_cached` の名指しを落とした。同関数（`new_with_cached_masks`）の doc に付いているので所在は保たれるが、`kana_for_cached` は同関数内のクロージャ（L476）なので名を残した方が探しやすい。任意
+
+### 実装の正しさ（フェーズ 1）— 問題なし
+- `nestedClaudeMdFiles()` は `MODULE_INDEX_CRATES` の鍵から導出（一覧の写しを持たない）。`checkNormativeAreaInstrument` は `sumChars(nested)` の findings を積むので、入れ子 1 枚が読めなければ「G-area-instrument 母集団の欠落」finding が出る（テスト「1 枚読めなければ…」が縛り、変異 3 とは別に動作を読んで確認）
+- `normativeArea().nested` は `always` にも `rules` にも足していない（コードを読んで確認・変異 3 で「足すと赤」を実測）
+- `sumChars().total` は null にならない（読めないファイルは加算しないだけ）ので、evidence に `null 字` が出る経路は無い
+- 意図的分離（`nestedClaudeMdFiles()` と `G-module-index.mjs:69` / `edit-findings.mjs:102`）は挙げない——循環回避と、片や配列・片や述語という役割の違いを確認した
+- テストの Red→Green 性: 新テスト 4 本のうち「常時ロード面に算入されない」は変異 3 で実際に赤になった。「母集団は MODULE_INDEX_CRATES から導く」は実装と同じ式を書いたトートロジー寄りだが、一覧を手書きへ戻す変異なら落ちる（許容）。evidence.test の「供給が消えれば finding」は変異 2 と同じ経路を単体で縛る
+
+### 文書の正しさ（フェーズ 2）
+- 消した bullet 39 本（太字）+ 非太字 4 本すべてについて再確立地点を file:line で確認した（詳細は reverse-audit-1240.txt）。上記 Medium 2 と Low 4 以外は対応表どおり
+- 残した太字 bullet が横断かの全数確認: 名指す識別子の定義ファイルを grep で数えた——`with_normalized_key`(scoring.rs) ↔ `normalize_entry_key_into`(indexer/keys.rs)、`measure_derived_sharing`(query.rs) ↔ `derive_columns`(indexer/columns.rs) ↔ `assemble`(search/build.rs)、`sorted_prefix_len`(engine/index_tree/path_store/indexer/cache の 8 ファイル)、`icons_turned_off` ↔ `drop_icon_cache`(config_watcher.rs / icon.rs)、`build_index_from_material` / `extend_with_path_entries`(indexing.rs / main.rs)、`IndexInputs::from_config`(config_watcher.rs / engine.rs)、`NameArena` / `kana_lower_names`(index_tree / build / search)、`HotkeyConfig`(snotra-settings / platform)、`index_build_started` / `is_index_stale`(state.rs / indexing.rs / engine.rs)。いずれも 2 ファイル以上。件数パラメータ・依存方向・テスト一覧は索引として残す判定に同意
+- 消した「**索引を建てる唯一の入口**」（build.rs 行）は、`from_material` の `///`（L401）が「『唯一の入口』と無条件に書いてはならない」と明記しており CLAUDE.md 側が古かった。消したことで矛盾が解消（改善）
+- `src-tauri` 側で「モジュール構成」を指す `.rs` 10 件（activation.rs:348・search_flow.rs:44・layout.rs:394・mod.rs:21・view.rs:972/1214/1248・window_coordinator.rs:24/190・state.rs:101）はすべて残した `###` 小節（#1032 条項・`window_coordinator.rs` の項・trace 規範）を指しており影響なし
+
+### 折返し・rustdoc（フェーズ 1 補助）
+- 追加された `//!` / `///` 行を diff から抽出して検査: バッククォート奇数の行 0 件（コードスパンの物理改行なし）、`<` を含む行は 2 件でどちらもコードスパン内（`Mutex<Engine>`・`Vec<AppEntry>`）、全角閉じ角括弧 0 件。`cargo doc` 緑・`governance:check` の折れうる位置 20 件 / 角括弧対 769 件も緑
+
+### パフォーマンス（フェーズ 3）
+- 製品コードの実行文は変わっていない（diff はコメントのみ）。governance-check への追加は 4 ファイルの読みと文字数計数のみで、`npm run governance:check` の体感時間に差なし
+
+## 変異注入（3 件・ハッシュ照合済み）
+| # | 変異 | 期待 | 実測 | 赤の理由 | 巻き戻し |
+|---|---|---|---|---|---|
+| 1 | `snotra-core/CLAUDE.md` L32 `- `search/query_plan.rs` — …` を削除 | 当該 basename を名指す finding で exit 1 | **exit 1**。finding: `snotra-core/CLAUDE.md:1  実ファイル snotra-core/src/search/query_plan.rs が索引（「モジュール構成」節のバッククォート）に見当たらない` | 検査（G-module-index）の判定。構文エラーではない | hash 3c281a4 → dd2afc8（注入）→ 3c281a4（復元・一致） |
+| 2 | `scripts/governance-check.mjs` L202 `areaNested: area.nested,` を削除 | `areaNested が未記録` の finding が印字され exit は 0 | **exit 0**。成功行が `入れ子 CLAUDE.md ? 字` になり、finding: `scripts/governance/evidence.mjs:1  evidence が読む `areaNested` が未記録である（供給側…が消えた疑い）——undefined を印字して exit 0 になる経路` | evidenceView の Proxy 判定（格下げ済み・ADR-governance-meta-demotion どおり） | hash 16f9ecc → 3ea33a5（注入・main の blob と同一＝差分が当該 1 行だけであることの副証）→ 16f9ecc（復元・一致） |
+| 3 | `scripts/governance/instrument.mjs` L130 を `always: always + nested` へ | `npx vitest run scripts/governance/instrument.test.mjs` が赤 | **exit 1**。`Tests 1 failed | 14 passed`。落ちたのは「入れ子 CLAUDE.md の面積は別欄 `nested` に合計され、常時ロード面には算入されない」— `AssertionError: expected 421 to be 25` | テストの assert（`a.always === b.always`）。構文エラーではない | hash fc1008c → ead2a4f（注入）→ fc1008c（復元・一致） |
+
+## 逆向き監査の要約（全文は workspace/reverse-audit-1240.txt）
+- 削除された太字 bullet 39 本すべてに現在形の再確立地点が在り、file:line で確認した。対応表と一致しなかったのは 2 点: (a) core L25 の「Windows の dirs 同一性を含めた」は偽（主張が消えた・Medium 2）、(b) src-tauri L30 heap_trace の「欄の不在は 0 ではない」は逐語では無い（Low 4）
+- 対応表の外で、消した主張を指し続けている散文が 2 件（ADR-path-query-forward-single-pass.md:15・rules/snotra-core-search.md:17・Medium 1）
+- 対応表の「写し」判定は上記以外すべて実体と一致。「単一」判定の 9 本は新設段落として `.rs` に在り、CLAUDE.md 側の数値（µs・MB）は幅または PERFORMANCE.md への指しへ置き換えられている
+
+## 結論
+- 検証カテゴリ A・E・F はすべて exit 0。変異 3 件は期待どおり（索引欠落は exit 1・計器の供給断は finding + exit 0・常時ロード面への混入はテスト赤）で、赤の理由はいずれも検査の assert である
+- Critical / High なし。マージ前に直す価値があるのは **Medium 1（付け替え漏れ 2 件）** と **Medium 2（対応表と location.rs の食い違い）**。いずれも 1〜3 行の編集で、製品コードに触れない
+- 意図的分離（`nestedClaudeMdFiles()` ↔ `G-module-index.mjs:69` ↔ `edit-findings.mjs:102`）は維持で妥当
+
+## 再検証（8c33649）
+- アンカー: `git checkout --detach 8c33649` → HEAD = 8c33649be604c664dcc0e72cec1ec68e4259c0fc。`git diff 174b81c..8c33649 --stat` は 4 ファイル（location.rs +2 / heap_trace.rs +1-1 / migration-1240.md / plan.md）で通知どおり
+
+### (1) 指摘の解消を、指摘を見つけた道具で測る
+- Medium 2（location.rs の dirs 同一性）: `grep -n "data_dir\|config_local_dir" snotra-core/src/config/location.rs` → 前回 0 件が、今回 L12-13 に 1 文（`dirs::config_dir()` = `dirs::data_dir()`・RoamingAppData・dirs 6.0.0 実測・危険なのは `config_local_dir()` / `data_local_dir()`）。消した bullet の主張と同内容。**解消**。対応表 core L25 行も「Windows の dirs 同一性の実測…」を足した差分として書き直されており、実体と一致
+- Low 4（heap_trace.rs の 1 句）: `grep -n "0 ではない" src-tauri/src/heap_trace.rs` → L5「**不在が「測っていない」であり、0 ではない**」。消した bullet の逐語が復元。**解消**。対応表 src-tauri L30 行も追加を記録
+
+### (2) 検証
+- `cargo doc --workspace --no-deps --document-private-items`: exit 0・warning 0 件（8c33649 で再実行）
+- `npm run governance:check`: exit 0・24 件緑。成功行は前回と同一（入れ子 CLAUDE.md 78217 字・.rs 137 件・見出し参照 370 件——`.rs` の追加行は正準形参照を含まないため件数不変）
+- カテゴリ A の他項目（fmt / check / clippy / test）と E（npm test）は **前回 174b81c の結果を引き継ぐ**。根拠: 修正差分の `.rs` 変更は `//!` コメント 3 行のみで実行文が無く、`scripts/**` は触れていない（diffstat で確認）
+
+### (3) 折返し・rustdoc（足した 2 行）
+- location.rs L12-13: 「（どちらも RoamingAppData・dirs 6.0.0 で」/「実測）」の物理改行は括弧内の散文で折れており、コードスパンは行内で閉じている（バッククォート奇数の行 0 件）。`<` `］` 無し
+- heap_trace.rs L4-5: 「`heap` 欄の」/「**不在が…**」で折れる。太字は L5 内で開閉し、コードスパンも行内で閉じる。`<` `］` 無し。G-folded-* 20 件・角括弧対 769 件は前回と同数で緑
+
+### (4) 据え置きの裁定の再確認
+- `.claude/rules/snotra-core-search.md:17` の全文: 「横断不変条件（並列 Vec レイアウト・ビットマスク一元化・has_path_sep 非互換）: `snotra-core/CLAUDE.md` の search.rs 節・「文字ビットマスク」節・「incremental cache とパスクエリの非互換」節」。3 語と 3 節の順対応の読みは**成り立つ**: `###`「incremental cache とパスクエリの非互換」（snotra-core/CLAUDE.md:125）は「`has_path_sep` 時は incremental search を無条件で無効化する」を本文に持ち、「非互換」の語もそこにある。前回の Medium 1(b) は「has_path_sep 非互換」を Fuzzy pre-filter スキップ（消した bullet）と誤って同一視していた。**Medium 1(b) を撤回**する
+  - ⚠️ ただし同じ行の 2 つ目「文字ビットマスク」節は、`grep -n "^##.*ビットマスク" snotra-core/CLAUDE.md` が 0 件——現在の見出しは `### char_bitmask は query.rs に一元化済み`（L111）で、「文字ビットマスク」を名に持つ見出しは無い。rules ファイルは本 PR の diff に含まれず main から不変なので **#1240 で生じたものではない既存の腐り**（正準形でない「」節の書き方ゆえ G-heading-refs の射程外）。別 issue 向けの記録
+- `docs/adr/ADR-path-query-forward-single-pass.md:15` を凍結 ADR として編集しない裁定: `ADR-adr-frozen-history` の規約どおりで妥当。残余として「search.rs 節」が空を指す点は変わらない（読者は query_plan.rs の `//!` へ辿り直す必要がある）が、受容する残余として明示されていれば足りる
+
+### 前回の ⚠️ 3 件の更新
+- ⚠️1（search.rs 行の宣言とテスト一覧 bullet のずれ）: 新情報なし・据え置き
+- ⚠️2（件数パラメータの残す根拠）: 新情報なし・判定不変
+- ⚠️3（`kana_for_cached` の名指し）: 新情報なし・任意のまま
+
+### 結論（8c33649）
+- Medium 2・Low 4 は実体で解消を確認。Medium 1 のうち rules 行は撤回、ADR 行は凍結ゆえ受容。Critical / High なし。マージを止める所見は残っていない
+- 作業ツリー: 変更なし（`git status` で追跡外は workspace の report 2 枚と作業ログのみ）

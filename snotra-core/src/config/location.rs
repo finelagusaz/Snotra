@@ -9,6 +9,8 @@
 //! [`Config::config_dir_from`] は env を読まないので並列テストから安全に測れるが、その代償として
 //! `config_dir()` が `dirs::config_dir()` を呼んでいること自体は純粋関数のテストからは見えない。
 //! その結線は `config_dir_is_wired_to_dirs_config_dir_with_snotra_suffix` が env を**読むだけ**で pin する。
+//! Windows では `dirs::config_dir()` と `dirs::data_dir()` は同一（どちらも RoamingAppData・dirs 6.0.0 で
+//! 実測）なので、実際に危険な取り違えは `config_local_dir()` / `data_local_dir()`（LocalAppData）である。
 
 use std::ffi::OsString;
 use std::path::PathBuf;

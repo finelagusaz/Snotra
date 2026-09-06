@@ -14,7 +14,7 @@
 | 19 | 新しいセクション・設定キーには serde の既定を付ける（#824） | 写し | `config/schema.rs` `//!` L6〜7（太字で既在） | 検知器名 2 種（`empty_section_deserializes_to_default_*` / `config_parses_with_all_sections_omitted`）・配列要素の例外・`SPEC.md`「13.1 設定データ」の指し。「射程と検知器は CLAUDE.md」の委ね文を消した |
 | 21 | `Config::icon_cache_cap()` はこれらから派生 | 写し | `config/schema.rs` `icon_cache_cap` の `///`（L475〜479 `保守注意:`） | なし |
 | 24 | 新しい永続ファイルの保存先も `Config::config_dir()` から導く（#803） | 写し | `config/location.rs` `//!` L3〜4・`config_dir` の `///` L31〜32 | 全称「`dirs::config_dir()` を直接呼ぶ箇所は他に無い」・2 経路の欠陥への指し・判定核が env を読まない代償・結線を pin する検知器名 |
-| 25 | env 上書きはそのまま使い `Snotra` を付け足さない | 写し | `config/location.rs` `config_dir_from` の `///`（bullet 自身が「契約の全文は rustdoc」） | なし（Windows の `dirs` 同一性の実測は判定核の結線と同じ段落に含めた） |
+| 25 | env 上書きはそのまま使い `Snotra` を付け足さない | 写し | `config/location.rs` `config_dir_from` の `///`（bullet 自身が「契約の全文は rustdoc」） | Windows の `dirs` 同一性の実測（`config_dir()` = `data_dir()`・危険なのは `*_local_dir()`）を `//!` に 1 文追加（レビュー Medium 2 で欠落が判明し追記） |
 | 28 | 旧キーの後方互換移行 | 写し | `config/migrate.rs` `//!` L7〜8・`apply_migrations` 本体の行末コメント | なし |
 | 29 | migration を足すときは系統ごとの private fn として書く | 写し | `config/migrate.rs` `//!` L7 | なし |
 | 30 | migration の呼び出し順は元と同一に固定し、依存は行末コメントが正本 | 写し | `config/migrate.rs` `//!` L8 | なし（「実測: 責務分割のレビューまで…」は経緯ゆえ捨てた） |
@@ -75,7 +75,7 @@
 | 20 | コヒーレンシは engine の `index_stale` ledger に一元化 | 写し（同文書内） | 同節 L14（残した横断 bullet） | なし |
 | 22 | `LoadOutcome::ReadFailed` では適用せず早期 return | 写し | `config_watcher.rs` `should_apply_config_change` の `///` L179〜186 | `//!` の「跨る不変条件は CLAUDE.md」を「読込失敗の保全は本ファイルが正本」へ反転 |
 | 23 | 早期 return の前にバウンドリトライ（既定 3 回 × 150ms） | 写し | `config_watcher.rs` `load_with_read_failed_retry` の `///` L212〜219・定数 `CONFIG_READ_RETRY_MAX` / `CONFIG_READ_RETRY_BACKOFF` | `//!` に定数への intra-doc link を足した（数を散文に写さない） |
-| 30 | `heap_trace.rs` 既定ビルドには入らない・欄の不在は「測っていない」 | 索引（写し） | `heap_trace.rs` `//!` L3〜4 | なし |
+| 30 | `heap_trace.rs` 既定ビルドには入らない・欄の不在は「測っていない」 | 索引（写し） | `heap_trace.rs` `//!` L3〜4 | 「欄の不在が『測っていない』であり 0 ではない」の 1 句を `//!` へ追加（レビュー Low 4） |
 | 31 | `startup.rs` 終端を `RegisterInitialHotkey` の arm だけに閉じない | 索引（写し・bullet 自身が「正本は `//!`」） | `startup.rs` `//!`（失敗経路と一度きり性の節） | なし |
 | 32 | `monitor.rs` 基準モニターは必ず点から決める | 索引（写し） | `monitor.rs` `point_monitor_work_area` の `///` L77〜86 | なし |
 | 41 | 起動の入口は `launcher_controller/` の直下に置くこと | 写し（`//!` の方が新しい） | `activation.rs` `//!` L3〜13（「集める規範は要らなくなった」・受容する死角まで） | なし |

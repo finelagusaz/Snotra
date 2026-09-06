@@ -166,7 +166,7 @@ Phase 1（機構・独立）→ Phase 2 → Phase 3 → Phase 4。Phase ごと�
 ### Phase 4 — 付け替え・逆向き監査
 - [x] D-1 の 7 件を付け替える——schema.rs / path_query_cost.rs / performance.rs / breakdown.rs / config_watcher.rs / docs/design を付け替え、str_arena.rs:116 と paths.rs:5 は指し先が残るので変更なし。`rules/snotra-core-search.md` L17 は L39（残す）を指すので変更なし
 - [x] 索引節に残る太字 bullet がすべて横断か名前の索引であることを対応表で確認（snotra-core 9 群・src-tauri 5 群 + `###` 7 項。`migration-1240.md`「残した太字 bullet」）
-- [ ] 逆向き監査——`/implement` Step 3 の worktree 委譲 1 体へ束ねて渡す（同じ sha を対象にし、`workspace/reverse-audit-1240.txt` へ書かせる。Agent の起動は Step 3 の 1 体だけ）。全行「見つかった」になるまで戻す
+- [x] 逆向き監査——Step 3 の worktree 委譲（sha 174b81c）が対応表を見ずに実施。消した太字 39 本すべてに現在形の再確立地点あり。対応表との不一致 2 点（core L25 の `dirs` 同一性が `location.rs` に無い・heap_trace の 1 句が逐語で無い）は `.rs` へ 1 文ずつ足して解消。対応表の外の指し 2 件のうち `.claude/rules/snotra-core-search.md:17` は「has_path_sep 非互換」を `###`「incremental cache とパスクエリの非互換」節へ対応づけており現物と一致（変更なし・裁定は主エージェントが L17 を読んで確認）、`docs/adr/ADR-path-query-forward-single-pass.md:15` は凍結された ADR ゆえ編集しない（`ADR-adr-frozen-history`）
 - [x] 文字数を実測して対応表に記す（38,664 → 30,573 / 31,782 → 29,496）
 
 ## 未確定（実装前に潰す）

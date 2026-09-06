@@ -1,0 +1,150 @@
+issue #1240 research.md 敵対的レビュー（最終版）
+対象: workspace/research.md（ブランチ chore/nested-claude-md-invariants-to-module-doc）
+一次資料: gh issue view 1240 / snotra-core/CLAUDE.md / src-tauri/CLAUDE.md /
+scripts/governance/instrument.mjs / G-module-index.mjs / G-heading-refs.mjs / lib.mjs /
+docs/comment-guidelines.md / .claude/rules/snotra-core-search.md /
+ADR-module-index-reverse-scope.md / ADR-retire-area-budget.md
+
+===============================================================================
+## 壊せた項目
+===============================================================================
+
+### [最重要・確定] 単位不一致: research.md が引き継いだ「71,419 / 57,892 字」は
+`wc -c`（バイト数）であり、issue が同時に「面積計器の母集団へ足す」よう求めている
+`instrument.mjs` の指標（コードポイント数・CR 除く・`countChars`）で測ると
+snotra-core/CLAUDE.md = 38,664、src-tauri/CLAUDE.md = 31,782 で、**両方とも既に 40k 未満**。
+
+実測:
+```
+node -e "
+const fs=require('fs');
+for (const f of ['snotra-core/CLAUDE.md','src-tauri/CLAUDE.md']) {
+  const t = fs.readFileSync(f,'utf8');
+  console.log(f,'bytes=',Buffer.byteLength(t,'utf8'),'codepoints(no CR)=',[...t.replace(/\r/g,'')].length);
+}"
+→ snotra-core/CLAUDE.md bytes=71419 codepoints=38664
+→ src-tauri/CLAUDE.md   bytes=57892 codepoints=31782
+```
+`scripts/governance/instrument.mjs` L21 のコメント自身が「指標は文字数（コードポイント・CR 除く）」
+「CR を除くのは CRLF checkout 対策」と明言し、`countChars` の実装（L37-38）は
+`[...text.replace(/\r/g, "")].length` で上と同じ関数である。`file` コマンドで両ファイルとも
+CRLF ではない（LF）ことも確認済みで、改行コードの水増しでもない。
+
+research.md はこの数字をそのまま issue から引き継ぎ（「71,419 字」「57,892 字」という書き方も
+issue 本文の「wc -c と節ごとの集計」という注記も踏襲）、**「40k 字」という issue の前提が
+そもそもどの単位で成り立つ主張なのかを検証していない**。issue 本文の「Claude Code の大型メモリ
+警告の閾値（約 40k 字）」は Claude Code 自身の警告（おそらくバイトまたは別の計測）を指しており、
+`instrument.mjs` の 40k とは別物である可能性が高い——だが research.md はこの区別に一言も触れず、
+「見込み: 索引節だけでは 40k を切らない」「38k（40k をわずかに切る）」という**バイト単位の議論**を
+延々と展開する一方、対応 2（面積計器へ入れ子の字数を足す）が実装されたら**その報告行に出る数字は
+コードポイント数であり、両ファイルとも最初から 40k を切っている**という、対応 1 の動機そのものを
+弱体化させる帰結に触れていない。
+
+これは是正 (1) の見積り作業全体（−18k / −20k 等の目標値）の前提を揺るがす。**「両ファイルを
+40k 字未満にする」という受け入れ条件は、単位を bytes から codepoints へ変えるだけで無条件に
+満たされてしまう**——issue のスコープ（「単一ファイルの不変条件を //! へ移す」というリファクタ）
+自体は依然として `docs/comment-guidelines.md` の観点から正当だが、「40k を切るために削る」という
+数値目標としては、対応 2 を先に実装して実際の指標で測り直すまで見積りが確定しない。
+
+この所見を偽にする手順: 上記の node ワンライナーを再実行し、`instrument.mjs` の `countChars` の
+実装（L37-38）と乖離していないか確認する。乖離していれば本所見は崩れる。
+
+---
+
+### [確定] src-tauri/CLAUDE.md の「モジュール構成」節の実際の範囲は L7〜114 であり、
+research.md の記述「L7〜64」は誤り。分類表がその後半 18.4k 分（全体の約半分）を検討していない。
+
+- `sectionOf`（scripts/governance/lib.mjs、`ending: "heading"`）は「同レベル以上の見出しが
+  後方に無ければ赤」——`##` 節は次の `##` までであり `###` では閉じない
+- 実測: `grep -n '^## ' src-tauri/CLAUDE.md` → 7:モジュール構成, 115:実装パターン
+  （次の `##` は L115。「L7〜64」ではない）
+- 文字数実測（`awk 'NR==a,NR==b' src-tauri/CLAUDE.md | wc -c`）:
+  L7-64: 17,401字 / L7-114: 35,818字 / L65-114: 18,417字
+- research.md が「モジュール構成」節の分量として使っている **35.8k という数字自体は
+  L7-114（＝実際の節全体）と一致する**。つまり research.md は節の総量は正しく把握していたが、
+  L65-114 に並ぶ 7 個の `###` 小見出し（処置を返す純粋核の強制#934／wake_main外部起動／
+  イベント駆動wake#532 SU5／期限を待つ状態armed#711／テーマ色・font・行高#673／
+  config の読みはread_config#1032,#1123／trace presence#671 PR A′）を分類表に**一つも
+  載せていない**。これらはいずれも複数ファイルにまたがる横断規則（例: config の読みの規則は
+  state.rs・commands/launch.rs・launcher_controller にまたがる）で、research.md 自身の
+  「単一なら移す・横断なら残す」基準では「残す」側に入るはずである。
+- 帰結: 「見込み: 索引節 35.8k のうち移せるのは約 20k → 57.9k − 20k ≒ 38k」という数字は
+  母集団の半分を検討せずに出しており、信頼できない。実際にはもっと大きくなる可能性が高く、
+  「40k をわずかに切る」という結論も崩れうる。
+- 対照: snotra-core/CLAUDE.md 側は `awk 'NR==8,NR==85' | wc -c` = 31,370字で、
+  research.md の「31.4k」「L8〜85」という記述と一致する。**非対称な誤り**——snotra-core 側は
+  正確、src-tauri 側だけ範囲を取り違えている。
+
+偽にする手順: `grep -n '^## ' src-tauri/CLAUDE.md` を実行し、モジュール構成の直後の `##` の
+行番号を見る。L115 なら本所見は真。
+
+---
+
+### [⚠️ 中確信] L40「`sorted_prefix_len`・測り直し禁止」の分類「単一（path_store.rs）」は
+厳密には横断——同じフィールド名が index_tree.rs にも定義がある。
+
+- `grep -rn 'sorted_prefix_len'` で snotra-core/src/index_tree.rs（`TreeColumns` /
+  `OwnedTreeColumns` 構造体フィールド、複数箇所）と snotra-core/src/search/path_store.rs
+  （所有フィールドと `#[cfg(test)]` の観測用メソッド）の双方に定義がある
+- ただし index_tree.rs 側は「PathStore と列を受け渡すための columnar interchange 型」の
+  フィールドであり、独立した不変条件の**別定義**というより同じ値の運搬経路と見なせる。
+  research.md の「識別子の定義がすべて 1 つのファイルにあるなら単一」という基準を字義通り
+  適用すると横断行きだが、実務上は path_store.rs が正本という判断も成り立つ——**確信度は
+  中程度**であり、⚠️ として計上する
+- 偽にする手順: `grep -n 'sorted_prefix_len' snotra-core/src/index_tree.rs
+  snotra-core/src/search/path_store.rs` を実行し、index_tree.rs 側のフィールドが
+  path_store.rs の値を単に転写するだけの構造か、独自ロジック（例えば別の整列判定）を
+  持つかを確認する。前者なら「単一」判定は実務上妥当、後者なら本所見どおり横断。
+
+===============================================================================
+## 壊せなかった項目（実測で裏付けられた）
+===============================================================================
+
+1. **正準形参照 0 件（サンプル 4 件）**: `並列の列は添字` `sorted_prefix_len」`
+   `measure_derived_sharing」` `剪定容量` `top_n.*live-read」` を Grep で全ツリー検索し、
+   0 件（research.md 自身のファイル以外）。研究の「太字 bullet を正準形で指す参照は 0 件」は
+   このサンプルでは崩せなかった（全数走査はしていない＝下記「未検査」参照）
+
+2. **G-module-index の逆方向照合に excludeTest が無い**: `MODULE_INDEX_CRATES` の
+   4 crate 設定（scripts/governance/checks/G-module-index.mjs L44-49）はいずれも
+   `excludeTest` キーを持たず、`moduleIndexSources` はテストファイルを含む `src/` 配下の
+   全 `.rs` を対象にする。research.md の主張どおり
+
+3. **instrument.mjs ヘッダの引用は逐語で一致**: L24-25「skills 本文・モジュール CLAUDE.md・
+   docs・ADR は対象外——『その作業に入った者だけが読む面』への退去は #593 が推奨する経路であり、
+   課税すれば登ってほしい階梯を登る側が罰せられる」——research.md の引用と一致
+
+4. **window_coordinator.rs の `//!` が CLAUDE.md を正本に指名**: 実ファイル L23-26 に
+   「両者が同じ高さを導出する共有の実体の正本は `src-tauri/CLAUDE.md`「モジュール構成」の
+   `window_coordinator.rs` の項」とあり、research.md の引用と一致
+
+5. **`MonitorFromWindow` は window_coordinator.rs 側 0 件**: `grep -n MonitorFromWindow
+   src-tauri/src/egui_shell/window_coordinator.rs` は 0 件で確認。ただし文字列全体では
+   src-tauri/src/monitor.rs（コメント）と snotra-egui-runtime/src/monitor.rs（実際の
+   Win32 API 呼び出し、3 箇所）に存在する——research.md の主張は「window_coordinator.rs
+   というそのファイル」に限定した文脈（issue 本文もその文脈）であり、その限りでは崩れない
+
+6. **`.rs` の編集は post-edit hook が cargo 系検査を無条件に走らせる**（doc コメントのみでも）:
+   `.claude/hooks/post-edit.mjs` の `selectChecks`（L132-148）は `rel.endsWith(".rs")` だけを
+   条件に fmt・clippy・該当 crate のテストを push する。doc-only か code かの分岐は存在しない。
+   `cargo doc` に対応する check id は selectChecks 内に存在しない（`cargo doc` は hook で
+   走らないという research.md の主張も一致）
+
+7. **IndexInputs / mark_index_stale / measure_derived_sharing / with_normalized_key の
+   定義は単一ファイル**: それぞれ engine.rs（IndexInputs, mark_index_stale）・query.rs
+   （measure_derived_sharing）・search/scoring.rs（with_normalized_key）に 1 箇所ずつのみ
+   定義があり、research.md の「単一」判定と矛盾しない
+
+===============================================================================
+## 未検査
+===============================================================================
+
+- 太字 bullet 全数（22.5k 分・35 本、および src-tauri 12 本）についての正準形参照の悉皆調査
+  （サンプル 4 件のみ実施）
+- `npm run governance:check` の実行によるライブ確認（コード読解のみで裏取り、実行はしていない）
+- 「見込み: 太字 bullet 22.5k のうち残すのは L26・36・51・63 と各ファイル名行 ≒ 4k」の内訳検算
+- comment-guidelines.md の「折返しの禁則 2 形」「日本語の折返し」条項の逐語確認
+- config.rs L18 の「契約の全文は config_dir / config_dir_from の rustdoc」の原文確認
+- `.claude/rules/snotra-core-search.md` の指し先が現物と一致するかの確認
+- ADR-module-index-reverse-scope.md / ADR-retire-area-budget.md の逐語確認
+  （instrument.mjs のヘッダ引用は確認したが、ADR 本文とのクロスチェックは未実施）

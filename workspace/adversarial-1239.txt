@@ -1,0 +1,61 @@
+敵対的レビュー: workspace/research.md (issue #1239)
+実施日: 2026-09-06
+
+## 壊せた項目
+
+なし（実測で崩れた主張は見つからなかった）。
+
+## 壊せなかった項目（実測で裏付いた）
+
+1. 「rust-toolchain.toml は channel="1.98" / components=["rustfmt","clippy"] で rust-analyzer が無い」
+   - 確認: rust-toolchain.toml 全文を読んだ。記載どおり。
+   - 反証手順: 同ファイルの components 配列を grep する。
+
+2. 「ローカルの 1.98 toolchain は 1.98.1・component 5 個（rustc/cargo/rust-std/rustfmt/clippy）で rust-analyzer が無い」
+   - 確認: `rustc +1.98 --version` → 1.98.1。`rustup component list --installed --toolchain 1.98-x86_64-pc-windows-msvc` → 5件、rust-analyzer 無し。
+   - 反証手順: 同コマンドの再実行。
+
+3. 「bin/ 配下は本日 13:07 に更新された」
+   - 確認: `rustc.exe` の CreationTime = 2026-09-06 13:07:23（PowerShell Get-Item 実測）。manifest の date="2026-09-03"（1.98.1 のビルド日と符合、更新自体は当日反映）。
+   - 反証手順: 同ファイルの CreationTime を再取得。
+   - 注記: research.md は「1.98.0→1.98.1 へ丸ごと入れ替わった」と書くが、CreationTime だけでは「新規ダウンロードで置換」と「in-place 更新」を区別できない。当該主張は「入れ替わった」という表現だが実測は「タイムスタンプが13:07」止まりであり、⚠️これは research.md 自身も明記していない微妙な言い換えの余地——ただし結論（rust-analyzer が無い5component構成である事実）には影響しない。
+
+4. 「CI (run 34020570400) のログに `syncing channel updates for 1.98` → `downloading 5 components` が出る」「Setup Rust toolchain ステップは26秒」
+   - 確認: `gh run view 34020570400 --job 101452276138 --log` で該当行を実測（07:59:24〜07:59:25）。ジョブ時刻 `gh api .../jobs/101452276138` で Setup Rust toolchain は 07:58:57〜07:59:23 = **26秒**（record値と完全一致）。
+   - 追加で run 33728421128（9/3）と run 34012268227（9/6 早朝、#1238）も見た。**3run とも 1.98 側は毎回 "downloading 5 components" が出る**（stable 側は run 33728421128 で "downloading" 行自体が無く、キャッシュされた形跡がある——ただし 1.98 側は3/3 で出ており、research.md の主張「1.98 は毎run取りに行く」はキャッシュされない側として裏付けられた。むしろ研究文書より強い証拠が得られた）。
+   - 反証手順: 追加の run を無作為抽出し `downloading` 行の有無を見る。
+
+5. 「#1177 (commit 8fa8b5f) は『足すと CI も毎run取りに行く』を理由に components への追加を却下し、`/deps-update` の手順（引き金）へ復旧を括り付けた」
+   - 確認: `git show 8fa8b5f` のコミット本文・diff（`.claude/skills/deps-update/SKILL.md` L40-46 追加）を読んだ。文言は research.md の要約と一致（「意図して外してある」「channel を上げたら rustup component add」「セッションは再起動で復帰」まで含め正確）。
+   - 反証手順: 同コミットの再表示。
+
+6. 「今回の #1238 (`/deps-update`, commit d2e9804) は channel を上げず、rust-toolchain.toml は無変更」→ 引き金が発火しない
+   - 確認: `gh pr view 1238 --json files` → 変更ファイルは Cargo.lock と package-lock.json のみ。rust-toolchain.toml は含まれない。コミットメッセージも「toolchain: 最新 stable 1.98.1 は channel `1.98` の範囲内のため rust-toolchain.toml は変更なし」と明記。
+   - 反証手順: 同 PR のファイル一覧を再取得。
+
+7. 「lsp-config.mjs の checkLspConfig はバイナリの実在を見ない」「.lsp.json に args 欄は無い」
+   - 確認: `.lsp.json` を全文読み、`args` キーが無いことを確認。`checkLspConfig` 本体（L82〜）を読み、検査対象は ratoml 内容・settings.json の marketplace/enabledPlugins 宣言・JSON 構造のみで、`command` の指すバイナリの実在チェックは無い。
+   - 反証手順: `.claude/hooks/lsp-config.mjs` 全文 grep で `existsSync` 等バイナリ実在チェックの呼び出しが無いことを確認（実施済み、該当なし）。
+
+8. 「docs/hooks.md L89-90 の壊れ方分類表に『component 不在（バイナリ欠落）』は無い」
+   - 確認: 表の2行は「設定が届かない・上書きされる」（沈黙）と「plugin の load 自体が失敗する」（沈黙しない）の2種のみ。「rust-analyzer バイナリ自体が起動できない」という第三の壊れ方はどちらの記述にも一致しない別ケースで、明示的には無い。
+   - 反証手順: `docs/hooks.md` L69-98 の再読。
+
+9. 「settings.json で snotra-rust-lsp@snotra が true・rust-analyzer-lsp@claude-plugins-official が false」
+   - 確認: `jq` で該当キーを直接読んだ。記載通り。
+   - 反証手順: 同 jq クエリの再実行。
+
+10. 「~/.cargo/bin/rust-analyzer は rustup の shim で、override された1.98では起動時エラーになる」
+   - 確認: `which -a rust-analyzer` → `/c/Users/Eoh/.cargo/bin/rust-analyzer`。`rustup which rust-analyzer` → `error: unknown binary 'rust-analyzer' in toolchain '1.98-x86_64-pc-windows-msvc'`。`rustup show` で active toolchain の出所が rust-toolchain.toml のoverrideであることも確認。
+   - 反証手順: 同コマンド再実行。
+
+## 未検査
+
+- 「rust-toolchain.toml の components は rustup が toolchain 解決のたびに保証する（未インストールなら取得）」の実地検証——research.md 自身が「実装時に実測する」と明記し、指示により rustup component add 等の環境変更コマンドは実行していない。rustup --help / toolchain install --help のドキュメントレベルでは `-c/--component` オプションの存在と「既存 toolchain への追加」を示唆する記述はあるが、「toml 経由での自動追従」を明文で保証する記述までは `--help` 出力からは確認できなかった（正式ドキュメント/CHANGELOGへのアクセスなし）。
+- 1.98.0 時点（更新前）に rust-analyzer component があったかどうか——研究文書も「確定できない」「⚠️」として扱っており、これは元の記述と整合。1.97 toolchain（ローカルに残存）を覗いたところ rust-analyzer は無かった（component一覧: clippy/cargo/rust-std/rust-docs/rustfmt/rustc）が、これは別バージョンであり1.98.0の直接証拠にはならない。
+- 「他に rust-analyzer 再取得を促す記述が無いか」の全ツリー grep は実施済み（`git grep -n rust-analyzer -- '*.md'`）。ヒットは deps-update/SKILL.md（研究文書が引用済みの箇所）、AGENTS.md（無関係文脈）、ADR 2本（配送経路の話で無関係）、docs/hooks.md、docs/comment-guidelines.md。**新たに見つかった、研究文書が触れていない引き金は無い**——母集団は研究文書の記述と一致。
+
+## ⚠️ 不確実（返り値に含める）
+
+- ⚠️ 「1.98.0 → 1.98.1 へ丸ごと入れ替わった」という表現は、CreationTime の実測だけでは「新規取得による置換」と「既存ファイルの上書き更新」を区別できない。結論（現状5component構成でrust-analyzerが無い）には影響しないが、「丸ごと入れ替わった」という機序描写自体は直接証拠が無い推測を含む。
+- ⚠️ CI キャッシュの挙動について、research.md は「Rust cache は target を対象にし toolchain は覆わない」と断定しているが、これは3 run のログ観察（1.98側は常にdownloading出現）からの傍証であり、Swatinem/rust-cache の設定ファイル(`ci.yml`)自体でtoolchainキャッシュを明示的に除外している記述までは今回確認していない。

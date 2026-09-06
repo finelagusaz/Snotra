@@ -23,7 +23,8 @@
 # rustup shim 越しに起動するもので、**無くても cargo / clippy / test は緑のまま LSP だけが落ちる**
 # （沈黙する壊れ方）。#1177 は CI の費用を理由に `/deps-update` の手順へ逃がしたが、その手順は
 # 「`channel` を上げたら」が条件で、`channel` がパッチ版を追う限り toolchain は**この行を変えずに**
-# 入れ替わる（2026-09-06 に 1.98.0 → 1.98.1 で実測。手順は発火せず component が無いまま残った）。
+# 入れ替わる（2026-09-06 に `channel` の行はそのまま `rustc +1.98` が 1.98.1・manifest の date が
+# 2026-09-03 になっており、component は無かった。手順は発火していない）。
 # 費用も見込みと違う——CI は pin された toolchain を毎 run 丸ごと取得しており（3 run で実測）、
 # component 1 つ分しか変わらない。rustup は既にインストール済みの toolchain にも次の呼び出しで
 # 不足分を取得する（rustup 1.29.1 で実測）。宣言が消える形は `.claude/hooks/lsp-config.mjs` が赤にする。

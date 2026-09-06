@@ -245,6 +245,17 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/rust-toolchain\.toml の components に rust-analyzer が無い/);
   });
 
+  // 別テーブルの `components` を採ってはならない——先頭一致だと `[other]` 側の宣言で緑になる
+  // （レビューの故障注入 P19 で実測した偽陰性）。
+  it("足 10c — 別テーブルの components に在っても [toolchain] に無ければ赤", () => {
+    const v = violationsAfter((dir) => {
+      const p = path.join(dir, "rust-toolchain.toml");
+      const body = fs.readFileSync(p, "utf-8").replace(/,\s*"rust-analyzer"/, "");
+      fs.writeFileSync(p, `[other]\ncomponents = ["rust-analyzer"]\n${body}`);
+    });
+    expect(v.join("\n")).toMatch(/rust-toolchain\.toml の components に rust-analyzer が無い/);
+  });
+
   // 引用キーは TOML として正当なので、素の識別子だけを見る判定では素通りする（偽陰性）。
   it("足 8b — ratoml が引用キーで書いても赤", () => {
     const v = violationsAfter((dir) => {

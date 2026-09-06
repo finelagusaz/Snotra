@@ -132,9 +132,14 @@ export function checkLspConfig(rootDir) {
     violations.push(`${toolchainRel} を読めない: ${e.message}`);
     toolchain = "";
   }
-  // `components = [ ... ]` の配列の中に `"rust-analyzer"` があるか。配列は複数行に折れうるので
-  // `[^\]]*` で閉じ角括弧まで読む。
-  const components = /^\s*components\s*=\s*\[([^\]]*)\]/m.exec(toolchain);
+  // `[toolchain]` テーブルの中の `components = [ ... ]` に `"rust-analyzer"` があるか。テーブルは
+  // `[toolchain]` 見出しから次の `[...]` 見出しまでで切り出す（別テーブルの `components` を採らない）。
+  // 配列は複数行に折れうるので `[^\]]*` で閉じ角括弧まで読む。**見るのは素の `components =` 行だけ**
+  // ——inline table（`toolchain = { components = [...] }`）・引用キー・dotted key は TOML として正当だが
+  // この判定は読まず「無い」と報告する（安全側の偽陽性。rustup は読むので、その書式へ変えるなら
+  // ここも変える）。
+  const table = /^\s*\[toolchain\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toolchain);
+  const components = table && /^\s*components\s*=\s*\[([^\]]*)\]/m.exec(table[1]);
   if (!components || !/["']rust-analyzer["']/.test(components[1])) {
     violations.push(
       `${toolchainRel} の components に rust-analyzer が無い — toolchain が入れ替わるたびに` +

@@ -169,7 +169,8 @@ describe("selectChecks", () => {
   });
 
   // rust-toolchain.toml の `components` は同じカナリアの被検査対象（#1239）。ルートのみ——
-  // rustup が override の出所に読むのはルートの 1 枚である。
+  // hook・CI・LSP はリポジトリルートを cwd にするので、この運用で rustup が読むのはルートの 1 枚
+  // （`checkLspConfig` もルートしか読まない）。
   it("rust-toolchain.toml（ルート）は hook-selftest を発火する", () => {
     expect(selectChecks("rust-toolchain.toml")).toEqual(["hook-selftest"]);
     expect(selectChecks("snotra-core/rust-toolchain.toml")).toEqual([]);

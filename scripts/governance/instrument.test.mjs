@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { snap } from "./test-helpers.mjs";
-import { checkNormativeAreaInstrument, normativeArea, ALWAYS_LOADED_FILES } from "./instrument.mjs";
+import { checkNormativeAreaInstrument, normativeArea, ALWAYS_LOADED_FILES, nestedClaudeMdFiles } from "./instrument.mjs";
+import { MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
 
 describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない計器・母集団だけを判定・ADR-retire-area-budget）", () => {
   const x = (n) => "x".repeat(n);
@@ -8,7 +9,10 @@ describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない
   const skill = (name, desc) => ({
     [`.claude/skills/${name}/SKILL.md`]: `---\nname: ${name}\ndescription: "${desc}"\n---\n本文\n`,
   });
-  const base = { ...rule("a.md", 1), ...skill("s", "d") };
+  // 入れ子 CLAUDE.md（各 crate 直下）。母集団は `MODULE_INDEX_CRATES` から導くので、ここでも
+  // 同じ鍵から組む——crate 名を手で並べると、crate を足したときにこの fixture だけが腐る
+  const nested = (n) => Object.fromEntries(Object.keys(MODULE_INDEX_CRATES).map((c) => [`${c}/CLAUDE.md`, x(n)]));
+  const base = { ...rule("a.md", 1), ...skill("s", "d"), ...nested(1) };
 
   it("母集団が揃っていれば findings 無し（緑）", () => {
     const s = snap({ "CLAUDE.md": x(100), "AGENTS.md": x(100), ...base });
@@ -24,7 +28,7 @@ describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない
   });
 
   it("rules 面がいくら大きくても finding を出さない（面替えにも鳴らない）", () => {
-    const s = snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...skill("s", "d"), ...rule("a.md", 1_000_000) });
+    const s = snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...skill("s", "d"), ...nested(1), ...rule("a.md", 1_000_000) });
     expect(checkNormativeAreaInstrument(s)).toEqual([]);
   });
 
@@ -85,5 +89,33 @@ describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない
 
   it("ALWAYS_LOADED_FILES はルート直下の 2 文書", () => {
     expect(ALWAYS_LOADED_FILES).toEqual(["CLAUDE.md", "AGENTS.md"]);
+  });
+
+  // #1240: 入れ子 CLAUDE.md は「その crate で作業した者だけが読む面」で、常時ロード面には
+  // 混ぜない。合否も持たない。**報告の欄だけを持つ**——数字が一度も出ないまま 38k 字まで
+  // 育っていた（2026-09-06 実測）のが本欄を足した理由である。
+  it("入れ子 CLAUDE.md の面積は別欄 `nested` に合計され、常時ロード面には算入されない", () => {
+    const a = normativeArea(snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...rule("a.md", 1), ...skill("s", "d"), ...nested(100) }));
+    const b = normativeArea(snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...rule("a.md", 1), ...skill("s", "d"), ...nested(1) }));
+    expect(a.nested).toBe(100 * Object.keys(MODULE_INDEX_CRATES).length);
+    expect(a.always).toBe(b.always);
+    expect(a.rules).toBe(b.rules);
+  });
+
+  it("入れ子 CLAUDE.md の母集団は MODULE_INDEX_CRATES の鍵から導く（一覧を二重に持たない）", () => {
+    expect(nestedClaudeMdFiles()).toEqual(Object.keys(MODULE_INDEX_CRATES).map((c) => `${c}/CLAUDE.md`));
+  });
+
+  it("入れ子 CLAUDE.md がいくら大きくても finding を出さない（別欄も合否を持たない）", () => {
+    const s = snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...rule("a.md", 1), ...skill("s", "d"), ...nested(1_000_000) });
+    expect(checkNormativeAreaInstrument(s)).toEqual([]);
+  });
+
+  it("入れ子 CLAUDE.md が 1 枚読めなければ母集団欠落 finding（数字が静かに欠ける経路の閉塞）", () => {
+    const files = { "CLAUDE.md": x(10), "AGENTS.md": x(10), ...rule("a.md", 1), ...skill("s", "d"), ...nested(1) };
+    const [missing] = nestedClaudeMdFiles();
+    delete files[missing];
+    const f = checkNormativeAreaInstrument(snap(files));
+    expect(f.some((v) => v.file === missing && v.message.includes("G-area-instrument 母集団の欠落"))).toBe(true);
   });
 });

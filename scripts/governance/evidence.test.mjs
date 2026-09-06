@@ -12,6 +12,7 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     skills: 12,
     areaAlways: 15000,
     areaRules: 12000,
+    areaNested: 88000,
     headingRefs: 219,
     refDocs: ["a.md"],
     refSourceDocs: ["a.rs"],
@@ -116,6 +117,17 @@ describe("evidence の読み取りガード（#1098 — undefined を印字し�
     expect(findings).toHaveLength(1);
     expect(findings[0].message).toContain("areaAlways");
     expect(line).toContain("常時ロード ? 字");
+    expect(line).not.toContain("undefined");
+  });
+
+  it("入れ子 CLAUDE.md の欄も平坦なキーで読み、供給が消えれば finding になる（#1240）", () => {
+    const findings = [];
+    const src = complete();
+    delete src.areaNested;
+    const line = assembleEvidence(evidenceView(src, findings));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain("areaNested");
+    expect(line).toContain("入れ子 CLAUDE.md ? 字");
     expect(line).not.toContain("undefined");
   });
 

@@ -127,7 +127,7 @@ Phase 1（機構・独立）→ Phase 2 → Phase 3 → Phase 4。Phase ごと�
 |---|---|---|
 | Phase 1（先に赤） | `npm test -- scripts/governance` | `areaNested` 欠落・入れ子欠落の新テストが赤 → 実装後に緑 |
 | Phase 1 | `npm run governance:check` | 成功行に `入れ子 CLAUDE.md 88594 字（報告のみ）`（38,664 + 31,782 + 13,051 + 5,097・本日実測。実装時点の値で読み替える） |
-| Phase 1（消費点の実測） | `governance-check.mjs` 側の `areaNested` 供給を一時的に落として `npm run governance:check` | `evidence が読む areaNested が未記録` の finding で赤 → 戻す |
+| Phase 1（消費点の実測） | `governance-check.mjs` 側の `areaNested` 供給を一時的に落として `npm run governance:check` | `evidence が読む areaNested が未記録` の finding が印字される（exit は格下げゆえ 0）→ 戻す |
 | Phase 2 冒頭（検出器の実測） | 索引行 1 本（例: `- `search/footprint.rs` …`）を消して `npm run governance:check` | `実ファイル snotra-core/src/search/footprint.rs が索引（…）に見当たらない` で赤 → 戻す |
 | 各 Phase | `npm run governance:check` | 24 件緑。成功行の `.rs 137 件`・見出し参照件数が**減っていない** |
 | Phase 2〜3 | `cargo doc --workspace --no-deps --document-private-items` | 警告 0 |
@@ -147,10 +147,10 @@ Phase 1（機構・独立）→ Phase 2 → Phase 3 → Phase 4。Phase ごと�
 ## 作業項目
 
 ### Phase 1 — 面積計器
-- [ ] `instrument.mjs` に入れ子欄（`MODULE_INDEX_CRATES` 由来）・母集団欠落 finding・ヘッダの理由文の改稿
-- [ ] `governance-check.mjs` / `evidence.mjs` に `areaNested` を通す
-- [ ] `instrument.test.mjs` / `evidence.test.mjs` の fixture と同型テスト（先に赤）
-- [ ] 消費点の実測（供給を落として赤を見る）と `npm test -- scripts/governance` / `npm run governance:check` の緑
+- [x] `instrument.mjs` に入れ子欄（`MODULE_INDEX_CRATES` 由来）・母集団欠落 finding・ヘッダの理由文の改稿
+- [x] `governance-check.mjs` / `evidence.mjs` に `areaNested` を通す
+- [x] `instrument.test.mjs` / `evidence.test.mjs` の fixture と同型テスト（先に赤: 新 4 本が落ち既存 23 本は緑・2026-09-06 実測）
+- [x] 消費点の実測と `npm test`（506 件緑）/ `governance:check`（入れ子 CLAUDE.md 88594 字）——供給を落とすと `evidence が読む areaNested が未記録` の finding が印字され行は `? 字` になる。**exit は 0 のまま**（計器の供給断は `metaFindings` へ格下げされており、ゲートへ戻るのは監査モードだけ・`ADR-governance-meta-demotion`）。「赤」ではなく「沈黙しない」が実測された保証
 
 ### Phase 2 — snotra-core 索引節
 - [ ] 検出器の実測（索引行 1 本を消して赤を見て戻す）

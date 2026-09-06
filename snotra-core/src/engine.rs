@@ -4,6 +4,14 @@
 //! 多重ロックを解消する。ロック保持時間を最小化するため、ロック外で扱うスナップショット/
 //! 構築物 `FolderListContext`・`PrebuiltIndex`・`PreparedHistorySave` を公開する。
 //!
+//! **config 変更と index 再構築のコヒーレンシ判断は `index_stale` ledger に閉じる**——
+//! [`Engine::mark_index_stale`] / [`Engine::begin_index_drain`]（snapshot）/
+//! [`Engine::complete_index_drain`]（swap + re-diff で stale をクリア）/ [`Engine::is_index_stale`]。
+//! 外側の `Mutex<Engine>` の内側に閉じることが、config 変更→index 再構築の lost-update を塞ぐ
+//! 根拠である（#347/#348-A）。消費者は `snotra` crate の `indexing.rs` と `config_watcher.rs` で、
+//! そちらの `AtomicBool` 2 つ（`indexing` / `index_build_started`）は二重ビルド防止と UI 表示専用
+//! であり、コヒーレンシ判断をそこから導かない。
+//!
 //! **設定だけは外側の `Mutex` を経ずに読める**（#1032・[`Engine::config_handle`] の doc が正本）。検索は `&mut self` を要求するので外側の `Mutex` を長く握り（実運用点での保持時間も同 doc が持つ）、その間 UI が同じ `Mutex` 越しに設定を読んでいたのが #1032 の主因だった。
 
 use crate::config::{Config, ScanPath};

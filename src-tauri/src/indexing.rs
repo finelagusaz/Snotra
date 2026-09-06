@@ -19,6 +19,9 @@ use crate::state::AppState;
 /// ビルド要求の全経路（config 変更 reindex / first-run / 手動 rebuild / 自己再 kick）が通る単一入口。
 /// 先に `mark_index_stale` で index を stale にし、CAS に失敗（既に in-flight）しても走行中ビルドの
 /// drain ループ / finish 後再チェックが取りこぼさず拾う（lost-update を塞ぐ、issue #347/#348-A）。
+///
+/// **finish 後に `is_index_stale` を再チェック**し、finish 窓で刺さった変更を自己再 kick で拾う。
+/// **unwind の panic 経路では再 kick しない**——決定論的な panic を無限にリトライしないため。
 pub fn start_index_build(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
 

@@ -199,6 +199,7 @@ export function runAll(snapshot) {
         skills,
         areaAlways: area.always,
         areaRules: area.rules,
+        areaNested: area.nested,
         workspaceMembers: workspaceMembers(snapshot).members.length,
         clippyDisallowed: clippyDisallowedCount(snapshot),
         adrFiles: adrFiles(snapshot).length,

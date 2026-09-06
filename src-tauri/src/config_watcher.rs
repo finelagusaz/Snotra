@@ -1,8 +1,11 @@
 //! `notify` クレートによる `config.toml` の変更監視（100ms debounce）。
 //!
 //! 差分検出後、`apply_config_change()` がホットキー・トレイ・インデックス・テーマ・
-//! ウィンドウ幅・言語を実行中のアプリへ反映する。適用順序・読込失敗時のデータ保全など
-//! 多サブシステムに跨る不変条件は `src-tauri/CLAUDE.md` を正とする。
+//! ウィンドウ幅・言語を実行中のアプリへ反映する。**読込失敗時のデータ保全は本ファイルが正本**
+//! ——`ReadFailed` では何も適用せず早期 return し（[`should_apply_config_change`]）、その前に
+//! バウンドリトライ（[`load_with_read_failed_retry`]・既定 [`CONFIG_READ_RETRY_MAX`] 回 ×
+//! [`CONFIG_READ_RETRY_BACKOFF`]）で一時的ロックの解除を待つ。多サブシステムに跨る不変条件
+//! （アイコンキャッシュ破棄の順序・index 再構築の要否判定）は `src-tauri/CLAUDE.md` を正とする。
 
 use std::sync::Mutex;
 use std::time::Duration;

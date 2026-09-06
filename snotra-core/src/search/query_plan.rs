@@ -5,6 +5,10 @@
 //! 履歴更新も行わない自由関数）。正本は `crate::query` の正規化群であり、ここは検索固有の
 //! 組み立て責務のみを持つ。incremental 判定と前回状態の read/write は親 `search.rs` の
 //! `IncrementalCache`（`can_reuse` / `update`・#601）。
+//!
+//! **`has_path_sep` のクエリは Fuzzy ビットマスク pre-filter をスキップする**——パスマッチは
+//! 正規化キーへの Substring であり、名前のビットマスクでは候補を絞れない。ゆえに全エントリの
+//! 走査が毎打鍵で走る唯一の経路になる（費用の計器は `tests/path_query_cost.rs`）。
 
 use std::borrow::Cow;
 

@@ -4,6 +4,7 @@
 //! 入力の健全性だけは findings に残す。
 
 import { skillFiles, modelHiddenSkills } from "./checks/G-skill-table.mjs";
+import { MODULE_INDEX_CRATES } from "./checks/G-module-index.mjs";
 import { finding } from "./lib.mjs";
 
 // ---------------------------------------------------------------------------
@@ -21,9 +22,13 @@ import { finding } from "./lib.mjs";
 // 指標は**文字数（コードポイント・CR 除く）**——行数は「改行を消す」で読む量を減らさず数字だけ
 // 下がる（ADR-area-metric-characters に実測）。CR を除くのは CRLF checkout 対策（#587/#589）。
 // 常時ロード面には skill の description を含める（毎セッション注入される面）。skills 本文・
-// モジュール CLAUDE.md・docs・ADR は対象外——「その作業に入った者だけが読む面」への退去は
-// #593 が推奨する経路であり、課税すれば登ってほしい階梯を登る側が罰せられる。
-// 二面（常時ロード / rules）を分けて報告するのは、面替えによる片面の肥大が合計では見えないため。
+// docs・ADR は対象外——「その作業に入った者だけが読む面」への退去は #593 が推奨する経路であり、
+// 課税すれば登ってほしい階梯を登る側が罰せられる。
+// **モジュール CLAUDE.md（各 crate 直下）は、その退去先でありながら報告の欄だけ持つ**（#1240）。
+// 合否は無く、常時ロード面にも混ぜない。欄を持たなかった間に `snotra-core/CLAUDE.md` は 38k 字まで
+// 育ち、誰の目にも数字が出なかった（2026-09-06 実測）——報告は課税ではなく、上限の無い面へ
+// 逃げた分が見えないままになる方を避けるための計器である。
+// 三面（常時ロード / rules / 入れ子）を分けて報告するのは、面替えによる片面の肥大が合計では見えないため。
 // ---------------------------------------------------------------------------
 
 /** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書。ほかに skill description が同じ面に載る）。
@@ -32,6 +37,13 @@ import { finding } from "./lib.mjs";
  *  計上が動いたのは `CLAUDE.md` 側の 1 行分だけ・#1008）。足し忘れを知るのはファイルシステムであって
  *  この検査ではない。 */
 export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
+
+/** 入れ子 CLAUDE.md（各 crate 直下）。母集団は `MODULE_INDEX_CRATES` の鍵から導く——G-module-index が
+ *  索引を照合する crate と同じ集合であり、ここに一覧を書き写すと crate を足したときに片方だけが腐る。
+ *  `MODULE_INDEX_CRATES` 自体が `Cargo.toml` の写しであることの守り手は、その doc が名指す。 */
+export function nestedClaudeMdFiles() {
+  return Object.keys(MODULE_INDEX_CRATES).map((c) => `${c}/CLAUDE.md`);
+}
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {
@@ -90,7 +102,8 @@ export function checkNormativeAreaInstrument(snapshot) {
 
   const docs = sumChars(snapshot, ALWAYS_LOADED_FILES, "G-area-instrument");
   const desc = skillDescriptionArea(snapshot);
-  findings.push(...docs.findings, ...desc.findings);
+  const nested = sumChars(snapshot, nestedClaudeMdFiles(), "G-area-instrument");
+  findings.push(...docs.findings, ...desc.findings, ...nested.findings);
   if (desc.count === 0) findings.push(finding(".claude/skills", 1, "skills が 0 件（G-area-instrument 母集団の欠落）"));
 
   const ruleFiles = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f));
@@ -112,5 +125,7 @@ export function normativeArea(snapshot) {
     snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)),
     "G-area-instrument",
   ).total;
-  return { always, rules };
+  // 入れ子 CLAUDE.md は別欄（#1240）。常時ロード面へ足さない——足すと「退去」が数字の上で消える
+  const nested = sumChars(snapshot, nestedClaudeMdFiles(), "G-area-instrument").total;
+  return { always, rules, nested };
 }

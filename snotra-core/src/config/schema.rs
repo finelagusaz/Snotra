@@ -3,8 +3,12 @@
 //! ここが持つのは「TOML の形」である——読み書き（`super::io`）・移行（`super::migrate`）・
 //! 検証（`super::validate`）はこの形を入力に取る側で、逆向きの依存を持たない。
 //!
-//! **新しいセクション・設定キーには serde の既定を付ける**（欠けた 1 キーが `config.toml` 全体を
-//! `.bak` 退避へ落とさないための不変条件。射程と検知器は `snotra-core/CLAUDE.md`）。
+//! **新しいセクション・設定キーには serde の既定を付ける**（#824）——欠けた 1 キーが `config.toml`
+//! 全体を `.bak` 退避へ落とさないための不変条件で、正本は `SPEC.md`「13.1 設定データ」の
+//! 「欠損キーはデフォルト補完」。検知器は欠落の単位で分かれる: キー欠落は
+//! `empty_section_deserializes_to_default_*` 群、セクション欠落は `config_parses_with_all_sections_omitted`
+//! （どちらも必須フィールドが混入すると空文字列 parse が落ちる）。**例外は配列要素の必須フィールド**
+//! （`[[paths.scan]]` / `[[openers]]` / `[[instant_commands]]` の各要素・理由は `SPEC.md` 同節）。
 
 use serde::{Deserialize, Serialize};
 

@@ -2,6 +2,8 @@
 //!
 //! 剪定容量 `top_n` は `HistoryStore` に焼き込まず、保存/参照時に現在 config から受け取る
 //! （live-read）——`result_limit` 設定変更を再起動なしで反映するため（#348）。
+//! **`HistoryStore` に `top_n` フィールドを再導入しないこと**——焼き込むと設定変更が反映されない
+//! ドリフトが復活する。
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};

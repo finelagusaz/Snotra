@@ -164,8 +164,8 @@ impl EntryRepr<'_> {
                 table,
                 // **`..` を書かない。** 値は読まない（旗は真偽によらず 1 バイト）が、列を
                 // 足したときにここを触り忘れたらコンパイルを止めるのが網羅的分解の役目
-                // である——`footprint_rows` と同じ規律（`snotra-core/CLAUDE.md` の
-                // search.rs 節）。残余の検算は `#[ignore]` の計器でしか走らないので、
+                // である——`footprint_rows` と同じ規律（`search/footprint.rs` の `//!`）。
+                // 残余の検算は `#[ignore]` の計器でしか走らないので、
                 // 落とすとコンパイラの検出が手作業へ格下げされる。
                 sorted_by_path: _,
             } => vec![

@@ -3,7 +3,14 @@
 //! **この crate で保存先を導く経路はここである**——`config.toml` / `history.bin` / `index.bin` /
 //! `icons.bin` / `window.bin` のすべてが [`Config::config_dir`] から派生する。env 上書きの契約
 //! （そのまま使う・空文字は未設定・展開も絶対化もしない）は [`Config::config_dir_from`] の
-//! rustdoc が正本である。
+//! rustdoc が正本である。**`dirs::config_dir()` を直接呼ぶ箇所はこの crate の他に無い**（#803）
+//! ——別経路で組むと `SNOTRA_CONFIG_DIR` が効かず「導出が 2 経路」の欠陥になる
+//! （`docs/development-principles.md`「config の値は到達性の検出器を持たない」）。判定核
+//! [`Config::config_dir_from`] は env を読まないので並列テストから安全に測れるが、その代償として
+//! `config_dir()` が `dirs::config_dir()` を呼んでいること自体は純粋関数のテストからは見えない。
+//! その結線は `config_dir_is_wired_to_dirs_config_dir_with_snotra_suffix` が env を**読むだけ**で pin する。
+//! Windows では `dirs::config_dir()` と `dirs::data_dir()` は同一（どちらも RoamingAppData・dirs 6.0.0 で
+//! 実測）なので、実際に危険な取り違えは `config_local_dir()` / `data_local_dir()`（LocalAppData）である。
 
 use std::ffi::OsString;
 use std::path::PathBuf;

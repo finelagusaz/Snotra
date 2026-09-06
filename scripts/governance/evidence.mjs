@@ -102,7 +102,7 @@ export function assembleEvidence(ev) {
   }
   return (
     `検査 ${ev.checkCount} 件 / 対象文書 ${ev.docs.length} 件 / rules ${ev.rules} 件 / skills ${ev.skills} 件` +
-    ` / 恒久規範 常時ロード ${ev.areaAlways} 字・rules ${ev.areaRules} 字` +
+    ` / 恒久規範 常時ロード ${ev.areaAlways} 字・rules ${ev.areaRules} 字・入れ子 CLAUDE.md ${ev.areaNested} 字（報告のみ）` +
     ` / 見出し参照 ${ev.headingRefs} 件を md ${ev.refDocs.length} 件 + .rs ${ev.refSourceDocs.length} 件` +
     ` + スクリプトのコメント ${ev.refCommentDocs.length} 件から照合` +
     ` / workspace member ${ev.workspaceMembers} 件の lints opt-in / clippy 禁止 ${ev.clippyDisallowed} 件` +

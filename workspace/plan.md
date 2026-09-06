@@ -89,14 +89,14 @@ Select-String -Path .claude/rules/snotra-core-search.md -Pattern 'CLAUDE\.md`[^�
 
 ### Phase 1 — 書き換え
 
-- [ ] `.claude/rules/snotra-core-search.md` L17 を上記の逐語へ書き換える
-- [ ] `.claude/rules/snotra-core-search.md` L24 を上記の逐語へ書き換える
+- [x] `.claude/rules/snotra-core-search.md` L17 を上記の逐語へ書き換える
+- [x] `.claude/rules/snotra-core-search.md` L24 を上記の逐語へ書き換える
 
 ### Phase 2 — 検証
 
-- [ ] `npm run governance:check` 緑・見出し参照件数 371 → 375
-- [ ] フォールトインジェクション（L111 見出しの一時改名 → 赤 → 戻す）で L17 が名指されることを確認
-- [ ] 同ファイルの grep で散文形の節名参照が残っていないことを確認
+- [x] `npm run governance:check` 緑・見出し参照件数 371 → 375（実測: 全検査 passed・375 件）
+- [x] フォールトインジェクション（L111 見出しの一時改名 → 赤 → 戻す）で L17 が名指されることを確認（実測: `.claude/rules/snotra-core-search.md:17 見出し参照が着地しない`。復元後 `git status` は rule 1 枚のみ）
+- [x] 同ファイルの grep で散文形の節名参照が残っていないことを確認（0 件）
 
 ## 未確定（実装前に潰す）
 

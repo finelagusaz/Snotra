@@ -55,6 +55,7 @@
 | `.claude/settings.json` | `hook-selftest` | `.claude/hooks/**` / `package.json` / `vitest.config.ts` も同じ |
 | `.claude/lsp/snotra-rust-lsp/.lsp.json` | `hook-selftest` | `.claude/lsp/**` 全体。Claude Code の RA インスタンスへ渡す設定で、**設定が届かない・上書きされる壊れ方は沈黙する**（下節） |
 | `rust-analyzer.toml` | `hook-selftest` | basename でアンカーするので crate 直下も拾う。同じカナリアの被検査対象（ratoml はクライアント設定より優先される） |
+| `rust-toolchain.toml` | `hook-selftest` | ルートのみ。同じカナリアが `components` に `rust-analyzer` の宣言が在るかを見る（#1239。宣言が消えると LSP は沈黙で落ちる） |
 | `.githooks/pre-commit` | `githooks-selftest` | `.githooks/**` 全体 |
 | `docs/hooks.md` | （なし） | 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等）は**検査が 1 つも走らない**——沈黙は「合格」ではない。`.md` にも `.rs` にも検査でない reminder が在るが（下記）、id を持たないのでこの列は空のままである |
 
@@ -87,6 +88,7 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 | 壊れ方 | 現れ方 |
 |---|---|
 | **設定が届かない・上書きされる**（抑制キーの消失・ratoml による上書き・宣言箇所の取り違え） | **沈黙する**——rust-analyzer は設定が無ければ既定値で普通に起動するので、navigation は動いたまま `checkOnSave` だけが復活する |
+| **rust-analyzer のバイナリが無い**（toolchain の入れ替え・pin の変更で component が落ちる） | **沈黙する**——cargo / clippy / test は緑のまま、`LSP` ツールだけが `crashed with exit code 1` を返す（#1239 実測。2026-08-24 に新しい toolchain が実体化したときは 11 時間気づかれなかった・#1177。診断は `checkOnSave: false` で切ってあるので plugin の使用カウンタの 0 も報せない）。守り手は `rust-toolchain.toml` の `components` の宣言で、`lsp-config.mjs` が見るのは**宣言が在ること**まで——実際に入っているかは射程の外（runner には入っていないので環境の実測は置けない） |
 | **plugin の load 自体が失敗する**（trust 未受諾・マニフェスト不正・パス解決失敗・名前の不一致） | 沈黙しない——公式 plugin を無効化してあるため `.rs` の LSP が上がらず、**navigation が消える**形で現れる（ただしエラー自体は debug log にしか出ない） |
 
 公式の `claude plugin validate --strict` は `.lsp.json` を視界に入れない（JSON として壊しても抑制キーを消しても exit 0・2026-08-14 実測）。ゆえに上段（沈黙する側）は `.claude/hooks/lsp-config.mjs` のカナリアだけが機械的に捕まえる（発火は上の一覧、故障注入の実測は `lsp-config.test.mjs`）。**このカナリアは `rust-analyzer.toml` を、生成物ディレクトリ（`target` / `node_modules` / `dist` 等）を除くツリー全体から読む**——local 水準の設定は crate 直下の ratoml でも効くため、発火（basename アンカー）と判定の母集団を揃えてある。

@@ -79,6 +79,11 @@ const CHECK_DEFINITION = new Set([
   "package.json",
   "vitest.config.ts",
   "Cargo.toml",
+  // `components` の宣言を lsp-config.test.mjs のカナリアが読む（#1239）。ルートのみ——
+  // rustup は cwd から祖先へ最も近い toml を読むが、hook・CI・Claude Code の LSP はいずれも
+  // リポジトリルートを cwd にするので、この運用で効くのはルートの 1 枚である（`checkLspConfig` も
+  // ルートしか読まない）。
+  "rust-toolchain.toml",
 ]);
 
 /** 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。 */

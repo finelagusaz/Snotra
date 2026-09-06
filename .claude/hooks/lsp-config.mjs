@@ -117,6 +117,37 @@ export function checkLspConfig(rootDir) {
     }
   }
 
+  // --- rust-analyzer のバイナリは rust-toolchain.toml の `components` が保証する（#1239） ---
+  //
+  // **見るのは宣言だけである。** 実際に toolchain へ入っているかは射程の外——CI の runner には
+  // toml が効いて初めて入るので、環境の実測を検査に置くと toml の効果に依存する循環になる。
+  // 宣言が在るのに rustup が取得に失敗した形は沈黙する（受容する残余・`docs/hooks.md`「Claude Code の RA インスタンスと hook の分担」）。
+  // ratoml 検査と同じく配送経路の連鎖より前に置く（連鎖の早期 return に道連れにされない）。
+  // コメントの除去も同じ扱い——`rust-analyzer` を**論じている**コメント行で緑にならないため。
+  const toolchainRel = "rust-toolchain.toml";
+  let toolchain;
+  try {
+    toolchain = fs.readFileSync(at(toolchainRel), "utf-8").replace(/#.*$/gm, " ");
+  } catch (e) {
+    violations.push(`${toolchainRel} を読めない: ${e.message}`);
+    toolchain = "";
+  }
+  // `[toolchain]` テーブルの中の `components = [ ... ]` に `"rust-analyzer"` があるか。テーブルは
+  // `[toolchain]` 見出しから次の `[...]` 見出しまでで切り出す（別テーブルの `components` を採らない）。
+  // 配列は複数行に折れうるので `[^\]]*` で閉じ角括弧まで読む。**見るのは素の `components =` 行だけ**
+  // ——inline table（`toolchain = { components = [...] }`）・引用キー・dotted key は TOML として正当だが
+  // この判定は読まず「無い」と報告する（安全側の偽陽性。rustup は読むので、その書式へ変えるなら
+  // ここも変える）。
+  // 見出しの括弧内空白（`[ toolchain ]`）と、rustup が別名として解決する `rust-analyzer-preview` は受理する。
+  const table = /^\s*\[\s*toolchain\s*\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toolchain);
+  const components = table && /^\s*components\s*=\s*\[([^\]]*)\]/m.exec(table[1]);
+  if (!components || !/["']rust-analyzer(-preview)?["']/.test(components[1])) {
+    violations.push(
+      `${toolchainRel} の components に rust-analyzer が無い — toolchain が入れ替わるたびに` +
+        " Claude Code の LSP が沈黙で落ちる（cargo / clippy / test は緑のまま）",
+    );
+  }
+
   // --- 配送経路: settings.json → marketplace → plugin ---
   let settings;
   try {

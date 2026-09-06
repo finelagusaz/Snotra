@@ -41,7 +41,7 @@
 |---|---|---|---|
 | 14 | `IndexInputs` に載せるもの | 写し（`engine.rs` L66〜77 の `IndexInputs` doc が同文） | 消す |
 | 15〜16 | `index_stale` ledger・`complete_index_drain` の clear 条件 | 単一（engine.rs） | `engine.rs` `//!` に ledger の契約を書き、`complete_index_drain` の `///` に clear 条件。**`docs/design/2026-05-31-coherence-staleset.md` L15 の「正本は CLAUDE.md「モジュール構成」」を `engine.rs` の `IndexInputs` / ledger doc へ付け替える** |
-| 17 | config.rs の re-export が外部名を決める | 単一（`//!` の面: 依存方向） | `config.rs` `//!` へ（L63 の indexer.rs と同型） |
+| 17 | config.rs の re-export が外部名を決める | 写し（`config.rs` `//!` L4〜6 が同文・実装時に判明） | 消す |
 | 19 | serde 既定（#824）・検知器名 | 写し（`schema.rs` `//!` L6〜7 が太字で持ち「射程と検知器は CLAUDE.md」と委ねる） | 検知器名（`empty_section_deserializes_to_default_*` / `config_parses_with_all_sections_omitted`）と例外（配列要素の必須フィールド）を `schema.rs` `//!` へ取り込み、委ねる一文を消す。CLAUDE.md 側は消す |
 | 20 | 件数パラメータ | 名前の索引（L5 の例外） | 残す |
 | 21 | `icon_cache_cap` 派生 | 写し（`schema.rs` L475〜479 `保守注意:`） | 消す |
@@ -68,7 +68,7 @@
 | 57 | footprint.rs | 写し（`footprint.rs` `//!` L6〜17 が同じ 2 主張） | 本文を消しファイル名行に。**`search/tests/performance.rs:103` と `indexer/cache/breakdown.rs:167` の「CLAUDE.md の footprint 節」を `footprint.rs` の `//!` へ付け替える** |
 | 58 | search/tests の索引 | 索引そのもの | 動かさない |
 | 60〜61 | history の `top_n` live-read・再導入禁止 | 写し（`history.rs` `//!` L3〜4） | 「再導入しないこと」の禁止文が `//!` に無ければ 1 文足し、CLAUDE.md 側は消す |
-| 63 | indexer.rs の re-export | 単一（L17 と同型） | `indexer.rs` `//!` へ |
+| 63 | indexer.rs の re-export | 写し（`indexer.rs` `//!` L9〜11 が同文） | 消す |
 | 72 / 73 / 77 | str_arena 線上表現 / index_tree 辿る規則 / autostart 状態の正本 | 写し（各 `//!` が同文） | 太字の本文を消し、索引行だけ残す |
 | 79 | instant.rs | 「正本は `//!` と各 `///`」と自ら言う | 索引行だけに畳む |
 | 83〜84 | tests/path_query_cost の計器 | 単一 | `tests/path_query_cost.rs` `//!`（L1〜6 に一部あり）へ統合。CLAUDE.md 側はファイル名行だけ |
@@ -153,11 +153,11 @@ Phase 1（機構・独立）→ Phase 2 → Phase 3 → Phase 4。Phase ごと�
 - [x] 消費点の実測と `npm test`（506 件緑）/ `governance:check`（入れ子 CLAUDE.md 88594 字）——供給を落とすと `evidence が読む areaNested が未記録` の finding が印字され行は `? 字` になる。**exit は 0 のまま**（計器の供給断は `metaFindings` へ格下げされており、ゲートへ戻るのは監査モードだけ・`ADR-governance-meta-demotion`）。「赤」ではなく「沈黙しない」が実測された保証
 
 ### Phase 2 — snotra-core 索引節
-- [ ] 検出器の実測（索引行 1 本を消して赤を見て戻す）
-- [ ] 上表の「写し」行: 差分だけ `.rs` へ足し、CLAUDE.md 側を消す
-- [ ] 上表の「単一」行: `.rs` へ書いてから CLAUDE.md 側を消す
-- [ ] `workspace/migration-1240.md` に対応表を書く
-- [ ] `cargo doc` と `governance:check` が緑
+- [x] 検出器の実測——`search/footprint.rs` の索引行を消すと `実ファイル snotra-core/src/search/footprint.rs が索引（…）に見当たらない` で exit 1（2026-09-06 実測）。戻して緑
+- [x] 上表の「写し」行: 差分だけ `.rs` へ足し、CLAUDE.md 側を消す
+- [x] 上表の「単一」行: `.rs` へ書いてから CLAUDE.md 側を消す
+- [x] `workspace/migration-1240.md` に対応表を書く（snotra-core 分）
+- [x] `cargo doc`（exit 0）と `governance:check`（24 件緑・入れ子 80503 字）が緑。snotra-core/CLAUDE.md 38,664 → 30,573 字
 
 ### Phase 3 — src-tauri 索引節
 - [ ] 上表の行を処置し、対応表へ追記

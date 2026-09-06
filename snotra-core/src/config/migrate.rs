@@ -55,6 +55,12 @@ impl Config {
     /// Apply post-load migrations: legacy field migration, normalization, invalid hotkey fallback.
     /// Returns true if any changes were applied.
     /// Called by `load()` (auto-save on change) and import (caller decides when to save).
+    ///
+    /// **`additional` → `scan` の追加が正規化より先であることは検知器が守る**
+    /// （`legacy_additional_moves_into_scan_before_scan_paths_are_normalized`）: 既存 `scan` へマージされる枝と
+    /// 新規に push される枝の両方を通し、2 種の変異でそれぞれ別の assert が落ちることを実測してある。
+    /// 見ているのは順序制約そのものではなく、それが守っている 2 つの帰結である（射程と死角は同テストの
+    /// doc が正本）。`migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので、この並びを通らない。
     pub fn apply_migrations(&mut self) -> bool {
         // 呼び出し順は挙動不変のため元のまま固定する。**順序依存を作ったら、そのステップの
         // 行末へ依存先を書くこと**（`(5) の normalize より先` / `(2) より後` の形）——依存の

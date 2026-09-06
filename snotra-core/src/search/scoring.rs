@@ -38,7 +38,9 @@ mod score_tier {
     pub const SUBSTRING_BASE: i64 = 5_000;
     /// Kana（migemo）マッチ: `KANA_BASE - byte_pos`（Substring より低い）。
     pub const KANA_BASE: i64 = 4_500;
-    /// Path マッチ: `PATH_BASE - min(byte_pos, PATH_POS_CAP)`（Kana より低い）。
+    /// Path マッチ: `PATH_BASE - min(byte_pos, PATH_POS_CAP)`（Kana より低い）。クエリがパス区切り
+    /// （`\` `/`）を含むとき、導出した正規化キー（`normalize_entry_key(target_path)` と同値）への
+    /// Substring マッチで、name / file_name / kana がすべて不成立のときのフォールバックである。
     pub const PATH_BASE: i64 = 3_000;
     /// Path マッチの位置ペナルティ上限。
     pub const PATH_POS_CAP: i64 = 500;

@@ -12,7 +12,7 @@
 > **実装後の差分（#975 で追記）**: 本文が挙げる needs_reindex / needs_rebuild は**設計時点で
 > 存在した実装の名前**、index_keys_differ / set_top_n は**提案されたが採られなかった名前**で、
 > いずれも現在のコードには無い。as-built は `IndexInputs`（単一定義）と `index_stale` ledger で、
-> 正本は `snotra-core/CLAUDE.md`「モジュール構成」である。**以下の本文は 2026-05-31 時点の
+> 正本は `snotra-core/src/engine.rs` の `//!` と `IndexInputs` の doc である（#1240 で `CLAUDE.md` から移した）。**以下の本文は 2026-05-31 時点の
 > 記録として読むこと**——これらの語をバッククォートで囲まないのは、正準形が「今ある場所への
 > 指し」であって過去の名前の記録ではないためである（`.claude/rules/governance-docs.md`「ガバナンス文書の参照と命名のルール」）。
 

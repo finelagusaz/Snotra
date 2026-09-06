@@ -7,6 +7,12 @@
 //! doc が名指しで禁じている）。全コンストラクタは
 //! `assemble` に集約し、並列 Vec 長・kana 系 2 本の {0, entries.len()} 不変条件を一元検証する。
 //! 検索ホットパス（`search_with_options` 系）は親 `search.rs` に残す。
+//!
+//! **kana 系 2 本（`kana_lower_names` / `kana_char_masks`）は `migemo_enabled` が true のときだけ
+//! 構築し、無効時は空である**（migemo 無効ユーザーの死蔵メモリと構築時間を削る・#337）。
+//! 2 本は必ず同時に空か同長（`assemble` の debug_assert が検証）。空のとき検索ループは
+//! `kana_available` の空ガードで `kana_lower_names.get(i)` を回避し、Fuzzy pre-filter は
+//! `kana_char_masks.is_empty()` で kana 経路を棄却する（構築時 OFF → 検索時 ON の窓での panic 防止）。
 
 use rayon::prelude::*;
 
@@ -436,6 +442,16 @@ impl SearchEngine {
     ///   `None`（派生文字列を持たない旧版からのフォールバック）は Wave 1 を通常通り並列実行する
     /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空、issue #337）。
     ///   **全経路で**このフラグを反映する
+    ///
+    /// 不変条件: **`kana_lower_names` をアリーナへの逐次 push で組み直してはならない**（#1056）——
+    /// ここはキャッシュヒット起動が毎回通る経路であり、逐次化すると `to_kana` の全件適用が秒オーダーで
+    /// 起動に乗る（額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」が正本）。
+    /// kana 列はディスクを通らない `NameArena` の消費者である——表現は表示名と同じだが `index.bin` に
+    /// 保存しないので、serde impl も線上表現の制約もかからない。塊併合の結線（順序保存と底上げ）を
+    /// 守るのは `kana_column_survives_chunked_parallel_merge` である——A/B 突き合わせの fixture は
+    /// 数件しか無く [`KANA_CHUNK`] に届かないので、塊の順序を反転しても緑のまま通る（実測）。
+    /// 規模を持つ fixture を別に置くことが要件で、[`KANA_CHUNK`] を増やすときはそのテストが
+    /// 跨げているかを確かめる。
     ///
     /// **`normalized_keys` は受け取らない。** v5 でオンディスク形式から落とし、検索時に
     /// `target_path` から導出する形へ移した。v4 バイト列を読んだ場合も当該フィールドは

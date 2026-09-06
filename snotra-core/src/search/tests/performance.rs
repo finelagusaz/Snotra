@@ -100,7 +100,7 @@ fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
 // 撤去した（#1056）。**製品が捨てた表現を測る計器になっていたためである**——あれは
 // `entries` から自前で `Vec<Box<str>>` を組んで「kana_lower_names のメモリ実体」と名乗って
 // いたが、`kana_lower_names` は `NameArena` になり、あの物体は索引のどこにも存在しない。
-// `snotra-core/CLAUDE.md` の footprint 節が明文で禁じている型（「構築前の `Vec<AppEntry>` を
+// `search/footprint.rs` の `//!` が明文で禁じている型（「構築前の `Vec<AppEntry>` を
 // 走査して代用しない——その走査は存在しない物体を測る」）の再発であり、`#[ignore]` ゆえ
 // CI は黙る。答えていた問い（migemo の限界費用）は `tests/memory_footprint.rs` の Phase B
 // ラダー（on − off）が現に答えており、`PERFORMANCE.md` の表もその数字で書かれている。

@@ -1,9 +1,17 @@
 //! パスクエリ（`has_path_sep`）の走査コスト実測ハーネス。
 //!
-//! パスクエリは Fuzzy ビットマスク pre-filter を**スキップする**（`snotra-core/CLAUDE.md`「モジュール構成」の search.rs 節）。ゆえに全エントリの `normalized_key` に対する
+//! パスクエリは Fuzzy ビットマスク pre-filter を**スキップする**（`snotra-core/src/search/query_plan.rs` の `//!`）。ゆえに全エントリの `normalized_key` に対する
 //! 部分文字列検索が毎打鍵で走る、索引規模がそのまま乗る唯一の経路である。
 //! それでいて `search/tests/performance.rs` の bench 群も
-//! `tests/search_frame_cost.rs` もパス区切りを含むクエリを 1 つも持っていない。
+//! `tests/search_frame_cost.rs` もパス区切りを含むクエリを 1 つも持っていない——
+//! **`normalized_keys` を保持するか導出するかの差を測る唯一の計器**がここである。
+//!
+//! **`measure_path_query_frame_cost_at_operating_point` は実起動の経路を再現する**（#1067）: PATH マージ
+//! （`IndexMaterial::extend_with_path_entries`）を通し、実 config の `normal_mode` をそのまま使う。
+//! `measure_path_query_frame_cost` の側は据え置く——過去の全表との比較可能性がそこに掛かっている。
+//! 2 つの計器は同一構成で一致することを実測してある（`PERFORMANCE.md`「実運用点のパスクエリのフレームコスト」）。
+//! **旗（`Engine::sorted_by_path`）を出力に添えるのが要点である**——`cmp_paths` の経路がそれで変わり、
+//! `c:\` の p50 が数千 µs 動く。
 //!
 //! **実 `index.bin` に対して測るのが要点である。** パス長がコストを支配し、
 //! 実運用点の平均 119.3 B は合成ラダー（66.4 B）の約 2 倍ある（`PERFORMANCE.md`「索引の常駐の内訳」）。実インデックスが無い環境では自動スキップする。

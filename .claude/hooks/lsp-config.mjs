@@ -117,6 +117,31 @@ export function checkLspConfig(rootDir) {
     }
   }
 
+  // --- rust-analyzer のバイナリは rust-toolchain.toml の `components` が保証する（#1239） ---
+  //
+  // **見るのは宣言だけである。** 実際に toolchain へ入っているかは射程の外——CI の runner には
+  // toml が効いて初めて入るので、環境の実測を検査に置くと toml の効果に依存する循環になる。
+  // 宣言が在るのに rustup が取得に失敗した形は沈黙する（受容する残余・`docs/hooks.md`「Claude Code の RA インスタンスと hook の分担」）。
+  // ratoml 検査と同じく配送経路の連鎖より前に置く（連鎖の早期 return に道連れにされない）。
+  // コメントの除去も同じ扱い——`rust-analyzer` を**論じている**コメント行で緑にならないため。
+  const toolchainRel = "rust-toolchain.toml";
+  let toolchain;
+  try {
+    toolchain = fs.readFileSync(at(toolchainRel), "utf-8").replace(/#.*$/gm, " ");
+  } catch (e) {
+    violations.push(`${toolchainRel} を読めない: ${e.message}`);
+    toolchain = "";
+  }
+  // `components = [ ... ]` の配列の中に `"rust-analyzer"` があるか。配列は複数行に折れうるので
+  // `[^\]]*` で閉じ角括弧まで読む。
+  const components = /^\s*components\s*=\s*\[([^\]]*)\]/m.exec(toolchain);
+  if (!components || !/["']rust-analyzer["']/.test(components[1])) {
+    violations.push(
+      `${toolchainRel} の components に rust-analyzer が無い — toolchain が入れ替わるたびに` +
+        " Claude Code の LSP が沈黙で落ちる（cargo / clippy / test は緑のまま）",
+    );
+  }
+
   // --- 配送経路: settings.json → marketplace → plugin ---
   let settings;
   try {

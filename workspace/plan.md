@@ -64,20 +64,20 @@
 ## 作業項目
 
 ### Phase 1 — toml
-- [ ] `rust-toolchain.toml` に `rust-analyzer` を足し、ヘッダコメントに理由を書く
-- [ ] `cargo --version` で自動取得を実測し、`rustup component list --installed` で確認
+- [x] `rust-toolchain.toml` に `rust-analyzer` を足し、ヘッダコメントに理由を書く
+- [x] `cargo --version` で自動取得を実測し、`rustup component list --installed` で確認（リポジトリの toml で `cargo 1.98.1`・`rust-analyzer-x86_64-pc-windows-msvc`・`rust-analyzer 1.98.1`・override の出所は `rust-toolchain.toml`。component 自体は計画段階の scratch 実測で既に入っていた）
 
 ### Phase 2 — 文書
-- [ ] `.claude/skills/deps-update/SKILL.md` の手動手順を「toml が保証する」形へ改める（再起動の注意は残す）
-- [ ] `docs/hooks.md` の壊れ方の表に「component が無い」行を足す
-- [ ] `npm run governance:check` が緑
+- [x] `.claude/skills/deps-update/SKILL.md` の手動手順を「toml が保証する」形へ改める（再起動の注意は残す）
+- [x] `docs/hooks.md` の壊れ方の表に「component が無い」行を足す（編集時の語彙 reminder で `pluginUsage` を散文へ直した）
+- [x] `npm run governance:check` が緑（24 件）
 
 ### Phase 3 — 宣言検査
-- [ ] `lsp-config.test.mjs` に故障注入 2 本（先に赤）
-- [ ] `checkLspConfig` に toml の宣言検査を足す（射程のコメントつき）
-- [ ] `lsp-config.test.mjs` の `COPIED` に `rust-toolchain.toml` を足す
-- [ ] `post-edit.mjs` `CHECK_DEFINITION` に `rust-toolchain.toml` を足し、`post-edit.test.mjs` に `selectChecks` の単体テスト 1 本。`docs/hooks.md` の発火一覧（`G-hook-fires` 照合）へ 1 行
-- [ ] `npx vitest run .claude/hooks` が緑
+- [x] `lsp-config.test.mjs` に故障注入 2 本（先に赤）（hook-selftest が 2 本の赤を報せた・2026-09-06 19:52）
+- [x] `checkLspConfig` に toml の宣言検査を足す（射程のコメントつき）
+- [x] `lsp-config.test.mjs` の `COPIED` に `rust-toolchain.toml` を足す
+- [x] `post-edit.mjs` `CHECK_DEFINITION` に `rust-toolchain.toml` を足し、`post-edit.test.mjs` に `selectChecks` の単体テスト 1 本。`docs/hooks.md` の発火一覧（`G-hook-fires` 照合）へ 1 行（単体テストも先に赤を確認）
+- [x] `npx vitest run .claude/hooks` が緑（329 件）
 
 ## 未確定（実装前に潰す）
 

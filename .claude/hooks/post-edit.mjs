@@ -79,6 +79,9 @@ const CHECK_DEFINITION = new Set([
   "package.json",
   "vitest.config.ts",
   "Cargo.toml",
+  // `components` の宣言を lsp-config.test.mjs のカナリアが読む（#1239）。ルートのみ——
+  // rustup が override の出所に読むのはルートの 1 枚である。
+  "rust-toolchain.toml",
 ]);
 
 /** 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。 */

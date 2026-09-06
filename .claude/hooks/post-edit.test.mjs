@@ -168,6 +168,13 @@ describe("selectChecks", () => {
     expect(selectChecks("docs/rust-analyzer.toml.md")).toEqual([]);
   });
 
+  // rust-toolchain.toml の `components` は同じカナリアの被検査対象（#1239）。ルートのみ——
+  // rustup が override の出所に読むのはルートの 1 枚である。
+  it("rust-toolchain.toml（ルート）は hook-selftest を発火する", () => {
+    expect(selectChecks("rust-toolchain.toml")).toEqual(["hook-selftest"]);
+    expect(selectChecks("snotra-core/rust-toolchain.toml")).toEqual([]);
+  });
+
   // 題を「hooks 以外は発火しない」から改めた（#1083）。`.claude/lsp/` が加わって全称が偽になり、
   // 主張より広い題は、次に読む者を「ここは何も走らない」という誤りへ導く。
   // **ここが言うのは `selectChecks` が空を返すことだけである**——`.md` には検査でない reminder が

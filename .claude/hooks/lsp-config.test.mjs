@@ -25,6 +25,7 @@ const COPIED = [
   ".claude/lsp/snotra-rust-lsp/.claude-plugin/plugin.json",
   ".claude/lsp/snotra-rust-lsp/.lsp.json",
   "rust-analyzer.toml",
+  "rust-toolchain.toml",
 ];
 
 function materialize() {
@@ -223,6 +224,25 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
       fs.appendFileSync(path.join(dir, "rust-analyzer.toml"), "\n[diagnostics]\nenable = false\n");
     });
     expect(v.join("\n")).toMatch(/rust-analyzer\.toml に diagnostics/);
+  });
+
+  // rust-analyzer のバイナリは rust-toolchain.toml の `components` が保証する（#1239）。宣言が消えると
+  // toolchain の次の入れ替えで LSP が沈黙で落ちる——cargo / clippy / test は緑のまま。
+  // 見るのは宣言だけで、実際に入っているかは射程の外（runner には無い）。
+  it("足 10 — rust-toolchain.toml の components から rust-analyzer が消えると赤", () => {
+    const v = violationsAfter((dir) => {
+      const p = path.join(dir, "rust-toolchain.toml");
+      fs.writeFileSync(p, fs.readFileSync(p, "utf-8").replace(/,\s*"rust-analyzer"/, ""));
+    });
+    expect(v.join("\n")).toMatch(/rust-toolchain\.toml の components に rust-analyzer が無い/);
+  });
+
+  it("足 10b — components の行ごと消えても赤", () => {
+    const v = violationsAfter((dir) => {
+      const p = path.join(dir, "rust-toolchain.toml");
+      fs.writeFileSync(p, fs.readFileSync(p, "utf-8").replace(/^components\s*=.*$/m, ""));
+    });
+    expect(v.join("\n")).toMatch(/rust-toolchain\.toml の components に rust-analyzer が無い/);
   });
 
   // 引用キーは TOML として正当なので、素の識別子だけを見る判定では素通りする（偽陰性）。

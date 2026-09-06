@@ -1,0 +1,126 @@
+# verify-1239
+
+## アンカー確認
+- worktree: C:/workspace/Snotra/.claude/worktrees/agent-aa4c44fce013ddec2
+- HEAD was 2d82a3f -> checkout --detach 3d30bde 実行 -> HEAD=3d30bde21ac97d1a0b8d5012b2de0bb9c00fce59
+- diff d5502da..3d30bde --stat: 8 files, +83/-20（指示どおり）
+
+## 検証（進行中）
+
+### 検証（カテゴリ A〜F）
+| カテゴリ | 該当 | 結果 |
+|---|---|---|
+| A（.rs） | 該当なし（.rs 無変更）だが toml が toolchain 解決を変えるので cargo check --workspace を 1 回 | exit 0 / Finished dev in 43.20s / rustc 1.98.1 |
+| B（.ts） | 該当なし（vitest.config.ts 無変更） | - |
+| C（窓/hotkey/slash） | 該当なし（製品コード無変更） | - |
+| D（表示） | 該当なし（描画に触れない） | - |
+| E（.claude/hooks/**） | 該当 | npm test: exit 0 / 38 files, 894 tests passed |
+| F（*.md, skills, docs/hooks.md） | 該当 | npm run governance:check: exit 0 / 検査 24 件 全 passed |
+
+- rustup show active-toolchain: 1.98-x86_64-pc-windows-msvc (overridden by C:/workspace/Snotra/.claude/worktrees/agent-aa4c44fce013ddec2/rust-toolchain.toml) -> worktree の toml が override の出所として効いている
+- rust-analyzer --version（worktree cwd）: rust-analyzer 1.98.1 (48a229ce 2026-09-01) exit 0 -> 1.98 系のプロキシ解決。rustup component list --installed に rust-analyzer-x86_64-pc-windows-msvc
+- rustup 1.29.1
+
+## レビュー用プローブ（checkLspConfig の toml 判定・複製 temp に当てて実測）
+実行: node C:/Users/Eoh/AppData/Local/Temp/probe-1239.mjs（materialize と同形で 6 ファイルを temp へ複製し rust-toolchain.toml だけ差し替え）
+OK  P1 コメント行が rust-analyzer を論じ実配列に無い -> 赤（コメント除去は効く）
+OK  P2 複数行配列 + 配列内コメント -> 緑
+OK  P3 単引用 -> 緑
+OK  P4 components 無し -> 赤 / P5 空配列 -> 赤 / P6 ファイル無し -> 赤（finding 2 件: 読めない + 無い）
+OK  P7 配列後の行末コメントが名指し -> 赤 / P8 rust-analyzer-preview -> 赤 / P12 targets に在り components に無し -> 赤
+OK  P13 文字列内の # が先行 -> 緑 / P14 空白無し -> 緑 / P15 CRLF 複数行 -> 緑 / P16 [toolchain] 丸ごとコメントアウト -> 赤
+!!  P10 inline table `toolchain = { ..., components = [...] }` -> 偽陽性（赤）
+!!  P11 引用キー `"components" = [...]` -> 偽陽性（赤）
+!!  P17 dotted key `toolchain.components = [...]` -> 偽陽性（赤）
+!!  P18 `[other] components = []` が先行し `[toolchain]` に在る -> 偽陽性（赤・先頭一致しか見ない）
+!!  P19 `[other] components = ["rust-analyzer"]` が先行し `[toolchain]` に無い -> **偽陰性（緑）**（テーブルを見ない・先頭一致）
+
+## レビュー所見（code-reviewer の観点・対象 = 3d30bde の diff）
+
+### Critical
+なし
+
+### High
+なし
+
+### Medium
+- M1 `checkLspConfig` の toml 判定は TOML のテーブル境界を見ず、**ファイル内で最初に現れた `components = [...]` を採る**。`[other]` 等の別テーブルに `components = ["rust-analyzer"]` が先行し `[toolchain]` 側に無い形（P19）は**偽陰性（緑）**。逆順（P18）は偽陽性。rust-toolchain.toml は実務上 `[toolchain]` 1 テーブルしか持たず（rustup も他テーブルを定義しない）、発生確率は低いので Medium。修正案: `/^\s*\[toolchain\]\s*$/m` 以降・次の `^\s*\[` までを切り出してから `components` を探すか、判定コメントへ「テーブルは見ない（最初の `components` を採る）」を射程の宣言として書く（後者で足りる）。
+
+### Low
+- L1 偽陽性（赤・安全側）が 3 形: inline table（P10）・引用キー `"components"`（P11）・dotted key `toolchain.components`（P17）。いずれも TOML として正当で rustup も読むが、この repo の書式では出ない。赤の文言は「rust-analyzer が無い」なので、その形へ書き換えた人は原因を誤読しうる。判定コメント（「配列は複数行に折れうる」の隣）に「素の `components =` 行だけを見る」を 1 句添えれば足りる。
+- L2 toml が読めないとき finding が 2 件出る（「読めない」+「components に無い」・P6）。1 つの原因に 2 行。`catch` で `return`／`continue` 相当にすれば 1 件になるが、赤には変わりないので任意。
+- L3 変異 3（`docs/hooks.md` の発火一覧から `rust-toolchain.toml` 行だけ削除）で `governance:check` は**緑のまま**。理由は G-hook-fires の母集団照合が「hook が発行しうる id が表のどこかに在るか」だけを見るためで、`hook-selftest` は他の 4 行にも在る。これは `docs/adr/ADR-hook-fires-table-check.md`「検出器自身のカバー範囲を検算して見つかった足」が**既に名指しして受容した残余**（閉じたのは空集合の行だけ）であり、本 PR が開けた穴ではない。ただし G-hook-fires.mjs 内のコメント「行の削除は、id を持つ行なら下の母集団照合が拾う」は**id を単独で持つ行に限って真**で、共有 id の行には偽——ADR の記述と食い違う。本 PR の射程外だが、直すなら G-hook-fires.mjs のそのコメント 1 行（「その id を他の行が持たなければ」を添える）。
+- L4 `deps-update/SKILL.md` の改稿で「2026-08-24 に新しい toolchain が実体化して以降、11 時間気づかれなかった・実測」の一次事実が恒久文書から消えた（`git grep '11 時間' 3d30bde` は `workspace/research.md` のみ。d5502da では SKILL.md L44 に在った）。「沈黙する壊れ方」の定量的な根拠であり、toml ヘッダか `docs/hooks.md` の壊れ方の行へ 1 句戻す価値はある。それ以外の注意（再起動しないと復帰しない・索引が冷えている・「意図して外してある」の撤回）は移設または意図的な撤去で、失われていない。
+- L5 `post-edit.mjs` / `post-edit.test.mjs` のコメント「rustup が override の出所に読むのはルートの 1 枚である」は厳密には偽——rustup は **cwd から祖先へ最も近い** `rust-toolchain.toml` を読むので、crate 直下に置けばその crate 内で打つ cargo には効く。hook・CI・Claude Code の LSP はいずれもリポジトリルートを cwd にするので**この repo の運用ではルートの 1 枚が効く**、が正確。`checkLspConfig` もルートしか読まないので機構は一貫している（射程の宣言の言い回しだけの問題）。
+
+### ⚠️（確信の持てない所見）
+- ⚠️1 `rust-toolchain.toml` ヘッダ「2026-09-06 に 1.98.0 → 1.98.1 で実測」——`workspace/research.md` L13/L68 自身は「CreationTime からの推定・中確信」と留保している。ヘッダは「実測」と書き切っており research より 1 段強い。結論（channel を変えずに toolchain が入れ替わる）は rustup の channel 意味論から真なので害は小さいが、「実測」を「推定」に弱めるか、`rustc +1.98 --version` = 1.98.1 と `multirust-channel-manifest.toml` の date を根拠として並べる方が research と揃う。
+- ⚠️2 ヘッダ「CI は pin された toolchain を毎 run 丸ごと取得しており（3 run で実測）」は research L14/L66 と一致（run 34020570400 + 追加 2 run）。「rustup は既にインストール済みの toolchain にも次の呼び出しで不足分を取得する（rustup 1.29.1 で実測）」は research L73（scratch ディレクトリでの実測）と一致。私の環境でも `rustup component list --installed` に `rust-analyzer-x86_64-pc-windows-msvc` が在り `rust-analyzer --version` = 1.98.1 だが、**それが本 PR の toml によって入ったのか research L73 の scratch 実測で既に入っていたのかは、この worktree からは区別できない**（同じ 1.98 toolchain を共有する）。
+- ⚠️3 `rust-analyzer-preview` は旧名の component（P8 で赤）。1.64 以降は `rust-analyzer` が正式名で rustup の manifest に両方載るが、旧名で書いた人へ「無い」と言うのは判定として妥当（LSP プラグインが呼ぶ shim は `rust-analyzer` なので同じ結果）。所見ではなく確認。
+
+### 確認済み（問題なし）
+- `CHECK_DEFINITION` への追加と `docs/hooks.md` 発火一覧の行は一致。G-hook-fires は `docs/hooks.md` の表を行ごとに読み `selectChecks(代表パス)` を呼んで id 配列を順序込みで比較する（`scripts/governance/checks/G-hook-fires.mjs`）。**この行を実際に見ていること**は変異 2 で実測（`docs/hooks.md:58` を名指しして赤）。代表パスの実在検査（`snapshot.files`）も通っている。
+- `hook-selftest` = `vitestSpec(".claude/hooks")` で `lsp-config.test.mjs` を含む（post-edit.mjs L400-401）。よって `rust-toolchain.toml` 編集 → 実リポジトリを指すテストが宣言の有無を見る配線は閉じている。
+- `.lsp.json` の `command` は `rust-analyzer`（PATH の rustup shim）。toml の component が入ると shim が解決する（`rust-analyzer --version` exit 0 で確認）。
+- ratoml 検査と同じく配送経路の連鎖の**前**に置かれており、settings.json 側の早期 return に道連れにされない（コード位置で確認）。
+
+## 変異注入（4 件・`git hash-object` で注入前後を照合し全件巻き戻し済み。`git status --short` は `?? workspace/verify-1239.txt` のみ）
+
+| # | 変異 | 注入前 hash | 結果 | 赤の理由 | 巻き戻し後 hash |
+|---|---|---|---|---|---|
+| 1 | `rust-toolchain.toml` の components から `"rust-analyzer"` を削除 → `npx vitest run .claude/hooks/lsp-config.test.mjs` | 5b24027 | **赤** exit 1 / 3 failed, 27 passed | AssertionError（構文エラーではない）: 「現在のツリーの LSP 設定は不変条件をすべて満たす」`expected [Array(1)] to deeply equal []` に「rust-toolchain.toml の components に rust-analyzer が無い」。加えて「無変異の複製は緑」「足 8d」も同じ finding で赤（複製が worktree の toml を写すため） | 5b24027（一致） |
+| 2 | `post-edit.mjs` `CHECK_DEFINITION` から `"rust-toolchain.toml"` 行を削除 → `npx vitest run .claude/hooks/post-edit.test.mjs` / `node scripts/governance-check.mjs` | 7452649 | vitest **赤** exit 1 / 1 failed, 101 passed。governance **赤** exit 1 | vitest: AssertionError `expected [] to deeply equal ['hook-selftest']`。governance: `docs/hooks.md:58  発火一覧が selectChecks と一致しない: \`rust-toolchain.toml\` は [] を発火するが表は [hook-selftest]` | 7452649（一致） |
+| 3 | `docs/hooks.md` 発火一覧から `rust-toolchain.toml` 行だけ削除 → `node scripts/governance-check.mjs` | 98145b6 | **緑** exit 0（全検査 passed） | 赤にならない。G-hook-fires の母集団照合は「発行しうる id が表のどこかに在るか」であり `hook-selftest` は他の行にも在る。ADR-hook-fires-table-check が受容済みの残余（→ L3） | 98145b6（一致） |
+| 4 | `lsp-config.mjs` の toml 判定を `if (false && (...))` で無効化 → `npx vitest run .claude/hooks/lsp-config.test.mjs` | ca9678a | **赤** exit 1 / 2 failed, 28 passed | AssertionError: 足 10・足 10b とも `expected '' to match /rust-toolchain\.toml の components に r…/`（検査が縛っている） | ca9678a（一致） |
+
+## 結論
+- 検証: 該当カテゴリ（E・F）はすべて緑。A は非該当だが `cargo check --workspace` 緑・worktree の toml が override の出所として 1.98（rustc 1.98.1）を選ぶことを確認。`rust-analyzer --version` は 1.98.1 を返す。
+- 変異注入: 4 件中 3 件が意図どおり赤（assert による赤で、構文エラーではない）。1 件（変異 3・表の行削除）は緑だが、既存 ADR が名指しした受容済み残余であり本 PR が開けた穴ではない。
+- レビュー: Critical / High なし。Medium 1（テーブルを見ない先頭一致 → 偽陰性の形が 1 つ作れる。射程の宣言で足りる）。Low 5・⚠️ 3。**マージを止める所見は無い**。直すなら M1 と L4（11 時間の一次事実の復元）と ⚠️1（「実測」→ research と同じ強さ）を同じ PR で 1 行ずつ。
+
+## 再検証（f595e1a）
+
+### アンカー
+- `git checkout --detach f595e1a` → `git rev-parse HEAD` = f595e1a7f0bb4eeaf7ecdd71de0abbf0a0d25506
+- `git diff 3d30bde..f595e1a --stat`: 6 files, +27/-7（lsp-config.mjs / lsp-config.test.mjs / post-edit.mjs / post-edit.test.mjs / docs/hooks.md / rust-toolchain.toml）
+- 新判定: `[toolchain]` 見出しから次の `^\s*\[` 見出し（または EOF）までを `[\s\S]*?` + lookahead で切り出し、その中で素の `components = [...]` を探す
+
+### (1) プローブの当て直し（同じ temp 複製方式・P1〜P19 + 追加 P20〜P25）
+| 群 | 結果 |
+|---|---|
+| 直った | **P19（`[other]` の components が先行し `[toolchain]` に無い）→ 赤**（3d30bde では緑の偽陰性）。P18（`[other] components = []` 先行・`[toolchain]` に在る）→ 緑（3d30bde では偽陽性） |
+| 引き続き赤（宣言どおり安全側） | P10 inline table / P11 引用キー / P17 dotted key。判定コメントに「素の `components =` 行だけを見る」が宣言済み |
+| 緑のまま | P2 複数行配列+内部コメント / P3 単引用 / P13 文字列内 `#` / P14 空白無し / P15 CRLF 複数行 |
+| 赤のまま（正） | P1 / P4 / P5 / P6（finding 2 件のまま・L2 は未対処＝任意） / P7 / P8 / P9 / P12 / P16 |
+| 追加 P20 `[toolchain]` の後ろに `[other]` が続く（RA は toolchain 側） | 緑（正） |
+| 追加 P20b 同・RA が `[other]` 側だけ | 赤（正・切り出しが `[other]` で止まっている） |
+| 追加 P21 `[toolchain]` の後ろに `[toolchain.sub]`（RA は toolchain 側） | 緑（正） |
+| 追加 P21b 同・RA が `[toolchain.sub]` 側だけ | 赤（正・dotted テーブル見出しも `^\s*\[` で境界になる） |
+| 追加 P22 `[toolchain] # コメント` + CRLF + 後続テーブル | 緑（正・コメント除去後の `\s*$` が `\r` を吸う） |
+| 追加 P24 `[toolchain]` が EOF 直前で末尾改行無し | 緑（正・`(?![\s\S])` の EOF 分岐） |
+| 追加 P25 配列の継続行が `"rust-analyzer"]` で始まる | 緑（`[` で始まる行ではないので境界にならない） |
+| 追加 P23 `[ toolchain ]`（括弧内空白・TOML として正当） | **赤（新しい安全側の偽陽性）**。`\[toolchain\]` が空白を許さない。この repo では出ない書式で、L1 と同じ「素の書式だけを見る」宣言の内側と読める。Low・任意（`\[\s*toolchain\s*\]` にすれば消える） |
+
+判定の境界について 1 点（⚠️ではなく確認）: 切り出しの終端は「`[` で始まる行」であり、複数行配列の継続行が `[` で始まる形は TOML の文法上作れない（配列の `[` は `=` と同じ行）ので、`components` 配列の中身が誤って切り落とされる形は無い。
+
+### (2) exit code
+- `npx vitest run .claude/hooks`: exit 0 / 3 files, **330 passed**（足 10c を含む）
+- `npm run governance:check`: exit 0 / 検査 24 件 全 passed
+
+### (3) 変異 1・2・4 の再実行（hash 照合・全件巻き戻し済み。`git status --short` は `?? workspace/verify-1239.txt` のみ）
+| # | 変異 | 注入前 | 結果 | 赤の理由 | 巻き戻し後 |
+|---|---|---|---|---|---|
+| 1 | toml の components から `"rust-analyzer"` 削除 → `vitest run lsp-config.test.mjs` | b171790 | **赤** exit 1 / 3 failed | AssertionError: 「現在のツリーの LSP 設定は不変条件をすべて満たす」`expected [Array(1)] to deeply equal []`（+「無変異の複製は緑」「足 8d」も同 finding） | b171790（一致） |
+| 2 | `CHECK_DEFINITION` から `"rust-toolchain.toml"` 削除 → `vitest run post-edit.test.mjs` / governance-check | bbf5cb5 | vitest **赤** exit 1 / 1 failed, 101 passed。governance **赤** exit 1 | vitest: `expected [] to deeply equal ['hook-selftest']`。governance: `docs/hooks.md:58  発火一覧が selectChecks と一致しない: \`rust-toolchain.toml\` は [] を発火するが表は [hook-selftest]` | bbf5cb5（一致） |
+| 4 | toml 判定を `if (false && (...))` で無効化 → `vitest run lsp-config.test.mjs` | daf68ce | **赤** exit 1 / **3 failed**（足 10 / 10b / **10c**） | AssertionError: `expected '' to match /rust-toolchain\.toml の components に r…/` ×3 | daf68ce（一致） |
+（変異 3 は受容済み残余と裁定済みのため再実行対象外・指示どおり）
+
+### (4) 前回 ⚠️ の更新
+- ⚠️2（component が本 PR の toml で入ったか）: `$(rustc --print sysroot)/bin/rust-analyzer.exe` と `lib/rustlib/components` の mtime は **2026-09-06 19:40:48**。私の worktree で最初に cargo を呼んだのは 19:56 以降なので、**この worktree の検証が入れたのではない**（research L73 の scratch 実測か main 側の cargo 呼び出しで既に入っていた）。どちらかは依然として区別できないが、「worktree の toml が効いて入った」と私が主張していないことの裏づけにはなる。結論は不変
+- ⚠️3（`rust-analyzer-preview`）: **新情報**。`lib/rustlib/components` の実体は `rust-analyzer-preview-x86_64-pc-windows-msvc`（clippy / rustfmt も `-preview` 名で載る）。rustup は `rust-analyzer` を `rust-analyzer-preview` の別名として解決しているので、toml に `"rust-analyzer-preview"` と書いても rustup は同じ component を入れる。すると P8 の赤は**偽陽性（安全側）**であって「妥当な赤」ではない——前回「判定として妥当」と書いたのは誤り。害は L1 と同型（赤を見て正式名へ直せば通る）。Low・任意（判定を `/["']rust-analyzer(-preview)?["']/` にすれば消えるが、この repo が正式名を使う限り不要）
+- ⚠️1: ヘッダの言い直し（`rustc +1.98` の版・manifest の date 2026-09-03・「手順は発火していない」）は research L13 の根拠と同じ強さになった。解消
+
+### 再検証の結論
+- M1 は閉じた（P19 赤・足 10c が縛る＝変異 4 で赤）。L1 / L4 / L5 / ⚠️1 も差分どおり当たっている。
+- 新たに見つかった安全側の偽陽性 2 形（P23 `[ toolchain ]`・P8 `-preview` 別名）はいずれも Low・任意で、マージを止めない。
+- Critical / High なし。**f595e1a はマージ可**。

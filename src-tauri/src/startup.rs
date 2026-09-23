@@ -192,6 +192,7 @@ impl Phase {
 
 /// 終端の分類。**イベント名がこの意味を運ぶ**——`data.ok` をハーネスが見忘れても
 /// 沈黙で通らないようにするため、成功と失敗でイベント名そのものを変える。
+/// イベント名と `data.ok` の組は [`terminal`] が 1 か所で決める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StartupFailure {
     /// platform スレッドの spawn に失敗した。
@@ -247,6 +248,31 @@ impl From<crate::platform::BridgeError> for StartupFailure {
             BridgeError::Handshake => StartupFailure::PlatformHandshake,
             BridgeError::Disconnected => StartupFailure::PlatformCommandDisconnected,
         }
+    }
+}
+
+/// 終端のイベント名と `data.ok` の組。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Terminal {
+    event: &'static str,
+    ok: bool,
+}
+
+/// **イベント名と `data.ok` を決めるのはこの `match` 1 か所だけである**（#1026）。
+///
+/// 両者を別々の場所で `outcome` から導くと、片方だけが変わる食い違いが起こりうる。
+/// それを外（`scripts/lib/SnotraStartupContract.psm1`）から監視するより、組で導いて
+/// 食い違いそのものを起こせなくするほうが強い。
+fn terminal(outcome: Result<(), StartupFailure>) -> Terminal {
+    match outcome {
+        Ok(()) => Terminal {
+            event: "startup:ready",
+            ok: true,
+        },
+        Err(_) => Terminal {
+            event: "startup:failed",
+            ok: false,
+        },
     }
 }
 
@@ -459,7 +485,8 @@ impl Timeline {
             json!(self.branch.include_path_env),
         );
 
-        m.insert("ok".into(), json!(outcome.is_ok()));
+        // `ok` はイベント名と同じ [`terminal`] から取る——ここで `outcome` を読み直さない。
+        m.insert("ok".into(), json!(terminal(outcome).ok));
         m.insert(
             "reason".into(),
             outcome
@@ -468,6 +495,20 @@ impl Timeline {
         );
 
         serde_json::Value::Object(m)
+    }
+}
+
+impl Timeline {
+    /// 終端の 1 行（イベント名と payload）を組で返す。名前と `ok` はどちらも [`terminal`] から来る。
+    pub(crate) fn terminal_line(
+        &self,
+        post_main_elapsed: Duration,
+        outcome: Result<(), StartupFailure>,
+    ) -> (&'static str, serde_json::Value) {
+        (
+            terminal(outcome).event,
+            self.to_json(post_main_elapsed, outcome),
+        )
     }
 }
 
@@ -521,6 +562,8 @@ pub(crate) fn set_index_load_stats_total(total: Duration) {
 ///
 /// 一度きり性は必須である——platform の初期化に失敗した後、`setup_hotkey_listener` が
 /// bridge 不在をもう一度観測して二つ目の失敗行を出す経路が実在する。
+///
+/// **イベント名はここで決めない**。[`Timeline::terminal_line`] が返した組をそのまま出す。
 pub(crate) fn finish(outcome: Result<(), StartupFailure>) {
     if FINISHED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -528,21 +571,18 @@ pub(crate) fn finish(outcome: Result<(), StartupFailure>) {
     {
         return;
     }
-    let Some(payload) = with_timeline(|anchor, t| {
+    let Some((event, payload)) = with_timeline(|anchor, t| {
         // **1 回の読みを終端の区間と `post_main` の両方に使う。** 別々に読むと
         // `sum_phase_ns == post_main_ns` がナノ秒差で崩れる。
         let post_main = anchor.elapsed();
+        // これは「arm まで到達したか」であって「成功したか」ではない。イベント名の導出
+        // （[`terminal`]）とは別の問いなので、そこへ畳まない。
         if outcome.is_ok() || outcome.is_err_and(StartupFailure::reached_the_arm) {
             t.mark(Phase::HotkeyRegister, post_main);
         }
-        t.to_json(post_main, outcome)
+        t.terminal_line(post_main, outcome)
     }) else {
         return;
-    };
-    let event = if outcome.is_ok() {
-        "startup:ready"
-    } else {
-        "startup:failed"
     };
     crate::trace::trace(event, payload);
 }
@@ -885,6 +925,39 @@ mod tests {
         assert_eq!(json["index_load_unattributed_ms"], 0);
     }
 
+    /// `StartupFailure` の全 variant。**手書きの列挙であり、variant を足してここへ書き足さなくても
+    /// 落ちない**（受容する残余・`failure_reasons_are_stable_and_unique` の doc）。列挙を 1 部に
+    /// 保つため、全 variant を回すテストはすべてこれを使う。
+    const ALL_FAILURES: [StartupFailure; 7] = [
+        StartupFailure::PlatformSpawn,
+        StartupFailure::PlatformInit,
+        StartupFailure::PlatformHandshake,
+        StartupFailure::PlatformBridgeUnavailable,
+        StartupFailure::PlatformCommandDisconnected,
+        StartupFailure::WindowCreation,
+        StartupFailure::HotkeyRegistration,
+    ];
+
+    #[test]
+    fn every_outcome_pairs_event_and_ok_in_one_place() {
+        // **`Ok` と `StartupFailure` の全 variant を踏む**（#1026）。実機のハーネスが踏めるのは成功と
+        // `HotkeyRegistration` の 2 つだけで、残りは `ADR-no-test-only-injection-in-product-code`
+        // により実機では永久に踏めない。出る 1 行（名前と payload）を組で照合する。
+        let t = Timeline::new(None);
+
+        let (event, payload) = t.terminal_line(Duration::ZERO, Ok(()));
+        assert_eq!(event, "startup:ready");
+        assert_eq!(payload["ok"], true);
+        assert!(payload["reason"].is_null());
+
+        for f in ALL_FAILURES {
+            let (event, payload) = t.terminal_line(Duration::ZERO, Err(f));
+            assert_eq!(event, "startup:failed", "{f:?}");
+            assert_eq!(payload["ok"], false, "{f:?}");
+            assert_eq!(payload["reason"], f.reason(), "{f:?}");
+        }
+    }
+
     #[test]
     fn failure_reasons_are_stable_and_unique() {
         // **手書きの列挙である**——variant を足してここへ書き足さなくても落ちない。
@@ -892,16 +965,7 @@ mod tests {
         // 仕掛けが無く（ゆえに `indexed_key_enum!` にも載せていない）、`reason()` の網羅 match だけが
         // 足し忘れを止める。**その match は `todo!()` を書けば通ってしまう**ので、
         // ここは網羅の証明ではなく「既存の `reason` が衝突せず固定である」ことの検査である。
-        let all = [
-            StartupFailure::PlatformSpawn,
-            StartupFailure::PlatformInit,
-            StartupFailure::PlatformHandshake,
-            StartupFailure::PlatformBridgeUnavailable,
-            StartupFailure::PlatformCommandDisconnected,
-            StartupFailure::WindowCreation,
-            StartupFailure::HotkeyRegistration,
-        ];
-        let mut reasons: Vec<&str> = all.iter().map(|f| f.reason()).collect();
+        let mut reasons: Vec<&str> = ALL_FAILURES.iter().map(|f| f.reason()).collect();
         reasons.sort_unstable();
         let before = reasons.len();
         reasons.dedup();

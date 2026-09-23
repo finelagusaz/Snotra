@@ -57,9 +57,18 @@ $ErrorActionPreference = 'Stop'
   `ok=false` / `reason=hotkey-registration` が正直に載ったまま**他の検査は全部通った**
   ——キーの存在しか見ておらず、値を一度も読んでいなかったためである。
 
-  **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は同じ `outcome` から
-  導かれるので、`outcome` を取り違える変異は両方が揃って動き素通りする。捕まえるのは
-  `to_json`（`ok`）と `finish`（`event`）という**別の場所の導出が食い違うこと**だけである。
+  **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は `startup.rs` の
+  `terminal` が 1 つの `match` から組で導く（#1026）ので、`outcome` を取り違える変異は両方が
+  揃って動き素通りする。捕まえるのは**名前と `ok` が実バイナリの出力で食い違ったこと**である
+  ——`terminal` の誤りに加え、`finish` が `terminal_line` の組を使わずに名前を作る退行もここへ
+  現れうる（食い違う経路をその run が踏んだときに限る。`smoke.yml` が意図して踏むのは
+  成功経路だけである）。**その退行のうち、組の名前を `_` で明示的に捨てる形はここにしか
+  届かない**（名前を捨て忘れた形は未使用変数として clippy の `-D warnings` が止める・
+  #1026 で注入して実測。`finish` は一度きりで出力が trace だけなので、単体テストからは呼んでも観測できない）。
+  **PR を止める検知器はここではない**——この検査を実バイナリへ当てる `bench-startup.ps1` は
+  `smoke.yml` で `continue-on-error` の観測として走る。名前と `ok` の対応を `Ok` と
+  `StartupFailure` の全 variant で固定するのは `startup.rs` の単体テスト
+  （`every_outcome_pairs_event_and_ok_in_one_place`）である。
 - **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total` の
   差である。**非負性が乗る前提と、破れたときに負値がそのまま出力へ現れることは
   `startup.rs` の `to_json` が正本**。ここはその前提が破れたことを外から捕まえる。

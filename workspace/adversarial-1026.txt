@@ -1,0 +1,239 @@
+# 敵対的調査: workspace/research.md（issue #1026）反証ログ
+
+調査開始: 2026-09-23
+一次資料: gh issue view 1026 / src-tauri/src/startup.rs / src-tauri/src/main.rs /
+src-tauri/src/platform/mod.rs / src-tauri/src/trace.rs / scripts/lib/SnotraStartupContract.psm1 /
+scripts/lib/SnotraStartupContract.Tests.ps1 / scripts/bench-startup.ps1 / scripts/smoke-startup.ps1 /
+.github/workflows/{smoke,ci}.yml / docs/adr/ADR-startup-instrument-contract-shape.md
+
+---
+
+## 争点1: 「event 名を作るのは finish の1か所、data.ok を作るのは to_json の1か所」
+
+**壊せなかった。**
+
+- `grep -rn "startup:ready|startup:failed"` の実行結果（全リポジトリ）:
+  ヒットは `workspace/research.md` / `main.rs`（コメントのみ、`startup::finish` 呼び出し）/
+  `startup.rs`（`finish` 内 542-546 行のみ、リテラルは 543・545 行の2箇所）/
+  `SnotraStartupContract.psm1` / `bench-startup.ps1` / `PERFORMANCE.md` / `smoke.yml` /
+  `occupy-hotkey.ps1` / `platform/mod.rs`（コメントのみ）/ `SnotraStartupContract.Tests.ps1` /
+  ADR 2本。**Rust 側でリテラルを直接書いているのは startup.rs の finish 関数内だけ**。
+- `data.ok` の生成箇所も `grep -n '"ok"' startup.rs` で `to_json` 内462行の1箇所のみ（他の
+  `.ok()` ヒットはすべて `Result::ok()` の無関係なメソッド呼び出しかテストの読み取り側）。
+- `main.rs`（284, 394, 505-523行）・`platform/mod.rs`（352行）の呼び出し点は
+  `Result<(), StartupFailure>` を `finish` へ渡すだけで、event 文字列にもリテラルにも触れない
+  （実際にコード本文を読んで確認済み）。
+
+**この所見を偽にする手順**: `grep -rn '"startup:ready"\|"startup:failed"' --include=*.rs .` を
+再実行し、`startup.rs` の `finish` 以外に `.rs` ファイルでリテラルが構築されている行が出れば偽。
+
+---
+
+## 争点2: 「data.ok の消費者は SnotraStartupContract.psm1 だけ」
+
+**壊せなかった。**
+
+- `grep` で `.ok` / `"ok"` / `$data.ok` 的パターンを `scripts/` 全体・`PERFORMANCE.md` に当てた
+  結果: `smoke-egui.ps1:262` の `$hk.ok` は issue 本文が明言する通り `hotkey:registered` の別
+  フィールド（`hotkey.rs:144` の trace）で無関係。`SnotraSmoke.Tests.ps1:272,297` の `"ok":true`
+  は `SnotraSmoke` モジュール自体の汎用 JSON パーステストのフィクスチャであり、起動計器の
+  `ok` を消費してはいない（テスト対象は trace 行のパース機構そのもの）。`PERFORMANCE.md` には
+  `ok` という語自体が1件もヒットしない。
+- 唯一の実消費者は `SnotraStartupContract.psm1:147,149,153,155` と、それをテストする
+  `SnotraStartupContract.Tests.ps1`（後者は消費者ではなく検査自身の単体テスト）。
+
+**この所見を偽にする手順**: `git grep -n '\.ok\b'` を `scripts/**` と `.github/**` に対して
+再実行し、`SnotraStartupContract.psm1` 以外で起動計器の `ok`（`hotkey:registered` の `ok` を
+除く）を読む行が無いか確認する。
+
+---
+
+## 争点3: 「outcome は8通り、実機で踏めるのは成功と HotkeyRegistration の2つだけ」
+
+**壊せなかった。**
+
+- `StartupFailure` の variant は `startup.rs:196-211` で実測 7 個
+  （PlatformSpawn / PlatformInit / PlatformHandshake / PlatformBridgeUnavailable /
+  PlatformCommandDisconnected / WindowCreation / HotkeyRegistration）。`Ok(())` を加えて 8。
+  `#[non_exhaustive]` 等の属性は無く、`reason()` の match は全7腕を網羅（235-251行の
+  `From<BridgeError>` は 4 variant のみを埋めるので、残る3つ = WindowCreation は main.rs が
+  直接構築、HotkeyRegistration は platform/mod.rs が直接構築、という経路も実際に読んで確認）。
+- 実機で踏めるのが2つだけという主張は `startup.rs` module doc（53-72行）の「受容する残余」節が
+  正本として明記しており、`ADR-no-test-only-injection-in-product-code` を却下理由に挙げている。
+  この doc の記述と research.md の要約は一致する。
+
+**この所見を偽にする手順**: `StartupFailure` に `#[non_exhaustive]` や追加 variant が入って
+いないか `startup.rs:196-211` を再度読む。または `platform/mod.rs` / `main.rs` に
+`StartupFailure::` を直接構築する行が 3 箇所（main.rs 2 + platform/mod.rs 1）以外に無いか
+`grep -n "StartupFailure::"` で数える。
+
+---
+
+## 争点4: 「導出を finish の外（Timeline 等の純粋側）へ置けば単体テストで8通り踏める」
+
+**壊せなかった。ただし現状カバレッジには穴がある（⚠️ 追記）。**
+
+- `finish`（524-548行）は `FINISHED`（`AtomicBool` CAS）と `TIMELINE`（`OnceLock<Mutex<...>>`）
+  という process-global static に依存しており、`#[cfg(test)]` から素朴に複数回呼べない
+  （2回目以降は CAS で早期 return する）。この制約は research.md の技術的制約節（53行目）が
+  正しく明記している。
+- 一方 `Timeline::to_json(&self, post_main_elapsed, outcome)` は既に純粋関数として単体テスト
+  from複数箇所で直接呼ばれている（`outcome_is_carried_in_the_payload` 等）。event 名の導出
+  （`if outcome.is_ok() { "startup:ready" } else { "startup:failed" }`）を `StartupFailure`
+  または `Result<(), StartupFailure>` に対する自由関数として切り出し、`to_json` 同様に
+  `#[cfg(test)]` から直接呼べば、8通り全部を実際に単体テストで踏むことは構造的に可能に見える
+  （ブロッカーは見当たらない）。
+- ⚠️ **確信が持てない所見**: 現状のテスト `outcome_is_carried_in_the_payload`（916-926行）は
+  `Ok(())` と `Err(HotkeyRegistration)` の2通りしか検証していない。`failure_reasons_are_stable_
+  and_unique`（888-914行）も手書きで7 variant の `reason()` の一意性だけを見ており、
+  「event 名との対応」は見ていない。つまり **research.md が issue の要求として書いている
+  「全8通りの event/ok 対応を固定する単体テスト」は、現時点のコードにはまだ存在しない**。
+  research.md 自身はこれを「issue のやること（未達成）」として書いており矛盾はしていないが、
+  読み手が「もう検証済み」と誤読しないよう明記しておく。
+
+**この所見を偽にする手順**: `cargo test -p snotra -- startup::` を実行し、
+`outcome_is_carried_in_the_payload` が8 variant を網羅しているかを実際のテスト本文で数える
+（現状2件のみのはず）。
+
+---
+
+## 争点5: 「ハーネスの整合検査は、導出点が1つになると match 自体の誤りしか捕まえず単体テストと重なる」
+## ＋ ハーネスにしか捕まえられない故障の型
+
+**壊せた。** 少なくとも3種の独立した理由で、統一後も `Test-SnotraStartupPayload` は
+Rust 単体テストが原理的に触れない層を検査している。
+
+1. **trace() のシリアライズ／プロセス境界。** `trace.rs`（44-67行）には `#[cfg(test)]` が
+   1つも無い（`grep -n "cfg(test)" src-tauri/src/trace.rs` は0件）。Rust 単体テストは
+   `to_json()` が返す `serde_json::Value` を直接 assert するだけで、実際に
+   `eprintln!("[trace] {line}")` で吐かれた文字列を誰も読み直していない。ハーネス
+   （`Wait-SnotraTraceCondition` → `Read-SnotraTraceEvents` → `Test-SnotraStartupPayload`）は
+   **実プロセスの実 stderr を `ConvertFrom-Json` で読み直した結果**を検査する。ここには
+   「キー過不足」チェック（psm1:82-93）が含まれており、たとえば `trace()` 側でフィールドが
+   欠落する・シリアライズが壊れるという回帰は、Rust 単体テストの視界には一切入らないが
+   ハーネスは捕まえる。これは今回の課題文が例示する「trace の直列化経路」そのものである。
+2. **複数スレッドが本当に競合するタイミング。** `main.rs:495-504` のコメントが明記する通り、
+   platform スレッド（`platform/mod.rs:352` が撃つ `finish`）と main スレッド
+   （`main.rs:284/394/523` が撃つ `finish`）は実際に並行に走り、どちらが `FINISHED` の CAS を
+   先に取るかで `setup_rest` 区間の意味が変わる。Rust 単体テストはシングルスレッドで
+   `Timeline::mark` に手で `Duration` を渡すだけなので、この実タイミング競合は原理的に
+   再現できない。ハーネスは実バイナリを実際に起動して初めてこの経路を踏む。
+3. **一度きり性（FINISHED CAS）自体は module doc（69-72行）が「検知手段は無い」と明記して
+   おり、これは実は**「壊せなかった」側の所見**——ハーネスも単体テストもここを検知できない
+   受容残余であることを研究メモは正しく書いていないが、issue 本文にも研究メモにも出てこない
+   ので独立に発見した死角として記録する。
+
+**この所見を偽にする手順**: `trace.rs` に `#[cfg(test)]` モジュールを追加し、`trace()` の
+出力を実際にキャプチャして assert するテストを書けるかどうかを試す。書けて、かつ将来
+そのテストが「`event` と `ok` の食い違い」を実際に検出できるなら、この所見（=ハーネス固有の
+価値がある）は弱まる。また `main.rs` と `platform/mod.rs` の2並行 `finish` 呼び出しを
+単一プロセス内の Rust テストで確定的に競合させる仕組み（determinism injection）が既存する
+かを再確認する（現状は無いはず）。
+
+---
+
+## 争点5-補足（測定環境そのものへの疑い）: ハーネス整合検査は実際どこから呼ばれ、何を守っているか
+
+**壊せた（research.md が触れていない重大な非対称を発見）。**
+
+`Test-SnotraStartupPayload` の呼び出し元は grep で2つだけ実測された:
+
+1. `scripts/bench-startup.ps1:166`（実バイナリを起動して実ペイロードを検査する、本来の
+   integration 用途）
+2. `scripts/lib/SnotraStartupContract.Tests.ps1:50`（Pester。合成データ `New-StartupPayload`
+   を検査関数自身に当てる、**検査ロジックの自己単体テスト**であり実バイナリの出力は一切
+   関与しない）
+
+このうち **(1) の実行経路は `smoke.yml` の "Measure startup timeline" ステップであり、
+`continue-on-error: true` が明示的に付いている**（smoke.yml:135-137。理由コメント自身が
+「回帰の検査ではなく観測」「今は基準そのものが無い」と明言）。つまり `startup.rs` を変更する
+PR で実バイナリの `event`/`ok` が実際に食い違っても、**この CI ステップは赤にならず PR は
+ブロックされない**（コメントに残るだけ）。`SnotraStartupContract.psm1` 自身の module doc
+（14-16行）も「`smoke.yml` の `continue-on-error: true` なステップからしか走らず、壊れても
+誰も気づかない位置に居た」と自己申告しており、この点は矛盾しないが、**research.md 本文にも
+issue 本文にも、この非対称（自己単体テストは blocking／実データ検査は non-blocking）は一言も
+出てこない**。
+
+一方 (2) の Pester 自己単体テスト（合成データのみ）は `.github/workflows/ci.yml:238-239`
+`"Run PowerShell tests (Pester)"` → `npm run test:powershell` 経由で実行され、この ci.yml の
+windows job には `continue-on-error` が付いておらず、かつ `on: pull_request` に paths 制限が
+無い（ci.yml:3-9）ため**全 PR で blocking として走る**。
+
+**帰結**: 現状「ハーネス側の検査」のうち実際に PR をブロックしうる部分は「検査ロジックが
+合成フィクスチャに対して正しく動くこと」だけであり、「実バイナリの `event`/`ok` が実際に
+一致していること」は non-blocking な観測に留まる。research.md の未解決の疑問（末尾60-65行）
+は「ハーネス側の検査を残すか外すか」を Rust 単体テストとの重なりの観点だけで論じているが、
+**実態としてこのハーネス検査は現在ほぼ「一致していないことを人間が気づけば直す」程度の弱い
+保護であり、9割方の実効的な保護は既に Rust 側の（将来の）単体テストに移っている**と読める。
+これは issue の判断（残すか外すか）に直接効く事実であり、研究メモに欠落している。
+
+**この所見を偽にする手順**: `.github/workflows/smoke.yml:135-137` を再度読み、
+`continue-on-error: true` が "Measure startup timeline" ステップに付いているかを確認する
+（付いていなければ本所見は偽）。また `ci.yml` の `pull_request:` トリガーに `paths:` フィルタが
+無いこと（238-239行のステップが全PRで走ること）を `.github/workflows/ci.yml` 冒頭3-9行で
+再確認する。
+
+---
+
+## 争点6: 「ADR-startup-instrument-contract-shape §1 に抵触しない」
+
+**壊せなかった。**
+
+- ADR §1（10-19行）が却下したのは「終端を1つのイベントにして `ok` フラグで分ける」案であり、
+  却下理由は「ハーネスが `ok` の検査を1つ忘れた瞬間に沈黙で通る」——つまり**イベント名が
+  2種類あること自体**（`startup:ready` / `startup:failed`）が守りたい性質であって、
+  「その2つの文字列をコード上のどこから導出するか」は ADR の争点に含まれていない。
+- issue #1026 本文・research.md とも「event 名を2つ保つ」ことを明言しており、実際に
+  `finish` の書き換え案（導出点を1つにする）でも `event` 変数自体は `"startup:ready"` /
+  `"startup:failed"` の2値を返す設計のままである（研究メモの「再利用できる既存パターン」節の
+  例示、および issue 本文「ADR との関係」節と整合）。
+
+**この所見を偽にする手順**: ADR 本文（10-19行）を再読し、却下理由が「イベント名の導出箇所」
+ではなく「イベント数を1つに畳むこと」自体に向いているかを確認する（向いていれば偽）。
+
+---
+
+## smoke-startup.ps1 が見るもの・見ないもの（issue が明示的に要求した確認）
+
+**壊せなかった（research.md に矛盾する記述は無いが、research.md 自体はこの点に触れていない
+ため独立に検証した）。**
+
+`smoke-startup.ps1` は `Test-SnotraStartupPayload` を一切呼ばない（grep 実測・
+`SnotraStartupContract` という文字列が同ファイルに1件もヒットしない）。実際にこのスクリプトが
+見ているのは:
+- trace 行数が0でないこと（125-127行）
+- `[config] ` 系の seed 読み込みエラーが無いこと（115-119行）
+- `first_run` に該当する `cmd:launch_settings_process:*` イベントが出ていないこと（140-143行）
+- `*.bin` が生成されていること（161-166行）
+
+**`event` の値そのもの（`startup:ready` か `startup:failed` か）も `data.ok` も一切検査して
+いない**——events 配列を舐めて `event_count` を数えるだけで、終端イベントの名前や中身は見ない。
+これは課題文が示唆する「measures the branch that instrumentation touches vs. the branch the
+change touches」の一種の弱い確認材料であり、smoke-startup.ps1 は今回の変更（導出の単純化）に
+対する検知力を実質持たない。
+
+**この所見を偽にする手順**: `grep -n "startup:ready\|startup:failed\|\.ok\b" scripts/smoke-
+startup.ps1` を実行し、ヒットが無いことを確認する（ヒットがあれば本所見は偽）。
+
+---
+
+## 総括（壊せた／壊せなかった／⚠️ の一覧）
+
+1. event 名の単一生成点（finish のみ）: **壊せなかった**
+2. data.ok の単一生成点（to_json のみ）＋唯一の消費者が psm1: **壊せなかった**
+3. outcome 8通り／実機到達2通り: **壊せなかった**
+4. 純粋核化で単体テスト8通り網羅が可能という設計上の主張: **壊せなかった**
+   （⚠️ ただし「現状もう網羅テストが在る」という誤読を招かないよう、現状2通りしか
+   テストされていない事実を追記した）
+5. ハーネス検査は導出統一後「match自体の誤りにしか届かず単体テストと重なる」という主張:
+   **壊せた**——trace.rs のシリアライズ・プロセス境界（`#[cfg(test)]` 皆無）と、
+   main/platform 2スレッドの実タイミング競合という、Rust 単体テストが構造的に触れない
+   2つの独立した層が残ることを specific に示した
+6. ハーネス整合検査の実効的な保護力（測定環境の疑い）: **壊せた（research.md の欠落を発見）**
+   ——実バイナリを検査する経路（bench-startup.ps1 / smoke.yml）は `continue-on-error: true`
+   で non-blocking、blocking なのは合成フィクスチャに対する自己単体テスト
+   （SnotraStartupContract.Tests.ps1 / ci.yml）だけである。「残すか外すか」の判断はこの
+   非対称を踏まえるべきで、research.md には一言もこの事実が無い
+7. ADR §1 との非抵触: **壊せなかった**
+8. smoke-startup.ps1 が event/ok を検査しないこと: **壊せなかった**（research.md は未言及
+   だが矛盾もしない。独立に検証した追加情報として記録）

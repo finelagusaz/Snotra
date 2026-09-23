@@ -57,9 +57,13 @@ $ErrorActionPreference = 'Stop'
   `ok=false` / `reason=hotkey-registration` が正直に載ったまま**他の検査は全部通った**
   ——キーの存在しか見ておらず、値を一度も読んでいなかったためである。
 
-  **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は同じ `outcome` から
-  導かれるので、`outcome` を取り違える変異は両方が揃って動き素通りする。捕まえるのは
-  `to_json`（`ok`）と `finish`（`event`）という**別の場所の導出が食い違うこと**だけである。
+  **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は `startup.rs` の
+  `terminal` が 1 つの `match` から組で導く（#1026）ので、`outcome` を取り違える変異は両方が
+  揃って動き素通りする。捕まえるのは**その `match` 自体の誤りが実バイナリの出力に現れたこと**
+  だけである。**PR を止める検知器はここではない**——この検査を実バイナリへ当てる
+  `bench-startup.ps1` は `smoke.yml` で `continue-on-error` の観測として走る。名前と `ok` の
+  対応を 8 通りすべてで固定するのは `startup.rs` の単体テスト
+  （`every_outcome_pairs_event_and_ok_in_one_place`）であり、ここが足すのは実機で出た 1 行の観測である。
 - **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total` の
   差である。**非負性が乗る前提と、破れたときに負値がそのまま出力へ現れることは
   `startup.rs` の `to_json` が正本**。ここはその前提が破れたことを外から捕まえる。

@@ -62,17 +62,17 @@
 
 ### フェーズ 1 — 純粋核とテスト
 
-- [ ] テスト用定数（7 variant の列挙）を置き、`failure_reasons_are_stable_and_unique` をそれへ寄せる
-- [ ] `every_outcome_pairs_event_and_ok_in_one_place` を書き、`terminal` / `terminal_line` を `todo!()` で置いて Red を確かめる
-- [ ] `terminal` / `terminal_line` を実装し、`to_json` の `ok` を差し替えて Green にする
-- [ ] `finish` を `terminal_line` の組を渡すだけにする
-- [ ] 変異 3 種を注入し、assert で落ちることと巻き戻しを確かめる
+- [x] テスト用定数（7 variant の列挙）を置き、`failure_reasons_are_stable_and_unique` をそれへ寄せる
+- [x] `every_outcome_pairs_event_and_ok_in_one_place` を書き、`terminal` / `terminal_line` を `todo!()` で置いて Red を確かめる
+- [x] `terminal` / `terminal_line` を実装し、`to_json` の `ok` を差し替えて Green にする
+- [x] `finish` を `terminal_line` の組を渡すだけにする
+- [ ] 変異 3 種を注入し、assert で落ちることと巻き戻しを確かめる（主エージェントは同じ木へ注入しない——`/implement` 3b。検証の委譲先が実施する）
 
 ### フェーズ 2 — 文書
 
-- [ ] `StartupFailure` と `finish` の doc を導出点に合わせて更新する
-- [ ] `SnotraStartupContract.psm1:55-62` と `bench-startup.ps1:162-167` のコメントを、導出点が 1 つになった現行の事実へ更新する（判定・Pester は変えない）
-- [ ] 変更で偽になる散文が他に無いか、`to_json（ok）` / `別の場所の導出` の語で `git grep` する
+- [x] `StartupFailure` と `finish` の doc を導出点に合わせて更新する
+- [x] `SnotraStartupContract.psm1:55-62` と `bench-startup.ps1:162-167` のコメントを、導出点が 1 つになった現行の事実へ更新する（判定・Pester は変えない）
+- [x] 変更で偽になる散文が他に無いか、`to_json（ok）` / `別の場所の導出` の語で `git grep` する
 
 ## 未確定（実装前に潰す）
 

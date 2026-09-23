@@ -162,7 +162,8 @@ try {
 
     # **契約の検査は成功・失敗のどちらの終端でも走らせる。** 失敗した起動でも payload は契約を
     # 守るべきであり、**とくに `event` と `ok` の整合はここを通らないと `startup:ready` を騙る
-    # 変異に届かない**——騙られた run は下の失敗分岐へ入らないためである。
+    # 変異に届かない**——騙られた run は下の失敗分岐へ入らないためである（名前と `ok` を導くのは
+    # `startup.rs` の `terminal` 1 か所で、そこが騙る形は単体テストが先に止める・#1026）。
     $contractFailures = Test-SnotraStartupPayload -Data $data -PhaseKey $PhaseKeys `
       -ObservedWallClockMs $observedMs -EventName $terminal.event
     foreach ($f in $contractFailures) { $failures += "run=$run $f" }

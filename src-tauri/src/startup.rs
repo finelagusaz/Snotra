@@ -499,8 +499,7 @@ impl Timeline {
 }
 
 impl Timeline {
-    /// 終端の 1 行（イベント名と payload）を組で返す。[`finish`] はこれをそのまま出すだけで、
-    /// **イベント名を自分で決めない**——名前と `ok` はどちらも [`terminal`] から来る。
+    /// 終端の 1 行（イベント名と payload）を組で返す。名前と `ok` はどちらも [`terminal`] から来る。
     pub(crate) fn terminal_line(
         &self,
         post_main_elapsed: Duration,
@@ -941,7 +940,7 @@ mod tests {
 
     #[test]
     fn every_outcome_pairs_event_and_ok_in_one_place() {
-        // **8 通りの `outcome` すべてを踏む**（#1026）。実機のハーネスが踏めるのは成功と
+        // **`Ok` と `StartupFailure` の全 variant を踏む**（#1026）。実機のハーネスが踏めるのは成功と
         // `HotkeyRegistration` の 2 つだけで、残りは `ADR-no-test-only-injection-in-product-code`
         // により実機では永久に踏めない。出る 1 行（名前と payload）を組で照合する。
         let t = Timeline::new(None);

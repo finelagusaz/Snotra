@@ -59,11 +59,13 @@ $ErrorActionPreference = 'Stop'
 
   **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は `startup.rs` の
   `terminal` が 1 つの `match` から組で導く（#1026）ので、`outcome` を取り違える変異は両方が
-  揃って動き素通りする。捕まえるのは**その `match` 自体の誤りが実バイナリの出力に現れたこと**
-  だけである。**PR を止める検知器はここではない**——この検査を実バイナリへ当てる
-  `bench-startup.ps1` は `smoke.yml` で `continue-on-error` の観測として走る。名前と `ok` の
-  対応を 8 通りすべてで固定するのは `startup.rs` の単体テスト
-  （`every_outcome_pairs_event_and_ok_in_one_place`）であり、ここが足すのは実機で出た 1 行の観測である。
+  揃って動き素通りする。捕まえるのは**名前と `ok` が実バイナリの出力で食い違ったこと**である
+  ——`terminal` の誤りに加え、**`finish` が `terminal_line` の組を使わずに名前を作る退行も
+  ここにしか届かない**（単体テストは static な状態を持つ `finish` を呼べない）。
+  **PR を止める検知器はここではない**——この検査を実バイナリへ当てる `bench-startup.ps1` は
+  `smoke.yml` で `continue-on-error` の観測として走る。名前と `ok` の対応を `Ok` と
+  `StartupFailure` の全 variant で固定するのは `startup.rs` の単体テスト
+  （`every_outcome_pairs_event_and_ok_in_one_place`）である。
 - **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total` の
   差である。**非負性が乗る前提と、破れたときに負値がそのまま出力へ現れることは
   `startup.rs` の `to_json` が正本**。ここはその前提が破れたことを外から捕まえる。

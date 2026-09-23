@@ -66,7 +66,7 @@
 - [x] `every_outcome_pairs_event_and_ok_in_one_place` を書き、`terminal` / `terminal_line` を `todo!()` で置いて Red を確かめる
 - [x] `terminal` / `terminal_line` を実装し、`to_json` の `ok` を差し替えて Green にする
 - [x] `finish` を `terminal_line` の組を渡すだけにする
-- [ ] 変異 3 種を注入し、assert で落ちることと巻き戻しを確かめる（主エージェントは同じ木へ注入しない——`/implement` 3b。検証の委譲先が実施する）
+- [x] 変異 3 種を注入し、assert で落ちることと巻き戻しを確かめる（主エージェントは同じ木へ注入しない——`/implement` 3b。検証の委譲先が実施する）
 
 ### フェーズ 2 — 文書
 

@@ -102,7 +102,7 @@ pub(super) fn prepare_query_plan<'a>(
     // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
     // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
     let has_path_sep = contains_path_sep(query.trim());
-    // **needle は `norm_query` である。** 生クエリで判定すると `¥` の畳み込みでずれる
+    // **needle は `norm_query` である。** 生クエリで判定すると `¥` の正規化でずれる
     // （フィールドの doc が正本）。
     let norm_query_has_path_sep = contains_path_sep(norm_query.as_ref());
     let path_query: Option<String> = if has_path_sep {

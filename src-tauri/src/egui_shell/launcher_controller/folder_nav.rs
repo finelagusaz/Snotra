@@ -137,7 +137,7 @@ impl LauncherController {
     /// **別の順序制約が今も本メソッドの呼び出し位置を縛っている**（#700 とは無関係・本
     /// diff 以前から不記載のまま存在）: `move_selection` は `view.rs` の RowsSnapshot
     /// publish（`self.controller.state().selected()` を読み snapshot へ積む段・#699）より
-    /// **前**に呼ばれている必要がある——選択直後のフレームで新しい選択値を results 窓へ
+    /// **前**に呼ばれている必要がある——選択直後のフレームで新しい選択値を results ウィンドウへ
     /// 配るためで、現状 `update()` 内の呼び出し順序（本メソッド → snapshot publish）が
     /// それを満たしている。
     pub(in crate::egui_shell) fn on_nav_keys(

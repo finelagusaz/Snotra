@@ -7,7 +7,7 @@
 //!
 //! - **フレームを所有しない。** `update()` の文の実行順序を決めるのは `view.rs` であり、ここに
 //!   あるのは呼ばれる側の遷移である。`egui::Context` もフィールドに持たず毎回引数で受け取る
-//!   （Context の clone は repaint callback ごと複製し、その `RepaintScheduler` の `Arc` が窓の
+//!   （Context の clone は repaint callback ごと複製し、その `RepaintScheduler` の `Arc` がウィンドウの
 //!   `Destroyed` を越えて worker の停止・join を止める・#671 PR D）
 //! - **7 番目の外部イベント消費（`take_clicked_for`）はここに無い**（#699）。行クリックの逆流は
 //!   `view.rs` が snapshot publish の**後**に消費し、照合を通った index だけが
@@ -127,7 +127,7 @@ impl LauncherController {
 
     /// 検索 debounce を建てる唯一の口（構築時と reset-on-show の 2 か所が共有する）。
     ///
-    /// **窓の長さ（interval）の正本はここである**——[`crate::egui_shell::search_state`] の
+    /// **ウィンドウの長さ（interval）の正本はここである**——[`crate::egui_shell::search_state`] の
     /// `is_unsettled` の doc が「`LauncherController` が `Debouncer::new` へ渡す値」と名指して
     /// いる先がこの関数である。分割で 2 か所がファイルをまたいだため、値を綴る点を 1 つに戻した。
     /// 第 2 引数は `leading`（バースト先頭で即発火するか）であって `armed` ではない——

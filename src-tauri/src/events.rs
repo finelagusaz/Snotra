@@ -19,7 +19,7 @@ pub(crate) const HOTKEY_PRESSED: &str = "hotkey-pressed";
 /// `egui_shell::register_initial_hotkey_failure_listener` の doc。
 pub(crate) const HOTKEY_REGISTRATION_FAILED: &str = "hotkey-registration-failed";
 
-/// 起動時の初回ホットキー登録の失敗。payload は**素の `String`**。受け口は窓を能動表示して
+/// 起動時の初回ホットキー登録の失敗。payload は**素の `String`**。受け口はウィンドウを能動表示して
 /// から通知する（SPEC §10）。`HOTKEY_REGISTRATION_FAILED` と**受け口の挙動が逆を向く**理由は
 /// `egui_shell::register_initial_hotkey_failure_listener` の doc。
 pub(crate) const INITIAL_HOTKEY_FAILED: &str = "initial-hotkey-failed";

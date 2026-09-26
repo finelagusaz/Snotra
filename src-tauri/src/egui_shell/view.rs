@@ -1,4 +1,4 @@
-//! egui メインウィンドウの main 窓 1 フレーム（入力の読みと描画・OS 窓への適用）。
+//! egui メインウィンドウの main ウィンドウ 1 フレーム（入力の読みと描画・OS ウィンドウへの適用）。
 //! 検索セッションの状態と遷移は `launcher_controller`（`LauncherController`。責務詳細は
 //! そちらの `//!`）が持つ（#666 段 3。依存は一方向——`launcher_controller` はこの型を
 //! 見ない）。
@@ -19,7 +19,7 @@
 //! `src-tauri/src/` の全域 grep で 0 件である**（#751 で撤去・現在の pass に届かないため。
 //! #900 以降は `src-tauri/clippy.toml` の `disallowed-methods` が機構で禁じる）。
 //!
-//! **この crate では `panel_fill` / `window_fill` を書かない**——main 窓には読む egui コンテナ
+//! **この crate では `panel_fill` / `window_fill` を書かない**——main ウィンドウには読む egui コンテナ
 //! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、消費者ゼロの死んだ書き込みだった
 //! （spec 決定 2 で撤去）。**揃えるために書き足さないこと**——ただし
 //! **`snotra-settings` には当てはまらない**（あちらは `CentralPanel` を使うので実消費者が在り、
@@ -101,7 +101,7 @@ pub(crate) struct SearchWindowView {
     /// **リサイズ経路だけが持つ**: show 経路（`show_egui_main`）は状態を持たない関数で、頻度も
     /// ホットキーのトグル程度ゆえ無条件で撃つ。打鍵ごとに走るのはこちらだけである。
     applied_background: Option<egui::Color32>,
-    /// SU6 spec 決定 2: 直近 set_size の幅。main（本 view）が両窓（main・results）の唯一の
+    /// SU6 spec 決定 2: 直近 set_size の幅。main（本 view）が両ウィンドウ（main・results）の唯一の
     /// size writer に一意化されている（幅は config live-read・#646 PR2 決定 6）。
     last_set_width: f64,
     last_set_height: f64,
@@ -109,7 +109,7 @@ pub(crate) struct SearchWindowView {
     /// （#872/#936）。**打ち切りを持つのは費用のためではなく意味のため**——知りたいのは
     /// 最初のフレームであって、定常状態ではない。
     focus_state_traces_left: u8,
-    // results 窓のサイズデルタガードは `ResultsWindow` が持つ（#749 で移設）。**`last_set_*`
+    // results ウィンドウのサイズデルタガードは `ResultsWindow` が持つ（#749 で移設）。**`last_set_*`
     // （main 用）を流用してはならない**という当時の不変条件（Important 1）は、memo が別の型に
     // 分かれたことで構造的に保たれる——同一フレーム内で main のブロックが先に
     // `last_set_width` を更新するため、共有すると results が幅の live-reload に追従しなくなる。
@@ -130,7 +130,7 @@ impl SearchWindowView {
         }
     }
 
-    /// ウィンドウ論理幅は config live-read（SU6 spec 決定 2）。**main（本 view）が両窓（main・
+    /// ウィンドウ論理幅は config live-read（SU6 spec 決定 2）。**main（本 view）が両ウィンドウ（main・
     /// results）の唯一の size writer に一意化されている**（#646 PR2 決定 6: results への幅適用は
     /// `drive_results_window` 経由で main が担い、results 自身は書かない）。
     /// 旧実装の inner_size() 読みは「幅を維持」だったが、config_watcher（notify スレッド）の幅
@@ -226,7 +226,7 @@ pub(crate) struct SearchInputParams {
     pub(crate) input_id: egui::Id,
     /// フォルダ絞り込みから展開前 query へバッファ全体を復元したフレームか（#840）。
     pub(crate) restored_search: bool,
-    /// 窓が OS の focus を持つか（`RawInput::focused`）。**focus 要求の条件である。**
+    /// ウィンドウが OS の focus を持つか（`RawInput::focused`）。**focus 要求の条件である。**
     pub(crate) window_focused: bool,
     pub(crate) input_editable: bool,
     pub(crate) inset: f32,
@@ -301,7 +301,7 @@ pub(crate) fn search_input_ui(
     //
     // **egui はこれを Windows でだけ `true`（＝旧表示）にする。** 理由は「`winit` が韓国語 IME
     // で誤ったカーソル位置を報告する」ことである（egui の `Visuals::ime_composition` の doc）。
-    // **その理由は Snotra に当たらない**——この窓は winit を使わず、tao + 自前の IMM32 処理
+    // **その理由は Snotra に当たらない**——このウィンドウは winit を使わず、tao + 自前の IMM32 処理
     //（`snotra-egui-runtime/src/windows_ime.rs`）で preedit を取る。
     //
     // **旧表示のままだと、変換対象の節が分からない。** `windows_ime.rs` は `GCS_COMPATTR` から
@@ -329,7 +329,7 @@ pub(crate) fn search_input_ui(
             // 構築の**後**に要求すると、そのフレームに載っていた文字は焦点の無い widget の
             // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
             // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
-            // `Memory` に残るので初回だけ）。窓は可視・前面・focus 済みで「打てるはず」に
+            // `Memory` に残るので初回だけ）。ウィンドウは可視・前面・focus 済みで「打てるはず」に
             // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
             // ——これが #872 の間欠失敗の正体である。
             //
@@ -337,7 +337,7 @@ pub(crate) fn search_input_ui(
             // であり、同一フレームの文字イベントに効かせるには構築前でなければならない。
             //
             // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に
-            // 足す）にすると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうる
+            // 足す）にすると、reset-on-show 直後は `NeverFocused` なのにウィンドウは focus を持ちうる
             // ため、show 直後に打鍵できなくなる（SU2 が入れた当の挙動が消える）。条件は
             // `interactive` と同じ `input_editable` を読む（同変数の doc）。
             if params.window_focused
@@ -476,12 +476,12 @@ struct PostWidgetInput {
     shift: bool,
 }
 
-/// main 窓の当たり判定を、**描かれた矩形そのもの**に一致させる（`setup` から 1 回だけ）。
+/// main ウィンドウの当たり判定を、**描かれた矩形そのもの**に一致させる（`setup` から 1 回だけ）。
 ///
 /// egui の既定は `interaction.interact_radius = 5.0`——矩形の**外 5px** までを近傍として
 /// その widget の当たりに含める。`hit_test` は「大きな drag 背景の上に載った小さな click
 /// widget」を助ける枝を持ち、そこで**背景のドラッグを捨てて**近傍の widget へ click も drag も
-/// 渡す。main 窓はまさにその形（背景 = `Sense::drag()` の `max_rect`・入力欄 =
+/// 渡す。main ウィンドウはまさにその形（背景 = `Sense::drag()` の `max_rect`・入力欄 =
 /// `Sense::click_and_drag()`）ゆえ、バー帯の余白 `Metrics::bar_inset`（既定 7.0）のうち
 /// **内側 5px が入力欄に食われ**、入力欄以外の全域をドラッグして移動可能という
 /// `SPEC.md`「8.2 ウィンドウ位置」の定めが、外側 2px まで痩せていた（実測: 余白 7px のうち
@@ -492,7 +492,7 @@ struct PostWidgetInput {
 /// （`ui.visuals_mut()` で 3 値を渡す `search_input_ui` とは経路が違う）。
 ///
 /// **`all_styles_mut` であって `global_style_mut` ではない**——後者が書くのは**現在テーマの
-/// style だけ**である（`Options::style()` が `dark_style` / `light_style` を選ぶ）。この窓は
+/// style だけ**である（`Options::style()` が `dark_style` / `light_style` を選ぶ）。このウィンドウは
 /// テーマ設定に触れないので `theme_preference` は既定の `System` のまま、`system_theme` が
 /// `None` の間は `fallback_theme`（Dark）へ落ちる——**そこへ OS が Light を報せた瞬間、
 /// 書いていない側の style が現役になり修正が黙って消える**（実測: `RawInput.system_theme = Some(Light)` を
@@ -505,8 +505,8 @@ struct PostWidgetInput {
 /// `Arc<Style>` に間に合わない）を、この地点は原理的に持たない。同ファイルが sanctioned な
 /// 解消手段として指定する `#[allow]` + 理由コメントで開ける。
 ///
-/// **射程は main 窓の全 widget である**——toast ボタンの当たりも見た目の矩形に一致する
-/// （近傍 5px の助けを失う。矩形自体は変えていない）。results 窓は別 `Context` ゆえ無関係。
+/// **射程は main ウィンドウの全 widget である**——toast ボタンの当たりも見た目の矩形に一致する
+/// （近傍 5px の助けを失う。矩形自体は変えていない）。results ウィンドウは別 `Context` ゆえ無関係。
 ///
 /// **検査が縛るのは適用の帰結だけである**——`bar_margin_belongs_to_the_window_drag_not_the_input_field`
 /// はこの関数を直接呼ぶため、`setup` からの**呼び出しを落とす退行には届かない**
@@ -577,10 +577,10 @@ impl EguiView for SearchWindowView {
             // **show ごとに観測の予算を張り直す**（#872/#936）。egui の widget focus は
             // `Memory` に残るため、**2 回目以降の show で入力欄が focus を保つのか、初回と
             // 同じく最初のフレームで失うのかは、初回だけの計測では言えない**——前者なら
-            // 脆弱な窓はプロセス起動時に限られ、後者なら Alt+Q のたびに開く。
+            // 脆弱なウィンドウはプロセス起動時に限られ、後者なら Alt+Q のたびに開く。
             // ここが「show 直後の最初のフレーム」の唯一の判定点である。
             self.focus_state_traces_left = 5;
-            // results 窓の **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6・memo 自体は
+            // results ウィンドウの **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6・memo 自体は
             // #749 で `ResultsWindow` へ移設）。これは冗長な set_size を避ける性能上のガードで
             // あり、可視性のような correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。
             // 0 へ戻すことで再 show 後に必ず 1 度は現行 metrics で set_size させる。
@@ -602,7 +602,7 @@ impl EguiView for SearchWindowView {
                 results.reset_size_guard();
             }
 
-            // **main 窓のサイズ memo も 0 へ戻す**（results と対称・#755）。show 経路は
+            // **main ウィンドウのサイズ memo も 0 へ戻す**（results と対称・#755）。show 経路は
             // OS のサイズを直接書き、この memo を更新しない。戻さないと「memo == 導出値」の
             // 一致で補正が握り潰され、**導出がずれた瞬間に固着する**。
             //
@@ -633,7 +633,7 @@ impl EguiView for SearchWindowView {
         // `search_input_ui` の入口が `ui.visuals_mut()` で適用する（#949 で `update()` から移設。
         // 機序と順序不変条件の正本はその doc）。**唯一の消費者はその関数が描く `TextEdit` である**
         // ——この view の egui ウィジェットは他に無く、status 行と toast は raw painter へ色を
-        // 明示渡しする。results 窓は別 Context ゆえ影響外。
+        // 明示渡しする。results ウィンドウは別 Context ゆえ影響外。
         // font_family のエッジ検出も同一の読みで取る（SU6 spec 決定 2・読み 1 回/フレーム）。
         // 値はフレーム冒頭の `visual` から取る（#673）。
 
@@ -715,7 +715,7 @@ impl EguiView for SearchWindowView {
         // 上の #700 の規範（案内の描画面は status 行ただ 1 つ）に抵触しない——status 行が担うのは
         // 「いま何が起きているか」の**お知らせ**（indexing / 起動中 / 一時通知）で、こちらは
         // 「いま入力するとどこが絞り込まれるか」という**入力欄本来の説明**である。現在地の
-        // 描画面はこの hint ただ 1 つで、status 行にも results 窓にも出さない。
+        // 描画面はこの hint ただ 1 つで、status 行にも results ウィンドウにも出さない。
         //
         // **`indexing_hint()` は名前に反して status 行の文言である**（#700 で移設された際に
         // 関数名だけが残った）。`hint` で grep してここへ辿り着いた編集者が、現在地を
@@ -796,7 +796,7 @@ impl EguiView for SearchWindowView {
         // 入力欄はバー帯の内側に四辺一様の余白（`Metrics::bar_inset`）を残して置く
         //（#646 PR2・実機目視で追加）。egui の既定配置では上と左が詰まり余りが下だけに
         // 溜まっていた。Frame の inner_margin で四辺の枠を作り、中身の高さを
-        // `bar_height - 2*inset` に固定することで帯をちょうど埋める（窓高は bar_height
+        // `bar_height - 2*inset` に固定することで帯をちょうど埋める（ウィンドウ高は bar_height
         // ゆえ、下に取り残しも溢れも出ない）。余白部はドラッグ掴み領域になる（決定 10）。
         let inset = metrics.bar_inset as f32;
         let field_height = (metrics.bar_height as f32 - 2.0 * inset).max(1.0);
@@ -874,7 +874,7 @@ impl EguiView for SearchWindowView {
         if response.changed() {
             self.controller.on_input_changed(buf, in_folder, &ctx);
         }
-        // **かつてここに「窓に focus があるのに入力欄が持たないなら移す」があった**（#872/#936
+        // **かつてここに「ウィンドウに focus があるのに入力欄が持たないなら移す」があった**（#872/#936
         // で TextEdit の構築前へ移設）。ここに置くと、そのフレームに載っていた文字は既に
         // 捨てられた後であり、効くのは次のフレームからだった。**移設は挙動を 1 フレーム
         // 早めるだけで、回復の速さは変わらない**——このフレームで焦点を失った場合（Escape 等）、
@@ -938,7 +938,7 @@ impl EguiView for SearchWindowView {
         // **受容する残余**（`indexing` の (1) と同型）: 凍結ゆえ、`config_watcher` がこの
         // フレームの途中で適用した新しい値は次フレームまで効かない（最大 1 フレーム古い）。
         // **表示と起動が同じ値を見ること**がこの凍結の目的であり、遅れは `config-applied` の
-        // wake が起こす次フレームが回復する（`SPEC.md`「4.7 結果表示制御（2 窓構成）」の反映機構）。
+        // wake が起こす次フレームが回復する（`SPEC.md`「4.7 結果表示制御（2 ウィンドウ構成）」の反映機構）。
         let visible_rows = super::window_coordinator::read_visible_rows(&app);
         let is_results = self.controller.state().view_kind() == ViewKind::Results;
         let launching_now = self.controller.is_launching();
@@ -964,7 +964,7 @@ impl EguiView for SearchWindowView {
         // 報告された。launching 中は入力欄が非対話（`input_editable`）で整合していたが、
         // indexing（数分に及びうる）と notice（数秒）は編集可能なまま覆われていた。
         // 行の高さは toast と同じ `metrics.toast_height`（= bar_height・#646 決定 2）で、
-        // 窓高は `main_window_height` の `status_height` が積む。
+        // ウィンドウ高は `main_window_height` の `status_height` が積む。
         // **`overlay_text.is_some()` と同値である**（上で 1 度だけ読んだ同じ 4 入力を
         // 同じローカルとして `overlay_kind` / 本関数の両方へ通すため——読み直した入力では
         // ない・レビュー是正 2）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**
@@ -1115,7 +1115,7 @@ impl EguiView for SearchWindowView {
         // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
         // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
         // 案内は status 行が担い（#700 で一本化・空/非空で切り替えない）、show_results=false
-        // では results 窓が hide される（main は bar(+toast)固定高で伸縮しない・#646 PR2 決定 6）。
+        // では results ウィンドウが hide される（main は bar(+toast)固定高で伸縮しない・#646 PR2 決定 6）。
         // 連言③は**1 フレーム 1 回だけ**読む（#752 F2）。`indexing` は `AtomicBool` の live-read で
         // 同一フレーム内でも変わりうるため、pre/post で 2 回読むと連言③がフレーム内で食い違う。
         // ここで得た値を snapshot 用と `drive_results_window` の両方へ配る。
@@ -1126,7 +1126,7 @@ impl EguiView for SearchWindowView {
         // `indexing` だけである**——`view_kind` と `instant_rows_query` はここで読むのが正しい
         // （`on_enter` が Tool ビューへ入る等、この行より前で正当に変わる）。
         //
-        // **受容する残余が 2 つある。** (1) この値は `indexing_raw` を読んだ時点のもので、表示ゲートとしては最大 1 フレーム古い——`on_enter` の同期 `engine.search` は engine lock を握る（実運用点での保持時間は `Engine::config_handle` の doc）ので、その間に立つ余地がある。帰結は results 窓が隠れるのが 1 フレーム遅れることだけで、**起動と表示は同じ値を見たまま**である。(2) `run_search_with` の `indexing` 読みは live のままである（用途が違う——行をクリアするか。**到達経路は数えない**——凍結より前に走るものも後に走るものも在り、足すたびに腐る）。食い違うと「Enter が 1 フレーム飲まれる」か「行が空で何も起きない」になり、どちらも次フレームの再検索が回復する。
+        // **受容する残余が 2 つある。** (1) この値は `indexing_raw` を読んだ時点のもので、表示ゲートとしては最大 1 フレーム古い——`on_enter` の同期 `engine.search` は engine lock を握る（実運用点での保持時間は `Engine::config_handle` の doc）ので、その間に立つ余地がある。帰結は results ウィンドウが隠れるのが 1 フレーム遅れることだけで、**起動と表示は同じ値を見たまま**である。(2) `run_search_with` の `indexing` 読みは live のままである（用途が違う——行をクリアするか。**到達経路は数えない**——凍結より前に走るものも後に走るものも在り、足すたびに腐る）。食い違うと「Enter が 1 フレーム飲まれる」か「行が空で何も起きない」になり、どちらも次フレームの再検索が回復する。
         let plain_hidden = crate::egui_shell::plain_results_hidden(
             self.controller.state().view_kind(),
             self.controller.instant_rows_query().is_some(),
@@ -1135,7 +1135,7 @@ impl EguiView for SearchWindowView {
         // snapshot publish 用は**クリック逆流の消費より前**の値である（#699: publish → 消費の順序）。
         // 一方 `drive_results_window` は件数を消費**後**に読む——この非対称が #752 F2 の要点。
         let show_results = !self.controller.state().results().is_empty() && !plain_hidden;
-        // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results 窓(ResultsView)が担う。
+        // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results ウィンドウ(ResultsView)が担う。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
         // 判定は Vec を作る前に行う（/simplify・効率）——無変化フレームで行数ぶんの String
         // 確保を払わないため、`RowsSnapshot::matches` にスライスのまま突き合わせさせる。
@@ -1173,7 +1173,7 @@ impl EguiView for SearchWindowView {
             // **この消費が snapshot publish の後にある順序は不変条件である**（#699）。
             // 照合に使う世代は、そのフレームで行を差し替えうる全ハンドラ——Escape・
             // index 世代検知・folder drain・launch 完了——より**後**の値でなければ、
-            // 「積んだ後・消費する前に総入れ替えが起きた」窓を塞げない。
+            // 「積んだ後・消費する前に総入れ替えが起きた」ウィンドウを塞げない。
             match shared.take_clicked_for(self.controller.state().rows_generation()) {
                 crate::egui_shell::ClickTake::Current(i) => {
                     // クリックも Enter と同じ `indexing` / `visible_rows` を見る（#1077 / #1106）
@@ -1196,8 +1196,8 @@ impl EguiView for SearchWindowView {
             }
         }
 
-        // #646 PR2 決定 6: main は bar(+status/toast)のみで結果件数には伸縮しない。結果窓の可視性・サイズ・位置も
-        // ここ(毎フレーム走る main)が駆動する——hidden 窓は update() が走らず自分では
+        // #646 PR2 決定 6: main は bar(+status/toast)のみで結果件数には伸縮しない。結果ウィンドウの可視性・サイズ・位置も
+        // ここ(毎フレーム走る main)が駆動する——hidden ウィンドウは update() が走らず自分では
         // show できない(SU5 要石)。位置 → サイズ → show の順(main の show と同じ制約)。
         let height = crate::egui_shell::layout::main_window_height(
             metrics.bar_height,
@@ -1285,7 +1285,7 @@ impl EguiView for SearchWindowView {
         //
         // **クランプの `!any_down()` の外に置く。** クランプが走ったかどうかとは無関係な
         // 不変条件であり、内側に置くと show 直後にポインタが押されていた回の検証機会が
-        // 黙って落ちる。**位置にも依存しない**——矩形そのものを比べるので、窓が作業領域の
+        // 黙って落ちる。**位置にも依存しない**——矩形そのものを比べるので、ウィンドウが作業領域の
         // 内側にいてクランプが no-op でも導出の誤りは現れる。
         //
         // **呼び出し側にしか無い制約**（`/race-check` 境界 1）: **上の `set_size` ブロックより
@@ -1294,7 +1294,7 @@ impl EguiView for SearchWindowView {
         // このフレームは必ず `set_size` を撃つ。前へ動かすと、幅設定が hide を跨いで
         // 変わっていた回に**旧幅を読んで偽陽性**になる。**同期性への依存はクランプと同じ**
         // ——`SetWindowPos` は所有スレッドから撃てば同期で効く（`SWP_ASYNCWINDOWPOS` が
-        // 効くのは呼び出しスレッドと窓の所有スレッドが違うときだけである）。
+        // 効くのは呼び出しスレッドとウィンドウの所有スレッドが違うときだけである）。
         // クランプ（上）との前後は問わない——あちらは `set_position` だけでサイズを変えない。
         if was_reset_frame {
             crate::egui_shell::check_show_bar_rect(&app, metrics.bar_height);
@@ -1339,7 +1339,7 @@ mod tests {
     ///
     /// `AppState.indexing` は `AtomicBool` の live-read で、同一フレーム内でも index build
     /// スレッドが値を変えうる。独立に 2 回読むと、status 行・表示ゲート・起動判定のうち
-    /// **どの 2 つかが同じフレームで食い違う**——#752 F2 が status 行と窓高について踏み、
+    /// **どの 2 つかが同じフレームで食い違う**——#752 F2 が status 行とウィンドウ高について踏み、
     /// #1077 が表示ゲートと Enter の起動判定について踏んだ。どちらも「片方だけ古い値で
     /// 描く／判断する」形で、**挙動テストは通り抜ける**（行は正しく出る）。
     ///
@@ -1618,7 +1618,7 @@ mod tests {
     ///
     /// `update()` はかつて widget を追加した**後**に `response.request_focus()` を撃っており、
     /// プロセス起動後の最初のフレーム（`has_focus=false`）に届いた文字が丸ごと消えていた。
-    /// ローカルではその窓が 50ms しか開かないが、CI runner では 1.4〜19 秒開き、#872 の
+    /// ローカルではそのウィンドウが 50ms しか開かないが、CI runner では 1.4〜19 秒開き、#872 の
     /// 間欠失敗（失敗率 12.5%・7 か月）の正体がこれだった。
     ///
     /// **両方の並びを 1 フレームずつ走らせて差まで測る**——「構築前なら入る」だけでは、
@@ -1986,7 +1986,7 @@ mod tests {
         assert_eq!(
             probe_bar_margin(true, 1.0),
             (true, false),
-            "余白（欄の外 1px）が窓ドラッグへ渡っていない"
+            "余白（欄の外 1px）がウィンドウドラッグへ渡っていない"
         );
         assert_eq!(
             probe_bar_margin(false, 1.0),
@@ -2004,7 +2004,7 @@ mod tests {
     ///
     /// `global_style_mut` は**現在テーマの style だけ**を書くため、`system_theme` が Light で
     /// 届いた瞬間に書いていない側が現役になり、修正が黙って消える。**`theme_preference` は
-    /// 既定の `System` のままで起きる**——この窓はテーマ設定に触れないので、コード側は何も
+    /// 既定の `System` のままで起きる**——このウィンドウはテーマ設定に触れないので、コード側は何も
     /// していないのに OS の報せだけで倒れる経路である。
     ///
     /// **両テーマを直接読む**（`global_style()` は現在テーマしか返さないので、切替を経ずに

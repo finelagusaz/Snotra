@@ -1,7 +1,7 @@
 //! egui/softbuffer メインウィンドウの外殻（#532 SU2〜SU7・唯一の UI 経路）。
-//! window 生成（main/results 両窓）・共有状態（`EguiShellState`）・config の 1 フレーム読み・
+//! window 生成（main/results 両ウィンドウ）・共有状態（`EguiShellState`）・config の 1 フレーム読み・
 //! listener の登録・起動時 updater check。
-//! **窓を操作する実体（show/hide・位置・results のサイズ・wake）は `window_coordinator` に
+//! **ウィンドウを操作する実体（show/hide・位置・results のサイズ・wake）は `window_coordinator` に
 //! ある**（#749 段 1）——ここに残るのは登録と生成であって、駆動ではない。
 //! main のサイズだけは 2 か所に分かれている（`window_coordinator` の show 経路と `view.rs` の
 //! 毎フレーム。理由は `window_coordinator` の `//!`）。
@@ -33,9 +33,9 @@ mod view;
 mod visual;
 mod window_coordinator;
 
-// main.rs（hotkey / tray / setup）・view.rs（結果窓の駆動と wake）・launcher_controller
+// main.rs（hotkey / tray / setup）・view.rs（結果ウィンドウの駆動と wake）・launcher_controller
 // （updater install 失敗の wake_main）・results_view.rs（クリック逆流）が
-// 消費する。窓操作の実体は window_coordinator.rs へ移した（#749 段 1）。**モジュール外に
+// 消費する。ウィンドウ操作の実体は window_coordinator.rs へ移した（#749 段 1）。**モジュール外に
 // 消費者があるものだけを re-export する**——`read_placement_relative` / `read_metrics` /
 // `max_results` / `position_on_target_monitor` は同モジュール内
 // からしか呼ばれず、`position_results_below_main` は親である本ファイルが
@@ -45,7 +45,7 @@ pub(crate) use window_coordinator::{
     hide_egui_main, show_egui_main, wake_main, wake_results,
 };
 
-// mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
+// mod.rs（ウィンドウ生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
 // results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。ClickTake は view.rs
 // （クリック逆流の消費・世代照合の結果で分岐する）が消費する（#699）。
 pub(crate) use results_view::ClickTake;
@@ -130,7 +130,7 @@ use crate::egui_shell::view::SearchWindowView;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HotkeyFailureKind {
     /// 起動時の初回登録失敗（`initial-hotkey-failed`）。
-    /// SPEC §10 のとおり窓を能動表示してから通知する
+    /// SPEC §10 のとおりウィンドウを能動表示してから通知する
     /// （listener は `register_initial_hotkey_failure_listener`・#652 Task 4）。
     Initial,
     /// 設定変更による再登録失敗（`hotkey-registration-failed`）。旧ホットキーを維持。
@@ -165,19 +165,19 @@ pub(crate) struct EguiShellState {
     pub(crate) show_bar_width_phys: AtomicI32,
     #[cfg(windows)]
     pub(crate) show_bar_height_phys: AtomicI32,
-    /// main 窓を外部から起こすハンドル（`create()` = `attach` の戻り値・#671 PR D）。
+    /// main ウィンドウを外部から起こすハンドル（`create()` = `attach` の戻り値・#671 PR D）。
     /// hidden 中は次 show のフレームで toast 等が読まれるため、wake は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
     /// 旧実装は各 view の `setup` が `egui::Context` の clone を登録する
-    /// `Mutex<Option<egui::Context>>` スロットだった——**登録前の窓を「未登録＝no-op」で
-    /// 扱う段が消え、この型は窓の存在と同時に有効になる**。
+    /// `Mutex<Option<egui::Context>>` スロットだった——**登録前のウィンドウを「未登録＝no-op」で
+    /// 扱う段が消え、この型はウィンドウの存在と同時に有効になる**。
     main_waker: snotra_egui_runtime::WindowWaker,
-    /// results 窓を外部から起こすハンドル（main と同型・#646 PR2 の `results_ctx` の後継）。
+    /// results ウィンドウを外部から起こすハンドル（main と同型・#646 PR2 の `results_ctx` の後継）。
     results_waker: snotra_egui_runtime::WindowWaker,
     /// hotkey 登録失敗の pending payload（SU6 spec 追補 2 + #652）。種別ごとに文言が違う
     /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
     /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
-    /// 委ね、言語同時変更で旧言語整形になる競合窓を閉じる）。この競合窓が閉じる根拠は
+    /// 委ね、言語同時変更で旧言語整形になる競合ウィンドウを閉じる）。この競合ウィンドウが閉じる根拠は
     /// `apply_config_change` が engine への `update_config` 適用**後**に `config-applied` を
     /// emit する順序——wake 時の lang() live-read は必ず新言語を読む（旧 `language-changed`
     /// 先行発火の不変条件は #532 SU7 の emit 削除で消滅し、この順序が後継の根拠）。
@@ -186,7 +186,7 @@ pub(crate) struct EguiShellState {
 }
 
 impl EguiShellState {
-    /// wake handle は `create()` が返すものだけを受け取る（`Default` は持たない——窓が
+    /// wake handle は `create()` が返すものだけを受け取る（`Default` は持たない——ウィンドウが
     /// 無いのに wake できる状態を作らないため）。他フィールドは従来の既定値。
     pub(crate) fn new(handles: &EguiShellHandles) -> Self {
         Self {
@@ -308,30 +308,30 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
 
 /// `create()` が setup へ引き渡す所有物（#671 PR D・spec 決定 8 の終端形）。
 ///
-/// **窓の生成（`create`）と managed state への載せ替え（`main.rs`）を分ける**ため、間に立つ
+/// **ウィンドウの生成（`create`）と managed state への載せ替え（`main.rs`）を分ける**ため、間に立つ
 /// 型が要る。`create` の中で `app.manage` しないのは、setup の順序制約（どの listener より
 /// 前に何が載っているか）を `main.rs` の 1 画面に残すため（spec 決定 8）。
 pub(crate) struct EguiShellHandles {
-    /// results 窓の所有型（生 Win32 の show/hide/topmost・#671 PR A′）。
+    /// results ウィンドウの所有型（生 Win32 の show/hide/topmost・#671 PR A′）。
     pub(crate) results_window: ResultsWindow,
-    /// main 窓の wake handle（`EguiShellState` が保持する）。
+    /// main ウィンドウの wake handle（`EguiShellState` が保持する）。
     pub(crate) main_waker: snotra_egui_runtime::WindowWaker,
-    /// results 窓の wake handle（同上）。
+    /// results ウィンドウの wake handle（同上）。
     pub(crate) results_waker: snotra_egui_runtime::WindowWaker,
 }
 
-/// main 窓の生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
-/// **窓のプロパティを決めるのはここだけである**——`tauri.conf.json` の `app.windows` は空であり、
-/// 宣言による窓は 1 つも無い。ここが与える全プロパティ（52px 高は初期値〔SU3 で show 前折り畳み + 結果表示時に動的リサイズ・view.rs〕・width は config の window_width・skipTaskbar・
-/// alwaysOnTop・decorations:false・resizable:false・visible:false）が窓の姿である（codex #11・(B)#1）。
+/// main ウィンドウの生成。EguiRuntime を install し webview 無しの "main" ウィンドウを生成して attach。setup 限定。
+/// **ウィンドウのプロパティを決めるのはここだけである**——`tauri.conf.json` の `app.windows` は空であり、
+/// 宣言によるウィンドウは 1 つも無い。ここが与える全プロパティ（52px 高は初期値〔SU3 で show 前折り畳み + 結果表示時に動的リサイズ・view.rs〕・width は config の window_width・skipTaskbar・
+/// alwaysOnTop・decorations:false・resizable:false・visible:false）がウィンドウの姿である（codex #11・(B)#1）。
 /// `background_color_hex`: config `visual.background_color`（`#RRGGBB`）。過渡/リサイズ下地の
 /// SU2 ハードコード 0x282828 を config へ差し替える（§11・#532 SU4 Task 2）。
 /// パース失敗時は `VisualConfig::default()` の背景色へ fallback（`visual::background_color` =
 /// `Color32::from_hex` 1 本・spec 決定 4。リテラルを再手打ちしない）。
 ///
-/// **この初期ブラシが画面に出る機会は無い**——両窓とも `.visible(false)` で生成され、可視化の
+/// **この初期ブラシが画面に出る機会は無い**——両ウィンドウとも `.visible(false)` で生成され、可視化の
 /// 直前（`show_egui_main` / `ResultsWindow::show`）が無条件で上書きするためである。**残すのは
-/// 安全網としてであり**、show 経路を迂回する窓表示が将来足されたときに白い窓を出さないための
+/// 安全網としてであり**、show 経路を迂回するウィンドウ表示が将来足されたときに白いウィンドウを出さないための
 /// もの。config 値を届ける経路としては働いていない。
 pub(crate) fn create(
     app: &mut tauri::App,
@@ -350,8 +350,8 @@ pub(crate) fn create(
         .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）。高さは初期値。実高は show 時に Metrics で再設定(#646)
         .decorations(false)
         .resizable(false)
-        .skip_taskbar(true) // 宣言窓 skipTaskbar:true の再現（(B)#1）
-        .always_on_top(true) // 宣言窓 alwaysOnTop:true の再現（(B)#1）
+        .skip_taskbar(true) // 宣言ウィンドウ skipTaskbar:true の再現（(B)#1）
+        .always_on_top(true) // 宣言ウィンドウ alwaysOnTop:true の再現（(B)#1）
         // 白フラッシュ回避: show 時、最初の softbuffer present 前にネイティブ背景ブラシが一瞬見える。
         // softbuffer の CLEAR_COLOR（renderer.rs=0x282828）に合わせて config テーマ色にし、
         // 白→暗の点滅を消す（既定は従来どおり 0x282828）。
@@ -359,10 +359,10 @@ pub(crate) fn create(
         .visible(false)
         .build()?; // tauri::Error → RuntimeError（#[from]・runtime.rs:46）
 
-    // #646 PR2: 結果リスト窓。focusable(false) で tao が WS_EX_NOACTIVATE を自動適用し
+    // #646 PR2: 結果リストウィンドウ。focusable(false) で tao が WS_EX_NOACTIVATE を自動適用し
     // (tao window_state.rs: !FOCUSABLE → style_ex |= WS_EX_NOACTIVATE)、クリックしても
     // フォーカスはメインの入力欄から動かない（決定 4）。可視性・サイズ・位置は main の
-    // update() が駆動する（hidden 窓は update() が走らないため自分では show できない）。
+    // update() が駆動する（hidden ウィンドウは update() が走らないため自分では show できない）。
     let results = tauri::Window::builder(app, "results")
         .title("Snotra Results")
         .inner_size(window_width, 100.0) // 初期値。実高は main が visible_rows 分の固定高で設定（#835）
@@ -380,10 +380,10 @@ pub(crate) fn create(
         apply_rounded_corners(&results);
     }
     // #671 PR A′: attach は window を move するため、その**前**に clone から所有型を作る。
-    // `tauri::Window` は Arc ベースのハンドルで、clone は同一窓を指す（tauri 2.11 の
+    // `tauri::Window` は Arc ベースのハンドルで、clone は同一ウィンドウを指す（tauri 2.11 の
     // `impl Clone for Window` を実測）。
     let results_window = ResultsWindow::new(results.clone());
-    // attach は窓ごとの wake handle を返す（#671 PR D）。**results を先に attach する順序は
+    // attach はウィンドウごとの wake handle を返す（#671 PR D）。**results を先に attach する順序は
     // 変えない**——`ResultsWindow::new` は attach の move より前でなければならず（PR A′）、
     // main の Moved リスナー登録もこの間に入る。
     let results_waker =
@@ -408,7 +408,7 @@ pub(crate) fn create(
     })
 }
 
-/// DWM に窓の角丸を依頼する（#646 PR2 決定 4）。Windows 11（build 22000+）のみ有効で、
+/// DWM にウィンドウの角丸を依頼する（#646 PR2 決定 4）。Windows 11（build 22000+）のみ有効で、
 /// Windows 10 ではエラーを黙って握りつぶす（装飾なしで受容・best-effort）。
 /// softbuffer は AA を持たず自前角丸は品質が出ないため OS 機構に委ねる。
 #[cfg(windows)]
@@ -533,7 +533,7 @@ pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
 /// - **格納が先**: show が起こすフレームは reset-on-show の `notice.clear()` を通ってから
 ///   pending を消費する（view の順序不変条件）。逆順にすると clear と store の間にフレームが
 ///   挟まりうるため、通知が消えたまま二度と出ない。
-/// - **show する**: ホットキーが登録できていない＝ユーザーが窓を開く手段がトレイしか無い。
+/// - **show する**: ホットキーが登録できていない＝ユーザーがウィンドウを開く手段がトレイしか無い。
 ///   SPEC §10「初回ホットキー登録失敗時は操作不能回避のため検索 UI を表示し」の実装で、
 ///   旧 TS フロントが担っていた経路の egui 版（当該フロントは #532 SU7 で撤去済み）。
 /// - **wake する**: `show_on_startup=true` で既に可視なら `show()` は再描画を生まない。

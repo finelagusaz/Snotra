@@ -12,7 +12,7 @@
 //! 構築し、無効時は空である**（migemo 無効ユーザーの死蔵メモリと構築時間を削る・#337）。
 //! 2 本は必ず同時に空か同長（`assemble` の debug_assert が検証）。空のとき検索ループは
 //! `kana_available` の空ガードで `kana_lower_names.get(i)` を回避し、Fuzzy pre-filter は
-//! `kana_char_masks.is_empty()` で kana 経路を棄却する（構築時 OFF → 検索時 ON の窓での panic 防止）。
+//! `kana_char_masks.is_empty()` で kana 経路を棄却する（構築時 OFF → 検索時 ON のウィンドウでの panic 防止）。
 
 use rayon::prelude::*;
 

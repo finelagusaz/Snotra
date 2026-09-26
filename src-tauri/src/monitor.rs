@@ -74,18 +74,18 @@ pub fn primary_monitor_work_area() -> Option<WorkArea> {
 
 /// Get the work area of the monitor containing the given physical point.
 ///
-/// **基準モニターは必ず点から決める。窓の矩形から決めてはならない**（#738）。
+/// **基準モニターは必ず点から決める。ウィンドウの矩形から決めてはならない**（#738）。
 /// `MonitorFromWindow` は**ウィンドウ全体の矩形**の重なりでモニターを選ぶため、上下に並んだ
 /// モニターで status 行 + toast 行が出て下側へ大きく伸びると基準が下側へ移り、**行が出た
 /// だけでバーが隣モニターへ飛ぶ**（バーの位置を行の出没で動かさない規則に反する・
-/// `SPEC.md` §4.7「4.7 結果表示制御（2 窓構成）」）。呼び出し側は `layout::bar_rect_center` が返すバー矩形の中心を渡す——バー矩形は
+/// `SPEC.md` §4.7「4.7 結果表示制御（2 ウィンドウ構成）」）。呼び出し側は `layout::bar_rect_center` が返すバー矩形の中心を渡す——バー矩形は
 /// 行の出没で変わらないので、基準モニターも動かない。
 ///
-/// **この crate に窓の矩形からモニターを決める経路はもう無い。** 唯一の例外だった
-/// `window_monitor_work_area`（results 窓の高さクランプ用）は #835 のクランプ撤去で消えた。
+/// **この crate にウィンドウの矩形からモニターを決める経路はもう無い。** 唯一の例外だった
+/// `window_monitor_work_area`（results ウィンドウの高さクランプ用）は #835 のクランプ撤去で消えた。
 ///
 /// `MONITOR_DEFAULTTONEAREST` ゆえ、点がどのモニターにも乗っていなくても最寄りを返す
-/// （完全に画面外へドラッグされた窓を復帰させるのに要る）。
+/// （完全に画面外へドラッグされたウィンドウを復帰させるのに要る）。
 #[cfg(windows)]
 pub fn point_monitor_work_area(x: i32, y: i32) -> Option<WorkArea> {
     unsafe {

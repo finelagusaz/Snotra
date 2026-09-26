@@ -20,7 +20,7 @@ use crate::state::AppState;
 /// 先に `mark_index_stale` で index を stale にし、CAS に失敗（既に in-flight）しても走行中ビルドの
 /// drain ループ / finish 後再チェックが取りこぼさず拾う（lost-update を塞ぐ、issue #347/#348-A）。
 ///
-/// **finish 後に `is_index_stale` を再チェック**し、finish 窓で刺さった変更を自己再 kick で拾う。
+/// **finish 後に `is_index_stale` を再チェック**し、finish ウィンドウで刺さった変更を自己再 kick で拾う。
 /// **unwind の panic 経路では再 kick しない**——決定論的な panic を無限にリトライしないため。
 pub fn start_index_build(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
@@ -40,7 +40,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     // 要求した事実そのものが引き金であり、集合が変わったかを測り直す必要は無い。
     //
     // ここで撃つのは CAS に成功した側だけである（要求のたびに撃つと、走行中ビルドへの
-    // 重複要求で無駄に捨てる）。ただし `drain_index` の finish 窓で刺さった変更は自己再 kick
+    // 重複要求で無駄に捨てる）。ただし `drain_index` の finish ウィンドウで刺さった変更は自己再 kick
     // として再びここを通るため、直前の無効化から間を置かず 2 回撃たれうる——1 回目の無効化後に
     // ユーザーが検索してアイコンを再抽出していれば、それも巻き添えで捨てる。無害だが無駄。
     // engine ロックは `mark_index_stale()` の中で解放済みで、ロックを跨いだ取得にはならない。
@@ -71,7 +71,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
 
             match build_result {
                 Ok(()) => {
-                    // finish 窓: complete が clear した後〜finish までに config 変更（CAS 失敗）が
+                    // finish ウィンドウ: complete が clear した後〜finish までに config 変更（CAS 失敗）が
                     // 刺さった場合を拾う。stale が残っていれば再 kick（CAS は finish 後なので成功する）。
                     let stale = app_handle
                         .state::<AppState>()

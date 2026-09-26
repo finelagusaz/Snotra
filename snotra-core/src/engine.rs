@@ -117,7 +117,7 @@ pub struct Engine {
     /// インデックスが現在の config の `IndexInputs` を反映していない可能性を表す（issue #347/#348-A）。
     /// `start_index_build`（ビルド要求）が `mark_index_stale` で立て、`complete_index_drain` が
     /// 「ビルド開始時スナップショット == 現在」のときだけ落とす。コヒーレンシ判断を engine Mutex
-    /// （軸1）に閉じ、lost-update 窓を塞ぐための単一の真実。
+    /// （軸1）に閉じ、lost-update ウィンドウを塞ぐための単一の真実。
     index_stale: bool,
 }
 
@@ -290,7 +290,7 @@ impl Engine {
         self.index_stale = true;
     }
 
-    /// インデックスが stale か。`start_index_build` の finish 後再チェック（finish 窓の取りこぼし回収）に使う。
+    /// インデックスが stale か。`start_index_build` の finish 後再チェック（finish ウィンドウの取りこぼし回収）に使う。
     pub fn is_index_stale(&self) -> bool {
         self.index_stale
     }

@@ -93,7 +93,7 @@ fn apply_config_change(app: &AppHandle) {
     // 読みかで口を分ける理由が無い）。
     //
     // **書き込みとは原子的でない。** 読みは guard がこの文末で落ち、`update_config` は下で
-    // engine 錠を取り直す——この窓は #1123 以前から在り、移設で広がっていない。
+    // engine 錠を取り直す——このウィンドウは #1123 以前から在り、移設で広がっていない。
     let old_config = state.read_config(|c| c.clone());
 
     // Detect changes（egui は config-applied wake + 毎フレーム live-read で値を拾うため、
@@ -157,7 +157,7 @@ fn apply_config_change(app: &AppHandle) {
     // ある**: 先に撃つと、config がまだ `show_icons=true` を返す隙に icon worker
     // （`ensure_icon_cache_loaded_if_enabled` → `IconCache::load`）がキャッシュを建て直し、
     // **無効なのに常駐したまま次のトグルか終了まで残る**。後に撃てば、config を読む worker は
-    // 偽を見て自分で `None` にする。**それでも窓は閉じない**——`update_config` の直前に真を
+    // 偽を見て自分で `None` にする。**それでもウィンドウは閉じない**——`update_config` の直前に真を
     // 読んだ worker は、この破棄の後に挿入しうる（`ensure_…` は config 読みと icon lock を
     // 別々に取る）。**これは受容する残余で、drain 上で撃っていた頃から在る**。
     if icons_off && let Some(icons) = app.try_state::<crate::icon::IconCacheState>() {
@@ -174,7 +174,7 @@ fn apply_config_change(app: &AppHandle) {
     // 幅変更の反映は egui view が config-applied wake 後の live-read で自ら set_size する
     //（SU6: view 単独 size writer——notify スレッドとの 2 次元 read-modify-write race 回避）。
 
-    // SU6 spec 決定 1: egui 窓への単一 wake（値は運ばない・受信側は次フレームの live-read が拾う）。
+    // SU6 spec 決定 1: egui ウィンドウへの単一 wake（値は運ばない・受信側は次フレームの live-read が拾う）。
     // update_config（上）より後に置く——先に起こすと旧 config を描いてから二度目の wake が要る。
     let _ = app.emit(crate::events::CONFIG_APPLIED, ());
 }

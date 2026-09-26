@@ -368,7 +368,7 @@ impl SearchEngine {
         // - `Fuzzy` — Prefix/Substring は `starts_with` / `find` であって部分列ではない。
         //   `find` は連続一致を要求するので同じ論証が使えるが、そもそも安いので飛ばす価値が無い
         // - `norm_query_has_path_sep` — **`has_path_sep`（生クエリ）ではない**。needle は
-        //   `norm_query` であり、**畳み込みが区切りに触る版では両者がずれる**
+        //   `norm_query` であり、**正規化が区切りに触る版では両者がずれる**
         //   （条件の正本は `QueryPlan` の当該フィールドの doc。今の nucleo では `¥` は畳まれず
         //   2 述語は外延的に一致するので、**この条件だけは変異を当てても落ちる検知器を置けない**）
         // - `!any_name_has_path_sep` — 前提そのもの。**契約ではなく構築時の実測**で、

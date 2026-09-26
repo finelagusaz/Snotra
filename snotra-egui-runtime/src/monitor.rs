@@ -1,4 +1,4 @@
-//! 窓が載っているモニターのリフレッシュレート取得（#737・契約②「配送には下限間隔がある」の供給側）。
+//! ウィンドウが載っているモニターのリフレッシュレート取得（#737・契約②「配送には下限間隔がある」の供給側）。
 //!
 //! カスケードは 現在モード（動的）→ OS 既定（レジストリ）→ None の順で、None は呼び出し側
 //! （`RepaintScheduler::set_min_interval`）が 60Hz フォールバックへ倒す（issue #737 コメントの
@@ -8,7 +8,7 @@
 //! HWND / HMONITOR は `isize` で受け渡す（`Send` でないハンドル型を持ち回らない
 //! `windows_ime.rs` と同じパターン）。
 
-/// 窓が載っている HMONITOR（変化検知用・安価な単独呼び出し）。
+/// ウィンドウが載っている HMONITOR（変化検知用・安価な単独呼び出し）。
 /// `Moved` はドラッグ中に連発するため、呼び出し側はこの値の変化を見てから
 /// `monitor_refresh_hz`（`EnumDisplaySettingsW` を含み安くない）を呼ぶ。
 #[cfg(windows)]
@@ -24,7 +24,7 @@ pub(crate) fn window_monitor(_hwnd: isize) -> Option<isize> {
     None
 }
 
-/// 窓が載っているモニターのリフレッシュレート（Hz）。取得できなければ None。
+/// ウィンドウが載っているモニターのリフレッシュレート（Hz）。取得できなければ None。
 #[cfg(windows)]
 pub(crate) fn monitor_refresh_hz(hwnd: isize) -> Option<u32> {
     use windows::Win32::Foundation::HWND;

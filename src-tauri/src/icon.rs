@@ -195,7 +195,7 @@ pub fn invalidate_icon_cache(icons: &IconCacheState) {
 /// テスト可能な内部実装。`bin_file` を `None` で渡すとファイル削除をスキップする。
 ///
 /// **ファイル削除まで lock 保持中に行う**（#522）。旧実装の「None 化 → unlock →
-/// 削除」では、unlock〜削除の窓で `ensure_icon_cache_loaded_if_enabled`（同じ lock で
+/// 削除」では、unlock〜削除のウィンドウで `ensure_icon_cache_loaded_if_enabled`（同じ lock で
 /// None 検知 → `icons.bin` ロード）が削除直前の旧ファイルをメモリへ戻せた
 /// （実測 17/2000 回）。削除 → None 化を同一 critical section に置くことで、
 /// **`remove()` が成功した場合**「None の観測 = `icons.bin` は削除済み」が成立し、
@@ -490,7 +490,7 @@ mod tests {
     /// issue #522 の回帰テスト: invalidate（ファイル削除 + メモリ None 化）と
     /// 並行ロード（None 検知 → icons.bin ロード）を並走させ、「icons.bin 不在なのに
     /// メモリへ旧データが残存する」interleaving が存在しないことを確認する。
-    /// 修正前は「None 化 → unlock → 削除」の窓で 17/2000 回再現した（issue 実測）。
+    /// 修正前は「None 化 → unlock → 削除」のウィンドウで 17/2000 回再現した（issue 実測）。
     /// loader は ensure_icon_cache_loaded_if_enabled と同手順を temp BinFile 上で
     /// 再構成する（本物は icon_bin_file() 固定パス依存のため temp 注入が効かない）。
     #[test]

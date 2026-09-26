@@ -76,11 +76,11 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 
 ### ウィンドウ管理
 
-- 検索ウィンドウ（`main`）と結果ウィンドウ（`results`）は起動時のセットアップで作成し `visible: false`、ホットキーで表示/非表示を切替（#646 PR2 で 2 窓構成へ）
-- 検索バーは `main`、検索結果は `results`（`egui_shell/view.rs` / `egui_shell/results_view.rs`）に分離して描画する。`results` は `focusable(false)` でフォーカスを取らない従属窓
+- 検索ウィンドウ（`main`）と結果ウィンドウ（`results`）は起動時のセットアップで作成し `visible: false`、ホットキーで表示/非表示を切替（#646 PR2 で 2 ウィンドウ構成へ）
+- 検索バーは `main`、検索結果は `results`（`egui_shell/view.rs` / `egui_shell/results_view.rs`）に分離して描画する。`results` は `focusable(false)` でフォーカスを取らない従属ウィンドウ
 - 結果の表示/非表示は `search_state.rs` の純粋核（view 種別 = tool>folder>results の優先度射影 + indexing 表示ゲート）で制御。**表示ゲートが起動の可否も決める**——隠れている行を Enter / クリック / Shift+Enter が起動しないよう `launcher_controller/activation.rs` の起動の入口が表示側と同じ述語を呼ぶ（#1077 / #1106。別式を書くと表示と起動が片方だけ変わる）。**ゲートは独立した 2 つで、どちらか一方でも隠していれば起動しない**: `plain_results_hidden`（索引構築中の通常結果。carve-out あり）と `layout::results_area_collapsed`（最大表示件数が 0。carve-out 無し・全ビュー）。**どちらの入力値も `view.rs` が 1 フレーム 1 回読み**、構築子を読み点のモジュールへ閉じた型（`FrameIndexing` / `FrameVisibleRows`。`window_coordinator` の外では構築できない）として起動側へ渡す
-- `main` の高さは結果表示による伸縮はしない。`main` の高さは `egui_shell/view.rs` の毎フレーム処理が算出し自窓へ直接 `set_size` する。`results` の高さは `egui_shell/window_coordinator.rs` の driver が算出し `ResultsWindow::set_size` で適用する（旧 compute_window_height は撤去済み）。式は `src-tauri/src/egui_shell/layout.rs`（`main_window_height` / `results_window_height`）が正本、ユーザー観測面は `SPEC.md` §4.7「4.7 結果表示制御（2 窓構成）」（main）・`SPEC.md` §4.5「4.5 最大列挙数」（results）が正本。**show 経路も同じ式で高さを導き、そのまま適用する**——窓を bar_height へ物理的に畳む手順は #878 で消えた（位置決めに要るバー矩形は `window_coordinator::derive_bar_rect_phys` が OS へ書かずに導く）
-- `results` の位置・可視性は `main` の毎フレーム更新（`drive_results_window`）が駆動する（`main` 直下 + `window_gap`・既定 4px）。両窓に DWM 角丸を適用（Windows 11 best-effort・Win10 は角丸なし）
+- `main` の高さは結果表示による伸縮はしない。`main` の高さは `egui_shell/view.rs` の毎フレーム処理が算出し自ウィンドウへ直接 `set_size` する。`results` の高さは `egui_shell/window_coordinator.rs` の driver が算出し `ResultsWindow::set_size` で適用する（旧 compute_window_height は撤去済み）。式は `src-tauri/src/egui_shell/layout.rs`（`main_window_height` / `results_window_height`）が正本、ユーザー観測面は `SPEC.md` §4.7「4.7 結果表示制御（2 ウィンドウ構成）」（main）・`SPEC.md` §4.5「4.5 最大列挙数」（results）が正本。**show 経路も同じ式で高さを導き、そのまま適用する**——ウィンドウを bar_height へ物理的に畳む手順は #878 で消えた（位置決めに要るバー矩形は `window_coordinator::derive_bar_rect_phys` が OS へ書かずに導く）
+- `results` の位置・可視性は `main` の毎フレーム更新（`drive_results_window`）が駆動する（`main` 直下 + `window_gap`・既定 4px）。両ウィンドウに DWM 角丸を適用（Windows 11 best-effort・Win10 は角丸なし）
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換
 
 ### 起動シーケンスと初期化順序
@@ -154,11 +154,11 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 ```mermaid
 sequenceDiagram
     participant User
-    participant View as view.rs・launcher_controller（main 窓の 1 フレーム）
+    participant View as view.rs・launcher_controller（main ウィンドウの 1 フレーム）
     participant State as search_state.rs（純粋核・seq も内側に持つ）
     participant W as search_worker.rs（プロセス寿命 1 本）
     participant Eng as Engine / SearchEngine (snotra-core)
-    participant Results as results_view.rs（results 窓）
+    participant Results as results_view.rs（results ウィンドウ）
 
     Note over User,Results: ── 打鍵フレーム ──
     User->>View: キー入力（TextEdit changed）
@@ -227,8 +227,8 @@ sequenceDiagram
 ### 補足
 
 - この流れに現れる非同期は、検索 worker・folder 展開・アイコン抽出・起動である（crate 全体の worker はこれで尽きない——`config_watcher` / index build / platform スレッド / updater は別軸）。**この 4 つの中では検索 worker だけが長寿命であり**、folder は per-nav、起動は per-launch、アイコンは未キャッシュぶんの spawn である（都度 spawn を採らなかった理由は `search_worker.rs` の `//!`）。遅着は folder / 起動が channel drop で、検索が seq の不一致で消す
-- 通常の打鍵で残るフレーム費用は、results 窓の show 遷移（`SW_SHOWNOACTIVATE` + 下地の塗り・行が 0 → N のときだけ）と main の `set_size` である。どちらも予算の内側に収まる
-- `results` は `focusable(false)` の従属窓のため、可視性・サイズ・位置の driver は常に `main` 側にある（hidden 窓は `update()` が走らないため自分では show できない・#646 PR2）
+- 通常の打鍵で残るフレーム費用は、results ウィンドウの show 遷移（`SW_SHOWNOACTIVATE` + 下地の塗り・行が 0 → N のときだけ）と main の `set_size` である。どちらも予算の内側に収まる
+- `results` は `focusable(false)` の従属ウィンドウのため、可視性・サイズ・位置の driver は常に `main` 側にある（hidden ウィンドウは `update()` が走らないため自分では show できない・#646 PR2）
 
 #### 検索が worker へ出ているのは Plain の打鍵だけである（#1004）
 
@@ -236,7 +236,7 @@ sequenceDiagram
 
 #### 例外は Enter である
 
-最終クエリの結果がまだ行へ反映されていない間の Enter は worker の往復を待てないため、`on_enter` がその場で同期 `engine.search` を走らせる（判定は `should_flush_on_enter`、正当性の理由は同関数のコメント。**「未反映」の中身は第 3 引数を導く `SearchState::is_unsettled` の doc が正本である**）。**この条件は debounce の予約中に限らない**（#1038）——#631 が塞いだ欠陥が同じ形で戻っていた（含意が壊れた経緯は同 doc）。**発火しうる窓は「打鍵 → 50 ms」から「打鍵 → 50 ms + worker の走査（実運用点の値は `Engine::config_handle` の doc が持つ）と、その結果を採り込むフレーム」へ広がった**（**上端**は走査の完了ではなく `drain_search` の `accept` である。起動突入・空クエリ・reset は**行を同期で差し替えることによって**これより早く閉じる・#1039。**folder からの Escape だけは閉じない**——復帰させる行は展開前のものであって復元 query の最終結果ではないため、#1079 が突入時点の未反映を frame へ控えて復帰時に立て直す。ゆえに窓は folder の往復を跨いで持ち越され、閉じるのは復帰後に行が実際に差し替わったときである）。**1 回あたりの費用は #1076 で勘定が変わった**（それ以前は「変わらない」と書いていた——根拠は `on_enter` が判定より前に `instant_prefix` で `engine.lock()` を取ることで、flush するかによらず走査待ちを払っていたためである）。**その無条件の待ちは #1076 で消えた。** ゆえに今は flush の有無で分かれる: **flush へ倒れない Enter は engine の錠を待たない**（config は `read_config` から読む）。**flush へ倒れる Enter のうち、クエリが空でも `indexing` 中でもないものだけが**同期 `engine.search` の錠待ちと走査を負う——**クエリが空のときと `indexing` 中のときは行を同期でクリアするだけで engine の錠を取らない**（枝は `on_enter` が持つ。どちらも到達する: 全消し直後の Enter は `armed` ゆえ flush へ倒れ、索引再構築中の Enter も同様である）。#1038 が広げたのは flush へ倒れる窓であるから、**その広がったぶんの Enter は #1076 以降、走査待ちを新たに負う——空クエリと `indexing` 中の枝に当たらない限りにおいて**（以前はどちらでも払っていたので差が出なかった）。**このフレームだけは検索がフレームに乗る。これは受容している**——結果を確定させる Enter は 1 回だけで、打鍵ごとに払う費用ではない。**IME 変換確定の Enter がここへ紛れないのは、`read_post_widget_input` が `response.changed()` より後で Enter を読むからである**（確定した文字列が state へ入った後の値で起動する・同関数の doc が正本）
+最終クエリの結果がまだ行へ反映されていない間の Enter は worker の往復を待てないため、`on_enter` がその場で同期 `engine.search` を走らせる（判定は `should_flush_on_enter`、正当性の理由は同関数のコメント。**「未反映」の中身は第 3 引数を導く `SearchState::is_unsettled` の doc が正本である**）。**この条件は debounce の予約中に限らない**（#1038）——#631 が塞いだ欠陥が同じ形で戻っていた（含意が壊れた経緯は同 doc）。**発火しうるウィンドウは「打鍵 → 50 ms」から「打鍵 → 50 ms + worker の走査（実運用点の値は `Engine::config_handle` の doc が持つ）と、その結果を採り込むフレーム」へ広がった**（**上端**は走査の完了ではなく `drain_search` の `accept` である。起動突入・空クエリ・reset は**行を同期で差し替えることによって**これより早く閉じる・#1039。**folder からの Escape だけは閉じない**——復帰させる行は展開前のものであって復元 query の最終結果ではないため、#1079 が突入時点の未反映を frame へ控えて復帰時に立て直す。ゆえにウィンドウは folder の往復を跨いで持ち越され、閉じるのは復帰後に行が実際に差し替わったときである）。**1 回あたりの費用は #1076 で勘定が変わった**（それ以前は「変わらない」と書いていた——根拠は `on_enter` が判定より前に `instant_prefix` で `engine.lock()` を取ることで、flush するかによらず走査待ちを払っていたためである）。**その無条件の待ちは #1076 で消えた。** ゆえに今は flush の有無で分かれる: **flush へ倒れない Enter は engine の錠を待たない**（config は `read_config` から読む）。**flush へ倒れる Enter のうち、クエリが空でも `indexing` 中でもないものだけが**同期 `engine.search` の錠待ちと走査を負う——**クエリが空のときと `indexing` 中のときは行を同期でクリアするだけで engine の錠を取らない**（枝は `on_enter` が持つ。どちらも到達する: 全消し直後の Enter は `armed` ゆえ flush へ倒れ、索引再構築中の Enter も同様である）。#1038 が広げたのは flush へ倒れるウィンドウであるから、**その広がったぶんの Enter は #1076 以降、走査待ちを新たに負う——空クエリと `indexing` 中の枝に当たらない限りにおいて**（以前はどちらでも払っていたので差が出なかった）。**このフレームだけは検索がフレームに乗る。これは受容している**——結果を確定させる Enter は 1 回だけで、打鍵ごとに払う費用ではない。**IME 変換確定の Enter がここへ紛れないのは、`read_post_widget_input` が `response.changed()` より後で Enter を読むからである**（確定した文字列が state へ入った後の値で起動する・同関数の doc が正本）
 
 #### 行を差し替えたら in-flight は必ず失効する。これは規約ではなく機構である（#1039）
 

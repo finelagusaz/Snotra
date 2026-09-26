@@ -78,7 +78,7 @@ impl NoticeSlot {
     /// **落として stale 表示になるかは呼び出し点に依る。** 現行の唯一の production 呼び出し点
     /// （`launcher_controller::poll_async`）は `update()` の中で、status 行が `notice_message()` を
     /// 読むより前に走るため、クリアは同じフレームの paint に乗る——**この呼び出し点では表示の stale は
-    /// 起きない**（status 行の消滅は窓高も変えるため、そのリサイズを誰が再描画するかは未測。
+    /// 起きない**（status 行の消滅はウィンドウ高も変えるため、そのリサイズを誰が再描画するかは未測。
     /// 「落ちるのは 1 フレームだけ」とまでは測っていない）。**paint より後（遅延 dispatch）や worker
     /// から poll するなら**表示が stale のまま次の無関係な入力まで残る
     /// （`src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」。`UpdaterUi::dismiss` 側は遅延

@@ -250,7 +250,7 @@ pub(crate) fn expand_env(input: &str) -> String {
     }
 }
 
-/// exec 種別の起動。COM 不要（CreateProcessW 直叩き）。コンソール窓抑止。
+/// exec 種別の起動。COM 不要（CreateProcessW 直叩き）。コンソールウィンドウ抑止。
 pub(crate) fn launch_exec_core(
     exe: &str,
     args: &str,

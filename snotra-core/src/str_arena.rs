@@ -69,7 +69,7 @@ impl Bits {
     /// `i` 番の旗。**呼び出し側が `i < len` を保証する契約である。**
     ///
     /// **「範囲外は panic する」とは書けない。** ビットは 64 個ずつ確保されるので、
-    /// `len <= i < words.len() * 64` の窓では `words` の添字が範囲内に収まり、release では
+    /// `len <= i < words.len() * 64` のウィンドウでは `words` の添字が範囲内に収まり、release では
     /// **黙って `false`**（[`OptionalStrArena::get`] としては `None`）を返す。`debug_assert` が
     /// 撃つのはデバッグ実行だけである。
     ///

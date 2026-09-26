@@ -66,10 +66,10 @@ npm run smoke:manual -- -Only 2,5 # 一部だけ再実施
 npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 ```
 
-- **trace には性質の違う 2 つが載る。混ぜて読まない**（#757）。**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: `egui_results:hide` は出たのに窓は残り、presence を見る smoke は緑のまま通した）。一方 **H1 / H4 / H5 の不変条件は「起きてはならないことが起きていないか」を見るので合否を名乗れる**——判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測。`smoke:egui` の orphan 検出と同じ導出を共有する）
+- **trace には性質の違う 2 つが載る。混ぜて読まない**（#757）。**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: `egui_results:hide` は出たのにウィンドウは残り、presence を見る smoke は緑のまま通した）。一方 **H1 / H4 / H5 の不変条件は「起きてはならないことが起きていないか」を見るので合否を名乗れる**——判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測。`smoke:egui` の orphan 検出と同じ導出を共有する）
 - **項目の合否は目視と trace の両方が決める。** trace が緑でも目視が赤なら赤であり、逆も同じ。記録は不一致を専用の節で名指しする
-- **SKIP を見たら合格と読まず、記録に併記された理由を確かめる。** SKIP は「判定できなかった」であって合格ではない——「該当イベントが無い」「`rows` が読めない」「main の可視状態が未観測」「hide 窓が閉じていない」「parse できなかった行がある」はすべて SKIP として現れる
-- **`smoke:manual` は人間へ依頼する**（`Read-Host` で判定を採るためエージェントには実行できない）。実施の有無が会話にしか残らないと「検証されていない」と「問題が無かった」が区別できなくなるため、`-PostToPr` か出力ファイルの貼り付けで PR に残す。**カテゴリ D 全体がそうではない**——`check:colors` は exit code で自動判定するのでエージェントが実行でき（**画面がロックされているときを除く**）、目視項目も打鍵注入 + 窓矩形キャプチャで実施した実績がある（#836 / #870）
+- **SKIP を見たら合格と読まず、記録に併記された理由を確かめる。** SKIP は「判定できなかった」であって合格ではない——「該当イベントが無い」「`rows` が読めない」「main の可視状態が未観測」「hide ウィンドウが閉じていない」「parse できなかった行がある」はすべて SKIP として現れる
+- **`smoke:manual` は人間へ依頼する**（`Read-Host` で判定を採るためエージェントには実行できない）。実施の有無が会話にしか残らないと「検証されていない」と「問題が無かった」が区別できなくなるため、`-PostToPr` か出力ファイルの貼り付けで PR に残す。**カテゴリ D 全体がそうではない**——`check:colors` は exit code で自動判定するのでエージェントが実行でき（**画面がロックされているときを除く**）、目視項目も打鍵注入 + ウィンドウ矩形キャプチャで実施した実績がある（#836 / #870）
 - **新機能のために先回りで `$items` へ足さない**——足す条件は「その表示が実際に一度回帰したとき」である。`scripts/manual-smoke.ps1` の `$items`（常設項目）が SSOT であり、PR 本文の目視表とは別の母集団である（写しではない・`docs/adr/ADR-folder-location-display-surface.md`「却下 6」）。`$items` に載るのは**どの変更でも壊れうる横断不変条件**、PR 本文の表はその PR 限りの受け入れ確認
 
 - **`cargo run` には必ず `-p snotra` を付ける**（既定が egui・#532 SU7 flip 済み・env フラグ不要）。`-p` を欠くと**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` が候補。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する
@@ -77,18 +77,18 @@ npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 #### `[visual]` の色を変える変更は、**非既定色で**目視する
 
 ```powershell
-npm run check:colors                      # 自動判定: 各窓が宣言した色の占有率を実測し exit code で返す
+npm run check:colors                      # 自動判定: 各ウィンドウが宣言した色の占有率を実測し exit code で返す
 npm run check:colors -- -Color '#FFF'     # 3 桁 hex の受理（#680 の 1・パーサ統合の回帰）
 npm run check:colors -- -Interactive      # 判定せず起動し、目視項目を読み上げる
 ```
 
 - **CI では走らない。** GUI を要するため `ci.yml` にも `smoke.yml` にも入っておらず、明示的に起動したときだけ動く（**エージェントも起動できる**——画面がロックされているときを除く）。ゆえに `[visual]` の色に効く変更は、**CI が緑でも未検証である**
 - **既定色での確認はこの検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」）
-- **自動判定するのは、各窓が「見せねばならない」と宣言した色である**（#953）——main は**背景と入力欄背景**、results は**背景**。判定は「窓全体の最頻色が期待色か」**ではない**: その前提（背景は窓で最も広い色）は main 窓で偽であり（**入力欄の塗りが背景より広い**・実測 37.6% > 33.3%）、**main はどんな背景色を指定しても赤だった**。**下限占有率は宣言ごとに持つ**（main 15% / results 50%・実測に対し 1.5〜2.5 倍の余裕）——「最頻である」は「下限以上」を含意するが逆は成り立たないため、一律の小さな下限にすると results の検出力が落ちる。**合否に依らず色ごとの実測占有率を出す**ので、レイアウトのドリフトは失敗になる前に「余裕の縮小」として見える。**判定述語は `scripts/lib/SnotraWindowColors.psm1`**（Pester が述語と**配備される下限の両方**を測る）、宣言を呼び出すのは `scripts/visual-check-colors.ps1` である。却下した代替案は `docs/adr/ADR-declared-colors-over-modal-color.md`
+- **自動判定するのは、各ウィンドウが「見せねばならない」と宣言した色である**（#953）——main は**背景と入力欄背景**、results は**背景**。判定は「ウィンドウ全体の最頻色が期待色か」**ではない**: その前提（背景はウィンドウで最も広い色）は main ウィンドウで偽であり（**入力欄の塗りが背景より広い**・実測 37.6% > 33.3%）、**main はどんな背景色を指定しても赤だった**。**下限占有率は宣言ごとに持つ**（main 15% / results 50%・実測に対し 1.5〜2.5 倍の余裕）——「最頻である」は「下限以上」を含意するが逆は成り立たないため、一律の小さな下限にすると results の検出力が落ちる。**合否に依らず色ごとの実測占有率を出す**ので、レイアウトのドリフトは失敗になる前に「余裕の縮小」として見える。**判定述語は `scripts/lib/SnotraWindowColors.psm1`**（Pester が述語と**配備される下限の両方**を測る）、宣言を呼び出すのは `scripts/visual-check-colors.ps1` である。却下した代替案は `docs/adr/ADR-declared-colors-over-modal-color.md`
 - results は専用 scan 3 件を seed し、キー注入で表示して実ピクセルを測る。残る 2 点は目視（`-Interactive`）に留まる——**show の一瞬のフラッシュ**は present 前の 1 フレーム未満で連写しても捉えられず、**results のリサイズ時のちらつき**は入力と描画のタイミングに依存して単一キャプチャでは不在を証明できない
 - **測れないもの（受容する残余）**: 位置に紐付かない存在検査ゆえ、**背景と入力欄で色が入れ替わる「クロス配線」を検出できない**（両色とも下限を超えて緑になる）。選択色・hint 色も測らない
 - **trace は判定に使わない。** 「`set_clear_color` を呼んだ」というログは、その色が画面へ出たことを意味しない（`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。判定の根拠は描かれたピクセルだけである
-- **画面がロックされていると実行できない**（#866）。ロック中は窓が可視のままでも画面に合成されず、`CopyFromScreen` は**ロック画面の中身を持つ有効な Bitmap** を返す（`IsWindowVisible` も矩形も DPI も真っ当な値なので、他のガードは全部通る）。`Get-SnotraWindowCapture` が起動前に名指しして止める。**ロック状態を判定できなかったときは警告のみで続行する**——読めないホストで実行そのものを拒めば、情報を足さずに道具を失うため
+- **画面がロックされていると実行できない**（#866）。ロック中はウィンドウが可視のままでも画面に合成されず、`CopyFromScreen` は**ロック画面の中身を持つ有効な Bitmap** を返す（`IsWindowVisible` も矩形も DPI も真っ当な値なので、他のガードは全部通る）。`Get-SnotraWindowCapture` が起動前に名指しして止める。**ロック状態を判定できなかったときは警告のみで続行する**——読めないホストで実行そのものを拒めば、情報を足さずに道具を失うため
 - **ユーザーの実 config は読みも書きもしない。** `SNOTRA_CONFIG_DIR`（env ハッチ）で `target/visual-check/profile` を指し、そこへ検証用の config を 1 枚書いて起動する。退避も復元も無いので、異常終了しても実 config が検証色のまま残る経路が**構造的に無い**（#803）。残るのは使い捨てプロファイルだけで、`cargo clean` が掃く（`CARGO_TARGET_DIR` を設定している環境では対象外）
 - **seed が読めたかは本体の stderr で確かめる。** `[config] ` で始まる行が出たら赤にする。**`config.toml.bak` の不在では証明にならない**——退避は best-effort で、`fs::rename` が失敗すれば parse 失敗でも `.bak` は現れない（`snotra-core/src/config.rs` の `backup_invalid`）。seed が読めていないと既定色で起動するため、「色が届いていない」と誤読される
 - **`SNOTRA_CONFIG_DIR` が効いたことは肯定的に確かめる。** 実行後にプロファイル配下へ `*.bin` が生成されていることを見る。効いていなければ本体は実 config を読むため、ピクセルが赤いときに「色が届いていない」と「env が効いていない」を切り分けられない
@@ -99,7 +99,7 @@ npm run check:colors -- -Interactive      # 判定せず起動し、目視項目
 ```powershell
 npm run check:input-metrics                                  # 既定の 8 フォント（日本語 4 + 英語 4）
 pwsh -File scripts/visual-input-metrics.ps1 -Fonts 'Segoe UI;Arial'   # `;` 区切りで絞る
-pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮った窓を target/ へ残す
+pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮ったウィンドウを target/ へ残す
 ```
 
 - **合否を出さない。道具であって検査ではない。** 出るのは「欄の内側 / キャレットの高さ / 上下余白 / Skew」の表で、読むのは人間である。**毎作業では走らせない**——使う契機は egui / epaint を上げたとき・入力欄の描画や行高やフォント登録に触ったとき・「見え方が変わった気がする」と報告を受けたときである
@@ -113,15 +113,15 @@ pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮った窓を 
 
 `smoke:manual` が実行できないのは合否の記録に `Read-Host` を使うからで、**目視項目の実体（アプリを操作して表示を観測する）は実施できる**（#836 で 11 項目・#870 で日英 2 本の実績）。実施するなら以下に従う。
 
-- **`scripts/lib/SnotraSmoke.psm1` の関数だけで組む。** `New-SnotraVerificationProfile` / `Start-SnotraProcess` / `Wait-SnotraWindow` / `Set-SnotraForegroundWindow` / `Send-SnotraKey` / `Get-SnotraWindowCapture` で、使い捨てプロファイルの seed から打鍵注入・窓矩形キャプチャまで完結する。**この経路だけが上の画面ロック検出（#866）に守られる**——モジュールに無い操作（マウスの `SetCursorPos` + mouse_event 系（いずれも Win32 API）はいまも無い）を自前 P/Invoke で足すと、その実行は検出の外へ出る。ロック中に走らせればロック画面を撮り、`check:colors` のような判定が無いぶん**誰も気づかない**
+- **`scripts/lib/SnotraSmoke.psm1` の関数だけで組む。** `New-SnotraVerificationProfile` / `Start-SnotraProcess` / `Wait-SnotraWindow` / `Set-SnotraForegroundWindow` / `Send-SnotraKey` / `Get-SnotraWindowCapture` で、使い捨てプロファイルの seed から打鍵注入・ウィンドウ矩形キャプチャまで完結する。**この経路だけが上の画面ロック検出（#866）に守られる**——モジュールに無い操作（マウスの `SetCursorPos` + mouse_event 系（いずれも Win32 API）はいまも無い）を自前 P/Invoke で足すと、その実行は検出の外へ出る。ロック中に走らせればロック画面を撮り、`check:colors` のような判定が無いぶん**誰も気づかない**
 - **撮る前に、その入力が分岐へ入っているかを確かめる**（#872）。中間省略・overflow・clipping は入力が短ければ発生せず、**正常に見える画像が撮れてしまう**。分岐へ確実に入る fixture を用意して初めて測ったことになる（`AGENTS.md`「検証の作法（全タスク共通）」の「観測形が対象を含むか」の視覚版）
-- **高さの判定に `GetWindowRect` を使わない**——不可視のリサイズ枠を含むため、2 行の窓が 1 行の 2 倍にならない（実測 118 / 64 に対し `DwmGetWindowAttribute` の `EXTENDED_FRAME_BOUNDS` は 110 / 56）。位置の判定は `GetWindowRect` でよい（クランプが渡す物理 outer 座標系と同じ）。作業領域は `MonitorFromWindow` + `GetMonitorInfoW` の `rcWork` を、プロセスを PER_MONITOR_AWARE_V2 にしてから読む
-- **人間の反応時間より短い時限を、手作業のシナリオに要求しない。** 単純反応時間は〜200ms で、それより短い時限（#745 の blur 猶予は 100ms）の内側に手作業を差し込むシナリオは**原理的に実行できない**（#745 では計画レビュー 5 体を通してなお 3 本がこの形で書かれ、実機で初めて不能と分かった）。注入での代替も当てにしない——`SetForegroundWindow` はバックグラウンドからの呼び出しを OS が制限し、PowerShell からの呼び出し自体に 165ms かかる（実測）。**時限より短い窓が要るなら、その不変条件は純粋核テストへ降ろす**（実機は回帰確認だけを担う、と射程を明記して分担する）
+- **高さの判定に `GetWindowRect` を使わない**——不可視のリサイズ枠を含むため、2 行のウィンドウが 1 行の 2 倍にならない（実測 118 / 64 に対し `DwmGetWindowAttribute` の `EXTENDED_FRAME_BOUNDS` は 110 / 56）。位置の判定は `GetWindowRect` でよい（クランプが渡す物理 outer 座標系と同じ）。作業領域は `MonitorFromWindow` + `GetMonitorInfoW` の `rcWork` を、プロセスを PER_MONITOR_AWARE_V2 にしてから読む
+- **人間の反応時間より短い時限を、手作業のシナリオに要求しない。** 単純反応時間は〜200ms で、それより短い時限（#745 の blur 猶予は 100ms）の内側に手作業を差し込むシナリオは**原理的に実行できない**（#745 では計画レビュー 5 体を通してなお 3 本がこの形で書かれ、実機で初めて不能と分かった）。注入での代替も当てにしない——`SetForegroundWindow` はバックグラウンドからの呼び出しを OS が制限し、PowerShell からの呼び出し自体に 165ms かかる（実測）。**時限より短いウィンドウが要るなら、その不変条件は純粋核テストへ降ろす**（実機は回帰確認だけを担う、と射程を明記して分担する）
 - **ウィジェットの位置を知らないまま操作するなら、当たり判定を「副作用が起きたか」で行う。** Tab の回数を 1 つずつ増やして Space を打ち、**観測可能な副作用（レジストリ値・ファイル・trace）が変化した回数**を当たりとする形は、外れたときに何も起きないので誤検知が構造的に起きない（#1210 で設定アプリのチェックボックスへ到達）。座標クリックと違い、レイアウトが動いても壊れない
 - **「プロセスが動いている」は起動経路の証拠にならない。** どの契機で立ち上がったかを主張するなら、その契機の時刻との差を測る（#1210 のサインイン起動は、対話ログオン `Win32_LogonSession` の `StartTime` と `Process.StartTime` の差 53.9 秒で裏づけた）。存在だけを見ると、別経路で立ち上がった同名プロセスと区別できない
-- **OS のモーダルループ中（`frame.drag_window()` のドラッグ等）の値を単発観測で判定しない**——合成マウス移動への追従が不安定で、同一手順・同一バイナリでも窓 top が 956 と 1050 の間で揺れた（最終位置は毎回安定）。**実装の有無を切り替える対照実験だけが差を示す**
+- **OS のモーダルループ中（`frame.drag_window()` のドラッグ等）の値を単発観測で判定しない**——合成マウス移動への追従が不安定で、同一手順・同一バイナリでもウィンドウ top が 956 と 1050 の間で揺れた（最終位置は毎回安定）。**実装の有無を切り替える対照実験だけが差を示す**
 
-判定者は分ける——ピクセル値・窓の可視性のように決定的なものは exit code を返す検査へ寄せ、「読めるか」のような非決定的な判断は調査の道具に留める。実行前に、フォアグラウンド窓へ入力を撃つ旨と**キーボードから手を離す時間**を人へ明示的に求めること。
+判定者は分ける——ピクセル値・ウィンドウの可視性のように決定的なものは exit code を返す検査へ寄せ、「読めるか」のような非決定的な判断は調査の道具に留める。実行前に、フォアグラウンドウィンドウへ入力を撃つ旨と**キーボードから手を離す時間**を人へ明示的に求めること。
 
 #### 別プロファイルで起動するための env ハッチ（`SNOTRA_CONFIG_DIR`）
 
@@ -244,10 +244,10 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 ## スモーク運用メモ
 
-- `scripts/lib/SnotraSmoke.psm1` は各検証スクリプトに共通する config seed の骨格、env の設定/復元、Cargo target の本体導出、既存プロセス方針、起動、窓/trace 待機、キー注入、DWM/DPI 対応キャプチャを所有する。各 smoke の合否条件と固有の TOML 節は呼び出し側に残す。`scripts/lib/SnotraSmoke.Tests.ps1` は env の正常/例外時復元、Cargo target 導出、trace parse、既存プロセス方針を単体検査し、実バイナリで seed parse・意図したプロファイルへの `index.bin` 生成・窓矩形＝キャプチャ寸法に加え、**起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっていること**を統合検査する（#872 で機序を再設計。キャレットの断言は `src-tauri/src/egui_shell/view.rs` の kittest が実コードの並びごと縛るので、実機側は打鍵を注入しない）
+- `scripts/lib/SnotraSmoke.psm1` は各検証スクリプトに共通する config seed の骨格、env の設定/復元、Cargo target の本体導出、既存プロセス方針、起動、ウィンドウ/trace 待機、キー注入、DWM/DPI 対応キャプチャを所有する。各 smoke の合否条件と固有の TOML 節は呼び出し側に残す。`scripts/lib/SnotraSmoke.Tests.ps1` は env の正常/例外時復元、Cargo target 導出、trace parse、既存プロセス方針を単体検査し、実バイナリで seed parse・意図したプロファイルへの `index.bin` 生成・ウィンドウ矩形＝キャプチャ寸法に加え、**起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっていること**を統合検査する（#872 で機序を再設計。キャレットの断言は `src-tauri/src/egui_shell/view.rs` の kittest が実コードの並びごと縛るので、実機側は打鍵を注入しない）
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、trace が 1 件以上出ることを要求する。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-startup/profile` を指す・#804）をループ前に 1 回だけ seed し、5 起動で共有する**——実 config には触れず、毎回作り直さないのは「first-run でない起動」を測る現在の意味論を保つため。**seed が正常に読まれたこと、first-run を踏んでいないこと、env が効いたこと（プロファイルに `*.bin` が生成されたこと）も肯定的に検査する**。trace の失敗名には統一分類がなく、正常系でも起こりうる best-effort の失敗も含まれるため、汎用的な「起動エラー不在」は保証しない（#845）。trace 0 件は起動経路を何も観測できていないため失敗にする（#690 follow-up）。実際に冷えた CI runner の初回起動で trace 0 行を実測しており、その状態でも旧 smoke は緑を返していた。サマリ表の `event_count` は成功時にも出す（検査が実際に何かを見たことを示す肯定的報告）。**待ち方は「最初の trace を待ってから観測時間 `WaitMs` を開始する」**（`-FirstTraceTimeoutMs`・既定 12s）——固定待機だけだと遅い側に振れた起動が丸ごと無音になる（実測: 同一 runner・同一バイナリで最初の trace までが 0.6s〜8s 超とばらつき、5 回中 3 回が無音だった）。固定待機を一律に伸ばす案を採らないのは、速い起動まで毎回待つことになるため。`first_trace_ms` も成功時に出す（**分散の原因は未解明**ゆえ、予算に触れる前に悪化を読めるようにする。`n/a` は予算内に 1 行も出なかったことを表す）
 - `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で hotkey（起動時の `hotkey:registered` trace から導出した VK 列を注入。対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`。押下順で押し、解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-HotkeyVks` を明示指定すると trace より優先される（trace を出さない旧バイナリの検証など）。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す・#804）へ最小の有効 TOML を常に seed する**——実ユーザーの `%APPDATA%\Snotra` は読みも書きもしない（退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である）。seed を置く理由は `scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile` のコメントを正本とする。**seed が読めたこと・first-run を踏んでいないこと・env が効いたこと（プロファイルに `*.bin` が生成されたこと）を 3 つとも肯定的に検査する**——「観測できなかった」を合格と読ませないため。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
-- `scripts/smoke-egui.ps1` は results 窓の表示も検査する（#671/#673 サイクル PR A）: `egui_show:done` の後、1 文字クエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。**#804 以降 skip は無い**——検証用プロファイルを常に seed するので、既定クエリ `"z"` が seed した索引 1 件に必ず一致する（`-ResultsQuery <letter>` は残るが、開発機の既存索引に合わせる用途は消えた。空文字を渡す用途については次の bullet）（CONTRIBUTING.md の「results 窓 show/hide の trace 観測」と対応）
+- `scripts/smoke-egui.ps1` は results ウィンドウの表示も検査する（#671/#673 サイクル PR A）: `egui_show:done` の後、1 文字クエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。**#804 以降 skip は無い**——検証用プロファイルを常に seed するので、既定クエリ `"z"` が seed した索引 1 件に必ず一致する（`-ResultsQuery <letter>` は残るが、開発機の既存索引に合わせる用途は消えた。空文字を渡す用途については次の bullet）（CONTRIBUTING.md の「results ウィンドウ show/hide の trace 観測」と対応）
 - **results 検査は無条件に要求される（#686 の `-RequireResults` を #804 が格上げ）**: 旧 flag が opt-in だったのは「ローカルでは索引を制御できないのが普通」ゆえの緩和だったが、検証用プロファイルを常に seed する以上その前提は偽になったので、flag ごと撤去して**常に要求する**形にした。**これは検出器の削除ではなく格上げである**——従来はローカルで既定 skip（緩和）だったものが、ローカルでも赤になる。**判定はアプリ起動前に確定する**ため、この guard はプロセスを起こさずに落ちる（`pwsh -File scripts/smoke-egui.ps1 -ResultsQuery '' -ExePath <任意の既存ファイル>` でフォールトインジェクション可能・実機に触らない。**空文字の明示がその注入口である**）。skip へ至る沈黙経路は構造的に消えており、他（実行ファイル不在・`hotkey:registered` 未観測・`egui_show:done` 未観測・`egui_results:show` 未観測・クエリが A-Z 単字でない）はいずれも exit≠0 で鳴る。**`smoke.yml` のステップ順序も自由になった**——両 smoke が自分の検証用プロファイルを持つため、startup smoke の 5 起動が egui smoke の seed を壊すことはない（#803 で `SNOTRA_CONFIG_DIR` が入り、#804 が smoke 2 本を env 化した）
 - **索引規模に依存する性能は smoke では測れない**（#1004）: `smoke-egui.ps1` は scan 対象を上書きする引数を持たず、seed する索引の規模は固定である（正本は同スクリプトの seed）。ゆえに**索引件数のゲートを持つ検知器を置くと、CI でもローカルでも永久に SKIP になる**——#930 が戒めた「発火しえない検出器」そのものである。**規模に依存しない検知器なら置ける**（`scripts/lib/SnotraTraceInvariants.psm1` の H7 は seq の大小しか見ない）。**索引規模に依存するフレーム性能**については実運用点での手動計測が唯一の観測手段であり、その読み方は `PERFORMANCE.md`「計測と受け入れ基準」が持つ
 - **smoke が赤いときは `--- 失敗時の証拠 ---` ブロックを先に読む**（#690 follow-up）: **プロセスの生死**（既に終了 = 起動途中で落ちた / 生存中 = 起動はしたが未到達・遅延）と **trace 行数**が出る。`trace 行数: 0` は単体では「起動していない」とも「イベントが出ていない」とも読めるため、**必ず生死と併せて読む**。失敗チャネルは `throw`（前提崩壊）と検査項目の不合格の 2 本あり**どちらも同じ証拠を出す**——以前は後者にしか証拠が無く、`throw` は手掛かりを残さず終了していた（`-StartupWaitMs 0 -ObserveTimeoutMs 1` でフォールトインジェクション可能）

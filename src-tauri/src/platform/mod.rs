@@ -320,7 +320,7 @@ fn process_commands(
             PlatformCommand::TurnOffIme(hwnd_raw) => {
                 // 送信元は egui_shell::show_egui_main（旧 show_main_and_emit は #532 SU7 で削除）。
                 // 呼び出し順は set_focus() → 本コマンド送信であり、「focus より先に IME を切る」
-                // ことは意図的に避けている（前に置くと IME オフが対象窓に効かない）。
+                // ことは意図的に避けている（前に置くと IME オフが対象ウィンドウに効かない）。
                 // **かつて両者の間に在った `SendMessageTimeoutW` のフォーカス同期待ちは、
                 // show がイベントループスレッドへ移って no-op 化したため撤去された**——機構と
                 // 「導出し直せない」理由は `egui_shell/window_coordinator.rs` の `set_focus()`
@@ -346,8 +346,8 @@ fn process_commands(
                     // `hotkey-registration-failed` と同じ素の String に揃える。
                     let _ = app_handle.emit(crate::events::INITIAL_HOTKEY_FAILED, hotkey_str);
                 }
-                // 起動の終端（成功側）。**ここが「押せば窓が出る状態」の成立点である**
-                // ——listener は送信より前に登録され、窓は `egui_shell::create` で既に在る
+                // 起動の終端（成功側）。**ここが「押せばウィンドウが出る状態」の成立点である**
+                // ——listener は送信より前に登録され、ウィンドウは `egui_shell::create` で既に在る
                 // （根拠は `crate::startup` の `//!`）。失敗側の終端は `main.rs` にもある。
                 crate::startup::finish(if registered {
                     Ok(())

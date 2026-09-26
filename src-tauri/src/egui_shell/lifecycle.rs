@@ -10,7 +10,7 @@ pub(crate) enum HotkeyPlan {
 }
 
 /// Alt+Q 押下時の分岐（意味論は #532 SU7 で撤去した旧 UI 経路から引き継いだ）。表示中かつ hotkey_toggle=true なら
-/// 即 hide。それ以外（非表示、または表示中でも hotkey_toggle=false ＝ 既に見えている窓を
+/// 即 hide。それ以外（非表示、または表示中でも hotkey_toggle=false ＝ 既に見えているウィンドウを
 /// 再フォーカス/再配置）は show 側へ回り、Alt が押されている限り解放を待ってから show する。
 pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool) -> HotkeyPlan {
     if visible && hotkey_toggle {
@@ -159,7 +159,7 @@ impl BlurGrace {
             return BlurAction::Idle;
         }
         match *self {
-            // 一度も focus を得ていない窓に `focus_lost` は起きない（`SPEC.md` §8.6 と整合）。
+            // 一度も focus を得ていないウィンドウに `focus_lost` は起きない（`SPEC.md` §8.6 と整合）。
             Self::NeverFocused => BlurAction::Idle,
             Self::Focused => {
                 *self = Self::Blurred(now);

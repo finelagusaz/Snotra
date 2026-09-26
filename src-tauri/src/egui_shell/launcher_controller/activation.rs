@@ -88,7 +88,7 @@ impl LauncherController {
     /// エラー行（is_error）／フォルダロード中（cache・error 未着で results が stale）は起動しない。
     /// Enter とシングルクリックの単一チョークポイント（#636 レビュー Finding A）。
     fn activate(&mut self, index: usize, ctx: &egui::Context) {
-        // フォルダ展開直後、列挙結果も失敗行も未着の窓では results が展開前ビューの残存物ゆえ、
+        // フォルダ展開直後、列挙結果も失敗行も未着のウィンドウでは results が展開前ビューの残存物ゆえ、
         // 誤項目の起動を止める（dead/slow UNC でロードが滞留すると Enter/クリックが前ビューの
         // 項目を起動しうる・#636 レビュー Finding A）。判定核は search_state の純粋述語。
         if folder_load_pending(
@@ -122,7 +122,7 @@ impl LauncherController {
     /// 起動を per-launch worker スレッドへ投げる（#631・spec C 節）。single-flight:
     /// in-flight 中は拒否（WebView2 activationLane parity・二重起動防止）。突入時に results を
     /// クリアする（withLaunchLifecycle の await 前 clearResults parity・spec 決定 7）——
-    /// launching 中は results 窓が hide される（結果 0 件→snapshot.show=false・#646 PR2 決定 6）・
+    /// launching 中は results ウィンドウが hide される（結果 0 件→snapshot.show=false・#646 PR2 決定 6）・
     /// ↑↓/クリックは空リストゆえ自然に inert。クエリは保持。
     fn start_launch(&mut self, work: LaunchWork, tag: LaunchTag, ctx: &egui::Context) {
         if self.launching.is_some() {
@@ -134,7 +134,7 @@ impl LauncherController {
             rx,
             tag,
         });
-        // 突入時のクリアが in-flight も失効させる——しないと launching 中に worker の遅着結果が届き、隠れているはずの results 窓が drain_search 経由で生え直す（#1039 で `SearchState` の内側へ入った）。
+        // 突入時のクリアが in-flight も失効させる——しないと launching 中に worker の遅着結果が届き、隠れているはずの results ウィンドウが drain_search 経由で生え直す（#1039 で `SearchState` の内側へ入った）。
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
         let app = self.app_handle.clone();
@@ -183,7 +183,7 @@ impl LauncherController {
                 }
             };
             // 履歴記録は worker 側（spec 決定 5）。timeout で drain が破棄済みでも記録は行われる
-            // ＝「実際に起動したのに履歴が無い」窓を Normal/Tool では作らない。
+            // ＝「実際に起動したのに履歴が無い」ウィンドウを Normal/Tool では作らない。
             if matches!(outcome.status, LaunchStatus::Ok)
                 && let Some((path, query)) = record
                 && let Some(state) = app.try_state::<crate::AppState>()
@@ -243,7 +243,7 @@ impl LauncherController {
     }
 
     /// フレーム毎の in-flight 回収（spec C 節 不変条件 2: **reset_pending 消費の後**に呼ぶ。
-    /// 前に置くと show 直後フレームで stale Ok が reset より先に処理され再 show 窓を hide で撃つ）。
+    /// 前に置くと show 直後フレームで stale Ok が reset より先に処理され再 show ウィンドウを hide で撃つ）。
     pub(super) fn drain_launch(&mut self, ctx: &egui::Context) {
         let Some(inflight) = &self.launching else {
             return;
@@ -401,7 +401,7 @@ impl LauncherController {
         visible_rows: FrameVisibleRows,
         ctx: &egui::Context,
     ) {
-        // §4.5 の連言④で results 窓が 1 行も描いていないなら起動しない（#1106）。
+        // §4.5 の連言④で results ウィンドウが 1 行も描いていないなら起動しない（#1106）。
         //
         // **③（下の `plain_results_hidden`）とは独立した規則であり、carve-out を持たない。**
         // ③が隠すのは Results ビューの通常結果だけだが、④は最大表示件数そのものが 0 なので
@@ -418,7 +418,7 @@ impl LauncherController {
         //
         // **止めるのは操作だけである。** 行データと選択は消さず、→ / ← のフォルダ突入も
         // 止めない。**#1077（③）の「突入すれば行は可視へ戻る」という理由はここでは成り立たない**
-        // ——窓高は 0 のままである。それでも止めないのは、突入が**行の起動ではなく現在地の移動**
+        // ——ウィンドウ高は 0 のままである。それでも止めないのは、突入が**行の起動ではなく現在地の移動**
         // であり可逆だからで、③と射程を揃えることを優先した。
         //
         // **詰みは作らない。** `/o`（設定を開く）は完全一致した時点で Enter を経ずに走るため
@@ -435,7 +435,7 @@ impl LauncherController {
             return;
         }
         // §4.7 の表示ゲートで隠れている行は起動しない（#1077）。index 再構築中の通常結果は
-        // results 窓から消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
+        // results ウィンドウから消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
         // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 枝を
         // 通らず、**画面に 1 行も出ていないまま古い行を起動する**（2026-08-16 に実機再現）。
         // #1072 が塞いだのは同じ族の unsettled 側の切片だけだった。
@@ -468,7 +468,7 @@ impl LauncherController {
 
     /// Shift+Enter（§18.3）: 選択行の tools ≥ 2 ならツール選択メニューへ、それ以外
     /// （≤1・instant 行・tool ビュー中）は通常 Enter と同一（hide も同様）。folder ロード
-    /// 未確定窓は activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
+    /// 未確定ウィンドウは activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
     fn shift_activate(
         &mut self,
         index: usize,

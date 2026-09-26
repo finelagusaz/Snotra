@@ -344,7 +344,7 @@ impl SearchEngine {
         };
 
         // kana_lower_names は migemo 無効で構築されたとき空（issue #337）。
-        // 構築時 migemo OFF → 検索時 migemo ON（kana_query=Some）の窓で
+        // 構築時 migemo OFF → 検索時 migemo ON（kana_query=Some）のウィンドウで
         // self.kana_lower_names.get(i) が範囲外の添字で panic するのを防ぐ。
         // Copy な bool としてクロージャに move する（self への可変借用は不要）。
         let kana_available = !self.kana_lower_names.is_empty();
@@ -410,9 +410,9 @@ impl SearchEngine {
 
     /// 「最近起動した」候補。**呼び出し元はいずれも明示の操作である**——`/r` スラッシュコマンド（`src-tauri` の `launcher_controller`）とトレイの履歴メニュー。
     ///
-    /// **窓を開くたび・クエリを消すたびには走らない。** [`Self::search_with_options`] は
+    /// **ウィンドウを開くたび・クエリを消すたびには走らない。** [`Self::search_with_options`] は
     /// 空クエリに対して `Vec::new()` を返すだけで、ここを呼ばない。
-    /// この一行が「全件走査が毎回の窓表示に乗る」という誤読を 2 度招いたので、頻度を
+    /// この一行が「全件走査が毎回のウィンドウ表示に乗る」という誤読を 2 度招いたので、頻度を
     /// 推測させない形にしてある——**頻度を書くなら呼び出し元を名指しする。**
     ///
     /// **照合表は探す側（履歴・高々 `max_results` 件）で組む。** 探される側（全エントリ）で

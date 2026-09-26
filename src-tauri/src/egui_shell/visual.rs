@@ -1,7 +1,7 @@
 //! テーマ（config `[visual]` のうち**色・font・padding** + `appearance.show_icons`）の
 //! 1 フレーム分の読み取り値と、その純粋な導出（#673 spec 決定 4）。
 //!
-//! **`[visual]` 全体ではない。`window_gap` は含まない**——results 窓の配置
+//! **`[visual]` 全体ではない。`window_gap` は含まない**——results ウィンドウの配置
 //! （`window_coordinator::position_results_below_main`）は main の `update()` と `Moved` リスナーの
 //! 両方から呼ばれ、**フレームに閉じない**読みだからである。ゆえに `window_gap` だけは
 //! 1 フレーム内で別 lock から読まれうる（`window_gap` と `font_size` を同時に変更した
@@ -10,14 +10,14 @@
 //! **なぜ束ねるか**: 従来は 1 フレームの中でテーマ色（文字色・font_size）と `read_metrics`
 //! （font_size・padding）が別々に lock を取っていた。その間に `config_watcher` の
 //! `apply_config_change` が挟まると、**新しい font_size を旧い行高で描く 1 フレーム**が生じる。
-//! 次フレームで自然に直る cosmetic な窓だが、同じ値を 2 度読む構造そのものが窓の原因である。
+//! 次フレームで自然に直る cosmetic なウィンドウだが、同じ値を 2 度読む構造そのものがウィンドウの原因である。
 //!
 //! **保持しないこと**: `VisualSnapshot` の寿命は 1 フレームである。`self.` へ持つと config 変更が
 //! 反映されなくなる（毎フレーム live-read 方針・#576 / #646 決定 2）。
 //!
 //! **色のパーサは 1 本である**（spec 決定 4 で統合）: `egui::Color32::from_hex`（`#RGB` / `#RGBA` /
 //! `#RRGGBB` / `#RRGGBBAA` を受理）。tao のネイティブ背景ブラシへの変換は
-//! `window_coordinator::native_brush_color` が持つ——**窓の関心であってテーマ導出の関心ではない**
+//! `window_coordinator::native_brush_color` が持つ——**ウィンドウの関心であってテーマ導出の関心ではない**
 //! ため、消費者がフレームの外にあるものはここに置かない。
 //! 旧 `config_watcher::parse_hex_color`（`#RRGGBB` 厳格）と 2 本立てだった頃は、`#FFF` を書くと
 //! 描画色だけが白になり下地は既定色へ落ちていた（#680 の 1）。統合で消えたのはこの非対称である。
@@ -59,12 +59,12 @@ pub(crate) struct RowTheme {
     pub button_size: f32,
 }
 
-/// 1 フレーム分のテーマ値。main と results の要求の**和集合**である（窓ごとの projection に
+/// 1 フレーム分のテーマ値。main と results の要求の**和集合**である（ウィンドウごとの projection に
 /// 分けない——分けると導出式が再び 2 箇所になる・spec 決定 4）。
 pub(crate) struct VisualSnapshot {
-    /// **両窓**の背景（softbuffer の clear color）と、その下地であるネイティブブラシ。
+    /// **両ウィンドウ**の背景（softbuffer の clear color）と、その下地であるネイティブブラシ。
     /// **main 専用ではない**——results も `set_clear_color` に使い、`DriveResultsInputs` を経て
-    /// results 窓のブラシにもなる。`panel_fill` を指す値ではない（決定 2 でその代入は撤去した）。
+    /// results ウィンドウのブラシにもなる。`panel_fill` を指す値ではない（決定 2 でその代入は撤去した）。
     pub background: egui::Color32,
     /// TextEdit / overlay 背景（main のみ使用）。
     pub input_bg: egui::Color32,

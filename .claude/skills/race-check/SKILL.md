@@ -1,6 +1,6 @@
 ---
 name: race-check
-description: "worker スレッド・channel・フレーム drain・Tauri listener・スレッド/窓をまたぐ共有状態・フレーム内 live-read・paint 後の遅延処理を追加/変更したとき、または async 関数を追加/変更したときに使用。送信から適用までの窓での状態競合リスクを検証する。"
+description: "worker スレッド・channel・フレーム drain・Tauri listener・スレッド/ウィンドウをまたぐ共有状態・フレーム内 live-read・paint 後の遅延処理を追加/変更したとき、または async 関数を追加/変更したときに使用。送信から適用までのウィンドウでの状態競合リスクを検証する。"
 argument-hint: "[対象: 境界の説明, 例: 'spawn_folder_load: FolderMsg を共有 channel へ送り update() が drain']"
 allowed-tools:
   - Read
@@ -9,7 +9,7 @@ allowed-tools:
   - Bash
 ---
 
-$ARGUMENTS の変更が、**別スレッド・別フレーム・別窓へ何かを渡しているか**を見る。渡っていれば、送信してから適用されるまでの間に世界が変わりうる——このプロダクトの状態競合はその 1 点に帰着する。`await` を数える検査は当たらない。
+$ARGUMENTS の変更が、**別スレッド・別フレーム・別ウィンドウへ何かを渡しているか**を見る。渡っていれば、送信してから適用されるまでの間に世界が変わりうる——このプロダクトの状態競合はその 1 点に帰着する。`await` を数える検査は当たらない。
 
 **計画段階では起動しない**（経緯は `#784`）。**`$ARGUMENTS` は対象の説明であって母集団の定義ではない**——食い違ったら差分の側を採る。
 
@@ -29,7 +29,7 @@ $ARGUMENTS の変更が、**別スレッド・別フレーム・別窓へ何か�
 
 - **a. 何が誰へ渡るか** — 種別・シンボル・渡る値
 - **b. 送信〜適用の間に世界が変わったとき、古い結果はどう落ちるか** — 判定軸は「**送信路が view 寿命の共有か、per-request か**」。共有なら世代 token が要り、per-request なら `Receiver` 所有権の破棄で足りる。**混ぜてはならない**。既知の 4 型: 世代 token・チャネル所有権・重複 spawn ガード・level-triggered 状態（網羅ではない。5 型目を見つけたらそう報告する）。同定した機構が**実際に適用されているか**まで見る——照合・破棄・remove・フラグ復帰が**全終端**（成功・timeout・異常終了・リセット）にあるか
-- **c. 状態を変えたあと、次フレームを起こす者はいるか** — フレームは勝手に回らない。回数ではなく到達性を問う。自窓は `ctx.request_repaint()`、外部スレッド・別窓・listener からは wake handle。**managed state へ `egui::Context` の clone を置かない**（worker の停止を妨げる）
+- **c. 状態を変えたあと、次フレームを起こす者はいるか** — フレームは勝手に回らない。回数ではなく到達性を問う。自ウィンドウは `ctx.request_repaint()`、外部スレッド・別ウィンドウ・listener からは wake handle。**managed state へ `egui::Context` の clone を置かない**（worker の停止を妨げる）
 - **d. 送信〜適用の間に、何が届きうるか** — 打鍵・起動・モード離脱・hide/show（reset-on-show の一掃）・config 適用・index build 完了・他 worker。到達不能と結論するなら**そのガードの条件式を `file:シンボル` か grep 結果で示す**。hide を跨ぐ in-flight 状態は reset-on-show の backstop とセットか。クリア対象は view-local で閉じない——managed state 側の共有スロットも見る
 - **e. 順序と live-read** — この処理を別の位置へ動かすと壊れるか（壊れるなら順序の明文化、壊れないなら読み書き集合の非重なりを示す）。live-read 3 点: フレーム冒頭で読んだ値を後段で読み直さない・`self.` へ保持しない・逆にフレームを跨ぐキャッシュで hot-reload を殺さない
 

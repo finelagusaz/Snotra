@@ -26,7 +26,7 @@
 - `hotkey.rs` — 永続ホットキー文字列の意味解析とシステムショートカット競合判定（責務は `//!`）。`HotkeyConfig` は serde 互換のため `config.rs` から re-export し、設定検証・UI・Win32 platform は同じ `ParsedHotkey` を消費する。文字列 parser を下流へ複製しない
 - `search.rs` — 検索順位計算・履歴ブースト・incremental search キャッシュ・空クエリ時履歴候補（責務・スコア階層は `//!` と `SearchEngine` の struct doc）。以下は複数ファイルにまたがる不変条件（単一ファイルのものは各 `//!` / `///` が正本・#1240）:
   - **並列の列は添字で対応づけて持つ**（cache locality）: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` をその形で持つ。**すべてが `Vec` ではない**——`lower_names` / `lower_file_names` は `str_arena` のアリーナ、表示名と `kana_lower_names` は `index_tree` の `NameArena` である。**エントリ数に比例する確保を持つ列は 1 つも残っていない**（migemo 有効時も。額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」）
-  - **正規化キー（履歴照合・パスマッチ）は索引に持たない**: `target_path` から `normalize_entry_key_into` で導出し、スレッドローカルのバッファへ詰め直す（唯一の経路は `search/scoring.rs` の `with_normalized_key`）。**畳み込み比較を別実装で書き起こしてはならない**——記録側と照合側が同じ関数を通ることがバイト一致の根拠であり、1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが消える）
+  - **正規化キー（履歴照合・パスマッチ）は索引に持たない**: `target_path` から `normalize_entry_key_into` で導出し、スレッドローカルのバッファへ詰め直す（唯一の経路は `search/scoring.rs` の `with_normalized_key`）。**正規化比較を別実装で書き起こしてはならない**——記録側と照合側が同じ関数を通ることがバイト一致の根拠であり、1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが消える）
   - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
   - `search/scoring.rs` — スコアリング・順位計算（#600 で分離。責務は `//!`）
   - `search/query_plan.rs` — クエリ計画の純粋導出（#599 で分離。責務は `//!`）
@@ -102,7 +102,7 @@
 - `history.rs`: 全記録・参照・マイグレーションのキー正規化
 - `search.rs` / `search/scoring.rs`: 履歴照合とパスマッチのキー（索引には持たず `with_normalized_key` が導出する）
 
-**規則の定義は `normalize_entry_key_into` 1 つである**（`normalize_entry_key` はその薄い包み）。記録側と照合側が同じ関数を通ることがバイト一致の根拠なので、**この関数を迂回する畳み込み比較を書かないこと**。ASCII 高速路は分岐しても結果が変わらない（ASCII 範囲では Unicode 小文字化と ASCII 小文字化が一致する）ことに依存しており、実インデックスの全パスでの一致を `tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key` が固定する。
+**規則の定義は `normalize_entry_key_into` 1 つである**（`normalize_entry_key` はその薄い包み）。記録側と照合側が同じ関数を通ることがバイト一致の根拠なので、**この関数を迂回する正規化比較を書かないこと**。ASCII 高速路は分岐しても結果が変わらない（ASCII 範囲では Unicode 小文字化と ASCII 小文字化が一致する）ことに依存しており、実インデックスの全パスでの一致を `tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key` が固定する。
 
 **同じ関数に「末尾セグメントだけ」を通す派生が 1 つある**（`indexer/keys.rs` の `normalize_file_name_key_into`・反復 9）。PATH スキャンが既存エントリを素通しするための**篩**であり、判定ではない。照合する両辺が同じ手順を通ることだけが「偽陰性を出さない」の根拠なので、**ここでも別実装を書き起こしてはならない**（規則の全文と健全性の論証はその関数の doc）。
 
@@ -194,7 +194,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 - **`FolderListContext`**: ロック内で `capture_folder_list_context()` してスナップショットを取得 → ロック外で I/O（`read_dir_entries`）→ ロック内で `finalize_folder_list()` でスコアリング。設定変更との微小な不整合は許容する設計判断
 - **`PrebuiltIndex`**: ロック外で構築 → ロック内で `apply_prebuilt_index()` でスワップ。SearchEngine の構築コスト（Wave 1/2 の並列計算）をロック外に追い出す。**入口は `PrebuiltIndex::from_material` の 1 つである**——派生データの有無で建て方が分かれるのは `SearchEngine::from_material` の 1 か所に閉じており、呼び出し点は分岐を持たない。`PrebuiltIndex::new` は `#[cfg(test)]` ゆえ製品から呼べない
-- **`PreparedHistorySave`**: ロック内で剪定・シリアライズ済み snapshot を取得 → ロック外で `save()`。process-wide の書き込み mutex と history path ごとの完了 sequence により、並行した古い snapshot が新しい `history.bin` を上書きしない。終了時の `prepare_history_flush` は、通常保存が prepare 済み・未書込の窓を回収するため `dirty_count` に関係なく最終 snapshot を生成する
+- **`PreparedHistorySave`**: ロック内で剪定・シリアライズ済み snapshot を取得 → ロック外で `save()`。process-wide の書き込み mutex と history path ごとの完了 sequence により、並行した古い snapshot が新しい `history.bin` を上書きしない。終了時の `prepare_history_flush` は、通常保存が prepare 済み・未書込のウィンドウを回収するため `dirty_count` に関係なく最終 snapshot を生成する
 
 新しい Engine メソッドを追加するとき、I/O やインデックス構築をロック内で行わないよう注意する。
 
@@ -205,9 +205,9 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 - 走査して書く経路（`rebuild_and_save` / `load_or_scan_with_stats` の cache-miss 枝）: `with_index_write_lock`（blocking）で取得
 - 走査せずに書く経路（ロードの旧版枝からの形式昇格・`upgrade_legacy_cache_in`）: 同じく `with_index_write_lock`。読めた旧版の走査結果をそのまま現行版で書き直すだけで、索引の中身は変えない
 
-**世代機構（読んだ時点の世代を控え、保存の直前に照合する）は #1023 で撤去した。** 守っていたのは「**内容を決めてから保存するまでの間に、別の書き手が新しい索引を書き終える**」窓であり、それを持つ書き手は背景再スキャンだけだった——22〜30 秒の走査をロックの**外**で終えてから、保存のためにロックを取りに行っていた。今の書き手 3 つのうち 2 つ（cache-miss 枝・`rebuild_and_save`）は走査から保存までを 1 回のロック取得で覆うので、この窓は構造的に開かない。
+**世代機構（読んだ時点の世代を控え、保存の直前に照合する）は #1023 で撤去した。** 守っていたのは「**内容を決めてから保存するまでの間に、別の書き手が新しい索引を書き終える**」ウィンドウであり、それを持つ書き手は背景再スキャンだけだった——22〜30 秒の走査をロックの**外**で終えてから、保存のためにロックを取りに行っていた。今の書き手 3 つのうち 2 つ（cache-miss 枝・`rebuild_and_save`）は走査から保存までを 1 回のロック取得で覆うので、このウィンドウは構造的に開かない。
 
-**例外は形式昇格である**——`index.bin` を読むのはロックの外で、保存だけがロックの内側にある。**その窓が今日開かないのは機構ではなく順序による**: 製品でこの経路を通る呼び出し元は `main` の起動段の 1 つだけで、もう一方の書き手（索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。**ロード後に走りうる書き手をこの経路へ足す日には、窓が戻る。** なお**プロセスをまたぐ同時起動は世代機構でも守れていなかった**——世代は `INDEX_WRITE_LOCK` と同じくプロセス大域の `static` であり、射程が同じだからである。
+**例外は形式昇格である**——`index.bin` を読むのはロックの外で、保存だけがロックの内側にある。**そのウィンドウが今日開かないのは機構ではなく順序による**: 製品でこの経路を通る呼び出し元は `main` の起動段の 1 つだけで、もう一方の書き手（索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。**ロード後に走りうる書き手をこの経路へ足す日には、ウィンドウが戻る。** なお**プロセスをまたぐ同時起動は世代機構でも守れていなかった**——世代は `INDEX_WRITE_LOCK` と同じくプロセス大域の `static` であり、射程が同じだからである。
 - `save_cache_sorted` 自身はロックを取らない（呼び出し側が保持する契約）。ロック取得済みのクロージャ内から呼ぶ。`save_cache_sorted` がロックを取ると自己デッドロックする
 - **`index.bin` を書く新しい経路を追加するときは、必ず `with_index_write_lock` を経由させる**
 
@@ -263,7 +263,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ### 製品の入口を通るテストは、その経路へ計器を足した瞬間に実 `%APPDATA%\Snotra` を書き始める
 
-**しかもテストは全部通ったままである**（判定が 1 つも変わらないため）。#1013 で当時の背景再スキャンに記録を足したところ、`Config::config_dir()` を内部で解決する入口を通る既存テスト 2 本が実 `rescan-log.jsonl` へ書き始めた（実測: 当該ファイルの全 36 行がテスト由来・実起動由来 0 行）。上限つきの記録なら、テスト実行が実運用の窓を食いつぶす。
+**しかもテストは全部通ったままである**（判定が 1 つも変わらないため）。#1013 で当時の背景再スキャンに記録を足したところ、`Config::config_dir()` を内部で解決する入口を通る既存テスト 2 本が実 `rescan-log.jsonl` へ書き始めた（実測: 当該ファイルの全 36 行がテスト由来・実起動由来 0 行）。上限つきの記録なら、テスト実行が実運用の記録枠を食いつぶす。
 
 - 直し方は **dir 注入の入口**（`load_cache_in` / `save_cache_sorted_in` のように `dir: &Path` を取る形）へ寄せること
 - **`SNOTRA_CONFIG_DIR` で迂回してはならない**——プロセス大域の env であり、並列実行中の他テストの保存先まで動かす

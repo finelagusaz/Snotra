@@ -15,7 +15,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `indexing.rs` — バックグラウンドインデックス構築（責務は `//!`）。以下は 2 経路にまたがる不変条件（panic 戦略・finish 後の再チェックは `start_index_build` の doc と本体のコメントが正本）:
   - **`start_index_build` は `mark_index_stale`（CAS の前）→ CAS → spawn の順で呼ぶ**。**drain ループ**（`begin_index_drain` で現在 config の `IndexInputs` snapshot → ロック外で `rebuild_and_save` → `build_index_from_material` → `complete_index_drain` で swap + re-diff）は stale が消えるまで回す。**索引を建てる手順（PATH マージ + `PrebuiltIndex::from_material`）を共有する呼び出し点は `build_index_from_material` の 1 関数に閉じている——この drain ループの 1 か所である**（背景再スキャンの適用〔`apply_rescanned_index`〕は #1001 で撤去済み）。手順を書き写すと片方だけ PATH マージを忘れる欠陥が沈黙で起きる（PATH のコマンドが検索から消えるが結果自体は出るので気づく手段が無い。詳細は同関数の doc）。**起動時のロード直後（`main.rs` の PATH エントリのスキャン + マージ、`startup::mark(Phase::PathMerge)` を含む区間）は同じ手順を別に持つ**——そこは `PrebuiltIndex` ではなく `Engine` を直接建てるため `build_index_from_material` を呼べない。PATH マージの規則を変えるときはこの起動経路も忘れないこと。**保存が返した派生データをそのまま索引の表現に使う**——木とマスクは `IndexMaterial` が組のまま運ぶので、**片方だけ伸ばす形はこの crate からは書けない**（正本は `indexer::IndexMaterial` の doc）
 - `config_watcher.rs` — `config.toml` 監視（100ms debounce）と `apply_config_change()` による反映（責務は `//!`）。以下は複数ファイルにまたがる適用の不変条件と発火イベント（読込失敗時のデータ保全は `//!` と `should_apply_config_change` の doc が正本）:
-  - **不変条件: アイコンキャッシュの破棄（`icons_turned_off` → `icon::drop_icon_cache`）は `update_config` より後に撃つ**——判定は old/new が要るので前、破棄は後、と分かれる。**前で撃つと config がまだ `show_icons=true` を返す隙に icon worker（`ensure_icon_cache_loaded_if_enabled` → `IconCache::load`）がキャッシュを建て直し、無効なのに常駐したまま次のトグルか終了まで残る**（#996 follow-up の `/race-check` で発見）。**窓は閉じない**——`update_config` の直前に真を読んだ worker はこの破棄の後に挿入しうる（`ensure_…` は config 読みと icon lock を別々に取る）。**受容する残余であり、`show_icons` を `IndexInputs` に載せて drain 上で撃っていた頃から在る**
+  - **不変条件: アイコンキャッシュの破棄（`icons_turned_off` → `icon::drop_icon_cache`）は `update_config` より後に撃つ**——判定は old/new が要るので前、破棄は後、と分かれる。**前で撃つと config がまだ `show_icons=true` を返す隙に icon worker（`ensure_icon_cache_loaded_if_enabled` → `IconCache::load`）がキャッシュを建て直し、無効なのに常駐したまま次のトグルか終了まで残る**（#996 follow-up の `/race-check` で発見）。**ウィンドウは閉じない**——`update_config` の直前に真を読んだ worker はこの破棄の後に挿入しうる（`ensure_…` は config 読みと icon lock を別々に取る）。**受容する残余であり、`show_icons` を `IndexInputs` に載せて drain 上で撃っていた頃から在る**
   - **不変条件: index 再構築の要否は `IndexInputs::from_config(old) != IndexInputs::from_config(new)` で判定し、ビルド進行中（`indexing`）でも `!indexing` ゲートなしで常に `start_index_build` を kick する**（`start_index_build` が `mark_index_stale` で stale を立て、in-flight ビルドの drain / finish 後再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。#347/#348-A）
   - 発火するイベント: `hotkey-registration-failed` / `indexing-started`（indexing.rs から）/ `indexing-complete`（indexing.rs から）/ `config-applied`（egui wake・値なし・SU6）。旧フロント向けの値運搬 emit 群（language-changed 等 7 本）は #532 SU7 で削除——egui は config-applied wake + 毎フレーム live-read で値を拾う
 - `events.rs` — アプリ内 Tauri イベント名の定数（責務は `//!`）
@@ -45,16 +45,16 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
   - `icon_textures.rs` — アイコン・テクスチャ層の純粋核（責務は `//!`）
   - `notify.rs` — 通知 primitive の純粋核（責務は `//!`）
   - `strings.rs` — UI 文言テーブル（責務は `//!`）
-  - `view.rs` — main 窓の 1 フレーム（入力の読み・描画・OS 窓への適用。責務は `//!`）
-  - `results_view.rs` — 結果リスト窓の従属 view（責務は `//!`）
-  - `results_window.rs` — results 窓の所有型（責務は `//!`）
+  - `view.rs` — main ウィンドウの 1 フレーム（入力の読み・描画・OS ウィンドウへの適用。責務は `//!`）
+  - `results_view.rs` — 結果リストウィンドウの従属 view（責務は `//!`）
+  - `results_window.rs` — results ウィンドウの所有型（責務は `//!`）
   - `visual.rs` — テーマの 1 フレーム分の読み取り値と純粋な導出（責務は `//!`）
-  - `window_coordinator.rs` は窓を駆動する責務（main の show/hide（両窓同期）・位置永続と復元・results の毎フレーム driver・wake primitive・#749）。**z-order は含まない**——`commands/window.rs` と `ResultsWindow` が持つ。窓の幾何に関する規則は次の 4 つ:
+  - `window_coordinator.rs` はウィンドウを駆動する責務（main の show/hide（両ウィンドウ同期）・位置永続と復元・results の毎フレーム driver・wake primitive・#749）。**z-order は含まない**——`commands/window.rs` と `ResultsWindow` が持つ。ウィンドウの幾何に関する規則は次の 4 つ:
     - **main のサイズは show 経路（ここ）と毎フレーム（`view.rs`）の 2 か所で設定し、両者は同じ高さを導く。** status 行の有無は `status_row_present` を、積算は `main_window_height` を共有する。show 側は reset-on-show 後の状態をリテラルで渡す——畳む高さと描く高さが食い違っても、memo リセットが同じフレームの動的高さ算出で直すため固着はしない。ずれはその 1 フレームだけのスナップとして現れる（#755 / #801。反転の経緯は `ADR-show-path-derives-drawn-height`）
     - **main の位置に基準モニターを判断する 3 箇所は、材料をバー高で共通にし、OS からは非クライアント分と scale しか読まない**（#738 / #878）。3 箇所とは show（`position_on_target_monitor`）・可視中のクランプ（`clamp_main_into_work_area`。呼ぶのは `view.rs` だがポインタ非押下のフレームに限る——reset-on-show の backstop は実測で却下した・`ADR-main-window-clamp-on-pointer-release`）・hide 時の保存（`read_placement_relative`）。材料が実高ではなくバー高である理由は `layout::bar_rect_height_phys` の doc。バー矩形の物理サイズは `read_frame_geom` が読んだ差分の上で `layout::logical_to_phys` が導く。show が `outer_size()` を読み戻していた経路は消えたため、同じ物理バー高が 2 通りに導出されることはもう無い（`ADR-show-path-derives-bar-rect`）
-    - **基準モニターは 2 対 1 に分かれ、クランプと hide 保存は `read_bar_anchor` という同じ 1 つの関数を通る。** その 2 つはバー矩形の中心が乗るモニター、show だけがカーソル/プライマリである。一致を doc の申し合わせではなく構造で担保するための共有であり、show が違うのは「これから出す窓をどこへ置くか」であって既存の窓を戻す話ではないため
-    - **`MonitorFromWindow`（窓全体の矩形）を位置決めの基準モニターに使ってはならない。** status/toast で伸びた分の重なりで隣モニターが選ばれ、行の出没でバーが飛ぶ（正本は `monitor::point_monitor_work_area` の doc）。唯一の例外だった `results_available_height` は #835 のクランプ撤去で消えたため、この crate に窓の矩形から位置決めの基準モニターを決める経路はもう無い（`snotra-egui-runtime/src/monitor.rs` は `MonitorFromWindow` を使うが、リフレッシュレートの取得であって位置決めではない）
-  - `mod.rs` — 窓生成（main/results 両窓）・共有状態・config の 1 フレーム読み・listener 登録（責務は `//!`）
+    - **基準モニターは 2 対 1 に分かれ、クランプと hide 保存は `read_bar_anchor` という同じ 1 つの関数を通る。** その 2 つはバー矩形の中心が乗るモニター、show だけがカーソル/プライマリである。一致を doc の申し合わせではなく構造で担保するための共有であり、show が違うのは「これから出すウィンドウをどこへ置くか」であって既存のウィンドウを戻す話ではないため
+    - **`MonitorFromWindow`（ウィンドウ全体の矩形）を位置決めの基準モニターに使ってはならない。** status/toast で伸びた分の重なりで隣モニターが選ばれ、行の出没でバーが飛ぶ（正本は `monitor::point_monitor_work_area` の doc）。唯一の例外だった `results_available_height` は #835 のクランプ撤去で消えたため、この crate にウィンドウの矩形から位置決めの基準モニターを決める経路はもう無い（`snotra-egui-runtime/src/monitor.rs` は `MonitorFromWindow` を使うが、リフレッシュレートの取得であって位置決めではない）
+  - `mod.rs` — ウィンドウ生成（main/results 両ウィンドウ）・共有状態・config の 1 フレーム読み・listener 登録（責務は `//!`）
 
 ### 処置を返す純粋核の強制（#934）
 
@@ -67,13 +67,13 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - **「落とせなくなった」と書いてはならない。** 受容残余は 4 件——上の「型段の射程」・下の「`double_must_use` を当てにしない」と、次の 2 つ。`let _ =` は今も通り——`lifecycle.rs` のテストに実使用があり、rustc 自身が修正提案として案内する（`clippy::let_underscore_must_use` は pedantic で未有効。有効化するとその正当なセットアップを誤爆させる）。また捕まえるのは「一度も見なかった」だけで、`if ….is_some() { }` のような「見たが捨てた」形は通る（`UpdaterUi::try_begin_install` はそこで `Update` を失い install 不能で固着する）
 - **型段へ移すときは、古いメソッド段を消したことを目で確かめること。** 消し忘れに `clippy::double_must_use` が当たることはあるが、当てにしてはならない——捕まえるのはメッセージ無しの残存だけである（診断文自身が `with no message` と名乗る。#934 で発火したのは #932 が入れた属性が素だったためで、上の「メッセージで名指す」規約どおりに書かれた残存は沈黙する。probe crate で実測）。deny 化しているのは `ci.yml` と `.claude/hooks/post-edit.mjs` が渡す `-D warnings` であって設定ファイルではない——この lint は clippy::style ＝ warn 既定で、`[workspace.lints.clippy]` に在るのは `disallowed_methods` だけ（#950 が同じ罠を root `Cargo.toml` のコメントで名指している）
 
-### 外部から窓を起こすときは `wake_main` / `wake_results` を通し、shell に `egui::Context` を持たせない（#671 PR D）
+### 外部からウィンドウを起こすときは `wake_main` / `wake_results` を通し、shell に `egui::Context` を持たせない（#671 PR D）
 
-wake handle（`snotra_egui_runtime::WindowWaker`）は `create()`（= `attach` の戻り値）から `EguiShellState` へ渡る。**ただし表現不能化ではない**——`EguiShellState` の `main_waker` / `results_waker` は `pub(crate)` ゆえ、crate 内から `app.try_state::<EguiShellState>()` を引いて直接 `.wake()` を呼ぶ書き方はコンパイルが通る（正しい経路を 2 本に定めただけ。results の raw 操作と同じ性格で、wake 経路に計装や dedup を足すなら直呼びの grep も要る）。**managed state に `egui::Context` の clone を置いてはならない**——Context の clone は repaint callback ごと複製し、callback が握る `RepaintScheduler` の Arc が窓の `Destroyed` を越えて worker の停止・join を止める（PR D 以前の実在した破れ・`snotra-egui-runtime/CLAUDE.md` の不変条件）。**自窓の Context を持っている場所（view の `update()` 内・worker へ渡した clone）では従来どおり `ctx.request_repaint()` が正しい**——`WindowWaker` は外部スレッド・別窓からの wake のための経路である
+wake handle（`snotra_egui_runtime::WindowWaker`）は `create()`（= `attach` の戻り値）から `EguiShellState` へ渡る。**ただし表現不能化ではない**——`EguiShellState` の `main_waker` / `results_waker` は `pub(crate)` ゆえ、crate 内から `app.try_state::<EguiShellState>()` を引いて直接 `.wake()` を呼ぶ書き方はコンパイルが通る（正しい経路を 2 本に定めただけ。results の raw 操作と同じ性格で、wake 経路に計装や dedup を足すなら直呼びの grep も要る）。**managed state に `egui::Context` の clone を置いてはならない**——Context の clone は repaint callback ごと複製し、callback が握る `RepaintScheduler` の Arc がウィンドウの `Destroyed` を越えて worker の停止・join を止める（PR D 以前の実在した破れ・`snotra-egui-runtime/CLAUDE.md` の不変条件）。**自ウィンドウの Context を持っている場所（view の `update()` 内・worker へ渡した clone）では従来どおり `ctx.request_repaint()` が正しい**——`WindowWaker` は外部スレッド・別ウィンドウからの wake のための経路である
 
 ### イベント駆動 wake の不変条件（#532 SU5） — フレームの paint より後や worker で UI 状態を変えたら `ctx.request_repaint()` を撃つ
 
-runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレームは勝手に回らない。**フレームの paint より後（遅延 dispatch・クリックハンドラ）や worker スレッドで UI 状態を変えたら、必ず `ctx.request_repaint()` で次フレームを起こす**——欠くと次の無関係な入力まで stale 表示が残る（toast dismiss で実測・PR #647 の e746826 で修正。folder/icon worker の送信毎 repaint と同根）。また **hidden 中は `update()` が走らない**（実測・SU5 要石。機構は tao/OS 層の配送抑止＝worker が送った `RequestRedraw` が hidden な窓には `RedrawRequested` として届かない・#697 実測）——時限処理（timeout・通知期限）の `request_repaint_after` は可視中しか効かず、hide を跨ぐ in-flight 状態は reset-on-show の backstop（クリア）とセットで設計する（blur 猶予は #745 で `BlurGrace::reset` として合流した。**そこに残る受容残余は同 doc が正本**）
+runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレームは勝手に回らない。**フレームの paint より後（遅延 dispatch・クリックハンドラ）や worker スレッドで UI 状態を変えたら、必ず `ctx.request_repaint()` で次フレームを起こす**——欠くと次の無関係な入力まで stale 表示が残る（toast dismiss で実測・PR #647 の e746826 で修正。folder/icon worker の送信毎 repaint と同根）。また **hidden 中は `update()` が走らない**（実測・SU5 要石。機構は tao/OS 層の配送抑止＝worker が送った `RequestRedraw` が hidden なウィンドウには `RedrawRequested` として届かない・#697 実測）——時限処理（timeout・通知期限）の `request_repaint_after` は可視中しか効かず、hide を跨ぐ in-flight 状態は reset-on-show の backstop（クリア）とセットで設計する（blur 猶予は #745 で `BlurGrace::reset` として合流した。**そこに残る受容残余は同 doc が正本**）
 
 ### 期限を待つ状態（armed）は、条件が成立するか解除されるまで毎フレーム残余を再要求する（#711）
 
@@ -89,7 +89,7 @@ runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレーム
 - **背景色だけは style を経由しない。** `RuntimeFrame::set_clear_color` が `run_ui` → paint の順序に乗るため同じフレームに届く。style を経由する 3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）も同じフレームに届く（#751。経路は別のままで、到達フレームの非対称だけが消えた）——ただしそれは `ui.visuals_mut()` で適用しているからである
 - **`ctx.set_visuals` をはじめ、`Context` 経由で global style を書いてはならない。** egui の root `Ui` は pass 冒頭で `ctx.global_style()` を `Arc` snapshot するため（版は `Cargo.toml` の固定値。`Context::global_style` が `Arc<Style>` を返す限り成り立つ）、そこへの書き込みは次の pass からしか効かず、色だけを変えた config 適用フレーム（＝次フレームが来る保証の無い状況と一致する）で入力欄だけが旧色で残る。この禁止は `src-tauri/clippy.toml` の `disallowed-methods` が機構で守る（#900）——ただし守るのは列挙した 7 メソッドの直呼びだけであり、`ctx.options_mut` / `ctx.memory_mut` から `Options` の `dark_style` / `light_style` へ直接書く経路は通る（列挙と除外理由の正本は同ファイル。規範は機構より広い）
 - **3 値の適用は、visuals を読む最初の操作（ウィジェットの描画・子 Ui の生成）より前に置くこと——その位置は `search_input_ui` の入口 1 か所に固定してある**（#949 で `update()` から移設）。適用位置が correctness の条件である。そこは 3 値の唯一の消費者である `TextEdit` を描く関数であり、同じ pass の子 `Ui` を実コードのまま観測する検査がこの順序を縛る（正本は同関数の doc。#751 が「検知手段が無い」と記録した受容残余はここで閉じた）。ただし検査が見るのはその関数の中だけである——`update()` 側でその呼び出しより前に visuals を読むウィジェットを足す退行は捕まらない（残る受容残余。現時点でその区間に visuals を読む描画は無く、`ui.interact` は `create_widget` を呼ぶが visuals を読まないので上にあってよい）
-- **main 窓へ新しく egui コンテナ（`Area` / `Window` / `CentralPanel` / popup / tooltip）を足すなら、その Ui へ自分で visuals を渡すこと。** global style はもう 3 値を持たず、それらは `ctx.global_style()` から Ui を作るため、既定色で描かれる。#949 以降はこれがより広く当てはまる——3 値が届くのは `search_input_ui` の入口以降だけである
+- **main ウィンドウへ新しく egui コンテナ（`Area` / `Window` / `CentralPanel` / popup / tooltip）を足すなら、その Ui へ自分で visuals を渡すこと。** global style はもう 3 値を持たず、それらは `ctx.global_style()` から Ui を作るため、既定色で描かれる。#949 以降はこれがより広く当てはまる——3 値が届くのは `search_input_ui` の入口以降だけである
 - 却下した代替案（runtime のフック・`request_repaint` の対症療法・両方書く・検知器を置く）は `ADR-visuals-application-target`、その「検知器を置く」の見送りを覆した経緯は `ADR-visuals-order-detector-at-choke-point`
 
 ### config の読みは `read_config` を通す。`engine.lock()` を経てはならない（#1032 / #1123）
@@ -104,7 +104,7 @@ runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレーム
 
 ### trace の presence 検査は状態の検査ではない（#671 PR A′）
 
-「操作を要求した」ログは、その操作が効いたことを意味しない。`egui_results:hide` は出るのに窓は残る、という回帰を `smoke:egui` が緑のまま通した。trace で不変条件を守るなら「何が起きたか」ではなく**「起きてはならないことが起きていないか」**（区間内に事象が現れないこと等）を書く
+「操作を要求した」ログは、その操作が効いたことを意味しない。`egui_results:hide` は出るのにウィンドウは残る、という回帰を `smoke:egui` が緑のまま通した。trace で不変条件を守るなら「何が起きたか」ではなく**「起きてはならないことが起きていないか」**（区間内に事象が現れないこと等）を書く
 
 ## 実装パターン
 
@@ -118,11 +118,11 @@ runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレーム
   `position_on_target_monitor` → `set_size`（実高。最初のフレームが描く高さ）→ `show()` の順。
   **位置とサイズは別々の高さで決まる**——位置は**バー高**（`derive_bar_rect_phys` が導いて引数で
   渡す）、サイズは**実高**である。**バーの位置はユーザーが決めるものであり、status 行・toast 行の
-  出没で動かしてはならない**。`set_size` を位置決定の後に置くことで、show 後に窓が伸びる／縮んで
+  出没で動かしてはならない**。`set_size` を位置決定の後に置くことで、show 後にウィンドウが伸びる／縮んで
   から伸びる（#755 / #801）を消す。**`set_size` は位置を動かさない**（tao の
   `util::set_inner_size_physical` が `SWP_NOMOVE` を立てる）。
   **かつてはここで `set_size` を 2 回撃っていた**——1 手目でバー高へ畳み、位置計算がそれを
-  `outer_size()` で**読み戻して**いた。畳むこと自体に目的は無く、値を渡す手段が OS の窓しか
+  `outer_size()` で**読み戻して**いた。畳むこと自体に目的は無く、値を渡す手段が OS のウィンドウしか
   無かったことの帰結である（#878 の継ぎ目 2・`ADR-show-path-derives-bar-rect`）
 
 ## 共有 core 関数の返り値契約
@@ -139,7 +139,7 @@ runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレーム
 
 Shell のトレイコールバック (`uCallbackMessage`) は `SendMessage` で配送される場合があり、`GetMessageW` ループに到達しない。カスタムメッセージ (`WM_APP + N`) をウィンドウプロシージャ (`DefWindowProcW`) だけで処理すると消滅するため、`platform_default_wnd_proc` で検出して `PostThreadMessageW` でスレッドキューに再投入する設計にしている。
 
-**`app.listen` のコールバックは emit した呼び出し元スレッド上で同期実行される**（tauri 2.11.4 の `event/listener.rs::emit_filter` が別スレッドへ dispatch せず直接呼ぶ・実測）。ゆえに listener の中身は「emit 元のスレッドで走るコード」である——Win32 メッセージループスレッド（hotkey）・config 監視スレッド・index build スレッドが、そのまま managed state や窓 API を触る。**listener を足すことは worker を足すことと同じ**であり、並行境界として扱う（→ `/race-check`）。
+**`app.listen` のコールバックは emit した呼び出し元スレッド上で同期実行される**（tauri 2.11.4 の `event/listener.rs::emit_filter` が別スレッドへ dispatch せず直接呼ぶ・実測）。ゆえに listener の中身は「emit 元のスレッドで走るコード」である——Win32 メッセージループスレッド（hotkey）・config 監視スレッド・index build スレッドが、そのまま managed state やウィンドウ API を触る。**listener を足すことは worker を足すことと同じ**であり、並行境界として扱う（→ `/race-check`）。
 
 NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application キー）によるコンテキストメニュー要求は `uCallbackMessage` を経由せずウィンドウプロシージャに直接 `WM_CONTEXTMENU` として届く。`platform_default_wnd_proc` で同様に再投入することで `handle_tray_message` に統一している。
 
@@ -147,11 +147,11 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 
 ## ウィンドウ生成の制約
 
-ウィンドウの生成は必ず setup フェーズで行い、ランタイムでは show/hide のみで制御する（メイン窓は `egui_shell::create`・setup 限定）。イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）はメッセージポンプが 1 イテレーション内で停止しており、ポンプ進行を要する操作（ウィンドウ生成・COM STA 初期化・モーダルダイアログ等）はデッドロックする——「メインスレッドにいる」と「メッセージポンプが自由に回る」は別物（旧 WebView2 期に実測した不変条件・egui 窓でも生成は setup 限定を維持）。メインウィンドウは `decorations: false` で閉じるボタンを持たないため `CloseRequested` ハンドラは不要。
+ウィンドウの生成は必ず setup フェーズで行い、ランタイムでは show/hide のみで制御する（メインウィンドウは `egui_shell::create`・setup 限定）。イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）はメッセージポンプが 1 イテレーション内で停止しており、ポンプ進行を要する操作（ウィンドウ生成・COM STA 初期化・モーダルダイアログ等）はデッドロックする——「メインスレッドにいる」と「メッセージポンプが自由に回る」は別物（旧 WebView2 期に実測した不変条件・egui ウィンドウでも生成は setup 限定を維持）。メインウィンドウは `decorations: false` で閉じるボタンを持たないため `CloseRequested` ハンドラは不要。
 
 **setup フック自身もイベントループの中で走る**（#671 PR D で一次資料を確認・tauri 2.11.4 `src/app.rs` の `make_run_event_loop_callback` が `RuntimeRunEvent::Ready` の arm で setup を呼ぶ）。**「setup はイベントループより前」ではない。** 帰結が 2 つある:
 
-- setup ブロックの実行中は wry plugin の `on_event` が回らないため、**egui フレームは 1 枚も走らない**。ゆえに窓生成（`egui_shell::create`）より**後**に managed state を載せてよい（`EguiShellState` の manage 位置がこれに依る）
+- setup ブロックの実行中は wry plugin の `on_event` が回らないため、**egui フレームは 1 枚も走らない**。ゆえにウィンドウ生成（`egui_shell::create`）より**後**に managed state を載せてよい（`EguiShellState` の manage 位置がこれに依る）
 - 上段のポンプ停止の話は setup にも当てはまる。setup 内で「ポンプが回ること」を期待する操作（`run_on_main_thread` の完了待ち等）を足してはならない
 
 ## working set の能動回収（EmptyWorkingSet）
@@ -167,7 +167,7 @@ Latin と CJK が混在する行のベースラインずれは、**softbuffer �
 
 - **前提**（混在を 2 フォントで積むとずれること自体）は `snotra-settings/CLAUDE.md`（#399）が正本
 - **softbuffer 固有の増幅**: `raster.rs` の `fill_mesh` は**カバレッジ AA を持たない**ため、2 フォント間の分数 px のベースライン差を整数 px へ丸めて**目に見える段差**にする。glow / wgpu 期は sub-pixel AA が同じ差を吸収して隠していた——**描画バックエンドを替えたことで顕在化した**類のバグである
-- **再発の経路**: フォント登録を書くたびに「末尾 fallback（`push`）で足す」形へ戻り、#399 → #579 と繰り返した。**新しく bin や窓を足すときに再導入されやすい**
+- **再発の経路**: フォント登録を書くたびに「末尾 fallback（`push`）で足す」形へ戻り、#399 → #579 と繰り返した。**新しく bin やウィンドウを足すときに再導入されやすい**
 - **ゆえにフォント登録に触る変更では `cargo run -p snotra` の目視（`docs/build-commands.md` カテゴリ D）を省略してはならない**（検知手段が視覚スモークだけであること・受容残余は `snotra-settings/CLAUDE.md` と `SPEC.md` のフォント節が正本）
 
 ## Win32 / Tauri 注意事項
@@ -175,17 +175,17 @@ Latin と CJK が混在する行のベースラインずれは、**softbuffer �
 - Win32 関連の不具合では、まず `config.toml`（テーマ含む）を確認し、次にウィンドウライフサイクル順序、最後に API 呼び出しを調査する（白画面バグの真因がテーマ設定だった事例あり）
 - Rust クレートをバージョン昇格する際は、対象バージョンが crates.io に実在・正当であることを確認する。大版ジャンプを前提にしない（例: `bincode 3.0.0` は `compile_error!` のみを含むジョークパッケージでコンパイル不能）
 - `windows` クレート（現在 v0.62）はバージョンごとに API シグネチャが変わる（`Result` 型の有無、ハンドル型の変更など）。コードを書く前に、使用中のバージョンで対象 API が利用可能か・型が一致するかを確認する
-- **宣言的なウィンドウ属性（`focusable(false)` 等）で挙動を代替させる判断は、その属性を読む側の「全分岐」を確かめてから確定する。** tao はスタイル計算（`window_state.rs` の `to_window_styles`）で `!FOCUSABLE → WS_EX_NOACTIVATE` を付ける一方、`apply_diff` の `ShowWindow` 分岐は**別の条件**（`MARKER_DONT_FOCUS`・窓生成時に 1 回だけ立ち初回 show で消費）で `SW_SHOW`（活性化する）と `SW_SHOWNOACTIVATE` を選ぶ。前者だけ読んで「この属性で足りる」と結論すると、**クリックでは奪われないのに表示で奪われる**非対称を踏む（#646 PR2・実機スモークでのみ露見）。属性が効く経路と、同じフラグを読む他の経路は別物である
-- **ある窓の show / hide / topmost のいずれか 1 つが tao を迂回したら、残り 2 つも必ず迂回側へ寄せる。混在は許されない。** `apply_diff` はフラグ差分がゼロなら早期 return し、`VISIBLE` を持たない窓には `SW_HIDE` を副作用で撃つ。片方だけ raw にすると「`hide()` が何もしない」「`set_always_on_top` で窓が消える」が同時に生まれる（#646 PR2）。窓ごとの層は次で固定する:
-  - main（主窓）= 3 操作すべて tao 経由（tauri `show` / `hide` / `set_always_on_top`）
-  - results（従属窓）= 3 操作すべて raw（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）。実装は `egui_shell::ResultsWindow` に集約する（#671 PR A′）。**ただし表現不能化ではない**——`Manager` から results の生ハンドルを引いて `.hide()` を呼ぶ書き方は依然コンパイルが通り、黙って no-op する（正しい経路を 1 つにしただけ・spec §7-1）
+- **宣言的なウィンドウ属性（`focusable(false)` 等）で挙動を代替させる判断は、その属性を読む側の「全分岐」を確かめてから確定する。** tao はスタイル計算（`window_state.rs` の `to_window_styles`）で `!FOCUSABLE → WS_EX_NOACTIVATE` を付ける一方、`apply_diff` の `ShowWindow` 分岐は**別の条件**（`MARKER_DONT_FOCUS`・ウィンドウ生成時に 1 回だけ立ち初回 show で消費）で `SW_SHOW`（活性化する）と `SW_SHOWNOACTIVATE` を選ぶ。前者だけ読んで「この属性で足りる」と結論すると、**クリックでは奪われないのに表示で奪われる**非対称を踏む（#646 PR2・実機スモークでのみ露見）。属性が効く経路と、同じフラグを読む他の経路は別物である
+- **あるウィンドウの show / hide / topmost のいずれか 1 つが tao を迂回したら、残り 2 つも必ず迂回側へ寄せる。混在は許されない。** `apply_diff` はフラグ差分がゼロなら早期 return し、`VISIBLE` を持たないウィンドウには `SW_HIDE` を副作用で撃つ。片方だけ raw にすると「`hide()` が何もしない」「`set_always_on_top` でウィンドウが消える」が同時に生まれる（#646 PR2）。ウィンドウごとの層は次で固定する:
+  - main（主ウィンドウ）= 3 操作すべて tao 経由（tauri `show` / `hide` / `set_always_on_top`）
+  - results（従属ウィンドウ）= 3 操作すべて raw（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）。実装は `egui_shell::ResultsWindow` に集約する（#671 PR A′）。**ただし表現不能化ではない**——`Manager` から results の生ハンドルを引いて `.hide()` を呼ぶ書き方は依然コンパイルが通り、黙って no-op する（正しい経路を 1 つにしただけ・spec §7-1）
   - **「main の show だけ raw にして統一する」は禁止。** main の tao `VISIBLE` が stale 化し、`set_always_on_top` が main を消す（`commands/window.rs` の topmost 対称がその瞬間に凶器になる）
-  - **新しい操作を raw へ寄せるかは、「`apply_diff` を通るか」ではなく「フラグ差分が生じるか」で判定する。** `set_size` / `set_position` も `set_window_flags(MAXIMIZED=false)` 経由で `apply_diff` に**入る**が、results では MAXIMIZED が元から false ゆえ差分が空になり冒頭 return で助かる（tao 0.35.3 で実測）。ゆえに tao 経由のままでよい。一方**差分を生む操作**（`set_resizable` 等）は `apply_diff` 末尾の `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し results 窓を消す
+  - **新しい操作を raw へ寄せるかは、「`apply_diff` を通るか」ではなく「フラグ差分が生じるか」で判定する。** `set_size` / `set_position` も `set_window_flags(MAXIMIZED=false)` 経由で `apply_diff` に**入る**が、results では MAXIMIZED が元から false ゆえ差分が空になり冒頭 return で助かる（tao 0.35.3 で実測）。ゆえに tao 経由のままでよい。一方**差分を生む操作**（`set_resizable` 等）は `apply_diff` 末尾の `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し results ウィンドウを消す
   - **可視性は「誰が撃つか」だけでは閉じない — 撃ってよい状況かは show 述語側のゲートで判定する。** main が hidden の間に results が出る事故は show 述語側のゲート（`egui_shell::layout::present_results` が `AppState.main_visible` を連言①として合流させる）が塞ぐ。`ResultsWindow` は raw 操作の所有点であって、撃ってよい状況かは判定しない（#671 PR A′ で実機発見）
-  - **可視性を変える操作はイベントループスレッドに閉じてある — 新しい可視性操作にも `&EventLoopProof` を要求する。** `show_egui_main` / `hide_egui_main` / `drive_results_window` / `ResultsWindow::{show, hide}` は `&snotra_egui_runtime::EventLoopProof`（`!Send + !Sync`・crate 外で構築不能）を引数に要求し、**別スレッドからの呼び出しはコンパイルが通らない**。フレームの中は `RuntimeFrame::event_loop()`、外は `on_event_loop` が唯一の口である。**証人を引数から外してはならない**——外した瞬間に「フラグ = false・窓 = 可視」の並びが再び構築可能になる（下の「`results 可視 ⇒ main 可視` は事前ゲート 1 点で守る」の項）
-  - **可視性を変える 5 関数の閉包は表現不能化ではない。閉じたのはその 5 関数であって、`tauri::Window` の生の面ではない。** `Manager` から main のハンドルを引いて `.hide()` / `.show()` を呼ぶ書き方は任意のスレッドからコンパイルが通り、**results と違って実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確である）。そのとき `AppState.main_visible` は更新されないため、**results が既に可視であれば最前面に取り残される**——main が hidden の間は `RedrawRequested` が配送されず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 PR A′ で実機発見した症状）。**results が新たに出ることはない**（同じ理由でフレームが走らない）ので、危険なのは既に可視だった場合に限る。**#880 サイクル段 2 時点でこの書き方の呼び出し点は無く**（main に対する `window.hide()` は `hide_egui_main` の 1 か所のみ。`results_window.rs` の非 Windows fallback は results 窓ゆえ別・grep 実測）、ゆえに現状の欠陥ではなく**受容する残余**である。main を隠す新しい経路が要るなら `hide_egui_main` を通すこと
-  - **`results 可視 ⇒ main 可視` は事前ゲート（`present_results`）1 点で守る。** 事後検査や「フラグを無視して撃つ hide」を足してはならない——それらが要るのは「フラグ = false・窓 = 可視」の食い違いを作れるときだけであり、証人型がその状態を構築不能にしている。ゲートが「読んだ時刻」しか守れなかった頃の 3 点防御と、その撤去（#880 サイクル段 2）の経緯は `ADR-results-gate-single-point`（`hide_egui_main` の hide 側同期は別軸として引き続き必要——上の「可視性は『誰が撃つか』だけでは閉じない」の bullet と #646 PR2 決定 6）
-  - **この種の race を lock で囲んではならない。** 窓を所有しないスレッドからの `ShowWindow`（`set_topmost` はいまも `commands/window.rs` のポーリングスレッドから撃つ、真の cross-thread 経路である）は所有スレッドのメッセージポンプ待ちでブロックしうるため、イベントループ側が取る lock で囲むと race がデッドロックへ化ける。cross-thread な Win32 呼び出しの順序づけに使ってよいのは `SeqCst` の全順序（撃った**後**に読み直す）だけである（`ADR-results-gate-single-point`）
+  - **可視性を変える操作はイベントループスレッドに閉じてある — 新しい可視性操作にも `&EventLoopProof` を要求する。** `show_egui_main` / `hide_egui_main` / `drive_results_window` / `ResultsWindow::{show, hide}` は `&snotra_egui_runtime::EventLoopProof`（`!Send + !Sync`・crate 外で構築不能）を引数に要求し、**別スレッドからの呼び出しはコンパイルが通らない**。フレームの中は `RuntimeFrame::event_loop()`、外は `on_event_loop` が唯一の口である。**証人を引数から外してはならない**——外した瞬間に「フラグ = false・ウィンドウ = 可視」の並びが再び構築可能になる（下の「`results 可視 ⇒ main 可視` は事前ゲート 1 点で守る」の項）
+  - **可視性を変える 5 関数の閉包は表現不能化ではない。閉じたのはその 5 関数であって、`tauri::Window` の生の面ではない。** `Manager` から main のハンドルを引いて `.hide()` / `.show()` を呼ぶ書き方は任意のスレッドからコンパイルが通り、**results と違って実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確である）。そのとき `AppState.main_visible` は更新されないため、**results が既に可視であれば最前面に取り残される**——main が hidden の間は `RedrawRequested` が配送されず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 PR A′ で実機発見した症状）。**results が新たに出ることはない**（同じ理由でフレームが走らない）ので、危険なのは既に可視だった場合に限る。**#880 サイクル段 2 時点でこの書き方の呼び出し点は無く**（main に対する `window.hide()` は `hide_egui_main` の 1 か所のみ。`results_window.rs` の非 Windows fallback は results ウィンドウゆえ別・grep 実測）、ゆえに現状の欠陥ではなく**受容する残余**である。main を隠す新しい経路が要るなら `hide_egui_main` を通すこと
+  - **`results 可視 ⇒ main 可視` は事前ゲート（`present_results`）1 点で守る。** 事後検査や「フラグを無視して撃つ hide」を足してはならない——それらが要るのは「フラグ = false・ウィンドウ = 可視」の食い違いを作れるときだけであり、証人型がその状態を構築不能にしている。ゲートが「読んだ時刻」しか守れなかった頃の 3 点防御と、その撤去（#880 サイクル段 2）の経緯は `ADR-results-gate-single-point`（`hide_egui_main` の hide 側同期は別軸として引き続き必要——上の「可視性は『誰が撃つか』だけでは閉じない」の bullet と #646 PR2 決定 6）
+  - **この種の race を lock で囲んではならない。** ウィンドウを所有しないスレッドからの `ShowWindow`（`set_topmost` はいまも `commands/window.rs` のポーリングスレッドから撃つ、真の cross-thread 経路である）は所有スレッドのメッセージポンプ待ちでブロックしうるため、イベントループ側が取る lock で囲むと race がデッドロックへ化ける。cross-thread な Win32 呼び出しの順序づけに使ってよいのは `SeqCst` の全順序（撃った**後**に読み直す）だけである（`ADR-results-gate-single-point`）
   - **この事故は presence 検査では捕まらない。** 検出器は `scripts/lib/SnotraTraceInvariants.psm1` の H1（hidden 区間に `egui_results:show` が現れたら異常）であり、ユニットテストが測れるのは述語の決定ロジックだけである（raw 操作は `#[cfg(windows)]`）
 - 必要な feature フラグ（`Win32_UI_WindowsAndMessaging` 等）が `Cargo.toml` に宣言されているか確認してから実装する
 - `UpdateWindow` など一部 API は windows クレートのバージョンによっては未提供。代替 API（`RedrawWindow` 等）の存在を事前に調べる
@@ -194,6 +194,6 @@ Latin と CJK が混在する行のベースラインずれは、**softbuffer �
 - **Win32 の「サイズ取得 → バッファ充填」2回呼び出しパターン**（`ExpandEnvironmentStringsW` 等）では、2回目の戻り値（書込長）を必ず**バッファ長で clamp してからスライス**する（`written.min(buf.len())`）。値が2呼び出し間で伸びると戻り値 > バッファ長になり `buf[..written-1]` が境界外 panic、release は `Cargo.toml` で `panic="abort"` のためプロセス abort に化ける（#394）
 - Tauri プラグインの新機能を使う際は `capabilities/*.json` の権限宣言を確認する
 - `ShellExecuteW` でフォルダ・画像・文書ファイルを開く場合は COM STA が必要。Tauri コマンドハンドラスレッドは COM 状態が保証されないため、`std::thread::spawn` + `CoInitializeEx(None, COINIT_APARTMENTTHREADED)` + `ShellExecuteW` + `if com_ok { CoUninitialize() }` パターンで新規スレッドに COM 環境を用意する。`is_ok()` は S_OK(0) と S_FALSE(1) を両方 true とし、どちらも CoUninitialize が必要。EXE ファイルは COM 不要なため同問題を起こさない
-- `SendInput` はシステム入力キューに注入し、ルーティングはキュー取り出し時に決定される。**フォーカス移行直後の `SendInput` は対象ウィンドウに届かない場合がある**（`SetForegroundWindow` は部分的に非同期）。**この同期待ちに `SendMessageTimeoutW(hwnd, WM_NULL, …)`（Raymond Chen 推奨パターン）を使えるのは、宛先窓が他スレッドの所有であるときだけである**——`SendMessage` 系は宛先が**呼び出しスレッド自身の所有**なら窓プロシージャを直接サブルーチンとして呼んで即座に戻り、キューを 1 通も排出せず、タイムアウトも意味を持たない（＝**完全な no-op**）。ゆえに宛先ごとに当否が分かれる:
-  - **tao の窓（main / results）を宛先にこのパターンを使わない**（#880 サイクル段 2 で `show_egui_main` から撤去済み） — tao の窓はイベントループスレッドの所有であり、可視性を変える 5 関数も証人型で同スレッドへ閉じてある（**このパターンの当否を決めるのは宛先窓の所有スレッドと呼び出しスレッドが同じかであって、その閉包ではない**）。**自分のキューが進むのを待つ手段はイベントループのコールバック内には無い**——ポンプを回すことは「ウィンドウ生成の制約」が禁じている。ゆえに `set_focus()` 直後の `SendInput` / IME 操作が依存できるのは**呼び出し順だけ**である
-  - **例外は `platform/mod.rs` が `platform_thread_loop` の中で生成する `SnotraPlatformWindow`** である（Win32 メッセージループスレッドの所有）。イベントループ側からそこを宛先にする限り、このパターンは**今も有効**である（`tray.rs` は既に `PostMessageW(hwnd, WM_NULL, …)` をこの窓へ撃っている）
+- `SendInput` はシステム入力キューに注入し、ルーティングはキュー取り出し時に決定される。**フォーカス移行直後の `SendInput` は対象ウィンドウに届かない場合がある**（`SetForegroundWindow` は部分的に非同期）。**この同期待ちに `SendMessageTimeoutW(hwnd, WM_NULL, …)`（Raymond Chen 推奨パターン）を使えるのは、宛先ウィンドウが他スレッドの所有であるときだけである**——`SendMessage` 系は宛先が**呼び出しスレッド自身の所有**ならウィンドウプロシージャを直接サブルーチンとして呼んで即座に戻り、キューを 1 通も排出せず、タイムアウトも意味を持たない（＝**完全な no-op**）。ゆえに宛先ごとに当否が分かれる:
+  - **tao のウィンドウ（main / results）を宛先にこのパターンを使わない**（#880 サイクル段 2 で `show_egui_main` から撤去済み） — tao のウィンドウはイベントループスレッドの所有であり、可視性を変える 5 関数も証人型で同スレッドへ閉じてある（**このパターンの当否を決めるのは宛先ウィンドウの所有スレッドと呼び出しスレッドが同じかであって、その閉包ではない**）。**自分のキューが進むのを待つ手段はイベントループのコールバック内には無い**——ポンプを回すことは「ウィンドウ生成の制約」が禁じている。ゆえに `set_focus()` 直後の `SendInput` / IME 操作が依存できるのは**呼び出し順だけ**である
+  - **例外は `platform/mod.rs` が `platform_thread_loop` の中で生成する `SnotraPlatformWindow`** である（Win32 メッセージループスレッドの所有）。イベントループ側からそこを宛先にする限り、このパターンは**今も有効**である（`tray.rs` は既に `PostMessageW(hwnd, WM_NULL, …)` をこのウィンドウへ撃っている）

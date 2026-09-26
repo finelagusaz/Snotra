@@ -1203,7 +1203,7 @@ name の Fuzzy スコアリング（`Utf32String` の確保 + nucleo マッチ�
 
 `SearchEngine::any_name_has_path_sep` を**構築時に測って**持ち（契約ではない・`sorted_by_path`
 と同じ形）、false のときだけ飛ばす。ガードは `QueryPlan::norm_query_has_path_sep` を見る
-——**`has_path_sep`（生クエリ）ではない**。needle は `norm_query` であり、畳み込みが区切りに
+——**`has_path_sep`（生クエリ）ではない**。needle は `norm_query` であり、正規化が区切りに
 触る版では両者がずれる。
 
 #### 対のレイテンシ実測（**開発機 GPD WIN MINI**・Ryzen 7 8840U・23.8 GB）

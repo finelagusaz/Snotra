@@ -212,7 +212,7 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
             target_path: "C:\\projects".to_string(),
             is_folder: true,
         },
-        // 非 ASCII（アクセント畳み込みが効く側）。
+        // 非 ASCII（アクセントの正規化が効く側）。
         AppEntry {
             name: "Café".to_string(),
             target_path: "C:\\apps\\Café.lnk".to_string(),

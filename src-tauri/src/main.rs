@@ -509,7 +509,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
     // `startup:failed` を出さないとハーネスには「タイムアウト」としか見えない。
     let sent = match app_handle.try_state::<Mutex<PlatformBridge>>() {
         Some(bridge) => match bridge.lock() {
-            // **写像は 1 か所に集約してある**（`startup::StartupFailure::from`）。
+            // **マッピングは 1 か所に集約してある**（`startup::StartupFailure::from`）。
             // ここでワイルドカードを書くと、`BridgeError` に variant を足したとき
             // 黙って既存の `reason` へ潰れる——`reason` はハーネスの契約である。
             Ok(b) => b

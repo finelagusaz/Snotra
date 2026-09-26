@@ -138,7 +138,7 @@ pub enum EscapeOutcome {
     Hide,
 }
 
-/// slash コマンドの写像（§15.2）。History(`/r`) だけは結果注入型（履歴を表示して留まる）で、
+/// slash コマンドのマッピング（§15.2）。History(`/r`) だけは結果注入型（履歴を表示して留まる）で、
 /// driver が run_search の Command 分岐へ振る。他 3 つは fire-once の副作用型。
 /// driver（launcher_controller）が消費する（#532 SU3 M3 Task 2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

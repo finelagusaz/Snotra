@@ -62,8 +62,8 @@ pub fn normalize_entry_key_into(buf: &mut String, path: &str) {
 /// [`super::path_env::scan_path_dirs`] の事前フィルタ専用。**照合する両辺は必ずこの 1 つを通すこと**——
 /// `normalize_entry_key_into` と同じ理屈で、同じ手順を通ることだけが一致の根拠になる。
 ///
-/// **これは篩であって判定ではない。** 正規化は「全体 `trim` → 文字単位の写像（小文字化と
-/// `/` → `\`）」であり、写像は新たな `\` を生まないのでセグメント境界を保つ。ゆえに
+/// **これは篩であって判定ではない。** 正規化は「全体 `trim` → 文字単位の変換（小文字化と
+/// `/` → `\`）」であり、この変換は新たな `\` を生まないのでセグメント境界を保つ。ゆえに
 /// `normalize_entry_key(a) == normalize_entry_key(b)` ならこのキーも必ず一致する
 /// （＝**偽陰性を出さない**）。逆は成り立たない——別ディレクトリの同名ファイルが
 /// 通り抜けるので、通した候補はフルパスの正規化キーで確かめること。
@@ -80,7 +80,7 @@ pub fn normalize_entry_key_into(buf: &mut String, path: &str) {
 ///    セグメントを切り出し、[`normalize_entry_key_into`] が**そのセグメントをもう一度
 ///    `trim` する**。区切りの直後に空白があるパス（`C:\dir\ tool.exe`）では、
 ///    「正規化してから切り出す」と「切り出してから正規化する」が一致するために、
-///    写像と `trim` が可換であることが要る。
+///    変換と `trim` が可換であることが要る。
 pub(crate) fn normalize_file_name_key_into(buf: &mut String, target_path: &str) {
     let trimmed = target_path.trim();
     let segment = match trimmed.rfind(['\\', '/']) {

@@ -2365,7 +2365,7 @@ Vec 本体 4.77 MiB はどの案でも残る。割った結果、上限はそれ
 
 同時に、**割ったことで順位が入れ替わる新しい候補が出た**: `lower_names` の 86.6%
 （270,355 件・9.80 MiB）が `entries[].name` と同一である。索引名が既に小文字のとき
-ASCII 小文字化が恒等写像になるためで、候補としては `lower_file_names` の共有（9.71 MiB /
+ASCII 小文字化が恒等関数になるためで、候補としては `lower_file_names` の共有（9.71 MiB /
 255,961 blocks）より大きい。**どちらもホットパスに分岐を 1 つ足す**ので、採否は測ってから決める。
 
 ### 採用: `lower_file_names` を `lower_names` と共有（-9.71 MiB・反復 4）
@@ -2440,7 +2440,7 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 
 ### 採用: `lower_names` を `entries[].name` と共有（-9.80 MiB・反復 5）
 
-`to_lower_folded` が恒等写像になる名前——既に小文字の ASCII と、変換対象を持たない CJK——は
+`to_lower_folded` が恒等関数になる名前——既に小文字の ASCII と、変換対象を持たない CJK——は
 `lower_name` が `name` と同じ文字列になる。実データで **86.6%**（270,355/312,377）。
 
 | 指標 | 変更前 | 変更後 |

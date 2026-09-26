@@ -180,9 +180,9 @@ describe("G-heading-refs / G-near-heading-refs のスクリプトの腕（コメ
   });
 
   it("種 2: 文字列リテラルの中の同じ参照は見ない（負の fixture を偽陽性にしない契約の実体）", () => {
-    // **これが「`*.test.mjs` を外す」の代わりに置いた意味の写像である。**拡張子で外すと
+    // **これが「`*.test.mjs` を外す」の代わりに置いた意味のマッピングである。**拡張子で外すと
     // `*.Tests.ps1` のような別の綴りが素通りし、fixture を持たないテストのコメントまで落ちる。
-    // この it が落ちたら、母集団の定義が拡張子の写像へ戻った合図
+    // この it が落ちたら、母集団の定義が拡張子のマッピングへ戻った合図
     const s = scan("scripts/a.test.mjs", 'const doc = "`CLAUDE.md`「Git 運用」";\n');
     expect(s.findings).toEqual([]);
     expect(s.checked).toBe(0);

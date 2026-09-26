@@ -120,7 +120,7 @@ pub struct SearchEngine {
     /// `String` の容量ワード（8B/要素）が無駄になる。`str` へ Deref するので読み取り側は無変更。
     ///
     /// **`None` は「`entries[i].name` と同一」を意味する**（`assemble` が構築時に測って潰す）。
-    /// `to_lower_folded` が恒等写像になる名前——既に小文字の ASCII と、変換対象を持たない
+    /// `to_lower_folded` が恒等関数になる名前——既に小文字の ASCII と、変換対象を持たない
     /// CJK——がそれに当たり、実データでは 86.6% を占める。**`Option` で足りるのは
     /// `lower_names` に「無い」という状態が元から無いからである**（`lower_file_names` の
     /// `None` は「file name 成分が無い」を先に意味しており、そちらは旗を別に要した）。

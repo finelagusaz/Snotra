@@ -22,7 +22,7 @@
 | フック | 発火条件（一覧は `docs/hooks.md`） | 正しい対応 |
 |---|---|---|
 | コマンドの形のガード（PreToolUse） | `tool_input.command` の形で決まる（判定と一覧の SSOT は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」）。`gh pr create` は未 push＝空 PR と `workspace/plan.md` の未チェック `- [ ]` でも拒む（#749） | **拒否メッセージが復帰手順を持つ。それに従う**（規範を機構へ吸収した設計ゆえ、代わりの手段は必ず文言に入っている・#768）。`gh pr create` は `git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**——対象リポジトリを判定できず拒否される（実測） |
-| 編集後の自動検証（PostToolUse） | 編集した `file_path` の種類で決まる（写像の SSOT は `post-edit.mjs` の `selectChecks`） | 失敗時のみ `--- <検査>: 失敗 (exit N) ---` と再現コマンドと診断が会話に届く。手動での再実行は不要（沈黙の読み方は下の #497 の条項） |
+| 編集後の自動検証（PostToolUse） | 編集した `file_path` の種類で決まる（マッピングの SSOT は `post-edit.mjs` の `selectChecks`） | 失敗時のみ `--- <検査>: 失敗 (exit N) ---` と再現コマンドと診断が会話に届く。手動での再実行は不要（沈黙の読み方は下の #497 の条項） |
 
 - **「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/ADR-squash-merge-issue-autoclose.md` が SSOT。**残余（PR 本文の closing keyword）は `/merge-pr` の手順に委ねられる**——マージ前に `gh pr view <PR> --json closingIssuesReferences` の一覧から消えるまで本文を編集する繰り返しと、マージ後の 3 点検証がその実体である
 - **検出は exit code、出力は証拠**（#471）。**沈黙しうる経路はすべて塞いであり、その閉塞を壊す変更を `.claude/hooks/` に入れてはならない**（経路の内訳は `docs/hooks.md`）

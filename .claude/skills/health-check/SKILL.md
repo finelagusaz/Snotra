@@ -73,7 +73,7 @@ allowed-tools:
 
 ## Check 11 — 格下げ中のメタ層の発火計数
 
-ガバナンス機構のうち**主題が機構自身である判定 2 件**——面積計器の入力ガードと evidence の供給断検知——は、`governance:check` の合否から外してある（`ADR-governance-meta-demotion`）。**この Check だけがその 2 件を観測する窓である。**
+ガバナンス機構のうち**主題が機構自身である判定 2 件**——面積計器の入力ガードと evidence の供給断検知——は、`governance:check` の合否から外してある（`ADR-governance-meta-demotion`）。**この Check だけがその 2 件を観測する唯一の経路である。**
 
 **錨の層は格下げではなく撤去した**（`ADR-governance-anchor-layer-discarded`）ので、観測の対象ではない。**「母集団が黙って縮んでも誰も赤くしない」は受容した残余であり、発見事項ではない**——同 ADR の「受容する残余」が正本。
 

@@ -857,7 +857,7 @@ describe("package.json ドリフト検出カナリア — #497", () => {
 
 describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
   // check / clippy は --workspace なので members を cargo が読む（写しは消えた）。
-  // しかし `cargo test -p <crate>` は「編集した crate → そのテスト」の写像であり、
+  // しかし `cargo test -p <crate>` は「編集した crate → そのテスト」のマッピングであり、
   // selectChecks のディレクトリ接頭辞と buildCommand の case に手書きされている。
   // 新しい crate が生えると、その .rs を編集してもテストが**気づかれないまま走らない**。
   // ここで落とし、selectChecks / buildCommand / ci.yml / SSOT の更新を強制する。

@@ -387,7 +387,7 @@ export function buildCommand(id, root) {
         "clippy", "--workspace",
         "--all-targets", "--message-format", "short", "--", "-D", "warnings",
       ]);
-    // test の -p は写しではなく「編集した crate → そのテスト」の写像。--workspace に
+    // test の -p は写しではなく「編集した crate → そのテスト」のマッピング。--workspace に
     // すると編集していない crate のテストまで走り、hook の即時性が失われる。
     case "core-test":
       return cargoSpec(["test", "-p", "snotra-core"]);

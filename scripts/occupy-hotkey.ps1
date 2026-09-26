@@ -67,7 +67,7 @@ function Get-ParameterDefault {
 $hotkeyModifier = Get-ParameterDefault -Name 'HotkeyModifier'
 $hotkeyKey = Get-ParameterDefault -Name 'HotkeyKey'
 if ($hotkeyModifier -ne 'Alt' -or $hotkeyKey.Length -ne 1) {
-  # **既定が動いたらここで止める。** 対応する Win32 定数の写像を持たないまま握ると、
+  # **既定が動いたらここで止める。** 対応する Win32 定数のマッピングを持たないまま握ると、
   # 別のキーを占有して「握れた」と報告し、対照の起動が普通に成功する。
   throw "検証用プロファイルの既定ホットキーが $hotkeyModifier+$hotkeyKey へ変わりました。このスクリプトの Win32 定数を揃えてください"
 }

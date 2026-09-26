@@ -1216,7 +1216,7 @@ mod tests {
             ("Ünïcode", "C:\\Projects\\Ünïcode.LNK", false),
             ("apps", "C:\\apps", true),
             // 区切りの直後に空白があるパス（`normalize_file_name_key_into` の doc が
-            // 「写像と `trim` が可換」を前提として名指している形）。
+            // 「変換と `trim` が可換」を前提として名指している形）。
             (" tool", "C:\\apps\\ tool.EXE", false),
         ];
         let want: Vec<String> = entries

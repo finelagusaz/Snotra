@@ -203,7 +203,7 @@ pub fn icon_prefetch_range(
         return 0..total_rows;
     }
     // **ピッチは egui が実際に積む値へ丸めてから使う**（正本は `results_window_height` の
-    // `drawn_row`）——素の `row_height` で割ると、行の積み方と index の写像が僅かにずれる。
+    // `drawn_row`）——素の `row_height` で割ると、行の積み方と index のマッピングが僅かにずれる。
     // 丸めた結果が 0 以下になる病的な入力もここで弾く（除算が壊れる）。
     // なお `results_list_ui` は `item_spacing.y = 0.0` を敷いてピッチ = 行高を構造的に真に
     // しているが、この関数は呼ばれ方に依存しない。

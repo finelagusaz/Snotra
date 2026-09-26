@@ -11,7 +11,7 @@
 
 ## Git/GitHub 運用
 
-- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` の 4 hook が commit / 非 FF merge / rebase / push を拒み（`githooks.test.mjs` で実測）、GitHub ruleset `default` が main への直接 push を拒む（実測）
+- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` の各 hook が commit / 非 FF merge / rebase / push を拒み（`githooks.test.mjs` で実測）、GitHub ruleset `default` が main への直接 push を拒む（実測）
 - **Layer 1（`.githooks/`）は best-effort である** — hook は追跡ファイルゆえ、含まないコミットの checkout は fail-open。`cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` も `pre-commit` を呼ばず**沈黙で main が進む**（実測）。**取りこぼしは push 時に GitHub ruleset が捕捉する**（不在検知は意図的に置かない）
 - **squash マージは `/merge-pr` の手順で行う** — マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない（#488 実測）。手順の全文は `/merge-pr`、機構の理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`。`gh pr merge --auto` は確認とマージを引き離すため**使わない**
 
@@ -22,11 +22,13 @@
 | フック | 発火条件（一覧は `docs/hooks.md`） | 正しい対応 |
 |---|---|---|
 | コマンドの形のガード（PreToolUse） | `tool_input.command` の形で決まる（判定と一覧の SSOT は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」）。`gh pr create` は未 push＝空 PR と `workspace/plan.md` の未チェック `- [ ]` でも拒む（#749） | **拒否メッセージが復帰手順を持つ。それに従う**（規範を機構へ吸収した設計ゆえ、代わりの手段は必ず文言に入っている・#768）。`gh pr create` は `git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**——対象リポジトリを判定できず拒否される（実測） |
-| 編集後の自動検証（PostToolUse） | 編集した `file_path` の種類で決まる（写像の SSOT は `post-edit.mjs` の `selectChecks`） | **検査が割り当てられているファイルでは、沈黙は合格を意味する**（割り当ての SSOT は `selectChecks`）。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
+| 編集後の自動検証（PostToolUse） | 編集した `file_path` の種類で決まる（マッピングの SSOT は `post-edit.mjs` の `selectChecks`） | 失敗時のみ `--- <検査>: 失敗 (exit N) ---` と再現コマンドと診断が会話に届く。手動での再実行は不要（沈黙の読み方は下の #497 の条項） |
 
-- **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/ADR-squash-merge-issue-autoclose.md` が SSOT。**残余（PR 本文の closing keyword）は `/merge-pr` の手順に委ねられる**——マージ前に `gh pr view <PR> --json closingIssuesReferences` の一覧から消えるまで本文を編集する繰り返しと、マージ後の 3 点検証がその実体である
-- **検出は exit code、出力は証拠**（#471）。成功した検査は何も出力せず、失敗したときだけ `--- <検査>: 失敗 (exit N) ---` と再現コマンドが会話に現れる。**沈黙しうる経路はすべて塞いであり、その閉塞を壊す変更を `.claude/hooks/` に入れてはならない**（経路の内訳は `docs/hooks.md`）
-- **沈黙が「合格」なのは `selectChecks` に検査が割り当てられたファイルだけである**（#497・機構ではなく規範ゆえ前提を忘れれば false green が再発する）。`*.md` 全般・`SPEC.md`・`scripts/` 配下の非 TS ファイル・`.github/workflows/`・`Cargo.lock` の沈黙は「何も走らなかった」である（`scripts/*.ts` は「include 対象外」の一行が出るため沈黙しない）。**検査ではない reminder が別経路で出るが（`.md` の依存参照・#1140、編集に帰属するガバナンスの不整合・#1139。一覧は `docs/hooks.md`「検査ではない reminder」が正本）、その不在も「問題が無い」を意味しない**——依存参照は純追記でもフェンスに分断された節でも出ず、編集に帰属する側は削除も `mod` 宣言も見ない。**どの判定がどこまで見るかは母集団ごとに違う**ので、ここで数え上げず `docs/hooks.md` の表と射程の穴を読む。決定的な項目（参照実在・索引・スキル表・SPEC 番号・rules glob・コマンド写像）は PR CI の `governance-check` job（`skip-ci` 非対象・#587）が事後に捕捉し、その検査対象外（責務の妥当性等の意味的整合）は**受容する残余**である
+- **「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/ADR-squash-merge-issue-autoclose.md` が SSOT。**残余（PR 本文の closing keyword）は `/merge-pr` の手順に委ねられる**——マージ前に `gh pr view <PR> --json closingIssuesReferences` の一覧から消えるまで本文を編集する繰り返しと、マージ後の 3 点検証がその実体である
+- **検出は exit code、出力は証拠**（#471）。**沈黙しうる経路はすべて塞いであり、その閉塞を壊す変更を `.claude/hooks/` に入れてはならない**（経路の内訳は `docs/hooks.md`）
+- **沈黙が「合格」なのは `selectChecks` に検査が割り当てられたファイルだけである**（#497・機構ではなく規範ゆえ前提を忘れれば false green が再発する）。`*.md` 全般・`SPEC.md`・`scripts/` 配下の非 TS ファイル・`.github/workflows/`・`Cargo.lock` の沈黙は「何も走らなかった」である（`scripts/*.ts` は「include 対象外」の一行が出るため沈黙しない）
+- **検査ではない reminder の不在も「問題が無い」を意味しない**——reminder は別経路で出るが（`.md` の依存参照・#1140、編集に帰属するガバナンスの不整合・#1139。一覧は `docs/hooks.md`「検査ではない reminder」が正本）、依存参照は純追記でもフェンスに分断された節でも出ず、編集に帰属する側は削除も `mod` 宣言も見ない。**どの判定がどこまで見るかは母集団ごとに違う**ので、ここで数え上げず `docs/hooks.md` の表と射程の穴を読む
+- **事後の捕捉は PR CI の `governance-check` job が担う**（`skip-ci` 非対象・#587）——決定的な項目（参照実在・索引・スキル表・SPEC 番号・rules glob・コマンドマッピング）はそこで捕捉され、その検査対象外（責務の妥当性等の意味的整合）は**受容する残余**である
 - **フックを改修するときは `docs/hooks.md` を読む**（実装契約・機構・保守。原理は `docs/development-principles.md`「構造的設計原則と強制の階梯」）。改修時は `.claude/rules/safety-nets.md` も自動配送される
 
 ## チーム憲章
@@ -45,7 +47,7 @@
   - **検査対象を変更しながら検査を走らせない**——委譲した検査が対象を読む時刻は制御できない（#489）。**起動したことを相手は知らないので、「以降この範囲を触るな」と伝えるのは委譲側の責務である**
     - **複数枠を並列で走らせたら、全枠が出揃うまで対象へ触らない。** 1 枠ずつ届く報告は**個別に処理したくなる**が、そこで対象を直すと**残りの枠が読む版が分岐する**——#992 で 3 度踏み（うち 1 枠が実際に編集前の文言を引用した所見を返した）、しかも**「以降触らない」と宣言した後に 2 度再発した**。宣言は効かない。**先に全報告を受け取り、裁定と修正はそこから始める**——順序を変えるだけで消える失敗であり、待つ費用は「1 枠ぶんの遅延」しかない
     - **版がずれた所見は捨てなくてよい。** 引用された文言が現在の対象に在るかを見れば版は判定でき、**別枠が同じ穴を独立に突いていれば修正の妥当性はむしろ裏づけられる**（#992 で 2 枠が規範の射程の穴へ独立に到達した）
-  - **委譲した検査の成果物は、呼び出し側が指定したパスへ書かせる**（返り値に依存させない）——実装の成果は git に残るが、レビュー・判定は会話にしか無く、届かなければ実施の有無すら区別できない（#725 で 6 回中 5 回・束C で 2 回中 2 回。機序は `docs/development-principles.md`「デバッグ・バグ修正」）。**ただし書かせる先を `report*.md` にしない**——Write が拒否される（2026-08-08 実測。同ディレクトリで `report-*.txt` と `scratch-note.md` は通り `report-test.md` だけが落ちた）。`.txt` か別の basename にする
+  - **委譲した検査の成果物は、呼び出し側が指定したパスへ書かせる**（返り値に依存させない）——実装の成果は git に残るが、レビュー・判定は会話にしか無く、届かなければ実施の有無すら区別できない（#725 で 6 回中 5 回・束C で 2 回中 2 回。機序は `docs/development-principles.md`「デバッグ・バグ修正」）。**ただし書かせる先を `report*.md` にしない**——**サブエージェントからの** Write は harness に拒否される（2026-08-08 実測: 同ディレクトリで `report-*.txt` と `scratch-note.md` は通り `report-test.md` だけが落ちた。2026-09-26 再測: 落ちるのはサブエージェントからだけで、メインエージェントからは通る）。`.txt` か別の basename にする
 - **長時間の委譲タスクは中断を前提に設計する** — セッションリミット・API エラーで途中終了しうる。大きなタスクは Phase 分割し「各 Phase の検証 green 後にコミット」を指示に含める（#431）。**検査を委ねるときは「測る前に、いま持っている分を出力先へ書け」を指示に入れる**——#878 で 529 で落ちた枠は「ベースラインは緑。次は変異注入」まで進んでいたのに**成果物ファイルは 0 バイト**で、カテゴリ検証の結果もレビュー所見も会話にしか無かった（再開で回収できたのは、名前付きで `SendMessage` できたからにすぎない）
 - **レビューの委譲では、「重複に見えるが意図的に分けた構造」を根拠つきで先に渡す** — 渡さないと DRY 違反として必ず挙がり、採否の判断に毎回コストが乗る（#872 で `/simplify` の 4 枠へ意図的分離 3 件を根拠の所在つきで渡したところ、**4 枠とも 1 件も誤検出しなかった**）。ルート `CLAUDE.md`「コミュニケーション原則」の「意図的なリファクタリングの結果を元に戻さない」を、委譲時に**実際に届く形へ落とす**のがこの 1 手である
 - **指摘 0 件の報告は、対象が空だったことと区別が付かない——報告が名乗る対象（ブランチ・sha・件数）を自分の状態と突き合わせてから受け取る** — #878 で `/code-review` が別の作業コピーを見て「ブランチ `main`・差分なし・指摘 0」を返した。**exit も緑、所見も 0 件で、成功したレビューと出力が同じである**。気づけたのは結論ではなく**報告に含まれる前提**（名乗ったブランチ名）を見たからで、対象を引数で明示すればこの曖昧さは構造的に消える

@@ -244,7 +244,7 @@ export const commentFamilyOf = (file) => COMMENT_FAMILY.get((/\.[a-z0-9]+$/i.exe
 /**
  * スクリプトの**コメント行だけ**を `[lineNo, text]` で返す。
  *
- * **これが「テストファイルを外す」の代わりに置く意味の写像である**（#1138）。負の fixture が
+ * **これが「テストファイルを外す」の代わりに置く意味のマッピングである**（#1138）。負の fixture が
  * 検査を赤くするのは「テストファイルだから」ではなく「**文字列リテラルに書かれたデータ**だから」で、
  * 参照はコメント＝散文に書かれる。拡張子で外すと `*.Tests.ps1` のような別の綴りが素通りし、
  * 逆に fixture を持たないテストのコメント内の参照まで落ちる。実測（この変更の直前の作業ツリー）:
@@ -635,7 +635,7 @@ export function headingRefDocs(snapshot) {
  * **`.mjs` / `.ps1` はここではなく `headingRefCommentDocs` が持つ**（#1138）。#925 はこれらを
  * 却下したが、その裁定の実測は `.mjs` だけを見ており、`.ps1` / `.psm1` には本物の腐りが残っていた。
  * 却下の理由（フィクスチャと検出器自身のコメントが赤になる）は、走査をコメント行へ限る
- * 意味の写像で解ける——詳細は `headingRefCommentDocs` と `linesOfComments`。
+ * 意味のマッピングで解ける——詳細は `headingRefCommentDocs` と `linesOfComments`。
  *
  * **md の腕が持つ除外接頭辞を共有しない。** `docs/adr/` の除外は「ADR **本文**は決定日時点の世界の
  * 記述として凍結する」という散文についての契約であり（`ADR-adr-frozen-history`）、`docs/superpowers/`
@@ -656,7 +656,7 @@ export function headingRefSourceDocs(snapshot) {
  * 委譲したレビュアであって機構ではない（#1138）。
  *
  * **拡張子を並べた列ではなく `commentFamilyOf` を母集団の述語にする。** 「どのファイルを見るか」と
- * 「その中のどの行を見るか」が同じ 1 つの写像から出るので、片方だけ足して他方を忘れる形が作れない。
+ * 「その中のどの行を見るか」が同じ 1 つのマッピングから出るので、片方だけ足して他方を忘れる形が作れない。
  *
  * **規範はすでにここへ配送されている**——`.claude/rules/governance-docs.md` の `paths` が `scripts/` 配下を
  * 覆っており（正本はその frontmatter。ここに glob を写さない）、正準形で書けと言いながら検めていない

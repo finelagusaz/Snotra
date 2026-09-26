@@ -102,7 +102,7 @@ pub fn file_char_mask(lower_file_name: Option<&str>) -> u64 {
 /// 鎖は `lower_file_name` → `lower_name` → `name` の順で、各段が上流と一致すれば持たずに済む。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DerivedSharing {
-    /// `lower_name` が `name` とバイト一致する（`to_lower_folded` が恒等写像になる名前）。
+    /// `lower_name` が `name` とバイト一致する（`to_lower_folded` が恒等関数になる名前）。
     pub lower_name_is_name: bool,
     /// `lower_file_name` が `lower_name` とバイト一致する。
     ///

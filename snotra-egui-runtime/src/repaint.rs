@@ -1,7 +1,7 @@
-//! 即時／遅延 repaint を Tauri イベントループへ配送する worker（窓ごと 1 スレッド）。
+//! 即時／遅延 repaint を Tauri イベントループへ配送する worker（ウィンドウごと 1 スレッド）。
 //! 配送には下限間隔がある（フレーム上限＝モニターのリフレッシュレート・取得失敗時 60Hz・
 //! contract-design spec 契約②・#737）——gate は要求 deadline を**早めも取りこぼしもしない**。
-//! 外部から窓を起こす公開ハンドル `WindowWaker`（`EguiRuntime::attach` の戻り値）もここが所有する。
+//! 外部からウィンドウを起こす公開ハンドル `WindowWaker`（`EguiRuntime::attach` の戻り値）もここが所有する。
 
 use std::{
     sync::{
@@ -21,19 +21,19 @@ enum SchedulerMessage {
     Stop,
 }
 
-/// 窓を外部（別スレッド・別窓・Tauri イベントリスナー）から起こすハンドル。
-/// `EguiRuntime::attach` が窓ごとに 1 つ返す（#671 PR D）。
+/// ウィンドウを外部（別スレッド・別ウィンドウ・Tauri イベントリスナー）から起こすハンドル。
+/// `EguiRuntime::attach` がウィンドウごとに 1 つ返す（#671 PR D）。
 ///
-/// **窓ごとの `egui::Context` を clone して外へ配る代わりに、repaint worker への送信側
+/// **ウィンドウごとの `egui::Context` を clone して外へ配る代わりに、repaint worker への送信側
 /// だけを渡す。** 前者は Context に括り付いた repaint callback ごと clone するため、
-/// callback が握る `RepaintScheduler` の Arc が窓の `Destroyed` を越えて生き残り、
+/// callback が握る `RepaintScheduler` の Arc がウィンドウの `Destroyed` を越えて生き残り、
 /// `SchedulerInner::drop`（stop + join）を止めていた。
 ///
 /// このハンドルは `RepaintScheduler` の Arc を持たないため、**永久保持しても停止を
 /// 妨げない**——`SchedulerInner::drop` は `Stop` を明示送信してから join するので、
 /// チャネルの切断（全 Sender の drop）を待たない。
 ///
-/// **活性化前の `wake()` は queue される**（イベントループが窓を活性化した直後に 1 回
+/// **活性化前の `wake()` は queue される**（イベントループがウィンドウを活性化した直後に 1 回
 /// 描画要求として現れる）。活性化自身も `request(ZERO)` を撃つため実効差は無い。
 #[derive(Clone)]
 pub struct WindowWaker {
@@ -41,7 +41,7 @@ pub struct WindowWaker {
 }
 
 impl WindowWaker {
-    /// 次フレームを要求する。窓が既に破棄されていれば無害な no-op
+    /// 次フレームを要求する。ウィンドウが既に破棄されていれば無害な no-op
     /// （失敗を呼び出し側へ伝えないのが契約——呼び出し点は wake の成否を分岐しない）。
     pub fn wake(&self) {
         self.request(Duration::ZERO);
@@ -66,7 +66,7 @@ pub(crate) struct WakeReceiver {
     receiver: Receiver<SchedulerMessage>,
 }
 
-/// wake 経路の 1 対を作る（`EguiRuntime::attach` が窓ごとに呼ぶ）。
+/// wake 経路の 1 対を作る（`EguiRuntime::attach` がウィンドウごとに呼ぶ）。
 pub(crate) fn wake_channel() -> (WindowWaker, WakeReceiver) {
     let (sender, receiver) = mpsc::channel();
     (
@@ -191,7 +191,7 @@ impl RepaintScheduler {
                             };
                             // hidden 中の抑止点の切り分け計器（#697）。受信側は runtime.rs の
                             // RedrawRequested arm。ここが出て受信側が出なければ、落としたのは
-                            // proxy 以降である（wry の user-message 処理は窓の引き当てに成功
+                            // proxy 以降である（wry の user-message 処理はウィンドウの引き当てに成功
                             // すれば request_redraw() へ渡すだけで、hidden でも非破棄なら
                             // 引き当ては成功する——ゆえに実体は tao/OS 層）。
                             if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn wake_before_activation_is_queued() {
         // 活性化前（worker 未起動）の wake は落ちずに queue される。活性化後の最初の
-        // 1 回として現れるため、setup〜初フレームの窓で要求が消えない。
+        // 1 回として現れるため、setup〜初フレームのウィンドウで要求が消えない。
         let (waker, wake_rx) = wake_channel();
         waker.wake();
         waker.wake();
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn wake_after_receiver_drop_is_silent() {
-        // 窓が Destroyed になり worker（受信側）が落ちた後の wake は無害な no-op。
+        // ウィンドウが Destroyed になり worker（受信側）が落ちた後の wake は無害な no-op。
         // panic せず、呼び出し側に失敗を伝えないこと自体が契約である。
         let (waker, wake_rx) = wake_channel();
         drop(wake_rx);

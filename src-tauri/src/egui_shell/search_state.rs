@@ -62,7 +62,7 @@ pub fn interpret(raw_query: &str, prefix: &str, view_kind: ViewKind) -> QueryInt
 }
 
 /// フォルダ展開直後、列挙結果（cache）も失敗行（error）も未着の間は true（#636 レビュー Finding A）。
-/// この窓では `results` が展開前ビューの残存物なので、driver は起動（Enter/クリック）を抑止する
+/// このウィンドウでは `results` が展開前ビューの残存物なので、driver は起動（Enter/クリック）を抑止する
 /// ——dead/slow UNC でロードが滞留すると、前ビューの誤項目を起動しうるため。前フレーム結果の保持は
 /// フリッカ回避の意図的設計（`launcher_controller` の `run_search`）ゆえ温存し、不可逆な起動だけを止める。Results
 /// モードや列挙完了（cache/error いずれか到着）後は false で、通常どおり起動できる。
@@ -97,7 +97,7 @@ pub struct FolderFrame {
     /// 真のときに flush を**足す**だけなので、**古い行のまま起動する side へは倒れない**（偽陽性が
     /// 何をするかは flush の枝で分かれる: 通常は行を作り直し、空クエリ・`indexing()` 中は
     /// `set_results(Vec::new())` で起動そのものが止まる——後者は flush の既定の扱いである）。
-    /// **窓の長さをここに書かない**（interval の正本は `LauncherController` が `Debouncer::new` へ
+    /// **ウィンドウの長さをここに書かない**（interval の正本は `LauncherController` が `Debouncer::new` へ
     /// 渡す値であって、この doc ではない）。
     pub unsettled_at_entry: bool,
 }
@@ -181,7 +181,7 @@ pub struct SearchState {
     ///
     /// 進めるのは**行の差し替え**だけであって選択の移動ではない。`move_selection` /
     /// `reset_selection` で進めると、消費側（#699 のクリック照合）が全クリックを捨てる。
-    /// さらに #714 以降、世代交代フレームは results 窓のスクロールがアニメーションなし
+    /// さらに #714 以降、世代交代フレームは results ウィンドウのスクロールがアニメーションなし
     /// （瞬時）になる——選択移動で進めると ↑↓ のアニメーション維持という要件も壊れる。
     rows_generation: u64,
     /// 検索要求の同一性（#1004）。**行の差し替えと同じ型に住まわせる**（#1039）——
@@ -232,7 +232,7 @@ impl SearchState {
 
     /// `results` の世代（#699 / #632 Fix 3）。**行が差し替わったかの唯一の判定材料**である
     /// ——`selected` の値だけでは「打鍵で結果が丸ごと変わったが selected は偶然 0 のまま」を
-    /// 検出できない。`RowsSnapshot.generation` と results 窓からのクリック照合が消費する。
+    /// 検出できない。`RowsSnapshot.generation` と results ウィンドウからのクリック照合が消費する。
     pub fn rows_generation(&self) -> u64 {
         self.rows_generation
     }
@@ -382,7 +382,7 @@ impl SearchState {
     /// `navigate_folder` がこの値を**同期で**書き、フォルダ列挙は後から非同期に届く。ゆえに列挙が
     /// 未着の間も、列挙に失敗した場合（`SPEC.md`「6.6 列挙失敗時」）も、0 件のときも、ここは
     /// 遷移先を返し続ける。**これは意図した挙動である**——「どこへ移ったか」を行の入れ替わりより
-    /// 先に示すことが #836 の目的そのもの（#743 の誤読はこの窓で起きた）。
+    /// 先に示すことが #836 の目的そのもの（#743 の誤読はこのウィンドウで起きた）。
     ///
     /// **`view_kind() == ViewKind::Folder` なら必ず `Some` である。逆は成り立たない**——tool が
     /// folder の上に積まれた状態（`enter_tool` は folder frame を残す）では `Some` を返しつつ
@@ -1017,7 +1017,7 @@ mod tests {
         assert_eq!(names(&s), before, "folder の行が上書きされていないこと");
     }
 
-    /// `navigate_folder` の窓も同じガードが閉じる（`enter_folder` と別の呼び出し点である）。
+    /// `navigate_folder` のウィンドウも同じガードが閉じる（`enter_folder` と別の呼び出し点である）。
     #[test]
     fn late_worker_rows_are_dropped_after_navigate_folder() {
         let base = Instant::now();
@@ -1533,7 +1533,7 @@ mod tests {
         s.enter_folder("C:\\a".into(), false);
         s.set_results(vec![res("a"), res("b"), res("c"), res("d"), res("e")]); // 置換前の候補
         s.navigate_folder("C:\\a\\b".into()); // ← / → の打鍵: 選択は 0 へ・行はまだ古いまま
-        s.move_selection(3); // ロード窓で ↑↓ が入る
+        s.move_selection(3); // ロードウィンドウで ↑↓ が入る
         assert_eq!(s.selected(), 3);
         s.set_results(vec![res("a"), res("b"), res("c"), res("d")]);
         assert_eq!(s.selected(), 3, "範囲内なら保たれる（先頭へは戻さない）");
@@ -1652,7 +1652,7 @@ mod tests {
 
     #[test]
     fn folder_load_pending_blocks_launch_only_before_cache_or_error() {
-        // Folder 突入直後（cache も error も未着）は起動抑止の窓 = true。
+        // Folder 突入直後（cache も error も未着）は起動抑止のウィンドウ = true。
         assert!(folder_load_pending(ViewKind::Folder, false, false));
         // 列挙成功（cache 到着）後は false → 通常どおり起動できる。
         assert!(!folder_load_pending(ViewKind::Folder, true, false));

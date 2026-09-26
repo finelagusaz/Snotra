@@ -38,7 +38,7 @@ pub fn update_config(&mut self, config: Config) {
 コヒーレンシ所有権が Engine の外（config_watcher の非同期ループ）へ追放され、3 つの弊害を生む:
 
 1. **網羅漏れ**: index 由来 B（entries+kana）だけが整合される。**`HistoryStore.top_n` は漏れ**（#348 欠陥 B）
-2. **lost-update 窓**: 整合の正しさが engine Mutex 軸と `indexing` AtomicBool 軸の**両方**に依存し、軸間にすき間がある（#348 欠陥 A）
+2. **lost-update ウィンドウ**: 整合の正しさが engine Mutex 軸と `indexing` AtomicBool 軸の**両方**に依存し、軸間にすき間がある（#348 欠陥 A）
 3. **キー集合の対称二重メンテ**: index 入力キー集合が needs_reindex と in-flight needs_rebuild の 2 箇所に重複。新キー追加（#337 の migemo）が対称漏れリスクを生む
 
 ### 1.1 決定的観察: stale は「config キー単位」でなく「派生オブジェクト単位」
@@ -75,7 +75,7 @@ git 史実調査（commit 証拠付き）で、現状の複雑さを「**本質�
 |---|---|---|
 | `update_config` がコヒーレンシ非所有 | 初出 `ca9a0f7` から差し替えのみ（`git log -S "self.config = config"` が**1件のみ**＝変遷なし） | 「重い再構築をロック外へ」は正当だが「出した先の所有者を Engine に残す」を忘れた。所有権の config_watcher への"追放"は**決定でなく欠落** |
 | needs_reindex キーの漸増・二重メンテ | 3キー（`8678a78`）→ +include_path_env（`f964fb7`/#264）→ +migemo（`16ede58`/#337）。inline `\|\|` 連鎖で機能ごとに堆積 | 設計でなく機能追加の堆積。in-flight needs_rebuild と同一集合の二重化は #264 で生まれ #337 で初めて認識された |
-| in-flight needs_rebuild | `f964fb7`/#264「ビルド中の設定変更を完了後に再反映」 | lost-update を*部分的に*塞ぐ patch。cross-axis 窓（#348-A）は残った |
+| in-flight needs_rebuild | `f964fb7`/#264「ビルド中の設定変更を完了後に再反映」 | lost-update を*部分的に*塞ぐ patch。cross-axis ウィンドウ（#348-A）は残った |
 | `HistoryStore.top_n` 漏れ | setter は**史上一度も存在しない**（`git log -S "set_top_n"` は設計メモのみ）。`main.rs:404` で起動時に1度焼くだけ | **純粋な見落とし**。top_n_history の別の顔（fetch_limit）が live-read で"だいたい効く"ため、prune 容量のドリフトが顕在化しなかった |
 
 ### archaeology が教える核心
@@ -147,7 +147,7 @@ Engine が **stale ledger と判断プリミティブ**を所有し、src-tauri 
 ### 3.2 3 同期軸の「統合」の正体 — 物理統合ではなく判断軸の一元化
 
 現状、整合の正しさは **軸1（engine Mutex）と軸2（`indexing` AtomicBool）の両方**に依存している。
-これが lost-update 窓の根。
+これが lost-update ウィンドウの根。
 
 **設計の核心**: stale ledger を **engine Mutex（軸1）上の状態**として置く。すると:
 
@@ -158,7 +158,7 @@ Engine が **stale ledger と判断プリミティブ**を所有し、src-tauri 
 つまり 3 つのロックを物理的に 1 つに merge するのではない（それはロック最小化を壊す）。
 **コヒーレンシの正しさの議論を軸1 だけに閉じる**のが「統合」。軸2/軸3 は性能・安全のための独立した装置に純化する。
 
-### 3.3 lost-update 窓が閉じる理由（厳密）
+### 3.3 lost-update ウィンドウが閉じる理由（厳密）
 
 現状の交錯（#348 欠陥 A）:
 
@@ -312,7 +312,7 @@ history を live-read 化（手1）すると重量カテゴリ B は SearchEngin
 |---|---|---|---|
 | D1 **所有権の帰属** | needs_reindex が config_watcher（**Engine の外**）に居続ける。所有権散在のまま | index_keys_differ が **`update_config`（Engine = 所有者）内**へ移動。「設定変更⇒派生 reconcile」が Engine の責務になる |
 | D2 **キー集合の単一定義** | needs_reindex と in-flight needs_rebuild の **2 箇所**が残る（migemo 二重メンテ継続） | set（update_config）と re-diff（complete_index_drain）が **同一の index_keys_differ を参照** = 1 定義 |
-| D3 **窓の閉じ方** | pending-reindex ラッチを **軸2 に新規追加**して塞ぐ（状態を増やす） | コヒーレンシ判断を **軸1 に閉じる**（軸2 を正しさから外す）。**新しい状態を足さずに**塞ぐ |
+| D3 **ウィンドウの閉じ方** | pending-reindex ラッチを **軸2 に新規追加**して塞ぐ（状態を増やす） | コヒーレンシ判断を **軸1 に閉じる**（軸2 を正しさから外す）。**新しい状態を足さずに**塞ぐ |
 
 → history は **live-read 化してカテゴリ A になる**（手1）。つまり「ledger から外れて散在」ではなく **そもそも B でない**——
 fetch_limit と同じく毎回 config から読むだけで、無効化の対象ですらない。「配置だけ一元化・機構は散在」批判は
@@ -341,14 +341,14 @@ history を B のまま外部 reconcile に置いた場合に当たるが、本�
   **最小・独立・先行可能。setter も stale も不要**
 - **Phase 2 — index-stale ledger 化（#347 中核 + #348 欠陥 A）**: Engine に `index_stale` + `IndexInputs` snapshot、
   `begin_index_drain` / `complete_index_drain` を追加。needs_reindex / in-flight needs_rebuild をこの 1 機構に統合。
-  config_watcher は `indexing` を見ず常に set+kick。TDD: lost-update 窓の状態遷移テスト（`state.rs` フラグ + Engine stale 機構、AppHandle 非依存）。
+  config_watcher は `indexing` を見ず常に set+kick。TDD: lost-update ウィンドウの状態遷移テスト（`state.rs` フラグ + Engine stale 機構、AppHandle 非依存）。
   着手時チェックリスト（レビュー指摘の反映）:
   - **needs_reindex の全 caller を grep 列挙**し、削除順序の依存を確認してから段階的に置換（一括置換しない）
   - **新しい同期軸を増やさないことの形式確認**: 変更後の `state.rs` / `engine.rs` の全フィールドを列挙し、stale 判断が `engine.stale`（軸1）のみに依存・新 `AtomicBool`/`Mutex` が増えていないことを確認
   - `IndexInputs` の snapshot/比較が現状の `indexing.rs:36` 開始時キャプチャと同コストであることを確認（§4 コストモデル）
   - **実装済み（2026-05-31, `refactor/index-stale-ledger`）。スケッチ §4 からの確定点（マルチパースペクティブレビュー反映）**:
     ① bit を立てるのは `update_config` ではなく **`start_index_build`**（config 変更 reindex / first-run / 手動 rebuild / 自己再 kick の全経路を統一。`update_config` を呼ぶ経路は config_watcher 唯一と確認済みなので取りこぼしなし）
-    ② **finish 後に `is_index_stale` を再チェックして再 kick**し、complete clear〜finish の窓を閉じる
+    ② **finish 後に `is_index_stale` を再チェックして再 kick**し、complete clear〜finish のウィンドウを閉じる
     ③ build 本体を **`catch_unwind` で包み panic でも必ず `finish_index_build`**（panic wedge 対策＝レビュー Agent 1 検出。panic 経路は再 kick せず無限リトライ回避、`index_stale` は次の契機で回復）
     ④ 単一定義は `IndexInputs`（config_watcher の kick 判定 + `complete_index_drain` の re-diff で共有）。needs_reindex と in-flight needs_rebuild を削除
 - **Phase 3 — ドキュメント同期**: `snotra-core/CLAUDE.md`（migemo 二重メンテ記述の更新）/ `src-tauri/CLAUDE.md`（drain 機構）/

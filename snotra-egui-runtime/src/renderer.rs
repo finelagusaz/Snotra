@@ -40,9 +40,9 @@ pub(crate) struct EguiRenderer {
     // Surface は自前の display handle を所有し Context 生存に依存しない（Context 非保持）。
     surface: softbuffer::Surface<tauri::Window, tauri::Window>,
     textures: HashMap<egui::TextureId, CpuTexture>,
-    /// `SNOTRA_EGUI_PAINT_TRACE` の行に載せる窓の識別子（`main` / `results`）。
-    /// **窓ごとに別の `egui::Context` を持つ構成ゆえ、窓を名指さない計測値は合算できない**
-    /// ——同じ字形の集合が窓の数だけ実体化されるため、どちらの窓の額かで意味が変わる。
+    /// `SNOTRA_EGUI_PAINT_TRACE` の行に載せるウィンドウの識別子（`main` / `results`）。
+    /// **ウィンドウごとに別の `egui::Context` を持つ構成ゆえ、ウィンドウを名指さない計測値は合算できない**
+    /// ——同じ字形の集合がウィンドウの数だけ実体化されるため、どちらのウィンドウの額かで意味が変わる。
     label: String,
 }
 
@@ -174,7 +174,7 @@ impl EguiRenderer {
             // - `tex_other`（アイコン等の実行時テクスチャ。件数も出す）
             //
             // **撤去してよいのは、この 3 つの関係が別の手段で観測できるようになったときである。**
-            // 現状これらは外から測れない——プロセスの commit にまとめて現れるだけで、窓ごとにも
+            // 現状これらは外から測れない——プロセスの commit にまとめて現れるだけで、ウィンドウごとにも
             // 実体ごとにも分けられない。計器の一覧と読み方は `PERFORMANCE.md`「計測と受け入れ基準」。
             let residency = raster::texture_residency(&self.textures);
             let atlas = context.fonts(|f| f.font_image_size());

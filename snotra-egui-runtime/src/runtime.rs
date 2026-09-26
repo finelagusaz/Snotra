@@ -88,7 +88,7 @@ pub struct EguiRuntime {
     installed: Arc<AtomicBool>,
 }
 
-/// 活性化待ちの窓。`wake_rx` は活性化時に `RepaintScheduler` へ渡して消えるため、
+/// 活性化待ちのウィンドウ。`wake_rx` は活性化時に `RepaintScheduler` へ渡して消えるため、
 /// 「活性化後は存在しない」ことを型で表す（`Option` + `take()` にしない）。
 struct PendingWindow {
     window: EguiWindow,
@@ -107,8 +107,8 @@ impl EguiRuntime {
         self.installed.store(true, Ordering::Release);
     }
 
-    /// 窓に view を結び付け、その窓を外部から起こす [`WindowWaker`] を返す（#671 PR D）。
-    /// **`#[must_use]` は付けない**——wake を要さない窓では戻り値を落とせる設計にしてある
+    /// ウィンドウに view を結び付け、そのウィンドウを外部から起こす [`WindowWaker`] を返す（#671 PR D）。
+    /// **`#[must_use]` は付けない**——wake を要さないウィンドウでは戻り値を落とせる設計にしてある
     /// （意図）。ただし現在の呼び出し元はいずれも束縛しており、捨てる実例は無い（実測）。
     /// 属性を足すなら「落とせる」という設計判断ごと見直すことになる。
     ///
@@ -131,7 +131,7 @@ impl EguiRuntime {
         }
 
         let egui_window = EguiWindow::new(window, Box::new(view))?;
-        // wake 経路はこの窓の活性化を待たずに作る（要求は queue され、活性化直後に届く）。
+        // wake 経路はこのウィンドウの活性化を待たずに作る（要求は queue され、活性化直後に届く）。
         let (waker, wake_rx) = wake_channel();
         let mut pending = self.pending.lock().expect("egui pending window lock");
         match pending.entry(label.clone()) {
@@ -174,7 +174,7 @@ struct RuntimePlugin<T: UserEvent> {
 struct ActiveWindow {
     window: EguiWindow,
     scheduler: RepaintScheduler,
-    /// 窓が載っている HMONITOR（isize・#737）。`Moved` はドラッグ中に連発するため、
+    /// ウィンドウが載っている HMONITOR（isize・#737）。`Moved` はドラッグ中に連発するため、
     /// 変化検知（安価な `window_monitor`）を挟んでからリフレッシュレート再取得
     /// （`EnumDisplaySettingsW` 込み・安くない）へ進むためのキャッシュ。
     last_monitor: Option<isize>,
@@ -239,12 +239,12 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                     self.active.remove(&runtime_id);
                     return false;
                 }
-                // 契約②（#737）: 配送の下限間隔の backstop。窓が静止したまま OS 設定で
+                // 契約②（#737）: 配送の下限間隔の backstop。ウィンドウが静止したまま OS 設定で
                 // リフレッシュレートが変わる・モニターが抜き差しされる経路は Moved でも
                 // ScaleFactorChanged でも捕まらないため、show のたびに必ず来る Focused(true)
-                // で再取得する（頻度は低い）。**全窓**に適用するのは、従属窓（results）が
+                // で再取得する（頻度は低い）。**全ウィンドウ**に適用するのは、従属ウィンドウ（results）が
                 // focusable(false) + SW_SHOWNOACTIVATE で Focused を一度も受けないため
-                // ——両窓は設計上同じモニターに載る（results は main 直下へ追従・/symmetric-check #737）。
+                // ——両ウィンドウは設計上同じモニターに載る（results は main 直下へ追従・/symmetric-check #737）。
                 if matches!(event, TaoWindowEvent::Focused(true)) {
                     for active in self.active.values_mut() {
                         active.last_monitor =
@@ -277,7 +277,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
             Event::RedrawRequested(window_id) => {
                 // hidden 中の抑止点の切り分け計器（#697）。送信側は repaint.rs の worker。
                 // 引き当て前に置く——引き当て失敗で握りつぶされる経路も観測対象。
-                // runtime_id は送信側の window_id と同じ ID 空間ゆえ、窓の帰属を直接照合できる。
+                // runtime_id は送信側の window_id と同じ ID 空間ゆえ、ウィンドウの帰属を直接照合できる。
                 if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
                     eprintln!(
                         "SNOTRA_EGUI_WAKE_RECV window_id={window_id:?} runtime_id={:?}",
@@ -332,7 +332,7 @@ impl<T: UserEvent> RuntimePlugin<T> {
                     log::error!("egui softbuffer surface init failed: {error}");
                     eprintln!("SNOTRA_EGUI_RENDER_ERROR={error}");
                     // この window はスキップ（attach の同期エラー契約は狭まる）。wake_rx も
-                    // ここで落ちるため、以降この窓宛の `WindowWaker::wake()` は no-op になる。
+                    // ここで落ちるため、以降このウィンドウ宛の `WindowWaker::wake()` は no-op になる。
                     continue;
                 }
             }
@@ -373,7 +373,7 @@ struct EguiWindow {
     /// 影響しない。env 未設定なら一度も書かれず `None` のまま。
     repaint_trace_prev: Option<std::time::Instant>,
     /// 最後に OS へ適用したカーソル（`handle_platform_output` の変化検出用）。
-    /// `SetCursor` はスレッド共通ゆえ毎フレーム撃つと 2 窓が上書きし合う（同関数のコメント）。
+    /// `SetCursor` はスレッド共通ゆえ毎フレーム撃つと 2 ウィンドウが上書きし合う（同関数のコメント）。
     applied_cursor: Option<egui::CursorIcon>,
 }
 
@@ -423,7 +423,7 @@ impl EguiWindow {
             // このガードは現在到達不能。それでも残すのは、「hidden 中は update() が走ら
             // ない」という #532 SU5 の不変条件が runtime の外＝tao/OS 層に依っており
             // （2026-07-26 実測・#697: worker は RequestRedraw を送信するが、hidden な
-            // 窓には RedrawRequested が配送されない）、将来 runtime 側での抑止が必要
+            // ウィンドウには RedrawRequested が配送されない）、将来 runtime 側での抑止が必要
             // になったときの受け口として置いているため。参照:
             // docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md §7 残余 2・3（#697 の errata で解消）
             return Ok(()); // 不変条件⑥: 非表示中は描かない。
@@ -513,16 +513,16 @@ impl EguiWindow {
             }
         }
 
-        // **値が変わったときだけ OS へ書く。** tao の `set_cursor_icon` は窓に紐づかない
+        // **値が変わったときだけ OS へ書く。** tao の `set_cursor_icon` はウィンドウに紐づかない
         // `SetCursor` を直接撃つ（tao 0.35.3 `platform_impl/windows/window.rs:460-466`）——
         // 最後に呼んだ者が勝ち、マウス静止中は `WM_SETCURSOR` が来ないので OS の復元も
-        // 入らない。毎フレーム無条件に撃つと、ポインタを持つ窓（Text）と持たない窓
+        // 入らない。毎フレーム無条件に撃つと、ポインタを持つウィンドウ（Text）と持たないウィンドウ
         // （Default）が交互に上書きし合ってカーソルが点滅する（#628 の計測中に実機で
         // 発見。main 1194 / results 1339 フレームが撃ち合っていた）。
         //
         // 変化検出は egui 側の値で行う（`tauri::CursorIcon` の等値性に依存しない）。
-        // 残余: 別窓のアイコンが実際に変わった瞬間だけ、静止中のポインタ下のカーソルが
-        // 一度ずれうる。マウスを動かせば `WM_SETCURSOR` で窓ごとの値へ復帰する。
+        // 残余: 別ウィンドウのアイコンが実際に変わった瞬間だけ、静止中のポインタ下のカーソルが
+        // 一度ずれうる。マウスを動かせば `WM_SETCURSOR` でウィンドウごとの値へ復帰する。
         if self.applied_cursor != Some(output.cursor_icon) {
             self.applied_cursor = Some(output.cursor_icon);
             if let Some(cursor) = cursor_icon(output.cursor_icon) {

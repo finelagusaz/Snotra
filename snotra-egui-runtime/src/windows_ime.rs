@@ -152,10 +152,10 @@ impl Drop for PlatformIme {
 
 /// IME サブクラスメッセージのネイティブ描画方針。egui が preedit を自前描画するため
 /// 既定の変換文字列ウィンドウを抑制しつつ、確定（GCS_RESULTSTR）は Tao の
-/// ReceivedImeText 経路へ通す（#532 の二重表示＝ネイティブ窓 非抑制 の修正）。
+/// ReceivedImeText 経路へ通す（#532 の二重表示＝ネイティブウィンドウ 非抑制 の修正）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImeAction {
-    /// DefSubclassProc を呼ばず `LRESULT(0)`。既定変換窓を作らせない／描かせない。
+    /// DefSubclassProc を呼ばず `LRESULT(0)`。既定変換ウィンドウを作らせない／描かせない。
     Suppress,
     /// そのまま Tao へ通す（DefSubclassProc）。確定文字・キー等は Tao が担う。
     PassThrough,
@@ -227,7 +227,7 @@ unsafe extern "system" fn ime_subclass_proc(
         }
     }));
 
-    // egui が preedit を自前描画するため、未確定のネイティブ変換窓は描かせない（#532 二重表示）。
+    // egui が preedit を自前描画するため、未確定のネイティブ変換ウィンドウは描かせない（#532 二重表示）。
     match action {
         ImeAction::Suppress => LRESULT(0),
         // SAFETY: every observed message must continue through Tao's own subclass,

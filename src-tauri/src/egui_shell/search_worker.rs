@@ -2,7 +2,7 @@
 //!
 //! **都度 spawn を採らない理由**は `spawn_folder_load` の doc と対である——あちらの per-nav spawn は dead UNC の hang を隔離するための選択で、`engine.search` には転移しない（hang しない代わりに必ず共有 Mutex を要求する）。打鍵ごとに spawn すると、捨てるとわかっている結果のために lock と CPU を払う。
 //!
-//! **`egui::Context` を持たない**——長寿命 worker が Context clone を握ると `RepaintScheduler` の Arc が窓の `Destroyed` を越えて生き、停止を妨げる（#671 PR D）。起床は `wake_main` を使う。
+//! **`egui::Context` を持たない**——長寿命 worker が Context clone を握ると `RepaintScheduler` の Arc がウィンドウの `Destroyed` を越えて生き、停止を妨げる（#671 PR D）。起床は `wake_main` を使う。
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 

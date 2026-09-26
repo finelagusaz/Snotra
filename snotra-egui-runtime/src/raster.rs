@@ -209,7 +209,7 @@ pub(crate) fn apply_texture_delta(
 }
 
 /// CPU 側テクスチャ常駐の内訳（バイト）。**フォントアトラスとそれ以外を分ける**
-/// ——前者は窓ごとに 1 枚で高さの倍加とともに階段状に伸び、後者（アイコン等）は件数が動く。
+/// ——前者はウィンドウごとに 1 枚で高さの倍加とともに階段状に伸び、後者（アイコン等）は件数が動く。
 /// 混ぜて 1 つの数にすると、増えたのがどちらかを外から区別できない。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TextureResidency {

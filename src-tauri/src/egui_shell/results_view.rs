@@ -1,7 +1,7 @@
-//! 結果リスト窓（"results"）の egui view（#646 PR2）。main（SearchWindowView）が発行する
+//! 結果リストウィンドウ（"results"）の egui view（#646 PR2）。main（SearchWindowView）が発行する
 //! RowsSnapshot を描くだけの従属 view——検索状態の所有者は main のまま（一方向データフロー・
 //! spec 決定 5）。クリックは ResultsShared.clicked へ積んで main を wake する（遅延 dispatch）。
-//! 窓の可視性・サイズ・位置の driver は main 側（hidden 窓は update() が走らないため）。
+//! ウィンドウの可視性・サイズ・位置の driver は main 側（hidden ウィンドウは update() が走らないため）。
 //! hide は外部（`hide_egui_main` / main の `drive_results_window`）が所有する。runtime に
 //! view 側から hide する API は無い（`RuntimeFrame::hide_window` は #671 サイクル PR A で削除。
 //! 対称の `close_window` も #660 の `snotra-egui-mvp` 撤去に伴い削除）。
@@ -19,7 +19,7 @@ use crate::egui_shell::{IconMsg, RowTheme, retain_visible};
 /// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct RowsSnapshot {
-    /// 描画する行。**空 = results 窓は非表示**（別途 `show` フラグは持たない・/simplify）——
+    /// 描画する行。**空 = results ウィンドウは非表示**（別途 `show` フラグは持たない・/simplify）——
     /// main は「表示すべきでないフレーム」に空 Vec を発行するため、`rows.is_empty()` が
     /// 可視性そのものを表す。2 つの書き込みを手で同期させる規約を型で消す。
     pub rows: Vec<snotra_core::ui_types::SearchResult>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
@@ -117,7 +117,7 @@ impl ResultsShared {
 
 pub(crate) struct ResultsView {
     app_handle: tauri::AppHandle,
-    /// font_family hot-reload 用（main の applied_font_family と同型・ctx が窓ごとに独立
+    /// font_family hot-reload 用（main の applied_font_family と同型・ctx がウィンドウごとに独立
     /// なため複製必須 — plan-review rev-egui の指摘）。
     applied_font_family: String,
     /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632・Task 4）。
@@ -127,7 +127,7 @@ pub(crate) struct ResultsView {
     /// `selected` の値が変わらない場合でも scroll gate を強制リセットする。
     last_generation: u64,
     /// path→TextureHandle（セッション内保持。可視集合に頭打ち・#532 SU4。Task 5 で view.rs から
-    /// 本 view へ移設——TextureHandle は窓の Context 従属のため、行描画と同じ窓に置く）。
+    /// 本 view へ移設——TextureHandle はウィンドウの Context 従属のため、行描画と同じウィンドウに置く）。
     icon_textures: HashMap<String, egui::TextureHandle>,
     /// path→抽出の失敗回数（#692）。**「失敗したか」ではなく「何回失敗したか」を持つ**
     /// ——一過性の失敗（冷えたシェルのアイコンキャッシュ等）を 1 度で恒久的な欠落として
@@ -316,13 +316,13 @@ pub(crate) fn draw_result_row(
             }
         }
     }
-    // **viewport の外に出た行は、ここから下を一切やらない。** 行の確保（＝窓高・
+    // **viewport の外に出た行は、ここから下を一切やらない。** 行の確保（＝ウィンドウ高・
     // スクロールバー・ピッチ）とスクロール要求は上で済んでおり、以降は「見えるものを描く」
     // 仕事だけである。`snapshot.rows` は可視行数ではなく `effective_result_limit`
     // （既定 200・設定次第で 1000）ゆえ、間引かないと画面に 8 行しか出ないフレームでも
     // 全行ぶんのアイコン描画とテキストレイアウトを払う。
     //
-    // 実測（release・`kittest_row_draw_cost_probe`・可視 8 行の実寸窓）: 画面外 1 行あたり
+    // 実測（release・`kittest_row_draw_cost_probe`・可視 8 行の実寸ウィンドウ）: 画面外 1 行あたり
     // 約 0.8us で、1 フレームは rows=8 で 13us・200 で 156us・1000 で 807us だった。
     // 同じ idiom の先例は `snotra-settings/src/tabs/visual.rs` の `is_rect_visible`。
     if !ui.is_rect_visible(rect) {
@@ -439,7 +439,7 @@ pub(crate) fn draw_result_row(
 /// **返す `ScrollAreaOutput.content_size.y` が検出器の測定点である。** これは
 /// `content_ui.min_size()`（egui 0.35 `scroll_area.rs`）＝**実際に積んだ行の総高**であり、
 /// viewport にクランプされない。`layout::results_window_height(N, row_height)` と等しいことが
-/// 「窓に N 行がちょうど収まる」の機械的な表現になる——**この 2 つを結ぶ検査は他に無い**
+/// 「ウィンドウに N 行がちょうど収まる」の機械的な表現になる——**この 2 つを結ぶ検査は他に無い**
 /// （`layout.rs` からは行間の余白が見えず、式が式であることしか測れない）。
 ///
 /// `clicked` は `ScrollArea` の inner として返す。呼び出し側は `.inner` だけを読み、
@@ -456,9 +456,9 @@ pub(crate) fn results_list_ui(
     theme: &RowTheme,
     row_height: f32,
 ) -> egui::scroll_area::ScrollAreaOutput<Option<usize>> {
-    // **行ピッチを `row_height` ちょうどにする。** 窓高（`layout::results_window_height`）は
+    // **行ピッチを `row_height` ちょうどにする。** ウィンドウ高（`layout::results_window_height`）は
     // `max_results × row_height` で**行間を勘定していない**ため、egui 既定の
-    // `item_spacing.y`（3.0）が入ると `(N-1) × 3.0` だけ中身が窓を超え、最終行が切れる
+    // `item_spacing.y`（3.0）が入ると `(N-1) × 3.0` だけ中身がウィンドウを超え、最終行が切れる
     // （実測: `visible_rows` 8 で 0.38 行・20 で 1.38 行はみ出していた）。
     //
     // **高さの式へ `(N-1) × spacing` を足す形は採らない**——`layout.rs` は egui 非依存の
@@ -524,7 +524,7 @@ pub(crate) fn truncate_middle(s: &str, avail_px: f32, per_char_px: f32) -> Strin
 
 impl snotra_egui_runtime::EguiView for ResultsView {
     fn setup(&mut self, context: &egui::Context) {
-        // 日本語フォント: main と同じ config font_family を適用（ctx は窓ごとに独立）。
+        // 日本語フォント: main と同じ config font_family を適用（ctx はウィンドウごとに独立）。
         let font_family = crate::egui_shell::font_stack::font_family_from_config(&self.app_handle);
         crate::egui_shell::font_stack::configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
@@ -554,10 +554,10 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             // 移設後は本 view が gate の唯一の所有者ゆえここでリセットする——hide/非表示の
             // たびに戻し、次に見えるフレームで選択行への scroll_to_me を再度発火させる。
             self.last_scrolled_selected = None;
-            return; // 窓は main が hide 済みのはず(backstop で何も描かない)
+            return; // ウィンドウは main が hide 済みのはず(backstop で何も描かない)
         }
         // font_family hot-reload(view.rs の applied_font_family 比較と同型を複製・
-        // ctx は窓ごとに独立なため main 側の適用はこの窓に効かない)。
+        // ctx はウィンドウごとに独立なため main 側の適用はこのウィンドウに効かない)。
         if let Some(name) = &visual.font_family_changed {
             crate::egui_shell::font_stack::configure_japanese_font(ui.ctx(), name);
             self.applied_font_family = name.clone();
@@ -566,10 +566,10 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let metrics = &visual.metrics;
         let show_icons = visual.show_icons;
         // アイコン drain（token 無し・アイコンキーで適用）。到着したら load_texture して map へ。
-        // load_texture は egui context 必須ゆえ、ここ（results の update()・自窓 ctx）でのみ呼ぶ
+        // load_texture は egui context 必須ゆえ、ここ（results の update()・自ウィンドウ ctx）でのみ呼ぶ
         // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。Task 5 で
-        // main（view.rs）から本 view へ移設: TextureHandle は窓の Context 従属のため、行描画と
-        // 同じ窓に置く。
+        // main（view.rs）から本 view へ移設: TextureHandle はウィンドウの Context 従属のため、行描画と
+        // 同じウィンドウに置く。
         let icon_ctx = ui.ctx().clone();
         let mut icon_arrived = false;
         while let Ok(msg) = self.icon_rx.try_recv() {
@@ -609,7 +609,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 世代交代フレームはアニメーションなし（#714・指示の導出は scroll_directive）。
         let do_scroll = self.last_scrolled_selected != Some(snapshot.selected);
         // 行の描画は `results_list_ui`（`AppHandle` 非依存の自由関数）へ出してある——
-        // 行ピッチと窓高の対を kittest が実コードのまま測れるようにするため（同関数の doc）。
+        // 行ピッチとウィンドウ高の対を kittest が実コードのまま測れるようにするため（同関数の doc）。
         let row_height = metrics.row_height as f32;
         let list_out = results_list_ui(
             ui,
@@ -701,11 +701,11 @@ mod tests {
     use snotra_core::ui_types::{IconSource, SearchResult};
     use std::collections::HashMap;
 
-    // ---- 行ピッチと窓高の対（kittest・実コードをヘッドレスで走らせる）----------------
+    // ---- 行ピッチとウィンドウ高の対（kittest・実コードをヘッドレスで走らせる）----------------
     //
     // **ここが `layout.rs` の式と実際の描画を結ぶ唯一の点である。** あちらのユニットテストは
     // 「式が式であること」しか測れず（行間の余白は egui 側にあって見えない）、描画側には
-    // これまで検査が無かった。#646 PR2 から続いた「設定した件数が窓に収まらない」欠陥は、
+    // これまで検査が無かった。#646 PR2 から続いた「設定した件数がウィンドウに収まらない」欠陥は、
     // どちらの検査からも見えない場所に居たためレビューと CI を素通りしている。
 
     fn theme_for_test(row_font: f32) -> RowTheme {
@@ -743,7 +743,7 @@ mod tests {
         let theme = theme_for_test(12.0);
         let rows = rows.to_vec();
         let mut harness = egui_kittest::Harness::builder()
-            // 窓の実寸に近い幅と、行が全部収まる高さ。**高さは content_size に影響しない**
+            // ウィンドウの実寸に近い幅と、行が全部収まる高さ。**高さは content_size に影響しない**
             // （`content_ui.min_size()` は viewport にクランプされない）が、狭いと
             // `scroll_to_me` が働いて測定が読みにくくなる。
             .with_size(egui::vec2(600.0, 2000.0))
@@ -763,8 +763,8 @@ mod tests {
     /// 行描画の **per-row コスト**計測（`/simplify` の Efficiency 指摘の検証）。
     /// `cargo test -p snotra --release kittest_row_draw_cost_probe -- --ignored --nocapture`
     ///
-    /// 測りたいのは「画面外の行に毎フレーム払っているコスト」なので、**窓は実寸**
-    /// （可視 8 行相当）にする——`measure_content_height` の 2000px 窓では clip rect が
+    /// 測りたいのは「画面外の行に毎フレーム払っているコスト」なので、**ウィンドウは実寸**
+    /// （可視 8 行相当）にする——`measure_content_height` の 2000px ウィンドウでは clip rect が
     /// 全行を含み、画面外という状態自体が作れない。`step()`（1 フレーム固定）で測るのは
     /// `run()` が安定するまでの可変フレーム数を割り算に持ち込まないため。
     #[test]
@@ -851,7 +851,7 @@ mod tests {
                 let window = results_window_height(n, row_height) as f32;
                 assert!(
                     (window - drawn).abs() < 1e-3,
-                    "font={f} n={n}: 窓 {window} と描画 {drawn} が一致しない（差 {}）。\
+                    "font={f} n={n}: ウィンドウ {window} と描画 {drawn} が一致しない（差 {}）。\
                      正なら {} 行目の頭が覗き、負なら最終行が切れる",
                     window - drawn,
                     n + 1
@@ -879,12 +879,12 @@ mod tests {
         let overflow = drawn - window;
         assert!(
             overflow > 0.0,
-            "行が高くなったのに窓へ収まった＝上の 2 検査は何も縛っていない\
-             （描画 {drawn} / 窓 {window}）"
+            "行が高くなったのにウィンドウへ収まった＝上の 2 検査は何も縛っていない\
+             （描画 {drawn} / ウィンドウ {window}）"
         );
         // 超過は「1 行あたり 3.0 が N 行」の規模になる。**両辺とも丸めを通る**——案 3 で
         // `results_window_height` も掛ける前に `round_ui` するようになったため、差は
-        // 丸め済みどうしの引き算で表せる（案 3 より前は窓側だけが生の値だった）。
+        // 丸め済みどうしの引き算で表せる（案 3 より前はウィンドウ側だけが生の値だった）。
         let expected = ((row_height + 3.0).round_ui() - row_height.round_ui()) * n as f32;
         assert!(
             (overflow - expected).abs() < 1e-3,
@@ -914,7 +914,7 @@ mod tests {
 
     // ---- クリック逆流の世代照合（#699）----
     //
-    // 実機の競合窓（results がクリックを積んでから main が消費するまでに行が総入れ替え
+    // 実機の競合ウィンドウ（results がクリックを積んでから main が消費するまでに行が総入れ替え
     // される）は**手で再現できない**。純粋核をここで固定するのが唯一の担保である。
 
     #[test]

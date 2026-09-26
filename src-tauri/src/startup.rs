@@ -27,7 +27,7 @@
 //!
 //! # 終端は 1 か所ではない
 //!
-//! **`RegisterInitialHotkey` の arm だけに閉じてはならない**——bridge の初期化失敗・窓の
+//! **`RegisterInitialHotkey` の arm だけに閉じてはならない**——bridge の初期化失敗・ウィンドウの
 //! 生成失敗のように、その arm 自体が実行されない経路が実在する。そこで終端を出さないと、
 //! ハーネスには「タイムアウト」としか見えず、**診断したい相手が読めなくなる**。
 //!
@@ -205,7 +205,7 @@ pub(crate) enum StartupFailure {
     PlatformBridgeUnavailable,
     /// 初回 command の送信に失敗した（channel 切断）。
     PlatformCommandDisconnected,
-    /// 窓の生成に失敗した（`egui_shell::create`）。setup ブロック唯一の早期 return。
+    /// ウィンドウの生成に失敗した（`egui_shell::create`）。setup ブロック唯一の早期 return。
     WindowCreation,
     /// `RegisterHotKey` が失敗した（キー競合・不正な設定）。
     HotkeyRegistration,

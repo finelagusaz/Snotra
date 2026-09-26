@@ -111,21 +111,21 @@ fn send_alt_key_up() {
     //
     // **この根拠は #880 サイクル段 2 で失効した（受容・未実測）。** 呼び出し元
     // （`egui_shell::show_egui_main`）がイベントループスレッドへ移った結果、ここで対象と
-    // している focused window は**自スレッドが所有する main 窓**になった。スリープ中この
-    // スレッドはポンプを回さないので、**フォアグラウンドが既に main 窓へ移っていれば、
+    // している focused window は**自スレッドが所有する main ウィンドウ**になった。スリープ中この
+    // スレッドはポンプを回さないので、**フォアグラウンドが既に main ウィンドウへ移っていれば、
     // 待っているあいだにキー up が処理されることはもう無い**——その前提の下では
     // スリープの目的は自スレッド上では達成できず、純粋なコストになる
     // （`show_egui_main` の `SendMessageTimeoutW` 撤去と**同じ型の失効**。あちらの撤去跡の
     // コメントを参照）。**前提を落として「常に純粋なコスト」とは書けない**——直前の
-    // `set_focus()` はフォアグラウンド移行を同期しないため、まだ旧窓が前景なら合成キー up は
+    // `set_focus()` はフォアグラウンド移行を同期しないため、まだ旧ウィンドウが前景なら合成キー up は
     // そちらのスレッドで処理されうる（それこそがバリア撤去跡が「未実測」と断っている当の点で
     // ある）。**hotkey に Alt を含む設定では実質すべての show がここを通る**
     // （`ShowAfterAltRelease` の再入時に `!is_alt_pressed()` が真になるため）。
     //
     // **撤去は次段の判断に残す。** 見込みとしては「別スレッドへ出す」ではなく**削除**が正しい
-    // ——目的は「窓がキー up を処理できるようにする」ことであり、それを可能にするのは
+    // ——目的は「ウィンドウがキー up を処理できるようにする」ことであり、それを可能にするのは
     // 待つことではなく**早く返してポンプへ戻ること**だからである（**ただし上の前提が要る**
-    // ——旧窓が前景に残る場合まで含めて削除してよいかは、測ってからでないと言えない）。加えて注入順は
+    // ——旧ウィンドウが前景に残る場合まで含めて削除してよいかは、測ってからでないと言えない）。加えて注入順は
     // `SendInput` がシステム入力キューへ積んだ時点で決まり、後から打たれた実キーはその後ろに
     // 並ぶ。ただし**この経路は生 Win32 で `cargo test` の視界の外にあり、実機で測っていない**
     // ——削除はカテゴリ C/D の検出器を回せる段で行うこと。
@@ -240,7 +240,7 @@ fn main() {
 
     let app_state = AppState::new(engine, initial_indexing);
 
-    // 宣言窓なし（tauri.conf.json の windows は空・#532 SU7 flip）。メイン窓は
+    // 宣言ウィンドウなし（tauri.conf.json の windows は空・#532 SU7 flip）。メインウィンドウは
     // setup フェーズで egui_shell::create が生成する。
     let app_context = tauri::generate_context!();
 
@@ -263,7 +263,7 @@ fn main() {
         // commands/ の _core 関数・engine を直呼びする）
         .setup(move |app| {
             // **setup はイベントループより前ではない**（同じ 1 イベントの処理中）。ゆえに
-            // ここまでが「tauri の初期化」であり、以降が窓とリスナーである。
+            // ここまでが「tauri の初期化」であり、以降がウィンドウとリスナーである。
             startup::mark(startup::Phase::TauriInit);
             let app_handle = app.handle().clone();
 
@@ -273,7 +273,7 @@ fn main() {
             // through the platform bridge managed here.
             setup_platform_thread(&app_handle, hotkey_config, initial_language);
 
-            // 窓生成（egui・platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）。
+            // ウィンドウ生成（egui・platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）。
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
             // **setup ブロック唯一の早期 return である。** ここで抜けると
             // `RegisterInitialHotkey` は送られないので、終端を出さないとハーネスには
@@ -285,12 +285,12 @@ fn main() {
                     return Err(Box::new(e));
                 }
             };
-            // **フォント解決を含む区間である**（`font_stack.rs`）。窓を一度も出していない
+            // **フォント解決を含む区間である**（`font_stack.rs`）。ウィンドウを一度も出していない
             // 時点で常駐に効くことが実測されており、表示より前に走る。
             startup::mark(startup::Phase::WindowsCreate);
             // #671 PR D（spec 決定 8 の終端形）: show/hide を跨ぐ共有状態（世代・emit dedup）と
-            // 両窓の wake handle。**`create()` の後**に manage する——handle は attach の戻り値
-            // ゆえ窓の生成より前には存在しない。各 view の `setup()` はもう `EguiShellState` を
+            // 両ウィンドウの wake handle。**`create()` の後**に manage する——handle は attach の戻り値
+            // ゆえウィンドウの生成より前には存在しない。各 view の `setup()` はもう `EguiShellState` を
             // 読まないので（PR D で `register_ctx` を撤去した）、この順序で問題が無い。
             //
             // この順序が安全である根拠は 2 つある（`EguiShellState` の読み手はすべて
@@ -308,18 +308,18 @@ fn main() {
             //    listener が、hotkey_generation は hide と hotkey listener が立てる——
             //    setter はすべてこの manage より後にしか動かない。
             app.manage(egui_shell::EguiShellState::new(&handles));
-            // #671 PR A′: results 窓の所有型を managed state へ。**listener 登録より前**に置く
+            // #671 PR A′: results ウィンドウの所有型を managed state へ。**listener 登録より前**に置く
             // ——hide_egui_main が try_state で引くため、hide が起こりうる時点より前に manage
             // されている必要がある。
             app.manage(handles.results_window);
             // view→emit→listener の合流点。**main の** hide を hide_egui_main の 1 経路に集約（codex #7）。
             egui_shell::register_hide_listener(&app_handle);
             // config 変更・indexing 状態変化の wake（SU6 spec 決定 1）。config_watcher 起動
-            // （下の setup_config_watcher）と setup_startup_display より前に登録し、可視窓が
-            // 合図を取りこぼす窓を作らない（位置は spec が pin・並行性レビュー）。
+            // （下の setup_config_watcher）と setup_startup_display より前に登録し、可視ウィンドウが
+            // 合図を取りこぼすウィンドウを作らない（位置は spec が pin・並行性レビュー）。
             egui_shell::register_config_wake_listeners(&app_handle);
             // hotkey 登録失敗の pending 格納（spec 追補 2）。wake しない listener——
-            // wake は config-applied（言語変更同時発生時の競合窓を閉じる）に委ねる。
+            // wake は config-applied（言語変更同時発生時の競合ウィンドウを閉じる）に委ねる。
             egui_shell::register_hotkey_failure_listener(&app_handle);
             // 起動時 hotkey 登録失敗の受け口（#652）。RegisterInitialHotkey を送る
             // setup_hotkey_listener より前に登録される位置なので emit を取りこぼさない
@@ -328,7 +328,7 @@ fn main() {
             app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(
                 Default::default(),
             )));
-            // main と results 窓が共有する一方向フローの入れ物（#646 PR2）。
+            // main と results ウィンドウが共有する一方向フローの入れ物（#646 PR2）。
             app.manage(egui_shell::ResultsShared::default());
             egui_shell::spawn_update_check(&app_handle);
 
@@ -417,7 +417,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
         let t0 = Instant::now();
         trace_main("hotkey:listener_enter", json!({}));
         // 設定画面の起動中はホットキーを無視する（ユーザーが新しい組み合わせを設定するために
-        // 現在の組み合わせを押している可能性がある）。**窓に触らない読みなのでタスクの外に置く**
+        // 現在の組み合わせを押している可能性がある）。**ウィンドウに触らない読みなのでタスクの外に置く**
         // ——無駄なタスク post を避ける。
         if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
             && proc_state.lock().unwrap().is_some()

@@ -17,7 +17,7 @@
 //!    `notify::overlay_kind` の**排他ラダー**
 //! 3. **toast 行**（`update_available` / `update_install_now` / `update_dismiss` /
 //!    `update_installing` / `update_failed`）——status 行とは**独立に積まれ、同時に出うる**
-//!    （`SPEC.md`「4.7 結果表示制御（2 窓構成）」）。2 と 3 を「同じお知らせの面」と畳まないこと
+//!    （`SPEC.md`「4.7 結果表示制御（2 ウィンドウ構成）」）。2 と 3 を「同じお知らせの面」と畳まないこと
 //!
 //! **`indexing_hint` は名前に `hint` を持つが 1 ではなく 2 である**（#700 で status 行へ移した際に
 //! 関数名だけが残った）。`hint` で grep して 1 のつもりで触ると描画面を取り違える。

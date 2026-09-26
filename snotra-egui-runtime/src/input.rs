@@ -16,7 +16,7 @@ pub(crate) struct InputState {
     /// ——判定は `admit_key`、そこに機序と一次資料を書いた。
     ///
     /// **`Focused(false)` で全消去し、focus セッションを越えない。** 抑止したキーの release が
-    /// 届かない経路（release 時に窓が focus を失っている）で抑止が持ち越されると、以後
+    /// 届かない経路（release 時にウィンドウが focus を失っている）で抑止が持ち越されると、以後
     /// Escape が永久に効かなくなる——fail-closed の側へ倒れるため、消去点を持つことが
     /// 抑止そのものと同じだけ重要である。
     held_since_focus_gain: HashSet<KeyCode>,
@@ -42,7 +42,7 @@ const TAKE_TRACE_HEARTBEAT: Duration = Duration::from_millis(100);
 /// 判定を `input_trace` の内側だけに置くと、呼び出し側が `format!` の割り当てを
 /// 無条件に払う。呼ぶ前に問えるよう外へ出す。
 pub(crate) fn input_trace_enabled() -> bool {
-    // **一度だけ読む**。この述語は窓イベントごと（マウス移動を含む）とフレームごとに問われる
+    // **一度だけ読む**。この述語はウィンドウイベントごと（マウス移動を含む）とフレームごとに問われる
     // ため、env の読み出し（`crate::env::trace_hatch_enabled` の中の `var_os`）の割り当てを
     // 毎回払うと、計器を**切っていても**出荷バイナリのホットパスに費用が残る。
     // キャッシュの形は `src-tauri/src/trace.rs` の `trace_enabled` と同じ。
@@ -83,13 +83,13 @@ pub(crate) fn input_trace(kind: &str, detail: &str) {
 /// （`tao-0.35.3/src/platform_impl/windows/keyboard.rs:87-93` の `get_async_kbd_state()` →
 /// `synthesize_kbd_state(ElementState::Pressed, …)`）。設定ウィンドウを Escape の **down** で
 /// 閉じると、本体が focus を取り戻した瞬間にこの合成 press が届き、Escape ラダーが走って
-/// **1 回の押下で 2 つの窓が閉じる**（#927 の症状。実測: 本体が受けた press は `synthetic=true`）。
+/// **1 回の押下で 2 つのウィンドウが閉じる**（#927 の症状。実測: 本体が受けた press は `synthetic=true`）。
 ///
 /// ゆえに **focus 獲得時に押されていたキーは、release されるまで press を渡さない**。
 /// 抑止は Escape に限らない——`Z` を押しっぱなしで設定を閉じると検索欄へ合成 press が届く（実測）。
 ///
 /// **非合成の press も抑止対象に含める**のは、物理キーボードのオートリピートが focus 移行を
-/// 跨いで新しい前面窓へ届く可能性を塞ぐためである（`keybd_event` はリピートを生まないので
+/// 跨いで新しい前面ウィンドウへ届く可能性を塞ぐためである（`keybd_event` はリピートを生まないので
 /// 注入では測れない。#927 の (A)）。
 ///
 /// **release は常に渡す**——落とすと egui の `keys_down` に押しっぱなしが残る。egui へ渡らな
@@ -577,7 +577,7 @@ mod tests {
     use super::*;
 
     /// #927: focus 獲得時の合成 press は egui へ渡さず、抑止対象として記録する。
-    /// **この 1 件が「1 回の押下で設定窓と本体の 2 つが閉じる」を止めている唯一の判定である。**
+    /// **この 1 件が「1 回の押下で設定ウィンドウと本体の 2 つが閉じる」を止めている唯一の判定である。**
     #[test]
     fn synthetic_press_at_focus_gain_is_not_admitted() {
         let mut held = HashSet::new();
@@ -638,7 +638,7 @@ mod tests {
         assert!(held.is_empty());
     }
 
-    /// #927: 抑止は focus セッションを越えない。**release が届かない経路**（release 時に窓が
+    /// #927: 抑止は focus セッションを越えない。**release が届かない経路**（release 時にウィンドウが
     /// focus を失っている）で持ち越されると、以後 Escape が効かなくなる。
     #[test]
     fn losing_focus_clears_suppression() {

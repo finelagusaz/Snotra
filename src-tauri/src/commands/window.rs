@@ -95,8 +95,8 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     drop(guard);
 
     // Temporarily disable main window alwaysOnTop so snotra-settings can be focused.
-    // egui 窓は webview 無しゆえ get_webview_window では取れない。get_window で取る
-    // （codex #3・SPEC §8.5）。results 窓にも対称適用する（#646 PR2）——片方だけ解除すると
+    // egui ウィンドウは webview 無しゆえ get_webview_window では取れない。get_window で取る
+    // （codex #3・SPEC §8.5）。results ウィンドウにも対称適用する（#646 PR2）——片方だけ解除すると
     // 設定画面の上に結果カードが浮く（/symmetric-check 対象・plan-review 独立導出の指摘）。
     if let Some(main) = app.get_window("main") {
         let _ = main.set_always_on_top(false);
@@ -145,7 +145,7 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         }
 
         // Restore main window alwaysOnTop（egui は get_window・codex #3・SPEC §8.5）。
-        // results 窓にも対称適用する（#646 PR2・上の解除と対）。
+        // results ウィンドウにも対称適用する（#646 PR2・上の解除と対）。
         //
         // **対称に書いてあるが、2 行の実行スレッドは違う**（#923 で実測）:
         // `set_always_on_top` は tauri の `send_user_message` と tao の `execute_in_thread` で

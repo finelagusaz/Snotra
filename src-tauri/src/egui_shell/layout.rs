@@ -1,11 +1,11 @@
 //! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出・
-//! results 窓の可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・バー矩形）・
+//! results ウィンドウの可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・バー矩形）・
 //! 検索 debounce の判定・**表示幅に合わせたテキストの中間省略**（`truncate_middle_chars` /
 //! `fit_middle_by_measure`・#870）を Win32 非依存で持つ。ユニットテスト対象。
 //!
 //! **`egui` へ問うのは行高の丸め規則ただ 1 つである**（`GuiRounding`・`results_window_height`）。
 //! かつては egui にも依存しない旨を謳っていたが、それは「egui が行をどう積むか」を
-//! **写して持つ**ことでしか成り立たず、実際に 1/32 の丸めを写し忘れて窓と中身がずれた。
+//! **写して持つ**ことでしか成り立たず、実際に 1/32 の丸めを写し忘れてウィンドウと中身がずれた。
 //! 規則は写さず SSOT へ問う（`AGENTS.md`「検証の作法」の「照合は SSOT に対して行う」）。
 
 use egui::emath::GuiRounding as _;
@@ -59,14 +59,14 @@ impl Metrics {
     }
 }
 
-/// **main 窓の** scale factor。`ResultsScale` と取り違えられないための newtype。
+/// **main ウィンドウの** scale factor。`ResultsScale` と取り違えられないための newtype。
 ///
 /// **フィールドは private である。** `pub f64` にすると呼び出し側で
 /// `MainScale(results_scale)` と書けてしまい、型は付いても拘束にならない——構築を
-/// 「窓が手元にある場所」へ閉じることが要点で、生成子は `window_coordinator::main_scale`
+/// 「ウィンドウが手元にある場所」へ閉じることが要点で、生成子は `window_coordinator::main_scale`
 /// （main のハンドルから読む）だけである。
 ///
-/// **なぜ要るか**: #835 のクランプ撤去で results 窓の scale を読む箇所が一度消え、
+/// **なぜ要るか**: #835 のクランプ撤去で results ウィンドウの scale を読む箇所が一度消え、
 /// 「同型の値が 1 種類になったので取り違えは構造的に起こらない」と書けた時期があった。
 /// 物理 px への切り上げ（`results_height_phys`）でその読みが戻り、同型の `f64` が 2 種類
 /// 並ぶ状態が再来したため、**doc の申し合わせではなく型で分ける**。
@@ -74,13 +74,13 @@ impl Metrics {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MainScale(f64);
 
-/// **results 窓の** scale factor（`MainScale` の対）。生成子は `ResultsWindow::set_size`
-/// （自窓のハンドルから読む）だけである。
+/// **results ウィンドウの** scale factor（`MainScale` の対）。生成子は `ResultsWindow::set_size`
+/// （自ウィンドウのハンドルから読む）だけである。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResultsScale(f64);
 
 impl MainScale {
-    /// 窓から読んだ値を包む。**呼ぶのは main のハンドルを持つ場所だけである**
+    /// ウィンドウから読んだ値を包む。**呼ぶのは main のハンドルを持つ場所だけである**
     /// （`window_coordinator::main_scale`）。
     pub fn new(scale: f64) -> Self {
         Self(scale)
@@ -88,14 +88,14 @@ impl MainScale {
 }
 
 impl ResultsScale {
-    /// 窓から読んだ値を包む。**呼ぶのは results のハンドルを持つ場所だけである**
+    /// ウィンドウから読んだ値を包む。**呼ぶのは results のハンドルを持つ場所だけである**
     /// （`ResultsWindow::set_size`）。
     pub fn new(scale: f64) -> Self {
         Self(scale)
     }
 }
 
-/// main 窓の高さ(#646 PR2 決定 6)。bar(+status/toast)のみで結果に伸縮しない。
+/// main ウィンドウの高さ(#646 PR2 決定 6)。bar(+status/toast)のみで結果に伸縮しない。
 ///
 /// `status_height`: indexing 案内・起動中・一時通知の行(#700)。**入力欄に重ねず独立した行を
 /// 占める**——重ね描きは「編集できるのに文字が見えない」状態を作り、実際に編集不能と報告された
@@ -110,8 +110,8 @@ pub fn main_window_height(
     bar_height + status_height.unwrap_or(0.0) + toast_height.unwrap_or(0.0)
 }
 
-/// 結果窓の高さ（#835）。**`max_results` 分の固定高**。**件数を入力に持たない**
-/// ——候補が少なくても窓は縮まない（#646 PR2 決定 7 の実件数フィットを覆した。理由は
+/// 結果ウィンドウの高さ（#835）。**`max_results` 分の固定高**。**件数を入力に持たない**
+/// ——候補が少なくてもウィンドウは縮まない（#646 PR2 決定 7 の実件数フィットを覆した。理由は
 /// `ADR-results-fixed-height`）。
 ///
 /// **`0.0` は「hide せよ」の契約値である。** 返すのは `max_results == 0` のときだけで
@@ -121,7 +121,7 @@ pub fn main_window_height(
 /// 撤去したため、ここが正本である。
 ///
 /// **作業領域の下端で抑えない**（#835 で #675 を撤去）。収まらない分は画面外へはみ出す。
-/// 窓の大きさが表示位置で変わらないことを優先した人間裁定であり、その帰結（最下端では
+/// ウィンドウの大きさが表示位置で変わらないことを優先した人間裁定であり、その帰結（最下端では
 /// 1 行も見えないことがある）は `SPEC.md` §4.5 が受容すると明示している。
 ///
 /// **返すのは「egui が実際に積む高さ」である。** `row_height` を **egui の丸め規則へ通してから**
@@ -133,8 +133,8 @@ pub fn main_window_height(
 /// **余りを持たない（丸め済み行高の整数倍ちょうど）。** これが成り立つのは `results_view` が
 /// `item_spacing.y = 0` を敷いて**行ピッチを行高に一致させている**からであり、両者は対である
 /// （片方だけ変えると最終行が切れるか、`max_results + 1` 行目の頭が覗く）。かつてあった
-/// `+ 8.0` は 1 窓時代の `HeightParams.results_padding`——結果リスト領域の**内側**の余白——を
-/// #646 PR2 が窓高へそのまま持ち込んだものだが、窓を分けた時点で「窓の高さ = `ScrollArea` の
+/// `+ 8.0` は 1 ウィンドウ時代の `HeightParams.results_padding`——結果リスト領域の**内側**の余白——を
+/// #646 PR2 がウィンドウ高へそのまま持ち込んだものだが、ウィンドウを分けた時点で「ウィンドウの高さ = `ScrollArea` の
 /// 高さ」になり、`ScrollArea` は与えられた高さいっぱいに行を積むため**余白としては一度も
 /// 機能していなかった**（実際には `max_results + 1` 行目の頭 8px が覗く場所になっていた）。
 ///
@@ -227,9 +227,9 @@ pub fn icon_prefetch_range(
     start..end
 }
 
-/// results 窓の**物理**高さ（案 3）。論理高を**切り上げて**物理 px にする。
+/// results ウィンドウの**物理**高さ（案 3）。論理高を**切り上げて**物理 px にする。
 ///
-/// **`round` ではなく `ceil` である。** 窓の物理高は整数 px、論理高は連続量であり、
+/// **`round` ではなく `ceil` である。** ウィンドウの物理高は整数 px、論理高は連続量であり、
 /// `round` は半分の確率で下へ倒れて最終行を削る。実測では font_size 8..48 × 件数 1..50 ×
 /// scale 5 種の **10,250 通り中 3,702 件（36%）で最終行が切れていた**（最悪 1.125pt）。
 /// `ceil` にすると**任意の scale で切れが 0 になる**（カスタムスケーリングの 1.1・1.37 でも）。
@@ -244,19 +244,19 @@ pub fn icon_prefetch_range(
 /// **格子を揃えるのではなく、最後に丸める 1 点をここに定めて必ず上へ倒す**——直列な丸めでは
 /// 最終段が全体を支配するため、上流の格子が噛み合わなくてもこれで足りる。
 /// **`ResultsScale` を要求する。** 生の `f64` を取ると main の scale を渡せてしまい、
-/// マルチモニターで別 DPI に跨ったとき窓が誤った大きさになる（`MainScale` の doc）。
+/// マルチモニターで別 DPI に跨ったときウィンドウが誤った大きさになる（`MainScale` の doc）。
 pub fn results_height_phys(logical_height: f64, scale: ResultsScale) -> u32 {
     (logical_height * scale.0).ceil().max(0.0) as u32
 }
 
-/// results 窓の**物理**サイズ（幅, 高さ）。`ResultsWindow::set_size` が渡す唯一の口である。
+/// results ウィンドウの**物理**サイズ（幅, 高さ）。`ResultsWindow::set_size` が渡す唯一の口である。
 ///
 /// **幅と高さで丸めが違うのは意図である。** 高さは `ceil`（`results_height_phys`——切り捨てが
-/// 最終行を削る）、幅は `round`（行の描画に影響せず、`ceil` にすると窓が 1px ずつ育つ）。
+/// 最終行を削る）、幅は `round`（行の描画に影響せず、`ceil` にするとウィンドウが 1px ずつ育つ）。
 ///
 /// **この関数があるのは `ResultsScale` の中身を呼び出し側へ漏らさないためである。** 生の `f64`
 /// を取り出せる口を作ると、そこで `MainScale` の値を包み直せてしまい、newtype で分けた意味が
-/// 消える（`MainScale` の doc）。窓側は「論理サイズと自窓の scale を渡す」だけでよい。
+/// 消える（`MainScale` の doc）。ウィンドウ側は「論理サイズと自ウィンドウの scale を渡す」だけでよい。
 pub fn results_size_phys(
     width_logical: f64,
     height_logical: f64,
@@ -266,16 +266,16 @@ pub fn results_size_phys(
     (width, results_height_phys(height_logical, scale))
 }
 
-/// 窓の外形に含まれる**不可視枠**の厚み（物理 px）。
+/// ウィンドウの外形に含まれる**不可視枠**の厚み（物理 px）。
 ///
-/// Windows は装飾を消した窓にも不可視枠を持たせる。`GetWindowRect`（tauri の
+/// Windows は装飾を消したウィンドウにも不可視枠を持たせる。`GetWindowRect`（tauri の
 /// `outer_position` / `outer_size` が返す座標系）はこの枠を**含み**、`DwmGetWindowAttribute`
 /// の `DWMWA_EXTENDED_FRAME_BOUNDS` は含まない。ゆえに外形どうしを突き合わせて隙間を作ると、
 /// 枠の厚みがそのまま**見た目の隙間**へ乗る。
 ///
 /// **上辺が 0 であることを前提にしてはならない。** DPI 125% の機体では上 0 / 下 8 / 左右 8 と
 /// 実測したが、それは観測値であって述語ではない——[`results_top_y`] の呼び出し元は両辺とも
-/// 窓から読む。
+/// ウィンドウから読む。
 ///
 /// **`window_coordinator::FrameGeom` の `inset_h`（外形 − 内形）とは別の量である。** 同じ機体で
 /// こちらは 8、あちらの doc が記録する実測は 10 で、混ぜれば 2 px ずれる。内形（クライアント
@@ -285,13 +285,13 @@ pub fn results_size_phys(
 /// 正本は `window_coordinator::position_results_below_main` の「受容する残余」節である。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InvisibleBorders {
-    /// main 窓の**下辺**の厚み。
+    /// main ウィンドウの**下辺**の厚み。
     pub main_bottom: i32,
-    /// results 窓の**上辺**の厚み。
+    /// results ウィンドウの**上辺**の厚み。
     pub results_top: i32,
 }
 
-/// results 窓の上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
+/// results ウィンドウの上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
 /// の算術部（#749 で `mod.rs` から移設）。
 ///
 /// **隙間は見えるものどうしの間隔である**（`SPEC.md`「11. ビジュアル」の
@@ -304,13 +304,13 @@ pub struct InvisibleBorders {
 /// ラッパーのままである。消費者は 2 つ（毎フレームの drive と `Moved` リスナー）で、
 /// どちらも同じラッパーを通る。
 ///
-/// `main_scale` は **main 窓の** scale である。**#835 より前は results 窓の scale を取る
+/// `main_scale` は **main ウィンドウの** scale である。**#835 より前は results ウィンドウの scale を取る
 /// `available_below` と同型で並んでおり、取り違えの検出器が無いことを受容していた**——
-/// クランプの撤去で **results 窓の** scale を読む箇所が一度は消え、同型の値が 1 種類に
+/// クランプの撤去で **results ウィンドウの** scale を読む箇所が一度は消え、同型の値が 1 種類に
 /// なったので取り違えは構造的に起こらない、と書けた時期があった。
 ///
 /// **案 3 でその読みは戻った。** `ResultsWindow::set_size` が高さを物理 px で指定するために
-/// **results 窓の** scale を読む（同関数の doc）。**ただし残余としては戻っていない**——
+/// **results ウィンドウの** scale を読む（同関数の doc）。**ただし残余としては戻っていない**——
 /// 両者は `MainScale` / `ResultsScale` に分かれており、**取り違えはコンパイルが通らない**
 /// （実測: 双方向で `expected MainScale, found ResultsScale` / その逆）。ここが要求するのは
 /// **main の** scale である。**マルチモニターで main と results が別 DPI のモニターに跨るとき、
@@ -331,7 +331,7 @@ pub fn results_top_y(
 ///
 /// **規則は `f64::round`（0 から遠ざかる丸め）でなければならない**——`set_size` に渡した
 /// `LogicalSize` を tao/dpi が物理へ戻すときの変換が `dpi::Pixel::from_f64`（= `f64::round`）
-/// であり、ここが違えば **show が置く位置と、窓が実際に占める矩形がずれる**（#755 / #801 と
+/// であり、ここが違えば **show が置く位置と、ウィンドウが実際に占める矩形がずれる**（#755 / #801 と
 /// 同じ観測形の 1 px スナップ）。
 ///
 /// **上流への依存はこの doc 1 か所に集約してある。** `dpi` が銀行家丸めへ変われば、直すのは
@@ -340,7 +340,7 @@ pub fn results_top_y(
 /// （`ADR-main-window-clamp-on-pointer-release`「残っている代価」が記録した状態）。
 ///
 /// **[`results_top_y`] の gap 換算は式が逐語で同じだが、ここへ束ねていない**（`/dry-check`
-/// で「維持」と判定・#878）。あちらは窓の矩形と一致する必要が無く、**上流が丸め規則を
+/// で「維持」と判定・#878）。あちらはウィンドウの矩形と一致する必要が無く、**上流が丸め規則を
 /// 変えたときに追随しなければならないのはこちらだけ**である——片方だけが変わる将来が
 /// 挙がる以上、式が同じでも概念は別である。
 pub fn logical_to_phys(logical: f64, main_scale: MainScale) -> i32 {
@@ -350,7 +350,7 @@ pub fn logical_to_phys(logical: f64, main_scale: MainScale) -> i32 {
 /// バー矩形の**物理**高さ（#738）。可視中の位置クランプの材料である。
 ///
 /// **実高（status 行・toast 行を含む高さ）ではない。** 実高でクランプすると toast が消えて
-/// 窓が縮んだときに位置が戻らず、hide が `read_placement_relative` 経由でそのずれを
+/// ウィンドウが縮んだときに位置が戻らず、hide が `read_placement_relative` 経由でそのずれを
 /// 永続化する（#755 / #801 で実際に起きた失敗）。「バーの位置はユーザーが決め、行の出没では
 /// 動かさない」（人間裁定・`SPEC.md` §4.7）の帰結でもあり、**`show_egui_main` が位置決めの
 /// 1 手目で畳む高さと同じ導出である**——書き手が 2 人でも材料は 1 つに保つ（#877 と同型）。
@@ -369,7 +369,7 @@ pub fn bar_rect_height_phys(bar_height_logical: f64, main_scale: MainScale) -> i
 
 /// バー矩形の中心（物理座標・#738）。クランプと hide 保存の**基準モニター**を決めるために使う。
 ///
-/// **窓全体の矩形から基準モニターを決めてはならない**——理由の正本は
+/// **ウィンドウ全体の矩形から基準モニターを決めてはならない**——理由の正本は
 /// `monitor::point_monitor_work_area` の doc。
 ///
 /// `bar_outer_height_phys` は**非クライアント分を足した後**の高さである
@@ -379,18 +379,18 @@ pub fn bar_rect_center(x: i32, y: i32, width_phys: u32, bar_outer_height_phys: i
     (x + (width_phys / 2) as i32, y + bar_outer_height_phys / 2)
 }
 
-/// 窓の再サイズが要るか（#749）。`set_size` は Win32 呼び出しゆえ、同値のフレームで撃たない
+/// ウィンドウの再サイズが要るか（#749）。`set_size` は Win32 呼び出しゆえ、同値のフレームで撃たない
 /// ためのデルタガードである。
 ///
 /// **correctness のフラグではない**——results の可視性は `ResultsWindow` の `visible` が持つ
-/// （#671 spec 決定 2 の意図的な分割）。ここが誤って `false` を返しても窓が消えることはなく、
+/// （#671 spec 決定 2 の意図的な分割）。ここが誤って `false` を返してもウィンドウが消えることはなく、
 /// 直近に適用したサイズのまま残るだけである。
 ///
 /// 許容 `0.5` は論理 px の丸め差を吸収する値で、#646 PR2 から手書きされていた式をそのまま
 /// 移した。引数は `(幅, 高さ)`——`set_size(width, height)` の引数順と揃える。
 ///
 /// 消費者は 2 つある（**状態は共有しない。式だけを共有する**）: `ResultsWindow::set_size`
-/// （memo は窓の所有型が持つ）と `view.rs` の main 窓ガード（memo は view が持つ——main の高さの
+/// （memo はウィンドウの所有型が持つ）と `view.rs` の main ウィンドウガード（memo は view が持つ——main の高さの
 /// 導出が show 経路（`show_egui_main`）と共有される事実の正本は `src-tauri/CLAUDE.md`「モジュール構成」の
 /// `window_coordinator.rs` の項。ここでの結論は**memo は共有しない**ことだけである）。`main_size` を
 /// results の導出へ入れないという `ADR-results-presentation-two-stage` 却下 1 の**結論**は今も真である
@@ -428,7 +428,7 @@ pub struct ResultsInputs {
     pub row_height: f64,
 }
 
-/// results 窓の見せ方の決定（#752 C2）。**driver はこの高さをそのまま `set_size` へ渡す**
+/// results ウィンドウの見せ方の決定（#752 C2）。**driver はこの高さをそのまま `set_size` へ渡す**
 /// ——作業領域による調整は #835 で撤去した（`results_window_height` の doc）。
 ///
 /// `{ visible: bool, height: f64 }` の struct にはしない。`visible: true, height: 0.0` という
@@ -457,7 +457,7 @@ pub enum ResultsPresentation {
 /// **読み点の非対称は呼び出し側の責務である**（#752 F2）。同一フレーム内で、③ `plain_hidden`
 /// はクリック逆流の消費**前**に、②の材料 `result_count` は消費**後**に読む。間に挟まる
 /// `start_launch` が `set_results(Vec::new())` を撃つため、行クリック起動フレームでは②が
-/// false になって窓が隠れる。**読み点を前へ寄せてはならない**——起動直後に古い行が 1 フレーム
+/// false になってウィンドウが隠れる。**読み点を前へ寄せてはならない**——起動直後に古い行が 1 フレーム
 /// 描かれる。`cargo test` では落ちない種類の回帰である。
 /// **`plain_results_hidden` を前後で 2 回読んでもならない**——`indexing` は `AtomicBool` の
 /// live-read で、同一フレーム内でも値が変わりうる。**その `indexing` については構造が担うように
@@ -760,7 +760,7 @@ mod tests {
     /// **これが崩れると失うもの**: 起動側のゲート（`launcher_controller` の
     /// `activate_or_execute` / `shift_activate`）はこの述語を見るので、表示と起動の判定が割れる。
     /// 実害は 2026-08-16 に実機で測った——`visible_rows = 0` の使い捨てプロファイルで
-    /// `egui_results:show` が 0 件・results 窓が OS 実測でも不可視のまま `egui_launch` が出た
+    /// `egui_results:show` が 0 件・results ウィンドウが OS 実測でも不可視のまま `egui_launch` が出た
     /// （対照の `visible_rows = 8` では show → launch が正常に並ぶ）。
     #[test]
     fn results_area_collapsed_matches_the_zero_height_contract() {
@@ -799,7 +799,7 @@ mod tests {
         assert_eq!(big.bar_height - 2.0 * big.bar_inset, 38.0);
     }
 
-    /// #646 PR2 決定 6: main 窓は bar(+status/toast)のみで、結果による伸縮をしない。
+    /// #646 PR2 決定 6: main ウィンドウは bar(+status/toast)のみで、結果による伸縮をしない。
     /// #700: status 行（indexing 案内・一時通知）は入力欄を覆わず独立した行を占める。
     #[test]
     fn main_height_is_bar_plus_optional_status_and_toast() {
@@ -811,7 +811,7 @@ mod tests {
         assert_eq!(main_window_height(43.0, Some(43.0), Some(43.0)), 129.0);
     }
 
-    /// #835: 結果窓は **`max_results` 分の固定高**。**件数では変わらない**
+    /// #835: 結果ウィンドウは **`max_results` 分の固定高**。**件数では変わらない**
     /// （#646 PR2 決定 7 の実件数フィットを覆した・`ADR-results-fixed-height`）。
     ///
     /// **`row_height` の整数倍ちょうどであること**（余りを持たないこと）も測る——`results_view`
@@ -845,7 +845,7 @@ mod tests {
         }
         // **`max_results = 0` は 0.0**——`config.toml` の手編集で到達可能な値であり
         // （`ResultsInputs::max_results` の doc）、0.0 は `present_results` が hide と読む
-        // 契約値である。ここを落とすと 8px のスリット窓が出る。
+        // 契約値である。ここを落とすと 8px のスリットウィンドウが出る。
         assert_eq!(results_window_height(0, row), 0.0);
     }
 
@@ -863,12 +863,12 @@ mod tests {
                 for &scale in &[1.0_f64, 1.1, 1.25, 1.37, 1.5, 1.75, 2.0, 2.5, 3.0] {
                     let logical = results_window_height(n, rh);
                     let phys = results_height_phys(logical, ResultsScale::new(scale));
-                    // 窓が egui へ渡す高さ（`runtime.rs` は物理 / scale を screen_rect にする）
+                    // ウィンドウが egui へ渡す高さ（`runtime.rs` は物理 / scale を screen_rect にする）
                     let screen = f64::from(phys as f32 / scale as f32);
                     let slack = screen - logical;
                     assert!(
                         slack >= -1e-6,
-                        "font={f} n={n} scale={scale}: {} 切れる（窓 {screen} < 中身 {logical}）",
+                        "font={f} n={n} scale={scale}: {} 切れる（ウィンドウ {screen} < 中身 {logical}）",
                         -slack
                     );
                     worst_slack = worst_slack.max(slack);
@@ -891,7 +891,7 @@ mod tests {
     /// #878: 丸め規則は `f64::round`（0 から遠ざかる丸め）である。
     ///
     /// **`dpi::Pixel::from_f64` と同じ規則でなければならない**——`set_size` に渡した論理値を
-    /// tao/dpi が物理へ戻すときの変換がそれであり、違えば show が置く位置と窓の実矩形がずれる。
+    /// tao/dpi が物理へ戻すときの変換がそれであり、違えば show が置く位置とウィンドウの実矩形がずれる。
     /// `.trunc()` や銀行家丸めへ替えると 0.5 の 3 例が落ちる。
     #[test]
     fn logical_to_phys_rounds_half_away_from_zero() {
@@ -916,11 +916,11 @@ mod tests {
         assert_eq!(bar_rect_height_phys(43.0, MainScale::new(1.25)), 54); // 53.75 → 54
     }
 
-    /// #738: 与えられた矩形の中点。**なぜ窓全体の矩形ではないかは
+    /// #738: 与えられた矩形の中点。**なぜウィンドウ全体の矩形ではないかは
     /// `monitor::point_monitor_work_area` の doc**。
     #[test]
     fn bar_rect_center_is_midpoint_of_given_rect() {
-        // 幅 600・バー高 43 の窓が (100, 200) にある
+        // 幅 600・バー高 43 のウィンドウが (100, 200) にある
         assert_eq!(bar_rect_center(100, 200, 600, 43), (400, 221));
         // 奇数幅は切り捨て（整数除算）
         assert_eq!(bar_rect_center(0, 0, 601, 43), (300, 21));
@@ -961,7 +961,7 @@ mod tests {
 
     /// #752 AC1: SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言の真理値表。
     ///
-    /// 連言は ①`main_visible` ②結果が空でない ③通常結果を隠していない ④窓高さ > 0。
+    /// 連言は ①`main_visible` ②結果が空でない ③通常結果を隠していない ④ウィンドウ高さ > 0。
     /// **②と③を区別できることが #752 の眼目である**——旧 `results_should_show` は両者を
     /// `show_results` へ潰しており、「0 件で隠れた」と「carve-out で隠れた」を固定できなかった。
     ///

@@ -51,14 +51,14 @@ impl LauncherController {
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
             self.search_debounce = Self::new_search_debounce();
-            // scroll gate（#632: 再表示後に確実に一度 scroll し直す）は results 窓の
+            // scroll gate（#632: 再表示後に確実に一度 scroll し直す）は results ウィンドウの
             // ResultsView::update() 側（実ゲート）に移設済み——main はもう読み書きしない。
             // icon パイプライン（icon_textures/icon_missing/icon_pending）も Task 5 で
-            // results 窓へ移設済み——main はもう保持しない。hide 中の常駐テクスチャは
+            // results ウィンドウへ移設済み——main はもう保持しない。hide 中の常駐テクスチャは
             // results 側の retain_visible が空 rows で自然に全クリアする（Task 5 申し送り）。
             // SU5: in-flight 起動と一時通知は show を跨がない（resetForShow の
             // setLaunching(false) + clearLaunchNotice parity）。rx ごと drop するため
-            // hide 中に完了した遅着結果もここで自然消滅する（stale Ok が再 show 窓を
+            // hide 中に完了した遅着結果もここで自然消滅する（stale Ok が再 show ウィンドウを
             // hide で撃つ事故の backstop・並行性レビュー High）。updater toast は触らない。
             self.launching = None;
             self.notice.clear();

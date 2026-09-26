@@ -169,7 +169,7 @@ npm test    # 必須: セーフティネット自身の回帰テスト（使い�
 ### F. ガバナンス文書（`*.md`・`.claude/rules/`・`.claude/skills/`・workflow）を変更した場合
 
 ```bash
-npm run governance:check    # 必須: ガバナンス文書の決定的検査（参照実在・モジュール索引・スキル表・SPEC 番号・rules glob・コマンド写像・見出し参照の着地。#587/#593。恒久規範の面積は合否を持たない計器として報告するだけ・`ADR-retire-area-budget`）
+npm run governance:check    # 必須: ガバナンス文書の決定的検査（参照実在・モジュール索引・スキル表・SPEC 番号・rules glob・コマンドマッピング・見出し参照の着地。#587/#593。恒久規範の面積は合否を持たない計器として報告するだけ・`ADR-retire-area-budget`）
 ```
 
 - **`.rs` のコメントへ正準形の見出し参照を書いた／その参照先の見出しを改題したときも `npm run governance:check` を打つ**（#925。G-heading-refs / G-near-heading-refs の走査元に `.rs` が入っている）。`.rs` では PostToolUse フックが走るが、その沈黙は fmt / clippy / test の合格であって見出し参照の着地を含まない（#1139 の索引 reminder も見出し参照は見ない）

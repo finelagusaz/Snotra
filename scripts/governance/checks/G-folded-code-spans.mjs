@@ -5,7 +5,7 @@ export const id = "G-folded-code-spans";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（allRefDocs・record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record("codeSpans", scanFoldedCodeSpans(snapshot, ctx.allRefDocs));
+  return scanFoldedCodeSpans(snapshot, ctx.allRefDocs).findings;
 }
 
 // ---------------------------------------------------------------------------

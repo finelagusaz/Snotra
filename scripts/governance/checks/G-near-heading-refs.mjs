@@ -5,7 +5,7 @@ export const id = "G-near-heading-refs";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（allRefDocs・record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record("nearRefs", scanNearHeadingRefs(snapshot, ctx.allRefDocs));
+  return scanNearHeadingRefs(snapshot, ctx.allRefDocs).findings;
 }
 
 // ---------------------------------------------------------------------------

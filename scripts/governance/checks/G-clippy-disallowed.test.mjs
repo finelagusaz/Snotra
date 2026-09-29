@@ -4,7 +4,6 @@ import { snap } from "../test-helpers.mjs";
 import { makeSnapshot } from "../lib.mjs";
 import {
   checkClippyDisallowed,
-  clippyDisallowedCount,
   disallowedMethodPaths,
   declaresEguiDependency,
   clippyMethodsDenied,
@@ -179,14 +178,6 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   it("clippyMethodsDenied はハイフン形を非実効と判定する（fail-closed・直し方はソースのコメント）", () => {
     expect(clippyMethodsDenied('[workspace.lints.clippy]\ndisallowed-methods = "deny"\n')).toBe(false);
   });
-  it("clippyDisallowedCount は読めない入力で 0 を返す（evidence が undefined にならない）", () => {
-    expect(clippyDisallowedCount(snap({}))).toBe(0);
-    // **数を書かない。** fixture は `REQUIRED_DISALLOWED_METHODS` を全件持つ形で組んであるので、
-    // 禁止を 1 つ足すたびにこの行だけが腐る（#1067 で実際に踏んだ）。測りたいのは
-    // 「読めた入力で件数が evidence に出る」ことであって、その時点の件数ではない。
-    expect(clippyDisallowedCount(snap(base))).toBe(REQUIRED_DISALLOWED_METHODS.length);
-  });
-
   // --- カナリア ---
   it("カナリア: 実リポジトリで緑であり、守りたい対象が全件入力に現れる", () => {
     const s = makeSnapshot(fileURLToPath(new URL("../../..", import.meta.url)));

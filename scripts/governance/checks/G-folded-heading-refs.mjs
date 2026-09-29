@@ -5,7 +5,7 @@ export const id = "G-folded-heading-refs";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（allRefDocs・record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record("foldedRefs", scanFoldedHeadingRefs(snapshot, ctx.allRefDocs));
+  return scanFoldedHeadingRefs(snapshot, ctx.allRefDocs).findings;
 }
 
 // ---------------------------------------------------------------------------

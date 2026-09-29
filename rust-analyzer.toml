@@ -32,7 +32,7 @@ limit = 512
 
 # rust-analyzer 専用の target ディレクトリ（`target/rust-analyzer/`）。
 # rust-analyzer の `cargo check` と build script 実行が `target/` のロックを掴まなくなるので、
-# PostToolUse hook の `cargo fmt/clippy/test` と食い合わない。
+# 手で走らせる `cargo fmt/clippy/test` と食い合わない。
 #
 # 代償の「成果物の二重化」は 2〜2.5 GB 程度である（2026-08-13 実測）。複製されるのは check
 # 成果物——`.rmeta` 1,853 MiB / 1,508 個と build script 出力 367 MB——だけで、リンク済み
@@ -66,7 +66,7 @@ targetDir = true
 # この禁止は `.claude/hooks/lsp-config.mjs` のカナリアが機械で縛っている（#1083）。
 
 # 必須 lint（`cargo clippy --workspace --all-targets -- -D warnings`）を保存時に走らせる。
-# エージェント側には不要——PostToolUse hook が編集ごとに同じものを既に走らせている。
+# エージェント側には不要——検証手順（`docs/build-commands.md` カテゴリ A）で同じものを走らせる。
 # [check]
 # command = "clippy"
 # extraArgs = ["--", "-D", "warnings"]

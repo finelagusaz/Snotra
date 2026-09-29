@@ -19,7 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { toPosixPath } from "./post-edit.mjs";
+const toPosixPath = (p) => p.split(path.sep).join("/");
 
 /** marketplace 名。`extraKnownMarketplaces` のキーと `marketplace.json` の `name` が一致していないと
  *  Claude Code は plugin を load せず、しかもエラーは debug log にしか出ない（バイナリ逐語:
@@ -49,9 +49,6 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf-8"));
  *
  * `diagnostics.*` は local 水準で、解決は「source root を遡る ratoml 群 → クライアント設定」の順
  * である（#1082 で水準を実測）。ゆえに crate 直下へ置かれた ratoml も plugin の設定を上書きしうる。
- * **発火側（`selectChecks` の basename アンカー）と母集団を揃えないと、hook が走ったのに
- * 判定は別のファイルを見ている＝緑になる**——割り当てられたファイルの緑は「合格」を意味するので、
- * 沈黙より悪い。
  *
  * 除外は**名前一致・全階層**であってパス固定ではない（`crates/dist/` のような名前の crate が
  * できれば取りこぼす）。`target` を全階層で外すのは cargo の入れ子 target のため。
@@ -250,7 +247,7 @@ export function checkLspConfig(rootDir) {
   if (init.checkOnSave !== false) {
     violations.push(
       `initializationOptions.checkOnSave が false でない: ${JSON.stringify(init.checkOnSave)}` +
-        " — flycheck が復活し、確定判定を担う PostToolUse hook の cargo と target/ を食い合う",
+        " — flycheck が復活し、確定判定を担う cargo と target/ を食い合う",
     );
   }
   const search = init.workspace?.symbol?.search;

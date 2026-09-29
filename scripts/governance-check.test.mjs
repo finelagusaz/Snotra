@@ -21,7 +21,7 @@ describe("G-module-index/G-references 母集団カナリア — #701", () => {
     const root = fileURLToPath(new URL("..", import.meta.url));
     const src = readFileSync(fileURLToPath(new URL("../Cargo.toml", import.meta.url)), "utf8");
 
-    // 書式が変わったら「読めなかった」と落ちる（fail-closed・post-edit.test.mjs の members カナリアと同型）
+    // 書式が変わったら「読めなかった」と落ちる（fail-closed）
     const section = src.match(/\[workspace\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/);
     expect(section, "Cargo.toml の [workspace] セクションを読めなかった").not.toBeNull();
     const m = section[1].match(/^members\s*=\s*\[([^\]]*)\]/m);

@@ -27,7 +27,7 @@ export function run(snapshot, ctx) {
 //   レベル側 — ルート [workspace.lints.clippy] の disallowed_methods の消滅・warn への降格・**同じ節の
 //            群 allow による打ち消し**（`all = "allow"` を 1 行足すと deny の行を残したまま禁止が消える。
 //            clippy 1.94.0 で実測: exit 0・診断 0 件）。この lint は **warn 既定**ゆえ、どの形でも黙る
-// **PostToolUse hook は exit code でしか検出しないため、上記の warning はエージェントにも届かない。**
+// **CI は exit code でしか検出しないため、上記の warning は誰にも届かない。**
 // 沈黙は二重である——それがこの検査を冗長でなくしている性質である（cargo のキャッシュを一切介さない
 // Node の静的読み取りなので、6 経路すべてが入力テキストの差分として現れる）。
 //

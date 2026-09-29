@@ -17,9 +17,8 @@ const HOOKS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOOKS_DIR_POSIX = HOOKS_DIR.split(path.sep).join("/");
 const T = 20_000; // git を数回起動するため既定 5s では足りない
 
-// 作った使い捨てディレクトリはここに集め、最後にまとめて消す
-// （`.claude/hooks/post-edit.test.mjs` と同じ作法）。Task 3・4・5 が
-// 足すテストも scratchDir を通す限り自動で片付く。
+// 作った使い捨てディレクトリはここに集め、最後にまとめて消す。
+// scratchDir を通す限り自動で片付く。
 const scratchDirs = [];
 afterAll(() => {
   for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });

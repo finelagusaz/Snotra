@@ -16,7 +16,7 @@ allowed-tools:
 **決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 2・3・4・6・8・9 は全面的にそこへ機械化済みで、対応表は `references/mechanized-checks.md` にある（**Check 番号は序数参照の腐敗を避けるため振り直さない**——下の欠番はその表が説明する）。Check 1・5・10 は一部だけが機械化されており、意味判断の残置部分が下にある。本スキルで実行するのは:
 
 1. `npm run governance:check` を実行し、赤ならその全件を発見事項（Critical）として報告する
-2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep・npm 系ラッパーの等価判断）と Check 7（メモリ整合）— を従来どおり実施する
+2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep）と Check 7（メモリ整合）— を従来どおり実施する
 
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 
@@ -28,8 +28,6 @@ allowed-tools:
 
 本 Check に残るのは**意味判断を要する部分**のみ:
 - `AGENTS.md`「変更後の検証を実行する」や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
-- hook の **cargo コマンド ↔ カテゴリ A の照合**（出力整形フラグは許容・#476 のフラグドリフト事故クラス）。照合する機構は無いので、ずれがあれば **Warning** で報告する。
-- node/vitest 系のみ本 Check に残る: hook が走らせる node 系検査が SSOT コマンド（`npm test`）の**部分集合ラッパー**として妥当か（hook の検査対象が `vitest.config.ts` の `include` に含まれるか）を確認する。**何をどの粒度で走らせるかはここへ写さない**——`.claude/hooks/post-edit.mjs` の `selectChecks` が正本である。写した記述は 2026-08-25 に実際に腐っていた（撤去済みの検査を 1 件挙げ、対象の粒度も実態と違っていた）。
 
 ## Check 7 — MEMORY.md 参照の実在性
 

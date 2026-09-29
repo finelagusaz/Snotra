@@ -518,7 +518,7 @@ export function resolveRefTarget(snapshot, doc, target) {
  *  返り値 `{ members, error }` の `error` は**母集団の欠落**（fail-closed）——読めない・`[workspace]` 節が無い・
  *  `members` 行が無い・0 件・glob 要素。glob（`crates/*`）は展開器を持たないので「読めなかった」側へ倒す。
  *  `[workspace]` セクションへスコープするのは、`default-members = [...]` を足したときに
- *  全文正規表現が**先に現れた方**を拾うため（`.claude/hooks/post-edit.test.mjs` のカナリアと同じ形）。 */
+ *  全文正規表現が**先に現れた方**を拾うため。 */
 export function workspaceMembers(snapshot) {
   const src = snapshot.read("Cargo.toml");
   if (src == null) return { members: [], error: "ルート Cargo.toml が読めない" };

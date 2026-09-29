@@ -67,7 +67,7 @@ $script:InvariantNames = Get-SnotraTraceInvariantNames
 #
 # **`inv` は issue 番号で書く。連番の ID を振らない**（#835 で置換）。かつては `I1`〜`I13` の
 # 連番だったが、**定義元がどこにも無かった**——このファイルにも無く、grep で出てくる
-# `.claude/hooks/post-edit.mjs` の `I6` / `I11` / `I13` は別体系である。結果として
+# 撤去済みの編集後フック（post-edit.mjs）の `I6` / `I11` / `I13` は別体系だった。結果として
 # **同じ `I7` が項目 1 では「raw 3 操作」・項目 6 では「z-order の所在」という別の不変条件を
 # 指していた**。`.claude/rules/governance-docs.md`「序数で他を指してはならない」——
 # 番号は構造を凍らせ、ずれても誰も気づかない——が名指しで禁じる形そのものである。

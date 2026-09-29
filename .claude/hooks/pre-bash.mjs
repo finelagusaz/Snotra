@@ -373,7 +373,6 @@ export function countUnchecked(text) {
 
 /**
  * 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。
- * post-edit.mjs の findUp と同じ実装（重複だが 2 hook 間の import は結合を増やすため許容）。
  */
 function findUp(startDir, relTarget) {
   let dir = path.resolve(startDir);

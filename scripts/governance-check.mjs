@@ -3,10 +3,8 @@
 // shebang 行は vitest の transform を SyntaxError で落とす（PR #592 で実測。
 // 他の *.mjs も同じ理由で shebang なし。起動は常に `node scripts/...` 経由）。
 //
-// PostToolUse hook は `.md`・rules・skills に検査を割り当てない（#497 で受容した残余）。
-// 本スクリプトはその残余のうち決定的に照合できる項目を PR CI（governance-check job）と
-// `npm run governance:check` で引き取る。意味判断（責務の妥当性・npm 系ラッパーの等価判断・
-// cargo フラグ照合・メモリ整合）は `/health-check` に残る。
+// 文書の決定的に照合できる項目を PR CI（governance-check job）と `npm run governance:check` で見る。意味判断（責務の妥当性・メモリ整合）は
+// `/health-check` に残る。
 // なお `G-workspace-lints` / `G-clippy-disallowed` は文書ではなくリポジトリ規約を見る。責務としては
 // 越境だが意図的な選択であり、帰属の作り直し（他の責務分担への割り当て直し）は #1088 で却下された。
 //

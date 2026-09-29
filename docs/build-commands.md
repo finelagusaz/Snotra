@@ -23,21 +23,20 @@ cargo test -p snotra-settings                                                   
 cargo doc --workspace --no-deps --document-private-items                               # 必須: intra-doc link 切れ検査（#562・CI 発火／hook 非発火）
 ```
 
-- **変更した crate のテストはローカルで必ず走らせる**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意——CI の rust-check が PR で workspace の全 crate のテストを常に実行し担保する
-- **エージェントが確認のために手で打つときは `-q` を付けてよい**（`cargo test -p snotra -q` 等）。畳まれるのは cargo の進捗行と成功テストの逐一報告だけで、**失敗時の証拠は一つも落ちない**——panic メッセージ・`assert_eq!` の left/right・`failures:` の一覧・`test result: FAILED`・非ゼロ exit はいずれも残る（2026-08-13 に使い捨て crate で実測）。量は `cargo test -p snotra` の 276 行 / 22,235 文字に対し `-q` が 8 行 / 411 文字。**カテゴリ A のコードブロックの必須行へ `-q` を足さない**——hook の cargo コマンドと同じ形に揃えておくため
-- **fmt が赤いときは `cargo fmt --all` を打つ**（#858）。検査（`cargo fmt --all -- --check`）と修復（`cargo fmt --all`）は別コマンドで、`--check` は直さない。ローカルでは PostToolUse フックが検査を自動発火するので、赤が届いたら修復コマンドを実行する——**差分を読んで手で直さない**（機械が持つ判定を人が写す作業になる）。整形の様式は rustfmt の既定であり `rustfmt.toml` を置かない（既定が drift 最小であることを 7 設定の比較で実測・`docs/adr/ADR-rustfmt-gate.md`）
-- カテゴリ A のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で fmt と clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
-- **`check` / `clippy` は `--workspace` を使う**（#500）。crate 名を `-p` で列挙すると `Cargo.toml` の `members` の写しになり、5 つ目の crate を追加したとき hook・CI・本ファイルが同じ誤りを共有して気づかれないまま漏れる。`--workspace` は cargo に SSOT を読ませる。一方 `cargo test -p <crate>` は「編集した crate → そのテスト」のマッピングなので `-p` のまま残す（`--workspace` にすると編集していない crate のテストまで走る）
+- **変更した crate のテストはローカルで必ず走らせる**。変更していない crate のテストはローカル任意——CI の rust-check が PR で workspace の全 crate のテストを常に実行し担保する
+- **エージェントが確認のために手で打つときは `-q` を付けてよい**（`cargo test -p snotra -q` 等）。畳まれるのは cargo の進捗行と成功テストの逐一報告だけで、**失敗時の証拠は一つも落ちない**——panic メッセージ・`assert_eq!` の left/right・`failures:` の一覧・`test result: FAILED`・非ゼロ exit はいずれも残る（2026-08-13 に使い捨て crate で実測）。量は `cargo test -p snotra` の 276 行 / 22,235 文字に対し `-q` が 8 行 / 411 文字。**カテゴリ A のコードブロックの必須行へ `-q` を足さない**——CI の実行形と同じ形に揃えておくため
+- **fmt が赤いときは `cargo fmt --all` を打つ**（#858）。検査（`cargo fmt --all -- --check`）と修復（`cargo fmt --all`）は別コマンドで、`--check` は直さない。赤が出たら修復コマンドを実行する——**差分を読んで手で直さない**（機械が持つ判定を人が写す作業になる）。整形の様式は rustfmt の既定であり `rustfmt.toml` を置かない（既定が drift 最小であることを 7 設定の比較で実測・`docs/adr/ADR-rustfmt-gate.md`）
+- カテゴリ A のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。ローカルでの自動実行は無い（編集後フックは 2026-09-29 に撤去）
+- **`check` / `clippy` は `--workspace` を使う**（#500）。crate 名を `-p` で列挙すると `Cargo.toml` の `members` の写しになり、5 つ目の crate を追加したとき CI と本ファイルが同じ誤りを共有して気づかれないまま漏れる。`--workspace` は cargo に SSOT を読ませる。一方 `cargo test -p <crate>` は「編集した crate → そのテスト」のマッピングなので `-p` のまま残す（`--workspace` にすると編集していない crate のテストまで走る）
 - **既定ビルドから外れる feature は CI でだけ通る**: `cargo check -p snotra --features heap-trace`（ヒープ計装）。**カテゴリ A の必須ではない**——`.rs` を触るたびに走らせる必要は無く、CI（rust-check）が毎 PR で通す。ここに書くのは「**誰も通さない経路**を作らない」ための配置の記録であって、手で打つ手順ではない（計器の意味と撤去条件は `src-tauri/src/heap_trace.rs` の `//!`）
-- **doc コメント（`///` / `//!`）を触ったら `cargo doc --workspace --no-deps --document-private-items` をローカルで手で実行する**（#562）。`cargo doc` は CI（rust-check）でのみ発火し PostToolUse フックは発火しない（編集レイテンシ回避の設計判断）ため、**編集時の沈黙は合格を意味しない**。deny 化は各 crate の `[lints] workspace = true`（`Cargo.toml`）→ root `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）で、既定 warn の素通りを塞ぐ。この 2 段（member 側の opt-in 漏れと、root 側の deny の降格・欠落）はどちらも cargo が exit 0 で沈黙するため、`npm run governance:check`（G-workspace-lints）が検知する（#713）
+- **doc コメント（`///` / `//!`）を触ったら `cargo doc --workspace --no-deps --document-private-items` をローカルで手で実行する**（#562）。`cargo doc` は CI（rust-check）でのみ自動で走る。deny 化は各 crate の `[lints] workspace = true`（`Cargo.toml`）→ root `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）で、既定 warn の素通りを塞ぐ。この 2 段（member 側の opt-in 漏れと、root 側の deny の降格・欠落）はどちらも cargo が exit 0 で沈黙するため、`npm run governance:check`（G-workspace-lints）が検知する（#713）
 - **`src-tauri/clippy.toml` の `disallowed-methods` へ禁止を足したら、`scripts/governance/checks/G-clippy-disallowed.mjs` の `REQUIRED_DISALLOWED_METHODS` へも足す**（#900・禁止集合の正本は `src-tauri/clippy.toml` 冒頭）——**カナリアへ登録していないパスの書き損じは射程外**である。この lint が赤くなるのは `-D warnings` のおかげではない（#950）: warn 既定だが root `[workspace.lints.clippy]` の `disallowed_methods = "deny"` で昇格させてあるため、コマンドラインのフラグから独立している（`clippy.toml` を持たない crate は禁止集合が空で無害）。禁止集合そのものの空洞化（ファイルの削除・空配列化・エントリ 1 行の消失・**カナリアが名指すパスの**書き損じ・コメントアウト）と、この deny の消失・降格・同じ節の群 allow による打ち消しは、どちらも clippy が exit 0 で沈黙するため `npm run governance:check`（G-clippy-disallowed）が検知する
-- **フックの cargo コマンドは、カテゴリ A のコードブロックの記載と「合否・検査対象を変えるフラグ」において一致させる**（フックと本ファイルの整合規約・`--lib` の付与・`-p` の欠落等を乖離とする）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は hook 側の証拠予算のための追加として許容する。npm 系検査は SSOT コマンド（`npm test`）の部分集合ラッパー（対象ディレクトリ限定の vitest 実行）を許容する。コマンドの実在は `npm run governance:check`（G-build-commands）が検知する。cargo フラグの乖離を照合する機構は無い
-- **検査が割り当てられているファイルでは、フックの沈黙は合格を意味する**（#471・前提条件は #497）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる。**割り当ての無いファイル**（`*.md`・`scripts/`・`.github/workflows/` 等）の沈黙は「何も走らなかった」であり合格ではない。割り当ての SSOT は `post-edit.mjs` の `selectChecks` である
+- コマンドの実在は `npm run governance:check`（G-build-commands）が検知する
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
 ### B. TypeScript ファイル（`vitest.config.ts` 等）を変更した場合
 
-TS の型検査は #532 SU7 のフロント撤去で消滅した（`tsconfig.json` ごと削除・`.ts` 編集時は PostToolUse フックが「検査はありません」の情報行を出す）。残る `.ts` は `vitest.config.ts` のみで、その変更は hook-selftest（PostToolUse 自動発火）と `npm test` が検証する。
+TS の型検査は #532 SU7 のフロント撤去で消滅した（`tsconfig.json` ごと削除）。残る `.ts` は `vitest.config.ts` のみで、その変更は `npm test` が検証する。
 
 ### C. ウィンドウ生成／表示順・ホットキー・スラッシュコマンドに触れた場合（A／B に追加）
 
@@ -159,9 +158,8 @@ npm test    # 必須: セーフティネット自身の回帰テスト（使い�
 
 **母集団の正本は `vitest.config.ts` の `include` である**——上の 3 つは索引であって、そこから写した一覧ではない。**`npm test` が何を走らせるかを決めるのはあの `include` だけ**なので、木が増減したらここの索引ではなくあちらを見る。
 
-- **`scripts/**` はここでしか拾われない**（#1220）。PostToolUse は `scripts/` に検査を割り当てず（`selectChecks` が SSOT）、他のカテゴリの引き金にも当たらないため、**このカテゴリを飛ばすとガバナンス検査自身の回帰テストが 1 度も走らない**。`governance:check` は代わりにならない——あれはリポジトリの現状に対する照合であって、判定を壊しても現行ツリーがたまたま緑なら通る
+- **`scripts/**` はここでしか拾われない**（#1220）。他のカテゴリの引き金に当たらないため、**このカテゴリを飛ばすとガバナンス検査自身の回帰テストが 1 度も走らない**。`governance:check` は代わりにならない——あれはリポジトリの現状に対する照合であって、判定を壊しても現行ツリーがたまたま緑なら通る
 - **`scripts/lib/**` の PowerShell を触ったら `npm run test:powershell` も打つ**（母集団は `scripts/run-pester.ps1` が `scripts/lib` を見る）。`npm test` の vitest は `.ps1` を見ない
-- PostToolUse フックが `.githooks/**` の編集で `vitest run .githooks` を、`.claude/hooks/**` の編集で hook-selftest を自動発火する（#484/#497）。**この 2 つは沈黙が合格を意味するが、`scripts/**` は沈黙が「何も走らなかった」である**（ルート `CLAUDE.md`「フック」）
 - `.githooks/` は **main 保護のローカル層**。commit / merge / rebase / push の各操作で git が直接呼ぶため、ツール・シェル・worktree・`git -C` のいずれにも依存しない
 - **bootstrap**: `npm install` / `npm ci` が `prepare` スクリプトで `git config core.hooksPath .githooks` を実行する。worktree は `.git/config` を共有するため一度で全 worktree に効く
 - この層は best-effort。`core.hooksPath` が外れても **GitHub ruleset（`default`）が main への直接 push を拒否する**ため、外れたことを検知する仕組みは意図的に設けていない
@@ -172,8 +170,8 @@ npm test    # 必須: セーフティネット自身の回帰テスト（使い�
 npm run governance:check    # 必須: ガバナンス文書の決定的検査（参照実在・モジュール索引・SPEC 番号・コマンドマッピング・見出し参照の着地。#587/#593）
 ```
 
-- **`.rs` のコメントへ正準形の見出し参照を書いた／その参照先の見出しを改題したときも `npm run governance:check` を打つ**（#925。G-heading-refs / G-near-heading-refs の走査元に `.rs` が入っている）。`.rs` では PostToolUse フックが走るが、その沈黙は fmt / clippy / test の合格であって見出し参照の着地を含まない
-- PostToolUse フックは `.md` に検査を割り当てない（#497 の受容を維持）ため、**編集時の沈黙は「何も走らなかった」である**。ローカルで本コマンドを実行するか、PR CI の `governance-check` job（skip-ci 非対象・常時実行）に委ねる
+- **`.rs` のコメントへ正準形の見出し参照を書いた／その参照先の見出しを改題したときも `npm run governance:check` を打つ**（#925。G-heading-refs / G-near-heading-refs の走査元に `.rs` が入っている）。fmt / clippy / test は見出し参照の着地を見ない
+- ローカルで本コマンドを実行するか、PR CI の `governance-check` job（skip-ci 非対象・常時実行）に委ねる
 - 検査の実体は `scripts/governance-check.mjs`（facade）と `scripts/governance/checks/` 配下の各ファイル。**検査の一覧は `checks/` ディレクトリの走査が SSOT**（`scripts/governance/registry.mjs`）——ファイルを置けばそのまま検査になり、範囲を手書きする面が無い（旧来はファイル冒頭のコメント見出しへ範囲を手で書いていたため黙って腐った。実際「G-module-index〜G-config-reachability」と書いたまま G-check-skill-enumeration まで増えていた・#812。per-check 分割・#1088 が範囲の手書きそのものを消した）。面積 ratchet の文字数指標は `docs/adr/ADR-area-metric-characters.md`、見出し参照の着地は `docs/adr/ADR-canonical-heading-references.md`、config フィールドの到達性は `docs/development-principles.md`「config の値は到達性の検出器を持たない」。意味判断（責務の妥当性・npm ラッパー等価・メモリ整合）は `/health-check` に残る
 
 ## Windows/macOS/Linux で実行可能

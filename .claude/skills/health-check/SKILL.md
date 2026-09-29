@@ -16,7 +16,7 @@ allowed-tools:
 **決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 2・3・4・6・8・9 は全面的にそこへ機械化済みで、対応表は `references/mechanized-checks.md` にある（**Check 番号は序数参照の腐敗を避けるため振り直さない**——下の欠番はその表が説明する）。Check 1・5・10 は一部だけが機械化されており、意味判断の残置部分が下にある。本スキルで実行するのは:
 
 1. `npm run governance:check` を実行し、赤ならその全件を発見事項（Critical）として報告する
-2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep・npm 系ラッパーの等価判断）と Check 7（メモリ整合）— を従来どおり実施する
+2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep）と Check 7（メモリ整合）— を従来どおり実施する
 
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 

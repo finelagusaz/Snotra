@@ -10,3 +10,4 @@
 | Check 6 — `docs/development-principles.md` 参照の実在性 | G-references（#587） | Check 3 と同様（走査元・射程も同じ） |
 | Check 8 — `.claude/rules/` パスパターンの有効性 | G-rules-globs（#587） | マッチ 0 件の検知。glob 意味論が harness の配送判定の近似であることはスクリプト側に明記済み |
 | Check 9 — スキル定義の整合性 | G-skill-table（#587） | #767 で母集団を `disable-model-invocation: true` の skill へ絞った |
+| Check 11 — 格下げ中のメタ層の発火計数 | 撤去（2026-09-29） | 観測対象の面積計器と evidence 行が計器ごと撤去された（`ADR-governance-meta-demotion` の追記） |

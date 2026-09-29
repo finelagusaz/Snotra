@@ -175,7 +175,6 @@ export const REF_HEAD = "`([^`\\n]+)`\\s*(?:§\\s*[\\d.]*\\s*)?";
  *  元へ書き戻さないので、`matchAll` だけを使う限り消費者どうしは互いを踏まない。
  *  **`exec` / `test` を 1 度でも混ぜると、以降の `matchAll` も取りこぼす**——実測: `exec` を 1 回
  *  呼んだ直後の `matchAll` は行頭の一致を落とす。「複製するから安全」ではないので、免疫だと読まないこと。
- *  **消費者は 1 つではない**——`G-heading-refs` の照合と `dependents.mjs` の逆引きが同じ形を読む（#1140）。
  *
  *  **ラベルは 1 段の入れ子まで受け入れる**（#1188）。見出し名が鉤括弧を入れ子に含むのは死角ではなく
  *  実在の形であり、それを全形で指す参照は**一致そのものが生成されなかった**——`checked` にも
@@ -210,7 +209,6 @@ export const REF_HEAD = "`([^`\\n]+)`\\s*(?:§\\s*[\\d.]*\\s*)?";
 export const HEADING_REF = new RegExp(`${REF_HEAD}「((?:[^「」\\n]|「[^「」\\n]*」)+)」`, "g");
 
 /** 正準形の対象として認める綴り。**ここが対象綴りの正本である**——`HEADING_REF` の第 1 群に当てる。
- *  **消費者は 1 つではない**（検査群と `dependents.mjs` の逆引きが同じ述語を読む）ので、
  *  ここを広げると読む側すべての射程が同時に動く。
  *
  *  **`.mjs` を含めたのは #1155 である**（`ADR-canonical-heading-references` の 2026-08-20 追記）。
@@ -346,7 +344,6 @@ export function refScanLines(text, file, findings) {
  * 赤にするのは 4 条件（いずれも `body: null` を返す）:
  *   ① アンカーが 0 件——見出しの改題・消滅で母集団が空になる
  *   ② アンカーが 2 件以上——先に現れた方を掴み、本物の節が照合されないまま緑になる
- *      （`G-hook-fires` が表のヘッダ多重度に対して置いた検知と同型）
  *   ③ `ending: "heading"` なのに終端が無い——節が EOF まで伸びる
  *   ④ `ending: "eof"` なのに終端が在る——宣言が腐った
  *
@@ -358,7 +355,7 @@ export function refScanLines(text, file, findings) {
  * **アンカーと終端はコードフェンスの外だけで探す**（`linesOutsideFences` を行番号のマスクとして使う）。
  * 字面だけを見ると、フェンス内の列 0 の `#` 行が終端になったり 2 本目のアンカーに数えられたりする——
  * `docs/build-commands.md` の §A のフェンスへ `# 整形` を 1 行足すと、findings 0 件のまま body が
- * 8 文字へ縮み、G-hook-commands の母集団が 8 行から 0 行になった（2026-08-17 実測）。**向きは
+ * 8 文字へ縮み、当時その節を読んでいた検査の母集団が 8 行から 0 行になった（2026-08-17 実測）。**向きは
  * 呼び出し点ごとに違う**——許可集合への所属で判定する側は縮んでも赤くならない。
  * **body の切り出しは生の行で行う**（フェンスの中身を落とさない）——落とすと、まさに上の
  * cargo 行のようなフェンス内が母集団である検査を、この関数自身が空にしてしまう。
@@ -462,8 +459,7 @@ export function gitIgnoredPaths(paths, root = process.cwd()) {
  * `g` フラグを付けないのは、行ごとに `exec` する消費者が `lastIndex` を持ち越さないためである。
  *
  * **`depth` は節の入れ子を決める。** ATX は `#` の数、残りは最も深い 7。
- * 着地判定（`collectAnchors`）と節境界（`dependents.mjs` の `sectionsOf`）が**同じ一覧を読む**ので、
- * 種類を足したときに片方だけが知っている状態を作れない（#1140 で 2 か所へ写していたのを畳んだ）。
+ * 着地判定（`collectAnchors`）と節境界（`sectionsOf`）が**同じ一覧を読む**。
  *
  * **テスト名の腕（`describe` / `it` の第 1 引数）は #1155 で足した。** `.mjs` を対象の綴りへ入れた以上、
  * 着地先が要る——`.mjs` には ATX 見出しが無く、`//! - **…**` は行頭が `//!` なので太字リードにも当たらない
@@ -479,8 +475,7 @@ export function gitIgnoredPaths(paths, root = process.cwd()) {
  * だけで、参照先の解決は `snapshot.files` 全体に対して行われる。
  *
  * **`describe` と `it` へ同じ深さを与えている**ので、`sectionsOf` から見て両者は入れ子にならず、
- * `describe` の節は次のアンカーで閉じる。着地判定（前方一致）はこれで足りるが、`dependents.mjs` の
- * 節境界は `describe` 全体を指さない。合否を持たない計器の側の精度なので受容する。
+ * `describe` の節は次のアンカーで閉じる。着地判定（前方一致）はこれで足りる。
  */
 export const ANCHOR_SPECS = [
   { re: /^(#{1,6})\s+(.+?)\s*$/, depth: (m) => m[1].length, label: (m) => m[2] },
@@ -567,18 +562,8 @@ export function governanceDocs(snapshot) {
   );
 }
 
-/** `.claude/rules/` 直下の md の形。**`governanceDocs` の腕と `G-rules-globs` の母集団が同じ集合を要る**ため
- *  綴りを 1 か所に閉じる（`globToRegex` / `rulePathPatterns` を #1143 でここへ寄せたのと同じ理由）。
- *
- *  **`governance-manifest.mjs` の `rules` 列はここを読まない。** あちらが `governanceDocs` の定義とは
- *  独立にファイル走査だけから導出しているのは意図であり、その二重導出こそが母集団の裏取りになる
- *  （正本は同ファイル `diffManifest` の doc）。写しに見えるが畳んではならない側である。 */
+/** `.claude/rules/` 直下の md の形。 */
 export const RULE_FILE_RE = /^\.claude\/rules\/[^/]+\.md$/;
-
-/** `.claude/rules/` 直下の md。 */
-export function ruleDocs(snapshot) {
-  return snapshot.files.filter((f) => RULE_FILE_RE.test(f));
-}
 
 /** workspace member の `src/` 配下の `.rs`。
  *  crate の一覧はルート `Cargo.toml`（`workspaceMembers`）が SSOT である。
@@ -673,8 +658,7 @@ export function headingRefCommentDocs(snapshot) {
 }
 
 /** 3 本の腕の**和**。腕ごとの 0 件検知は `runAll` が別に持つので、束ねてよいのは走査元として渡すときだけである。
- *  **和をここに 1 つ置く**——消費者（`governance-check.mjs` の検査と `dependents.mjs` の逆引き）が
- *  それぞれ連結を書くと、腕を足したとき片方だけが知っている状態が作れる（#1140） */
+ */
 export const allHeadingRefDocs = (snapshot) => [
   ...headingRefDocs(snapshot),
   ...headingRefSourceDocs(snapshot),
@@ -743,57 +727,3 @@ export const tomlLine = (raw) => stripTomlComment(raw).trim();
  *  （`= { level = "deny", priority = 1 }`）の 2 形を受ける。**rustdoc と clippy の 2 検査が共有する**——
  *  cargo が 3 つ目の表記を足したとき、直す場所が 1 か所であるために切り出してある（#950）。 */
 export const lintLevel = (value) => (value.startsWith("{") ? (value.match(/level\s*=\s*"([^"]+)"/)?.[1] ?? null) : (value.match(/^"([^"]+)"$/)?.[1] ?? null));
-
-// ---------------------------------------------------------------------------
-// `.claude/rules/` の frontmatter `paths` を読む道具。**2 つの検査が import する**ため
-// （`G-rules-globs` = glob → 実ファイルが 0 件 / `G-rules-script-coverage` = 実ファイル → glob が 0 件）、
-// 冒頭が定める掲載条件に当たる。写しにすると glob の意味論が検査ごとに独立に腐る。
-// ---------------------------------------------------------------------------
-
-/** documented 意味論（bare 名 = ルート直下のみ・`**` = 階層横断・`{a,b}` ブレース）の自前変換。
- *  **harness の配送判定の再現ではなく近似である**——言えるのは「この意味論で覆われているか」までで、
- *  「harness が実際に配送するか」ではない（`**` が 3 段跨ぐことだけは 2026-08-19 に実測・#1143）。 */
-export function globToRegex(pattern) {
-  let re = "";
-  let i = 0;
-  while (i < pattern.length) {
-    const c = pattern[i];
-    if (c === "{" && pattern.indexOf("}", i) === -1) {
-      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの明示的な赤に倒れる）
-      i += 1;
-    } else if (c === "*") {
-      if (pattern.startsWith("**/", i)) {
-        re += "(?:.*/)?";
-        i += 3;
-        continue;
-      }
-      if (pattern.startsWith("**", i)) {
-        re += ".*";
-        i += 2;
-        continue;
-      }
-      re += "[^/]*";
-      i += 1;
-    } else if (c === "{") {
-      const end = pattern.indexOf("}", i);
-      re += `(?:${pattern
-        .slice(i + 1, end)
-        .split(",")
-        .map((s) => s.replace(/[.+^$()|[\]]/g, "\\$&"))
-        .join("|")})`;
-      i = end + 1;
-    } else {
-      re += /[.+^$()|[\]?\\]/.test(c) ? `\\${c}` : c;
-      i += 1;
-    }
-  }
-  return new RegExp(`^${re}$`);
-}
-
-/** rule 本文から `paths` の glob 文字列を取り出す（frontmatter ブロックの中だけを見る。CRLF checkout 耐性）。
- *  **`G-skill-table` の frontmatter 読みとは束ねない**——あちらが取り出すのは別のキーであり、
- *  片方だけが変わる将来を挙げられる＝別概念である。 */
-export function rulePathPatterns(text) {
-  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
-  return [...fm.matchAll(/^\s*-\s*"([^"]+)"/gm)].map((m) => m[1]);
-}

@@ -45,9 +45,7 @@ export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
 }
 
 /** `.claude/skills/` ツリーの md。
- *  **`skillFiles`（`G-skill-table`）と畳んではならない**——あちらは `SKILL.md` だけで、こちらは配下の
- *  md も含む（実測で差は `.claude/skills/health-check/references/mechanized-checks.md`）。ADR の短縮引用は
- *  SKILL.md の外にも書かれるので、`skillFiles` へ寄せると照合が静かに減る。
+ *  `SKILL.md` だけでなく配下の md も含む——ADR の短縮引用は SKILL.md の外にも書かれる。
  *  **`references/` の腕には、縮みを見張る側を置いていない**（宣言する死角）——母集団へ 1 件しか
  *  出さないため、置いても単一ファイルの見張りにしかならないからである。**「どの層も赤くしない」とは
  *  書けない**——実在するファイルが消えれば、それを指す参照の側が鳴る（#1155 の実測で 1 件）。

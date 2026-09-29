@@ -27,8 +27,7 @@
 - **「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/ADR-squash-merge-issue-autoclose.md` が SSOT。**残余（PR 本文の closing keyword）は `/merge-pr` の手順に委ねられる**——マージ前に `gh pr view <PR> --json closingIssuesReferences` の一覧から消えるまで本文を編集する繰り返しと、マージ後の 3 点検証がその実体である
 - **検出は exit code、出力は証拠**（#471）。**沈黙しうる経路はすべて塞いであり、その閉塞を壊す変更を `.claude/hooks/` に入れてはならない**（経路の内訳は `docs/hooks.md`）
 - **沈黙が「合格」なのは `selectChecks` に検査が割り当てられたファイルだけである**（#497・機構ではなく規範ゆえ前提を忘れれば false green が再発する）。`*.md` 全般・`SPEC.md`・`scripts/` 配下の非 TS ファイル・`.github/workflows/`・`Cargo.lock` の沈黙は「何も走らなかった」である（`scripts/*.ts` は「include 対象外」の一行が出るため沈黙しない）
-- **検査ではない reminder の不在も「問題が無い」を意味しない**——reminder は別経路で出るが（`.md` の依存参照・#1140、編集に帰属するガバナンスの不整合・#1139。一覧は `docs/hooks.md`「検査ではない reminder」が正本）、依存参照は純追記でもフェンスに分断された節でも出ず、編集に帰属する側は削除も `mod` 宣言も見ない。**どの判定がどこまで見るかは母集団ごとに違う**ので、ここで数え上げず `docs/hooks.md` の表と射程の穴を読む
-- **事後の捕捉は PR CI の `governance-check` job が担う**（`skip-ci` 非対象・#587）——決定的な項目（参照実在・索引・スキル表・SPEC 番号・rules glob・コマンドマッピング）はそこで捕捉され、その検査対象外（責務の妥当性等の意味的整合）は**受容する残余**である
+- **事後の捕捉は PR CI の `governance-check` job が担う**（`skip-ci` 非対象・#587）——決定的な項目（参照実在・索引・SPEC 番号・コマンドマッピング）はそこで捕捉され、その検査対象外（責務の妥当性等の意味的整合）は**受容する残余**である
 - **フックを改修するときは `docs/hooks.md` を読む**（実装契約・機構・保守。原理は `docs/development-principles.md`「構造的設計原則と強制の階梯」）。改修時は `.claude/rules/safety-nets.md` も自動配送される
 
 ## チーム憲章
@@ -66,7 +65,7 @@
 
 ## 利用できるスキル
 
-トリガー（どの変更でどの検査に振るか）の SSOT は `AGENTS.md`「条件別チェック」表、引数の形は各 `SKILL.md` の `argument-hint`。**この表が索引するのは `disable-model-invocation: true` の user 起動専用スキルだけである** — 残りは harness が skill roster を `description` ごと毎セッション注入するため、書き写すと同じ面に二重で課税される（射程は G-skill-table が双方向で固定する）。
+トリガー（どの変更でどの検査に振るか）の SSOT は `AGENTS.md`「条件別チェック」表、引数の形は各 `SKILL.md` の `argument-hint`。**この表が索引するのは `disable-model-invocation: true` の user 起動専用スキルだけである** — 残りは harness が skill roster を `description` ごと毎セッション注入するため、書き写すと同じ面に二重で課税される。
 
 | スキル（user 起動専用） | 使うとき |
 |---|---|

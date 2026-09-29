@@ -5,11 +5,8 @@
 //
 // PostToolUse hook は `.md`・rules・skills に検査を割り当てない（#497 で受容した残余）。
 // 本スクリプトはその残余のうち決定的に照合できる項目を PR CI（governance-check job）と
-// `npm run governance:check` で引き取る。**編集時にも一部が前倒しで鳴るようになったが**
-// （#1139 の reminder が `checkModuleIndex` / `checkReferences` を編集ファイルの母集団で呼ぶ）、
-// **あちらは合否を持たず、見るのも編集した 1 ファイルに帰属する分だけである**——
-// 全体の照合はここが担い続ける（射程の差は `docs/hooks.md`「検査ではない reminder」）。意味判断（責務の妥当性・npm 系ラッパーの等価判断・
-// メモリ整合）は `/health-check` に残る（cargo フラグ照合は G-hook-commands が機械化済み・#589）。
+// `npm run governance:check` で引き取る。意味判断（責務の妥当性・npm 系ラッパーの等価判断・
+// cargo フラグ照合・メモリ整合）は `/health-check` に残る。
 // なお `G-workspace-lints` / `G-clippy-disallowed` は文書ではなくリポジトリ規約を見る。責務としては
 // 越境だが意図的な選択であり、帰属の作り直し（他の責務分担への割り当て直し）は #1088 で却下された。
 //
@@ -30,11 +27,7 @@
 //   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する
 //   - **既定の純関数から外れる検査もある。少なくとも次を含み、増えてもこの記述は偽にならない——
 //     偽になるのは、ここに名指した検査自身が外れなくなったときである。**
-//     (1) G-hook-fires: 判定の再実装を避けるため `.claude/hooks/post-edit.mjs` の
-//       `selectChecks` を import し、既定引数として注入する（理由は同検査のコメント）。ゆえに
-//       **snapshot の root（cwd）と import 元（スクリプト相対）が同じツリーであること**を前提とする——
-//       `npm run governance:check` 経由では常に成り立つが、別ツリーのスクリプトを叩けば崩れる。
-//     (2) G-references: `gitIgnoredPaths` が外部の `git` でチェックアウトの gitignore 設定を読む
+//     G-references: `gitIgnoredPaths` が外部の `git` でチェックアウトの gitignore 設定を読む
 //       （#1088）。注入するのは `buildChecks` で、**既定引数は何も免除しない**ため純関数としての
 //       テストは fixture のまま走る。読む入力の内訳・機体間の乖離の向きは `gitIgnoredPaths` の JSDoc が
 //       正本（「依存ゼロ」は npm 依存の話であり、`git` はチェックアウトが在る以上どちらの環境にも在る）
@@ -55,22 +48,7 @@ import {
   staleIdentifierTargets,
 } from "./governance/lib.mjs";
 
-// `lib.mjs` の 2 名を、facade 経由で読む消費者のために再輸出する（`buildChecks` / `runAll` は
-// 下で `export function` として定義するのでここに要らない）。**`export *` にしない**——公開する
-// 名前を明示的に持つことで、意図しない露出が起きない。
-//
-// **この一覧が短いことには機構上の役目がある**（#1094）。かつてここは 19 検査の関数を名指しで
-// 再輸出しており、その副作用として `checks/` の全ファイルが facade へ静的 import されていた。
-// ゆえに検査ファイルが消えると `buildChecks` へ到達する前に `ERR_MODULE_NOT_FOUND` で落ち、
-// **#1092 の manifest 差分は消失に対して発火する機会が無かった**。再輸出を実際の消費者まで絞った
-// ことで、その遮蔽が外れている。**消費者の一覧をここへ写さない**（増減しても赤くならない写しになる）
-// ——母集団は次の grep が持つ（**動的 `import()` は当たらない**。今日の動的消費者は同じファイルが
-// 静的 import も持つので取りこぼしは無いが、動的だけの消費者が現れれば母集団の外に居る）:
-//   grep -rn 'from ".*governance-check\.mjs"' --include=*.mjs scripts/
-// **射程と残余は `governance-manifest.test.mjs` のフォールトインジェクション節が正本**である。
-//
-// **名前を足す前に、その名前を読む消費者が実在するか確かめること。** `checks/` の関数をここへ
-// 戻すと、そのファイルだけ消失の検知が manifest 差分から import エラーへ戻る。
+// `lib.mjs` の 2 名を、facade 経由で読むテストのために再輸出する。
 export { makeSnapshot, governanceDocs };
 
 // ---------------------------------------------------------------------------
@@ -91,8 +69,6 @@ export function buildChecks(snapshot, sink = {}) {
   const refCommentDocs = headingRefCommentDocs(snapshot);
   // 3 つの腕は検査へ渡すときだけ束ねる。母集団としては別々に持つ——`runAll` の 0 件検知が
   // 腕ごとに 1 本ずつ要るためである（束ねた長さは他の腕の消滅を隠す）。
-  // **和の作り方は `allHeadingRefDocs` が正本**——`dependents.mjs` も同じ和を要るので、
-  // ここで連結を書くと腕を足したとき片方だけが知っている状態が作れる（#1140）
   const allRefDocs = allHeadingRefDocs(snapshot);
   const staleDocs = staleIdentifierDocs(snapshot);
   const staleGuides = staleIdentifierGuideDocs(snapshot);

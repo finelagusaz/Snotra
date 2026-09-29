@@ -12,12 +12,7 @@
 // 無いファイル（*.md 等）の沈黙は「何も走らなかった」であり、合格ではない。
 // 割り当ての SSOT は selectChecks である（#497）。
 //
-// **検査とは別に、gate ではない reminder が在る**（config-warn / 編集に帰属する索引・参照実在の
-// 不整合〔#1139〕/ .md の依存参照〔#1140〕**だけではない**——一覧は docs/hooks.md が持つ）。
-// reminder は exit code を動かさない。**その不在は「問題が無い」を意味しない**——上の
-// 「沈黙は合格ではない」は reminder についても同じである。
-// **一部は additionalContext にも出る**（#1139。失敗主体がエージェントであるため）が、
-// それでも検査ではない——buildSection の `--- <id>: 失敗 ---` の形は取らない。
+// 検査とは別に、gate ではない config-warn が在る。exit code は動かさない。
 //
 // 詳細と実測の根拠は issue #471。
 
@@ -130,9 +125,6 @@ export function extractFilePath(payload) {
 /**
  * 相対パスから走らせるべき検査を決める純関数。
  * （TS typecheck / csp-test は #532 SU7 のフロント撤去で消滅——`.ts` は情報行のみ・I16）
- *
- * **ここを変えたら `docs/hooks.md` の発火一覧も同じ変更で直す。** `governance:check` の
- * G-hook-fires が本関数を呼んで表と照合するため、直さなければ CI が落ちる（#863）。
  */
 export function selectChecks(rel) {
   const checks = [];
@@ -180,73 +172,6 @@ export function selectChecks(rel) {
   }
 
   return checks;
-}
-
-/**
- * 節の中身が変わったときの依存参照 reminder（#1140）。**gate ではない**——`editFindingsReminder` と同じく
- * exit code を動かさない。
- *
- * **subprocess で呼ぶ。静的 import を足してはならない。** import 文は `try { main() } catch` の**外**で
- * 走るため、解決に失敗すると JSON エンベロープを出さずにプロセスごと落ちる——この hook は全 `Edit|Write`
- * で発火するので、`.rs` の fmt / clippy / test まで含めて**全編集が沈黙する**。さらに相対 import は
- * importer の所在（`${CLAUDE_PROJECT_DIR}`）基準で解決し、`resolveRoot` が求める「編集されたファイルの
- * ツリー」とずれる（この非対称は `docs/hooks.md`「PostToolUse（post-edit.mjs）の機構と保守」が持つ）。
- *
- * **スクリプトが無いツリーでは静かに何もしない。** この機構より前に凍結された worktree が該当する。
- * 沈黙 = 合格を壊さない——この reminder は検査ではなく、**不在は「依存が無い」を意味しない**。
- *
- * @returns {string} 出す WARN 行。無ければ空文字
- */
-export function dependentsReminder(rel, root, run = spawnSync) {
-  if (!rel.endsWith(".md")) return "";
-  const script = path.join(root, "scripts", "governance", "dependents.mjs");
-  if (!existsSync(script)) return "";
-  const res = run(process.execPath, [script, rel], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: MAX_BUFFER,
-    shell: false,
-    timeout: PER_CHECK_TIMEOUT_MS,
-  });
-  if (res.error || res.status !== 0) return "";
-  return (res.stdout ?? "").trim();
-}
-
-/**
- * 編集したファイルに帰属する索引・参照実在の不整合 reminder（#1139）。**gate ではない**——
- * `dependentsReminder` と同じく exit code を動かさない。
- *
- * **判定は subprocess 側（`scripts/governance/edit-findings.mjs`）が持ち、そこは
- * `governance:check` と同じ `checkModuleIndex` / `checkReferences` を呼ぶ。** かつてここは
- * 「`.rs` を Write した」という低頻度シグナルだけを見て**無条件に**索引更新を促していた
- * （判定を hook で再実装すると drift する、という理由で判定を持たなかった）。判定を持つ側を
- * subprocess へ置いたことでその反論は解け、**実際に索引へ無いときだけ鳴る**ようになった。
- * ゆえに Write に絞る理由も消え、`.rs` の Edit も対象にできる——**#629/#630 の形（作成時に
- * 索引を書かず、以後の編集がすべて沈黙する）を捕まえるのは Edit の側である**。
- *
- * **`.rs` と `.md` 以外では spawn しない。** `dependentsReminder` が `.md` 以外に費用を載せないのと
- * 同じ形で、判定の要らない拡張子にプロセス起動を払わせない。
- *
- * **subprocess で呼ぶ。静的 import を足してはならない**（理由は `dependentsReminder` の doc）。
- *
- * **スクリプトが無いツリーでは静かに何もしない。** この機構より前に凍結された worktree が該当する。
- * **不在は「不整合が無い」を意味しない**——reminder は検査ではない。
- *
- * @returns {string} 出す WARN 行。無ければ空文字
- */
-export function editFindingsReminder(rel, root, run = spawnSync) {
-  if (!rel.endsWith(".rs") && !rel.endsWith(".md")) return "";
-  const script = path.join(root, "scripts", "governance", "edit-findings.mjs");
-  if (!existsSync(script)) return "";
-  const res = run(process.execPath, [script, rel], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: MAX_BUFFER,
-    shell: false,
-    timeout: PER_CHECK_TIMEOUT_MS,
-  });
-  if (res.error || res.status !== 0) return "";
-  return (res.stdout ?? "").trim();
 }
 
 /**
@@ -355,9 +280,7 @@ export function buildEnvelope({ context, systemMessage } = {}) {
  * `\` 区切りの絶対パスを作るため、素で出すと `node C:\...\vitest.mjs run .claude/hooks` になり、
  * **PreToolUse の `\` パス判定が拒む形**になる。片方の hook が指示するコマンドをもう片方が拒む
  * 状態は、規範を機構へ移した設計の信頼を直に壊す（`pre-bash.test.mjs` の相互契約カナリアが固定）。
- * 実行に使う `cmd`/`args` は正規化しない — spawnSync は `\` をそのまま受けるうえ、
- * `governance:check` の G-hook-commands が `cargoSpec` の引数リテラルをソースから読むためである
- * （G-hook-commands の抽出は散文中の呼び出し形にも一致するので、ここでその形を書かない）。
+ * 実行に使う `cmd`/`args` は正規化しない — spawnSync は `\` をそのまま受ける。
  */
 export function buildCommand(id, root) {
   const nodeSpec = (args) => ({
@@ -374,10 +297,7 @@ export function buildCommand(id, root) {
   };
 
   switch (id) {
-    // fmt は編集ファイル単位にせず --all で回す（#858）。理由は 2 つで、(1) 0.7s ゆえ
-    // 絞る利得が無く、(2) `G-hook-commands` が docs/build-commands.md カテゴリ A との
-    // トークン列一致を要求するため、hook だけ別形にすると照合が壊れる。
-    // 出力整形フラグを付けないのも同じ理由（除去リストは --message-format のみ）。
+    // fmt は編集ファイル単位にせず --all で回す（#858）。0.7s ゆえ絞る利得が無い。
     case "fmt":
       return cargoSpec(["fmt", "--all", "--", "--check"]);
     // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
@@ -488,10 +408,6 @@ function main() {
   const warnings = [];
   const errors = [];
 
-  // 節の中身が変わったら、その節に依存する参照を知らせる（#1140）。判定は subprocess 側が持つ
-  const reminder = dependentsReminder(rel, root);
-  if (reminder) warnings.push(reminder);
-
   for (const id of ids) {
     if (id === "config-warn") {
       warnings.push(`WARN: ${rel} を変更しました。Windows 互換性を確認してください。`);
@@ -502,20 +418,6 @@ function main() {
       if (invalid) errors.push(`HOOK ERROR: ${invalid}`);
     }
     runCheck(id, root, sections, errors);
-  }
-
-  // 編集したファイルに帰属する索引・参照実在の不整合を知らせる（#1139）。判定は subprocess 側が持つ。
-  //
-  // **`warnings`（人間向け `systemMessage`）と `sections`（エージェント向け `additionalContext`）の
-  // 両方へ積む。** #629/#630 の失敗主体はエージェントであり、人間向けの面にだけ出すと
-  // 「機構を足したのに当の失敗主体に見えない」で終わる（この非対称は buildEnvelope の doc が持つ）。
-  //
-  // **検査ループの後に置く。** 検査が失敗していればその証拠を先に見せる。reminder は情報行であって
-  // 検査の失敗ではないので、`--- <id>: 失敗 ---` の形（buildSection）にはしない。
-  const editFindings = editFindingsReminder(rel, root);
-  if (editFindings) {
-    warnings.push(editFindings);
-    sections.push(editFindings);
   }
 
   // 検査が 0 件でも、TypeScript 系なら「型検査は存在しない」と言う。

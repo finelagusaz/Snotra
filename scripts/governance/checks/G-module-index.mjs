@@ -103,9 +103,6 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
     for (const f of production) {
       const base = f.split("/").pop();
       if (!section.includes(`\`${base}\``) && !section.includes(`/${base}\``)) {
-        // **`実ファイル ${f}` の逐語のパスを外さないこと**——`edit-findings.mjs` の `attributesTo` が
-        // このメッセージの中のパスで編集ファイルへの帰属を作っており、消すと reminder が
-        // 静かに 0 件へ倒れる（同ファイルの doc がその沈黙経路を宣言している）
         findings.push(finding(mdPath, 1, `実ファイル ${f} が索引（「モジュール構成」節のバッククォート）に見当たらない`));
       }
     }

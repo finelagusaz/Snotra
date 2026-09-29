@@ -5,7 +5,7 @@ export const id = "G-fullwidth-doc-link-bracket";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record("docLinkBrackets", scanFullwidthDocLinkBrackets(snapshot, headingRefSourceDocs(snapshot)));
+  return scanFullwidthDocLinkBrackets(snapshot, headingRefSourceDocs(snapshot)).findings;
 }
 
 // ---------------------------------------------------------------------------

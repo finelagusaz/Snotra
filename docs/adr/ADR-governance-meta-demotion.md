@@ -117,3 +117,7 @@
 ## 関連
 
 `docs/design/2026-08-20-governance-meta-demotion-derivations.md`（この決定を出した独立導出と敵対レビューの原文。**2 サイクル後の撤去判定はここを読む**——どの項目が争点で、どちらの側がどんな根拠を出したかは要約に落とすと消える）・`docs/adr/ADR-retire-area-budget.md`（ゲートから計器への先例と、そこで積んだ観測）・`docs/adr/ADR-retire-norm-review.md`（規範は機構の代わりにならない実測）・`docs/adr/ADR-rules-paths-subtree-coverage.md`（#1143 の失効の経緯）・`.claude/rules/safety-nets.md`（機構の配置を変えたときの再測定の引き金）
+
+## 追記（2026-09-29）— 残る 2 件を計器ごと撤去した
+
+上の「2 サイクル連続 0 件」は成立していない。それでも利用者の裁定で、面積計器（`instrument.mjs`）と evidence 行（`evidence.mjs`）を入力ガードごと撤去した。`SNOTRA_GOV_META_AUDIT` と `/health-check` の Check 11 も同時に消えている。**観測を打ち切った理由は、この 2 件を守るための観測手続きのほうが重くなっていたからである。** その手続きはこの ADR に約 50 行の議論を積んでおり、小さな計器 2 件の価値を上回っていた。撤去後の `governance:check` が印字するのは検査の本数だけであり、上の観測表と判定規則はもう何も律していない。

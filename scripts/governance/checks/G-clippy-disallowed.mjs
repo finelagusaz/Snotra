@@ -180,12 +180,6 @@ export function clippyMethodsDenied(rootText) {
   return true;
 }
 
-/** evidence 用の件数。**読めない・配列が無い形は 0 とする**——素直に書くと
- *  「clippy 禁止 undefined 件」になり、この検査が存在する当の失敗ケースで evidence が壊れる。 */
-export function clippyDisallowedCount(snapshot) {
-  return disallowedMethodPaths(snapshot.read(CLIPPY_TOML) ?? "")?.length ?? 0;
-}
-
 export function checkClippyDisallowed(snapshot) {
   const findings = [];
   const toml = snapshot.read(CLIPPY_TOML);

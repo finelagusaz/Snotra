@@ -8,7 +8,7 @@ export const id = "G-edit-findings-table";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（この検査は使わない） */
 export function run(snapshot, ctx) {
-  return ctx.record("editFindingsRows", scanEditFindingsTable(snapshot));
+  return scanEditFindingsTable(snapshot).findings;
 }
 
 // ---------------------------------------------------------------------------

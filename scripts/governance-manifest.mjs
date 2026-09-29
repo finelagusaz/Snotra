@@ -15,11 +15,7 @@ import { makeSnapshot, buildChecks, governanceDocs } from "./governance-check.mj
 
 /** 構造母集団の列。すべて sorted——`readdirSync` の順序は ext4 で不定であり、
  *  揃えないと CI と手元で差分に化ける。
- *
- *  `checks` は `buildChecks` が積む検査 ID のみを見る——`G-area-instrument` は合否を持たない
- *  計器で `buildChecks` を経由せず `runAll` へ直接 push されるため、この列には現れない
- *  （その push 行を消しても manifest は沈黙する。歯止めは `governance-check.test.mjs` の
- *  カナリアテストの側にある）。 */
+ */
 export function manifest(snapshot) {
   const files = (re) => snapshot.files.filter((f) => re.test(f)).sort();
   return {

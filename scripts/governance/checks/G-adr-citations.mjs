@@ -6,7 +6,7 @@ export const id = "G-adr-citations";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（docs・record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, ctx.docs, adrFiles(snapshot))));
+  return scanAdrCitations(snapshot, adrCitationDocs(snapshot, ctx.docs, adrFiles(snapshot))).findings;
 }
 
 // ---------------------------------------------------------------------------

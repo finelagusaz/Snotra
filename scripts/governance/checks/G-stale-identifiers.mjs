@@ -5,7 +5,7 @@ export const id = "G-stale-identifiers";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（staleTargets・record を使う） */
 export function run(snapshot, ctx) {
-  return ctx.record("stale", scanStaleIdentifiers(snapshot, ctx.staleTargets));
+  return scanStaleIdentifiers(snapshot, ctx.staleTargets).findings;
 }
 
 /** Rust のコメントを落とす。落とさないと `preset` のような普通の英単語が doc コメントに埋もれる（実測）。

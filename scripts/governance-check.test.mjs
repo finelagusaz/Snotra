@@ -55,38 +55,6 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
     const { findings } = runAll(s);
     expect(findings.length).toBeGreaterThan(0);
   });
-  it("計器（G-area-instrument）は検査配列に無い——面積に合否は無い（ADR-retire-area-budget）", () => {
-    const ids = buildChecks(snap({}), {}).map((c) => c.id);
-    expect(ids).not.toContain("G-area-instrument");
-  });
-  // 計器の母集団欠落は**格下げ側へ移した**（`ADR-governance-meta-demotion`）。守っている相手が
-  // 計器なので、倒れても `checks/` の検査群の合否は動かない。**沈黙してはいない**——器が変わっただけで、
-  // 印字はされ、監査モードでは exit code へ戻る。
-  // **両モードとも env を明示的に固定して測る。** 固定しないと、`SNOTRA_GOV_META_AUDIT=1` で
-  // 走らせた監査そのものが「格下げされていること」のテストを落とす——検査対象の状態を
-  // 検査の実行条件が決めてしまう形である（実測で 1 本落ちた）。
-  const withAudit = (v, fn) => {
-    const prev = process.env.SNOTRA_GOV_META_AUDIT;
-    if (v === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
-    else process.env.SNOTRA_GOV_META_AUDIT = v;
-    try {
-      return fn();
-    } finally {
-      if (prev === undefined) delete process.env.SNOTRA_GOV_META_AUDIT;
-      else process.env.SNOTRA_GOV_META_AUDIT = prev;
-    }
-  };
-  const hasAreaGap = (fs) => fs.some((f) => f.message.includes("G-area-instrument 母集団の欠落"));
-
-  it("計器の母集団欠落は metaFindings に残る（格下げ後も沈黙しない）", () => {
-    const { findings, metaFindings } = withAudit(undefined, () => runAll(snap({})));
-    expect(hasAreaGap(metaFindings)).toBe(true);
-    expect(hasAreaGap(findings)).toBe(false);
-  });
-  it("監査モードではメタ層が findings へ合流する（戻す経路が実在する）", () => {
-    const { findings } = withAudit("1", () => runAll(snap({})));
-    expect(hasAreaGap(findings)).toBe(true);
-  });
 });
 
 describe("検査 ID の形（#812 — 序数を引用の語彙から外す）", () => {
@@ -102,25 +70,8 @@ describe("検査 ID の形（#812 — 序数を引用の語彙から外す）", 
 
   it("サマリの件数は登録表から計算される（範囲の手書きが存在しない）", () => {
     // 「G1..G15 passed」のような範囲表記は、検査を足しても黙って古くなる（#812 実測）
-    const { evidence } = runAll(makeSnapshot(fileURLToPath(new URL("..", import.meta.url))));
-    expect(evidence).toContain(`検査 ${ids.length} 件`);
-  });
-});
-
-describe("evidence の供給カナリア（#1098）", () => {
-  // **名前は「供給」であって「配線」ではない。** ここが見るのは、実リポジトリで evidence の
-  // 読みがすべて供給されていること——検査が `ctx.record` を呼ばなくなる／facade の導出が消える、
-  // という欠落を捕まえる。
-  //
-  // **配線（view を通ること）はここでは見えない**——view を外す変異を当てても、供給が揃っていれば
-  // 下の 3 条件はすべて満たされたまま緑になる（2026-08-17 実測: `governance:check` exit 0・
-  // `npm test` 745 件全緑）。配線は `governance/evidence.mjs` の brand が構造で拒み、
-  // その効きは `governance/evidence.test.mjs`「配線:」の 3 件が測る。
-  it("実リポジトリの evidence 行は `undefined` も `?` も含まない", () => {
-    const { evidence, findings } = runAll(makeSnapshot(fileURLToPath(new URL("..", import.meta.url))));
-    expect(evidence).not.toContain("undefined");
-    expect(evidence, "未記録の読みが `?` に化けている（供給側が消えた）").not.toContain("?");
-    expect(findings.filter((f) => f.message.includes("が未記録である"))).toEqual([]);
+    const { checkCount } = runAll(makeSnapshot(fileURLToPath(new URL("..", import.meta.url))));
+    expect(checkCount).toBe(ids.length);
   });
 });
 
@@ -151,7 +102,6 @@ describe("facade の公開面（export { … } の凍結）", () => {
       "buildChecks",
       "governanceDocs",
       "makeSnapshot",
-      "metaAuditEnabled",
       "runAll",
     ]);
   });

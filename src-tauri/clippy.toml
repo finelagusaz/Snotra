@@ -40,7 +40,7 @@
 # **この設定が死ぬ経路と、いま誰が見ているか**（いずれも 2026-08-06 に実測）:
 #   0. この lint は **warn 既定**である（`clippy-driver -W help` で実測）。**ルート `Cargo.toml` の
 #      `[workspace.lints.clippy]` が deny 化しているので、`-D warnings` には依存しない**（#950。それ以前は
-#      `ci.yml` と `.claude/hooks/post-edit.mjs` がそれを渡している間だけ赤くなった）。その deny が消える・
+#      `ci.yml` と当時の編集後フックがそれを渡している間だけ赤くなった）。その deny が消える・
 #      warn へ降格する・**同じ節の `all = "allow"` に打ち消される**（deny の行を残したまま禁止が消える）の
 #      3 経路は `npm run governance:check` の G-clippy-disallowed が見張る
 #   1. メソッド名・型名の書き損じ → warning は出るが `-D warnings` でも exit 0 → **G-clippy-disallowed**
@@ -53,7 +53,7 @@
 #      直後にこのファイルだけを編集して同じコマンドを打つと、`.rs` を触らず `cargo clean` も挟まずに
 #      診断が現れた。**機序は測っていない**（上流が追随するようになったのか別の要因かは不明）ので、
 #      上の手順は安全側の上位集合としてそのまま残す。#1122 の計測はいずれも `.rs` を touch している。
-#   PostToolUse hook は exit code でしか検出しないため、1・2 の warning は会話にも届かない——
+#   CI は exit code でしか検出しないため、1・2 の warning は誰にも届かない——
 #   だから検知を clippy の外（Node の静的読み取り）へ置いた。
 #   **パスを足す・変えるときは、その場で違反を注入して赤くなることを必ず測ること**——
 #   G-clippy-disallowed が見るのは `REQUIRED_DISALLOWED_METHODS` が名指す件の在否であって、

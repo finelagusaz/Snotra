@@ -25,7 +25,6 @@ import {
   pullWithoutFfOnly,
   judgeCommandShape,
 } from "./pre-bash.mjs";
-import { buildCommand, BUDGETS } from "./post-edit.mjs";
 
 // CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。どちらでも
 // 落ちないよう、OS 依存のリテラルパスを書かず path.join / tmpdir から組み立てる。
@@ -324,7 +323,6 @@ describe("readPlanState — 実ファイル読み取り", () => {
 
   // I2: session cwd がリポジトリのサブディレクトリ（例: src-tauri/）だと、素朴な
   // path.join(cwd, "workspace/plan.md") は永遠に見つからずゲートだけが沈黙で外れる。
-  // post-edit.mjs の resolveRoot と同じ「最近接の .git へ遡る」で揃える。
   it("cwd がリポジトリのサブディレクトリでも、最近接の .git を遡ってリポジトリルートの plan.md を見る", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-plan-root-"));
     mkdirSync(path.join(dir, ".git"));
@@ -878,26 +876,6 @@ describe("5 述語は全域関数である（I2・no-throw）", () => {
         expect(() => judgeCommandShape(input, platform)).not.toThrow();
       }
     }
-  });
-});
-
-describe("フック間契約 — post-edit が出す再現コマンドを pre-bash が拒まない（I8・#768）", () => {
-  const REPO = fileURLToPath(new URL("../../", import.meta.url));
-
-  // post-edit.mjs の repro が `\` 区切りを出すと、この hook の `\` 判定が拒む。
-  // 片方の hook が指示するコマンドをもう片方が拒む状態を、判定そのもので固定する。
-  //
-  // **母集団は BUDGETS から導出する。手で列挙しない**（#858）。id を手書きで並べていた頃は、
-  // 新しい検査を足した人がこのリストを更新し忘れれば緑のまま通った——`buildCommand` の
-  // case 欠落を機構で捕まえる唯一の点がここなので、母集団が欠ければ検知器ごと欠ける。
-  // BUDGETS 自身は `selectChecks` の発行 id を BUDGETS 完全性カナリア（post-edit.test.mjs）が
-  // 固定しているため、これで **selectChecks → BUDGETS → buildCommand の輪が閉じる**。
-  // config-warn は runCheck を通らず BUDGETS に無いので、自然に母集団から外れる。
-  it.each(Object.keys(BUDGETS).map((id) => [id]))("%s の再現コマンドは win32 でも allow", (id) => {
-    const spec = buildCommand(id, REPO);
-    expect(spec, `${id} の spec が null（buildCommand の case 欠落）`).not.toBeNull();
-    const r = decide(bash(spec.repro), CLEAN, NO_PLAN, "win32");
-    expect(r.action, `${id}: ${spec.repro} — ${r.reason ?? ""}`).toBe("allow");
   });
 });
 

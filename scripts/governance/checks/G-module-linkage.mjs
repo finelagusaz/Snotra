@@ -18,8 +18,7 @@ export function run(snapshot, ctx) {
 //   索引にも `mod` にも書かない → G-module-index が赤
 //   **索引には書き、`mod` 宣言だけ忘れる → どの検査も緑だった**（本検査が塞ぐのはこの足）
 //
-// **`mod` 忘れは cargo も LSP も報せない。** 未リンクの `.rs` は `cargo fmt/clippy/test` の視界に無く
-// （PostToolUse hook は沈黙する）、rust-analyzer は当該ファイルを読むが `unlinked-file` を publish
+// **`mod` 忘れは cargo も LSP も報せない。** 未リンクの `.rs` は `cargo fmt/clippy/test` の視界に無く、rust-analyzer は当該ファイルを読むが `unlinked-file` を publish
 // しない（#1085 で stdio クライアントから生の publishDiagnostics を読んで実測）。最悪の帰結は
 // `#[cfg(test)] mod tests` を持つファイルが 1 度もコンパイルされず**テストが黙って走らない**ことである。
 //

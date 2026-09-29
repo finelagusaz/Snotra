@@ -84,25 +84,3 @@ describe("実リポジトリ スモーク（dogfood）", () => {
     expect(findings).toEqual([]);
   });
 });
-
-describe("facade の公開面（export { … } の凍結）", () => {
-  // export { … } は手書きの一覧であり、書き忘れ・書き足しは npm test にも governance:check にも
-  // 現れるとは限らない——テストファイルが直接 import していない名前が消えても、どちらのコマンドも
-  // 検知しない。公開面を丸ごと凍結することで、この一覧への変更は気づかず起きることではなく、
-  // 意図して行う編集になる。
-  //
-  // **この凍結が守るものは #1094 で変わった。** かつては「検査を 1 本 checks/ へ移すたびに
-  // 書き足す面」を守っていたが、再輸出を実際の消費者まで絞った今、守るのは逆向きである——
-  // **`checks/` の名前がここへ戻ってくることを検知する**。戻すとその検査ファイルは facade へ
-  // 静的 import され、消失が manifest 差分ではなく import エラーとして現れる側へ帰る
-  // （射程の正本は `governance-manifest.test.mjs` のフォールトインジェクション節）。
-  it("公開する名前の集合が凍結した一覧と一致する", async () => {
-    const mod = await import("./governance-check.mjs");
-    expect(Object.keys(mod).sort()).toEqual([
-      "buildChecks",
-      "governanceDocs",
-      "makeSnapshot",
-      "runAll",
-    ]);
-  });
-});

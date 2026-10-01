@@ -12,7 +12,7 @@ postcard = { version = "1", features = ["alloc"] }
 toml = "1"
 nucleo-matcher = "0.3"
 rayon = "1"
-dirs = "6"
+dirs = "7"
 rustc-hash = "2.1.2"
 sys-locale = "0.3"
 percent-encoding = "2"

@@ -63,16 +63,16 @@ tao 0.37.1 は装飾なしの `WM_NCCALCSIZE` 処理が繋がる前に `SWP_FRAM
 
 ### Phase 1: ウィンドウ生成直後の再計算（D3）
 
-- [ ] Red: 現状で smoke の toast シナリオが `bar_rect_mismatch` を出すことを確認（文字入力の赤と並んで出る）
-- [ ] `egui_shell::create` に両ウィンドウの再計算を足す（`#[cfg(windows)]`・`apply_rounded_corners` と同じ並び）。理由と測定値を doc に書く
-- [ ] Green: smoke の toast シナリオで `bar_rect_mismatch` が消える。results の初回 inset は検出器が無いので、一時計装（コミットしない）で `outer − inner` が 2 回目以降と同じことを測ってから計装を消す
+- [x] Red: 現状で smoke の toast シナリオが `bar_rect_mismatch` を出すことを確認（文字入力の赤と並んで出る） — CI run 37781825112 とローカル 3 回で `show 616x82 / frame 616x52`
+- [x] `egui_shell::create` に両ウィンドウの再計算を足す（`#[cfg(windows)]`・`apply_rounded_corners` と同じ並び）。理由と測定値を doc に書く
+- [x] Green: smoke の toast シナリオで `bar_rect_mismatch` が消える。results の初回 inset は検出器が無いので、一時計装（コミットしない）で `outer − inner` が 2 回目以降と同じことを測ってから計装を消す — 2026-10-08: smoke 緑（`bar_rect_mismatch` 0 件）。`refresh_borderless_frame` 直後に main outer 616x61 / inner 600x52、results 616x109 / 600x100（inset 9 = 定常値）。計装は除去
 
 ### Phase 2: 通常文字（D1）
 
-- [ ] Red: 純関数のテストを先に書く——`"a"` 押下 → `Commit("a")`、`"\x01"`（Ctrl+A）→ なし、`"\r"` / `"\u{8}"` / `"\t"` / `"\u{1b}"` → なし、release → なし、`None` → なし、サロゲートペア `"😀"` → `Commit("😀")`、`"@"`（AltGr 相当・印字可能）→ `Commit("@")`
-- [ ] 純関数を実装し `on_keyboard_event` から呼ぶ（`admit_key` の後）。`:393` のコメントを新しい経路の説明へ置き換える。`ReceivedImeText` の arm（`input.rs`）と `rx_text` の arm（`runtime.rs`）の doc に tripwire であることを書く
-- [ ] `VK_PACKET` の測定: release ビルドを起動し、`SendInput` の `KEYEVENTF_UNICODE` で `z` を送る一時スクリプト（scratchpad に置きコミットしない）で `egui_input:changed` の `after_chars` が 1 増えることを見る。入らなければ同じ Phase で直す（受入 2）
-- [ ] Green: `cargo test -p snotra-egui-runtime` と smoke の `egui_results:show` 観測
+- [x] Red: 純関数のテストを先に書く——`"a"` 押下 → `Commit("a")`、`"\x01"`（Ctrl+A）→ なし、`"\r"` / `"\u{8}"` / `"\t"` / `"\u{1b}"` → なし、release → なし、`None` → なし、サロゲートペア `"😀"` → `Commit("😀")`、`"@"`（AltGr 相当・印字可能）→ `Commit("@")`
+- [x] 純関数を実装し `on_keyboard_event` から呼ぶ（`admit_key` の後）。`:393` のコメントを新しい経路の説明へ置き換える。`ReceivedImeText` の arm（`input.rs`）と `rx_text` の arm（`runtime.rs`）の doc に tripwire であることを書く
+- [x] `VK_PACKET` の測定: release ビルドを起動し、`SendInput` の `KEYEVENTF_UNICODE` で `z` を送る一時スクリプト（scratchpad に置きコミットしない）で `egui_input:changed` の `after_chars` が 1 増えることを見る。入らなければ同じ Phase で直す（受入 2） — 2026-10-08: `z` は `after_chars` 0 → 1 で入った。**絵文字（`U+1F600`）は入らない**: `VK_PACKET` はサロゲートを 1 単位ずつ別の keydown + `WM_CHAR` で送るので、tao が片割れの UTF-16 を文字列にできず `text` が `None` になる。旧 0.35 の `minimal_ime` も `String::from_utf16(&[wparam])` で 1 単位ずつ復号して捨てていた（`tao-0.35.3/.../minimal_ime.rs`）ので**回帰ではない**——受入 2 の「1 文字で入る」は BMP の文字について満たす
+- [x] Green: `cargo test -p snotra-egui-runtime` と smoke の `egui_results:show` 観測 — 38 passed・smoke 緑（`egui smoke passed (show/hide + results show/hide observed, webview delta 0)`）
 
 ### Phase 3: IME 確定の所有（D2）
 

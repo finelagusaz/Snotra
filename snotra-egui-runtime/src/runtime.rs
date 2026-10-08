@@ -225,6 +225,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                                 key.state, key.physical_key
                             ),
                         ),
+                        // Windows では 0 件が正常（#1266・tripwire の理由は `input.rs` の同じ arm）。
                         TaoWindowEvent::ReceivedImeText(text) => crate::input::input_trace(
                             "rx_text",
                             &format!("window_id={window_id:?} chars={}", text.chars().count()),

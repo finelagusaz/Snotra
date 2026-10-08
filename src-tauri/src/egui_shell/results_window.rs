@@ -108,8 +108,8 @@ impl ResultsWindow {
     /// 呼ぶが、`SW_SHOW` は**プログラム的にウィンドウを活性化する**。`focusable(false)` が付ける
     /// `WS_EX_NOACTIVATE` が防ぐのはユーザークリックによる活性化だけなので、1 文字目の入力で
     /// results が現れた瞬間に入力欄からフォーカスが奪われ 2 文字目が打てなくなる。
-    /// tao 内部で `SW_SHOWNOACTIVATE` に至る唯一の経路（`MARKER_DONT_FOCUS`）はウィンドウ生成時に
-    /// 1 回だけ立ち初回 show で消費されるため、繰り返し show する用途には使えない。
+    /// tao 内部で `SW_SHOWNOACTIVATE` に至る唯一の経路（`MARKER_DONT_FOCUS`）は生成時の `focused`
+    /// 属性から立ち、tao 0.37.1 は生成直後にそれを外すので、show の経路では使えない。
     ///
     /// `background` は下地（softbuffer が present するまでの一瞬に見えるネイティブブラシ）へ
     /// 適用する。**show 遷移のときだけ撃つ**（下の早期 return の後に置く理由）——可視のまま
@@ -147,7 +147,7 @@ impl ResultsWindow {
     /// raw 操作の所有点であり、外へ出す面を増やすことがこの型の値打ちを削る。
     ///
     /// tao の `set_background_color` は `window_state` への代入と `InvalidateRect` だけで
-    /// `apply_diff` を通らない（tao 0.35.3 実測）。ゆえに「results の 3 操作は raw へ寄せる」
+    /// `apply_diff` を通らない（tao 0.35.3 実測・0.37.1 も同じ）。ゆえに「results の 3 操作は raw へ寄せる」
     /// 規約（`src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」）の対象外であり、tao 経由でよい。
     fn apply_native_background(&self, color: egui::Color32) {
         {
@@ -237,7 +237,7 @@ impl ResultsWindow {
     ///
     /// **tao 経由のままにする。**
     ///
-    /// 理由は「差分適用を通らないから」では**ない**——tao 0.35.3 の `set_inner_size` /
+    /// 理由は「差分適用を通らないから」では**ない**——tao 0.37.1 の `set_inner_size` /
     /// `set_outer_position` はどちらも `set_window_flags(|f| f.set(MAXIMIZED, false))` を呼び
     /// `apply_diff` に**入る**。results では MAXIMIZED が元から false ゆえ**フラグ差分が空**に
     /// なり、`apply_diff` 冒頭の `if diff == empty { return }` で助かっている。

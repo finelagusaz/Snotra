@@ -376,12 +376,14 @@ pub(crate) fn create(
         .build()?;
     #[cfg(windows)]
     {
+        refresh_borderless_frame(&window);
+        refresh_borderless_frame(&results);
         apply_rounded_corners(&window); // main にも適用（輪郭言語を揃える・決定 4）
         apply_rounded_corners(&results);
     }
     // #671 PR A′: attach は window を move するため、その**前**に clone から所有型を作る。
     // `tauri::Window` は Arc ベースのハンドルで、clone は同一ウィンドウを指す（tauri 2.11 の
-    // `impl Clone for Window` を実測）。
+    // `impl Clone for Window` を実測・2.12.1 も同じ）。
     let results_window = ResultsWindow::new(results.clone());
     // attach はウィンドウごとの wake handle を返す（#671 PR D）。**results を先に attach する順序は
     // 変えない**——`ResultsWindow::new` は attach の move より前でなければならず（PR A′）、
@@ -406,6 +408,46 @@ pub(crate) fn create(
         main_waker,
         results_waker,
     })
+}
+
+/// 装飾なしウィンドウの非クライアント領域を、生成直後に計算し直させる（#1266）。
+///
+/// **tao 0.37.1 は装飾なしのウィンドウをキャプション付きのクライアント領域で生む。** 生成中の
+/// `WM_NCCREATE` でフラグを適用して `SWP_FRAMECHANGED` を撃つが、その時点では装飾なしとして
+/// `WM_NCCALCSIZE` に答える処理がまだ繋がっておらず、`DefWindowProcW` がキャプション分を引く
+/// （0.35.3 は生成専用の wndproc がこれに答えていた）。外形は装飾なしで計算されるので、
+/// **外形と内側が食い違ったまま生まれる**——実測（DPI 100%）で main は client 22 / 指定 52、
+/// results は 70 / 100。この状態は次にフレームが再計算されるまで残り、起動後の初回 show で
+/// `read_frame_geom` が非クライアント分を 39（正しくは 9）と読んで位置決めのバー矩形を
+/// 30 px 大きく導いた（`egui_main:bar_rect_mismatch` が発火・#878 の検出器）。
+///
+/// ここで撃ち直せば tao 自身の処理が答えるので、外形を変えずに内側だけが正しい値へ戻る
+/// （同じ実測で main 52・results 100）。**可視性・Z 順・位置・サイズは変えない**
+/// （`SWP_SHOWWINDOW` を含めない）。失敗したら初回だけ従来どおり stale のまま残る
+/// （best-effort・[`apply_rounded_corners`] と同じ倒し方）。
+///
+/// **撤去の条件**: tao が生成時に装飾なしの非クライアント領域を作るようになったら要らない。
+/// 確かめ方は、この呼び出しを外して `scripts/smoke-egui.ps1` の toast シナリオが
+/// `egui_main:bar_rect_mismatch` を出さないこと（外すと今は出る・#1266 で実測）。tao を上げるたびに
+/// 試す価値がある——要らない回避策は、生成直後の幾何を誰も疑わなくなる形で残る。
+#[cfg(windows)]
+fn refresh_borderless_frame(window: &tauri::Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    unsafe {
+        let _ = SetWindowPos(
+            HWND(hwnd.0),
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
 }
 
 /// DWM にウィンドウの角丸を依頼する（#646 PR2 決定 4）。Windows 11（build 22000+）のみ有効で、

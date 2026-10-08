@@ -225,6 +225,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                                 key.state, key.physical_key
                             ),
                         ),
+                        // Windows では 0 件が正常（#1266・tripwire の理由は `input.rs` の同じ arm）。
                         TaoWindowEvent::ReceivedImeText(text) => crate::input::input_trace(
                             "rx_text",
                             &format!("window_id={window_id:?} chars={}", text.chars().count()),
@@ -514,7 +515,7 @@ impl EguiWindow {
         }
 
         // **値が変わったときだけ OS へ書く。** tao の `set_cursor_icon` はウィンドウに紐づかない
-        // `SetCursor` を直接撃つ（tao 0.35.3 `platform_impl/windows/window.rs:460-466`）——
+        // `SetCursor` を直接撃つ（tao 0.37.1 `platform_impl/windows/window.rs:424-428`）——
         // 最後に呼んだ者が勝ち、マウス静止中は `WM_SETCURSOR` が来ないので OS の復元も
         // 入らない。毎フレーム無条件に撃つと、ポインタを持つウィンドウ（Text）と持たないウィンドウ
         // （Default）が交互に上書きし合ってカーソルが点滅する（#628 の計測中に実機で

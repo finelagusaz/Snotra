@@ -395,7 +395,7 @@ pub(crate) fn show_egui_main(
     // サブルーチンとして直接呼んで即座に戻る——キューを 1 通も排出せず、タイムアウトも意味を
     // 持たない。main ウィンドウは setup（イベントループスレッド）で生成され、`show_egui_main` は証人型に
     // より同スレッドでしか呼べないので、**宛先は常に自スレッド所有**である。`WM_NULL` は tao の
-    // wndproc が扱わず（0.35.3 実測・ハンドラ皆無）`DefWindowProcW` が 0 を返すだけなので、
+    // wndproc が扱わず（0.35.3 実測・0.37.1 もハンドラ皆無）`DefWindowProcW` が 0 を返すだけなので、
     // 撤去は**構造的に挙動を変えない**。
     //
     // 失われた保証: 旧経路（hotkey は platform スレッド上で `show_egui_main` を走らせていた）では
@@ -657,6 +657,8 @@ struct FrameGeom {
     /// 非クライアント分の高さ（`outer` − `inner`）。**「将来の保険」ではなく今すでに効いている**
     /// ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
     /// 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
+    /// **生成直後の値は信用できない**——tao 0.37 はキャプション付きのクライアント領域で生むので、
+    /// `egui_shell::create` が枠を計算し直させて初めて正しくなる（`refresh_borderless_frame`・#1266）。
     inset_h: i32,
     scale: layout::MainScale,
 }

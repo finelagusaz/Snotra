@@ -11,9 +11,9 @@ use windows::Win32::{
     UI::{
         Input::Ime::{
             CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, CPS_CANCEL, GCS_COMPATTR,
-            GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, HIMC, ImmGetCompositionStringW,
-            ImmGetContext, ImmNotifyIME, ImmReleaseContext, ImmSetCandidateWindow,
-            ImmSetCompositionWindow, NI_COMPOSITIONSTR,
+            GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, HIMC, IME_COMPOSITION_STRING,
+            ImmGetCompositionStringW, ImmGetContext, ImmNotifyIME, ImmReleaseContext,
+            ImmSetCandidateWindow, ImmSetCompositionWindow, NI_COMPOSITIONSTR,
         },
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION},
@@ -150,34 +150,52 @@ impl Drop for PlatformIme {
     }
 }
 
-/// IME サブクラスメッセージのネイティブ描画方針。egui が preedit を自前描画するため
-/// 既定の変換文字列ウィンドウを抑制しつつ、確定（GCS_RESULTSTR）は Tao の
-/// ReceivedImeText 経路へ通す（#532 の二重表示＝ネイティブウィンドウ 非抑制 の修正）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ImeAction {
-    /// DefSubclassProc を呼ばず `LRESULT(0)`。既定変換ウィンドウを作らせない／描かせない。
-    Suppress,
-    /// そのまま Tao へ通す（DefSubclassProc）。確定文字・キー等は Tao が担う。
-    PassThrough,
+/// このメッセージを subclass が持ち、tao にも既定の IME 処理（`DefWindowProc`）にも通さないか
+/// （#532・#1266）。`true` なら `LRESULT(0)` を返し、`false` なら tao へ通す。
+///
+/// **IME の 3 メッセージは確定を含めてすべてこの subclass が持つ。** 未確定は egui が自前で描くので
+/// 既定の変換文字列ウィンドウを作らせない（#532 の二重表示）。確定は [`ime_events_for`] が
+/// `GCS_RESULTSTR` から読んで送る。確定と `ENDCOMPOSITION` を通さないのは tao 0.37 以降の理由で、
+/// 通すと二重に入る——tao が `WM_IME_ENDCOMPOSITION` で `GCS_RESULTSTR` を読み直して
+/// `ReceivedImeText` を送り、`DefWindowProc` が確定から `WM_IME_CHAR` → `WM_CHAR` を作る。
+/// tao 0.35 は確定をその `WM_CHAR` から拾っていた（`minimal_ime`）ので、以前は確定を通していた。
+fn is_owned_ime_message(message: u32) -> bool {
+    matches!(
+        message,
+        WM_IME_STARTCOMPOSITION | WM_IME_COMPOSITION | WM_IME_ENDCOMPOSITION
+    )
 }
 
-/// ネイティブ描画を抑制するか Tao へ通すかだけを純粋に判定する（preedit の抽出可否は
-/// 呼び出し側が message で決める）。確定を落とさないため GCS_RESULTSTR を最優先で通す。
-fn classify_ime_message(message: u32, lparam: u32) -> ImeAction {
-    if message == WM_IME_STARTCOMPOSITION {
-        // 既定の変換文字列ウィンドウを作らせない（egui が preedit を描く）。
-        ImeAction::Suppress
-    } else if message == WM_IME_COMPOSITION {
-        if lparam & GCS_RESULTSTR.0 != 0 {
-            // 確定は Tao の ReceivedImeText 確定経路が要るため通す。
-            ImeAction::PassThrough
-        } else {
-            // 未確定のみ（GCS_COMPSTR 等）は egui が描くのでネイティブ描画を抑制。
-            ImeAction::Suppress
+/// IME メッセージ 1 通から egui へ送るイベント列を導く（#1266）。読み出しは呼び出し側が
+/// 渡す——IMM32 に触らずに順序と条件をテストで固定するため。
+///
+/// **確定は `GCS_RESULTSTR` が立っているときだけ読み、Commit を Preedit より先に置く。**
+/// 変換中の続け打ちでは確定と新しい未確定が同じメッセージで来る。egui は Commit で preedit の
+/// 範囲を消してから確定を挿し、後続の Preedit が新しい範囲を張るので、この順でなければ
+/// 新しい未確定が確定に上書きされる。空の確定は送らない。
+fn ime_events_for(
+    message: u32,
+    lparam: u32,
+    read_result: impl FnOnce() -> Option<String>,
+    read_preedit: impl FnOnce() -> Option<egui::ImeEvent>,
+) -> Vec<egui::ImeEvent> {
+    match message {
+        WM_IME_COMPOSITION => {
+            let mut events = Vec::with_capacity(2);
+            if lparam & GCS_RESULTSTR.0 != 0
+                && let Some(text) = read_result()
+                && !text.is_empty()
+            {
+                events.push(egui::ImeEvent::Commit(text));
+            }
+            events.extend(read_preedit());
+            events
         }
-    } else {
-        // ENDCOMPOSITION・キー等は Tao へ通す（後始末・確定・入力）。
-        ImeAction::PassThrough
+        WM_IME_ENDCOMPOSITION => vec![egui::ImeEvent::Preedit {
+            text: String::new(),
+            active_range_chars: None,
+        }],
+        _ => Vec::new(),
     }
 }
 
@@ -189,7 +207,7 @@ unsafe extern "system" fn ime_subclass_proc(
     _subclass_id: usize,
     ref_data: usize,
 ) -> LRESULT {
-    let action = classify_ime_message(message, lparam.0 as u32);
+    let owned = is_owned_ime_message(message);
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: ref_data was installed from a live Box<CallbackState>, and
         // Drop removes the subclass before releasing that Box.
@@ -197,48 +215,60 @@ unsafe extern "system" fn ime_subclass_proc(
             return;
         };
 
-        let event = match message {
-            WM_IME_COMPOSITION => read_preedit(hwnd),
-            WM_IME_ENDCOMPOSITION => Some(egui::ImeEvent::Preedit {
-                text: String::new(),
-                active_range_chars: None,
-            }),
-            _ => None,
-        };
-        if let Some(event) = event {
-            if crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE")
-                && let egui::ImeEvent::Preedit {
-                    text,
-                    active_range_chars,
-                } = &event
-            {
-                eprintln!(
-                    "SNOTRA_EGUI_IME_PREEDIT chars={} active={active_range_chars:?}",
-                    text.chars().count()
-                );
+        let events = ime_events_for(
+            message,
+            lparam.0 as u32,
+            || ImeContext::acquire(hwnd)?.composition_string(GCS_RESULTSTR),
+            || read_preedit(hwnd),
+        );
+        if events.is_empty() {
+            return;
+        }
+        let trace = crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE");
+        for event in events {
+            if trace {
+                trace_ime_event(&event);
             }
             let _ = state.sender.send(event);
-            // Tao does not expose preedit as WindowEvent. Invalidating the
-            // client area produces a RedrawRequested where the queue is drained.
-            // SAFETY: hwnd is the window currently dispatching this callback.
-            unsafe {
-                let _ = InvalidateRect(Some(hwnd), None, false);
-            }
+        }
+        // tao は preedit も確定も WindowEvent にしない（ここが送る）。後続のウィンドウイベントが
+        // あればその処理前に `drain_native_ime` が回収し、無ければこの再描画要求が
+        // `RedrawRequested` → `render` の drain で回収する。
+        // SAFETY: hwnd is the window currently dispatching this callback.
+        unsafe {
+            let _ = InvalidateRect(Some(hwnd), None, false);
         }
     }));
 
-    // egui が preedit を自前描画するため、未確定のネイティブ変換ウィンドウは描かせない（#532 二重表示）。
-    match action {
-        ImeAction::Suppress => LRESULT(0),
-        // SAFETY: every observed message must continue through Tao's own subclass,
-        // which remains responsible for key events and committed ReceivedImeText.
-        ImeAction::PassThrough => unsafe { DefSubclassProc(hwnd, message, wparam, lparam) },
+    if owned {
+        LRESULT(0)
+    } else {
+        // SAFETY: every non-IME message must continue through tao's own window procedure,
+        // which remains responsible for key events (and the text they carry).
+        unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+    }
+}
+
+/// `SNOTRA_EGUI_IME_TRACE` の 1 行。文字列そのものは出さない（入力内容が trace に残らないように）。
+fn trace_ime_event(event: &egui::ImeEvent) {
+    match event {
+        egui::ImeEvent::Commit(text) => {
+            eprintln!("SNOTRA_EGUI_IME_COMMIT chars={}", text.chars().count());
+        }
+        egui::ImeEvent::Preedit {
+            text,
+            active_range_chars,
+        } => eprintln!(
+            "SNOTRA_EGUI_IME_PREEDIT chars={} active={active_range_chars:?}",
+            text.chars().count()
+        ),
+        _ => {}
     }
 }
 
 fn read_preedit(hwnd: HWND) -> Option<egui::ImeEvent> {
     let context = ImeContext::acquire(hwnd)?;
-    let text = context.composition_string()?;
+    let text = context.composition_string(GCS_COMPSTR)?;
     let attributes = context.composition_data(GCS_COMPATTR).unwrap_or_default();
     let cursor = context.composition_cursor();
     Some(egui::ImeEvent::Preedit {
@@ -259,8 +289,9 @@ impl ImeContext {
         (!himc.0.is_null()).then_some(Self { hwnd, himc })
     }
 
-    fn composition_string(&self) -> Option<String> {
-        let bytes = self.composition_data(GCS_COMPSTR)?;
+    /// kind の文字列（GCS_COMPSTR = 未確定・GCS_RESULTSTR = 確定）を UTF-16 から復号する。
+    fn composition_string(&self, kind: IME_COMPOSITION_STRING) -> Option<String> {
+        let bytes = self.composition_data(kind)?;
         if bytes.len() % 2 != 0 {
             return None;
         }
@@ -281,10 +312,7 @@ impl ImeContext {
         (cursor >= 0).then_some(cursor as usize)
     }
 
-    fn composition_data(
-        &self,
-        kind: windows::Win32::UI::Input::Ime::IME_COMPOSITION_STRING,
-    ) -> Option<Vec<u8>> {
+    fn composition_data(&self, kind: IME_COMPOSITION_STRING) -> Option<Vec<u8>> {
         // SAFETY: size query does not dereference a buffer.
         let byte_len = unsafe { ImmGetCompositionStringW(self.himc, kind, None, 0) };
         if byte_len < 0 {
@@ -322,39 +350,99 @@ impl Drop for ImeContext {
 
 #[cfg(test)]
 mod tests {
-    use super::{ImeAction, classify_ime_message};
+    use super::{ime_events_for, is_owned_ime_message};
     use windows::Win32::UI::Input::Ime::{GCS_COMPSTR, GCS_RESULTSTR};
     use windows::Win32::UI::WindowsAndMessaging::{
-        WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
+        WM_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
     };
 
+    fn preedit(text: &str) -> egui::ImeEvent {
+        egui::ImeEvent::Preedit {
+            text: text.to_owned(),
+            active_range_chars: None,
+        }
+    }
+
+    fn commit(text: &str) -> egui::ImeEvent {
+        egui::ImeEvent::Commit(text.to_owned())
+    }
+
+    /// 確定を含む IME の 3 メッセージを tao へ通す形に戻ると二重確定になる（理由は
+    /// [`super::is_owned_ime_message`] の doc）。
     #[test]
-    fn suppresses_native_composition_but_passes_commit_and_end() {
-        // 変換開始: 既定の変換文字列ウィンドウを作らせない（egui が preedit を描く）。
-        assert_eq!(
-            classify_ime_message(WM_IME_STARTCOMPOSITION, 0),
-            ImeAction::Suppress
+    fn ime_messages_are_owned_by_the_subclass() {
+        for message in [
+            WM_IME_STARTCOMPOSITION,
+            WM_IME_COMPOSITION,
+            WM_IME_ENDCOMPOSITION,
+        ] {
+            assert!(is_owned_ime_message(message), "message={message:#x}");
+        }
+        // キー入力などは tao へ通す。
+        assert!(!is_owned_ime_message(WM_CHAR));
+        assert!(!is_owned_ime_message(0));
+    }
+
+    /// 変換中の続け打ちで確定と未確定が同じメッセージに立つとき、順が逆だと新しい未確定が
+    /// 確定に上書きされる（理由は [`super::ime_events_for`] の doc）。
+    #[test]
+    fn commit_precedes_preedit_in_the_same_message() {
+        let events = ime_events_for(
+            WM_IME_COMPOSITION,
+            GCS_RESULTSTR.0 | GCS_COMPSTR.0,
+            || Some("日本".to_owned()),
+            || Some(preedit("ご")),
         );
-        // 未確定のみ: egui が描くのでネイティブ描画を抑制（＝二重表示の解消）。
-        assert_eq!(
-            classify_ime_message(WM_IME_COMPOSITION, GCS_COMPSTR.0),
-            ImeAction::Suppress
+        assert_eq!(events, vec![commit("日本"), preedit("ご")]);
+    }
+
+    #[test]
+    fn result_only_composition_commits_then_reports_the_composition_state() {
+        let events = ime_events_for(
+            WM_IME_COMPOSITION,
+            GCS_RESULTSTR.0,
+            || Some("日本語".to_owned()),
+            || Some(preedit("")),
         );
-        // 確定あり: Tao の ReceivedImeText 確定経路が要るため通す（確定文字を落とさない）。
-        assert_eq!(
-            classify_ime_message(WM_IME_COMPOSITION, GCS_RESULTSTR.0),
-            ImeAction::PassThrough
+        assert_eq!(events, vec![commit("日本語"), preedit("")]);
+    }
+
+    /// 確定の読み出しは `GCS_RESULTSTR` が立っているときだけ行い、空なら送らない。
+    #[test]
+    fn commit_is_read_only_when_flagged_and_dropped_when_empty() {
+        let events = ime_events_for(
+            WM_IME_COMPOSITION,
+            GCS_COMPSTR.0,
+            || panic!("GCS_RESULTSTR が立っていないのに確定を読んだ"),
+            || Some(preedit("にほ")),
         );
-        // 確定 + 未確定が同時に立つ IME でも、確定を優先して通す。
-        assert_eq!(
-            classify_ime_message(WM_IME_COMPOSITION, GCS_RESULTSTR.0 | GCS_COMPSTR.0),
-            ImeAction::PassThrough
+        assert_eq!(events, vec![preedit("にほ")]);
+
+        let events = ime_events_for(
+            WM_IME_COMPOSITION,
+            GCS_RESULTSTR.0,
+            || Some(String::new()),
+            || Some(preedit("")),
         );
-        // 変換終了・その他のメッセージは Tao へ通す（後始末・キー入力）。
-        assert_eq!(
-            classify_ime_message(WM_IME_ENDCOMPOSITION, 0),
-            ImeAction::PassThrough
+        assert_eq!(events, vec![preedit("")]);
+    }
+
+    #[test]
+    fn end_composition_clears_the_preedit_and_other_messages_send_nothing() {
+        let events = ime_events_for(
+            WM_IME_ENDCOMPOSITION,
+            0,
+            || panic!("ENDCOMPOSITION で確定を読んだ"),
+            || panic!("ENDCOMPOSITION で preedit を読んだ"),
         );
-        assert_eq!(classify_ime_message(0, 0), ImeAction::PassThrough);
+        assert_eq!(events, vec![preedit("")]);
+
+        let events = ime_events_for(
+            WM_IME_STARTCOMPOSITION,
+            0,
+            || panic!("確定を読んだ"),
+            || panic!("preedit を読んだ"),
+        );
+        assert!(events.is_empty());
     }
 }

@@ -80,8 +80,11 @@ pub(crate) fn input_trace(kind: &str, detail: &str) {
 /// このキーイベントを egui へ渡すか（#927）。`true` = 渡す。`held` は副作用として更新する。
 ///
 /// **tao は `WM_SETFOCUS` を受けたとき、その瞬間に押されている全キーの `Pressed` を合成する**
-/// （`tao-0.35.3/src/platform_impl/windows/keyboard.rs:87-93` の `get_async_kbd_state()` →
-/// `synthesize_kbd_state(ElementState::Pressed, …)`）。設定ウィンドウを Escape の **down** で
+/// （`tao-0.37.1/src/platform_impl/windows/keyboard.rs:103-107` の `get_async_kbd_state()` →
+/// `synthesize_kbd_state(ElementState::Pressed, …)`）。**合成 press は文字も持つ**
+/// （`create_synthetic` が `text_with_all_modifiers` を埋める・同 `:478`）ので、ここで落とした
+/// press は文字も入れない（#1266 で文字を `KeyEvent` から取るようになった帰結。focus 獲得時に
+/// 押していたキーは、release まで文字も入らない）。設定ウィンドウを Escape の **down** で
 /// 閉じると、本体が focus を取り戻した瞬間にこの合成 press が届き、Escape ラダーが走って
 /// **1 回の押下で 2 つのウィンドウが閉じる**（#927 の症状。実測: 本体が受けた press は `synthetic=true`）。
 ///
@@ -217,11 +220,16 @@ impl InputState {
             }
             WindowEvent::Focused(focused) => {
                 // **focus を失ったら抑止を全消去する**（#927）。tao は `WM_KILLFOCUS` でも
-                // 合成 release を先に送る（`tao-0.35.3/src/platform_impl/windows/event_loop.rs`
-                // の `lose_active_focus` は `keyboard_callback` より後の `match msg` で走る）ので、
-                // 到着順に関わらずここで空になる。**`Focused(true)` では消さない**——合成 press は
-                // `Focused(true)` より**先**に届くため（同 `event_loop.rs` の `keyboard_callback`
-                // が `match msg` の前にある）、ここで消すと直前に立てた抑止を自分で捨てる。
+                // 合成 release を先に送る（`tao-0.37.1/src/platform_impl/windows/event_loop.rs`
+                // の `lose_active_focus` は `keyboard_callback`〔`:943`〕より後の `match msg`
+                // 〔`:1736` / `:1753`〕で走る）ので、到着順に関わらずここで空になる。
+                // **`Focused(true)` では消さない**——合成 press は `Focused(true)` より**先**に届くため
+                // （`gain_active_focus` も同じく `match msg` の中〔`:1734` / `:1745`〕）、ここで消すと
+                // 直前に立てた抑止を自分で捨てる。**0.37 で保証は弱まった**: 合成 press は
+                // `PendingEventQueue::complete_multi`（`keyboard.rs:827`）で未完了のキー処理の後ろへ
+                // 回されうる一方、`Focused(true)` は即時に出る。崩れるのは遅れた press が次の
+                // `Focused(false)` より後に届く並びだけで、そのときは抑止が立たずに press が 1 回
+                // 渡る（fail-open 側。Escape が効かなくなる側ではない）——受容する残余。
                 if !*focused {
                     self.held_since_focus_gain.clear();
                 }
@@ -304,6 +312,11 @@ impl InputState {
                 }
                 self.on_keyboard_event(event)
             }
+            // **Windows では発火しないはずの tripwire である**（#1266）。tao 0.37 がこれを送るのは
+            // `WM_IME_ENDCOMPOSITION` だけで、`windows_ime.rs` の subclass はそれを tao へ通さない
+            // （確定は subclass が `GCS_RESULTSTR` から読んで送る）。**ここに `push_text` が出たら
+            // その抑止が破れており、確定が二重に入っている。** 消さずに残すのは、破れたときに
+            // 確定を落とす側ではなく trace に現れる側へ倒すためである。
             WindowEvent::ReceivedImeText(text) => {
                 let committed = committed_text_event(text);
                 // **落とした側も残す**（#872/#936）。`committed_text_event` は制御文字と空を
@@ -390,8 +403,14 @@ impl InputState {
             });
         }
 
-        // Tao emits normal WM_CHAR text and IME commits through ReceivedImeText.
-        // Routing KeyEvent::text too would insert every printable character twice.
+        // **通常文字はここで積む**（#1266）。tao 0.37 は `WM_CHAR` を直前の `WM_KEYDOWN` に連結して
+        // `KeyEvent` にだけ載せ、`ReceivedImeText` には載せない（0.35 は `minimal_ime` が載せていた）。
+        // IME 確定は `windows_ime.rs` の subclass が `GCS_RESULTSTR` から読むので、この経路と
+        // 二重にならない——tao は `event_info` の無い IME 由来の `WM_CHAR` を `KeyEvent` にしない。
+        // `admit_key` の後に置くこと（合成 press も文字を持つ・理由は `admit_key` の doc）。
+        if let Some(text) = typed_text_event(pressed, event.text_with_all_modifiers()) {
+            self.raw.events.push(text);
+        }
     }
 }
 
@@ -425,6 +444,18 @@ fn touch_phase(phase: TouchPhase) -> egui::TouchPhase {
 
 fn is_printable_char(character: char) -> bool {
     !character.is_ascii_control() && character != '\u{7f}'
+}
+
+/// 打鍵 1 回が egui へ入れる文字（#1266）。渡すのは `KeyEvent::text_with_all_modifiers` であって
+/// `KeyEvent.text` ではない——後者は Ctrl を外した文字（Ctrl+A で `"a"`）を返すので、Ctrl 併用の
+/// ショートカットが文字も入れてしまう。前者は `WM_CHAR` の中身そのもの（Ctrl+A で `"\x01"`）で、
+/// tao 0.35 が `ReceivedImeText` として送っていた文字列と同じだから、弾き方も
+/// [`committed_text_event`] をそのまま使える。
+fn typed_text_event(pressed: bool, text_with_all_modifiers: Option<&str>) -> Option<egui::Event> {
+    if !pressed {
+        return None;
+    }
+    committed_text_event(text_with_all_modifiers?)
 }
 
 fn committed_text_event(text: &str) -> Option<egui::Event> {
@@ -686,6 +717,37 @@ mod tests {
         );
         assert_eq!(committed_text_event("\r"), None);
         assert_eq!(committed_text_event(""), None);
+    }
+
+    /// #1266: 通常文字は `KeyEvent::text_with_all_modifiers`（＝ `WM_CHAR` の中身）から取る。
+    /// 旧 tao の `ReceivedImeText` と同じ文字列なので、弾き方も同じになる。
+    #[test]
+    fn typed_text_commits_printable_characters_on_press() {
+        assert_eq!(
+            typed_text_event(true, Some("a")),
+            Some(egui::Event::Ime(egui::ImeEvent::Commit("a".to_owned())))
+        );
+        // AltGr 相当（印字可能な記号）も入る。
+        assert_eq!(
+            typed_text_event(true, Some("@")),
+            Some(egui::Event::Ime(egui::ImeEvent::Commit("@".to_owned())))
+        );
+        // サロゲートペアは 1 文字として入る（旧経路は 1 コード単位ずつ復号して捨てていた）。
+        assert_eq!(
+            typed_text_event(true, Some("😀")),
+            Some(egui::Event::Ime(egui::ImeEvent::Commit("😀".to_owned())))
+        );
+    }
+
+    /// Ctrl 併用は `text_with_all_modifiers` が制御文字（Ctrl+A なら `"\x01"`）を返すので弾かれる。
+    /// 呼び出し点で `KeyEvent.text` と取り違える形はこのテストに映らない（`KeyEvent` を組み立てられない）。
+    #[test]
+    fn typed_text_drops_control_characters_and_releases() {
+        for control in ["\x01", "\r", "\u{8}", "\t", "\u{1b}"] {
+            assert_eq!(typed_text_event(true, Some(control)), None, "{control:?}");
+        }
+        assert_eq!(typed_text_event(false, Some("a")), None);
+        assert_eq!(typed_text_event(true, None), None);
     }
 
     #[test]

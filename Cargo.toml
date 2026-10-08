@@ -8,10 +8,10 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-egui = "=0.36.1"
-tauri = { version = "=2.11.5", features = ["unstable"] }
-tauri-runtime = "=2.11.3"
-tauri-runtime-wry = "=2.11.4"
+egui = "=0.36.2"
+tauri = { version = "=2.11.6", features = ["unstable"] }
+tauri-runtime = "=2.12.1"
+tauri-runtime-wry = "=2.12.1"
 
 [workspace.package]
 version = "0.1.0"

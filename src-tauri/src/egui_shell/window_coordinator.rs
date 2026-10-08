@@ -14,10 +14,12 @@
 //! 瞬間に「armed 期限は保持者が毎フレーム再要求する」契約が壊れる。期限の所有者
 //! （`LauncherController`）が呼び、ここは実行するだけにする。
 //!
-//! **z-order は本モジュールに無い**——main は `commands/window.rs` が `set_always_on_top` を
-//! 直接叩き、results は `ResultsWindow::set_topmost` が持つ（tao の差分適用が results を消す
-//! ため層が違う・#646 PR2）。どちらも設定サイドカー監視のポーリングスレッドから来るため、
-//! ここを通らない。
+//! **z-order の決定は本モジュールに無い**——main は `commands/window.rs` が `set_always_on_top` を
+//! 直接叩き、results は `ResultsWindow` が持つ（tao の差分適用が results を消すため層が違う・
+//! #646 PR2）。TOPMOST の一時解除と復帰は設定サイドカーの起動・監視から来る。**ただし
+//! `drive_results_window` が呼ぶ `ResultsWindow::show` は Z 順を撃ちうる**——Windows では表示の
+//! たびに最前面の帯へ撃ち直すためで、撃つかどうかの判断は `ResultsWindow` の中に閉じている
+//! （`raw_show` の doc）。
 //!
 //! **main ウィンドウのサイズは 2 か所に分かれたままである**——show 経路の実高導出は `show_egui_main` の中、
 //! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` に
@@ -1233,18 +1235,24 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// ほど増える**——利用者が変えられる config キーなので、ここに px の定数を書かない。DPI 125% の
 /// 機体で `window_gap = 4` のとき 3 物理 px、`0` なら 8 物理 px である。
 ///
-/// 重なった帯では main の枠が前に居るため、`WindowFromPoint` は results ではなく main を返す
-/// （2026-08-28 実測）。**ただしクリックが失われるのは重なり全体ではない**——重なりのうち
-/// `results_top` の分は results 自身の不可視枠であって元から中身が無い。**失うのは
+/// **重なった帯でどちらが前に居るかは、直近にどちらが上がったかで決まる。** results は表示の
+/// たびに最前面の帯の上端へ撃ち直される（`ResultsWindow` の `raw_show`）ので、表示した時点では
+/// results が前に居て、`WindowFromPoint` は results を返す（2026-10-08 実測・DPI 125%・
+/// `window_gap = 4`: 重なり 3 物理 px のすべてで results）。帯のうち main 側は main の不可視枠で
+/// あり、main の見える部分は覆わない。**main が results より上にある並び**（撃ち直しの無かった頃の
+/// 実測 2026-08-28・10-08 はいずれもこの並びだった）では、次に results が表示へ遷移するまで
+/// その帯は main が受ける。results の表示中にこの並びが生じるか（main の前面化で main が上がるか）は
+/// 実測していない。そのときクリックが失われるのは重なり全体ではない——
+/// 重なりのうち `results_top` の分は results 自身の不可視枠であって元から中身が無い。**失うのは
 /// `main_bottom − round(window_gap × scale)`**、すなわち results の先頭行の上端のその厚みである
 /// （実測機体は `results_top = 0` ゆえ重なりと一致するが、それは一致であって同じ式ではない）。
 /// **リサイズは始まらない**——両ウィンドウとも `resizable(false)` で生成する（`super::create`）。
 ///
-/// **直さずに残す。** z-order で results を上げる案は、この関数の管轄外である上に（所在の正本は
-/// このモジュールの `//!`）、topmost どうしの順序を恒常的に固定する不変条件を `Moved` 追従と
-/// show/hide の全経路へ足すことになる。main 側の枠を消す案は [`FrameGeom`] の `inset_h`・
-/// バーのクランプ・hide の位置保存（#755 / #801）へ波及する。**DPI 125% の実測機体が既定値
-/// （`window_gap = 4`）で失うのは先頭行の上端 3 物理 px であり、どちらの案もそれに釣り合わない。**
+/// **順序を固定はしない。** main が前に来る並びを消すには、topmost どうしの順序を恒常的に
+/// 固定する不変条件を `Moved` 追従と show/hide・前面化の全経路へ足すことになり、この関数の
+/// 管轄外でもある（所在の正本はこのモジュールの `//!`）。main 側の枠を消す案は [`FrameGeom`] の
+/// `inset_h`・バーのクランプ・hide の位置保存（#755 / #801）へ波及する。**その並びで失うのは
+/// 先頭行の上端 3 物理 px（同条件）であり、どちらの案もそれに釣り合わない。**
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {

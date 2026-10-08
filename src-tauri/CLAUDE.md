@@ -49,7 +49,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
   - `results_view.rs` — 結果リストウィンドウの従属 view（責務は `//!`）
   - `results_window.rs` — results ウィンドウの所有型（責務は `//!`）
   - `visual.rs` — テーマの 1 フレーム分の読み取り値と純粋な導出（責務は `//!`）
-  - `window_coordinator.rs` はウィンドウを駆動する責務（main の show/hide（両ウィンドウ同期）・位置永続と復元・results の毎フレーム driver・wake primitive・#749）。**z-order は含まない**——`commands/window.rs` と `ResultsWindow` が持つ。ウィンドウの幾何に関する規則は次の 4 つ:
+  - `window_coordinator.rs` はウィンドウを駆動する責務（main の show/hide（両ウィンドウ同期）・位置永続と復元・results の毎フレーム driver・wake primitive・#749）。**z-order の決定は含まない**——`commands/window.rs` と `ResultsWindow` が持つ（results を表示へ遷移させる呼び出しが Z 順を撃ちうるのは、`ResultsWindow` の中で決まる・`//!` が正本）。ウィンドウの幾何に関する規則は次の 4 つ:
     - **main のサイズは show 経路（ここ）と毎フレーム（`view.rs`）の 2 か所で設定し、両者は同じ高さを導く。** status 行の有無は `status_row_present` を、積算は `main_window_height` を共有する。show 側は reset-on-show 後の状態をリテラルで渡す——畳む高さと描く高さが食い違っても、memo リセットが同じフレームの動的高さ算出で直すため固着はしない。ずれはその 1 フレームだけのスナップとして現れる（#755 / #801。反転の経緯は `ADR-show-path-derives-drawn-height`）
     - **main の位置に基準モニターを判断する 3 箇所は、材料をバー高で共通にし、OS からは非クライアント分と scale しか読まない**（#738 / #878）。3 箇所とは show（`position_on_target_monitor`）・可視中のクランプ（`clamp_main_into_work_area`。呼ぶのは `view.rs` だがポインタ非押下のフレームに限る——reset-on-show の backstop は実測で却下した・`ADR-main-window-clamp-on-pointer-release`）・hide 時の保存（`read_placement_relative`）。材料が実高ではなくバー高である理由は `layout::bar_rect_height_phys` の doc。バー矩形の物理サイズは `read_frame_geom` が読んだ差分の上で `layout::logical_to_phys` が導く。show が `outer_size()` を読み戻していた経路は消えたため、同じ物理バー高が 2 通りに導出されることはもう無い（`ADR-show-path-derives-bar-rect`）
     - **基準モニターは 2 対 1 に分かれ、クランプと hide 保存は `read_bar_anchor` という同じ 1 つの関数を通る。** その 2 つはバー矩形の中心が乗るモニター、show だけがカーソル/プライマリである。一致を doc の申し合わせではなく構造で担保するための共有であり、show が違うのは「これから出すウィンドウをどこへ置くか」であって既存のウィンドウを戻す話ではないため

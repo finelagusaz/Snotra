@@ -69,6 +69,15 @@ pub(crate) struct ResultsWindow {
     /// が要求するのは「変化後の**最初の**呼び出しで撃つ」ことであって、変化していない呼び出しでも
     /// 撃つことではない。hidden 中に色が変わっても、次の show / リサイズでこの比較が差分を検出する。
     last_background: Mutex<Option<egui::Color32>>,
+    /// TOPMOST で**あるべきか**（設定サイドカー存命中だけ false・`set_topmost` が書く）。
+    /// Windows の `raw_show` が show のたびに Z 順を撃ち直すとき、撃つかどうかをこれで決める——
+    /// 無条件に `HWND_TOPMOST` を撃つと、設定アプリの上に結果カードが浮く（SPEC §8.5 の main の
+    /// 一時解除を results にも対称適用している・`commands/window.rs` の `launch_settings_process`）。
+    ///
+    /// **ウィンドウの実際の Z 順ではない。** 実際の帯は他プロセスに崩されうる（`raw_show` の doc）
+    /// ので、ここに持つのは意図だけである。書き手の `set_topmost` は**イベントループ以外の
+    /// スレッドから来うる**。読み手との順序は `raw_show` の読み直しが閉じる。
+    topmost: AtomicBool,
 }
 
 impl ResultsWindow {
@@ -84,6 +93,8 @@ impl ResultsWindow {
             // `create` が builder の `.background_color` で同じ色を入れているが、**それを初期値に
             // しない**——一致を仮定すると、生成時と show 直前で config が変わった場合に撃たなくなる。
             last_background: Mutex::new(None),
+            // builder の `.always_on_top(true)` と一致させる（`mod.rs` の `create`）。
+            topmost: AtomicBool::new(true),
         }
     }
 
@@ -171,8 +182,17 @@ impl ResultsWindow {
     /// results ウィンドウに対しては `SW_HIDE` を副作用で撃ってしまう。`SWP_NOACTIVATE` 付きの
     /// `SetWindowPos` で Z オーダーだけを動かす。**可視フラグは変えない**——Z 順の変更は
     /// 表示/非表示の遷移ではない。
-    #[cfg(windows)]
+    ///
+    /// **意図（`topmost`）を先に書き、それから撃つ。** この順序が Windows の `raw_show` の読み直しと
+    /// 組になって別スレッドとの競合を閉じる（`raw_show` の doc）。非 Windows の `raw_show` は
+    /// 撃ち直さないので、そこでは意図は書かれるだけで読まれない。
     pub(crate) fn set_topmost(&self, topmost: bool) {
+        self.topmost.store(topmost, Ordering::SeqCst);
+        self.apply_topmost(topmost);
+    }
+
+    #[cfg(windows)]
+    fn apply_topmost(&self, topmost: bool) {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{
             HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
@@ -197,7 +217,7 @@ impl ResultsWindow {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn set_topmost(&self, topmost: bool) {
+    fn apply_topmost(&self, topmost: bool) {
         let _ = self.window.set_always_on_top(topmost);
     }
 
@@ -297,6 +317,24 @@ impl ResultsWindow {
         super::window_coordinator::read_window_borders(&self.window).top
     }
 
+    /// 表示し、**TOPMOST であるべきなら Z 順を最前面の帯へ撃ち直す**。
+    ///
+    /// **`SW_SHOWNOACTIVATE` は Z 順を動かさない**——ウィンドウは前回居た位置のまま現れる。
+    /// 一方、TOPMOST の帯は他プロセスに崩されうる: Apple Music を前面化すると、以後に前面化された
+    /// 通常ウィンドウ（ターミナル・Discord・Chrome）が TOPMOST のウィンドウより上へ入り、
+    /// タスクバーまで下に潜る（2026-10-08 実測。TOPMOST の印は付いたまま）。撃ち直さないと
+    /// results はその位置のまま出て、入力欄だけが見え結果が隠れる。main は tao の `SW_SHOW` が
+    /// 前面化で一番上へ戻すので症状が出ない——results だけが前面化しない（`show` の doc）。
+    ///
+    /// **意図が false（設定サイドカー存命中）なら撃たない。** `HWND_NOTOPMOST` も撃たない——
+    /// 「非 TOPMOST の最上位」へ動かす作用があり、設定アプリの上に出てしまう。
+    ///
+    /// **撃ったあとに意図を読み直す。** `set_topmost(false)` は別スレッドから来うる（`topmost`
+    /// の doc）。読み → 撃つの間に「false を書いて `HWND_NOTOPMOST` を撃つ」が割り込むと、
+    /// こちらの `HWND_TOPMOST` が後勝ちして設定アプリの上に残る。`set_topmost` は書いてから撃つ
+    /// ので、撃った後に `SeqCst` で読み直して false なら撃ち戻せば、どの並びでも最後に撃たれるのは
+    /// 意図どおりの値になる。**錠で囲まない**——cross-thread な `SetWindowPos` を錠で囲むと
+    /// 競合がデッドロックへ化けうる（`src-tauri/CLAUDE.md`「この種の race を lock で囲んではならない」）。
     #[cfg(windows)]
     fn raw_show(&self) {
         use windows::Win32::Foundation::HWND;
@@ -304,6 +342,12 @@ impl ResultsWindow {
         let Ok(hwnd) = self.window.hwnd() else { return };
         unsafe {
             let _ = ShowWindow(HWND(hwnd.0), SW_SHOWNOACTIVATE);
+        }
+        if self.topmost.load(Ordering::SeqCst) {
+            self.apply_topmost(true);
+            if !self.topmost.load(Ordering::SeqCst) {
+                self.apply_topmost(false);
+            }
         }
     }
 

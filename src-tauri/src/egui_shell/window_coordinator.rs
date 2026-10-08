@@ -17,8 +17,9 @@
 //! **z-order の決定は本モジュールに無い**——main は `commands/window.rs` が `set_always_on_top` を
 //! 直接叩き、results は `ResultsWindow` が持つ（tao の差分適用が results を消すため層が違う・
 //! #646 PR2）。TOPMOST の一時解除と復帰は設定サイドカーの起動・監視から来る。**ただし
-//! `drive_results_window` が呼ぶ `ResultsWindow::show` は Z 順を撃つ**——表示のたびに最前面の帯へ
-//! 撃ち直すためで、撃つかどうかの判断は `ResultsWindow` の中に閉じている（`raw_show` の doc）。
+//! `drive_results_window` が呼ぶ `ResultsWindow::show` は Z 順を撃ちうる**——Windows では表示の
+//! たびに最前面の帯へ撃ち直すためで、撃つかどうかの判断は `ResultsWindow` の中に閉じている
+//! （`raw_show` の doc）。
 //!
 //! **main ウィンドウのサイズは 2 か所に分かれたままである**——show 経路の実高導出は `show_egui_main` の中、
 //! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` に
@@ -1238,10 +1239,10 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// たびに最前面の帯の上端へ撃ち直される（`ResultsWindow` の `raw_show`）ので、表示した時点では
 /// results が前に居て、`WindowFromPoint` は results を返す（2026-10-08 実測・DPI 125%・
 /// `window_gap = 4`: 重なり 3 物理 px のすべてで results）。帯のうち main 側は main の不可視枠で
-/// あり、main の見える部分は覆わない。**results を出したまま main が前面化されて上がると**
-/// （show 経路の `SW_SHOW` と同じ作用。撃ち直しの無かった頃の実測 2026-08-28・10-08 はいずれも
-/// この並び）、次に results が表示へ遷移するまでその帯は main が受ける。その並びを results の
-/// 表示中に作る操作は実測していない。そのときクリックが失われるのは重なり全体ではない——
+/// あり、main の見える部分は覆わない。**main が results より上にある並び**（撃ち直しの無かった頃の
+/// 実測 2026-08-28・10-08 はいずれもこの並びだった）では、次に results が表示へ遷移するまで
+/// その帯は main が受ける。results の表示中にこの並びが生じるか（main の前面化で main が上がるか）は
+/// 実測していない。そのときクリックが失われるのは重なり全体ではない——
 /// 重なりのうち `results_top` の分は results 自身の不可視枠であって元から中身が無い。**失うのは
 /// `main_bottom − round(window_gap × scale)`**、すなわち results の先頭行の上端のその厚みである
 /// （実測機体は `results_top = 0` ゆえ重なりと一致するが、それは一致であって同じ式ではない）。

@@ -92,8 +92,8 @@ tao 0.37.1 は装飾なしの `WM_NCCALCSIZE` 処理が繋がる前に `SWP_FRAM
 
 ### Phase 5: 検証
 
-- [ ] `/race-check` を実装差分に当てる（D2 は既存の `mpsc` へ確定を送る経路を足す。`/race-check` は計画段階では起動しない規約ゆえここで走らせる・#784）
-- [ ] `/symmetric-check` を実装差分に当てる（IME メッセージの抑止/通過の対・`STARTCOMPOSITION` と `ENDCOMPOSITION` の扱いが揃ったか）
+- [x] `/race-check` を実装差分に当てる（D2 は既存の `mpsc` へ確定を送る経路を足す。`/race-check` は計画段階では起動しない規約ゆえここで走らせる・#784） — 2026-10-09: `race:boundaries --base origin/main --include-removed` は全種別 0 件（`state.sender.send` は差分に在るのに拾わない——手がかりは入口であって網羅ではない）。境界は手で 1 つ立てた: subclass → `mpsc` → `drain_native_ime` は同じイベントループスレッドでフレームだけを跨ぐ。[安全]。⚠ hide の最中に IME が自動確定した Commit は次の show の最初のイベントで積まれる——旧経路（`WM_CHAR` → `ReceivedImeText` → `raw.events`）も同じ形で、回帰ではない既存の性質。D1 と D3 は同スレッド同期で [非該当]
+- [x] `/symmetric-check` を実装差分に当てる（IME メッセージの抑止/通過の対・`STARTCOMPOSITION` と `ENDCOMPOSITION` の扱いが揃ったか） — 2026-10-09: START / END とも `Suppress` へ揃った・press のみ文字・main と results の両方へ枠の再計算・`ImmGetContext` は一時値の `Drop` で解放。全候補 [不要]。⚠ `text` と `text_with_all_modifiers` は同型で取り違えが型にも単体テストにも映らない——観測は Ctrl+A で `a` が入るかだけ（委譲の変異注入 (2) と人間スモーク (e)）
 - [ ] `docs/build-commands.md` カテゴリ A（全 crate のテスト・`cargo doc`）・`npm test`・`npm run governance:check`
 - [ ] カテゴリ C: `cargo build -p snotra --release` の後に `scripts/smoke-egui.ps1 -ExePath target/release/snotra.exe` と `npm run smoke:startup`
 - [ ] カテゴリ D 相当の目視: 初回 show のバー位置・角丸・影が 2.11 と同じ（`cargo run -p snotra`）

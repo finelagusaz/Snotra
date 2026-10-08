@@ -70,13 +70,13 @@ pub(crate) struct ResultsWindow {
     /// 撃つことではない。hidden 中に色が変わっても、次の show / リサイズでこの比較が差分を検出する。
     last_background: Mutex<Option<egui::Color32>>,
     /// TOPMOST で**あるべきか**（設定サイドカー存命中だけ false・`set_topmost` が書く）。
-    /// `raw_show` が show のたびに Z 順を撃ち直すとき、撃つかどうかをこれで決める——無条件に
-    /// `HWND_TOPMOST` を撃つと、設定アプリの上に結果カードが浮く（SPEC §8.5 の一時解除を破る）。
+    /// Windows の `raw_show` が show のたびに Z 順を撃ち直すとき、撃つかどうかをこれで決める——
+    /// 無条件に `HWND_TOPMOST` を撃つと、設定アプリの上に結果カードが浮く（SPEC §8.5 の main の
+    /// 一時解除を results にも対称適用している・`commands/window.rs` の `launch_settings_process`）。
     ///
     /// **ウィンドウの実際の Z 順ではない。** 実際の帯は他プロセスに崩されうる（`raw_show` の doc）
-    /// ので、ここに持つのは意図だけである。書き手は `set_topmost` で、**別スレッドから来うる**
-    /// （トレイの「設定」は `app.listen` 経由で Win32 メッセージループのスレッドから
-    /// `launch_settings_process` に至る）。読み手との順序は `raw_show` の読み直しが閉じる。
+    /// ので、ここに持つのは意図だけである。書き手の `set_topmost` は**イベントループ以外の
+    /// スレッドから来うる**。読み手との順序は `raw_show` の読み直しが閉じる。
     topmost: AtomicBool,
 }
 
@@ -183,8 +183,9 @@ impl ResultsWindow {
     /// `SetWindowPos` で Z オーダーだけを動かす。**可視フラグは変えない**——Z 順の変更は
     /// 表示/非表示の遷移ではない。
     ///
-    /// **意図（`topmost`）を先に書き、それから撃つ。** この順序が `raw_show` の読み直しと組になって
-    /// 別スレッドとの競合を閉じる（`raw_show` の doc）。
+    /// **意図（`topmost`）を先に書き、それから撃つ。** この順序が Windows の `raw_show` の読み直しと
+    /// 組になって別スレッドとの競合を閉じる（`raw_show` の doc）。非 Windows の `raw_show` は
+    /// 撃ち直さないので、そこでは意図は書かれるだけで読まれない。
     pub(crate) fn set_topmost(&self, topmost: bool) {
         self.topmost.store(topmost, Ordering::SeqCst);
         self.apply_topmost(topmost);

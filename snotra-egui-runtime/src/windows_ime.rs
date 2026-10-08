@@ -11,9 +11,9 @@ use windows::Win32::{
     UI::{
         Input::Ime::{
             CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, CPS_CANCEL, GCS_COMPATTR,
-            GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, HIMC, ImmGetCompositionStringW,
-            ImmGetContext, ImmNotifyIME, ImmReleaseContext, ImmSetCandidateWindow,
-            ImmSetCompositionWindow, NI_COMPOSITIONSTR,
+            GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, HIMC, IME_COMPOSITION_STRING,
+            ImmGetCompositionStringW, ImmGetContext, ImmNotifyIME, ImmReleaseContext,
+            ImmSetCandidateWindow, ImmSetCompositionWindow, NI_COMPOSITIONSTR,
         },
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION},
@@ -150,7 +150,8 @@ impl Drop for PlatformIme {
     }
 }
 
-/// IME サブクラスが受けたメッセージを tao へ通すか（#532・#1266）。
+/// このメッセージを subclass が持ち、tao にも既定の IME 処理（`DefWindowProc`）にも通さないか
+/// （#532・#1266）。`true` なら `LRESULT(0)` を返し、`false` なら tao へ通す。
 ///
 /// **IME の 3 メッセージは確定を含めてすべてこの subclass が持つ。** 未確定は egui が自前で描くので
 /// 既定の変換文字列ウィンドウを作らせない（#532 の二重表示）。確定は [`ime_events_for`] が
@@ -158,23 +159,11 @@ impl Drop for PlatformIme {
 /// 通すと二重に入る——tao が `WM_IME_ENDCOMPOSITION` で `GCS_RESULTSTR` を読み直して
 /// `ReceivedImeText` を送り、`DefWindowProc` が確定から `WM_IME_CHAR` → `WM_CHAR` を作る。
 /// tao 0.35 は確定をその `WM_CHAR` から拾っていた（`minimal_ime`）ので、以前は確定を通していた。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ImeAction {
-    /// DefSubclassProc を呼ばず `LRESULT(0)`。tao にも既定の IME 処理にも届かない。
-    Suppress,
-    /// そのまま tao へ通す（DefSubclassProc）。キー入力などは tao が担う。
-    PassThrough,
-}
-
-fn classify_ime_message(message: u32) -> ImeAction {
-    if matches!(
+fn is_owned_ime_message(message: u32) -> bool {
+    matches!(
         message,
         WM_IME_STARTCOMPOSITION | WM_IME_COMPOSITION | WM_IME_ENDCOMPOSITION
-    ) {
-        ImeAction::Suppress
-    } else {
-        ImeAction::PassThrough
-    }
+    )
 }
 
 /// IME メッセージ 1 通から egui へ送るイベント列を導く（#1266）。読み出しは呼び出し側が
@@ -218,7 +207,7 @@ unsafe extern "system" fn ime_subclass_proc(
     _subclass_id: usize,
     ref_data: usize,
 ) -> LRESULT {
-    let action = classify_ime_message(message);
+    let owned = is_owned_ime_message(message);
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: ref_data was installed from a live Box<CallbackState>, and
         // Drop removes the subclass before releasing that Box.
@@ -238,20 +227,7 @@ unsafe extern "system" fn ime_subclass_proc(
         let trace = crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE");
         for event in events {
             if trace {
-                // 文字列そのものは出さない（入力内容が trace に残らないように）。
-                match &event {
-                    egui::ImeEvent::Commit(text) => {
-                        eprintln!("SNOTRA_EGUI_IME_COMMIT chars={}", text.chars().count());
-                    }
-                    egui::ImeEvent::Preedit {
-                        text,
-                        active_range_chars,
-                    } => eprintln!(
-                        "SNOTRA_EGUI_IME_PREEDIT chars={} active={active_range_chars:?}",
-                        text.chars().count()
-                    ),
-                    _ => {}
-                }
+                trace_ime_event(&event);
             }
             let _ = state.sender.send(event);
         }
@@ -264,11 +240,29 @@ unsafe extern "system" fn ime_subclass_proc(
         }
     }));
 
-    match action {
-        ImeAction::Suppress => LRESULT(0),
+    if owned {
+        LRESULT(0)
+    } else {
         // SAFETY: every non-IME message must continue through tao's own window procedure,
         // which remains responsible for key events (and the text they carry).
-        ImeAction::PassThrough => unsafe { DefSubclassProc(hwnd, message, wparam, lparam) },
+        unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+    }
+}
+
+/// `SNOTRA_EGUI_IME_TRACE` の 1 行。文字列そのものは出さない（入力内容が trace に残らないように）。
+fn trace_ime_event(event: &egui::ImeEvent) {
+    match event {
+        egui::ImeEvent::Commit(text) => {
+            eprintln!("SNOTRA_EGUI_IME_COMMIT chars={}", text.chars().count());
+        }
+        egui::ImeEvent::Preedit {
+            text,
+            active_range_chars,
+        } => eprintln!(
+            "SNOTRA_EGUI_IME_PREEDIT chars={} active={active_range_chars:?}",
+            text.chars().count()
+        ),
+        _ => {}
     }
 }
 
@@ -296,10 +290,7 @@ impl ImeContext {
     }
 
     /// kind の文字列（GCS_COMPSTR = 未確定・GCS_RESULTSTR = 確定）を UTF-16 から復号する。
-    fn composition_string(
-        &self,
-        kind: windows::Win32::UI::Input::Ime::IME_COMPOSITION_STRING,
-    ) -> Option<String> {
+    fn composition_string(&self, kind: IME_COMPOSITION_STRING) -> Option<String> {
         let bytes = self.composition_data(kind)?;
         if bytes.len() % 2 != 0 {
             return None;
@@ -321,10 +312,7 @@ impl ImeContext {
         (cursor >= 0).then_some(cursor as usize)
     }
 
-    fn composition_data(
-        &self,
-        kind: windows::Win32::UI::Input::Ime::IME_COMPOSITION_STRING,
-    ) -> Option<Vec<u8>> {
+    fn composition_data(&self, kind: IME_COMPOSITION_STRING) -> Option<Vec<u8>> {
         // SAFETY: size query does not dereference a buffer.
         let byte_len = unsafe { ImmGetCompositionStringW(self.himc, kind, None, 0) };
         if byte_len < 0 {
@@ -362,7 +350,7 @@ impl Drop for ImeContext {
 
 #[cfg(test)]
 mod tests {
-    use super::{ImeAction, classify_ime_message, ime_events_for};
+    use super::{ime_events_for, is_owned_ime_message};
     use windows::Win32::UI::Input::Ime::{GCS_COMPSTR, GCS_RESULTSTR};
     use windows::Win32::UI::WindowsAndMessaging::{
         WM_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
@@ -379,9 +367,8 @@ mod tests {
         egui::ImeEvent::Commit(text.to_owned())
     }
 
-    /// #1266: IME の 3 メッセージは確定を含めてすべて subclass が持ち、tao へも
-    /// `DefWindowProc` へも通さない。確定を通すと tao 0.37 が `ENDCOMPOSITION` で
-    /// `ReceivedImeText` を送り直し、`DefWindowProc` が `WM_IME_CHAR` → `WM_CHAR` を作る。
+    /// 確定を含む IME の 3 メッセージを tao へ通す形に戻ると二重確定になる（理由は
+    /// [`super::is_owned_ime_message`] の doc）。
     #[test]
     fn ime_messages_are_owned_by_the_subclass() {
         for message in [
@@ -389,20 +376,15 @@ mod tests {
             WM_IME_COMPOSITION,
             WM_IME_ENDCOMPOSITION,
         ] {
-            assert_eq!(
-                classify_ime_message(message),
-                ImeAction::Suppress,
-                "message={message:#x}"
-            );
+            assert!(is_owned_ime_message(message), "message={message:#x}");
         }
         // キー入力などは tao へ通す。
-        assert_eq!(classify_ime_message(WM_CHAR), ImeAction::PassThrough);
-        assert_eq!(classify_ime_message(0), ImeAction::PassThrough);
+        assert!(!is_owned_ime_message(WM_CHAR));
+        assert!(!is_owned_ime_message(0));
     }
 
-    /// 確定と未確定が同じメッセージで立つとき（変換中の続け打ちで前の文節が確定する）、
-    /// **Commit を先に送る**。egui は Commit で preedit の範囲を消してから確定を挿し、
-    /// 後続の Preedit が新しい範囲を張る——逆にすると新しい未確定が確定で上書きされる。
+    /// 変換中の続け打ちで確定と未確定が同じメッセージに立つとき、順が逆だと新しい未確定が
+    /// 確定に上書きされる（理由は [`super::ime_events_for`] の doc）。
     #[test]
     fn commit_precedes_preedit_in_the_same_message() {
         let events = ime_events_for(

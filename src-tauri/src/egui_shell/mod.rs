@@ -425,6 +425,11 @@ pub(crate) fn create(
 /// （同じ実測で main 52・results 100）。**可視性・Z 順・位置・サイズは変えない**
 /// （`SWP_SHOWWINDOW` を含めない）。失敗したら初回だけ従来どおり stale のまま残る
 /// （best-effort・[`apply_rounded_corners`] と同じ倒し方）。
+///
+/// **撤去の条件**: tao が生成時に装飾なしの非クライアント領域を作るようになったら要らない。
+/// 確かめ方は、この呼び出しを外して `scripts/smoke-egui.ps1` の toast シナリオが
+/// `egui_main:bar_rect_mismatch` を出さないこと（外すと今は出る・#1266 で実測）。tao を上げるたびに
+/// 試す価値がある——要らない回避策は、生成直後の幾何を誰も疑わなくなる形で残る。
 #[cfg(windows)]
 fn refresh_borderless_frame(window: &tauri::Window) {
     use windows::Win32::Foundation::HWND;

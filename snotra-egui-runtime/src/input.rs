@@ -407,8 +407,7 @@ impl InputState {
         // `KeyEvent` にだけ載せ、`ReceivedImeText` には載せない（0.35 は `minimal_ime` が載せていた）。
         // IME 確定は `windows_ime.rs` の subclass が `GCS_RESULTSTR` から読むので、この経路と
         // 二重にならない——tao は `event_info` の無い IME 由来の `WM_CHAR` を `KeyEvent` にしない。
-        // `admit_key` の後に置くこと: tao の合成 press も文字を持つので、前に置くと focus 復帰で
-        // 押下中のキーの文字が入る。
+        // `admit_key` の後に置くこと（合成 press も文字を持つ・理由は `admit_key` の doc）。
         if let Some(text) = typed_text_event(pressed, event.text_with_all_modifiers()) {
             self.raw.events.push(text);
         }
@@ -741,7 +740,7 @@ mod tests {
     }
 
     /// Ctrl 併用は `text_with_all_modifiers` が制御文字（Ctrl+A なら `"\x01"`）を返すので弾かれる。
-    /// **`KeyEvent.text` を使うとここが `"a"` になり、Ctrl+A で `a` が入る**——取り違えを捕まえる。
+    /// 呼び出し点で `KeyEvent.text` と取り違える形はこのテストに映らない（`KeyEvent` を組み立てられない）。
     #[test]
     fn typed_text_drops_control_characters_and_releases() {
         for control in ["\x01", "\r", "\u{8}", "\t", "\u{1b}"] {

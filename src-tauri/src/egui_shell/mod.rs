@@ -383,7 +383,7 @@ pub(crate) fn create(
     }
     // #671 PR A′: attach は window を move するため、その**前**に clone から所有型を作る。
     // `tauri::Window` は Arc ベースのハンドルで、clone は同一ウィンドウを指す（tauri 2.11 の
-    // `impl Clone for Window` を実測）。
+    // `impl Clone for Window` を実測・2.12.1 も同じ）。
     let results_window = ResultsWindow::new(results.clone());
     // attach はウィンドウごとの wake handle を返す（#671 PR D）。**results を先に attach する順序は
     // 変えない**——`ResultsWindow::new` は attach の move より前でなければならず（PR A′）、

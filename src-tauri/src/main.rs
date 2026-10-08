@@ -298,7 +298,7 @@ fn main() {
             //
             // 1. **この setup ブロック自体がイベントループの 1 イテレーション内で走る。**
             //    tauri は setup フックを `RuntimeRunEvent::Ready` の処理中に呼ぶ
-            //    （tauri 2.11.4 `src/app.rs` の `make_run_event_loop_callback`）。この間
+            //    （tauri 2.12.1 `src/app.rs` の `make_run_event_loop_callback`）。この間
             //    メッセージポンプは停止しており（「ウィンドウ生成の制約」と同じ機構）、
             //    wry plugin の `on_event`＝`attach_pending_windows` は setup の復帰後にしか
             //    走らない。**「setup はイベントループより前」ではない**——同じ 1 イベントの

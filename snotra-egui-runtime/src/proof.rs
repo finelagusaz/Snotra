@@ -7,7 +7,7 @@
 //!
 //! **相互排他は lock ではなく tao の runner が与える。** `call_event_handler` は
 //! `event_handler.take()` してから呼び（非再入）、`send_event` はハンドラ実行中のイベントを
-//! `event_buffer` へ回す（tao 0.35.3 `event_loop/runner.rs`）。ゆえにイベントループ上の
+//! `event_buffer` へ回す（tao 0.37.1 `event_loop/runner.rs`・0.35.3 から変わっていない）。ゆえにイベントループ上の
 //! 2 つの処理は互いに割り込めない。**lock を足してはならない**——ウィンドウを所有しないスレッドからの
 //! `ShowWindow` は所有スレッドのポンプ待ちでブロックしうるため、イベントループ側も取る lock は
 //! race をデッドロックへ化けさせる。
@@ -37,7 +37,7 @@ impl EventLoopProof {
 
 /// フレームの外からイベントループスレッドへ入る唯一の口。
 ///
-/// **遅延 primitive ではない。** `AppHandle::run_on_main_thread` は `tauri-runtime-wry` の `send_user_message` へ落ち、**イベントループスレッドから呼ぶとその場で同期・再入的に実行される**（`src/lib.rs:235-255` の `current_thread().id() == context.main_thread_id` 分岐）。別スレッドからは `PostMessageW` で post して即座に戻る。ゆえにフレーム内から出た要求は今日と同じフレーム内順序を保つ。
+/// **遅延 primitive ではない。** `AppHandle::run_on_main_thread` は `tauri-runtime-wry` の `send_user_message` へ落ち、**イベントループスレッドから呼ぶとその場で同期・再入的に実行される**（2.12.1 の `src/lib.rs:263-280` の `current_thread().id() == self.main_thread_id` 分岐）。別スレッドからは `PostMessageW` で post して即座に戻る。ゆえにフレーム内から出た要求は今日と同じフレーム内順序を保つ。
 ///
 /// **hidden なウィンドウでも走る。** Task の受け口は tao が別に建てる `thread_msg_target`
 /// （0×0・`WS_EX_LAYERED` ゆえ不可視・イベントループの寿命と同じ）であり、アプリウィンドウの可視性とは

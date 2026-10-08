@@ -83,12 +83,12 @@ tao 0.37.1 は装飾なしの `WM_NCCALCSIZE` 処理が繋がる前に `SWP_FRAM
 
 ### Phase 4: 文書と版根拠（受入 5）
 
-- [ ] `snotra-egui-runtime/CLAUDE.md` の IME 2 項目を D1 / D2 の新しい不変条件へ書き換える（通常文字は `KeyEvent::text_with_all_modifiers`・IME 確定は subclass が `GCS_RESULTSTR` から読む・`ENDCOMPOSITION` と確定 `WM_IME_COMPOSITION` を tao へ通さない理由）
-- [ ] 「focus を獲得した瞬間に押されていたキー」項の tao 根拠を 0.37.1 の行へ差し替え、`PendingEventQueue` で合成 press の順序保証が弱まった受容残余を書く（破綻するのは遅れた press が次の `Focused(false)` の後に届く並びだけ・adversarial 争点 5）
-- [ ] `src-tauri/CLAUDE.md` の 4 項の版根拠を 2.12.1 / 0.37.1 で読み直して差し替える。「宣言的なウィンドウ属性」項の `MARKER_DONT_FOCUS` の機序は、0.37.1 では生成直後に remove されると直す（結論は不変）
-- [ ] 変更ファイル表の「コメントの版根拠」の各行を、新版のソースを読んで差し替える（行番号が変わったものは新しい行へ・挙動が変わったものは文を直す）
-- [ ] D3 の再計算について、`window_coordinator.rs:1136`（非クライアント分）の doc から生成時の前提へ辿れるようにする
-- [ ] 撤去の語彙検査: `git grep -n "ReceivedImeText\|minimal_ime\|tao-0.35\|tao 0.35\|0.35.3\|2\.11\.[0-9]"` を走らせ、残った出現を「歴史の記述」と「在る前提の記述」へ振り分けて後者を直す（`docs/superpowers/` と `docs/adr/` は前者）
+- [x] `snotra-egui-runtime/CLAUDE.md` の IME 2 項目を D1 / D2 の新しい不変条件へ書き換える（通常文字は `KeyEvent::text_with_all_modifiers`・IME 確定は subclass が `GCS_RESULTSTR` から読む・`ENDCOMPOSITION` と確定 `WM_IME_COMPOSITION` を tao へ通さない理由）
+- [x] 「focus を獲得した瞬間に押されていたキー」項の tao 根拠を 0.37.1 の行へ差し替え、`PendingEventQueue` で合成 press の順序保証が弱まった受容残余を書く（破綻するのは遅れた press が次の `Focused(false)` の後に届く並びだけ・adversarial 争点 5）
+- [x] `src-tauri/CLAUDE.md` の 4 項の版根拠を 2.12.1 / 0.37.1 で読み直して差し替える。「宣言的なウィンドウ属性」項の `MARKER_DONT_FOCUS` の機序は、0.37.1 では生成直後に remove されると直す（結論は不変）
+- [x] 変更ファイル表の「コメントの版根拠」の各行を、新版のソースを読んで差し替える（行番号が変わったものは新しい行へ・挙動が変わったものは文を直す）
+- [x] D3 の再計算について、`window_coordinator.rs:1136`（非クライアント分）の doc から生成時の前提へ辿れるようにする
+- [x] 撤去の語彙検査: `git grep -n "ReceivedImeText\|minimal_ime\|tao-0.35\|tao 0.35\|0.35.3\|2\.11\.[0-9]"` を走らせ、残った出現を「歴史の記述」と「在る前提の記述」へ振り分けて後者を直す（`docs/superpowers/` と `docs/adr/` は前者） — 2026-10-09: 残った出現は移行の描写（`input.rs` / `windows_ime.rs` / `CLAUDE.md` の「0.35 は〜していた」）と日付付きの実測（`SPEC.md:449`・`src-tauri/CLAUDE.md` の「2.11.4 で実測、2.12.1 で再確認」）だけ。版根拠はすべて 2.12.1 / 0.37.1 のソースで読み直した: `emit_filter` 同期実行・setup の `Ready` arm（`app.rs:1442`）・`impl Clone for Window`・`send_user_message` の分岐（`lib.rs:263-280`）・`SetCursor` 直呼び（`window.rs:424-428`）・runner の `event_buffer`・`WM_NULL` のハンドラ皆無・`apply_diff` の早期 return（`window_state.rs:318`）と末尾 `SW_HIDE`（`:408`）・`set_background_color` が `apply_diff` を通らない。`MARKER_DONT_FOCUS` の機序だけ記述を直した（生成直後に外れる・`window.rs:1419`）
 
 ### Phase 5: 検証
 

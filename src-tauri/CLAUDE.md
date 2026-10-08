@@ -139,7 +139,7 @@ runtime はイベント駆動（`RedrawRequested` 待ち）で通常フレーム
 
 Shell のトレイコールバック (`uCallbackMessage`) は `SendMessage` で配送される場合があり、`GetMessageW` ループに到達しない。カスタムメッセージ (`WM_APP + N`) をウィンドウプロシージャ (`DefWindowProcW`) だけで処理すると消滅するため、`platform_default_wnd_proc` で検出して `PostThreadMessageW` でスレッドキューに再投入する設計にしている。
 
-**`app.listen` のコールバックは emit した呼び出し元スレッド上で同期実行される**（tauri 2.11.4 の `event/listener.rs::emit_filter` が別スレッドへ dispatch せず直接呼ぶ・実測）。ゆえに listener の中身は「emit 元のスレッドで走るコード」である——Win32 メッセージループスレッド（hotkey）・config 監視スレッド・index build スレッドが、そのまま managed state やウィンドウ API を触る。**listener を足すことは worker を足すことと同じ**であり、並行境界として扱う（→ `/race-check`）。
+**`app.listen` のコールバックは emit した呼び出し元スレッド上で同期実行される**（tauri の `event/listener.rs::emit_filter` が別スレッドへ dispatch せず直接呼ぶ・2.11.4 で実測、2.12.1 のソースで再確認）。ゆえに listener の中身は「emit 元のスレッドで走るコード」である——Win32 メッセージループスレッド（hotkey）・config 監視スレッド・index build スレッドが、そのまま managed state やウィンドウ API を触る。**listener を足すことは worker を足すことと同じ**であり、並行境界として扱う（→ `/race-check`）。
 
 NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application キー）によるコンテキストメニュー要求は `uCallbackMessage` を経由せずウィンドウプロシージャに直接 `WM_CONTEXTMENU` として届く。`platform_default_wnd_proc` で同様に再投入することで `handle_tray_message` に統一している。
 
@@ -149,7 +149,7 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 
 ウィンドウの生成は必ず setup フェーズで行い、ランタイムでは show/hide のみで制御する（メインウィンドウは `egui_shell::create`・setup 限定）。イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）はメッセージポンプが 1 イテレーション内で停止しており、ポンプ進行を要する操作（ウィンドウ生成・COM STA 初期化・モーダルダイアログ等）はデッドロックする——「メインスレッドにいる」と「メッセージポンプが自由に回る」は別物（旧 WebView2 期に実測した不変条件・egui ウィンドウでも生成は setup 限定を維持）。メインウィンドウは `decorations: false` で閉じるボタンを持たないため `CloseRequested` ハンドラは不要。
 
-**setup フック自身もイベントループの中で走る**（#671 PR D で一次資料を確認・tauri 2.11.4 `src/app.rs` の `make_run_event_loop_callback` が `RuntimeRunEvent::Ready` の arm で setup を呼ぶ）。**「setup はイベントループより前」ではない。** 帰結が 2 つある:
+**setup フック自身もイベントループの中で走る**（#671 PR D で一次資料を確認・tauri `src/app.rs` の `make_run_event_loop_callback` が `RuntimeRunEvent::Ready` の arm で setup を呼ぶ。2.12.1 でも同じ）。**「setup はイベントループより前」ではない。** 帰結が 2 つある:
 
 - setup ブロックの実行中は wry plugin の `on_event` が回らないため、**egui フレームは 1 枚も走らない**。ゆえにウィンドウ生成（`egui_shell::create`）より**後**に managed state を載せてよい（`EguiShellState` の manage 位置がこれに依る）
 - 上段のポンプ停止の話は setup にも当てはまる。setup 内で「ポンプが回ること」を期待する操作（`run_on_main_thread` の完了待ち等）を足してはならない
@@ -175,12 +175,12 @@ Latin と CJK が混在する行のベースラインずれは、**softbuffer �
 - Win32 関連の不具合では、まず `config.toml`（テーマ含む）を確認し、次にウィンドウライフサイクル順序、最後に API 呼び出しを調査する（白画面バグの真因がテーマ設定だった事例あり）
 - Rust クレートをバージョン昇格する際は、対象バージョンが crates.io に実在・正当であることを確認する。大版ジャンプを前提にしない（例: `bincode 3.0.0` は `compile_error!` のみを含むジョークパッケージでコンパイル不能）
 - `windows` クレート（現在 v0.62）はバージョンごとに API シグネチャが変わる（`Result` 型の有無、ハンドル型の変更など）。コードを書く前に、使用中のバージョンで対象 API が利用可能か・型が一致するかを確認する
-- **宣言的なウィンドウ属性（`focusable(false)` 等）で挙動を代替させる判断は、その属性を読む側の「全分岐」を確かめてから確定する。** tao はスタイル計算（`window_state.rs` の `to_window_styles`）で `!FOCUSABLE → WS_EX_NOACTIVATE` を付ける一方、`apply_diff` の `ShowWindow` 分岐は**別の条件**（`MARKER_DONT_FOCUS`・ウィンドウ生成時に 1 回だけ立ち初回 show で消費）で `SW_SHOW`（活性化する）と `SW_SHOWNOACTIVATE` を選ぶ。前者だけ読んで「この属性で足りる」と結論すると、**クリックでは奪われないのに表示で奪われる**非対称を踏む（#646 PR2・実機スモークでのみ露見）。属性が効く経路と、同じフラグを読む他の経路は別物である
+- **宣言的なウィンドウ属性（`focusable(false)` 等）で挙動を代替させる判断は、その属性を読む側の「全分岐」を確かめてから確定する。** tao はスタイル計算（`window_state.rs` の `to_window_styles`）で `!FOCUSABLE → WS_EX_NOACTIVATE` を付ける一方、`apply_diff` の `ShowWindow` 分岐は**別の条件**（`MARKER_DONT_FOCUS`）で `SW_SHOW`（活性化する）と `SW_SHOWNOACTIVATE` を選ぶ。`MARKER_DONT_FOCUS` を決めるのはウィンドウ生成時の `focused` 属性で、tao 0.37.1 は生成直後にそれを外す（`window.rs` の生成経路）ので、以後の show は常に `SW_SHOW` を選ぶ。前者だけ読んで「この属性で足りる」と結論すると、**クリックでは奪われないのに表示で奪われる**非対称を踏む（#646 PR2・実機スモークでのみ露見）。属性が効く経路と、同じフラグを読む他の経路は別物である
 - **あるウィンドウの show / hide / topmost のいずれか 1 つが tao を迂回したら、残り 2 つも必ず迂回側へ寄せる。混在は許されない。** `apply_diff` はフラグ差分がゼロなら早期 return し、`VISIBLE` を持たないウィンドウには `SW_HIDE` を副作用で撃つ。片方だけ raw にすると「`hide()` が何もしない」「`set_always_on_top` でウィンドウが消える」が同時に生まれる（#646 PR2）。ウィンドウごとの層は次で固定する:
   - main（主ウィンドウ）= 3 操作すべて tao 経由（tauri `show` / `hide` / `set_always_on_top`）
   - results（従属ウィンドウ）= 3 操作すべて raw（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）。実装は `egui_shell::ResultsWindow` に集約する（#671 PR A′）。**ただし表現不能化ではない**——`Manager` から results の生ハンドルを引いて `.hide()` を呼ぶ書き方は依然コンパイルが通り、黙って no-op する（正しい経路を 1 つにしただけ・spec §7-1）
   - **「main の show だけ raw にして統一する」は禁止。** main の tao `VISIBLE` が stale 化し、`set_always_on_top` が main を消す（`commands/window.rs` の topmost 対称がその瞬間に凶器になる）
-  - **新しい操作を raw へ寄せるかは、「`apply_diff` を通るか」ではなく「フラグ差分が生じるか」で判定する。** `set_size` / `set_position` も `set_window_flags(MAXIMIZED=false)` 経由で `apply_diff` に**入る**が、results では MAXIMIZED が元から false ゆえ差分が空になり冒頭 return で助かる（tao 0.35.3 で実測）。ゆえに tao 経由のままでよい。一方**差分を生む操作**（`set_resizable` 等）は `apply_diff` 末尾の `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し results ウィンドウを消す
+  - **新しい操作を raw へ寄せるかは、「`apply_diff` を通るか」ではなく「フラグ差分が生じるか」で判定する。** `set_size` / `set_position` も `set_window_flags(MAXIMIZED=false)` 経由で `apply_diff` に**入る**が、results では MAXIMIZED が元から false ゆえ差分が空になり冒頭 return で助かる（tao 0.35.3 で実測、0.37.1 のソースで再確認）。ゆえに tao 経由のままでよい。一方**差分を生む操作**（`set_resizable` 等）は `apply_diff` 末尾の `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し results ウィンドウを消す
   - **可視性は「誰が撃つか」だけでは閉じない — 撃ってよい状況かは show 述語側のゲートで判定する。** main が hidden の間に results が出る事故は show 述語側のゲート（`egui_shell::layout::present_results` が `AppState.main_visible` を連言①として合流させる）が塞ぐ。`ResultsWindow` は raw 操作の所有点であって、撃ってよい状況かは判定しない（#671 PR A′ で実機発見）
   - **可視性を変える操作はイベントループスレッドに閉じてある — 新しい可視性操作にも `&EventLoopProof` を要求する。** `show_egui_main` / `hide_egui_main` / `drive_results_window` / `ResultsWindow::{show, hide}` は `&snotra_egui_runtime::EventLoopProof`（`!Send + !Sync`・crate 外で構築不能）を引数に要求し、**別スレッドからの呼び出しはコンパイルが通らない**。フレームの中は `RuntimeFrame::event_loop()`、外は `on_event_loop` が唯一の口である。**証人を引数から外してはならない**——外した瞬間に「フラグ = false・ウィンドウ = 可視」の並びが再び構築可能になる（下の「`results 可視 ⇒ main 可視` は事前ゲート 1 点で守る」の項）
   - **可視性を変える 5 関数の閉包は表現不能化ではない。閉じたのはその 5 関数であって、`tauri::Window` の生の面ではない。** `Manager` から main のハンドルを引いて `.hide()` / `.show()` を呼ぶ書き方は任意のスレッドからコンパイルが通り、**results と違って実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確である）。そのとき `AppState.main_visible` は更新されないため、**results が既に可視であれば最前面に取り残される**——main が hidden の間は `RedrawRequested` が配送されず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 PR A′ で実機発見した症状）。**results が新たに出ることはない**（同じ理由でフレームが走らない）ので、危険なのは既に可視だった場合に限る。**#880 サイクル段 2 時点でこの書き方の呼び出し点は無く**（main に対する `window.hide()` は `hide_egui_main` の 1 か所のみ。`results_window.rs` の非 Windows fallback は results ウィンドウゆえ別・grep 実測）、ゆえに現状の欠陥ではなく**受容する残余**である。main を隠す新しい経路が要るなら `hide_egui_main` を通すこと

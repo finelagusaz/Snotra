@@ -1,0 +1,110 @@
+adversarial-1269: research.md の主張への反証調査
+方法: 一次資料の読解のみ。ビルド・起動・実打鍵はしていない。実測が要る所見は ⚠️ を付けた。
+行番号は tao-0.37.1/src/platform_impl/windows/ 配下（keyboard.rs = K、event_loop.rs = E）と snotra-egui-runtime/src/ 配下。
+
+=== 争点 5 件 ===
+
+[1] 「離上の後の WM_CHAR は捨てる。event_info を立てるのは KEYDOWN/SYSKEYDOWN と DEADCHAR だけ」
+  判定: 前半 = 壊せなかった。後半 = 壊せた（DEADCHAR は誤記）。
+  根拠:
+  - event_info を Some にする箇所は K:137-149 の 1 箇所だけ。KEYDOWN/SYSKEYDOWN 分岐で、次メッセージが KEYDOWN/SYSKEYDOWN/KEYUP/SYSKEYUP 以外のときに限る。
+  - DEADCHAR 分岐（K:172-185）は event_info を立てない。`self.event_info.lock().take().unwrap()` で消費するだけ。「立てる」は誤り。
+  - WM_KEYUP 分岐（K:285-）は event_info を立ても消しもしない。
+  - WM_CHAR 分岐（K:188-196）は event_info が None なら Nothing を返す。
+  - 副次の発見: WM_KEYDOWN の先頭で `*event_info = None`（K:138）。WM_CHAR の末尾は take()。このため通常は孤立 WM_CHAR のとき None になる。
+  - ⚠️ 「離上の後なら必ず捨てる」は強すぎる。KEYUP が event_info を消さないので、直前の KEYDOWN が event_info=Some を残したまま文字が来なかった場合は、孤立 WM_CHAR がそこに連結されうる。例は "next_belongs_to_this" と判定された後に subclass が WM_CHAR を奪った場合。その場合 KeyEvent は一度も出ず、次の KEYDOWN まで Some のまま残る。今の Snotra は WM_CHAR を奪わないので現状では起きないが、争点 3 の実装でこの罠に落ちる。
+  - 反証される場合: Alt 離上の KEYUP(VK_MENU) の直前に、next が WM_CHAR になる KEYDOWN があり、その CHAR がまだ消費されていない場合。または K:143 の next_msg 判定が Alt-code で別の値を返す場合。
+  この所見を偽にする手順: 実機で Alt+6,5 を打ち、tao のバイナリに trace を付けて WM_CHAR 到着時の event_info.is_some() を出す。Some なら KeyEvent が出ているはずで、rx_key の件数が合う。⚠️ 未実施。
+
+[2] 「Alt+テンキーの合成文字は Alt 離上の後の WM_CHAR で届く → 0.37.1 では捨てられ、0.35.3 では minimal_ime 経由で入った」
+  判定: 0.35.3 側 = 壊せなかった（コードから）。「離上の後に届く」の部分 = ⚠️ 未実測。
+  根拠:
+  - 0.35.3 minimal_ime.rs:10-21 は WM_CHAR と WM_SYSCHAR を IME 関連と数える。
+  - 同:50-52 は result を Value(0) にし、getting_ime_text が false なら即座に `String::from_utf16(&[wparam])` を返す。
+  - 0.35.3 event_loop.rs:1000-1018 はそれを ReceivedImeText として送る。ゆえに KeyEvent の有無と無関係に、すべての WM_CHAR/WM_SYSCHAR が文字になった。
+  - 0.35.3 側の keyboard.rs（:173-）も event_info==None で `vec![]` を返す点は 0.37.1 と同じ。差は minimal_ime の有無だけ。
+  - 0.37.1 には minimal_ime.rs が無い（ディレクトリ一覧で確認。ime.rs が代わりに在る）。
+  - ⚠️ 「Alt-code の WM_CHAR は離上の後」は Win32 の既知挙動（TranslateMessage が最後の Alt の KEYUP から WM_CHAR を作る）としては通説だが、このリポジトリ内に一次証拠が無い。issue 本文自身も「見込み」と書いている。
+  - ⚠️ WM_SYSKEYUP か WM_KEYUP かは、K:285 では両方同じ分岐なので影響しない。WM_CHAR か WM_SYSCHAR かも、K:188 が両方を同じ分岐で受けるので同じ。ただし E:2182 は WM_SYSCHAR を DefWindowProc にする。K の分岐が result を変えない孤立 SYSCHAR は DefWindowProc に落ちる（既定動作はビープの可能性。未測）。
+  この所見を偽にする手順: Alt-code の WM_CHAR が KEYUP の前（WM_SYSKEYDOWN の直後）に来る、または event_info が Some のときに来ると分かれば偽。確かめ方は WM_CHAR/WM_SYSCHAR/WM_KEYUP/WM_SYSKEYUP の到着順を Spy++ 相当で記録する（subclass に一時ログを入れる手もあるが、今回はビルド禁止なので未実施）。
+
+[3] 「subclass は tao の wndproc より前。WM_CHAR を LRESULT(0) で止めて mpsc の Commit で送れば、受信側（drain_native_ime → push_ime_event）を変えずに入る」
+  判定: 順序と受信側 = 壊せなかった。「止めて」の部分 = 壊せた。
+  根拠:
+  - windows_ime.rs の ime_subclass_proc は SetWindowSubclass（新しい subclass が先に呼ばれる）で、非所有メッセージは DefSubclassProc で tao へ通す。受信側 runtime.rs:537 の drain_native_ime は Commit をそのまま積む（input.rs:208）。
+  - ただし LRESULT(0) で止めるのは危険。tao は KeyEvent を WM_CHAR の到着時に初めて出す（K:229-281）。通常打鍵の WM_CHAR を奪うと KeyEvent が出なくなり、event_info も Some のまま残る（上の [1]）。ゆえに「止める」のは孤立と判定できた WM_CHAR だけにする。
+  - 孤立 WM_CHAR なら止める必要も無い。tao は孤立 CHAR を KeyEvent にせず捨てるだけなので、通して Commit を送っても二重にならない。止めるかどうかの議論自体が不要。
+  - ⚠️ egui::ImeEvent::Commit を IME が無効な状況で積むと、egui の TextEdit が受けるかは未確認。現在 Commit は通常文字にも使われている（input.rs:454-463）ので、受理される見込みは高い。
+  この所見を偽にする手順: subclass で WM_CHAR を無差別に奪う実装を作り、通常の英字入力で rx_key は出るのに文字が入らない（または rx_key 自体が出ない）ことを実機で確認すれば、「止める」が誤りだと確定する。
+
+[4] 「現状、DefWindowProc の WM_IME_CHAR → WM_CHAR は IME メッセージを subclass が所有することで抑止済み。日本語 IME の確定が event_info 無し WM_CHAR として届く経路は無い」
+  判定: 壊せなかった。ただし全称が強い（下限の主張へ弱めるべき）。
+  根拠:
+  - windows_ime.rs の is_owned_ime_message は COMPOSITION/START/END の 3 つを LRESULT(0) で止める。DefWindowProc は WM_IME_COMPOSITION から WM_IME_CHAR を作るため、止めれば作られない。
+  - ADR（ADR-ime-commit-owned-by-subclass.md:21）自身が「TSF 系の別 IME は未測」と書く。実打鍵は日本語 IME 1 種だけ。
+  - 反証候補（コードから導けるが未測）: (a) IME 自身が PostMessage で WM_IME_CHAR / WM_CHAR を直接送る場合（旧式 IME・手書き・OSK）。(b) WM_IME_COMPOSITION に GCS_RESULTSTR が立たず確定が WM_IME_CHAR で来る場合。(c) 日本語 IME のモードが直接入力の場合は通常の KEYDOWN→CHAR で event_info があるので別経路。いずれも subclass は WM_IME_CHAR を所有していない（is_owned_ime_message に入っていない）。
+  - 検算: 「経路が無い」と断言できる根拠は、所有する 3 メッセージ以外の IME メッセージ（WM_IME_CHAR, WM_IME_KEYDOWN, WM_IME_NOTIFY など）を網羅した調査が無いこと。⚠️
+  この所見を偽にする手順: ime_off_on_show=false の状態で TSF 系 IME（Microsoft IME の新旧、Google 日本語入力、絵文字パネル Win+.）から確定し、WM_CHAR が event_info 無しで届くかを subclass に一時ログして調べる。届けば偽。
+
+[5] 「孤立 WM_CHAR を subclass が拾って tao の KeyEvent と二重にならないようにするには、tao の event_info 判定を subclass 側へ写すしかない」
+  判定: 壊せた（「しかない」は偽）。
+  根拠:
+  - 孤立と判定できなくても二重を避ける代替がある。(i) subclass が直前に見たキーメッセージ種別（KEYUP/SYSKEYUP の直後か）だけを覚える。tao の event_info の写しより小さい。(ii) 二重になるのは「tao が KeyEvent を出す WM_CHAR」を subclass も Commit する場合だけで、孤立 CHAR は tao が捨てるので重ならない。(iii) 逆向きに、tao の KeyEvent 側で text を見て、Alt が離上済みかつ text を持つ KeyEvent を判別することもできる（ただし KeyEvent が出ない現状では不可）。
+  - lParam の bit 31（遷移状態）で見分ける案は Microsoft の文書が「WM_CHAR では常に 0」とするので当てにならない。⚠️ ただし Alt-code の WM_CHAR が KEYUP 由来でこのビットを立てる実装差があるかは未測。
+  - 写しを置くと、K の判定規則が tao 更新で変わったとき黙って二重になるか取りこぼす。
+  この所見を偽にする手順: 「直前のキーメッセージが KEYUP/SYSKEYUP である WM_CHAR」を孤立と見なす方式が、通常打鍵（KEYDOWN→CHAR）と IME・dead key・リピート・AltGr でも誤判定しないことを一覧化し、1 件でも誤判定が出れば写しが要る。
+
+=== research.md の各主張（母集団） ===
+
+壊せなかった項目:
+- K の WM_KEYDOWN/SYSKEYDOWN 分岐で `*event_info = None` から始め、次メッセージが非キーなら部分情報を残す（K:138-149）。
+- WM_CHAR 分岐は event_info が None なら "probably IME, returning" で Nothing（K:190-196）。続く CHAR が無ければ take() で消費（K:238-244）。
+- WM_KEYUP 分岐は event_info を立てない（K:285-）。
+- input.rs の KeyboardInput arm → typed_text_event（押下時のみ）、committed_text_event が空と制御文字を弾く（input.rs:454-463）。
+- subclass は SetWindowSubclass で tao より前、is_owned_ime_message は IME 3 メッセージのみ所有、WM_CHAR は所有しない（テストで固定。windows_ime.rs 末尾のテスト）。
+- 注入プローブの忠実度が疑わしいという記述。理由を補強する: keybd_event(VK_NUMPAD6) は物理キーとスキャンコードが実キーボードと違い、NumLock off の実キーはカーソルキー（VK_RIGHT 等）になるはずで、Alt-code は NumLock on でしか成立しない。注入が通る枝（SYSKEYDOWN の直後に SYSCHAR が付く = event_info 有り）と実機の枝（CHAR が Alt の KEYUP 後 = event_info 無し）は別と考えるのが自然。プローブの「押すたびに 1 文字入った」は枝が違う証拠で、「離上の合成文字は入らなかった」だけが実機と同じ枝の証拠になりうる。
+- 孤立 WM_CHAR の文字値の注意（サロゲート 2 分割・制御文字は弾く）。tao 側の復号は K:211-228。
+- ADR が「TSF 系は未測」と記録している点（ADR:21）。
+
+壊せた項目:
+- 「DEADCHAR が event_info を立てる」: 誤り。take() で消費する（K:172-185）。
+- 「止めて送れば」: 争点 3 の通り。無差別に奪うと KeyEvent と event_info を壊す。
+- 「写すしかない」: 争点 5 の通り。
+- 関連シンボルの trace 種別の列挙（research.md 18 行目）: push_text は ReceivedImeText の arm（tripwire）にしか無い（input.rs:324 の 1 箇所のみ。grep で確認）。通常文字を KeyEvent から積む経路（input.rs の on_keyboard_event 末尾）は trace を出さない。ゆえに計器の説明は main では「通常文字が入ったか」を示さない。
+- 「再利用できる既存パターン」で「確定と同じ経路で孤立した WM_CHAR を送れる」: 経路は再利用できるが、送ると push_text/rx_text は出ない（mpsc から push_ime_event へ入るだけで trace 無し。input.rs:208-210）。計器が増えない。
+
+⚠️ 確信の持てない項目:
+- Alt-code の CHAR が離上のどのメッセージの後か（未解決の疑問 3 と同じ）。
+- 孤立 SYSCHAR が E:2182 の DefWindowProc に落ちたときの副作用（ビープ等）。
+- Alt+0169（BMP 内）以外、Alt+Unicode（レジストリ有効時の + 入力）は対象外かの確認。
+- 未解決の疑問 4（タッチキーボード・絵文字パネル・音声入力）は、一次資料が無く壊せも支持もできない。
+
+=== 測定環境の所見 ===
+
+1. 実 config（%APPDATA%/Snotra/config.toml）
+  - hotkey = Alt+Q、ime_off_on_show = true、hotkey_toggle = true、auto_hide_on_focus_lost = false。
+  - 影響: ホットキーの Alt+Q で表示したとき、Alt はまだ押下中。tao は WM_SETFOCUS で押下中キーの合成 press を作る（K:103-107、input.rs の admit_key 参照）。Alt の離上はウィンドウが受ける最初の KEYUP になる。Alt-code の再現手順を「Alt+Q で出す → 続けて Alt を離さず 6 5」とやると、Alt は押下継続で WM_SYSKEYDOWN が来ない（もう押されている）。本来の再現は一度 Alt を離してから Alt 押下 → 6 5 → 離上にする。手順書にこの区別が無い。
+  - ime_off_on_show=true は IME をオフにするだけなので、日本語 IME の確定経路はテストされない。Alt-code の検証と IME の二重確定の検証は別個に走らせる必要がある。
+  - ⚠️ 実 config の paths.scan は C:/ 全体を含むため、起動時に重いスキャンが走り、trace のタイミングが歪む可能性。使い捨てプロファイル（SNOTRA_CONFIG_DIR）を使うべき。
+
+2. trace 計器が「Alt-code の文字が入った / 捨てられた」を区別できるか
+  - SNOTRA_EGUI_INPUT_TRACE:
+    - rx_key（runtime.rs:215-228）は state / physical / synthetic だけを出し、text を出さない。文字を持つ KeyEvent と持たない KeyEvent は区別できない。
+    - rx_text と push_text は ReceivedImeText のときだけ。main では「0 件が正常」なので、Alt-code が入っても入らなくても出ない。
+    - push_key は mapped を出すが text は出さない。
+    - take は events 件数を出す。events が 1 つ増えるかで Commit の有無を粗く見られるが、キーイベントと混ざる。
+    - 結論: この計器では入った / 捨てられたを区別できない。0.35.3 のビルドでは rx_text が出たので、ビルド間の比較は「0.35 は rx_text がある、main は無い」という計器の差で一致して見える。偽の回帰証拠にもなる。
+  - SNOTRA_TRACE の egui_input:changed（search_flow.rs:247）は before_chars / after_chars を出す。実際に TextEdit が変わった結果を見るのでこれだけが区別できる。条件: その入力が TextEdit に届くこと（フォーカス）と、SNOTRA_TRACE が有効なこと。Alt-code のテスト中は検索ボックスが空であることが望ましい（after_chars の差が見やすい）。
+  - 結論: Alt-code の判定は egui_input:changed の after_chars の増減だけで行う。rx_key は「Alt の KEYUP が届いたか」の確認用にとどめる。
+
+3. 注入プローブ
+  - keybd_event で Alt を押したまま VK_NUMPAD6 / VK_NUMPAD5 を注入すると、システムの Alt-code 蓄積（NumLock on のテンキーでのみ働く）を通らず、SYSKEYDOWN→SYSCHAR 経路（event_info 有り）に乗った可能性が高い。観測の「1 文字ずつ入る」と一致する。
+  - SendInput + スキャンコード + NumLock on、または実キーボードでないと実機の枝を測れない。プローブは「注入が別の枝を通る」ことの証拠にはなるが、回帰の有無の証拠にはならない。⚠️ 未実測。
+
+4. tao の trace! ログ
+  - Snotra のワークスペースに env_logger / tracing_subscriber / tauri_plugin_log 等のロガー初期化は見つからなかった（grep 0 件）。tao の `trace!("... probably IME, returning.")` はロガー無しでは出ない。⚠️ 依存先 crate（tauri-plugin-log など）が間接的に初期化している可能性は未確認。出ていれば RUST_LOG=tao=trace で孤立 CHAR を直接観測できる。出ていなければ、孤立 CHAR の観測は subclass への一時ログが必要。
+
+=== 要約 ===
+壊せた: [1] の DEADCHAR 記述、[3] の「止めて」、[5] の「しかない」、research の trace 種別の説明（push_text は tripwire 専用で通常文字では出ない）。
+壊せなかった: 0.37.1 が event_info 無し WM_CHAR を捨てること、0.35.3 が minimal_ime で全 CHAR を送っていたこと、subclass が tao より前であり mpsc の Commit が受信側を変えずに使えること、IME の 3 メッセージ所有。
+⚠️: Alt-code の WM_CHAR の到着順、TSF 系の別 IME、孤立 SYSCHAR の副作用、tao のログ可視性、注入プローブの枝。

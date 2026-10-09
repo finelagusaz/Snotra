@@ -55,8 +55,8 @@
 
 ### Phase 1 — 記録
 
-- [ ] `snotra-egui-runtime/CLAUDE.md` の「一般」へ残余の項を足す
-- [ ] `npm run governance:check` が緑であることを確かめる
+- [x] `snotra-egui-runtime/CLAUDE.md` の「一般」へ残余の項を足す
+- [x] `npm run governance:check` が緑であることを確かめる（17 件 passed・exit 0）
 
 ## 未確定（実装前に潰す）
 

@@ -376,8 +376,10 @@ try {
 
   # --- パスクエリ打鍵（#1004）----------------------------------------------
   # `c:\` は has_path_sep が真になり incremental cache が無効化される＝全件走査の経路。
-  # 打鍵から結果までのフレームが予算を超えないことを H6 が判定する（区間は
-  # egui_input:changed → egui_search:settled で切れるのでマーカーは要らない）。
+  # 打鍵から結果までの区間は egui_input:changed → egui_search:settled で切れるが、
+  # その所要を判定する不変条件は無い（SnotraTraceInvariants.psm1 の一覧に載っていない）。
+  # 下の Ctrl+H ブロックが「3 文字になった」ことの根拠に読むので、ブロックが走らない経路でも定義しておく。
+  $pathTyped = $null
   # 窓が出ている根拠が要る（$resultsChecked のブロックが egui_results:show を観測済み）ため、
   # 既存の 1 文字クエリ注入・Escape 注入と同じく $failures.Count -eq 0 でガードする——
   # 窓が無い状態で注入すると、キューへ送った打鍵が前面の別アプリへ飛ぶ。
@@ -412,6 +414,45 @@ try {
       -Predicate { $_.event -eq 'egui_input:changed' -and $_.data.after_chars -eq 3 }.GetNewClosure()
     if ($null -eq $pathTyped) {
       $failures += "path query 'c:\' not observed as 3 chars within ${ObserveTimeoutMs}ms"
+    }
+  }
+
+  # --- Ctrl+英字で文字が入らないこと（#1268）------------------------------
+  # `input.rs` の `on_keyboard_event` が文字を `KeyEvent::text_with_all_modifiers()` ではなく
+  # `KeyEvent.text` から取ると、Ctrl を外した字が入る（Ctrl+A で `a`）。`KeyEvent` は crate 外から
+  # 組み立てられず、単体テストではこの呼び出し点を縛れないので、ここで実機に打つ。
+  #
+  # **Ctrl+H を使うのは、打鍵の効果がそのまま到達の証拠になるからである。** egui は Windows でも
+  # Ctrl+H を 1 字削除に束縛しているので、正常なら `c:\` → `c:`（3→2）の 1 件になる。取り違えると
+  # 同じ打鍵が `Key(H)` と `h` の確定を同じ RawInput に積み、削除してから `h` が入って 3→3 になる。
+  # 効果の無い英字（Ctrl+G 等）だと「文字が入らなかった」と「打鍵が届かなかった」が見分けられず、
+  # Ctrl+A だと全選択を伴うので取り違えても文字数が減る（3→1）——どちらも「増えない」の断言を
+  # すり抜ける。打鍵が落ちたときは観測なしで赤になる（緑にはならない）。
+  #
+  # **捕まえないもの**: 文字の配送を `admit_key` より前へ動かす退行。focus 復帰時に押下中のキーが
+  # 要るが、この smoke は hotkey を離してから show するので通常は残らない。
+  if ($failures.Count -eq 0 -and $null -ne $pathTyped) {
+    # 3 文字の観測そのものを起点にする——これより後の変化だけが Ctrl+H の帰結である。
+    $ctrlBaseSeq = [long]$pathTyped.seq
+    Send-SnotraKeyChord -VirtualKeys @(0x11, 0x48)   # Ctrl + H
+    $ctrlChanged = Wait-SnotraTraceCondition -Path $errPath -TimeoutMs $ObserveTimeoutMs `
+      -Description "Ctrl+H 後の入力変化" `
+      -Predicate { $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $ctrlBaseSeq }.GetNewClosure()
+    if ($null -eq $ctrlChanged) {
+      $failures += "Ctrl+H produced no egui_input:changed within ${ObserveTimeoutMs}ms (expected 'c:\' -> 'c:')"
+    } else {
+      # 1 件と決め打ちして待つのではなく、少し待ってから区間の全件を数える——想定外の追加変化も赤にする。
+      Start-Sleep -Milliseconds 300
+      $ctrlEvents = @((Read-SnotraTraceSnapshot -Path $errPath).Events | Where-Object {
+        $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $ctrlBaseSeq
+      })
+      # 件数を先に見る——読み取りが一時的に失敗して 0 件のとき、`[0]` を引くと StrictMode が
+      # 例外にして赤の理由がこの文言から外れる（`-or` は短絡するので添字は 1 件のときだけ評価される）。
+      if ($ctrlEvents.Count -ne 1 -or $ctrlEvents[0].data.before_chars -ne 3 -or $ctrlEvents[0].data.after_chars -ne 2) {
+        $observed = ($ctrlEvents | ForEach-Object { "$($_.data.before_chars)->$($_.data.after_chars)" }) -join ', '
+        $failures += ("Ctrl+H changed the input as [$observed], expected exactly [3->2]" +
+          " — a Ctrl-stripped character was typed (KeyEvent.text instead of text_with_all_modifiers? #1268)")
+      }
     }
   }
 
@@ -739,4 +780,4 @@ if (-not $resultsChecked) {
   Write-Host "egui smoke failed: results 検査が走らないまま合格しかけました（到達不能なはずの経路）。" -ForegroundColor Red
   exit 1
 }
-Write-Host "egui smoke passed (show/hide + results show/hide observed, webview delta 0)." -ForegroundColor Green
+Write-Host "egui smoke passed (show/hide + results show/hide observed, Ctrl+H typed no character, webview delta 0)." -ForegroundColor Green

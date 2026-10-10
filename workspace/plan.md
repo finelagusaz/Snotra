@@ -56,14 +56,14 @@ SPEC.md: 更新不要（挙動変更なし）。`docs/build-commands.md` の smo
 
 ### Phase 1 — smoke
 
-- [ ] `scripts/smoke-egui.ps1` に Ctrl+H ブロックを追加
-- [ ] :379-380 の H6 の記述を直す
-- [ ] 合格メッセージを更新
+- [x] `scripts/smoke-egui.ps1` に Ctrl+H ブロックを追加
+- [x] :379-380 の H6 の記述を直す
+- [x] 合格メッセージを更新
 - [ ] 現行ビルドで `npm run smoke:egui` が緑（AC1）
 
 ### Phase 2 — 文書
 
-- [ ] `snotra-egui-runtime/src/input.rs` のテストコメントを更新
+- [x] `snotra-egui-runtime/src/input.rs` のテストコメントを更新
 - [ ] `npm run governance:check`・`cargo fmt --check`・`npm run test:powershell`
 
 ## 未確定（実装前に潰す）

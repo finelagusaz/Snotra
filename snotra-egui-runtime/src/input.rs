@@ -740,7 +740,8 @@ mod tests {
     }
 
     /// Ctrl 併用は `text_with_all_modifiers` が制御文字（Ctrl+A なら `"\x01"`）を返すので弾かれる。
-    /// 呼び出し点で `KeyEvent.text` と取り違える形はこのテストに映らない（`KeyEvent` を組み立てられない）。
+    /// 呼び出し点で `KeyEvent.text` と取り違える形はこのテストに映らない（`KeyEvent` を組み立てられない）
+    /// ——それは `scripts/smoke-egui.ps1` の Ctrl+H の打鍵が捕まえる（#1268）。
     #[test]
     fn typed_text_drops_control_characters_and_releases() {
         for control in ["\x01", "\r", "\u{8}", "\t", "\u{1b}"] {

@@ -1,0 +1,125 @@
+adversarial-1268 反証結果（research.md の主張を一次資料で測り直した）
+対象 HEAD: chore/smoke-ctrl-letter（a844b05）。コードは変更していない。
+測れなかったもの: smoke 全体の実走（target/release/snotra.exe は 2026-10-09 00:39 のビルドで HEAD より古く、
+実走は利用者のデスクトップへ keybd_event を撃つため見送った）。実走が要る所見は ⚠️ を付けた。
+
+============================================================
+A. 壊せなかった項目（research.md の主張が一次資料で成立した）
+============================================================
+A1 [争点1] tao 0.37.1 は Ctrl+G で text_with_all_modifiers=Some("\x07")、text=Some("g")
+   - 一次: tao-0.37.1/src/platform_impl/windows/keyboard.rs
+       :188-275 WM_CHAR arm … utf16parts に WM_CHAR(0x07) を積み、ctrl_on なら event_info.text を
+       layout.get_key(mod_no_ctrl, ...) の to_text()（= "g"）にする。
+       :623-680 finalize … text_with_all_modifiers = utf16parts そのもの。
+   - TranslateMessage は tao の event_loop.rs:262/401/407/770 で呼ばれる。next_kbd_msg が WM_CHAR を拾える。
+   - 偽にする手順: has_alt_graph のレイアウト（独語等）で Alt を併用すると ctrl_on が偽になり text も "\x07" 側へ寄る。
+     en-US（windows-latest）・日本語配列は has_alt_graph 偽なので該当しない。
+A2 [争点2 前半] egui 0.36.2 は Windows の Ctrl+G に束縛なし／Snotra 本体も Ctrl+英字を束縛しない
+   - grep "Key::G\b" は egui-0.36.2/src で 0 件。cursor_range.rs:150 の P/N/B/F/A/E は os==Mac 限定。
+     Ctrl+A=:116 全選択、Y/Z=builder.rs:1197-1214、H/K/U/W=:1431-1446 は research どおり。
+   - src-tauri/src の Key:: は Escape・矢印・Enter、modifiers 参照は i.modifiers.shift のみ。KeyboardShortcut/consume_shortcut 0 件。
+   - 偽にする手順: egui を上げた版で Key::G に ctrl 束縛が入る／Snotra が Ctrl+G を束縛する。
+A3 [争点2 後半] 変異1下の Ctrl+A は 3→1 に「減る」
+   - builder.rs:1325-1333 ImeEvent::Commit は clear_preedit_text = text.delete_selected(cursor_range) を先に行う。
+     全選択下では選択範囲が消えて "a" だけになる。research の指摘は正しい。
+   - ただし Ime Commit は owns_ime_events（TextEdit が focus を持つ）でしか効かない（:1238）。
+A4 [争点3 の egui 側の疑問] changed() は「正味の差」ではなく「いずれかの変異があったか」で真になる
+   - builder.rs:1096 any_change / :1348 did_mutate_text / :601-602 text_changed / :827 mark_changed。
+   - ゆえに同一フレームで Commit("g")+Backspace が畳まれても changed は真で、trace は before=3 after=3 の 1 件。
+     「3→2 を要求する」述語には不一致 → 赤。Backspace が空文字列で効かなくても changed は真になりうる点は本件に無関係。
+   - 偽にする手順: 同一フレームで net 同一になる変異を作り、egui の changed が偽を返すことを示す（上記の読みでは起きない）。
+A5 [争点3 の正常系] 正常ビルドで Ctrl+G は文字を入れない
+   - input.rs:411 typed_text_event → committed_text_event → is_printable_char（ascii control を弾く）。
+   - Ctrl+G の Key{G, ctrl} を積むが、egui に束縛がないので TextEdit は変異しない。chord は G→Ctrl の順に離し、
+     ModifiersChanged が Key(Backspace) より前に積まれる（input.rs:239-246）ので Ctrl+Backspace(語削除) にはならない。
+A6 [争点6] smoke-egui.ps1:379 の「H6 が判定する」は古い記述
+   - SnotraTraceInvariants.psm1 の $script:Invariants = H1,H4,H5,H7。docs/superpowers/plans/2026-08-10-search-worker.md の
+     「Task 5: 取り下げ — 不変条件 H6 は置かない」で H6 は取り下げ済み（理由: smoke の索引は 1 件で発火しえない）。
+   - 追加の所見（B6 参照）: 古いのは名前だけでなく、「打鍵から結果までのフレーム予算を判定する」という主張全体。
+     今それを判定する検査は無い。
+A7 [関連ファイル] Ctrl+C/X/V は self.modifiers.command で Copy/Cut/Paste を積んで return（input.rs:363-385）。
+   単体テストのコメント（:742-743）が「呼び出し点の取り違えは映らない」と自認。egui_input:changed は
+   search_flow.rs:228-250 の trace_enabled ゲート下で出る。smoke は Start-SnotraProcess -Trace（smoke-egui.ps1:151）で
+   SNOTRA_TRACE=1 を立てる。
+A8 [争点4 の大半] H1/H4/H5/H7 を壊す道筋は見つからなかった（実走は未測・⚠️B5）
+   - Backspace で "c:" になると has_path_sep が偽に変わる。seed の索引は 1 件（%TEMP%\snotra_smoke_scan\zsnotrasmoke.exe）で、
+     名前 "zsnotrasmoke.exe" は "c:" に一致しないので rows=0 → drive_results_window が egui_results:hide（from=drive）を出す見込み。
+   - H5（hide を挟まない連続 show）: hide が挟まるので満たす。H4（rows=0 の show）: show 自体が出ない。
+     H1: window_coordinator.rs:1395-1445 の present_results が main_visible 偽なら Hidden に倒すので、Escape 後に遅れて来る検索結果は show にならない。
+     H7: 構造的に発火しえない（SnotraTraceInvariants.psm1:389）。
+   - 既存の Escape 後の egui_results:hide 待ちは弱まらない: hide_egui_main は戻り値を無視して「要求レベル」で常に
+     egui_results:hide を出す（window_coordinator.rs:510-525）。
+   - 偽にする手順: 新ブロックを足した smoke を実走し、Backspace の後に egui_results:show が 2 回連続する、
+     または Escape 後に egui_results:show が現れる trace を得る。
+A9 [測定環境] 入力欄の focus・trace ゲート・seed
+   - view.rs:337-347 が window_focused && input_editable のとき毎フレーム focus を取り戻す。既存の after_chars==3 観測が
+     パスクエリ後に入力欄が生きている証拠になる（scope は search。folder へは → でしか入らない・search_state.rs interpret）。
+   - 新ブロックが依存するのは「文字数」だけで、キーボード配列に依存しない（':' や '\' が JP 配列で別の文字でも 3 文字）。
+   - CI（smoke.yml）は windows-latest。paths に smoke-egui.ps1・scripts/lib/**・snotra-egui-runtime/** を含み、変更 PR で自動起動する。
+
+============================================================
+B. 壊せた項目（research.md の主張が偽、または過大、または見落とし）
+============================================================
+B1 [争点3「打鍵脱落で赤」は半分だけ] Ctrl+G 側の脱落は沈黙で緑になる  ※最重要
+   - research の「Backspace が落ちた: 予算切れで赤」は正しいが、Ctrl+G（keybd_event の G 押下）が落ちた場合は
+     Backspace だけが届いて 3→2 が成立し、変異1でも**緑のまま**になる。keybd_event は void を返し注入の成否を観測できない
+     （SnotraSmoke.psm1:763-785 のコメントも自認）。safety-nets.md の「沈黙で合格する不在の断言」を、後続打鍵の標識で
+     塞いだ後も、「注入した Ctrl+G が本体に届いたか」は未観測のまま残る。
+   - 逆の偽赤: Ctrl の押下だけが落ち G が届くと、正常ビルドでも 'g' が入り 3→4 で赤になる（flake 源）。
+   - 偽にする手順: Send-SnotraKeyChord(0x11,0x47) の Ctrl+G だけを間引いた状態（例: 該当 2 行を除いた smoke）で変異1のビルドを走らせ、緑になることを示す。
+   - 閉じ方の候補（実装は触らない）: SNOTRA_EGUI_INPUT_TRACE=1 を ExtraVariables で足し、`push_key`
+     （state=down physical=KeyG）の件数が打鍵前後で +1 増えたことを Ctrl+G の到達証拠にする。ただし push_key は修飾状態を載せない
+     ので「Ctrl が効いていたか」は別（Ctrl の push_key も並べて要求する）。
+B2 [争点5「原理的に捕まらない」は過大]
+   - 成立するのは「WM_SETFOCUS の瞬間に押下中のキーが無い」場合だけ。hotkey は ShowAfterAltRelease が Alt 解放を最大 350ms 待つ
+     （smoke-egui.ps1:237-241）。runner の停止で chord の Start-Sleep(50ms) が 350ms を超えると、Alt/Q 押下中に show され、
+     tao が合成 press（文字つき・keyboard.rs:103-107, :478）を作る。admit_key の後ろにある現行実装は無害だが、
+     変異2なら 'q' が入りうる。つまり「原理的に」ではなく「通常は」。
+   - 偽にする手順: hotkey chord の Alt 解放を 400ms 以上遅らせて変異2のビルドを走らせ、egui_input:changed が出ることを示す（未実測・⚠️）。
+B3 [研究の「配置は唯一の地点」は偽] research.md の「入力が `c:\` の 3 文字であることが `$pathTyped` で確定している唯一の地点」
+   - 唯一ではない。入力が非空でさえあればよく、1 文字クエリ（z）の直後でも「Ctrl+G → Backspace で 1→0」で同じ形が作れる。
+     パスクエリ（全件走査）の前に置けば、Backspace が引き起こす検索・results の遷移が path ブロックの後続判定へ触れない。
+     後ろに置く利点（before_chars=3 を $pathTyped が裏づける）と引き換えに、results の hide/show 遷移（A8）を新たに通る。
+   - 偽にする手順: 前置きの配置で緑・変異1で赤になることを実測（未実測）。
+B4 [争点3「ベースライン以降の最初の 1 件」は過剰仕様]
+   - G を使うかぎり、変異1が作る列は 3→4,4→3（別フレーム）か 3→3（同一フレーム）で、3→2 を含む列は無い。
+     ゆえに「seq>baseline かつ before=3 かつ after=2」を満たす 1 件の存在（Wait-SnotraTraceCondition の述語）だけで
+     正常=緑・変異1=赤は成立し、Read-SnotraTraceSnapshot から seq で切り出す工程は要らない。
+     ベースライン（打鍵前の seq）は要る（pathTyped が過去の 3 文字イベントに一致するので）が、seq は trace.rs の
+     プロセス全体の単調カウンタなので pathTyped.seq をそのまま使える（Get-SnotraTraceEventCount を足す必要も無い）。
+   - 偽にする手順: 上の述語だけの実装で、正常・変異1・同一フレーム畳みの 3 ケースが期待どおりになることを示す。
+B5 [争点4「Escape 以降は入力内容に依存しない」は未実測]
+   - 読みの上では A8 のとおり壊れないが、results の hide/show 遷移（"c:\"→1 行、"c:"→0 行と推定）は索引 1 件・
+     %TEMP% が C: にある前提の推論。%TEMP% が別ドライブの runner では "c:\" は 0 行になり、遷移が逆転する。
+   - 偽にする手順: 新ブロックつきの smoke を実走し、trace の egui_results:show/hide 列と H1/H4/H5/H7 の Overall を読む。⚠️
+B6 [争点6 の射程] 古い記述は H6 の名前だけではない
+   - smoke-egui.ps1:377-383 のコメントは「打鍵から結果までのフレームが予算を超えないことを H6 が判定する」と書くが、
+     H6 は取り下げられ（上記 A6）今それを判定する検査は無い。ADR-blur-grace-single-field-state-machine.md:39,45 の
+     「#930（H6）」も同じ幽霊を指す（ADR は凍結された歴史なので範囲外の可能性が高い）。
+   - 偽にする手順: git grep H6 -- scripts で smoke-egui.ps1 以外に生きた参照が 0 件であることを確認（本調査で確認済み）。
+B7 [未列挙の失敗モード] 新ブロックのゲート
+   - research は「パスクエリブロックのゲートは $failures.Count -eq 0 -and $resultsChecked」とだけ書く。新ブロックは
+     さらに $pathTyped が非 null（3 文字が入ったこと）を要求しなければならない。そうでないと before_chars=3 の前提が崩れ、
+     赤の理由が「Ctrl+G の退行」に化ける（path ブロックの失敗が既に $failures に積まれるので二重報告になる）。
+   - 偽にする手順: `\` の打鍵を落とした状態で新ブロックを走らせ、赤の文言が誤誘導的になることを示す。
+B8 [局所実行の危険] 窓が前面でない状態で撃つと別アプリへ Ctrl+G が飛ぶ
+   - 既存コメント（smoke-egui.ps1:381-383）が自認する危険に、Ctrl+G（VS Code で行ジャンプ等）と Backspace が加わる。
+     CI では無害。ゲートが $failures だけで前面確認が無い点は既存ブロックと同じ。
+
+============================================================
+C. ⚠️ 確信が持てない／未測
+============================================================
+C1 ⚠️ Ctrl+G の WM_CHAR が実機で 0x07 として届くこと自体は tao のコードと Win32 の仕様からの推論で、実注入では未観測
+   （research.md の未解決の疑問 2 と同じ）。変異1ビルドで 'g' が入ることを一度観測すれば裏が取れる。
+C2 ⚠️ 日本語 IME が ON の環境（利用者の PC）で Ctrl+G が IME に奪われるか。windows-latest（英語・IME 無し）では起きないが、
+   ローカルで smoke を回す利用者の環境では未確認。
+C3 ⚠️ B5 の results 遷移（"c:" で 0 行になるか）は索引 1 件と %TEMP% の位置に依存する推測。
+C4 ⚠️ B2 の runner 停止での合成 press は理屈のみ。実測していない。
+C5 ⚠️ 変異1・変異2のビルドで新しい検査が実際に赤になるかは研究どおり未測のまま（実装後に worktree で測る必要がある）。
+
+============================================================
+D. 結論の要約
+============================================================
+research.md の技術的な核（tao の text/text_with_all_modifiers の値、egui の束縛、changed() の意味、
+Ctrl+A が 3→1 に減ること、H6 が古いこと）はすべて一次資料で成立した。壊せたのは設計の周辺:
+B1（Ctrl+G 側の脱落が沈黙で緑）が最も重い。B2・B3・B4 は主張の強さの訂正、B5・B7 は実装時の注意点。

@@ -446,8 +446,9 @@ try {
       $ctrlEvents = @((Read-SnotraTraceSnapshot -Path $errPath).Events | Where-Object {
         $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $ctrlBaseSeq
       })
-      $first = $ctrlEvents[0]
-      if ($ctrlEvents.Count -ne 1 -or $first.data.before_chars -ne 3 -or $first.data.after_chars -ne 2) {
+      # 件数を先に見る——読み取りが一時的に失敗して 0 件のとき、`[0]` を引くと StrictMode が
+      # 例外にして赤の理由がこの文言から外れる（`-or` は短絡するので添字は 1 件のときだけ評価される）。
+      if ($ctrlEvents.Count -ne 1 -or $ctrlEvents[0].data.before_chars -ne 3 -or $ctrlEvents[0].data.after_chars -ne 2) {
         $observed = ($ctrlEvents | ForEach-Object { "$($_.data.before_chars)->$($_.data.after_chars)" }) -join ', '
         $failures += ("Ctrl+H changed the input as [$observed], expected exactly [3->2]" +
           " — a Ctrl-stripped character was typed (KeyEvent.text instead of text_with_all_modifiers? #1268)")

@@ -1,0 +1,71 @@
+# verify-1268 (issue #1268) 検証レポート
+（注: 指定先 C:/workspace/Snotra/workspace/verify-1268.txt への Write は harness が「worktree に隔離」として拒否したため、worktree 側の同名パスへ書いている）
+anchor: a0c0594 / worktree HEAD (git rev-parse HEAD 実測) = a0c0594d948041a0d8a7ee1cb8396f56bcbc5262
+  （当初 HEAD は a844b05 だったため git checkout --detach a0c0594 で合わせた）
+worktree: C:/workspace/Snotra/.claude/worktrees/agent-ae0ce4914fec0bc4b
+差分 (main...a0c0594): scripts/smoke-egui.ps1, snotra-egui-runtime/src/input.rs（テスト doc コメント 1 行）, workspace/*（文書）
+
+## カテゴリ判定と実行結果（進行中・測るたび追記）
+- 前準備: worktree 内で npm ci -> exit 0（本体リポジトリ内 worktree なので junction は張らない）
+- F: npm run governance:check -> exit 0「全検査 passed（検査 17 件）」
+- E (scripts/** 変更): npm test -> exit 0（25 files / 612 tests passed）
+- A (input.rs の /// コメント変更): cargo fmt --all -- --check -> exit 0
+- cargo build --release -p snotra -> exit 0（target/release/snotra.exe mtime 2026-10-10T17:44:01）
+- C: npm run smoke:egui（AC1・無変異）-> exit 0
+  "egui smoke passed (show/hide + results show/hide observed, Ctrl+H typed no character, webview delta 0)."
+  ブロックが実際に走った証拠（%TEMP%/snotra_smoke_egui.err）: seq 63 = 2->3（$pathTyped）、seq 74 = before_chars 3 -> after_chars 2（Ctrl+H）。以降の egui_input:changed なし
+
+- AC1 再走（M1 巻き戻し＋release 再ビルド後・exe mtime 17:51:27）-> exit 0、seq 74 = 3 -> 2（2 回連続緑）
+- A 残り: cargo check --workspace -> exit 0 / cargo clippy --workspace --all-targets -- -D warnings -> exit 0 /
+  cargo test -p snotra-egui-runtime -q -> exit 0（42 passed）/ cargo doc --workspace --no-deps --document-private-items -> exit 0
+  （注: 変更した /// は #[cfg(test)] 配下で rustdoc の視界外。この緑は「何も走らなかった」に近い。コメントに intra-doc link [..] は無いので実害なし）
+  cargo test -p snotra-core / -p snotra / -p snotra-settings: 該当なし（それらの crate は未変更）
+- C（smoke スクリプト自体の変更＝hotkey/表示経路の smoke）: cargo build -p snotra（debug）-> exit 0 後
+  npm test（上記 E と同一・exit 0）/ npm run test:powershell -> exit 0（Passed 132, Failed 0）/
+  npm run smoke:startup -> exit 0「Startup smoke passed (5 runs).」/ npm run smoke:egui -> exit 0（上記 AC1）
+- B: 該当なし（.ts の変更なし）
+- D: 該当なし（描画・スタイル・レイアウトを 1 ピクセルも変えない。smoke に打鍵を足しただけ）
+- CI: .github/workflows/smoke.yml の pull_request paths に 'scripts/smoke-egui.ps1' と 'snotra-egui-runtime/**' があり、PR で Smoke が自動起動する
+
+## レビュー所見（code-reviewer 観点: 正しさ・計画との一致・性能）
+Critical / High: なし
+- [Low ⚠️] 2 回目の Read-SnotraTraceSnapshot は Available/ReadError を見ない。一過性の読み取り失敗で Events=@() になると
+  $ctrlEvents[0] が StrictMode Latest 下で例外（`Set-StrictMode -Version Latest; @()[0]` -> "Index was outside the bounds of the array." を実測）。
+  catch 経路で非 0 終了するので偽の緑にはならないが、赤の理由が設計した文言ではなく例外になる。
+- [Low ⚠️] Ctrl+H ブロックに再注入が無い。hotkey と 1 文字クエリは CI runner の取りこぼしに備え 1 回再注入するが、こちらは 1 発勝負。
+  落ちれば偽の赤（偽の緑ではない）。直前のパスクエリブロックも再注入なしなので既存と同じ水準。CI 実績はまだ無い（ローカルで緑 2 回＋変異下で到達 2 回）。緑の 2 回とも予算超過の警告は 0 件（smoke 出力を「警告|WARNING|予算超」で走査）。
+- [Info] failure 文言は件数≠1 や 3->4（M3: Ctrl 脱落）でも「Ctrl-stripped character was typed (KeyEvent.text ...?)」と機序を断定気味に言う。
+  [observed] を併記するので診断は可能。疑問符付きで許容範囲。
+- [Info ⚠️] コメントの「Ctrl+A だと取り違えても文字数が減る（3→1）」「Ctrl+G だと到達と不入力が見分けられない」は今回実測していない
+  （設計判断の理由づけで、判定には効かない）。
+- [Info] 起点は $pathTyped.seq（3 文字の観測）で、打鍵直前のマーカーではない。間に別の egui_input:changed が入れば件数≠1 で赤（安全側）。計画どおり。
+- [Info] 300ms の静定後に区間全件を数える形は、M1 で削除と h が 1 件（3->3）に畳まれることを実測したので計画の判定表と一致。
+- [Info] workspace/plan.md の「現行ビルドで smoke:egui が緑（AC1）」と Phase 2 の検証項目が `- [ ]` のまま。gh pr create のフックが未チェックで拒むので、主エージェントがチェックを入れる必要がある。
+- 計画との一致: 新ブロックの位置（パスクエリ後・WebView2 検査前）、ゲート、.GetNewClosure()、300ms 静定、@() 包み、H6 記述の修正、合格メッセージ、input.rs コメント——すべて計画どおり。
+- 性能: smoke に約 0.5〜0.8 秒（打鍵 4×50ms + 300ms 静定 + 観測）を足すだけ。製品コードは無変更（input.rs はコメントのみ）。
+
+## 変異注入（ハッシュ: ref = git rev-parse a0c0594:<path>）
+基準: smoke-egui.ps1 ref=work=63690497a3ce825e4888e9690f1dd5004e92619e / input.rs ref=work=8e699ea771bcadbdb73af8231b32a571d62059c1
+
+### M2（AC3）: Send-SnotraKeyChord -VirtualKeys @(0x11, 0x48) の行を削除（無変異ビルド・exe mtime 17:44:01）
+- 変異後 smoke hash: c59cce1f282eb2e22394d89bac34b8715a33ed03
+- npm run smoke:egui -> exit 1。赤の理由（逐語）:
+  " - Ctrl+H produced no egui_input:changed within 8000ms (expected 'c:\' -> 'c:')"
+  付随の警告: "Ctrl+H 後の入力変化 が成立しませんでした（予算切れ・8001ms・74 周・読み取り失敗 0 回…）"
+- 巻き戻し（git checkout a0c0594 -- scripts/smoke-egui.ps1）後 hash: 63690497a3ce825e4888e9690f1dd5004e92619e = ref 一致
+
+### M3（参考）: @(0x11, 0x48) -> @(0x48)（修飾なしの H・無変異ビルド・exe mtime 17:44:01）
+- 変異後 smoke hash: 7ccc95205554caa353ab07fbffe896b803aa5319
+- npm run smoke:egui -> exit 1。赤の理由（逐語）:
+  " - Ctrl+H changed the input as [3->4], expected exactly [3->2] — a Ctrl-stripped character was typed (KeyEvent.text instead of text_with_all_modifiers? #1268)"
+- 巻き戻し後 hash: 63690497a3ce825e4888e9690f1dd5004e92619e = ref 一致
+
+### M1（AC2）: input.rs:411 typed_text_event(pressed, event.text_with_all_modifiers()) -> typed_text_event(pressed, event.text)
+- event.text はそのまま型が合った（.as_deref() 不要）。変異後 input hash: 1b3e1360bc586e3bbd6e8cec42379658ff5cf2ff
+- cargo build --release -p snotra -> exit 0（コンパイルエラーではない）・exe mtime 2026-10-10T17:49:31
+- npm run smoke:egui -> exit 1。failure は 1 件だけ（他検査の赤なし）。赤の理由（逐語）:
+  " - Ctrl+H changed the input as [3->3], expected exactly [3->2] — a Ctrl-stripped character was typed (KeyEvent.text instead of text_with_all_modifiers? #1268)"
+- before/after（trace 実測）: 無変異 seq 74 = before 3 -> after 2（appended_at_end=false）／変異 seq 75 = before 3 -> after 3（appended_at_end=false）。
+  削除と h の挿入は同じフレームの 1 件に畳まれていた（計画の判定表どおり・2 件に割れる形は観測されず）
+- 巻き戻し（git checkout a0c0594 -- snotra-egui-runtime/src/input.rs）後 hash: 8e699ea771bcadbdb73af8231b32a571d62059c1 = ref 一致
+- 巻き戻し後に release を再ビルド（exe mtime 2026-10-10T17:51:27）

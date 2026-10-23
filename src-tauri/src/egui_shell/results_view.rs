@@ -26,8 +26,8 @@ pub(crate) struct RowsSnapshot {
     /// **`Arc` で持つのは、results が毎フレーム snapshot を `clone` して受け取るためである**
     /// （lock を描画の間じゅう握らないため）。`Vec` だと受け取りのたびに行数ぶんの `String` を
     /// 複製し、ポインタ移動のように毎フレーム描く場面でそれが乗り続ける（額は
-    /// `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。行を作り直すのは発行が変化を
-    /// 検出したとき（[`Self::matches`]）だけである。
+    /// `PERFORMANCE.md`「採用: results の snapshot の受け取りで行を複製しない」）。行を作り直すのは
+    /// 発行が変化を検出したとき（[`Self::matches`]）だけである。
     pub rows: std::sync::Arc<[snotra_core::ui_types::SearchResult]>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
     pub selected: usize,
     /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632 reviewer Important 3

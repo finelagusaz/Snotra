@@ -197,8 +197,8 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> 
 ///
 /// **スレッドローカル（`MATCHER`）を借りるのは Fuzzy の腕だけである**——照合器と UTF-32 の
 /// 展開先を使うのはそこだけなので、借用をそこへ閉じれば呼び出し側はスレッドローカルを知らずに
-/// 済む。速さのためではない（Substring の全件走査で差が測れなかった・`PERFORMANCE.md`
-/// 「採用: 検索の候補ごとの確保をやめる」）。
+/// 済む。速さのためではない（Substring の全件走査で差が測れなかった・実測は
+/// `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 fn match_score_single_cached(
     mode: SearchMode,
     lower_name: &str,

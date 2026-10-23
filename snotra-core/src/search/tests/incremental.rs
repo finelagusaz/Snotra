@@ -271,22 +271,16 @@ fn incremental_search_empty_prev_candidates_falls_back() {
 #[test]
 fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
     let n = 4 * MIN_PAR_CANDIDATES;
-    let entries = || -> Vec<AppEntry> {
-        (0..n)
-            .map(|i| AppEntry {
-                // `omega` は "al" に一致しない（`l` を持たない）。
-                name: if i % 3 == 0 {
-                    format!("omega {:05}", n - i)
-                } else {
-                    format!("alpha {:05}", n - i)
-                },
-                target_path: format!("C:\\apps\\tool{i:05}.exe"),
-                is_folder: false,
-            })
-            .collect()
-    };
+    // `omega` は "al" に一致しない（`l` を持たない）。
+    let owned: Vec<String> = (0..n)
+        .map(|i| {
+            let stem = if i % 3 == 0 { "omega" } else { "alpha" };
+            format!("{stem} {:05}", n - i)
+        })
+        .collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
     let h = empty_history();
-    let mut engine = SearchEngine::new(entries());
+    let mut engine = SearchEngine::new(make_entries(&names));
 
     let _ = engine.search("al", 200, &h, SearchMode::Fuzzy);
     let prev = &engine.incremental_cache.prev_candidates;
@@ -311,17 +305,10 @@ fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
     );
     let reused = engine.search("alp", 200, &h, SearchMode::Fuzzy);
 
-    let fresh = SearchEngine::new(entries()).search("alp", 200, &h, SearchMode::Fuzzy);
+    let fresh = SearchEngine::new(make_entries(&names)).search("alp", 200, &h, SearchMode::Fuzzy);
 
-    let rows = |results: &[crate::ui_types::SearchResult]| -> Vec<(String, String)> {
-        results
-            .iter()
-            .map(|r| (r.name.clone(), r.path.clone()))
-            .collect()
-    };
     assert_eq!(
-        rows(&reused),
-        rows(&fresh),
+        reused, fresh,
         "前回候補を再利用した結果が、新品 engine の全件走査と順序込みで一致しない"
     );
 }

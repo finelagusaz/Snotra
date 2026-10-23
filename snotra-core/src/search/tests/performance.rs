@@ -114,11 +114,11 @@ fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
 // 移った今は製品でないものを測る。事実 #336 はその形で一致率 43.2% と読んで見送られ、
 // 現運用点の実測は 86.6% だった。判定の経緯は `PERFORMANCE.md` を正本とする。
 
-fn bench_search(label: &str, n: usize, queries: &[&str]) {
-    bench_search_in(label, n, queries, SearchMode::Fuzzy);
-}
+/// 規模のラダーで回すクエリ。**互いに接頭辞にならない**ので incremental の再利用が起きず、
+/// 毎回が全件走査になる（Fuzzy と Substring のベンチが同じ仕事量を測るために共有する）。
+const SCALING_QUERIES: [&str; 5] = ["vis", "code", "micro", "app", "sett"];
 
-fn bench_search_in(label: &str, n: usize, queries: &[&str], mode: SearchMode) {
+fn bench_search(label: &str, n: usize, queries: &[&str], mode: SearchMode) {
     use std::time::Instant;
     let entries = make_bench_entries(n);
     let mut engine = SearchEngine::new(entries);
@@ -149,21 +149,19 @@ fn bench_search_in(label: &str, n: usize, queries: &[&str], mode: SearchMode) {
 #[test]
 #[ignore]
 fn bench_fuzzy_search_scaling() {
-    let queries = ["vis", "code", "micro", "app", "sett"];
     for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
-        bench_search("fuzzy", n, &queries);
+        bench_search("fuzzy", n, &SCALING_QUERIES, SearchMode::Fuzzy);
     }
 }
 
 /// `normal_mode = "substring"` の全件走査。**Fuzzy の bitmask pre-filter を通らない**ので
 /// 全エントリが照合まで進み、1 件あたりの固定費がそのまま規模に乗る——上の Fuzzy の計器では
-/// この経路を 1 度も通らない。クエリは上と同じ（互いに接頭辞にならず、毎回が全件走査になる）。
+/// この経路を 1 度も通らない。
 #[test]
 #[ignore]
 fn bench_substring_search_scaling() {
-    let queries = ["vis", "code", "micro", "app", "sett"];
     for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
-        bench_search_in("substring", n, &queries, SearchMode::Substring);
+        bench_search("substring", n, &SCALING_QUERIES, SearchMode::Substring);
     }
 }
 
@@ -173,7 +171,7 @@ fn bench_fuzzy_path_query_scaling() {
     // パス区切り含有クエリ: has_path_sep=true でビットマスク pre-filter がスキップされる
     let queries = ["fake\\vis", "fake\\code", "fake\\micro"];
     for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
-        bench_search("fuzzy_path", n, &queries);
+        bench_search("fuzzy_path", n, &queries, SearchMode::Fuzzy);
     }
 }
 

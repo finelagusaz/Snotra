@@ -31,6 +31,7 @@ use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer::{self, AppEntry};
 use snotra_core::search::{SearchEngine, SearchMode};
+use snotra_core::ui_types::SearchResult;
 
 // ---------------------------------------------------------------------------
 // 計数アロケータ（スレッドローカル）
@@ -41,8 +42,11 @@ thread_local! {
     static BYTES: Cell<usize> = const { Cell::new(0) };
 }
 
-/// `System` を包み、このスレッドの確保回数と確保バイト数（`realloc` は新しい大きさ）を数える。
-/// 解放は数えない——問いは「1 回の検索がアロケータを何回呼ぶか」である。
+/// `System` を包み、このスレッドの確保回数と確保バイト数を数える。解放は数えない——問いは
+/// 「1 回の検索がアロケータを何回呼ぶか」である。
+///
+/// **`alloc_zeroed` / `realloc` は実装しない**——`GlobalAlloc` の既定実装がどちらも `alloc` を
+/// 1 回通る（`realloc` は新しい大きさで）ので、数える量は変わらない。
 struct Counting;
 
 impl Counting {
@@ -59,18 +63,8 @@ unsafe impl GlobalAlloc for Counting {
         unsafe { System.alloc(layout) }
     }
 
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        Self::on_alloc(layout.size());
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) };
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        Self::on_alloc(new_size);
-        unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
 
@@ -262,12 +256,18 @@ fn measure_search_allocations() {
         measure_real_index();
         measure_synthetic_ladder();
     });
+    println!("  * µs は計数器込み・worker 1 本の値であり、製品の壁時計ではない");
 }
 
-fn report_row(query: &str, results: usize, allocs: usize, bytes: usize, us: u128) {
+/// 1 回の検索を計数と計時の区間で囲み、表の 1 行を出す。
+fn report_measured(query: &str, search: impl FnOnce() -> Vec<SearchResult>) {
+    let started = Instant::now();
+    let (allocs, bytes, results) = allocations_during(search);
     println!(
-        "  {query:<22}{results:>8}{allocs:>10}{:>12.1}{us:>10}",
-        bytes as f64 / 1024.0
+        "  {query:<22}{:>8}{allocs:>10}{:>12.1}{:>10}",
+        results.len(),
+        bytes as f64 / 1024.0,
+        started.elapsed().as_micros()
     );
 }
 
@@ -302,18 +302,9 @@ fn measure_real_index() {
         let _ = engine.search(sequence[0]);
         let _ = engine.search(RESET_QUERY);
         for query in sequence {
-            let started = Instant::now();
-            let (allocs, bytes, results) = allocations_during(|| engine.search(query));
-            report_row(
-                query,
-                results.len(),
-                allocs,
-                bytes,
-                started.elapsed().as_micros(),
-            );
+            report_measured(query, || engine.search(query));
         }
     }
-    println!("  * µs は計数器込み・worker 1 本の値であり、製品の壁時計ではない");
 }
 
 /// ベンチ（`search/tests/performance.rs` の `make_bench_entries`）と同じ形の名前——
@@ -381,18 +372,9 @@ fn measure_synthetic_ladder() {
         ] {
             let _ = engine.search(query, MAX_RESULTS, &history, SearchMode::Fuzzy);
             let _ = engine.search(RESET_QUERY, MAX_RESULTS, &history, SearchMode::Fuzzy);
-            let started = Instant::now();
-            let (allocs, bytes, results) = allocations_during(|| {
+            report_measured(query, || {
                 engine.search(query, MAX_RESULTS, &history, SearchMode::Fuzzy)
             });
-            report_row(
-                query,
-                results.len(),
-                allocs,
-                bytes,
-                started.elapsed().as_micros(),
-            );
         }
     }
-    println!("  * µs は計数器込み・worker 1 本の値であり、製品の壁時計ではない");
 }

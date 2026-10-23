@@ -356,8 +356,7 @@ impl SearchEngine {
         // Copy な bool としてクロージャに move する（self への可変借用は不要）。
         let kana_available = !self.kana_lower_names.is_empty();
 
-        // 並列スコアリング: 照合器は rayon の worker ごとのスレッドローカル（`search/scoring.rs` の
-        // `MATCHER`）を借りる。各 task は自分の top-k ヒープを組み、reduce() で併合する。
+        // 並列スコアリング: 各 task は自分の top-k ヒープを組み、reduce() で併合する。
         //
         // top-k 更新規則は TopK 型に一元化する（fold の単一候補挿入・reduce の task 統合が
         // 同じ push 規則を通す・#602）。fold state の Vec<usize> は top-k とは別に全一致 index を

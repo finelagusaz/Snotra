@@ -46,7 +46,9 @@ pub(crate) struct RowsSnapshot {
 impl RowsSnapshot {
     /// 発行前の差分判定（/simplify・効率）。行の列を作ってから `PartialEq` で比べると、
     /// **無変化フレームでも** 行数ぶんの `String` 確保が走る（入力欄のキャレット点滅だけでも
-    /// main は repaint する）。行はスライスのまま突き合わせ、差があるときだけ作り直す。
+    /// main は repaint する）。行はスライスのまま突き合わせ、snapshot に差があるときだけ作り直す。
+    /// **作り直しの単位は snapshot 全体である**——行が同じでも、他のフィールド（選択の移動等）に
+    /// 差があれば行ごと作り直す。
     ///
     /// **フィールドを増やしたらここも増やす**——先頭の分解束縛が漏れを compile-fail にする。
     pub(crate) fn matches(

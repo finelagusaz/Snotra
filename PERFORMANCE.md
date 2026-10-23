@@ -2731,9 +2731,9 @@ worker 1 本の rayon プールで、1 回の検索が払う確保を数える�
 
 #### 等価性（検索結果を変えないことの根拠）
 
-- (a) は `Utf32String::from(s).slice(..)` と**同じ値**を組む。**`Utf32Str::new` では代用できない**
-  ——非 ASCII でも書記素の先頭がすべて ASCII の文字列（`e` + 結合アクセント等）に `Ascii` を返し、
-  照合器への入力が変わる。一致は `search/tests/basic.rs` の合成 10 行と、実インデックスの全 haystack
+- (a) は `Utf32String::from(s).slice(..)` と**同じ値**を組む。**`nucleo-matcher` 0.3.1 では
+  `Utf32Str::new` で代用できない**——非 ASCII でも書記素の先頭がすべて ASCII の文字列（`e` +
+  結合アクセント等）に `Ascii` を返し、照合器への入力が変わる。一致は `search/tests/basic.rs` の合成 10 行と、実インデックスの全 haystack
   （44,834 件・うち非 ASCII 240 件）で固定した。**後者は実インデックスが無ければ自己スキップする**
 - (b) は走査する添字の列も順序も変えない
 
@@ -2764,6 +2764,12 @@ C 1,540–1,609 / D 1,504–1,623 µs）。採ったのは、呼び出し側が�
 ある。**合成索引で Substring の非パスクエリを測るベンチはこれまで無かった**（Fuzzy のベンチは
 この経路を通らない。実 `index.bin` の Substring のパスクエリは
 `measure_path_query_frame_cost_at_operating_point` が測る）。
+
+**常駐の側には効果があるはずだが、測っていない。** 変更前は Prefix / Substring でも、候補を
+スコアリングした rayon worker ごとに `MATCHER` が遅延初期化され、`Matcher::new` が `alloc_zeroed` を
+1 回・133,120 B 確保していた（2026-10-24 に計数アロケータで実測・nucleo-matcher 0.3.1）。D の後は
+Fuzzy の照合でしか初期化されないので、この機体の実運用点（Substring・16 worker）では最大で
+16 × 133,120 B ≈ 2.0 MiB の commit が消える見込みである——**プロセスの PrivComm では確かめていない**。
 
 ### 採用: results の snapshot の受け取りで行を複製しない
 

@@ -476,14 +476,15 @@ fn history_boost_unified_across_accent_variants() {
     assert_eq!(results[0].name, "Résumé Builder");
 }
 
-/// 照合器へ渡す haystack を確保せずに組む形が、置き換え前の
+/// 照合器へ渡す haystack を候補ごとには確保せずに組む形が、置き換え前の
 /// `Utf32String::from(..).slice(..)` と同じ値を返す。
 ///
 /// 回帰テスト: 確保をやめる変更の安全性はこの一致だけに依る——照合器への入力が 1 文字でも
-/// 違えばスコアが静かに動き、順位だけが変わる（クラッシュしない）。**結合アクセントの行が
-/// 要石である**: `Utf32Str::new` は非 ASCII でも書記素の先頭がすべて ASCII の文字列に `Ascii`
-/// を返し、`Utf32String::from` が返す `Unicode` とずれる。その誤った置き換えを弾くのはこの行
-/// である（残りの行はどちらの形でも一致する）。
+/// 違えばスコアが静かに動き、順位だけが変わる（クラッシュしない）。**`nucleo-matcher` 0.3.1 では
+/// 結合アクセントの行が要石である**: `Utf32Str::new` は非 ASCII でも書記素の先頭がすべて ASCII の
+/// 文字列に `Ascii` を返し、`Utf32String::from` が返す `Unicode` とずれる。その誤った置き換えを
+/// 弾くのはこの行である（0.3.1 では、残りの行はどちらの形でも一致する）。**版を上げてこれが赤に
+/// なったら、まず上流の側が変わったかを見る**（`utf32_haystack` は 0.3.1 の `From<&str>` の写し）。
 #[test]
 fn utf32_haystack_matches_utf32_string_from() {
     let mut buf = Vec::new();

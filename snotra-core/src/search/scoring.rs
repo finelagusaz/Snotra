@@ -65,8 +65,8 @@ struct FuzzyScratch {
 }
 
 // D-5: one Matcher per rayon worker thread, reused across fold tasks.
-// Matcher::new() calls alloc_zeroed internally (several KB); thread_local avoids
-// that allocation on every rayon chunk boundary.
+// Matcher::new() is one alloc_zeroed of 133,120 B in nucleo-matcher 0.3.1 (measured 2026-10-24);
+// thread_local avoids that allocation on every rayon chunk boundary.
 thread_local! {
     static MATCHER: RefCell<FuzzyScratch> = RefCell::new(FuzzyScratch {
         matcher: Matcher::new(MatcherConfig::DEFAULT),
@@ -79,10 +79,13 @@ thread_local! {
 /// ここで確保すると候補の数だけ確保が乗る（pre-filter との順序の正本は
 /// [`SearchEngine::score_one_entry`] の doc。額は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 ///
-/// **`Utf32String::from(haystack).slice(..)` と同じ値を返す**（一致は `search/tests/basic.rs` の
-/// `utf32_haystack_matches_utf32_string_from` が固定する）。
-/// **`Utf32Str::new` で代用してはならない**——非 ASCII でも書記素の先頭がすべて ASCII の文字列
-/// （`e` + 結合アクセント等）に `Ascii` を返し、照合器への入力が変わる（スコアが静かに動く）。
+/// **`Utf32String::from(haystack).slice(..)` と同じ値を返す**——`nucleo-matcher` 0.3.1 の
+/// `From<&str>` を書き写した形である（一致は `search/tests/basic.rs` の
+/// `utf32_haystack_matches_utf32_string_from` が固定する）。**0.3.1 では `Utf32Str::new` で
+/// 代用してはならない**——非 ASCII でも書記素の先頭がすべて ASCII の文字列（`e` + 結合アクセント等）に
+/// `Ascii` を返し、照合器への入力が変わる（スコアが静かに動く）。**版を上げてその一致が赤になったら、
+/// まず上流の `From<&str>` / `Utf32Str::new` の側が変わったかを見る**——両者が揃っていれば、この
+/// 関数は書き写しをやめて `Utf32Str::new` へ置き換えられる。
 pub(super) fn utf32_haystack<'a>(haystack: &'a str, buf: &'a mut Vec<char>) -> Utf32Str<'a> {
     if haystack.is_ascii() {
         Utf32Str::Ascii(haystack.as_bytes())
@@ -192,8 +195,7 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> 
 }
 
 /// 小文字化済みの名前 1 つをスコアリングする。`needle_u32` は `query` の UTF-32 形（検索 1 回に
-/// 1 度だけ作る）でなければならない。Fuzzy の UTF-32 への変換はここで [`utf32_haystack`] が
-/// 候補ごとには確保せずに行う（pre-filter との順序の正本は [`SearchEngine::score_one_entry`] の doc）。
+/// 1 度だけ作る）でなければならない。Fuzzy の haystack は [`utf32_haystack`] が組む。
 ///
 /// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕の中に閉じてある**——呼び出し側が
 /// スレッドローカルを知らずに済むためであって、速さのためではない（Substring の全件走査で差が
@@ -215,7 +217,6 @@ fn match_score_single_cached(
         SearchMode::Substring => lower_name
             .find(query)
             .map(|idx| score_tier::SUBSTRING_BASE - idx as i64),
-        // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
         SearchMode::Fuzzy => MATCHER.with(|m| {
             let scratch = &mut *m.borrow_mut();
             let haystack = utf32_haystack(lower_name, &mut scratch.haystack);
@@ -392,8 +393,6 @@ impl SearchEngine {
         let v = self.entry_view(i);
         let norm_query_str: &str = plan.norm_query.as_ref();
 
-        // Fuzzy モードの UTF-32 への変換は照合の中で行う（`match_score_single_cached`）。
-        // ビットマスクで除外された候補には到達しない。
         // **区切りを含む needle は、区切りを含まない名前に部分列として存在しえない。**
         // ゆえに Fuzzy の name/file_name スコアリングは**証明として**飛ばせる（#1057）。
         // 額は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを行わない」が

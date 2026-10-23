@@ -20,9 +20,15 @@ use crate::egui_shell::{IconMsg, RowTheme, retain_visible};
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct RowsSnapshot {
     /// 描画する行。**空 = results ウィンドウは非表示**（別途 `show` フラグは持たない・/simplify）——
-    /// main は「表示すべきでないフレーム」に空 Vec を発行するため、`rows.is_empty()` が
+    /// main は「表示すべきでないフレーム」に空の行を発行するため、`rows.is_empty()` が
     /// 可視性そのものを表す。2 つの書き込みを手で同期させる規約を型で消す。
-    pub rows: Vec<snotra_core::ui_types::SearchResult>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
+    ///
+    /// **`Arc` で持つのは、results が毎フレーム snapshot を `clone` して受け取るためである**
+    /// （lock を描画の間じゅう握らないため）。`Vec` だと受け取りのたびに行数ぶんの `String` を
+    /// 複製し、ポインタ移動のように毎フレーム描く場面でそれが乗り続ける（額は
+    /// `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。行を作り直すのは発行が変化を
+    /// 検出したとき（[`Self::matches`]）だけである。
+    pub rows: std::sync::Arc<[snotra_core::ui_types::SearchResult]>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
     pub selected: usize,
     /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632 reviewer Important 3
     /// の後継・Fix 3）。`selected` の値だけでは「打鍵で結果が丸ごと変わったが selected は
@@ -38,9 +44,9 @@ pub(crate) struct RowsSnapshot {
 }
 
 impl RowsSnapshot {
-    /// 発行前の差分判定（/simplify・効率）。`Vec` を作ってから `PartialEq` で比べると、
+    /// 発行前の差分判定（/simplify・効率）。行の列を作ってから `PartialEq` で比べると、
     /// **無変化フレームでも** 行数ぶんの `String` 確保が走る（入力欄のキャレット点滅だけでも
-    /// main は repaint する）。行はスライスのまま突き合わせ、差があるときだけ `to_vec()` する。
+    /// main は repaint する）。行はスライスのまま突き合わせ、差があるときだけ作り直す。
     ///
     /// **フィールドを増やしたらここも増やす**——先頭の分解束縛が漏れを compile-fail にする。
     pub(crate) fn matches(
@@ -56,7 +62,7 @@ impl RowsSnapshot {
             generation: cur_generation,
             input_idle: cur_input_idle,
         } = self;
-        cur_rows.as_slice() == rows
+        **cur_rows == *rows
             && *cur_selected == selected
             && *cur_generation == generation
             && *cur_input_idle == input_idle
@@ -547,6 +553,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let Some(shared) = app_handle.try_state::<ResultsShared>() else {
             return;
         };
+        // 受け取りは行を複製しない（`RowsSnapshot::rows` の doc）。
         let snapshot = shared.snapshot.lock().unwrap().clone();
         if snapshot.rows.is_empty() {
             // #632 の不変条件「再表示後に確実に一度 scroll し直す」の実ゲート。旧実装は main
@@ -802,6 +809,25 @@ mod tests {
                 measure(n)
             );
         }
+    }
+
+    /// results が毎フレーム snapshot を受け取る `clone` は、行を複製しない
+    /// （`RowsSnapshot::rows` の doc）。
+    ///
+    /// 回帰テスト: 行を `Vec` で持っていた頃は、受け取りのたびに行数ぶんの `String` を
+    /// 複製していた。型を戻すと 2 つの snapshot が別々のバッファを指し、これが落ちる。
+    /// **検索結果も描画も変わらない退行なので、挙動テストでは捕まらない。**
+    #[test]
+    fn snapshot_clone_shares_rows_instead_of_copying_them() {
+        let snapshot = super::RowsSnapshot {
+            rows: rows_for_test(200).into(),
+            ..Default::default()
+        };
+        let taken = snapshot.clone();
+        assert!(
+            std::ptr::eq(snapshot.rows.as_ptr(), taken.rows.as_ptr()),
+            "snapshot の clone が行を複製している（受け取りのたびに 200 行ぶんの String を確保する）"
+        );
     }
 
     /// **行ピッチが `row_height`（を egui の UI 丸めに通した値）ちょうどである**

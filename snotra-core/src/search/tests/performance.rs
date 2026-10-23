@@ -115,6 +115,10 @@ fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
 // 現運用点の実測は 86.6% だった。判定の経緯は `PERFORMANCE.md` を正本とする。
 
 fn bench_search(label: &str, n: usize, queries: &[&str]) {
+    bench_search_in(label, n, queries, SearchMode::Fuzzy);
+}
+
+fn bench_search_in(label: &str, n: usize, queries: &[&str], mode: SearchMode) {
     use std::time::Instant;
     let entries = make_bench_entries(n);
     let mut engine = SearchEngine::new(entries);
@@ -122,7 +126,7 @@ fn bench_search(label: &str, n: usize, queries: &[&str]) {
 
     // ウォームアップ（rayon スレッドプールの初期化を除外）
     for q in queries {
-        let _ = engine.search(q, 10, &history, SearchMode::Fuzzy);
+        let _ = engine.search(q, 10, &history, mode);
     }
 
     let iters = 20usize;
@@ -130,7 +134,7 @@ fn bench_search(label: &str, n: usize, queries: &[&str]) {
     for _ in 0..iters {
         for q in queries {
             let t = Instant::now();
-            let _ = engine.search(q, 10, &history, SearchMode::Fuzzy);
+            let _ = engine.search(q, 10, &history, mode);
             total_ns += t.elapsed().as_nanos();
         }
     }
@@ -148,6 +152,18 @@ fn bench_fuzzy_search_scaling() {
     let queries = ["vis", "code", "micro", "app", "sett"];
     for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
         bench_search("fuzzy", n, &queries);
+    }
+}
+
+/// `normal_mode = "substring"` の全件走査。**Fuzzy の bitmask pre-filter を通らない**ので
+/// 全エントリが照合まで進み、1 件あたりの固定費がそのまま規模に乗る——上の Fuzzy の計器では
+/// この経路を 1 度も通らない。クエリは上と同じ（互いに接頭辞にならず、毎回が全件走査になる）。
+#[test]
+#[ignore]
+fn bench_substring_search_scaling() {
+    let queries = ["vis", "code", "micro", "app", "sett"];
+    for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
+        bench_search_in("substring", n, &queries, SearchMode::Substring);
     }
 }
 

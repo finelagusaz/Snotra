@@ -192,11 +192,15 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> 
 
 /// Score using pre-computed lowercase name.
 /// Fuzzy mode converts `lower_name` to the matcher's form on demand (after the bitmask
-/// pre-filter) through [`utf32_haystack`], reusing `scratch` instead of allocating.
+/// pre-filter) through [`utf32_haystack`], reusing the thread-local scratch instead of allocating.
 /// `needle_u32` must be the UTF-32 encoding of `query` (pre-computed once per search call).
+///
+/// **スレッドローカル（`MATCHER`）を借りるのは Fuzzy の腕だけである**——照合器と UTF-32 の
+/// 展開先を使うのはそこだけなので、借用をそこへ閉じれば呼び出し側はスレッドローカルを知らずに
+/// 済む。速さのためではない（Substring の全件走査で差が測れなかった・`PERFORMANCE.md`
+/// 「採用: 検索の候補ごとの確保をやめる」）。
 fn match_score_single_cached(
     mode: SearchMode,
-    scratch: &mut FuzzyScratch,
     lower_name: &str,
     query: &str,
     needle_u32: &Utf32String,
@@ -212,14 +216,16 @@ fn match_score_single_cached(
         SearchMode::Substring => lower_name
             .find(query)
             .map(|idx| score_tier::SUBSTRING_BASE - idx as i64),
-        SearchMode::Fuzzy => {
+        // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
+        SearchMode::Fuzzy => MATCHER.with(|m| {
+            let scratch = &mut *m.borrow_mut();
             let haystack = utf32_haystack(lower_name, &mut scratch.haystack);
             let needle = needle_u32.slice(..);
             scratch
                 .matcher
                 .fuzzy_match(haystack, needle)
                 .map(|s| s as i64)
-        }
+        }),
     }
 }
 
@@ -412,19 +418,10 @@ impl SearchEngine {
             && plan.norm_query_has_path_sep
             && !self.any_name_has_path_sep;
 
-        // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
         let name_score = if skip_name {
             None
         } else {
-            MATCHER.with(|m| {
-                match_score_single_cached(
-                    mode,
-                    &mut m.borrow_mut(),
-                    v.lower_name,
-                    norm_query_str,
-                    &plan.needle_u32,
-                )
-            })
+            match_score_single_cached(mode, v.lower_name, norm_query_str, &plan.needle_u32)
         };
 
         let primary_score = if plan.has_dot {
@@ -438,15 +435,7 @@ impl SearchEngine {
             let needs_fn_score = !skip_name && name_score.is_none_or(|s| s <= 9000);
             let fn_score = if needs_fn_score {
                 v.lower_file_name.and_then(|fn_name| {
-                    MATCHER.with(|m| {
-                        match_score_single_cached(
-                            mode,
-                            &mut m.borrow_mut(),
-                            fn_name,
-                            norm_query_str,
-                            &plan.needle_u32,
-                        )
-                    })
+                    match_score_single_cached(mode, fn_name, norm_query_str, &plan.needle_u32)
                 })
             } else {
                 None

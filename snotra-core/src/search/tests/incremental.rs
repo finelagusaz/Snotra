@@ -298,13 +298,14 @@ fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
         prev.iter().enumerate().any(|(j, &i)| i != j),
         "前回候補の添字が位置とずれている前提を固定する（ずれが無いと読み替えを外しても結果が変わらない）"
     );
-    // 2 打鍵目が再利用経路を通ることも固定する。通らなければ全件走査どうしの比較になり、
-    // このテストは何も検査しないまま緑になる。
+    // 2 打鍵目で再利用の判定（`IncrementalCache::can_reuse`）が真であることを固定する。偽なら
+    // 全件走査どうしの比較になり、何も検査しないまま緑になる。**固定するのは判定であって経路では
+    // ない**——呼び出し側が判定を無視する退行は結果を変えないので、このテストも見ない（受容する残余）。
     let plan = prepare_query_plan("alp", SearchMode::Fuzzy, &SearchOptions::default())
         .expect("空でないクエリは計画を返す");
     assert!(
         engine.incremental_cache.can_reuse(&plan, SearchMode::Fuzzy),
-        "2 打鍵目が前回候補を再利用する前提を固定する"
+        "2 打鍵目で再利用の判定が真である前提を固定する"
     );
     let reused = engine.search("alp", 200, &h, SearchMode::Fuzzy);
 

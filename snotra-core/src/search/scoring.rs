@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32String};
+use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str, Utf32String};
 
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::history::HistoryStore;
@@ -56,11 +56,44 @@ const _: () = {
     assert!(score_tier::PATH_POS_CAP > 0);
 };
 
+/// Fuzzy の照合に使う、rayon の worker ごとに 1 組の道具。
+struct FuzzyScratch {
+    matcher: Matcher,
+    /// 非 ASCII の haystack を UTF-32 へ展開する先（[`utf32_haystack`]）。容量を使い回すので、
+    /// 暖まった後は候補ごとの確保が起きない。
+    haystack: Vec<char>,
+}
+
 // D-5: one Matcher per rayon worker thread, reused across fold tasks.
-// Matcher::new() calls alloc_zeroed internally (several KB); thread_local avoids
-// that allocation on every rayon chunk boundary.
+// Matcher::new() is one alloc_zeroed of 133,120 B in nucleo-matcher 0.3.1 (measured 2026-10-24);
+// thread_local avoids that allocation on every rayon chunk boundary.
 thread_local! {
-    static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(MatcherConfig::DEFAULT));
+    static MATCHER: RefCell<FuzzyScratch> = RefCell::new(FuzzyScratch {
+        matcher: Matcher::new(MatcherConfig::DEFAULT),
+        haystack: Vec::new(),
+    });
+}
+
+/// `haystack` を照合器へ渡す形にする。**候補ごとには確保しない**——ASCII は借用し、非 ASCII は
+/// `buf` の容量を使い回す（伸びるのは容量が足りないときだけ）。照合は照合へ進んだ候補ごとに走るので、
+/// ここで確保すると候補の数だけ確保が乗る（pre-filter との順序の正本は
+/// [`SearchEngine::score_one_entry`] の doc。額は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
+///
+/// **`Utf32String::from(haystack).slice(..)` と同じ値を返す**——`nucleo-matcher` 0.3.1 の
+/// `From<&str>` を書き写した形である（一致は `search/tests/basic.rs` の
+/// `utf32_haystack_matches_utf32_string_from` が固定する）。**0.3.1 では `Utf32Str::new` で
+/// 代用してはならない**——非 ASCII でも書記素の先頭がすべて ASCII の文字列（`e` + 結合アクセント等）に
+/// `Ascii` を返し、照合器への入力が変わる（スコアが静かに動く）。**版を上げてその一致が赤になったら、
+/// まず上流の `From<&str>` / `Utf32Str::new` の側が変わったかを見る**——両者が揃っていれば、この
+/// 関数は書き写しをやめて `Utf32Str::new` へ置き換えられる。
+pub(super) fn utf32_haystack<'a>(haystack: &'a str, buf: &'a mut Vec<char>) -> Utf32Str<'a> {
+    if haystack.is_ascii() {
+        Utf32Str::Ascii(haystack.as_bytes())
+    } else {
+        buf.clear();
+        buf.extend(nucleo_matcher::chars::graphemes(haystack));
+        Utf32Str::Unicode(buf)
+    }
 }
 
 /// スレッドローカルのバッファへ索引 `i` の正規化キーを詰め、`&str` として貸す。
@@ -161,15 +194,16 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> 
         .map(|pos| (score_tier::KANA_BASE - pos as i64).max(1))
 }
 
-/// Score using pre-computed lowercase name and an optional UTF-32 haystack.
-/// `haystack_u32` is `Some` only in Fuzzy mode (computed on-demand after bitmask pre-filter).
-/// `needle_u32` must be the UTF-32 encoding of `query` (pre-computed once per search call).
+/// 小文字化済みの名前 1 つをスコアリングする。`needle_u32` は `query` の UTF-32 形（検索 1 回に
+/// 1 度だけ作る）でなければならない。Fuzzy の haystack は [`utf32_haystack`] が組む。
+///
+/// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕の中に閉じてある**——呼び出し側が
+/// スレッドローカルを知らずに済むためであって、速さのためではない（Substring の全件走査で差が
+/// 測れなかった・実測は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 fn match_score_single_cached(
     mode: SearchMode,
-    matcher: &mut Matcher,
     lower_name: &str,
     query: &str,
-    haystack_u32: Option<&Utf32String>,
     needle_u32: &Utf32String,
 ) -> Option<i64> {
     match mode {
@@ -183,12 +217,15 @@ fn match_score_single_cached(
         SearchMode::Substring => lower_name
             .find(query)
             .map(|idx| score_tier::SUBSTRING_BASE - idx as i64),
-        SearchMode::Fuzzy => {
-            let h = haystack_u32.expect("Fuzzy mode requires UTF-32 haystack");
-            let haystack = h.slice(..);
+        SearchMode::Fuzzy => MATCHER.with(|m| {
+            let scratch = &mut *m.borrow_mut();
+            let haystack = utf32_haystack(lower_name, &mut scratch.haystack);
             let needle = needle_u32.slice(..);
-            matcher.fuzzy_match(haystack, needle).map(|s| s as i64)
-        }
+            scratch
+                .matcher
+                .fuzzy_match(haystack, needle)
+                .map(|s| s as i64)
+        }),
     }
 }
 
@@ -316,7 +353,7 @@ impl SearchEngine {
     /// 依存しない**——ゆえに収集を止めても検索結果は 1 件も変わらない。
     ///
     /// **内部順序の不変条件（性能）**:
-    /// - bitmask pre-filter を関数**先頭**に置く（`entry_view` / `Utf32String::from` より前）。
+    /// - bitmask pre-filter を関数**先頭**に置く（`entry_view` / [`utf32_haystack`] より前）。
     ///   pre-filter で落ちる候補に UTF-32 変換コストを掛けないため。
     /// - `has_dot` の file_name 短絡（`name_score <= 9000`）を保存する（MATCHER 呼び出し回数）。
     ///
@@ -338,7 +375,7 @@ impl SearchEngine {
         // kana substring が成立する候補を棄却しない。
         // has_path_sep 時は従来どおりスキップ: パスだけでマッチするエントリが
         // name/file_name mask で落ちる問題を回避する。
-        // **必ず関数先頭**（entry_view / Utf32String 変換より前）。
+        // **必ず関数先頭**（entry_view / UTF-32 変換より前）。
         if mode == SearchMode::Fuzzy && !plan.has_path_sep {
             let name_mask = self.char_masks[i];
             let fn_mask = self.file_name_char_masks[i];
@@ -356,9 +393,6 @@ impl SearchEngine {
         let v = self.entry_view(i);
         let norm_query_str: &str = plan.norm_query.as_ref();
 
-        // Fuzzy モードのみ UTF-32 へのオンデマンド変換を行う。
-        // ビットマスクで除外された候補には到達しないため、変換コストは
-        // ビットマスク通過分（全体の 1-5%）にのみ発生する。
         // **区切りを含む needle は、区切りを含まない名前に部分列として存在しえない。**
         // ゆえに Fuzzy の name/file_name スコアリングは**証明として**飛ばせる（#1057）。
         // 額は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを行わない」が
@@ -382,27 +416,10 @@ impl SearchEngine {
             && plan.norm_query_has_path_sep
             && !self.any_name_has_path_sep;
 
-        let name_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy && !skip_name {
-            Some(Utf32String::from(v.lower_name))
-        } else {
-            None
-        };
-
-        // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
         let name_score = if skip_name {
             None
         } else {
-            MATCHER.with(|m| {
-                let mut matcher = m.borrow_mut();
-                match_score_single_cached(
-                    mode,
-                    &mut matcher,
-                    v.lower_name,
-                    norm_query_str,
-                    name_u32_owned.as_ref(),
-                    &plan.needle_u32,
-                )
-            })
+            match_score_single_cached(mode, v.lower_name, norm_query_str, &plan.needle_u32)
         };
 
         let primary_score = if plan.has_dot {
@@ -416,22 +433,7 @@ impl SearchEngine {
             let needs_fn_score = !skip_name && name_score.is_none_or(|s| s <= 9000);
             let fn_score = if needs_fn_score {
                 v.lower_file_name.and_then(|fn_name| {
-                    let fn_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy {
-                        Some(Utf32String::from(fn_name))
-                    } else {
-                        None
-                    };
-                    MATCHER.with(|m| {
-                        let mut matcher = m.borrow_mut();
-                        match_score_single_cached(
-                            mode,
-                            &mut matcher,
-                            fn_name,
-                            norm_query_str,
-                            fn_u32_owned.as_ref(),
-                            &plan.needle_u32,
-                        )
-                    })
+                    match_score_single_cached(mode, fn_name, norm_query_str, &plan.needle_u32)
                 })
             } else {
                 None

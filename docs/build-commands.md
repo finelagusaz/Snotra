@@ -199,6 +199,7 @@ cargo test --release -p snotra-core --test path_query_cost -- --ignored --nocapt
 cargo test --release -p snotra-core --test path_query_cost at_operating_point -- --ignored --nocapture --test-threads=1  # path_query_cost のうち実運用点（PATH マージ + 実 config の normal_mode）を 2×2 で測る（#1067）
 cargo test --release -p snotra-core --test path_query_cost across_settings -- --ignored --nocapture --test-threads=1     # 設定の組み合わせ 36 構成で c:\ のコストを掃く（改修の射程を決める・#1067）
 cargo test --release -p snotra-core --test dir_stat_cost -- --ignored --nocapture --test-threads=1     # ディレクトリの列挙と属性読み取りの費用差（判断は ADR-mtime-differential-scan-ceiling・撤去条件は当該ハーネスの //!）
+cargo test --release -p snotra-core --test search_allocations -- --ignored --nocapture  # 検索 1 回あたりの一時確保（回数・バイト数。計数器込みゆえ µs は壁時計ではない・詳細: PERFORMANCE.md）
 cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo fmt --all                  # 整形の**修復**（検査は カテゴリ A の `cargo fmt --all -- --check`・#858）

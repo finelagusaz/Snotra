@@ -253,3 +253,62 @@ fn incremental_search_empty_prev_candidates_falls_back() {
     assert!(!r3.is_empty());
     assert_eq!(r3[0].name, "Firefox");
 }
+
+/// 前回候補を再利用する検索が、rayon の分割（`MIN_PAR_CANDIDATES`）が起きる規模でも
+/// 新品の engine と順序込みで一致する。
+///
+/// 回帰テスト: 再利用時の走査は添字の範囲を回し、`map` の中で前回候補へ読み替える
+/// （`search_with_options` のコメント）。`incremental_search_gives_correct_results_on_extension` の
+/// fixture は分割が起きる規模に届かないので、
+/// **件数に依存する誤り**（前回候補を途中で打ち切る等）を見られない——このテストが単独で捕まえる
+/// のはその型である。**見えるのは、取りこぼしが top-k の選ばれる前回候補の末尾に掛かるときである**
+/// （分割の境目の 1 件だけを落とす誤りは、その候補が top-k の外なら結果を変えず、ここでも緑になる）。
+///
+/// **fixture の形が検出力を決める。** 全件が 1 打鍵目に一致すると前回候補が `0..n` そのものに
+/// なり、読み替えを外しても結果が変わらない——ゆえに 3 件に 1 件を一致させず、添字と位置を
+/// ずらす。名前は添字が大きいほど辞書順で前に来るので、top-k は前回候補の**末尾**から選ばれ、
+/// 範囲を素で回す誤りはちょうどそこを取りこぼす。
+#[test]
+fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
+    let n = 4 * MIN_PAR_CANDIDATES;
+    // `omega` は "al" に一致しない（`l` を持たない）。
+    let owned: Vec<String> = (0..n)
+        .map(|i| {
+            let stem = if i % 3 == 0 { "omega" } else { "alpha" };
+            format!("{stem} {:05}", n - i)
+        })
+        .collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let h = empty_history();
+    let mut engine = SearchEngine::new(make_entries(&names));
+
+    let _ = engine.search("al", 200, &h, SearchMode::Fuzzy);
+    let prev = &engine.incremental_cache.prev_candidates;
+    assert!(
+        prev.len() > 2 * MIN_PAR_CANDIDATES,
+        "前回候補が分割の閾値を超える前提を固定する（{} 件）",
+        prev.len()
+    );
+    assert!(
+        prev.iter().enumerate().any(|(j, &i)| i != j),
+        "前回候補の添字が位置とずれている前提を固定する（ずれが無いと読み替えを外しても結果が変わらない）"
+    );
+    // 2 打鍵目で再利用の判定（`IncrementalCache::can_reuse`）が真であることを固定する。この assert が
+    // 無ければ、判定が偽のときは全件走査どうしの比較になり、何も検査しないまま緑になる。**固定するのは
+    // 判定であって経路ではない**——呼び出し側が判定を無視して全件走査する退行は結果を変えないので、
+    // このテストも見ない（受容する残余）。
+    let plan = prepare_query_plan("alp", SearchMode::Fuzzy, &SearchOptions::default())
+        .expect("空でないクエリは計画を返す");
+    assert!(
+        engine.incremental_cache.can_reuse(&plan, SearchMode::Fuzzy),
+        "2 打鍵目で再利用の判定が真である前提を固定する"
+    );
+    let reused = engine.search("alp", 200, &h, SearchMode::Fuzzy);
+
+    let fresh = SearchEngine::new(make_entries(&names)).search("alp", 200, &h, SearchMode::Fuzzy);
+
+    assert_eq!(
+        reused, fresh,
+        "前回候補を再利用した結果が、新品 engine の全件走査と順序込みで一致しない"
+    );
+}

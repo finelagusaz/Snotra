@@ -337,11 +337,18 @@ impl SearchEngine {
         // Copy な bool としてクロージャに move する（kana_available と同じイディオム）。
         let collect_candidates = IncrementalCache::caches_candidates(&plan);
 
-        let candidate_indices: Vec<usize> = if use_incremental {
-            self.incremental_cache.take_candidates()
-        } else {
-            (0..self.entries.len()).collect()
-        };
+        // 再利用しない検索は添字を範囲のまま走査する。`Vec<usize>` へ集めると全件ぶんの確保と
+        // 書き込みが全件走査のたびに乗る（パスクエリが再利用しない理由は
+        // `IncrementalCache::caches_candidates`）。
+        //
+        // **走査は 1 つの型のまま行う**——再利用時も範囲を回し、`map` の中で前回候補へ読み替える。
+        // 再利用と全件で別の並列イテレータ（`rayon::iter::Either`）を組む形は、全規模で
+        // この形より遅く、小さい索引のパスクエリでは集める形より遅かった（実測。額と、
+        // 機序が推定に留まることは `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
+        let reused: Option<Vec<usize>> =
+            use_incremental.then(|| self.incremental_cache.take_candidates());
+        let reused: Option<&[usize]> = reused.as_deref();
+        let candidate_count = reused.map_or(self.entries.len(), <[usize]>::len);
 
         // kana_lower_names は migemo 無効で構築されたとき空（issue #337）。
         // 構築時 migemo OFF → 検索時 migemo ON（kana_query=Some）のウィンドウで
@@ -349,15 +356,14 @@ impl SearchEngine {
         // Copy な bool としてクロージャに move する（self への可変借用は不要）。
         let kana_available = !self.kana_lower_names.is_empty();
 
-        // Parallel scoring: each rayon task gets its own Matcher (created in fold init).
-        // Matcher::new() is O(alloc_zeroed) — lightweight enough to create per task.
-        // Each task builds a local top-k BinaryHeap; tasks are merged in reduce().
+        // 並列スコアリング: 各 task は自分の top-k ヒープを組み、reduce() で併合する。
         //
         // top-k 更新規則は TopK 型に一元化する（fold の単一候補挿入・reduce の task 統合が
         // 同じ push 規則を通す・#602）。fold state の Vec<usize> は top-k とは別に全一致 index を
         // 集める（incremental search cache 用。top-k から落ちた一致も残す）。
-        let (top_k, all_match_indices): (TopK, Vec<usize>) = candidate_indices
+        let (top_k, all_match_indices): (TopK, Vec<usize>) = (0..candidate_count)
             .into_par_iter()
+            .map(|j| reused.map_or(j, |c| c[j]))
             .with_min_len(MIN_PAR_CANDIDATES)
             .fold(
                 || (TopK::new(max_results), Vec::<usize>::new()),

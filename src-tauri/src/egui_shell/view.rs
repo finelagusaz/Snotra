@@ -1137,7 +1137,7 @@ impl EguiView for SearchWindowView {
         let show_results = !self.controller.state().results().is_empty() && !plain_hidden;
         // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results ウィンドウ(ResultsView)が担う。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
-        // 判定は Vec を作る前に行う（/simplify・効率）——無変化フレームで行数ぶんの String
+        // 判定は行の列を作る前に行う（/simplify・効率）——無変化フレームで行数ぶんの String
         // 確保を払わないため、`RowsSnapshot::matches` にスライスのまま突き合わせさせる。
         if let Some(shared) = app.try_state::<crate::egui_shell::ResultsShared>() {
             // 表示すべきでないフレームは空スライスを発行する（rows 空 = results 非表示）。
@@ -1160,7 +1160,7 @@ impl EguiView for SearchWindowView {
                     input_idle,
                 ) {
                     *guard = crate::egui_shell::RowsSnapshot {
-                        rows: rows.to_vec(),
+                        rows: rows.into(),
                         selected,
                         generation: self.controller.state().rows_generation(),
                         input_idle,

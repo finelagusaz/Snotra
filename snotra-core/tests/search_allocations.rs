@@ -8,12 +8,16 @@
 //! **数えるのは「このスレッドで起きた確保」だけである。** 計数器はスレッドローカルで、検索は
 //! worker 1 本の rayon プールの中で走らせる（[`on_single_worker`]）。fold も reduce もその
 //! worker が担うので検索の確保は全部そこへ計上され、libtest が並行に走らせる他のテストの確保は
-//! 混ざらない。**1 本で数えてよいのは、候補ごとの確保がスレッド数に依らないからである**——
-//! 分割の数に比例する確保（fold ごとの top-k）はスレッド数で変わるが、検知器が見るのは規模
-//! （エントリ数）に対する傾きだけである。
+//! 混ざらない。**1 本で数えてよいのは、候補ごとの確保がスレッド数に依らないからである。**
+//! 分割の数に比例する確保（fold ごとの top-k と一致の収集）は規模とスレッド数の両方で変わるが、
+//! 候補 1 件ごとの確保とは桁が違う——検知器の閾値はその間に置いてある。
 //!
 //! **壁時計は測らない。** 計数器は確保のたびに働くので、確保の多い側ほど遅く見せる。
 //! A/B の壁時計は既定のアロケータで走るベンチ（`bench_fuzzy_search_scaling` 等）が測る。
+//!
+//! **手元の計器（`measure_search_allocations`）は実 `index.bin` を書き換えうる。**
+//! `load_or_scan_with_stats` は旧版を読めば現行版へ昇格し、キャッシュが外れれば走査して
+//! 書き出す（契約は同関数の doc）。CI で走る検知器は実データに触れない。
 //!
 //! 撤去条件を持たない恒久の検知器である（足場ではない）。実測値は
 //! `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」が正本。
@@ -161,7 +165,7 @@ struct Case {
     file_stem: fn(usize) -> String,
 }
 
-/// 照合器へ渡す文字列（haystack）を作る経路ごとに 1 件。
+/// 照合器へ渡す haystack の作り方が違う fixture（何を通すかは各 `Case` のコメント）。
 const FUZZY_CASES: &[Case] = &[
     Case {
         label: "ASCII の表示名",
@@ -215,7 +219,8 @@ fn fuzzy_full_scan_does_not_allocate_per_candidate() {
 /// パスクエリの全件走査で、エントリ数に比例するバイト数を確保しない。
 ///
 /// 回帰テスト: `search_with_options` は incremental を再利用しない検索のたびに
-/// 全エントリの添字を `Vec<usize>` へ集めてから走査していた。パスクエリは毎打鍵がこの形になる。
+/// 全エントリの添字を `Vec<usize>` へ集めてから走査していた。パスクエリは前回候補を
+/// 再利用しないので（`IncrementalCache::caches_candidates`）、打鍵のたびにこの形になる。
 /// 確保の**回数**は 1 回のままなので回数では捕まらず、バイト数で見る。
 #[test]
 fn path_query_full_scan_does_not_allocate_per_entry() {
@@ -242,11 +247,14 @@ fn path_query_full_scan_does_not_allocate_per_entry() {
 // 計器（手元で release 実行する）
 // ---------------------------------------------------------------------------
 
-/// 実運用点と合成ラダーで、検索 1 回あたりの確保を表にする（合否は言わない）。
+/// 実 `index.bin` と合成ラダーで、検索 1 回あたりの確保を表にする（合否は言わない）。
 ///
-/// 実運用点は製品の呼び出し形（`Engine::search`・実 config の mode / limit / migemo・実履歴）で
-/// 測る。**打鍵の並びのまま測る**——2 打鍵目以降は前回候補を再利用するので、全件走査とは
-/// 候補の数が違う。並びの先頭で [`RESET_QUERY`] を打ち、前の並びの候補を持ち越さない。
+/// 実 `index.bin` は製品の呼び出し形（`Engine::search`・実 config の mode / limit / migemo・
+/// 実履歴）で測る。**PATH マージは通さない**——実起動の索引とは PATH 上の実行ファイルのぶんだけ
+/// 違うので、これを「実運用点」と呼ばない（通す計器は `tests/path_query_cost.rs` の
+/// `measure_path_query_frame_cost_at_operating_point`）。**打鍵の並びのまま測る**——2 打鍵目以降は
+/// 前回候補を再利用するので、全件走査とは候補の数が違う。並びの先頭で [`RESET_QUERY`] を打ち、
+/// 前の並びの候補を持ち越さない。
 #[test]
 #[ignore = "計測専用。release + --nocapture で手動実行する"]
 fn measure_search_allocations() {
@@ -273,14 +281,14 @@ fn report_header() {
 fn measure_real_index() {
     let config = Config::load();
     if config.paths.scan.is_empty() {
-        println!("実 config に scan パスが無いため実運用点をスキップします。");
+        println!("実 config に scan パスが無いため実 index.bin の計測をスキップします。");
         return;
     }
     let loaded =
         indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
     let n = loaded.material.tree().len();
     println!(
-        "\n=== 実運用点（実 index.bin・{n} 件・cache_hit = {}・migemo = {}・mode = {:?}）===",
+        "\n=== 実 index.bin（PATH マージなし・{n} 件・cache_hit = {}・migemo = {}・mode = {:?}）===",
         loaded.stats.cache_hit, config.search.migemo_enabled, config.search.normal_mode
     );
     let mut engine = Engine::from_material(loaded.material, HistoryStore::load(), config);

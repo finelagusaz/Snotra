@@ -253,3 +253,57 @@ fn incremental_search_empty_prev_candidates_falls_back() {
     assert!(!r3.is_empty());
     assert_eq!(r3[0].name, "Firefox");
 }
+
+/// 前回候補を再利用する検索が、rayon の分割（`MIN_PAR_CANDIDATES`）が起きる規模でも
+/// 新品の engine と順序込みで一致する。
+///
+/// 回帰テスト: 再利用時の走査は添字の範囲を回し、`map` の中で前回候補へ読み替える
+/// （`search_with_options` のコメント）。上の 5 件の fixture では分割が起きず、読み替えを
+/// 外す・ずらす誤りを分割の境目で見られない。
+///
+/// **fixture の形が検出力を決める。** 全件が 1 打鍵目に一致すると前回候補が `0..n` そのものに
+/// なり、読み替えを外しても結果が変わらない——ゆえに 3 件に 1 件を一致させず、添字と位置を
+/// ずらす。名前は添字が大きいほど辞書順で前に来るので、top-k は前回候補の**末尾**から選ばれ、
+/// 範囲を素で回す誤りはちょうどそこを取りこぼす。
+#[test]
+fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
+    let n = 4 * MIN_PAR_CANDIDATES;
+    let entries = || -> Vec<AppEntry> {
+        (0..n)
+            .map(|i| AppEntry {
+                // `omega` は "al" に一致しない（`l` を持たない）。
+                name: if i % 3 == 0 {
+                    format!("omega {:05}", n - i)
+                } else {
+                    format!("alpha {:05}", n - i)
+                },
+                target_path: format!("C:\\apps\\tool{i:05}.exe"),
+                is_folder: false,
+            })
+            .collect()
+    };
+    let h = empty_history();
+    let mut engine = SearchEngine::new(entries());
+
+    let _ = engine.search("al", 200, &h, SearchMode::Fuzzy);
+    let reused_from = engine.incremental_cache.prev_candidates.len();
+    assert!(
+        reused_from > 2 * MIN_PAR_CANDIDATES,
+        "前回候補が分割の閾値を超える前提を固定する（{reused_from} 件）"
+    );
+    let reused = engine.search("alp", 200, &h, SearchMode::Fuzzy);
+
+    let fresh = SearchEngine::new(entries()).search("alp", 200, &h, SearchMode::Fuzzy);
+
+    let rows = |results: &[crate::ui_types::SearchResult]| -> Vec<(String, String)> {
+        results
+            .iter()
+            .map(|r| (r.name.clone(), r.path.clone()))
+            .collect()
+    };
+    assert_eq!(
+        rows(&reused),
+        rows(&fresh),
+        "前回候補を再利用した結果が、新品 engine の全件走査と順序込みで一致しない"
+    );
+}

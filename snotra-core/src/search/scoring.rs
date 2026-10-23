@@ -74,9 +74,10 @@ thread_local! {
     });
 }
 
-/// `haystack` を照合器へ渡す形にする。**確保しない**——ASCII は借用し、非 ASCII は `buf` の
-/// 容量を使い回す。照合は bitmask を通った候補ごとに走るので、ここで確保すると候補の数だけ
-/// 確保が乗る（額は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
+/// `haystack` を照合器へ渡す形にする。**候補ごとには確保しない**——ASCII は借用し、非 ASCII は
+/// `buf` の容量を使い回す（伸びるのは容量が足りないときだけ）。照合は bitmask を通った候補ごとに
+/// 走るので、ここで確保すると候補の数だけ確保が乗る（額は
+/// `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 ///
 /// **`Utf32String::from(haystack).slice(..)` と同じ値を返す**（一致は `search/tests/basic.rs` の
 /// `utf32_haystack_matches_utf32_string_from` が固定する）。
@@ -190,15 +191,13 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> 
         .map(|pos| (score_tier::KANA_BASE - pos as i64).max(1))
 }
 
-/// Score using pre-computed lowercase name.
-/// Fuzzy mode converts `lower_name` to the matcher's form on demand (after the bitmask
-/// pre-filter) through [`utf32_haystack`], reusing the thread-local scratch instead of allocating.
-/// `needle_u32` must be the UTF-32 encoding of `query` (pre-computed once per search call).
+/// 小文字化済みの名前 1 つをスコアリングする。`needle_u32` は `query` の UTF-32 形（検索 1 回に
+/// 1 度だけ作る）でなければならない。Fuzzy の UTF-32 への変換は bitmask pre-filter を通った後の
+/// ここで、[`utf32_haystack`] が候補ごとには確保せずに行う。
 ///
-/// **スレッドローカル（`MATCHER`）を借りるのは Fuzzy の腕だけである**——照合器と UTF-32 の
-/// 展開先を使うのはそこだけなので、借用をそこへ閉じれば呼び出し側はスレッドローカルを知らずに
-/// 済む。速さのためではない（Substring の全件走査で差が測れなかった・実測は
-/// `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
+/// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕の中に閉じてある**——呼び出し側が
+/// スレッドローカルを知らずに済むためであって、速さのためではない（Substring の全件走査で差が
+/// 測れなかった・実測は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 fn match_score_single_cached(
     mode: SearchMode,
     lower_name: &str,

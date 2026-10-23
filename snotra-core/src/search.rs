@@ -338,7 +338,8 @@ impl SearchEngine {
         let collect_candidates = IncrementalCache::caches_candidates(&plan);
 
         // 再利用しない検索は添字を範囲のまま走査する。`Vec<usize>` へ集めると全件ぶんの確保と
-        // 書き込みが全件走査のたび（パスクエリでは毎打鍵）に乗る。
+        // 書き込みが全件走査のたびに乗る（パスクエリが再利用しない理由は
+        // `IncrementalCache::caches_candidates`）。
         //
         // **走査は 1 つの型のまま行う**——再利用時も範囲を回し、`map` の中で前回候補へ読み替える。
         // 再利用と全件で別の並列イテレータ（`rayon::iter::Either`）を組む形は、全規模で
@@ -355,9 +356,8 @@ impl SearchEngine {
         // Copy な bool としてクロージャに move する（self への可変借用は不要）。
         let kana_available = !self.kana_lower_names.is_empty();
 
-        // Parallel scoring: each rayon task gets its own Matcher (created in fold init).
-        // Matcher::new() is O(alloc_zeroed) — lightweight enough to create per task.
-        // Each task builds a local top-k BinaryHeap; tasks are merged in reduce().
+        // 並列スコアリング: 照合器は rayon の worker ごとのスレッドローカル（`search/scoring.rs` の
+        // `MATCHER`）を借りる。各 task は自分の top-k ヒープを組み、reduce() で併合する。
         //
         // top-k 更新規則は TopK 型に一元化する（fold の単一候補挿入・reduce の task 統合が
         // 同じ push 規則を通す・#602）。fold state の Vec<usize> は top-k とは別に全一致 index を

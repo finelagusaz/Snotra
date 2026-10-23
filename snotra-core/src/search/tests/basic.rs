@@ -508,7 +508,7 @@ fn utf32_haystack_matches_utf32_string_from() {
     }
 }
 
-/// 同じ一致を、実インデックスで照合器へ渡りうる全 haystack（`entry_view` の 2 つの文字列）で
+/// 同じ一致を、実インデックスで照合器へ渡りうる全 haystack（`entry_view` が照合器へ渡す文字列）で
 /// 確かめる。実インデックスが無ければ自動スキップする corpus であり、機構としての保証は上の
 /// 合成のほうが持つ（`real_index_entries` の doc）。
 #[test]

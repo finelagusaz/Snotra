@@ -26,8 +26,8 @@ pub(crate) struct RowsSnapshot {
     /// **`Arc` で持つのは、results が毎フレーム snapshot を `clone` して受け取るためである**
     /// （lock を描画の間じゅう握らないため）。`Vec` だと受け取りのたびに行数ぶんの `String` を
     /// 複製し、ポインタ移動のように毎フレーム描く場面でそれが乗り続ける（額は
-    /// `PERFORMANCE.md`「採用: results の snapshot の受け取りで行を複製しない」）。行を作り直すのは
-    /// 発行が変化を検出したとき（[`Self::matches`]）だけである。
+    /// `PERFORMANCE.md`「採用: results の snapshot の受け取りで行を複製しない」）。行を作り直すかは
+    /// 発行側が [`Self::matches`] で決める。
     pub rows: std::sync::Arc<[snotra_core::ui_types::SearchResult]>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
     pub selected: usize,
     /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632 reviewer Important 3
@@ -816,7 +816,8 @@ mod tests {
     ///
     /// 回帰テスト: 行を `Vec` で持っていた頃は、受け取りのたびに行数ぶんの `String` を
     /// 複製していた。型を戻すと 2 つの snapshot が別々のバッファを指し、これが落ちる。
-    /// **検索結果も描画も変わらない退行なので、挙動テストでは捕まらない。**
+    /// **検索結果も描画も変わらない退行なので、挙動テストでは捕まらない。** 見るのは型だけで、
+    /// 受け取り側で行を写し直す形（`to_vec` 等）はこの検査の射程外である。
     #[test]
     fn snapshot_clone_shares_rows_instead_of_copying_them() {
         let snapshot = super::RowsSnapshot {

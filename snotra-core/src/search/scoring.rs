@@ -192,8 +192,8 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> 
 }
 
 /// 小文字化済みの名前 1 つをスコアリングする。`needle_u32` は `query` の UTF-32 形（検索 1 回に
-/// 1 度だけ作る）でなければならない。Fuzzy の UTF-32 への変換は bitmask pre-filter を通った後の
-/// ここで、[`utf32_haystack`] が候補ごとには確保せずに行う。
+/// 1 度だけ作る）でなければならない。Fuzzy の UTF-32 への変換はここで [`utf32_haystack`] が
+/// 候補ごとには確保せずに行う（pre-filter との順序の正本は [`SearchEngine::score_one_entry`] の doc）。
 ///
 /// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕の中に閉じてある**——呼び出し側が
 /// スレッドローカルを知らずに済むためであって、速さのためではない（Substring の全件走査で差が

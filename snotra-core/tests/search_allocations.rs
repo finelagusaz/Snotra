@@ -168,6 +168,7 @@ struct Case {
 /// 照合器へ渡す haystack の作り方が違う fixture（何を通すかは各 `Case` のコメント）。
 const FUZZY_CASES: &[Case] = &[
     Case {
+        // ASCII の名前は UTF-32 へ展開せず、借用のまま照合器へ渡る側の経路を通る。
         label: "ASCII の表示名",
         query: "alpha",
         name: |i| format!("alpha tool {i:05}"),
@@ -250,11 +251,10 @@ fn path_query_full_scan_does_not_allocate_per_entry() {
 /// 実 `index.bin` と合成ラダーで、検索 1 回あたりの確保を表にする（合否は言わない）。
 ///
 /// 実 `index.bin` は製品の呼び出し形（`Engine::search`・実 config の mode / limit / migemo・
-/// 実履歴）で測る。**PATH マージは通さない**——実起動の索引とは PATH 上の実行ファイルのぶんだけ
-/// 違うので、これを「実運用点」と呼ばない（通す計器は `tests/path_query_cost.rs` の
-/// `measure_path_query_frame_cost_at_operating_point`）。**打鍵の並びのまま測る**——2 打鍵目以降は
-/// 前回候補を再利用するので、全件走査とは候補の数が違う。並びの先頭で [`RESET_QUERY`] を打ち、
-/// 前の並びの候補を持ち越さない。
+/// 実履歴）で測る。**PATH マージは通さない**ので、これを「実運用点」と呼ばない（実起動との違いと、
+/// それを通す計器は `tests/path_query_cost.rs` の `measure_path_query_frame_cost_at_operating_point`
+/// の doc）。**打鍵の並びのまま測る**——2 打鍵目以降は前回候補を再利用するので、全件走査とは
+/// 候補の数が違う。並びの先頭で [`RESET_QUERY`] を打ち、前の並びの候補を持ち越さない。
 #[test]
 #[ignore = "計測専用。release + --nocapture で手動実行する"]
 fn measure_search_allocations() {

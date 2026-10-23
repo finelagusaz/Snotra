@@ -258,8 +258,9 @@ fn incremental_search_empty_prev_candidates_falls_back() {
 /// 新品の engine と順序込みで一致する。
 ///
 /// 回帰テスト: 再利用時の走査は添字の範囲を回し、`map` の中で前回候補へ読み替える
-/// （`search_with_options` のコメント）。上の 5 件の fixture では分割が起きず、読み替えを
-/// 外す・ずらす誤りを分割の境目で見られない。
+/// （`search_with_options` のコメント）。上の 5 件の fixture は分割が起きる規模に届かないので、
+/// **件数に依存する誤り**（再利用する候補を分割の境目で取りこぼす等）を見られない——このテストが
+/// 単独で捕まえるのはその型である。
 ///
 /// **fixture の形が検出力を決める。** 全件が 1 打鍵目に一致すると前回候補が `0..n` そのものに
 /// なり、読み替えを外しても結果が変わらない——ゆえに 3 件に 1 件を一致させず、添字と位置を
@@ -286,10 +287,15 @@ fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
     let mut engine = SearchEngine::new(entries());
 
     let _ = engine.search("al", 200, &h, SearchMode::Fuzzy);
-    let reused_from = engine.incremental_cache.prev_candidates.len();
+    let prev = &engine.incremental_cache.prev_candidates;
     assert!(
-        reused_from > 2 * MIN_PAR_CANDIDATES,
-        "前回候補が分割の閾値を超える前提を固定する（{reused_from} 件）"
+        prev.len() > 2 * MIN_PAR_CANDIDATES,
+        "前回候補が分割の閾値を超える前提を固定する（{} 件）",
+        prev.len()
+    );
+    assert!(
+        prev.iter().enumerate().any(|(j, &i)| i != j),
+        "前回候補の添字が位置とずれている前提を固定する（ずれが無いと読み替えを外しても結果が変わらない）"
     );
     let reused = engine.search("alp", 200, &h, SearchMode::Fuzzy);
 

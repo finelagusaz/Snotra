@@ -259,8 +259,9 @@ fn incremental_search_empty_prev_candidates_falls_back() {
 ///
 /// 回帰テスト: 再利用時の走査は添字の範囲を回し、`map` の中で前回候補へ読み替える
 /// （`search_with_options` のコメント）。上の 5 件の fixture は分割が起きる規模に届かないので、
-/// **件数に依存する誤り**（再利用する候補を分割の境目で取りこぼす等）を見られない——このテストが
-/// 単独で捕まえるのはその型である。
+/// **件数に依存する誤り**（前回候補を途中で打ち切る等）を見られない——このテストが単独で捕まえる
+/// のはその型である。**見えるのは、取りこぼしが top-k の選ばれる前回候補の末尾に掛かるときである**
+/// （分割の境目の 1 件だけを落とす誤りは、その候補が top-k の外なら結果を変えず、ここでも緑になる）。
 ///
 /// **fixture の形が検出力を決める。** 全件が 1 打鍵目に一致すると前回候補が `0..n` そのものに
 /// なり、読み替えを外しても結果が変わらない——ゆえに 3 件に 1 件を一致させず、添字と位置を
@@ -296,6 +297,14 @@ fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
     assert!(
         prev.iter().enumerate().any(|(j, &i)| i != j),
         "前回候補の添字が位置とずれている前提を固定する（ずれが無いと読み替えを外しても結果が変わらない）"
+    );
+    // 2 打鍵目が再利用経路を通ることも固定する。通らなければ全件走査どうしの比較になり、
+    // このテストは何も検査しないまま緑になる。
+    let plan = prepare_query_plan("alp", SearchMode::Fuzzy, &SearchOptions::default())
+        .expect("空でないクエリは計画を返す");
+    assert!(
+        engine.incremental_cache.can_reuse(&plan, SearchMode::Fuzzy),
+        "2 打鍵目が前回候補を再利用する前提を固定する"
     );
     let reused = engine.search("alp", 200, &h, SearchMode::Fuzzy);
 

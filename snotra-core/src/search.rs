@@ -337,10 +337,13 @@ impl SearchEngine {
         // Copy な bool としてクロージャに move する（kana_available と同じイディオム）。
         let collect_candidates = IncrementalCache::caches_candidates(&plan);
 
-        let candidate_indices: Vec<usize> = if use_incremental {
-            self.incremental_cache.take_candidates()
+        // 再利用しない検索は添字を範囲のまま走査する。`Vec<usize>` へ集めると全件ぶんの確保と
+        // 書き込みが全件走査のたび（パスクエリでは毎打鍵）に乗る
+        // （額は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
+        let candidate_indices = if use_incremental {
+            rayon::iter::Either::Left(self.incremental_cache.take_candidates().into_par_iter())
         } else {
-            (0..self.entries.len()).collect()
+            rayon::iter::Either::Right((0..self.entries.len()).into_par_iter())
         };
 
         // kana_lower_names は migemo 無効で構築されたとき空（issue #337）。
@@ -357,7 +360,6 @@ impl SearchEngine {
         // 同じ push 規則を通す・#602）。fold state の Vec<usize> は top-k とは別に全一致 index を
         // 集める（incremental search cache 用。top-k から落ちた一致も残す）。
         let (top_k, all_match_indices): (TopK, Vec<usize>) = candidate_indices
-            .into_par_iter()
             .with_min_len(MIN_PAR_CANDIDATES)
             .fold(
                 || (TopK::new(max_results), Vec::<usize>::new()),

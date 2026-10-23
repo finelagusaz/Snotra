@@ -475,3 +475,63 @@ fn history_boost_unified_across_accent_variants() {
     assert!(!results.is_empty());
     assert_eq!(results[0].name, "Résumé Builder");
 }
+
+/// 照合器へ渡す haystack を確保せずに組む形が、置き換え前の
+/// `Utf32String::from(..).slice(..)` と同じ値を返す。
+///
+/// 回帰テスト: 確保をやめる変更の安全性はこの一致だけに依る——照合器への入力が 1 文字でも
+/// 違えばスコアが静かに動き、順位だけが変わる（クラッシュしない）。**結合アクセントの行が
+/// 要石である**: `Utf32Str::new` は非 ASCII でも書記素の先頭がすべて ASCII の文字列に `Ascii`
+/// を返し、`Utf32String::from` が返す `Unicode` とずれる。その誤った置き換えを弾くのはこの行
+/// である（残りの行はどちらの形でも一致する）。
+#[test]
+fn utf32_haystack_matches_utf32_string_from() {
+    let mut buf = Vec::new();
+    for s in [
+        "",
+        "visual studio code",
+        "c:\\program files\\app.exe",
+        "ドキュメント",
+        "日本語入力テスト 00001",
+        "re\u{301}sume\u{301}",
+        "\u{30ab}\u{3099}",
+        "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467} family",
+        "a\r\nb",
+        "mixed ascii と かな",
+    ] {
+        let want = nucleo_matcher::Utf32String::from(s);
+        assert_eq!(
+            crate::search::scoring::utf32_haystack(s, &mut buf),
+            want.slice(..),
+            "{s:?} で照合器への入力がずれた"
+        );
+    }
+}
+
+/// 同じ一致を、実インデックスで照合器へ渡りうる全 haystack（`entry_view` の 2 つの文字列）で
+/// 確かめる。実インデックスが無ければ自動スキップする corpus であり、機構としての保証は上の
+/// 合成のほうが持つ（`real_index_entries` の doc）。
+#[test]
+fn utf32_haystack_matches_utf32_string_from_over_real_index() {
+    let Some(entries) = super::common::real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let engine = SearchEngine::new_with_migemo(entries, false);
+    let mut buf = Vec::new();
+    let (mut checked, mut non_ascii) = (0usize, 0usize);
+    for i in 0..engine.entry_count() {
+        let view = engine.entry_view(i);
+        for s in std::iter::once(view.lower_name).chain(view.lower_file_name) {
+            let want = nucleo_matcher::Utf32String::from(s);
+            assert_eq!(
+                crate::search::scoring::utf32_haystack(s, &mut buf),
+                want.slice(..),
+                "index {i} の {s:?} で照合器への入力がずれた"
+            );
+            checked += 1;
+            non_ascii += usize::from(!s.is_ascii());
+        }
+    }
+    println!("{checked} 件の haystack で一致しました（うち非 ASCII {non_ascii} 件）。");
+}

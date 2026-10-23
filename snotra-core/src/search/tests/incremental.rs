@@ -258,7 +258,8 @@ fn incremental_search_empty_prev_candidates_falls_back() {
 /// 新品の engine と順序込みで一致する。
 ///
 /// 回帰テスト: 再利用時の走査は添字の範囲を回し、`map` の中で前回候補へ読み替える
-/// （`search_with_options` のコメント）。上の 5 件の fixture は分割が起きる規模に届かないので、
+/// （`search_with_options` のコメント）。`incremental_search_gives_correct_results_on_extension` の
+/// fixture は分割が起きる規模に届かないので、
 /// **件数に依存する誤り**（前回候補を途中で打ち切る等）を見られない——このテストが単独で捕まえる
 /// のはその型である。**見えるのは、取りこぼしが top-k の選ばれる前回候補の末尾に掛かるときである**
 /// （分割の境目の 1 件だけを落とす誤りは、その候補が top-k の外なら結果を変えず、ここでも緑になる）。
@@ -298,9 +299,10 @@ fn incremental_reuse_matches_a_fresh_engine_when_the_candidates_split() {
         prev.iter().enumerate().any(|(j, &i)| i != j),
         "前回候補の添字が位置とずれている前提を固定する（ずれが無いと読み替えを外しても結果が変わらない）"
     );
-    // 2 打鍵目で再利用の判定（`IncrementalCache::can_reuse`）が真であることを固定する。偽なら
-    // 全件走査どうしの比較になり、何も検査しないまま緑になる。**固定するのは判定であって経路では
-    // ない**——呼び出し側が判定を無視する退行は結果を変えないので、このテストも見ない（受容する残余）。
+    // 2 打鍵目で再利用の判定（`IncrementalCache::can_reuse`）が真であることを固定する。この assert が
+    // 無ければ、判定が偽のときは全件走査どうしの比較になり、何も検査しないまま緑になる。**固定するのは
+    // 判定であって経路ではない**——呼び出し側が判定を無視して全件走査する退行は結果を変えないので、
+    // このテストも見ない（受容する残余）。
     let plan = prepare_query_plan("alp", SearchMode::Fuzzy, &SearchOptions::default())
         .expect("空でないクエリは計画を返す");
     assert!(

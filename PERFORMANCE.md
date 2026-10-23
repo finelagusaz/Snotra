@@ -2676,7 +2676,7 @@ D = `f97f09a`。壁時計は**同一セッションで交互に 3 回ずつ**回
 打鍵ごとの検索で、候補の数・エントリ数に比例して起きていた確保を 2 つ消した。**検索結果と
 スコアは変えない**（根拠は下の「等価性」）。
 
-- **(a) Fuzzy の haystack**: `score_one_entry` は bitmask を通った候補ごとに `Utf32String::from` で
+- **(a) Fuzzy の haystack**: `score_one_entry` は照合へ進んだ候補ごとに `Utf32String::from` で
   name（`.` を含むクエリでは file name も）を確保していた。`search/scoring.rs` の `utf32_haystack` が
   ASCII は借用し、非 ASCII は worker ごとのバッファを使い回して同じ `Utf32Str` を組む
 - **(b) 全件走査の添字**: incremental を再利用しない検索は `(0..n)` を `Vec<usize>` へ逐次で集めて
@@ -2777,8 +2777,9 @@ results ウィンドウは `update()` の冒頭で `RowsSnapshot` を `clone` �
 | 200 行（既定の `result_limit`） | 11.5–12.6 µs | 0.017 µs |
 | 1,000 行 | 59.4–61.4 µs | 0.017 µs |
 
-- 同日・同機・release・A/B 交互に各 3 回（1 回あたり 20,000 反復の平均）。行は実運用点に近い長さ
-  （表示名 24 B・パス 70 B 前後）で作った
+- 同日・同機・release・A/B 交互に各 3 回（1 回あたり 20,000 反復の平均）。行は表示名 24 B・
+  パス 70 B 前後で作った（テスト用の `rows_for_test` より長くしただけで、実運用点の分布から採った
+  値ではない）
 - **計器は使い捨てのプローブで、リポジトリに入れていない**——効果は型で決まり（受け取りが参照カウントの
   加算 1 回になる）、退行の検知器は `results_view.rs` の単体テスト（`clone` した 2 つが同じ行の
   バッファを指す）が持つ。2 度目に額が要るなら `kittest_row_draw_cost_probe` の隣へ置く

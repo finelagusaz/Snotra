@@ -75,9 +75,9 @@ thread_local! {
 }
 
 /// `haystack` を照合器へ渡す形にする。**候補ごとには確保しない**——ASCII は借用し、非 ASCII は
-/// `buf` の容量を使い回す（伸びるのは容量が足りないときだけ）。照合は bitmask を通った候補ごとに
-/// 走るので、ここで確保すると候補の数だけ確保が乗る（額は
-/// `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
+/// `buf` の容量を使い回す（伸びるのは容量が足りないときだけ）。照合は照合へ進んだ候補ごとに走るので、
+/// ここで確保すると候補の数だけ確保が乗る（pre-filter との順序の正本は
+/// [`SearchEngine::score_one_entry`] の doc。額は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 ///
 /// **`Utf32String::from(haystack).slice(..)` と同じ値を返す**（一致は `search/tests/basic.rs` の
 /// `utf32_haystack_matches_utf32_string_from` が固定する）。

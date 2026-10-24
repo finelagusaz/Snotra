@@ -292,8 +292,8 @@ fn split_search_keeps_candidates_capacity_close_to_length() {
 ///
 /// 回帰テスト: パスクエリは前回候補を集めない（#1070・`IncrementalCache::caches_candidates`）。
 /// 葉の予約（#1280）を収集の条件の外へ出すと、集めないのに葉ごとに確保し、その容量が空の
-/// `prev_candidates` として次の打鍵まで残る。検索結果は変わらず、確保回数の検知器も worker 1 本では
-/// 葉が少なく映らないので、容量で見る。
+/// `prev_candidates` として次の打鍵まで残る。検索結果は変わらず、確保回数の検知器（4 本で数える
+/// ものも）はパスクエリを打たないので、容量で見る。
 #[test]
 fn path_query_leaves_no_candidates_capacity_when_split() {
     let owned: Vec<String> = (0..5_000).map(|i| format!("alpha {i:05}")).collect();

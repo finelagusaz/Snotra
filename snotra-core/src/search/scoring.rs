@@ -259,12 +259,11 @@ fn heap_into_results(paths: &PathStore, top_k: BinaryHeap<ScoredEntry>) -> Vec<S
         .collect()
 }
 
-/// 索引の `i` 番を [`SearchResult`] へ組み立てる（検索結果と [`SearchEngine::recent_history`]
-/// が共有する）。
+/// 索引の `i` 番を [`SearchResult`] へ組み立てる。
 ///
 /// **フルパスは `scratch` へ組み立ててから長さちょうどで写す。** 索引はフルパスを持たないので
 /// 段ごとに書き足すことになり、新しい `String` へ直接書くと容量が倍々に伸びるたびに確保する
-/// （実 `index.bin` で 1 件あたり 2.0〜4.1 回・#1277）。`scratch` は呼び出し側が結果の列の
+/// （額は `PERFORMANCE.md`「採用: 結果の組み立てでパスを長さちょうど 1 回で確保する（#1277）」）。`scratch` は呼び出し側が結果の列の
 /// 全件で使い回す——伸びるのは最初の数件だけで、以降は 1 件 1 回になる。
 /// 長さを先に数えて `with_capacity` する形は採らない。組み立ての規則（[`PathStore::raw_into`]）の写しを持つことになる。
 pub(super) fn result_at(paths: &PathStore, scratch: &mut String, i: usize) -> SearchResult {

@@ -249,23 +249,32 @@ pub(super) fn adjusted_history_boost(
 /// `into_sorted_vec()` はヒープ内部 Vec を再利用して昇順ソートする。
 /// `ScoredEntry::Ord` は Less = better ゆえ昇順で best が先頭になる（tie-break の意味を保つ）。
 /// 所有 String の生成はここで初めて発生する（top-k 確定後の K 件のみ）。
-/// **フルパスの組み立てもここに閉じる**——索引はフルパスを持たないため、`clone` ではなく
-/// [`PathStore::to_path`] で組み立てる。K 件ぶんゆえホットパスへの寄与はない。
+/// 1 件の組み立ては [`result_at`] が持つ。
 fn heap_into_results(paths: &PathStore, top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
+    let mut scratch = String::new();
     top_k
         .into_sorted_vec()
         .into_iter()
-        .map(|r| {
-            let entry = paths.get(r.index);
-            SearchResult {
-                name: paths.name_at(r.index).to_string(),
-                path: paths.to_path(r.index),
-                is_folder: entry.is_folder,
-                is_error: false,
-                icon: IconSource::FromPath,
-            }
-        })
+        .map(|r| result_at(paths, &mut scratch, r.index))
         .collect()
+}
+
+/// 索引の `i` 番を [`SearchResult`] へ組み立てる。
+///
+/// **フルパスは `scratch` へ組み立ててから長さちょうどで写す。** 索引はフルパスを持たないので
+/// 段ごとに書き足すことになり、新しい `String` へ直接書くと容量が倍々に伸びるたびに確保する
+/// （額は `PERFORMANCE.md`「採用: 結果の組み立てでパスを長さちょうど 1 回で確保する（#1277）」）。`scratch` は呼び出し側が結果の列の
+/// 全件で使い回す——伸びるのは最初の数件だけで、以降は 1 件 1 回になる。
+/// 長さを先に数えて `with_capacity` する形は採らない。組み立ての規則（[`PathStore::raw_into`]）の写しを持つことになる。
+pub(super) fn result_at(paths: &PathStore, scratch: &mut String, i: usize) -> SearchResult {
+    paths.raw_into(scratch, i);
+    SearchResult {
+        name: paths.name_at(i).to_string(),
+        path: scratch.as_str().to_owned(),
+        is_folder: paths.get(i).is_folder,
+        is_error: false,
+        icon: IconSource::FromPath,
+    }
 }
 
 /// 並列 top-k 更新規則を一元化する型（#602）。rayon の fold（単一候補）と reduce

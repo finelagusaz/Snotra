@@ -20,7 +20,8 @@
 //! 書き出す（契約は同関数の doc）。CI で走る検知器は実データに触れない。
 //!
 //! 撤去条件を持たない恒久の検知器である（足場ではない）。実測値は
-//! `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」が正本。
+//! `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」と「採用: 結果の組み立てでパスを
+//! 長さちょうど 1 回で確保する（#1277）」が正本。
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -234,6 +235,73 @@ fn path_query_full_scan_does_not_allocate_per_entry() {
             "エントリ {} 件の増加に対して確保が {grew} バイト増えた（{small_bytes} → {large_bytes}）。\
              添字を全件ぶん集めると {per_entry_index} バイト増える",
             LARGE - SMALL,
+        );
+    });
+}
+
+/// 親フォルダの鎖の下にファイルを並べた索引。ファイルのフルパスは根から
+/// `DEEP_FOLDERS` 段を足して組み立てることになる（親が索引に無いと、パスは根 1 段で
+/// 組み上がり、組み立ての成長が起きない）。
+///
+/// 親として解決されるには 2 つ要る: `target_path` 順に並んでいること（`IndexTree::build` は
+/// 親を二分探索で引く）と、ファイルの `name` が末尾成分の接頭辞であること（indexer が
+/// `file_stem()` を名前にする規則の写し）。後者を外すとファイルは根になり、この fixture は
+/// 何も測らなくなる。フォルダの名前は `alpha` の文字を含まないので、ファイルだけが一致する。
+fn engine_with_deep_paths(files: usize) -> SearchEngine {
+    const DEEP_FOLDERS: usize = 8;
+    let mut dir = String::from("C:\\directory-segment-root");
+    let mut entries = vec![AppEntry {
+        name: "directory-segment-root".into(),
+        target_path: dir.clone(),
+        is_folder: true,
+    }];
+    for d in 0..DEEP_FOLDERS {
+        let name = format!("directory-segment-{d:02}");
+        dir = format!("{dir}\\{name}");
+        entries.push(AppEntry {
+            name,
+            target_path: dir.clone(),
+            is_folder: true,
+        });
+    }
+    entries.extend((0..files).map(|i| AppEntry {
+        name: format!("alpha{i:05}"),
+        target_path: format!("{dir}\\alpha{i:05}.exe"),
+        is_folder: false,
+    }));
+    entries.sort_by(|a, b| a.target_path.cmp(&b.target_path));
+    SearchEngine::new(entries)
+}
+
+/// 結果 1 件ごとの確保が「表示名 1 回 + フルパス 1 回」を超えない。
+///
+/// 回帰テスト: `heap_into_results` はフルパスを `String::new()` から段ごとに書き足しており、
+/// 容量が倍々に伸びるたびに確保していた（#1277。額は `//!` が指す `PERFORMANCE.md` の節）。
+/// 同じ索引・同じクエリで結果の上限だけを 2 点変え、増えた確保を増えた結果で割る——
+/// 上限に依らない確保（top-k のヒープ・一致の収集）は差で消える。閾値 2.5 は、使い回しの
+/// バッファから長さちょうどで写す形（2 回）と、段ごとに伸ばす形（この fixture で 3 回以上）の間に置く。
+#[test]
+fn result_assembly_allocates_once_per_path() {
+    const FEW: usize = 10;
+    const MANY: usize = 40;
+    on_single_worker(|| {
+        let history = empty_history();
+        let mut engine = engine_with_deep_paths(200);
+        let mut measure = |limit: usize| {
+            let _ = engine.search("alpha", limit, &history, SearchMode::Fuzzy);
+            let _ = engine.search(RESET_QUERY, limit, &history, SearchMode::Fuzzy);
+            let (allocs, _, results) =
+                allocations_during(|| engine.search("alpha", limit, &history, SearchMode::Fuzzy));
+            // 上限まで埋まらなければ、差は結果の増分を測っていない。
+            assert_eq!(results.len(), limit, "fixture が上限まで一致していない");
+            allocs
+        };
+        let few = measure(FEW);
+        let many = measure(MANY);
+        let per_result = many.saturating_sub(few) as f64 / (MANY - FEW) as f64;
+        assert!(
+            per_result < 2.5,
+            "結果 1 件あたり {per_result:.2} 回確保した（上限 {FEW} 件: {few} 回 → {MANY} 件: {many} 回）"
         );
     });
 }

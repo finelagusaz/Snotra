@@ -1,0 +1,73 @@
+adversarial-1274: research.md (#1274) の主張を一次資料で壊しにいった記録。実機は起動していない（読むだけ）。
+
+■ 争点
+[1] 案(C): 合成 press が WM_SETFOCUS で作られる
+ 判定: 壊せなかった（⚠️ CI 側は未確認）
+ 根拠: tao-0.37.1 keyboard.rs:103-107 WM_SETFOCUS -> get_async_kbd_state() -> synthesize_kbd_state(Pressed)。create_synthetic(:434-482) は is_synthetic:true・text を持つ(:473-480)。修飾キーは後回しで非修飾キーが先に合成される(:380-395)。show は main.rs の ShowAfterAltRelease で Alt up 後なので Alt/Q は async 上 up、Z だけが残る。
+ 偽にする手順: show 時点で GetAsyncKeyState(Z) が down を返さない環境（CI の入力注入が async 状態に映らない場合）。既存 smoke は is_alt_pressed(main.rs:51)で同 API に依存するが、取りこぼしても 350ms のタイムアウトで通るため、CI で映る証拠にはならない。案の表の「合成 press が起きない→赤」が実際の安全弁。
+
+[2] 2 回目の down は非合成で届き、tao は落とさない
+ 判定: 壊せなかった（⚠️ 実際の配送は未測定）
+ 根拠: keyboard.rs の WM_KEYDOWN 腕(:117-170)は is_synthetic:false。落とす処理は is_current_fake（AltGr 用）だけ。key が既に down のときは lparam bit30 により is_repeat=true で届く(keyboard.rs:693)。admit_key(input.rs:101-115)は repeat を見ず held だけで落とすので結論は同じ。research は「非合成の press」とだけ書き repeat=true になる点が未記載（害なし）。
+ 偽にする手順: Windows が既 down の key への keybd_event down を WM_KEYDOWN にしない場合。その場合 2 回目 down の寄与が無く、変異 2 の検出が合成 press の文字だけに頼る。
+
+[3] reset は egui_input:changed を出さない
+ 判定: 壊せなかった
+ 根拠: egui_input:changed の出所は search_flow.rs:229-250 の on_input_changed 一箇所、呼び元は view.rs:875 の `if response.changed()` のみ。consume_reset_pending(frame_stages.rs:41)の state.reset() は経由しない。出力の gate は trace_enabled()＝SNOTRA_TRACE（smoke-egui.ps1:151 の -Trace）。SNOTRA_EGUI_INPUT_TRACE は smoke は立てない（Send-SnotraKey が env を見るだけ）。
+ 偽にする手順: reset 後の最初のフレームで TextEdit.changed() が真になる経路。見当たらず。
+
+[4] 3 状況の表
+ 判定: 概ね壊せなかった／変異 2 の件数の記述に不正確が 1 点（⚠️）
+ 根拠: 変異 2 の「3 件（合成が落ちれば 2 件）」は不完全。合成 press と 2 回目 down が同一フレームに積まれると egui は複数の Event::Text を 1 回の changed にまとめるので [0->2, 2->3] もありうる。どの形でも正常の [0->1] とは異なるので赤になる点は変わらない。
+ 注意: 合成の文字が egui_show:done の seq より前に changed を出す可能性は、show_egui_main(window_coordinator.rs:380-457)がイベントループ上で同期完了し frame も同スレッドなので低いが 0 ではない。その場合も 2 回目 down の文字は区間内なので変異は検出されるが、これは [2] に依存する。
+ 偽にする手順: 2 回目 down が届かず、かつ合成の文字が show:done より前に出た場合、変異 2 が [0->1] に見えて偽の緑になる。
+
+[5] 新手順を H1 判定より後に置けば既存断言を弱めない
+ 判定: 壊せなかった（research の根拠記述に誤りが 1 点）
+ 根拠: Test-SnotraTraceInvariants の呼び出しは smoke-egui.ps1:498 の 1 箇所、Read-SnotraTraceSnapshot は :446・:496 だけ（シナリオ 1）。:613 は別関数。Escape 検査(:465-480)も H1 ブロック(:492-529)の中で完結する。
+ 誤り: research は Wait-SnotraTraceEvent を「ファイル中で最初の 1 件」と書くが、Wait-SnotraTraceCondition(SnotraSmoke.psm1:653-)は成立した周回の matched の最後を返す(`Select-Object -Last 1`)。成立判定は「1 件以上」なので「前に置くと弱まる」の結論は変わらない。
+ 偽にする手順: H1 ブロックの後に別の Read-SnotraTraceSnapshot／不変条件判定を足す変更が入ること。
+
+[6] 文字キー押下中でも Alt+Q の hotkey は発火する
+ 判定: 壊せなかった（⚠️ 実測していない）
+ 根拠: hotkey.rs は RegisterHotKey(MOD_ALT|MOD_NOREPEAT, Q)。OS の hotkey 照合は修飾キーの状態と押された VK で決まり、他の非修飾キーの押下中でも成立する（Win32 仕様からの推論）。plan_hotkey(lifecycle.rs:15)の入力は visible/alt/hotkey_toggle のみ。
+ 偽にする手順: Z 押下中に前面アプリが Alt を使うアクセラレータを先に奪う。Z は Alt より前に押されるので Alt+Z の新規 keydown は起きない。
+
+■ 測定環境
+[7] smoke が読む config
+ 判定: 壊せなかった
+ 根拠: New-SnotraVerificationProfile(SnotraSmoke.psm1:205-)の seed は [hotkey] Alt+Q・[general] auto_update のみ。hotkey_toggle は seed せず既定 true(schema.rs:73)。hotkey の VK は起動 trace の hotkey:registered から取る(smoke-egui.ps1:253-270)ので前提（真・Alt+Q）と一致する。
+ 偽にする手順: -HotkeyVks の明示指定（その場合は呼び出し側の責任）。
+
+[8] 「計器が測る枝と変更が触る枝」
+ 判定: 壊せなかった
+ 根拠: egui_input:changed は TextEdit の実効果(view.rs:875)で、変異 2 が触る on_window_event 経路の下流。変異 2 の効果（文字が TextEdit に届く）を直接測る同じ枝。input trace は使わない設計なので env の差は無関係。
+
+[9] CI で keybd_event が GetAsyncKeyState に映るか
+ 判定: ⚠️確信なし
+ 根拠: ADR(ADR-synthetic-key-press-suppression.md)は CI に言及しない。smoke.yml は windows-latest(:61)。既存 smoke が keybd_event で hotkey／文字を届けている事実は「入力キューに入る」証拠だが、async 状態への映りの直接証拠ではない。映らなければ案は赤に倒れる設計なので沈黙の緑にはならないが、CI が恒常的に赤になる危険がある。
+ 偽にする手順: runner で Z を押したまま show し、drop_key（SNOTRA_EGUI_INPUT_TRACE）が出るかを一度測る。
+
+■ 争点外の主張・追加所見
+[10] 行番号・シンボル
+ 判定: 壊せなかった
+ 根拠: input.rs :101 admit_key / :221 Focused / :287 KeyboardInput / :350 on_keyboard_event / :411 typed_text_event / :44・:69 input_trace*。smoke :783 成功文言・:454。SnotraSmoke.psm1 :763 Send-SnotraKey・:787 Chord・:321 Start-SnotraProcess。frame_stages.rs:41・lifecycle.rs:15 一致。「:293-313」は実際の腕が :287-314。
+
+[11] research に無い前提: 新手順には先に plain な show が要る
+ 判定: 壊せた（欠落）
+ 根拠: Escape(:465)の後アプリは hidden。Z を本体が前面のときに押すには、(a) hotkey で show（押下なし）、(b) Z で文字を入れる（changed 0->1 が基準前に出る）、(c) Alt+Q で hide、(d) Alt+Q で show、の 4 手が要る。show:done／hide:done とも Get-SnotraTraceEventCount+1 で基準を取る必要がある（既存 :641 の形）。
+
+[12] Z が押しっぱなしで残る失敗経路
+ 判定: 壊せた（欠落）
+ 根拠: Z down と Z up の間で throw や Wait 失敗が起きると Z が OS 上 down のまま残る。ローカルでは利用者のキー状態を汚し、runner では後続のシナリオ 2 の入力状態に影響しうる。Z up は try/finally 相当で必ず送る設計が要る。
+
+[13] 隠れている間に前面の別アプリへ届くもの
+ 判定: 壊せなかった（補足あり）
+ 補足: Z の down は 1 回で autorepeat は生まれない(ADR)ので文字は出ない。ただし Alt の押離は前面アプリへ届く（既存 hotkey 注入と同じ）。ローカルで Z 押下状態の間に利用者が同キーを打つと干渉する程度。
+
+[14] 文書ドリフト
+ 判定: ⚠️
+ 根拠: H1 ブロックのコメント「smoke の実行は最後まで hidden で終わる」と成功文言 :783、:432-433 付近の「捕まえないもの」コメントは新手順後に偽になる／更新が要る。新手順の末尾でもう一度 hide して hidden で終えれば前者は保てる。
+
+■ 要約
+壊せたのは research の欠落 2 点（[11] plain show が要る、[12] Z 解放の保証）と記述の不正確 2 点（[5] Wait は最後の 1 件を返す、[4] の変異件数の形）。争点 1〜6 の命題そのものは壊せなかった。確信なし(⚠️)は CI での async 状態への映り([1][9])、2 回目 down の実際の配送([2])、hotkey 発火の実測([6])。

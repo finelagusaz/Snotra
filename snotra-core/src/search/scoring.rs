@@ -56,7 +56,7 @@ const _: () = {
     assert!(score_tier::PATH_POS_CAP > 0);
 };
 
-/// Fuzzy の照合に使う、rayon の worker ごとに 1 組の道具。
+/// Fuzzy の照合に使う、スレッドごとに 1 組の道具（[`fuzzy_match_score`] を呼ぶスレッドに置かれる）。
 struct FuzzyScratch {
     matcher: Matcher,
     /// 非 ASCII の haystack を UTF-32 へ展開する先（[`utf32_haystack`]）。容量を使い回すので、
@@ -64,9 +64,9 @@ struct FuzzyScratch {
     haystack: Vec<char>,
 }
 
-// D-5: one Matcher per rayon worker thread, reused across fold tasks.
+// D-5: one Matcher per thread that calls fuzzy_match_score, reused across calls on that thread.
 // Matcher::new() is one alloc_zeroed of 133,120 B in nucleo-matcher 0.3.1 (measured 2026-10-24);
-// thread_local avoids that allocation on every rayon chunk boundary.
+// thread_local avoids paying it per rayon chunk boundary or per folder filter call.
 thread_local! {
     static MATCHER: RefCell<FuzzyScratch> = RefCell::new(FuzzyScratch {
         matcher: Matcher::new(MatcherConfig::DEFAULT),
@@ -94,6 +94,21 @@ pub(super) fn utf32_haystack<'a>(haystack: &'a str, buf: &'a mut Vec<char>) -> U
         buf.extend(nucleo_matcher::chars::graphemes(haystack));
         Utf32Str::Unicode(buf)
     }
+}
+
+/// 小文字化済みの `haystack` を `needle` と Fuzzy で照合する。haystack は [`utf32_haystack`] が組み、
+/// `needle` は呼び出し側が `Utf32String::from` で 1 度だけ作る（両辺を同じ規則で組むこと——片側だけ
+/// `Utf32Str::new` にすると一致が落ちる・#1276）。
+///
+/// **検索の Fuzzy の腕とフォルダ絞り込みの Fuzzy の腕が共有する。** `fuzzy_match` を直接呼ぶ箇所を他に
+/// 足すと規則が 2 か所になる（検知器は無い）。スレッドローカル（`MATCHER`）の借用はこの関数の中に
+/// 閉じてあり、ここから照合以外を呼ばないので再入しない。
+pub(crate) fn fuzzy_match_score(haystack: &str, needle: Utf32Str<'_>) -> Option<u16> {
+    MATCHER.with(|m| {
+        let scratch = &mut *m.borrow_mut();
+        let haystack = utf32_haystack(haystack, &mut scratch.haystack);
+        scratch.matcher.fuzzy_match(haystack, needle)
+    })
 }
 
 /// スレッドローカルのバッファへ索引 `i` の正規化キーを詰め、`&str` として貸す。
@@ -195,11 +210,11 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> 
 }
 
 /// 小文字化済みの名前 1 つをスコアリングする。`needle_u32` は `query` の UTF-32 形（検索 1 回に
-/// 1 度だけ作る）でなければならない。Fuzzy の haystack は [`utf32_haystack`] が組む。
+/// 1 度だけ作る）でなければならない。Fuzzy の照合は [`fuzzy_match_score`] が行う。
 ///
-/// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕の中に閉じてある**——呼び出し側が
-/// スレッドローカルを知らずに済むためであって、速さのためではない（Substring の全件走査で差が
-/// 測れなかった・実測は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
+/// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕から呼ぶ [`fuzzy_match_score`] の中に閉じてある**
+/// ——呼び出し側がスレッドローカルを知らずに済むためであって、速さのためではない（Substring の
+/// 全件走査で差が測れなかった・実測は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 fn match_score_single_cached(
     mode: SearchMode,
     lower_name: &str,
@@ -217,15 +232,7 @@ fn match_score_single_cached(
         SearchMode::Substring => lower_name
             .find(query)
             .map(|idx| score_tier::SUBSTRING_BASE - idx as i64),
-        SearchMode::Fuzzy => MATCHER.with(|m| {
-            let scratch = &mut *m.borrow_mut();
-            let haystack = utf32_haystack(lower_name, &mut scratch.haystack);
-            let needle = needle_u32.slice(..);
-            scratch
-                .matcher
-                .fuzzy_match(haystack, needle)
-                .map(|s| s as i64)
-        }),
+        SearchMode::Fuzzy => fuzzy_match_score(lower_name, needle_u32.slice(..)).map(|s| s as i64),
     }
 }
 

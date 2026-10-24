@@ -161,8 +161,8 @@ fn sweep_derived(
     normalize: fn(&mut String, &str),
 ) -> (f64, usize) {
     let start = Instant::now();
-    // バッファは rayon の worker ごとに 1 本（`search/scoring.rs` の thread-local `MATCHER` と
-    // 同じ形）。worker 数ぶんしか確保されないので、常駐への寄与は無視できる。
+    // バッファは rayon の worker ごとに 1 本。worker 数ぶんしか確保されないので、常駐への寄与は
+    // 無視できる。
     let hits = entries
         .par_iter()
         .filter(|e| {

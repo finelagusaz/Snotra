@@ -4,13 +4,13 @@
 //! `select_nth_unstable_by`（O(N) 平均の top-k 選択）＋安定ソートの2段階で、入力順に
 //! 依存しない確定順序を保つ。
 
-use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
+use nucleo_matcher::Utf32String;
 use std::path::Path;
 
 use crate::history::HistoryStore;
 use crate::indexer::is_hidden_or_system;
 use crate::query::to_lower_folded;
-use crate::search::SearchMode;
+use crate::search::{SearchMode, fuzzy_match_score};
 use crate::ui_types::{IconSource, SearchResult};
 
 #[derive(Debug, Clone)]
@@ -44,8 +44,8 @@ pub(crate) fn read_dir_entries(
 ) -> std::io::Result<Vec<DirEntryData>> {
     let read_dir = std::fs::read_dir(dir)?;
     let mut entries = Vec::new();
-    let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
     let filter_lower = to_lower_folded(filter);
+    let needle = Utf32String::from(filter_lower.as_str());
 
     for entry in read_dir {
         let Ok(entry) = entry else {
@@ -54,7 +54,7 @@ pub(crate) fn read_dir_entries(
 
         let name = entry.file_name().to_string_lossy().to_string();
 
-        if !filter.is_empty() && !matches_filter(&name, &filter_lower, mode, &mut matcher) {
+        if !filter.is_empty() && !matches_filter(&name, &filter_lower, &needle, mode) {
             continue;
         }
 
@@ -202,10 +202,10 @@ pub fn filter_sorted(
         return cached.iter().take(max).cloned().collect();
     }
     let filter_lower = to_lower_folded(filter);
-    let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
+    let needle = Utf32String::from(filter_lower.as_str());
     cached
         .iter()
-        .filter(|r| matches_filter(&r.name, &filter_lower, mode, &mut matcher))
+        .filter(|r| matches_filter(&r.name, &filter_lower, &needle, mode))
         .take(max)
         .cloned()
         .collect()
@@ -221,18 +221,14 @@ pub fn error_result(dir: &Path) -> Vec<SearchResult> {
     }]
 }
 
-fn matches_filter(name: &str, filter_lower: &str, mode: SearchMode, matcher: &mut Matcher) -> bool {
+/// `needle` は `filter_lower` の UTF-32 形（`Utf32String::from`・呼び出し 1 回に 1 度）でなければならない。
+/// Fuzzy の照合は検索と同じ [`fuzzy_match_score`] を通す（#1276）。
+fn matches_filter(name: &str, filter_lower: &str, needle: &Utf32String, mode: SearchMode) -> bool {
     let name_lower = to_lower_folded(name);
     match mode {
         SearchMode::Prefix => name_lower.starts_with(filter_lower),
         SearchMode::Substring => name_lower.contains(filter_lower),
-        SearchMode::Fuzzy => {
-            let mut haystack_buf = Vec::new();
-            let mut needle_buf = Vec::new();
-            let haystack = Utf32Str::new(&name_lower, &mut haystack_buf);
-            let needle = Utf32Str::new(filter_lower, &mut needle_buf);
-            matcher.fuzzy_match(haystack, needle).is_some()
-        }
+        SearchMode::Fuzzy => fuzzy_match_score(&name_lower, needle.slice(..)).is_some(),
     }
 }
 
@@ -755,12 +751,10 @@ mod tests {
         mode: crate::search::SearchMode,
     ) -> Vec<DirEntryData> {
         let filter_lower = to_lower_folded(filter);
-        let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
+        let needle = Utf32String::from(filter_lower.as_str());
         entries
             .into_iter()
-            .filter(|e| {
-                filter.is_empty() || matches_filter(&e.name, &filter_lower, mode, &mut matcher)
-            })
+            .filter(|e| filter.is_empty() || matches_filter(&e.name, &filter_lower, &needle, mode))
             .collect()
     }
 
@@ -800,6 +794,62 @@ mod tests {
             is_error: false,
             icon: IconSource::FromPath,
         }
+    }
+
+    /// 絞り込みの Fuzzy は、needle に残った結合文字を検索と同じく書記素の先頭へ落として照合する（#1276）。
+    ///
+    /// 回帰テスト: `Utf32Str::new` へ戻すと needle が `Ascii` の生バイト（`x` + U+0308 の `0xCC 0x88`）の
+    /// まま照合され、どちらの行も不一致になる。`日本語` の行は needle の組み方だけに、`Cafe` の行は haystack と
+    /// needle の両方の組み方に依る（haystack が `Ascii` の生バイトのままだと `(Ascii, Unicode)` の組になり
+    /// 外れる）。拡張子は `.md` にしてある——`.txt` の `x` が 1 行目の needle に一致してしまうため。
+    #[test]
+    fn fuzzy_filter_drops_combining_marks_in_needle_like_search() {
+        use crate::search::SearchMode;
+        let cached = vec![sr("日本語 x.md"), sr("Cafe\u{301}.md")];
+        // 2 行の結果を集めてから 1 度だけ比べる——行ごとに assert すると、最初に落ちた行より後ろが報告から消える。
+        let got: Vec<(&str, Vec<String>)> = ["x\u{308}", "e\u{308}"]
+            .into_iter()
+            .map(|filter| {
+                let names = filter_sorted(&cached, filter, SearchMode::Fuzzy, 8)
+                    .into_iter()
+                    .map(|r| r.name)
+                    .collect();
+                (filter, names)
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("x\u{308}", vec!["日本語 x.md".to_string()]),
+                ("e\u{308}", vec!["Cafe\u{301}.md".to_string()]),
+            ]
+        );
+    }
+
+    /// 純 ASCII の名前は、非 ASCII の needle に一致しない。`nucleo-matcher` 0.3.1 の `fuzzy_match` が
+    /// `(Ascii, Unicode)` の組に無条件で `None` を返すためであり、検索側も同じである。**版を上げてこれが
+    /// 赤になったら、まず上流の側が変わったかを見る。**
+    #[test]
+    fn fuzzy_filter_ascii_name_never_matches_non_ascii_needle() {
+        use crate::search::SearchMode;
+        let out = filter_sorted(&[sr("resume")], "e\u{301}", SearchMode::Fuzzy, 8);
+        assert!(out.is_empty());
+    }
+
+    /// 旧実装が両辺を `Ascii` の生バイトとして突き合わせて得ていた一致を、修正後も保つ（#1276）。
+    ///
+    /// 回帰テスト: haystack だけを `Utf32String::from` の形へ替え、needle を `Utf32Str::new` のまま残すと、
+    /// `(Unicode, Ascii)` の組になってこの一致が落ちる——片側だけ替える退行を捕まえる。
+    #[test]
+    fn fuzzy_filter_keeps_old_byte_level_matches() {
+        use crate::search::SearchMode;
+        let out = filter_sorted(
+            &[sr("Re\u{301}sume\u{301}.docx")],
+            "e\u{301}",
+            SearchMode::Fuzzy,
+            8,
+        );
+        assert_eq!(out.len(), 1);
     }
 
     #[test]

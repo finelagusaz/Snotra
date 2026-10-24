@@ -31,6 +31,7 @@ use query_plan::{QueryPlan, prepare_query_plan};
 // 子モジュールへ分離（#600）。候補選択・rayon fold/reduce・incremental cache 更新は本ファイル。
 mod scoring;
 use scoring::TopK;
+pub(crate) use scoring::fuzzy_match_score;
 
 const GLOBAL_WEIGHT: i64 = 5;
 const QUERY_WEIGHT: i64 = 20;

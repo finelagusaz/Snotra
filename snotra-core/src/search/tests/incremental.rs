@@ -254,6 +254,17 @@ fn incremental_search_empty_prev_candidates_falls_back() {
     assert_eq!(r3[0].name, "Firefox");
 }
 
+/// 分割の容量テスト 2 本の件数（2 の冪の倍数にしない理由は下のテストの doc）。
+const SPLIT_FIXTURE_LEN: usize = 5_000;
+
+// **分割が起きることは件数の前提でしか守れない**——葉の数は外から見えないので、
+// `MIN_PAR_CANDIDATES` が上がって葉が 1 枚になると、join も葉ごとの予約も走らないまま 2 本とも
+// 緑になる。その前提をコンパイル時に固定する。
+const _: () = assert!(
+    SPLIT_FIXTURE_LEN >= 2 * MIN_PAR_CANDIDATES,
+    "SPLIT_FIXTURE_LEN が分割の閾値に届いていない"
+);
+
 /// 分割が起きる規模で、次の打鍵まで残る前回候補の容量が長さを大きく超えない。
 ///
 /// 回帰テスト: reduce の join で `extend` の前に `reserve_exact` しないと、葉が倍々で伸ばした
@@ -263,10 +274,11 @@ fn incremental_search_empty_prev_candidates_falls_back() {
 /// （容量だけを縮めても退行は消えなかった）。同じ誤りが残す観測点を CI に置くためにある。
 ///
 /// **件数は 2 の冪にしない。** 葉の長さが 2 の冪だと倍々の成長がちょうど長さに一致し、誤りが
-/// 容量に現れない（`8 * MIN_PAR_CANDIDATES` では緑のままだった）。5,000 件では、誤った版の容量が 8,192 になる。
+/// 容量に現れない（`8 * MIN_PAR_CANDIDATES` では緑のままだった。誤った版でのこの件数の容量は同じ節）。
+/// 分割が起きる前提は [`SPLIT_FIXTURE_LEN`] の直後の `const` assert が固定する。
 #[test]
 fn split_search_keeps_candidates_capacity_close_to_length() {
-    let n = 5_000;
+    let n = SPLIT_FIXTURE_LEN;
     let owned: Vec<String> = (0..n).map(|i| format!("alpha {i:05}")).collect();
     let names: Vec<&str> = owned.iter().map(String::as_str).collect();
     let mut engine = SearchEngine::new(make_entries(&names));
@@ -297,7 +309,9 @@ fn split_search_keeps_candidates_capacity_close_to_length() {
 /// 入れて緑のままだった（#1280 の変異注入）。ゆえに容量で見る。
 #[test]
 fn path_query_leaves_no_candidates_capacity_when_split() {
-    let owned: Vec<String> = (0..5_000).map(|i| format!("alpha {i:05}")).collect();
+    let owned: Vec<String> = (0..SPLIT_FIXTURE_LEN)
+        .map(|i| format!("alpha {i:05}"))
+        .collect();
     let names: Vec<&str> = owned.iter().map(String::as_str).collect();
     let mut engine = SearchEngine::new(make_entries(&names));
     let h = empty_history();
@@ -308,6 +322,27 @@ fn path_query_leaves_no_candidates_capacity_when_split() {
         (prev.len(), prev.capacity()),
         (0, 0),
         "パスクエリで前回候補を確保した"
+    );
+}
+
+/// 分割されない規模では、葉の予約が候補の件数を超えない。
+///
+/// 回帰テスト: 葉の予約（#1280）は、分割されれば葉が候補を `MIN_PAR_CANDIDATES` 件以上持つことに
+/// 頼っている。分割されない規模（打鍵が進んで前回候補が少ない再利用など）では葉は候補の全件だけを
+/// 持つので、固定の件数で予約すると、一致が数件でもその大きさを取って次の打鍵まで残す。
+#[test]
+fn unsplit_search_does_not_reserve_beyond_the_candidates() {
+    let n = MIN_PAR_CANDIDATES / 4;
+    let owned: Vec<String> = (0..n).map(|i| format!("alpha {i:05}")).collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let mut engine = SearchEngine::new(make_entries(&names));
+    let _ = engine.search("al", 10, &empty_history(), SearchMode::Fuzzy);
+    let prev = &engine.incremental_cache.prev_candidates;
+    assert_eq!(prev.len(), n, "全件が一致する前提を固定する");
+    assert!(
+        prev.capacity() <= n,
+        "候補 {n} 件の検索で前回候補を容量 {} まで予約した",
+        prev.capacity()
     );
 }
 

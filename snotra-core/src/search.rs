@@ -364,11 +364,19 @@ impl SearchEngine {
         //
         // **葉ごとの確保は 3 点の組で抑える**（#1280。額は
         // `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）: 葉の最初の一致で
-        // 予約する・reduce に identity を渡さない（`reduce_with`）・join で連結の前に長さちょうど予約する。
-        // **3 点目を外してはならない**——外すと、葉が倍々で伸ばした `Vec` がそのまま左辺になって、
-        // 根で 2 の冪まで膨らむ（`prev_candidates` として次の打鍵まで残る）。2 だけを入れた版では、
-        // Substring の 100k 件で壁時計も退行した。機序は分かっていない（最終容量だけを縮めても
-        // 退行は残った）。
+        // 予約する・reduce に identity を渡さない（`reduce_with`）・join で連結の前に、足りない分だけを
+        // 長さちょうど予約する。**3 点目を外してはならない**——外すと、葉が倍々で伸ばした `Vec` が
+        // そのまま左辺になって根で 2 の冪まで膨らむ（`prev_candidates` として次の打鍵まで残る）。
+        // 2 だけを入れた版では、Substring で壁時計も退行した。機序は分かっていない（最終容量だけを
+        // 縮めても退行は残った）。
+        //
+        // **それでも根の容量は長さを超えうる。** join の予約は左辺に余りがあれば何もしないので、
+        // 根に残る余りは、一致を持つ最も左の葉の余りまでである（一致がまばらな検索では予約の
+        // 残りがそのまま残る）。
+        //
+        // 葉は `with_min_len` ゆえ、分割されれば候補をこの件数以上持ち、分割されなければ候補の
+        // 全件が 1 枚に入る。ゆえに予約は葉の候補数を超えない。
+        let leaf_reserve = MIN_PAR_CANDIDATES.min(candidate_count);
         let (top_k, all_match_indices): (TopK, Vec<usize>) = (0..candidate_count)
             .into_par_iter()
             .map(|j| reused.map_or(j, |c| c[j]))
@@ -387,11 +395,10 @@ impl SearchEngine {
                         self.score_one_entry(i, &plan, mode, kana_available, history, options)
                     {
                         if collect_candidates {
-                            // 容量 0 から倍々で伸ばすと葉ごとに十数回確保する。葉は
-                            // `with_min_len` ゆえ（候補が足りれば）候補をこの件数以上持つ。
-                            // 一致が少ない葉でも、予約は同じ大きさで取る。
+                            // 容量 0 から倍々で伸ばすと葉ごとに十数回確保する。一致が少ない
+                            // 葉でも、予約は同じ大きさで取る（大きさは `leaf_reserve` の上のコメント）。
                             if local_matches.capacity() == 0 {
-                                local_matches.reserve_exact(MIN_PAR_CANDIDATES);
+                                local_matches.reserve_exact(leaf_reserve);
                             }
                             local_matches.push(i);
                         }
@@ -405,8 +412,14 @@ impl SearchEngine {
             // 葉は 1 枚以上できるので `None` は来ないが、来ても空の結果へ倒れる。
             .reduce_with(|(mut a_top, mut a_matches), (b_top, b_matches)| {
                 a_top.merge(b_top);
-                a_matches.reserve_exact(b_matches.len());
-                a_matches.extend(b_matches);
+                // 左辺に一致が無ければ右辺をそのまま使う——新しく確保して写すと、identity を
+                // 外して消した写しが join の側に戻る。並びは変わらない（左辺は空である）。
+                if a_matches.is_empty() {
+                    a_matches = b_matches;
+                } else {
+                    a_matches.reserve_exact(b_matches.len());
+                    a_matches.extend(b_matches);
+                }
                 (a_top, a_matches)
             })
             .unwrap_or_else(|| (TopK::new(max_results), Vec::new()));

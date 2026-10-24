@@ -13,7 +13,7 @@ use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::index_tree::NameArena;
 use crate::str_arena::{LowerFileColumn, LowerNameColumn};
-use crate::ui_types::{IconSource, SearchResult};
+use crate::ui_types::SearchResult;
 
 // 構築処理（Wave 1/2・kana マスク・IndexCache 復元・全コンストラクタ）は子モジュールへ分離（#598）。
 mod build;
@@ -454,20 +454,12 @@ impl SearchEngine {
             found[rank] = Some(i);
         }
 
+        // フルパスの組み立ては高々 `max_results` 件に閉じる。
+        let mut scratch = String::new();
         found
             .into_iter()
             .flatten()
-            .map(|i| {
-                let entry = self.entries.get(i);
-                SearchResult {
-                    name: self.entries.name_at(i).to_string(),
-                    // フルパスの組み立ては高々 `max_results` 件に閉じる。
-                    path: self.entries.to_path(i),
-                    is_folder: entry.is_folder,
-                    is_error: false,
-                    icon: IconSource::FromPath,
-                }
-            })
+            .map(|i| scoring::result_at(&self.entries, &mut scratch, i))
             .collect()
     }
 

@@ -309,8 +309,12 @@ impl PathStore {
         self.sorted_prefix_len
     }
 
-    /// `i` のフルパスを新しい `String` として返す（`SearchResult` 組み立て用・top-k 確定後の
-    /// K 件だけに使う）。ホットループから呼ばない。
+    /// `i` のフルパスを新しい `String` として返す（**テスト専用**）。
+    ///
+    /// **製品はこれを呼ばない**——空の `String` から段ごとに書き足すので、容量が伸びるたびに
+    /// 確保する。結果の組み立ては使い回しのバッファから長さちょうどで写す形
+    /// （`scoring::result_at`）を通る。
+    #[cfg(test)]
     pub(super) fn to_path(&self, i: usize) -> String {
         let mut buf = String::new();
         self.raw_into(&mut buf, i);

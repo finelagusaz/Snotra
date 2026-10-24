@@ -57,22 +57,22 @@
 ## 作業項目
 
 ### Phase 1 — 検知器（Red）
-- [ ] `tests/search_allocations.rs` に、複数段のパスを持つ fixture と、`max_results` の 2 点比較の検知器を足す
-- [ ] 変更前の実装で検知器が赤になることを確かめ、増分の実測値をメモする
+- [x] `tests/search_allocations.rs` に、複数段のパスを持つ fixture と、`max_results` の 2 点比較の検知器を足す
+- [x] 変更前の実装で検知器が赤になることを確かめ、増分の実測値をメモする — 変更前 1 件 6.00 回（上限 10 件 74 回 → 40 件 254 回）で赤、変更後 2.00 回。最初の fixture はファイル名が末尾成分の接頭辞でなく親が解決されず、変更前でも緑（2 回）だった——`name` を stem に揃えて直した
 
 ### Phase 2 — 実装（Green）
-- [ ] `scoring.rs` に `result_at` を新設し、`heap_into_results` を関数ローカルのバッファ + `result_at` へ移行する
-- [ ] `search.rs` の `recent_history` を同じ形へ移行する
-- [ ] `PathStore::to_path` を `#[cfg(test)]` にし、doc を直す
-- [ ] LSP の findReferences で `to_path` と `result_at` の参照を列挙し、製品の呼び出し点が想定どおりか確かめる。`/dry-check` を通す
-- [ ] 検知器と既存テストが緑になる
+- [x] `scoring.rs` に `result_at` を新設し、`heap_into_results` を関数ローカルのバッファ + `result_at` へ移行する
+- [x] `search.rs` の `recent_history` を同じ形へ移行する
+- [x] `PathStore::to_path` を `#[cfg(test)]` にし、doc を直す
+- [x] LSP の findReferences で `to_path` と `result_at` の参照を列挙し、製品の呼び出し点が想定どおりか確かめる。`/dry-check` を通す
+- [x] 検知器と既存テストが緑になる
 
 ### Phase 3 — 測定と記録
-- [ ] `measure_search_allocations` を変更前（`9a19e6e`）と変更後で取る（実 `index.bin`・worker 1 本）
-- [ ] 壁時計を同一セッションで A/B 交互に 3 回ずつ取る（`tests/search_frame_cost.rs` の `measure_search_frame_cost`）
-- [ ] `PERFORMANCE.md` に小節を足す（確保の表・内訳の帰属・PATH マージを通さない計器であることの注記・壁時計・検知器）
-- [ ] `tests/search_allocations.rs` の `//!` の正本の指し先を更新する
-- [ ] `docs/build-commands.md` のカテゴリ A・F を実行する
+- [x] `measure_search_allocations` を変更前（`9a19e6e`）と変更後で取る（実 `index.bin`・worker 1 本）
+- [x] 壁時計を同一セッションで A/B 交互に 3 回ずつ取る（`tests/search_frame_cost.rs` の `measure_search_frame_cost`） — 合成索引のパスが根 1 段で変更の枝を通らず全行重なった。実 `index.bin` の `measure_path_query_frame_cost_at_operating_point` を足して取った（PERFORMANCE.md）
+- [x] `PERFORMANCE.md` に小節を足す（確保の表・内訳の帰属・PATH マージを通さない計器であることの注記・壁時計・検知器）
+- [x] `tests/search_allocations.rs` の `//!` の正本の指し先を更新する
+- [ ] `docs/build-commands.md` のカテゴリ A・F を実行する — 主ツリーで fmt・clippy・`cargo doc`・`governance:check`・`snotra-core` 全テストを確認済み。権威ある一式は 3b の委譲が担う
 
 ## 未確定（実装前に潰す）
 

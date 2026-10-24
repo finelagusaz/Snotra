@@ -453,7 +453,7 @@ pub(super) fn with_cursor<R>(store: &PathStore, i: usize, f: impl FnOnce(&str) -
 }
 
 thread_local! {
-    /// 全件走査のカーソル。rayon の worker ごとに 1 本で、`MATCHER` と同じ形である。
+    /// 全件走査のカーソル。rayon の worker ごとに 1 本である。
     /// 走査は連続した index を順に舐めるので、worker ごとに鎖が暖まる。
     static CURSOR: std::cell::RefCell<PathCursor> =
         const { std::cell::RefCell::new(PathCursor::new()) };

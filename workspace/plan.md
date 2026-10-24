@@ -63,14 +63,14 @@
 
 ### Phase 1 — Red
 
-- [ ] `folder.rs` に受け入れ条件 2・3 のテストと 3 本目（`fuzzy_filter_keeps_old_byte_level_matches`）を足し、1 本目が現行で落ちる・2・3 本目が通ることを確かめる
+- [x] `folder.rs` に受け入れ条件 2・3 のテストと 3 本目（`fuzzy_filter_keeps_old_byte_level_matches`）を足し、1 本目が現行で落ちる・2・3 本目が通ることを確かめる（実測: 旧実装へ 3 本を差し込んで 1 本目だけ落ちた。fixture は `.txt` の `x` が needle `x\u{308}` に一致したため `日本語 x.md` / `Cafe\u{301}.md` へ変えた）
 
 ### Phase 2 — 共有関数と置き換え
 
-- [ ] `scoring.rs` に `fuzzy_match_score` を足し、`match_score_single_cached` の Fuzzy の腕を置き換える
-- [ ] `search.rs` で `pub(crate) use scoring::fuzzy_match_score;`
-- [ ] `folder.rs` の `matches_filter` / `read_dir_entries` / `filter_sorted` / `read_dir_entries_for_test` を置き換え、`Matcher` / `Utf32Str` の import を外す
-- [ ] `FuzzyScratch` / `MATCHER` / `match_score_single_cached` の doc・コメントと、`CURSOR`・`tests/path_query_cost.rs` の「`MATCHER` と同じ形」を事実へ合わせる
+- [x] `scoring.rs` に `fuzzy_match_score` を足し、`match_score_single_cached` の Fuzzy の腕を置き換える
+- [x] `search.rs` で `pub(crate) use scoring::fuzzy_match_score;`
+- [x] `folder.rs` の `matches_filter` / `read_dir_entries` / `filter_sorted` / `read_dir_entries_for_test` を置き換え、`Matcher` / `Utf32Str` の import を外す
+- [x] `FuzzyScratch` / `MATCHER` / `match_score_single_cached` の doc・コメントと、`CURSOR`・`tests/path_query_cost.rs` の「`MATCHER` と同じ形」を事実へ合わせる
 
 ### Phase 3 — 検証
 

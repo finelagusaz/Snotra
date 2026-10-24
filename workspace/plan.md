@@ -90,7 +90,7 @@ cargo check --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p snotra
 cargo doc --workspace --no-deps --document-private-items
-cargo build -p snotra && npm run smoke:egui -- -ExePath target/debug/snotra.exe   # smoke:egui の既定 ExePath は target/release（docs/build-commands.md の smoke:egui の行）
+cargo build -p snotra && npm run smoke:egui -- -ExePath target/debug/snotra.exe   # smoke:egui の既定 ExePath は target/release（docs/build-commands.md「Windows のみ実行可能」の smoke:egui の行）
 npm run governance:check   # PERFORMANCE.md・コメントの見出し参照を触るため（カテゴリ F）
 ```
 
@@ -123,7 +123,7 @@ npm run governance:check   # PERFORMANCE.md・コメントの見出し参照を�
 
 ### Phase 4 — 検証
 
-- [x] 検証コマンドをすべて実行して緑（委譲 verify-1279・アンカー 4bf00cf: カテゴリ A 全行 exit 0・cargo test -p snotra 318 passed・smoke:egui〔-ExePath debug〕/ smoke:startup / test:powershell 132 passed・governance:check 17 件 passed。変異 3 種は assert で検知、スライス比較の残余はどの検査も捕まえないことを実測）
+- [x] 検証コマンドをすべて実行して緑（委譲 verify-1279・アンカー 4bf00cf: カテゴリ A の該当行 exit 0〔未変更 crate のテストは必須の外で未実行〕・cargo test -p snotra 318 passed・smoke:egui〔-ExePath debug〕/ smoke:startup / test:powershell 132 passed・governance:check 17 件 passed。変異 3 種は assert で検知、スライス比較の残余はどの検査も捕まえないことを実測）
 
 ## 未確定（実装前に潰す）
 

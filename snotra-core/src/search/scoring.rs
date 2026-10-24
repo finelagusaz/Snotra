@@ -64,10 +64,9 @@ struct FuzzyScratch {
     haystack: Vec<char>,
 }
 
-// D-5: one Matcher per thread that calls fuzzy_match_score — each rayon worker for search, and
-// the UI thread for the folder filter (#1276) — reused across fold tasks and keystrokes.
+// D-5: one Matcher per thread that calls fuzzy_match_score, reused across calls on that thread.
 // Matcher::new() is one alloc_zeroed of 133,120 B in nucleo-matcher 0.3.1 (measured 2026-10-24);
-// thread_local avoids that allocation on every rayon chunk boundary and every folder filter call.
+// thread_local avoids paying it per rayon chunk boundary or per folder filter call.
 thread_local! {
     static MATCHER: RefCell<FuzzyScratch> = RefCell::new(FuzzyScratch {
         matcher: Matcher::new(MatcherConfig::DEFAULT),

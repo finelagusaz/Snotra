@@ -806,13 +806,24 @@ mod tests {
     fn fuzzy_filter_drops_combining_marks_in_needle_like_search() {
         use crate::search::SearchMode;
         let cached = vec![sr("日本語 x.md"), sr("Cafe\u{301}.md")];
-        for (filter, want) in [("x\u{308}", "日本語 x.md"), ("e\u{308}", "Cafe\u{301}.md")] {
-            let names: Vec<_> = filter_sorted(&cached, filter, SearchMode::Fuzzy, 8)
-                .into_iter()
-                .map(|r| r.name)
-                .collect();
-            assert_eq!(names, [want], "filter {filter:?} の一致がずれた");
-        }
+        // 2 行の結果を集めてから 1 度だけ比べる——行ごとに assert すると、最初に落ちた行より後ろが報告から消える。
+        let got: Vec<(&str, Vec<String>)> = ["x\u{308}", "e\u{308}"]
+            .into_iter()
+            .map(|filter| {
+                let names = filter_sorted(&cached, filter, SearchMode::Fuzzy, 8)
+                    .into_iter()
+                    .map(|r| r.name)
+                    .collect();
+                (filter, names)
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("x\u{308}", vec!["日本語 x.md".to_string()]),
+                ("e\u{308}", vec!["Cafe\u{301}.md".to_string()]),
+            ]
+        );
     }
 
     /// 純 ASCII の名前は、非 ASCII の needle に一致しない。`nucleo-matcher` 0.3.1 の `fuzzy_match` が

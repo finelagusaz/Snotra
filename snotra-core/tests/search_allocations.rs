@@ -10,8 +10,8 @@
 //! - **worker 1 本**（[`on_single_worker`]）: fold も reduce もその worker が担うので、検索の確保は
 //!   全部そこへ計上される。候補ごとの確保と結果ごとの確保は、スレッド数に依らないのでこれで足りる
 //! - **専用プールの全 worker**（[`allocations_on_all_workers`]）: rayon の葉ごとの確保（fold ごとの
-//!   top-k と一致の収集・reduce の連結）は葉の数に比例し、worker 1 本では葉が 2 枚しかできず
-//!   1/10〜1/20 にしか映らない（#1280）。各 worker の計数を `ThreadPool::broadcast` で読んで足す
+//!   top-k と一致の収集・reduce の連結）は葉の数に比例し、worker 1 本では葉が少なく（実
+//!   `index.bin` の 22,417 件で 2 枚）1/10〜1/20 にしか映らない（#1280）。各 worker の計数を `ThreadPool::broadcast` で読んで足す
 //!
 //! どちらも専用のプールで走らせるので、libtest が並行に走らせる他のテストの確保は混ざらない。
 //!
@@ -461,7 +461,7 @@ fn measure_real_index() {
         }
     }
 
-    // 葉に比例する確保は worker 1 本では葉が 2 枚しかできず縮んで映る（`//!`）。製品と同じ
+    // 葉に比例する確保は worker 1 本では縮んで映る（`//!`）。製品と同じ
     // 既定の本数のプールで、全 worker の分を数える。
     let pool = rayon::ThreadPoolBuilder::new()
         .build()

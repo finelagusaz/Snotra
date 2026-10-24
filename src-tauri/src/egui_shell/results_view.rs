@@ -26,8 +26,9 @@ pub(crate) struct RowsSnapshot {
     /// **`Arc` で持つのは、results が毎フレーム snapshot を `clone` して受け取るためである**
     /// （lock を描画の間じゅう握らないため）。`Vec` だと受け取りのたびに行数ぶんの `String` を
     /// 複製し、ポインタ移動のように毎フレーム描く場面でそれが乗り続ける（額は
-    /// `PERFORMANCE.md`「採用: results の snapshot の受け取りで行を複製しない」）。行を作り直すかは
-    /// 発行側が [`Self::matches`] で決める。
+    /// `PERFORMANCE.md`「採用: results の snapshot の受け取りで行を複製しない」）。発行側も行を
+    /// 複製しない——行の所有者 `SearchState` が同じ `Arc` を持ち、発行はそれを共有する
+    /// （[`ResultsShared::publish`]・#1279）。
     pub rows: std::sync::Arc<[snotra_core::ui_types::SearchResult]>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
     pub selected: usize,
     /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632 reviewer Important 3
@@ -44,16 +45,23 @@ pub(crate) struct RowsSnapshot {
 }
 
 impl RowsSnapshot {
-    /// 発行前の差分判定（/simplify・効率）。行の列を作ってから `PartialEq` で比べると、
-    /// **無変化フレームでも** 行数ぶんの `String` 確保が走る（入力欄のキャレット点滅だけでも
-    /// main は repaint する）。行はスライスのまま突き合わせ、snapshot に差があるときだけ作り直す。
-    /// **作り直しの単位は snapshot 全体である**——行が同じでも、他のフィールド（選択の移動等）に
-    /// 差があれば行ごと作り直す。
+    /// 発行前の差分判定。main は無変化フレームでも repaint する（入力欄のキャレット点滅だけでも）
+    /// ので、ここは毎フレーム走る。
+    ///
+    /// **行は `Arc` 同士で比べる（`**` で外してスライス同士にしない）。** std の `Arc` の `==` は
+    /// 中身が `Eq` のとき先にポインタの一致を見るので、行の所有者と同じ `Arc` を渡す限り行の比較は
+    /// O(1) で終わる。スライス同士に書き換えると毎フレーム全行の中身比較に戻るが、判定の結果は
+    /// 変わらないので**どの検査も捕まえない**（#1279）。
+    ///
+    /// **行の比較を `generation` で置き換えてはならない**——表示ゲートが反転したフレームは
+    /// 世代を進めずに空の行を発行する（`view.rs` の `plain_hidden`）。比較を世代から始めるのは
+    /// 連言の評価順にすぎず、行の差し替え直後（別の `Arc`・世代も進んでいる）に中身比較を
+    /// 走らせないためである。
     ///
     /// **フィールドを増やしたらここも増やす**——先頭の分解束縛が漏れを compile-fail にする。
     pub(crate) fn matches(
         &self,
-        rows: &[SearchResult],
+        rows: &std::sync::Arc<[SearchResult]>,
         selected: usize,
         generation: u64,
         input_idle: bool,
@@ -64,10 +72,10 @@ impl RowsSnapshot {
             generation: cur_generation,
             input_idle: cur_input_idle,
         } = self;
-        **cur_rows == *rows
+        *cur_generation == generation
             && *cur_selected == selected
-            && *cur_generation == generation
             && *cur_input_idle == input_idle
+            && cur_rows == rows
     }
 }
 
@@ -105,6 +113,32 @@ pub(crate) enum ClickTake {
 }
 
 impl ResultsShared {
+    /// main が描画用 snapshot を発行する。差があったときだけ差し替え、`true` を返す
+    /// （呼び出し側が results を wake する。wake を中に持たないのは、ここを `AppHandle` 無しで
+    /// テストするため）。
+    ///
+    /// 行は `Arc::clone` で共有し、複製しない（#1279）——選択の移動や `input_idle` の反転だけの
+    /// フレームでも、行の所有者が持つバッファをそのまま指す。
+    pub(crate) fn publish(
+        &self,
+        rows: &std::sync::Arc<[SearchResult]>,
+        selected: usize,
+        generation: u64,
+        input_idle: bool,
+    ) -> bool {
+        let mut guard = self.snapshot.lock().unwrap();
+        if guard.matches(rows, selected, generation, input_idle) {
+            return false;
+        }
+        *guard = RowsSnapshot {
+            rows: std::sync::Arc::clone(rows),
+            selected,
+            generation,
+            input_idle,
+        };
+        true
+    }
+
     /// results 側が積んだクリックを、**世代が一致するときだけ**取り出す（#699）。
     ///
     /// 不一致でも `take` する——残すと次フレーム以降に同じ stale クリックが再評価される。
@@ -831,6 +865,46 @@ mod tests {
             std::ptr::eq(snapshot.rows.as_ptr(), taken.rows.as_ptr()),
             "snapshot の clone が行を複製している（受け取りのたびに 200 行ぶんの String を確保する）"
         );
+    }
+
+    /// 選択だけが変わったフレームの発行は、行を作り直さず所有者の `Arc` を共有する（#1279）。
+    ///
+    /// 回帰テスト: 発行が `&[SearchResult]` から `Arc` を作っていた頃は、↑↓ のたびに行数ぶんの
+    /// `String` を複製していた。挙動は変わらない退行なので、見るのはポインタだけである。
+    #[test]
+    fn publish_shares_rows_when_only_selection_changes() {
+        let shared = super::ResultsShared::default();
+        let rows: std::sync::Arc<[SearchResult]> = rows_for_test(200).into();
+        assert!(shared.publish(&rows, 0, 1, true));
+        assert!(shared.publish(&rows, 1, 1, true), "選択の移動は発行する");
+        let published = shared.snapshot.lock().unwrap().rows.clone();
+        assert!(
+            std::sync::Arc::ptr_eq(&published, &rows),
+            "発行が行を複製している（↑↓ のたびに 200 行ぶんの String を確保する）"
+        );
+    }
+
+    /// 無変化なら発行しない（wake しない）。**中身が同じ別の `Arc` でも発行しない**——行の比較が
+    /// ポインタの一致だけに縮むと、ここが落ちる。
+    #[test]
+    fn publish_skips_when_nothing_changed() {
+        let shared = super::ResultsShared::default();
+        let rows: std::sync::Arc<[SearchResult]> = rows_for_test(8).into();
+        assert!(shared.publish(&rows, 2, 5, false));
+        assert!(!shared.publish(&rows, 2, 5, false));
+        let same_content: std::sync::Arc<[SearchResult]> = rows_for_test(8).into();
+        assert!(!shared.publish(&same_content, 2, 5, false));
+    }
+
+    /// 表示ゲートが倒れたフレームは、世代を進めずに空の行を発行する（`view.rs` の
+    /// `plain_hidden`）。行の比較を世代で置き換えると、ここが落ちる。
+    #[test]
+    fn publish_hides_rows_without_generation_change() {
+        let shared = super::ResultsShared::default();
+        let rows: std::sync::Arc<[SearchResult]> = rows_for_test(8).into();
+        assert!(shared.publish(&rows, 0, 3, true));
+        assert!(shared.publish(&std::sync::Arc::default(), 0, 3, true));
+        assert!(shared.snapshot.lock().unwrap().rows.is_empty());
     }
 
     /// **行ピッチが `row_height`（を egui の UI 丸めに通した値）ちょうどである**

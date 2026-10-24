@@ -407,7 +407,8 @@ impl InputState {
         // `KeyEvent` にだけ載せ、`ReceivedImeText` には載せない（0.35 は `minimal_ime` が載せていた）。
         // IME 確定は `windows_ime.rs` の subclass が `GCS_RESULTSTR` から読むので、この経路と
         // 二重にならない——tao は `event_info` の無い IME 由来の `WM_CHAR` を `KeyEvent` にしない。
-        // `admit_key` の後に置くこと（合成 press も文字を持つ・理由は `admit_key` の doc）。
+        // `admit_key` の後に置くこと（合成 press も文字を持つ・理由は `admit_key` の doc）。前へ動かすと
+        // `scripts/smoke-egui.ps1` の押しっぱなしの Z の打鍵が赤にする（#1274）。
         if let Some(text) = typed_text_event(pressed, event.text_with_all_modifiers()) {
             self.raw.events.push(text);
         }

@@ -1,0 +1,77 @@
+ADVERSARIAL REVIEW of workspace/research.md (#1276)
+Method: read nucleo-matcher 0.3.1 source, repo code, SPEC; extended probe at
+C:/Users/Eoh/AppData/Local/Temp/claude/C--workspace-Snotra/52749f70-0163-4011-ad31-b9e38e7c1430/scratchpad/adv1276/src/main.rs
+(3M-pair random fuzz over an adversarial char pool + 2M-pair fuzz over a "realistic" pool + named cases; xorshift, deterministic).
+
+=== PROP 1: (Ascii hay, Unicode needle) => None unconditionally -- NOT BROKEN ===
+Tried: read lib.rs. fuzzy_matcher_impl has TWO early returns before the (Ascii,Unicode) arm (needle.len()>hay.len() -> None; needle empty -> Some(0); equal length -> exact_match_impl), and exact_match_impl ALSO returns None for (Ascii,Unicode) (lib.rs:727). So no length-equal escape hatch.
+Measured: ("abc","日"), ("a","日"), ("abc","e\u0301"), ("e","e\u0301"), ("ab","a\u0301b") hay=Ascii needle=Unicode(From) -> all None.
+Subtlety (not a break): the Unicode needle here is `Utf32String::from("e\u0301")` = Unicode(['e']) (first char of grapheme only), i.e. an "NFD needle" becomes Unicode even though every grapheme is ASCII. Consequence: after the fix, NFD needle "e\u0301" never matches ANY pure-ASCII hay ("resume") -- while the OLD code also gave None there, so no change.
+How to falsify: find any (Ascii hay, Unicode needle) pair with Some() from fuzzy_match under 0.3.1 default Config.
+
+=== PROP 2a: haystack-only fix fixes no match difference -- NOT BROKEN (as far as measured) ⚠️ direction not exhaustively counted ===
+Tried: fuzz. In the 104/3M hay-only diffs all printed examples were old=true -> hayonly=false (regressions), none false->true seen. I did not separately count false->true for hay-only; ⚠️.
+=== PROP 2b: "the boolean only changes when needle is also built via From" -- BROKEN ===
+Evidence: a haystack-only change DOES change the boolean, in the WRONG direction (new regression), for realistic input:
+  name "Re\u0301sume\u0301.docx" (macOS NFD copy) / needle "e\u0301" (NFD paste):
+    old (both Utf32Str::new)  = Some(64)
+    new (both From)           = Some(16)
+    haystack-only (hay From, needle Utf32Str::new) = None   <-- true->false
+  same for "re\u0301s": old Some(140), new Some(88), hay-only None.
+  Fuzz: hay-only differs from old in 104/3,000,000 (adversarial pool) and old=true,hayonly=false in 1,748/2,000,000 (realistic pool). Examples: h=" \u3099" q=" \u3099"; h=".e\n1\u0308 1x" q="e\u0308".
+Mechanism: old classifies an all-ASCII-first-grapheme NFD hay AND NFD needle both as Ascii(bytes) and byte-matches them; a hay-only fix makes hay Unicode vs needle Ascii(bytes incl. 0xCC 0x81) -> no match. So the research's "haystack-only is merely ineffective" understates: it is actively harmful. Both sides MUST move together (the research's conclusion "needle too" is right, its reasoning/claim of harmlessness is not).
+Full fix (both From) vs old: realistic pool diff=22,979/2M, ALL false->true (0 true->false). Fuzz adversarial pool: full_diff=12,044/3M; needle-only (hay old, needle From) differs in 11,492 -- so nearly all changes come from the needle side, consistent with the research.
+How to falsify: run the "REAL" lines in adv1276 (cargo run -q --offline --release); if hayonly != None for the Re\u0301sume\u0301 / e\u0301 pair, my finding is wrong.
+
+=== PROP 2c: ASCII needle, haystack misclassification alone never changes boolean for realistic filenames -- NOT BROKEN ===
+Fuzz found ascii-needle boolean diffs only in 3/3M cases; every printed one is the "\r\n" shape (needle "\n", hay "...\r\n..."), confirming the research's hedge. Windows file names cannot contain \r or \n, so not reachable. Also tested U+0600 (prepend) in the adversarial pool: no ASCII-needle diff surfaced beyond \r\n in 3M samples (⚠️ sampling, not proof; theoretical prepend+ASCII digit case exists but is not a filename shape).
+How to falsify: a Windows-legal filename (no control chars) + ASCII needle where hay-only fix flips the boolean.
+
+=== PROP 3: folder filter consumes only the boolean; "順位だけが静かに変わる" does not apply to folders -- NOT BROKEN ===
+Tried: read folder.rs: matches_filter returns bool (`.is_some()`); filter_sorted = cached.iter().filter(..).take(max) preserving cached order; read_dir_entries only filters, then score_entries sorts by is_folder/expansion count/lower name/path. No score reaches ordering. Callers: search_flow.rs:76 (filter_sorted) and folder_nav.rs:76 (read_dir_entries with ""), neither uses score.
+How to falsify: find a path from nucleo's Option<u16> value into any sort key in folder.rs / callers (grep for fuzzy_match / indices / score in folder.rs).
+
+=== PROP 4a: filter_sorted on UI thread per keystroke; search Fuzzy never runs on UI thread -- NOT BROKEN ===
+Tried: search_flow.rs:63-76 (Folder arm, called from the input-changed edge with `self.run_search()` "folder は同期フィルタ") mutates UI state inline => egui thread. Search scoring: search.rs:381 `(0..n).into_par_iter()...fold` unconditionally (no sequential fallback; MIN_PAR_CANDIDATES only sets with_min_len). Callers of engine.search: search_worker.rs:60 (worker thread) and activation.rs:614 (UI thread, Enter flush) -- the latter calls par_iter from a non-pool thread; rayon injects into the pool and blocks, so leaves run on pool workers, not the UI thread. => a borrowed MATCHER on the UI thread is a NEW ~133,120 B resident.
+Also verified 133,120 B = 4*2048 + 2048 + 2*2048 + 8*2048(ScoreCell, assumed 8B) + 102,400 from matrix.rs struct (arithmetic matches; ScoreCell size assumed ⚠️).
+⚠️ Stale baseline: research says "97.51 MiB ... 0.13%". PERFORMANCE.md later rows show SearchEngine resident 54.92 MiB (line ~379) => ~0.23%. Immaterial to the conclusion but the quoted figure is not the latest.
+How to falsify: show the UI thread ever executes a Fuzzy fuzzy_match today (e.g. rayon thread-pool `install` on UI thread or a sequential path), then no "new" resident.
+
+=== PROP 4b: read_dir_entries called in production only with filter ""; still pays Matcher::new; list_folder has no production callers -- NOT BROKEN ===
+grep over all .rs: read_dir_entries -> engine.rs:41 (wrapper) <- folder_nav.rs:76 with "". Matcher::new at folder.rs:47 is unconditional. list_folder: only engine.rs:204 wrapper (doc says "folder.rs のユニットテスト向け"), no other caller (pub in a lib so external crates are theoretically possible; none in workspace).
+How to falsify: a non-test caller with a non-empty filter.
+
+=== PROP 5: SPEC makes this a bug fix; no SPEC edit -- NOT BROKEN, with ⚠️ ===
+SPEC §4.1 (nucleo-matcher 相当), §4.2 ("全検索モード・フォルダ展開共通"), §6.3 do not distinguish. But:
+⚠️ (a) SPEC says nothing about combining marks / graphemes at all, so "align to SPEC" is by internal parity with search code, not SPEC text; defensible as a bug (AGENTS.md step 1 treats "記述に合わせる" as bug), but the justification is weaker than the note presents.
+⚠️ (b) SPEC §4.2 lists "前後空白除去" and "連続空白の1文字化" as normalization for entry names AND queries "フォルダ展開共通"; folder.rs uses bare to_lower_folded (no trim, no whitespace collapse) for filter and name. Existing, separate divergence from the very clause the note cites -- not touched by this change, and not mentioned in research.md. Worth a note/issue, not a break of the proposition.
+How to falsify: find SPEC text that specifies different folder vs search matching, or that mandates grapheme/NFD behavior.
+
+=== PROP 6a: pub(crate) wrapper in scoring.rs has no RefCell re-entrancy risk -- NOT BROKEN ===
+fuzzy_match does not call back into MATCHER; folder candidate loop is flat (filter closure -> wrapper -> borrow_mut closed on return); rayon workers vs UI thread have separate thread-locals. The existing scoring.rs:200 contract ("借用は Fuzzy の腕の中に閉じる") is preserved if the wrapper is the only borrow site. Needs search.rs to re-export (mod scoring is private; research notes this).
+How to falsify: a reachable call chain MATCHER.with(|..| ... -> something calling the wrapper again).
+=== PROP 6b: only "D-5" comment becomes false -- BROKEN (enumeration incomplete) ===
+Statements that go false/imprecise if the UI thread also owns a MATCHER:
+  - scoring.rs:59 "Fuzzy の照合に使う、rayon の worker ごとに 1 組の道具" (FuzzyScratch doc)
+  - scoring.rs:67 "D-5: one Matcher per rayon worker thread"
+  - search/path_store.rs:456 "rayon の worker ごとに 1 本で、`MATCHER` と同じ形" (analogy relies on MATCHER being worker-only)
+  - snotra-core/tests/path_query_cost.rs:164-165 "worker 数ぶんしか確保されない ... `MATCHER` と同じ形"
+Research listed only the D-5 line. (Also FuzzyScratch.haystack doc "暖まった後は候補ごとの確保が起きない" stays true.)
+How to falsify: `grep -rn "rayon の worker\|per rayon worker" snotra-core` -- if those lines are shown not to reference MATCHER semantics.
+
+=== MEASUREMENT ENVIRONMENT -- NOT BROKEN (all checked) ===
+- Probe fold == query::to_lower_folded: repo: `s.chars().flat_map(|c| c.to_lowercase()).map(nucleo_normalize).collect()` with nucleo_normalize = nucleo_matcher::chars::normalize; probe: identical code. Exact match.
+- Version: Cargo.lock (repo) nucleo-matcher 0.3.1 checksum bf33f538...; probe pins =0.3.1 and its Cargo.lock has the same checksum; both depend on unicode-segmentation (graphemes feature on -- repo Cargo.toml `nucleo-matcher = "0.3"` default features). Probe adv1276 reused that lock.
+- Config: repo uses MatcherConfig::DEFAULT in folder.rs and scoring.rs; probe uses Config::DEFAULT. Same.
+- Branch touched: folder needle = to_lower_folded(filter), hay = to_lower_folded(name); probe folds both. Same. Probe shares one Matcher across calls, as production does.
+- Not exercised by probe: the real code path (filter_sorted/matches_filter) itself -- API calls are identical, but no integration test through folder::filter_sorted was run ⚠️.
+How to falsify: build a snotra-core test calling folder::filter_sorted with the "Re\u0301sume\u0301.docx"/"e\u0301" pair on the current code; if it returns a different old result than the probe's Some, the probe is not representative.
+
+=== "practically rare" claim -- NOT BROKEN ⚠️ ===
+The affected set is "needle contains a combining mark", and Latin NFC accents are folded to ASCII before nucleo, so only NFD paste hits it. Haystack side: macOS-origin NFD names are realistic for Japanese users (dakuten/handakuten = base + U+3099/U+309A), and ASCII-needle booleans against them are unchanged by the fix (fuzz, realistic pool). Related unaffected-but-adjacent gap: NFC needle "が" vs NFD name "か\u3099" is None both before and after (to_lower_folded does not compose) -- a different, unfixed problem, probably more common than the NFD-needle case the issue targets ⚠️.
+Also: the fix is a strict improvement on the realistic pool (22,979 false->true, 0 true->false) when both sides move, so no UX regression found for the full (both-sides) fix. Score magnitudes change (e.g. 154->166, 64->16), irrelevant to folders (Prop 3).
+
+=== Other research.md claims attacked ===
+- "旧 None / 新 Some(16) for Re\u0301sume\u0301.docx x x\u0308" etc.: not re-measured by me individually; adv1276 fuzz is a superset and agrees in direction. NOT BROKEN.
+- "スコアだけが変わったのは 20 組": not re-derived; irrelevant to folder. Not attacked.
+- "`to_lower_folded(name)` per-candidate String drop": design call, not falsifiable by measurement; not attacked.

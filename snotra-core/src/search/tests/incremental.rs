@@ -1,6 +1,6 @@
 //! incremental search キャッシュ（prefix 拡張・backspace・mode 変更・dot 遷移）のテスト。
 
-use super::common::{empty_history, make_entries};
+use super::common::{empty_history, make_entries, pool_of};
 use crate::indexer::AppEntry;
 use crate::search::*;
 
@@ -252,6 +252,34 @@ fn incremental_search_empty_prev_candidates_falls_back() {
     let r3 = engine.search("fire", 8, &h, SearchMode::Fuzzy);
     assert!(!r3.is_empty());
     assert_eq!(r3[0].name, "Firefox");
+}
+
+/// 分割が起きる規模で、次の打鍵まで残る前回候補の容量が長さを大きく超えない。
+///
+/// 回帰テスト: reduce の join で `extend` の前に `reserve_exact` しないと、葉が倍々で伸ばした
+/// `Vec` がそのまま左辺になり、根で 2 の冪まで膨らむ（#1280。額と、膨らんだ版の壁時計は
+/// `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）。**確保回数では捕まらない**——
+/// その誤りは回数をむしろ減らす。ゆえに容量そのものを見る。**壁時計の機序を固定するテストではない**
+/// （容量だけを縮めても退行は消えなかった）。同じ誤りが残す観測点を CI に置くためにある。
+///
+/// **件数は 2 の冪にしない。** 葉の長さが 2 の冪だと倍々の成長がちょうど長さに一致し、誤りが
+/// 容量に現れない（`8 * MIN_PAR_CANDIDATES` では緑のままだった）。5,000 件では、誤った版の容量が 8,192 になる。
+#[test]
+fn split_search_keeps_candidates_capacity_close_to_length() {
+    let n = 5_000;
+    let owned: Vec<String> = (0..n).map(|i| format!("alpha {i:05}")).collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let mut engine = SearchEngine::new(make_entries(&names));
+    let h = empty_history();
+    pool_of(4).install(|| engine.search("al", 10, &h, SearchMode::Fuzzy));
+    let prev = &engine.incremental_cache.prev_candidates;
+    assert_eq!(prev.len(), n, "全件が一致する前提を固定する");
+    assert!(
+        prev.capacity() * 4 < prev.len() * 5,
+        "前回候補の容量 {} が長さ {} の 1.25 倍以上ある",
+        prev.capacity(),
+        prev.len()
+    );
 }
 
 /// 前回候補を再利用する検索が、rayon の分割（`MIN_PAR_CANDIDATES`）が起きる規模でも

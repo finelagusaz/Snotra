@@ -18,6 +18,14 @@ pub(super) fn empty_history() -> HistoryStore {
     HistoryStore::empty()
 }
 
+/// worker が `threads` 本の rayon プール（rayon の分割を通すテスト用）。
+pub(super) fn pool_of(threads: usize) -> rayon::ThreadPool {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .expect("rayon のプールを作れない")
+}
+
 /// 実 `%APPDATA%\Snotra\index.bin` に**載っているときだけ**エントリを返す。
 /// scan パス未設定・キャッシュ不在・キャッシュが config と食い違うときは `None`。
 ///

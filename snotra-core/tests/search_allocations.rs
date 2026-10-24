@@ -5,12 +5,15 @@
 //! バイト数**を数える——どちらも入力だけで決まるので共有ランナーでも揺れず、`#[ignore]` を
 //! 付けずに CI で走らせられる。
 //!
-//! **数えるのは「このスレッドで起きた確保」だけである。** 計数器はスレッドローカルで、検索は
-//! worker 1 本の rayon プールの中で走らせる（[`on_single_worker`]）。fold も reduce もその
-//! worker が担うので検索の確保は全部そこへ計上され、libtest が並行に走らせる他のテストの確保は
-//! 混ざらない。**1 本で数えてよいのは、候補ごとの確保がスレッド数に依らないからである。**
-//! 分割の数に比例する確保（fold ごとの top-k と一致の収集）は規模とスレッド数の両方で変わるが、
-//! 候補 1 件ごとの確保とは桁が違う——検知器の閾値はその間に置いてある。
+//! **計数器はスレッドローカルで、数える範囲は 2 通りある。**
+//!
+//! - **worker 1 本**（[`on_single_worker`]）: fold も reduce もその worker が担うので、検索の確保は
+//!   全部そこへ計上される。候補ごとの確保と結果ごとの確保は、スレッド数に依らないのでこれで足りる
+//! - **専用プールの全 worker**（[`allocations_on_all_workers`]）: rayon の葉ごとの確保（fold ごとの
+//!   top-k と一致の収集・reduce の連結）は葉の数に比例し、worker 1 本では葉が 2 枚しかできず
+//!   1/10〜1/20 にしか映らない（#1280）。各 worker の計数を `ThreadPool::broadcast` で読んで足す
+//!
+//! どちらも専用のプールで走らせるので、libtest が並行に走らせる他のテストの確保は混ざらない。
 //!
 //! **壁時計は測らない。** 計数器は確保のたびに働くので、確保の多い側ほど遅く見せる。
 //! A/B の壁時計は既定のアロケータで走るベンチ（`bench_fuzzy_search_scaling` 等）が測る。
@@ -20,8 +23,8 @@
 //! 書き出す（契約は同関数の doc）。CI で走る検知器は実データに触れない。
 //!
 //! 撤去条件を持たない恒久の検知器である（足場ではない）。実測値は
-//! `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」と「採用: 結果の組み立てでパスを
-//! 長さちょうど 1 回で確保する（#1277）」が正本。
+//! `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」・「採用: 結果の組み立てでパスを
+//! 長さちょうど 1 回で確保する（#1277）」・「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」が正本。
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -85,11 +88,44 @@ fn allocations_during<R>(f: impl FnOnce() -> R) -> (usize, usize, R) {
 
 /// worker 1 本の rayon プールの中で `f` を走らせる（理由は `//!`）。
 fn on_single_worker<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    pool_of(1).install(f)
+}
+
+/// `pool` の全 worker と呼び出し側のスレッドの確保の（回数, バイト数）の合計。
+fn counts_on_all_workers(pool: &rayon::ThreadPool) -> (usize, usize) {
+    let workers = pool.broadcast(|_| (ALLOCS.with(Cell::get), BYTES.with(Cell::get)));
+    let caller = (ALLOCS.with(Cell::get), BYTES.with(Cell::get));
+    workers
+        .into_iter()
+        .fold(caller, |(a, b), (x, y)| (a + x, b + y))
+}
+
+/// `f` を `pool` の中で走らせ、その間に全 worker と呼び出し側で起きた確保の（回数, バイト数）と、
+/// `f` の戻り値を返す。
+///
+/// **broadcast 自身も確保する**（結果の `Vec` など）。読みの 2 回を空打ちして、その差を引く。
+fn allocations_on_all_workers<R: Send>(
+    pool: &rayon::ThreadPool,
+    f: impl FnOnce() -> R + Send,
+) -> (usize, usize, R) {
+    let before = counts_on_all_workers(pool);
+    let out = pool.install(f);
+    let after = counts_on_all_workers(pool);
+    let idle_before = counts_on_all_workers(pool);
+    let idle_after = counts_on_all_workers(pool);
+    let overhead = (idle_after.0 - idle_before.0, idle_after.1 - idle_before.1);
+    (
+        after.0 - before.0 - overhead.0,
+        after.1 - before.1 - overhead.1,
+        out,
+    )
+}
+
+fn pool_of(threads: usize) -> rayon::ThreadPool {
     rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
+        .num_threads(threads)
         .build()
-        .expect("rayon の 1 スレッドプールを作れない")
-        .install(f)
+        .expect("rayon のプールを作れない")
 }
 
 /// 空の履歴。存在しないパスを渡すと `load_in` は空で返す（実 `history.bin` を読まない）。
@@ -306,6 +342,55 @@ fn result_assembly_allocates_once_per_path() {
     });
 }
 
+/// rayon の葉 1 枚あたりの確保が、葉の中の一致の数に比例して増えない。
+///
+/// 回帰テスト: fold の一致の収集は容量 0 から倍々で伸び、reduce の identity は葉ごとに
+/// `TopK::new` と、空の `Vec` への写しを確保していた（#1280）。同じ索引・同じクエリを worker
+/// 1 本と 4 本のプールで走らせ、差（葉が増えた分の確保）を見る——候補ごと・結果ごとの確保は
+/// 差で消える。
+///
+/// **件数とスレッド数が検出力を決める。**
+/// - 8,000 件は、葉の数を `with_min_len` が上から抑える規模である（4 本と 8 本で値が一致した）
+/// - **4 本に固定する。** 2 本では、ランナーが負荷を受けると変更前の差が 26〜29 に落ち、閾値を割った
+/// - 閾値 32 は、採る形（14〜20・負荷下の最悪 29）と変更前（74〜77）の間に置く
+///   （実測の出所は `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）
+#[test]
+fn split_search_allocations_do_not_grow_with_leaf_matches() {
+    const N: usize = 8_000;
+    const THRESHOLD: usize = 32;
+    let history = empty_history();
+    let mut engine = engine_where_every_entry_matches(
+        N,
+        |i| format!("alpha tool {i:05}"),
+        |i| format!("bin{i:05}"),
+    );
+    let mut measure = |pool: &rayon::ThreadPool| {
+        // 暖機は各 worker のスレッドローカル（照合器・組み立てバッファ）を立ち上げる。
+        for _ in 0..2 {
+            pool.install(|| {
+                let _ = engine.search("alpha", MAX_RESULTS, &history, SearchMode::Fuzzy);
+                let _ = engine.search(RESET_QUERY, MAX_RESULTS, &history, SearchMode::Fuzzy);
+            });
+        }
+        let (allocs, _, results) = allocations_on_all_workers(pool, || {
+            engine.search("alpha", MAX_RESULTS, &history, SearchMode::Fuzzy)
+        });
+        assert_eq!(
+            results.len(),
+            MAX_RESULTS,
+            "fixture が上限まで一致していない"
+        );
+        allocs
+    };
+    let single = measure(&pool_of(1));
+    let split = measure(&pool_of(4));
+    let grew = split.saturating_sub(single);
+    assert!(
+        grew < THRESHOLD,
+        "worker 4 本で確保が {grew} 回増えた（1 本: {single} 回 → 4 本: {split} 回）"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 計器（手元で release 実行する）
 // ---------------------------------------------------------------------------
@@ -360,17 +445,48 @@ fn measure_real_index() {
         loaded.stats.cache_hit, config.search.migemo_enabled, config.search.normal_mode
     );
     let mut engine = Engine::from_material(loaded.material, HistoryStore::load(), config);
+    const SEQUENCES: [&[&str]; 3] = [
+        &["c", "co", "cod", "code"],
+        &["s", "se", "set"],
+        &["c:\\", "c:\\u", "c:\\users\\"],
+    ];
+    println!("--- worker 1 本 ---");
     report_header();
-    for sequence in [
-        &["c", "co", "cod", "code"][..],
-        &["s", "se", "set"][..],
-        &["c:\\", "c:\\u", "c:\\users\\"][..],
-    ] {
+    for sequence in SEQUENCES {
         // 暖機（スレッドローカルの立ち上げ）→ 再利用を外す → 並びを打つ。
         let _ = engine.search(sequence[0]);
         let _ = engine.search(RESET_QUERY);
         for query in sequence {
             report_measured(query, || engine.search(query));
+        }
+    }
+
+    // 葉に比例する確保は worker 1 本では葉が 2 枚しかできず縮んで映る（`//!`）。製品と同じ
+    // 既定の本数のプールで、全 worker の分を数える。
+    let pool = rayon::ThreadPoolBuilder::new()
+        .build()
+        .expect("rayon の既定プールを作れない");
+    println!(
+        "--- 既定のプールの全 worker（{} 本）---",
+        pool.current_num_threads()
+    );
+    println!(
+        "  {:<22}{:>8}{:>10}{:>12}",
+        "query", "results", "allocs", "KiB"
+    );
+    for sequence in SEQUENCES {
+        pool.install(|| {
+            let _ = engine.search(sequence[0]);
+            let _ = engine.search(RESET_QUERY);
+        });
+        for query in sequence {
+            let (allocs, bytes, results) =
+                allocations_on_all_workers(&pool, || engine.search(query));
+            println!(
+                "  {query:<22}{:>8}{allocs:>10}{:>12.1}",
+                results.len(),
+                bytes as f64 / 1024.0
+            );
         }
     }
 }

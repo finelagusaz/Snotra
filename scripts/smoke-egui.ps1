@@ -429,8 +429,8 @@ try {
   # Ctrl+A だと全選択を伴うので取り違えても文字数が減る（3→1）——どちらも「増えない」の断言を
   # すり抜ける。打鍵が落ちたときは観測なしで赤になる（緑にはならない）。
   #
-  # **捕まえないもの**: 文字の配送を `admit_key` より前へ動かす退行。focus 復帰時に押下中のキーが
-  # 要るが、この smoke は hotkey を離してから show するので通常は残らない。
+  # **捕まえないもの**: 文字の配送を `admit_key` より前へ動かす退行。focus 獲得時に押下中のキーが
+  # 要るので、H1 判定の後の押しっぱなしの Z のブロック（#1274）が捕まえる。
   if ($failures.Count -eq 0 -and $null -ne $pathTyped) {
     # 3 文字の観測そのものを起点にする——これより後の変化だけが Ctrl+H の帰結である。
     $ctrlBaseSeq = [long]$pathTyped.seq
@@ -526,6 +526,109 @@ try {
       if ($dropped -gt 0) {
         Write-Host "  [#757] parse できなかった trace 行が $dropped 件ある（H1 の PASS は SKIP へ落ちている）" -ForegroundColor Yellow
       }
+    }
+  }
+
+  # --- focus 獲得時に押されていたキーの文字が入らないこと（#1274）--------------
+  # `input.rs` は文字を `admit_key` の早期 return より後に積む。tao は `WM_SETFOCUS` で押下中の
+  # キーの合成 press を作り、合成 press も文字を持つので、文字の配送を `admit_key` より前へ
+  # 動かすと focus 獲得時に押していたキーの文字が入る。`KeyEvent` は crate 外から組み立てられず、
+  # 単体テストではこの順序を縛れないので、ここで実機に打つ。
+  #
+  # Z を押したまま hotkey で隠して出し直すと、show の `WM_SETFOCUS` で Z の合成 press が届く。
+  # その後、押しっぱなしの Z へもう 1 回 down を送り、離してから X を 1 回打つ。正常なら合成 press も
+  # 2 回目の down も `admit_key` が落とし、入るのは X だけ（`[0->1]`）である。**合成 press が
+  # 起きなければ 2 回目の down が通って `[0->1, 1->2]` になり、赤に倒れる**——「入らない」を
+  # 不在の断言にせず、前提が崩れたときに沈黙の緑にならない形にしてある。
+  #
+  # **H1 判定より後に置く**——既存の待ちは 1 件でも現れれば成立するので、それより前に show / hide を
+  # 足すと既存の断言が新しい事象で満たされる。ここで新しく書く待ちはすべて増分で待つ。
+  # **捕まえないもの**: 物理キーボードのオートリピート（`keybd_event` はリピートを生まない・
+  # `ADR-synthetic-key-press-suppression`）。
+  if ($failures.Count -eq 0 -and $resultsChecked) {
+    $VK_Z = 0x5A
+    $VK_X = 0x58
+    $zHeld = $false
+    try {
+      # 1. show する（直前の Escape で隠れている）。
+      $showBase = Get-SnotraTraceEventCount -Path $errPath -EventName 'egui_show:done'
+      Send-SnotraKeyChord -VirtualKeys $vks
+      $plainShow = Wait-SnotraTraceEvent -Path $errPath -EventName 'egui_show:done' `
+        -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($showBase + 1)
+      if ($null -eq $plainShow) { throw "held-key: egui_show:done not observed after hotkey ($vksLabel)" }
+
+      # 2. 本体が前面のまま Z を押しっぱなしにし、その文字が入るのを待つ。Z が OS 上で押されたことの
+      #    正の証拠であり、隠す前にフレームで消費させる（隠れたウィンドウはフレームが走らないので、
+      #    残った文字が次の show の後に入り、正しいコードでも赤になる）。Z は seed の
+      #    zsnotrasmoke.exe に一致するので results も出るが、この検査には関係しない。
+      $plainShowSeq = [long]$plainShow.seq
+      $zHeld = $true   # 注入より先に立てる——down が効いた後に例外が出ても finally が離す
+      Send-SnotraKey -VirtualKey $VK_Z
+      $zTyped = Wait-SnotraTraceCondition -Path $errPath -TimeoutMs $ObserveTimeoutMs `
+        -Description "押しっぱなしの Z の入力" `
+        -Predicate { $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $plainShowSeq -and $_.data.after_chars -eq 1 }.GetNewClosure()
+      if ($null -eq $zTyped) { throw "held-key: holding Z produced no 0->1 egui_input:changed (Z never went down?)" }
+
+      # 3. Z を押したまま hotkey で隠す。この hide の seq を区間の起点にする——合成の文字が
+      #    `egui_show:done` より前に出ても区間へ入れるためである（hide から show までに入力欄が
+      #    変わる経路は無い）。
+      $hideBase = Get-SnotraTraceEventCount -Path $errPath -EventName 'egui_hide:done'
+      Send-SnotraKeyChord -VirtualKeys $vks
+      $heldHide = Wait-SnotraTraceEvent -Path $errPath -EventName 'egui_hide:done' `
+        -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($hideBase + 1)
+      if ($null -eq $heldHide) { throw "held-key: egui_hide:done not observed after hotkey with Z held" }
+
+      # 4. Z を押したまま hotkey で出し直す（ここで Z の合成 press が届く）。
+      $showBase = Get-SnotraTraceEventCount -Path $errPath -EventName 'egui_show:done'
+      Send-SnotraKeyChord -VirtualKeys $vks
+      $heldShow = Wait-SnotraTraceEvent -Path $errPath -EventName 'egui_show:done' `
+        -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($showBase + 1)
+      if ($null -eq $heldShow) { throw "held-key: egui_show:done not observed after hotkey with Z held" }
+      Start-Sleep -Milliseconds 300
+
+      # 5〜7. 押しっぱなしの Z へ 2 回目の down → Z を離す → X を 1 回打つ。
+      Send-SnotraKey -VirtualKey $VK_Z
+      Start-Sleep -Milliseconds 150
+      Send-SnotraKey -VirtualKey $VK_Z -Up
+      $zHeld = $false
+      Start-Sleep -Milliseconds 150
+      Send-SnotraKey -VirtualKey $VK_X
+      Start-Sleep -Milliseconds 50
+      Send-SnotraKey -VirtualKey $VK_X -Up
+
+      # 8. 区間の変化を全件数える（Ctrl+H と同じく、最初の 1 件を待ってから少し待って数える）。
+      $heldHideSeq = [long]$heldHide.seq
+      $firstChange = Wait-SnotraTraceCondition -Path $errPath -TimeoutMs $ObserveTimeoutMs `
+        -Description "押しっぱなしの Z の後の入力変化" `
+        -Predicate { $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $heldHideSeq }.GetNewClosure()
+      if ($null -eq $firstChange) { throw "held-key: typing X after the held Z produced no egui_input:changed" }
+      Start-Sleep -Milliseconds 300
+      $heldEvents = @((Read-SnotraTraceSnapshot -Path $errPath).Events | Where-Object {
+        $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $heldHideSeq
+      })
+      if ($heldEvents.Count -ne 1 -or $heldEvents[0].data.before_chars -ne 0 -or $heldEvents[0].data.after_chars -ne 1) {
+        $observed = ($heldEvents | ForEach-Object { "$($_.data.before_chars)->$($_.data.after_chars)" }) -join ', '
+        $failures += ("held-key: the input changed as [$observed] after re-showing with Z held, expected exactly [0->1] (X only)" +
+          " — a key held across focus gain typed a character (text delivery moved before admit_key? #1274)" +
+          " or no synthetic press arrived (Z was not suppressed)")
+      }
+
+      # 9. 隠して終える。
+      if ($failures.Count -eq 0) {
+        $hideBase = Get-SnotraTraceEventCount -Path $errPath -EventName 'egui_hide:done'
+        Send-SnotraKey -VirtualKey $VK_ESCAPE
+        Start-Sleep -Milliseconds 50
+        Send-SnotraKey -VirtualKey $VK_ESCAPE -Up
+        if ($null -eq (Wait-SnotraTraceEvent -Path $errPath -EventName 'egui_hide:done' `
+            -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($hideBase + 1))) {
+          $failures += "held-key: egui_hide:done not observed after the final Escape"
+        }
+      }
+    } catch {
+      $failures += $_.Exception.Message
+    } finally {
+      # どの経路で抜けても Z を OS 上に押したまま残さない。
+      if ($zHeld) { Send-SnotraKey -VirtualKey $VK_Z -Up }
     }
   }
 } catch {
@@ -780,4 +883,4 @@ if (-not $resultsChecked) {
   Write-Host "egui smoke failed: results 検査が走らないまま合格しかけました（到達不能なはずの経路）。" -ForegroundColor Red
   exit 1
 }
-Write-Host "egui smoke passed (show/hide + results show/hide observed, Ctrl+H typed no character, webview delta 0)." -ForegroundColor Green
+Write-Host "egui smoke passed (show/hide + results show/hide observed, Ctrl+H typed no character, key held across focus gain typed no character, webview delta 0)." -ForegroundColor Green

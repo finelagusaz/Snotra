@@ -72,7 +72,7 @@
 - [x] 壁時計を同一セッションで A/B 交互に 3 回ずつ取る（`tests/search_frame_cost.rs` の `measure_search_frame_cost`） — 合成索引のパスが根 1 段で変更の枝を通らず全行重なった。実 `index.bin` の `measure_path_query_frame_cost_at_operating_point` を足して取った（PERFORMANCE.md）
 - [x] `PERFORMANCE.md` に小節を足す（確保の表・内訳の帰属・PATH マージを通さない計器であることの注記・壁時計・検知器）
 - [x] `tests/search_allocations.rs` の `//!` の正本の指し先を更新する
-- [ ] `docs/build-commands.md` のカテゴリ A・F を実行する — 主ツリーで fmt・clippy・`cargo doc`・`governance:check`・`snotra-core` 全テストを確認済み。権威ある一式は 3b の委譲が担う
+- [x] `docs/build-commands.md` のカテゴリ A・F を実行する — 3b の委譲が b080b71・483fcc0・fac2873 で A・F 全件 exit 0（B〜E は非該当）。最後の 1 語の修正は F を主ツリーで再実行
 
 ## 未確定（実装前に潰す）
 

@@ -2793,6 +2793,39 @@ results ウィンドウは `update()` の冒頭で `RowsSnapshot` を `clone` �
   200 行 75–91 µs・1,000 行 516–590 µs だった。**受け取りはその 1〜2 割を占めていた**。毎フレーム
   描くのはポインタ移動・hover のアニメーション・アイコン到着のときである
 
+### 採用: snapshot の発行で行を作り直さない（#1279）
+
+上の節で受け取り側は行を複製しなくなったが、行の所有者 `SearchState.results` が `Vec` のままだったので、
+**発行側**は snapshot に差があるたびに `rows.into()`（要素ごとの `clone`）で全行を作り直していた。
+snapshot は全体で比べるので、行が同じでも選択の移動（↑↓）や `input_idle` の反転で作り直す。所有者と
+退避行を `Arc<[SearchResult]>` にし、発行は `ResultsShared::publish` が所有者の `Arc` を共有する
+（A = `55e5c4a` → B = `48d034c`）。
+
+| 発行 1 回 | A 確保回数 | B 確保回数 | A 時間 | B 時間 |
+|---|---|---|---|---|
+| 8 行・選択だけ変化 | 17 | 0 | 0.48–0.51 µs | 0.018–0.019 µs |
+| 200 行（既定の `result_limit`）・選択だけ変化 | 401 | 0 | 12.7–13.4 µs | 0.018–0.020 µs |
+| 1,000 行・選択だけ変化 | 2,001 | 0 | 61.0–64.6 µs | 0.019–0.020 µs |
+| 200 行・無変化（`matches` だけ） | 0 | 0 | 0.96–1.35 µs | 0.010–0.011 µs |
+| 1,000 行・無変化 | 0 | 0 | 4.7–5.1 µs | 0.010–0.011 µs |
+
+- 2026-10-25・HAL9000・release・rustc 1.99.1・A/B 交互に各 3 回（1 回あたり 20,000 反復の平均）。
+  確保回数は `--features heap-trace` のビルドで `heap_trace::snapshot().allocs` の差から、時間は
+  feature 無しの別ビルドで取った（計器が確保ごとに原子操作を乗せるため・`heap_trace.rs` の `//!`）。
+  確保回数は 3 回とも同値。A の 2n+1 は行ごとの `String` 2 本と `Arc` の inner 1 つである
+- 行は表示名 24 B・パス 60 B の合成で、実運用点の分布から採った値ではない。A は 55e5c4a の
+  `view.rs` の発行（`matches` + `RowsSnapshot { rows: rows.into(), .. }`）を写したもの、B は
+  `publish` そのものを呼んだ
+- 「無変化」の差は `matches` の行の比較が `Arc` のポインタの一致で終わるためである（std の `Arc` の
+  `==` は中身が `Eq` のとき先にポインタを見る）。**比較をスライス同士に書き換えると A の列へ戻るが、
+  判定は変わらないのでどの検査も捕まえない**——`RowsSnapshot::matches` の doc に固定した
+- **行の差し替え（`put_rows`）には `Vec` → `Arc` の変換が残る**——確保 1 回と行数比例の memcpy
+  （`String` は複製しない）。単発の打鍵では leading と trailing の結果着で 2 回走る。本節の表は発行だけを
+  測っており、この分は含まない
+- **計器は使い捨てのプローブで、リポジトリに入れていない**。退行の検知器は `results_view.rs` の
+  `publish_shares_rows_when_only_selection_changes`（選択だけ変えた発行の行が所有者と同じ `Arc` を指す）と、
+  `search_state.rs` の `move_selection_keeps_rows_arc`・`frame_round_trip_restores_the_same_rows_arc` が持つ
+
 ### 採用: 結果の組み立てでパスを長さちょうど 1 回で確保する（#1277）
 
 `heap_into_results` と `recent_history` は結果 1 件ごとにフルパスを `String::new()` から段ごとに書き足しており、

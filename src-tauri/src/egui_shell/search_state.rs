@@ -1,6 +1,7 @@
 //! egui 検索ウィンドウの純粋状態核（#532 SU3）。query/選択/結果と 2 軸モード導出・遷移を
 //! egui/Win32 非依存で持ち、driver（launcher_controller）から駆動される。ユニットテスト対象。
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use snotra_core::config::OpenerTool;
@@ -79,7 +80,7 @@ pub fn folder_load_pending(
 #[derive(Debug, Clone)]
 pub struct FolderFrame {
     pub restore_query: String,
-    pub restore_results: Vec<SearchResult>,
+    pub restore_results: Arc<[SearchResult]>,
     pub restore_selected: usize,
     pub current_dir: String,
     /// 突入した時点で [`SearchState::is_unsettled`] が真だったか（#1079）。**復帰させる行が
@@ -111,7 +112,7 @@ pub struct FolderFrame {
 /// tool_frame() 越しに読む（`shift_activate` / `execute_tool_selected`・#532 SU3.5 Task 3）。
 #[derive(Debug, Clone)]
 pub struct ToolFrame {
-    pub restore_results: Vec<SearchResult>,
+    pub restore_results: Arc<[SearchResult]>,
     pub restore_selected: usize,
     pub target_path: String,
     pub target_is_folder: bool,
@@ -166,7 +167,9 @@ pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
 /// M2 で追加・#532 SU3 M2）と tool 軸（tool・SU3.5 で追加・#532 SU3.5）を持つ。
 pub struct SearchState {
     query: String,
-    results: Vec<SearchResult>,
+    /// `Arc` で持つのは、snapshot の発行が行を複製せずに共有するためである（#1279）——
+    /// 発行の判定と差し替えは [`crate::egui_shell::results_view::ResultsShared::publish`]。
+    results: Arc<[SearchResult]>,
     selected: usize,
     folder: Option<FolderFrame>,
     folder_filter: String,
@@ -218,7 +221,7 @@ impl SearchState {
     pub fn new() -> Self {
         Self {
             query: String::new(),
-            results: Vec::new(),
+            results: Arc::default(),
             selected: 0,
             folder: None,
             folder_filter: String::new(),
@@ -249,6 +252,12 @@ impl SearchState {
         &self.results
     }
 
+    /// 行を共有で読む口（#1279）。snapshot の発行はこれを `Arc::clone` して運ぶ——
+    /// [`Self::results`] のスライスから `Arc` を作り直すと、行数ぶんの `String` を複製する。
+    pub fn results_arc(&self) -> &Arc<[SearchResult]> {
+        &self.results
+    }
+
     /// **行の差し替えの単一チョークポイント**（#1039）。`results` の代入・`selected` のクランプ・
     /// 世代の前進（#699）・in-flight の失効・[`SearchState::restored_rows_stale`] のクリア（#1079）を
     /// 必ず同時に行う。**最後の 1 つをここへ置いたのは、`reset` がこのメソッドを通るからである**
@@ -265,11 +274,11 @@ impl SearchState {
     ///
     /// **`results` を差し替える経路はこのメソッドに収束する。** `enter_tool` の
     /// `std::mem::take(&mut self.results)` だけは外にあるが、それは frame への**退避**であって
-    /// 差し替えではなく、直後に必ずここを通る（take が空 Vec を残すので代入と衝突しない）。
+    /// 差し替えではなく、直後に必ずここを通る（take が空の `Arc` を残すので代入と衝突しない）。
     ///
     /// 却下した代替案（公開 `apply_rows(RowOrigin, ..)` など）は
     /// `docs/adr/ADR-row-replacement-choke-point.md` が正本。
-    fn put_rows(&mut self, rows: Vec<SearchResult>, next_selected: usize) {
+    fn put_rows(&mut self, rows: Arc<[SearchResult]>, next_selected: usize) {
         self.results = rows;
         self.selected = clamp_selected(self.results.len(), next_selected);
         self.rows_generation += 1;
@@ -283,7 +292,7 @@ impl SearchState {
     /// （どちらも [`SearchState::put_rows`] が行う）。
     pub fn set_results(&mut self, results: Vec<SearchResult>) {
         let keep = self.selected;
-        self.put_rows(results, keep);
+        self.put_rows(results.into(), keep);
     }
 
     pub fn selected(&self) -> usize {
@@ -425,7 +434,7 @@ impl SearchState {
         target_is_folder: bool,
         tools: Vec<OpenerTool>,
     ) {
-        let rows: Vec<SearchResult> = tools
+        let rows: Arc<[SearchResult]> = tools
             .iter()
             .map(|t| SearchResult {
                 name: t.name.clone(),
@@ -436,7 +445,7 @@ impl SearchState {
             })
             .collect();
         self.tool = Some(ToolFrame {
-            // 退避（`std::mem::take`）は `put_rows` より前に来る——take が空 Vec を残すので
+            // 退避（`std::mem::take`）は `put_rows` より前に来る——take が空の `Arc` を残すので
             // 下の代入と衝突しない。
             restore_results: std::mem::take(&mut self.results),
             restore_selected: self.selected,
@@ -537,10 +546,8 @@ impl SearchState {
         // 空行への総入れ替え（#699）——hide を跨いだ stale クリックはこれで失効する。
         // hide を跨いだ in-flight もここで失効する（#1039。以前は呼び出し側の
         // `consume_reset_pending` が別に撃っていた）。
-        // 旧実装の `results.clear()` と違い確保を解放するが、**その確保には受益者が最初から
-        // 居なかった**——次に行が入るのは `put_rows` の `self.results = rows` で、Vec ごと
-        // 置き換えるため保っていた容量はそこで必ず捨てられる。挙動差は無い。
-        self.put_rows(Vec::new(), 0);
+        // `Arc::default()` は空の行を static で共有し、確保しない（`Vec::new().into()` は確保する）。
+        self.put_rows(Arc::default(), 0);
     }
 
     /// 新しい検索要求へ seq を振る（controller が worker へ送る値）。
@@ -582,7 +589,7 @@ impl SearchState {
         }
         let keep = self.selected;
         // ここでの `invalidate`（`put_rows` の内側）は no-op である——`accept` が take 済み。
-        self.put_rows(rows, keep);
+        self.put_rows(rows.into(), keep);
         Some(settled)
     }
 
@@ -847,6 +854,31 @@ mod tests {
     // **両方向を固定する。** 進まないと stale クリックが誤った行を起動し、進めすぎると
     // 正当なクリックが全部落ちる。「行の差し替えで進む」「選択の移動では進まない」の
     // 対で初めて意味を持つ。
+
+    /// ↑↓ は行の `Arc` を差し替えない（#1279）——発行がポインタの一致で行の比較を
+    /// 終えられるのはこのためである（`RowsSnapshot::matches` の doc）。
+    #[test]
+    fn move_selection_keeps_rows_arc() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b")]);
+        let before = Arc::clone(s.results_arc());
+        s.move_selection(1);
+        assert!(Arc::ptr_eq(&before, s.results_arc()));
+    }
+
+    /// folder / tool の往復は退避した行の `Arc` をそのまま戻す——突入時に行を複製しない（#1279）。
+    #[test]
+    fn frame_round_trip_restores_the_same_rows_arc() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b")]);
+        let before = Arc::clone(s.results_arc());
+        let _ = s.enter_folder("C:/dir".into(), false);
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert!(Arc::ptr_eq(&before, s.results_arc()), "folder の往復");
+        s.enter_tool("C:/t.txt".into(), false, make_tools());
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);
+        assert!(Arc::ptr_eq(&before, s.results_arc()), "tool の往復");
+    }
 
     #[test]
     fn rows_generation_advances_on_set_results() {

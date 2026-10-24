@@ -102,22 +102,22 @@ npm run governance:check   # PERFORMANCE.md・コメントの見出し参照を�
 
 ### Phase 1 — 型の付け替え
 
-- [ ] `SearchState.results` / `FolderFrame.restore_results` / `ToolFrame.restore_results` を `Arc<[SearchResult]>` に
-- [ ] `put_rows` の引数を Arc に、`set_results` / `accept_worker_rows` は内部で `.into()`
-- [ ] `results_arc()` を新設
-- [ ] `cargo check -p snotra` が緑
+- [x] `SearchState.results` / `FolderFrame.restore_results` / `ToolFrame.restore_results` を `Arc<[SearchResult]>` に
+- [x] `put_rows` の引数を Arc に、`set_results` / `accept_worker_rows` は内部で `.into()`
+- [x] `results_arc()` を新設
+- [x] `cargo check -p snotra` が緑
 
 ### Phase 2 — 発行
 
-- [ ] `RowsSnapshot::matches` を `&Arc` で受け、比較順を入れ替える
-- [ ] `ResultsShared::publish` を旧挙動の本体（`Arc::from(&rows[..])`）で先に書き、常設テストを書いて ptr テストが落ちるのを確認（Red）
-- [ ] `publish` の本体を `Arc::clone` に直して Green にし、view.rs の発行を `publish` へ置き換える（非表示は `Arc::default()`）
-- [ ] 常設テストが緑
-- [ ] 新設の `publish`・`results_arc` の呼び出し元を LSP findReferences で確認し、`/dry-check` を通す
+- [x] `RowsSnapshot::matches` を `&Arc` で受け、比較順を入れ替える
+- [x] `ResultsShared::publish` を旧挙動の本体（`Arc::from(&rows[..])`）で先に書き、常設テストを書いて ptr テストが落ちるのを確認（Red）
+- [x] `publish` の本体を `Arc::clone` に直して Green にし、view.rs の発行を `publish` へ置き換える（非表示は `Arc::default()`）
+- [x] 常設テストが緑（Red: ptr テストが assert 文言で落ちることを確認 → Green: `cargo test -p snotra` 318 passed）
+- [x] 新設の `publish`・`results_arc` の呼び出し元を LSP findReferences で確認し、`/dry-check` を通す（本番の呼び出し元は各 1・view.rs の発行。手書き重複 0）
 
 ### Phase 3 — 散文と記録
 
-- [ ] 「散文の書き換え」の行を直し、導出 grep を再実行して残りを振り分ける
+- [x] 「散文の書き換え」の行を直し、導出 grep を再実行して残りを振り分ける
 - [ ] 使い捨てプローブで A/B 各 3 回の計数・計時を取る
 - [ ] `PERFORMANCE.md` へ新節を出所つきで書き、プローブを撤去する
 
@@ -144,3 +144,7 @@ npm run governance:check   # PERFORMANCE.md・コメントの見出し参照を�
 - `/dry-check`: 新設の `publish`・`results_arc` について実装時に実行（計画の作業項目に含む）
 - 要対処: 敵対的調査の 7 件を反映（上記）
 - 未検証: 計測値（実装後に取る）
+
+## 計画外の作業（実装中に判明）
+
+- [x] `egui_shell/mod.rs` の `RowsSnapshot` re-export を撤去——消費者が view.rs の発行だけで、`publish` へ移ったため未使用になり `-D warnings` で落ちた

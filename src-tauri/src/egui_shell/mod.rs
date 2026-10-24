@@ -45,12 +45,11 @@ pub(crate) use window_coordinator::{
     hide_egui_main, show_egui_main, wake_main, wake_results,
 };
 
-// mod.rs（ウィンドウ生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
-// results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。ClickTake は view.rs
+// mod.rs（ウィンドウ生成・managed state）が消費する。snapshot の発行は view.rs が
+// `ResultsShared::publish` を通して行う（#1279。`RowsSnapshot` を外へ出さなくなった）。ClickTake は view.rs
 // （クリック逆流の消費・世代照合の結果で分岐する）が消費する（#699）。
 pub(crate) use results_view::ClickTake;
 pub(crate) use results_view::ResultsShared;
-pub(crate) use results_view::RowsSnapshot;
 
 // main.rs（managed state 化）・window_coordinator.rs（drive / hide）・commands/window.rs
 // （topmost）が消費する（#671 PR A′ spec 決定 2。drive は #749 で view.rs から移設）。

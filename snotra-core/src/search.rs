@@ -365,9 +365,10 @@ impl SearchEngine {
         // **葉ごとの確保は 3 点の組で抑える**（#1280。額は
         // `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）: 葉の最初の一致で
         // 予約する・reduce に identity を渡さない（`reduce_with`）・join で連結の前に長さちょうど予約する。
-        // **3 点目を外してはならない**——
-        // 葉が倍々で伸ばした `Vec` がそのまま左辺になって根で 2 の冪まで膨らみ、Substring の
-        // 100k 件で壁時計が退行した。機序は分かっていない（最終容量だけを縮めても退行は残った）。
+        // **3 点目を外してはならない**——外すと、葉が倍々で伸ばした `Vec` がそのまま左辺になって、
+        // 根で 2 の冪まで膨らむ（`prev_candidates` として次の打鍵まで残る）。2 だけを入れた版では、
+        // Substring の 100k 件で壁時計も退行した。機序は分かっていない（最終容量だけを縮めても
+        // 退行は残った）。
         let (top_k, all_match_indices): (TopK, Vec<usize>) = (0..candidate_count)
             .into_par_iter()
             .map(|j| reused.map_or(j, |c| c[j]))
@@ -387,7 +388,8 @@ impl SearchEngine {
                     {
                         if collect_candidates {
                             // 容量 0 から倍々で伸ばすと葉ごとに十数回確保する。葉は
-                            // `with_min_len` ゆえ（候補が足りれば）この件数以上ある。
+                            // `with_min_len` ゆえ（候補が足りれば）候補をこの件数以上持つ。
+                            // 一致が少ない葉でも、予約は同じ大きさで取る。
                             if local_matches.capacity() == 0 {
                                 local_matches.reserve_exact(MIN_PAR_CANDIDATES);
                             }

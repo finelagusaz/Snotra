@@ -280,6 +280,34 @@ fn split_search_keeps_candidates_capacity_close_to_length() {
         prev.capacity(),
         prev.len()
     );
+    // join は左右の順序を保つ（左辺へ右辺を足す）。逆に足しても検索結果は変わらないので、
+    // 並びを固定するのはここだけである。
+    assert!(
+        prev.windows(2).all(|w| w[0] < w[1]),
+        "前回候補が添字の昇順に並んでいない"
+    );
+}
+
+/// 分割が起きる規模のパスクエリで、前回候補を確保しない。
+///
+/// 回帰テスト: パスクエリは前回候補を集めない（#1070・`IncrementalCache::caches_candidates`）。
+/// 葉の予約（#1280）を収集の条件の外へ出すと、集めないのに葉ごとに確保し、その容量が空の
+/// `prev_candidates` として次の打鍵まで残る。検索結果は変わらず、確保回数の検知器も worker 1 本では
+/// 葉が少なく映らないので、容量で見る。
+#[test]
+fn path_query_leaves_no_candidates_capacity_when_split() {
+    let owned: Vec<String> = (0..5_000).map(|i| format!("alpha {i:05}")).collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let mut engine = SearchEngine::new(make_entries(&names));
+    let h = empty_history();
+    let results = pool_of(4).install(|| engine.search("c:/fake/", 10, &h, SearchMode::Fuzzy));
+    assert!(!results.is_empty(), "パスクエリが一致する前提を固定する");
+    let prev = &engine.incremental_cache.prev_candidates;
+    assert_eq!(
+        (prev.len(), prev.capacity()),
+        (0, 0),
+        "パスクエリで前回候補を確保した"
+    );
 }
 
 /// 前回候補を再利用する検索が、rayon の分割（`MIN_PAR_CANDIDATES`）が起きる規模でも

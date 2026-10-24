@@ -60,9 +60,9 @@
 
 ## 不変条件と異常系
 
-- 候補 0 件では `reduce_with` が None を返し、空の `TopK` と `Vec` へ倒れる → `search_no_entries_returns_empty` が見る
-- `collect_candidates` が偽（パスクエリ）では `local_matches` を確保しない → 予約は push の枝の内側に置く
-- `all_match_indices` の並びは変わらない（左右の順序を保つ）
+- 候補 0 件でも fold は 1 項を出すので、`reduce_with` の `None` は実際には来ない（検証の変異 M6 で `expect` に替えても全部緑）。来ても空の `TopK` と `Vec` へ倒れる（コード側のコメント）。`search_no_entries_returns_empty` は `None` の経路を見ていない
+- `collect_candidates` が偽（パスクエリ）では `local_matches` を確保しない → 予約は push の枝の内側に置く → `path_query_leaves_no_candidates_capacity_when_split` が見る（検証で M4 が全部緑と判明して足した）
+- `all_match_indices` の並びは変わらない（左右の順序を保つ）→ `split_search_keeps_candidates_capacity_close_to_length` の昇順の確認が見る（M5 で赤）
 - 最終容量が長さを大きく超えない
   - join の `reserve_exact` を外す変異は、確保回数を**減らす**（試作で 500 → 492）ので、確保回数の検知器では原理的に捕まらない
   - 容量そのものを見るテストを置く（変更ファイルの 4）
@@ -102,6 +102,12 @@
 - [x] 壁時計の A/B（使い捨ての Substring の計器・`search_frame_cost`・`path_query_cost` の実運用点。使い捨ての計器はコミットせず消す）
 - [x] 検索結果の A/B
 - [x] PERFORMANCE.md の節
+
+### 計画外（実装の検証で判明）
+
+- [x] M4（予約を収集の条件の外へ出す）を捕まえるテストが無かった → `path_query_leaves_no_candidates_capacity_when_split` を足し、M4 で赤（容量 512）・B で緑を確かめた
+- [x] M5（join の左右の入れ替え）を捕まえるものが無かった → 容量のテストに昇順の確認を足し、M5 で赤を確かめた
+- [x] コメントの射程（壁時計の退行を測ったのは 2 だけの版）、葉の予約のコメント、検知器の閾値の根拠の数（生の記録に無い 29・77）、ハッシュ一致の出所を直した
 
 ## 未確定（実装前に潰す）
 

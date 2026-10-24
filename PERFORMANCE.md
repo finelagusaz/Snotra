@@ -2870,7 +2870,7 @@ PATH マージあり・Substring）:
 2. `reduce_with` で identity を渡さない
 3. join で連結の前に `reserve_exact` する
 
-A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin` の 14 クエリについて、PATH マージの有無それぞれで、A と B の結果（name・path・is_folder の列）のハッシュが一致した。
+A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin` の 14 クエリ（`c`〜`code`・`s`〜`set`・`a`〜`app`・`c:\`〜`c:\users\`・`ノート`・`メモ`）について、PATH マージの有無それぞれで、A と B の結果（name・path・is_folder の列）のハッシュが一致した（使い捨ての計器・既定のプール・コミットしていない）。
 
 #### 確保の表（決定的に近い・`tests/search_allocations.rs` の `measure_search_allocations`・PATH マージなし・各 3 回）
 
@@ -2916,11 +2916,14 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 - `tests/search_allocations.rs` の `split_search_allocations_do_not_grow_with_leaf_matches`（CI）
   - 合成 8,000 件の全件一致で、worker 4 本と 1 本の確保の差を見る。閾値は 32
   - A で 74 回（赤）・B で 20 回（各 3 回・debug）
-  - 試作の負荷試験（busy-loop を 8〜32 本）では、4 本の B の最悪が 29 回、A が 74〜77 回だった
+  - busy-loop を 32 本かけた負荷下でも、4 本では B が最大 23 回（25 回中）、A が 74 回だった（敵対的調査と実装の検証の 2 回で測った）
   - 2 本では、負荷下で A が 26〜29 回に落ちて閾値を割ったので、4 本に固定した
 - `src/search/tests/incremental.rs` の `split_search_keeps_candidates_capacity_close_to_length`（CI）
   - 3 を外す誤りは確保回数をむしろ減らす（500 → 492）ので、回数の検知器には映らない。前回候補の容量が長さの 1.25 倍未満であることを見る
   - 2 だけの版で赤になった（5,000 件で容量 8,192）。件数を 2 の冪の倍数にすると、成長がちょうど長さに一致して緑のままになる
+  - 同じテストが前回候補の昇順も見る（join の左右を入れ替える誤りは結果を変えず、ここでだけ赤になる）
+- `src/search/tests/incremental.rs` の `path_query_leaves_no_candidates_capacity_when_split`（CI）
+  - 1 の予約を収集の条件（`collect_candidates`）の外へ出す誤りは、パスクエリで集めないのに葉ごとに確保する。前回候補の容量が 0 のままであることを見る（誤った版で 512）
 
 ## 試みたが機能しない手法
 

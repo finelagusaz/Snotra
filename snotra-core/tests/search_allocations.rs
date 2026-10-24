@@ -349,11 +349,17 @@ fn result_assembly_allocates_once_per_path() {
 /// 1 本と 4 本のプールで走らせ、差（葉が増えた分の確保）を見る——候補ごと・結果ごとの確保は
 /// 差で消える。
 ///
-/// **件数とスレッド数が検出力を決める**（値と出所は
+/// **回数とバイト数の 2 つを見る。** identity だけを戻す誤りは、左辺が空の join が写しを避ける
+/// ので、葉ごとに `TopK::new` が 1 回増えるだけになり、回数の差ではほとんど動かない。`TopK` は
+/// 結果の上限ぶんの領域を取るので、上限を製品の既定（200）にしてバイト数の差で見る。一致の
+/// 収集が倍々で伸びる誤りは、回数の差で大きく動く。
+///
+/// **件数・スレッド数・上限が検出力を決める**（値と出所は
 /// `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」の「検知器」）。
 /// - 8,000 件は、葉の数を `with_min_len` が上から抑える規模である（4 本と 8 本で値が一致した）
 /// - **4 本に固定する。** 2 本では、ランナーが負荷を受けると変更前の差が閾値を割った
-/// - 閾値 32 は、4 本での採る形と変更前の間に置く
+/// - 2 つの閾値は、採る形とそれぞれの誤りの間に置く。バイト数の閾値は `ScoredEntry` の大きさに
+///   依るので、型を変えたら測り直す（大きくなる向きなら赤になって知らせる）
 ///
 /// **測った回の最小を取る。** ウォームアップで 1 枚の葉も受け持たなかった worker は、測る回で
 /// 初めてスレッドローカル（照合器・組み立てバッファ）を立ち上げ、その確保が差に乗る（負荷下で
@@ -361,7 +367,9 @@ fn result_assembly_allocates_once_per_path() {
 #[test]
 fn split_search_allocations_do_not_grow_with_leaf_matches() {
     const N: usize = 8_000;
-    const THRESHOLD: usize = 32;
+    const LIMIT: usize = 200;
+    const ALLOCS_THRESHOLD: usize = 32;
+    const BYTES_THRESHOLD: usize = 190_000;
     const SAMPLES: usize = 3;
     let history = empty_history();
     let mut engine = engine_where_every_entry_matches(
@@ -372,32 +380,49 @@ fn split_search_allocations_do_not_grow_with_leaf_matches() {
     let mut measure = |pool: &rayon::ThreadPool| {
         // ウォームアップ。ただし全 worker のスレッドローカルが立ち上がる保証は無い（doc）。
         pool.install(|| {
-            let _ = engine.search("alpha", MAX_RESULTS, &history, SearchMode::Fuzzy);
+            let _ = engine.search("alpha", LIMIT, &history, SearchMode::Fuzzy);
         });
-        (0..SAMPLES)
+        let samples: Vec<(usize, usize)> = (0..SAMPLES)
             .map(|_| {
                 pool.install(|| {
-                    let _ = engine.search(RESET_QUERY, MAX_RESULTS, &history, SearchMode::Fuzzy);
+                    let _ = engine.search(RESET_QUERY, LIMIT, &history, SearchMode::Fuzzy);
                 });
-                let (allocs, _, results) = allocations_on_all_workers(pool, || {
-                    engine.search("alpha", MAX_RESULTS, &history, SearchMode::Fuzzy)
+                let (allocs, bytes, results) = allocations_on_all_workers(pool, || {
+                    engine.search("alpha", LIMIT, &history, SearchMode::Fuzzy)
                 });
-                assert_eq!(
-                    results.len(),
-                    MAX_RESULTS,
-                    "fixture が上限まで一致していない"
-                );
-                allocs
+                assert_eq!(results.len(), LIMIT, "fixture が上限まで一致していない");
+                (allocs, bytes)
             })
-            .min()
-            .expect("SAMPLES は 1 以上")
+            .collect();
+        // 回数とバイト数は、それぞれの最小を取る（同じ回の組である必要は無い）。
+        (
+            samples
+                .iter()
+                .map(|s| s.0)
+                .min()
+                .expect("SAMPLES は 1 以上"),
+            samples
+                .iter()
+                .map(|s| s.1)
+                .min()
+                .expect("SAMPLES は 1 以上"),
+        )
     };
     let single = measure(&pool_of(1));
     let split = measure(&pool_of(4));
-    let grew = split.saturating_sub(single);
+    let grew_allocs = split.0.saturating_sub(single.0);
+    let grew_bytes = split.1.saturating_sub(single.1);
     assert!(
-        grew < THRESHOLD,
-        "worker 4 本で確保が {grew} 回増えた（1 本: {single} 回 → 4 本: {split} 回）"
+        grew_allocs < ALLOCS_THRESHOLD,
+        "worker 4 本で確保が {grew_allocs} 回増えた（1 本: {} 回 → 4 本: {} 回）",
+        single.0,
+        split.0
+    );
+    assert!(
+        grew_bytes < BYTES_THRESHOLD,
+        "worker 4 本で確保が {grew_bytes} バイト増えた（1 本: {} → 4 本: {}）",
+        single.1,
+        split.1
     );
 }
 

@@ -2925,6 +2925,11 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 - `src/search/tests/incremental.rs` の `path_query_leaves_no_candidates_capacity_when_split`（CI）
   - 1 の予約を収集の条件（`collect_candidates`）の外へ出す誤りは、パスクエリで集めないのに葉ごとに確保する。前回候補の容量が 0 のままであることを見る（誤った版で 512）
 
+#### 採らなかった案（どちらも未実測）
+
+- **fold の identity の `TopK::new` を最初の `push` まで遅らせる**: 減るのは一致 0 件の葉だけである。実データの 1〜2 文字のクエリでは、ほぼ全部の葉が一致を持つ。予約せずに成長させる形にすると、1 葉あたり約 8 回に増える
+- **全一致の添字をビット集合（`AtomicU64` の列）で集める**: 確保が葉の数に依らなくなる。ただし `fetch_or` がホットループに入り、`IncrementalCache` の候補の表現も変わる
+
 ## 試みたが機能しない手法
 
 - **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。**後日（#532 SU7）: この項目全体が WebView2 期のものであり、代替として指した `tauri::ipc::Response` にも現行構成の呼び出し点は無い**——アイコンの PNG は `commands::load_icon_pngs` がプロセス内で egui のテクスチャへ渡す。

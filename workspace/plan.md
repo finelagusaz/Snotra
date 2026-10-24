@@ -74,7 +74,7 @@ grep -nE "^\s*(//|///).*(Vec|複製|作り直)" src-tauri/src/egui_shell/search_
 常設（`#[cfg(test)]`）:
 
 - `results_view.rs`: `publish_shares_rows_when_only_selection_changes`——同じ Arc を selected 0 → 1 で 2 回 `publish`、2 回目が `true` を返し、snapshot の行が渡した Arc と `ptr::eq`（A 相当の変異で落ちる）
-- 同: `publish_skips_when_nothing_changed`——同じ引数で 2 回目は `false`（wake しない。無変化判定の意味の保存）、加えて**中身が同じで別の Arc** でも `false`（中身比較が残っていることの固定——generation 置き換えの退行で落ちる）
+- 同: `publish_skips_when_nothing_changed`——同じ引数で 2 回目は `false`（wake しない。無変化判定の意味の保存）、加えて**中身が同じで別の Arc** でも `false`（中身比較が残っていることの固定——比較がポインタの一致だけに縮む退行で落ちる。generation への置き換えを捕まえるのは下の非表示のテストである——委譲先の変異注入で実測して訂正）
 - 同: 非表示（`Arc::default()`）の publish で行が空になり `true`
 - `search_state.rs`: `move_selection` の前後で `results_arc()` が同じ Arc を指す・`enter_folder` → `on_escape` で復帰した行が突入前と同じ Arc を指す（深い複製をしない）
 
@@ -90,7 +90,7 @@ cargo check --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p snotra
 cargo doc --workspace --no-deps --document-private-items
-cargo build -p snotra && npm run smoke:egui
+cargo build -p snotra && npm run smoke:egui -- -ExePath target/debug/snotra.exe   # smoke:egui の既定 ExePath は target/release（docs/build-commands.md の smoke:egui の行）
 npm run governance:check   # PERFORMANCE.md・コメントの見出し参照を触るため（カテゴリ F）
 ```
 
@@ -123,7 +123,7 @@ npm run governance:check   # PERFORMANCE.md・コメントの見出し参照を�
 
 ### Phase 4 — 検証
 
-- [ ] 検証コマンドをすべて実行して緑
+- [x] 検証コマンドをすべて実行して緑（委譲 verify-1279・アンカー 4bf00cf: カテゴリ A 全行 exit 0・cargo test -p snotra 318 passed・smoke:egui〔-ExePath debug〕/ smoke:startup / test:powershell 132 passed・governance:check 17 件 passed。変異 3 種は assert で検知、スライス比較の残余はどの検査も捕まえないことを実測）
 
 ## 未確定（実装前に潰す）
 

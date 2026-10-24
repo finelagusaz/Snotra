@@ -2812,7 +2812,8 @@ snapshot は全体で比べるので、行が同じでも選択の移動（↑�
 - 2026-10-25・HAL9000・release・rustc 1.99.1・A/B 交互に各 3 回（1 回あたり 20,000 反復の平均）。
   確保回数は `--features heap-trace` のビルドで `heap_trace::snapshot().allocs` の差から、時間は
   feature 無しの別ビルドで取った（計器が確保ごとに原子操作を乗せるため・`heap_trace.rs` の `//!`）。
-  確保回数は 3 回とも同値。A の 2n+1 は行ごとの `String` 2 本と `Arc` の inner 1 つである
+  確保回数は 3 回とも同値。A の 2n+1 は行ごとの `String` 2 本と `Arc` の inner 1 つである（合成行の
+  `icon` は `IconSource::FromPath`。`Explicit(String)` の行なら行ごとに 1 本増える）
 - 行は表示名 24 B・パス 60 B の合成で、実運用点の分布から採った値ではない。A は 55e5c4a の
   `view.rs` の発行（`matches` + `RowsSnapshot { rows: rows.into(), .. }`）を写したもの、B は
   `publish` そのものを呼んだ

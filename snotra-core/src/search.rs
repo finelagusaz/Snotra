@@ -361,6 +361,22 @@ impl SearchEngine {
         // top-k 更新規則は TopK 型に一元化する（fold の単一候補挿入・reduce の task 統合が
         // 同じ push 規則を通す・#602）。fold state の Vec<usize> は top-k とは別に全一致 index を
         // 集める（incremental search cache 用。top-k から落ちた一致も残す）。
+        //
+        // **葉ごとの確保は 3 点の組で抑える**（#1280。額は
+        // `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）: 葉の最初の一致で
+        // 予約する・reduce に identity を渡さない（`reduce_with`）・join で連結の前に、足りない分だけを
+        // 長さちょうど予約する。**3 点目を外してはならない**——外すと、葉が倍々で伸ばした `Vec` が
+        // そのまま左辺になって根で 2 の冪まで膨らむ（`prev_candidates` として次の打鍵まで残る）。
+        // 2 だけを入れた版では、Substring で壁時計も退行した。機序は分かっていない（最終容量だけを
+        // 縮めても退行は残った）。
+        //
+        // **それでも根の容量は長さを超えうる。** join の予約は、左辺の余りが右辺の長さ以上なら
+        // 何もせず、足りなければ長さちょうどへ確保し直す。ゆえに根に残る余りは、一致を持つ最も
+        // 左の葉の余りまでである（一致がまばらな検索では予約の残りがそのまま残る）。
+        //
+        // 葉は `with_min_len` ゆえ、分割されれば候補をこの件数以上持ち、分割されなければ候補の
+        // 全件が 1 枚に入る。ゆえに予約は葉の候補数を超えない。
+        let leaf_reserve = MIN_PAR_CANDIDATES.min(candidate_count);
         let (top_k, all_match_indices): (TopK, Vec<usize>) = (0..candidate_count)
             .into_par_iter()
             .map(|j| reused.map_or(j, |c| c[j]))
@@ -379,6 +395,11 @@ impl SearchEngine {
                         self.score_one_entry(i, &plan, mode, kana_available, history, options)
                     {
                         if collect_candidates {
+                            // 容量 0 から倍々で伸ばすと葉ごとに十数回確保する。一致が少ない
+                            // 葉でも、予約は同じ大きさで取る（大きさは `leaf_reserve` の上のコメント）。
+                            if local_matches.capacity() == 0 {
+                                local_matches.reserve_exact(leaf_reserve);
+                            }
                             local_matches.push(i);
                         }
                         top_k.push(scored);
@@ -387,14 +408,21 @@ impl SearchEngine {
                     (top_k, local_matches)
                 },
             )
-            .reduce(
-                || (TopK::new(max_results), Vec::new()),
-                |(mut a_top, mut a_matches), (b_top, b_matches)| {
-                    a_top.merge(b_top);
+            // identity を渡すと、葉ごとに `TopK::new` と、葉の一致を空の `Vec` へ写す確保が乗る。
+            // 葉は 1 枚以上できるので `None` は来ないが、来ても空の結果へ倒れる。
+            .reduce_with(|(mut a_top, mut a_matches), (b_top, b_matches)| {
+                a_top.merge(b_top);
+                // 左辺に一致が無ければ右辺をそのまま使う——新しく確保して写すと、identity を
+                // 外して消した写しが join の側に戻る。並びは変わらない（左辺は空である）。
+                if a_matches.is_empty() {
+                    a_matches = b_matches;
+                } else {
+                    a_matches.reserve_exact(b_matches.len());
                     a_matches.extend(b_matches);
-                    (a_top, a_matches)
-                },
-            );
+                }
+                (a_top, a_matches)
+            })
+            .unwrap_or_else(|| (TopK::new(max_results), Vec::new()));
 
         // top_k は self（lower_names / entries）を借用しているため、先に所有 SearchResult へ
         // 変換して借用を終わらせてから incremental cache を write する

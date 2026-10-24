@@ -1,6 +1,6 @@
 //! incremental search キャッシュ（prefix 拡張・backspace・mode 変更・dot 遷移）のテスト。
 
-use super::common::{empty_history, make_entries};
+use super::common::{empty_history, make_entries, pool_of};
 use crate::indexer::AppEntry;
 use crate::search::*;
 
@@ -252,6 +252,99 @@ fn incremental_search_empty_prev_candidates_falls_back() {
     let r3 = engine.search("fire", 8, &h, SearchMode::Fuzzy);
     assert!(!r3.is_empty());
     assert_eq!(r3[0].name, "Firefox");
+}
+
+/// 分割の容量テスト 2 本の件数（葉の長さを 2 の冪にしない理由は下のテストの doc）。
+const SPLIT_FIXTURE_LEN: usize = 5_000;
+
+// **分割が起きることは件数の前提でしか守れない**——葉の数は外から見えないので、
+// `MIN_PAR_CANDIDATES` が上がって葉が 1 枚になると、join が走らず、容量テストは join の予約を
+// 外す誤りを捕まえなくなる（パスクエリのテストは 1 枚でも葉の予約を見るので赤のままである）。
+// その前提をコンパイル時に固定する。
+const _: () = assert!(
+    SPLIT_FIXTURE_LEN >= 2 * MIN_PAR_CANDIDATES,
+    "SPLIT_FIXTURE_LEN が分割の閾値に届いていない"
+);
+
+/// 分割が起きる規模で、次の打鍵まで残る前回候補の容量が長さを大きく超えない。
+///
+/// 回帰テスト: reduce の join で `extend` の前に `reserve_exact` しないと、葉が倍々で伸ばした
+/// `Vec` がそのまま左辺になり、根で 2 の冪まで膨らむ（#1280。額と、膨らんだ版の壁時計は
+/// `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）。**確保回数では捕まらない**——
+/// その誤りは回数をむしろ減らす。ゆえに容量そのものを見る。**壁時計の機序を固定するテストではない**
+/// （容量だけを縮めても退行は消えなかった）。同じ誤りが残す観測点を CI に置くためにある。
+///
+/// **葉の長さが 2 の冪になる件数にしない。** 葉の長さが 2 の冪だと倍々の成長がちょうど長さに一致し、誤りが
+/// 容量に現れない（`8 * MIN_PAR_CANDIDATES` では緑のままだった。誤った版でのこの件数の容量は同じ節）。
+/// 分割が起きる前提は [`SPLIT_FIXTURE_LEN`] の直後の `const` assert が固定する。
+#[test]
+fn split_search_keeps_candidates_capacity_close_to_length() {
+    let n = SPLIT_FIXTURE_LEN;
+    let owned: Vec<String> = (0..n).map(|i| format!("alpha {i:05}")).collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let mut engine = SearchEngine::new(make_entries(&names));
+    let h = empty_history();
+    pool_of(4).install(|| engine.search("al", 10, &h, SearchMode::Fuzzy));
+    let prev = &engine.incremental_cache.prev_candidates;
+    assert_eq!(prev.len(), n, "全件が一致する前提を固定する");
+    assert!(
+        prev.capacity() * 4 < prev.len() * 5,
+        "前回候補の容量 {} が長さ {} の 1.25 倍以上ある",
+        prev.capacity(),
+        prev.len()
+    );
+    // join は左右の順序を保つ（左辺へ右辺を足す）。逆に足しても検索結果は変わらないので、
+    // 並びを固定するのはここだけである。
+    assert!(
+        prev.windows(2).all(|w| w[0] < w[1]),
+        "前回候補が添字の昇順に並んでいない"
+    );
+}
+
+/// 分割が起きる規模のパスクエリで、前回候補を確保しない。
+///
+/// 回帰テスト: パスクエリは前回候補を集めない（#1070・`IncrementalCache::caches_candidates`）。
+/// 葉の予約（#1280）を収集の条件の外へ出すと、集めないのに葉ごとに確保し、その容量が空の
+/// `prev_candidates` として次の打鍵まで残る。検索結果は変わらず、パスクエリを打つ確保の検知器
+/// （`tests/search_allocations.rs` の `path_query_full_scan_does_not_allocate_per_entry`）も、この誤りを
+/// 入れて緑のままだった（#1280 の変異注入）。ゆえに容量で見る。
+#[test]
+fn path_query_leaves_no_candidates_capacity_when_split() {
+    let owned: Vec<String> = (0..SPLIT_FIXTURE_LEN)
+        .map(|i| format!("alpha {i:05}"))
+        .collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let mut engine = SearchEngine::new(make_entries(&names));
+    let h = empty_history();
+    let results = pool_of(4).install(|| engine.search("c:/fake/", 10, &h, SearchMode::Fuzzy));
+    assert!(!results.is_empty(), "パスクエリが一致する前提を固定する");
+    let prev = &engine.incremental_cache.prev_candidates;
+    assert_eq!(
+        (prev.len(), prev.capacity()),
+        (0, 0),
+        "パスクエリで前回候補を確保した"
+    );
+}
+
+/// 分割されない規模では、葉の予約が候補の件数を超えない。
+///
+/// 回帰テスト: 葉の予約（#1280）は、分割されれば葉が候補を `MIN_PAR_CANDIDATES` 件以上持つことに
+/// 頼っている。分割されない規模（打鍵が進んで前回候補が少ない再利用など）では葉は候補の全件だけを
+/// 持つので、固定の件数で予約すると、一致が数件でもその大きさを取って次の打鍵まで残す。
+#[test]
+fn unsplit_search_does_not_reserve_beyond_the_candidates() {
+    let n = MIN_PAR_CANDIDATES / 4;
+    let owned: Vec<String> = (0..n).map(|i| format!("alpha {i:05}")).collect();
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let mut engine = SearchEngine::new(make_entries(&names));
+    let _ = engine.search("al", 10, &empty_history(), SearchMode::Fuzzy);
+    let prev = &engine.incremental_cache.prev_candidates;
+    assert_eq!(prev.len(), n, "全件が一致する前提を固定する");
+    assert!(
+        prev.capacity() <= n,
+        "候補 {n} 件の検索で前回候補を容量 {} まで予約した",
+        prev.capacity()
+    );
 }
 
 /// 前回候補を再利用する検索が、rayon の分割（`MIN_PAR_CANDIDATES`）が起きる規模でも

@@ -1,6 +1,6 @@
 //! top-k 選択・タイブレーク・履歴ブースト正規化・文字ビットマスクのテスト。
 
-use super::common::{empty_history, make_entries};
+use super::common::{empty_history, make_entries, pool_of};
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::indexer::AppEntry;
 use crate::query::char_bitmask;
@@ -280,6 +280,56 @@ fn topk_merge_is_order_independent() {
 
     assert_eq!(names_ab, vec!["e1", "e3"]); // top2 of {10,40,20,30} = 40,30
     assert_eq!(names_ab, names_ba); // merge 順に依存しない
+}
+
+/// rayon の分割が起きる規模でも、プールのスレッド数と入力順に依らず結果が順序込みで一致する。
+///
+/// 回帰テスト: `search_with_options` の fold / reduce は葉ごとの `TopK` を併合する（#1280 で
+/// reduce の identity を外した）。上の 2 本は `MIN_PAR_CANDIDATES` 未満の規模で、分割を通らない。
+/// **fixture は tie を厚くしてある**——表示名を 97 種に絞るので、同じ `lower_name` が約 42 件ずつ並び、
+/// top-k の境目は tie-break の最後のキー（フルパス）で決まる。併合が要素を落とす・重ねる誤りは、
+/// その境目で結果の列を変える。
+#[test]
+fn search_top_k_is_independent_from_thread_count_and_input_order_when_split() {
+    let n = 8 * MIN_PAR_CANDIDATES;
+    let forward: Vec<AppEntry> = (0..n)
+        .map(|i| {
+            let name = format!("tool {:03}", i % 97);
+            AppEntry {
+                target_path: format!("C:\\t{i:05}\\{name}.lnk"),
+                name,
+                is_folder: false,
+            }
+        })
+        .collect();
+    let reversed: Vec<AppEntry> = forward.iter().rev().cloned().collect();
+    let h = empty_history();
+    let run = |entries: &[AppEntry], threads: usize, mode: SearchMode| -> Vec<(String, String)> {
+        pool_of(threads)
+            .install(|| SearchEngine::new(entries.to_vec()).search("tool", 200, &h, mode))
+            .into_iter()
+            .map(|r| (r.name, r.path))
+            .collect()
+    };
+    for mode in [SearchMode::Fuzzy, SearchMode::Substring] {
+        let expected = run(&forward, 1, mode);
+        assert_eq!(
+            expected.len(),
+            200,
+            "{mode:?}: 上限まで埋まる前提を固定する"
+        );
+        for (label, entries, threads) in [
+            ("正順・4 スレッド", &forward, 4),
+            ("逆順・1 スレッド", &reversed, 1),
+            ("逆順・4 スレッド", &reversed, 4),
+        ] {
+            assert_eq!(
+                run(entries, threads, mode),
+                expected,
+                "{mode:?}: {label} の結果が正順・1 スレッドと食い違う"
+            );
+        }
+    }
 }
 
 // --- 順序同一性の検知器（`target_path` の表現を変える改修用） ---

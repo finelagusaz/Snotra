@@ -1,0 +1,105 @@
+#1279 調査メモ(workspace/research.md)への反証検査
+対象: ブランチ feat/search-state-arc-rows / rustc 1.99.1 / コード変更なし(読みと使い捨てコマンドのみ)
+使い捨ての計器: scratchpad の t/a.rs(カウンタ付きアロケータで std の挙動を実測)・t/b.rs(比較と複製の計時)。リポジトリには入れていない。
+
+========================================================
+■ 壊せた項目(research.md の記述のうち偽・不正確・欠落)
+========================================================
+
+[B1] 計器の死角: kittest_row_draw_cost_probe は今回の受け入れ条件を測れない(命題への指示 "計器が測る枝と変更が触る枝が違う" に該当)
+ 証拠: results_view.rs L781-814。プローブは results_list_ui(ui, &rows, ...) を harness.step() で回し、1 フレームの描画時間(us)だけを出す。
+   - 引数は Vec<SearchResult> のまま渡す。RowsSnapshot も ResultsShared も view.rs の発行(matches / rows.into())も通らない。
+   - 確保を数えない(計時のみ)。
+   - 画面外の行は is_rect_visible で間引かれる(L336)ので、行数に比例する費用は 0.8us/行の間引き判定だけ。発行の費用(clone)は 1 バイトも映らない。
+ PERFORMANCE.md L2774 の #1278 計時も別物: 「受け取り 1 回(clone + drop)」を使い捨てプローブで測った値で、results 側の受け取りであって view.rs の発行側 rows.into() ではない(プローブはリポジトリに無い)。同表を「発行側の A」として流用すると枝がずれる。
+   なお、そこに書かれた "200 行 11.5–12.6us" と、発行側 From<&[T]> の実測は同水準(t/b.rs: 200 行・名前27B/パス60B 前後で From<&[T]> 11.5us)なので、数値の流用自体は大きく外れないが、出所は別である。
+ 何を数えるべきか(受け入れ条件別):
+   (a) 「発行 1 回の確保が行数に比例しない」= 確保**回数**の計数。bin クレート(src-tauri は lib 無し・RowsSnapshot は pub(crate))なので統合テストから届かない。選択肢は
+       - src-tauri の cfg(test) 単体テストで発行判定+構築を関数に切り出し(research.md 未解決の(a))、Arc::ptr_eq で「↑↓ の前後で同じバッファ」を固定する(確保の代理。決定的)。
+       - 実測するなら、一時的に heap_trace(--features heap-trace・allocs/frees の累計)の snapshot() を view.rs の発行ブロックの前後で取り差分を trace へ出す。heap-trace は確保ごとに原子操作 2 回が乗るので、計時と同じ実行で使わないこと(heap_trace.rs の //! が明記)。計数用と計時用でビルドを分ける。
+   (b) 「↑↓ で行を作り直さない」= 発行ブロック(matches→構築)単体の計時。プローブは results_view.rs の隣に新設し、RowsSnapshot::matches と、旧 rows.into() / 新 Arc::clone を直接呼ぶ形にする(kittest は不要)。#1278 の先例どおり A/B 交互 3 回。
+ 偽にする手順: kittest_row_draw_cost_probe に `RowsSnapshot` が出てこないことを grep し(0 件)、Arc::clone→rows.into() に差し替えてもプローブ出力が変わらないことを確かめる(変わらない=計器が枝を映していない)。
+
+[B2] research.md「技術的制約」: 発行 1 回あたりの matches は Arc 比較で O(1) になる、は条件付き(書き方を誤ると偽)
+ 証拠: results_view.rs L67 は `**cur_rows == *rows`(スライス同士)。これを Arc に直すとき `**cur_rows == **rows` や `cur_rows[..] == rows[..]` と書くと、deref したスライスの比較になり ptr_eq の特殊化が効かない。
+ 実測(t/a.rs): `x == y`(Arc 同士・同一 Arc)= 比較関数呼び出し 0 回 / `*x == *y`(deref したスライス)= 200 回。別 Arc で中身が等しい `x == z` も 200 回。
+ 研究メモは「&Arc で比べる」とは書くが、`&Arc == &Arc` 以外(deref 版)で黙って O(n) に戻る罠を書いていない。matches に単体テストが無い(grep: `.matches(` は view.rs 1156 だけ)ので、書き間違えても緑のまま推移する。
+ 偽にする手順: matches を `**cur_rows == **rows` で実装し、同一 Arc を渡して比較回数を数える(カウント付き PartialEq の型で 200 回)。
+
+[B3] research.md「再利用できる既存パターン」/ 未解決の疑問(b): 「`Arc::clone` 以外に &Arc から行を得る書き方は to_vec().into() 等の明示的な複製しかない」は偽
+ 証拠: `Arc<[T]>::from(&*arc)`・`arc.iter().cloned().collect()`・`rows.into()`(&[T]→Arc)はどれも &Arc/&[T] から型を通る。現行の view.rs が `rows: &[SearchResult]` から `rows.into()` している形のまま残っても型検査は通る(matches が &Arc を受けても、発行側が `state.results()`(&[T])を渡し続ければ型が通る限り壊れない。results() が &[T] を返す限り、型は退行を捕まえない)。
+ ゆえに「型に任せる」案(b)は、results() の返り値を &[T] のままにする限り成立しない。ptr_eq を固定するテストか、results() を &Arc で返す別 API(rows())を足し発行側をそれだけに限る、のどちらかが要る。
+ 偽にする手順: 発行側を `Arc::from(state.results())` に戻したコードが cargo build / clippy を通ることを確認する(通る=型は守っていない)。
+
+[B4] 命題 5 の細部: 「trailing の結果着で同じ内容の行が届いた場合、別の Arc になるので中身比較が走る」— 走るが、その比較は無駄で、並びの修正で消せる(研究メモに無い)
+ 経路(実際に辿った): 単発の打鍵 1 回。
+   フレーム N: on_input_changed → reset_selection・debounce.on_input()(armed=true・leading=true なので run_search_with)。Plain なら search_tx.send のみ(set_results は呼ばない。空クエリ/indexing/送信失敗のときだけ set_results(Vec::new()))。発行 1: input_idle が true→false(行は同じ)。
+   フレーム M: drain_search → accept_worker_rows → put_rows(世代+1)。発行 2: 行・世代が変わる(Arc 新規)。
+   フレーム M': poll_search_debounce が 50ms 経過で trailing 発火(layout.rs L536・launcher_controller.rs L136 の Debouncer::new(50ms, true))。run_search → issue_search+send。同フレームで armed=false。発行 3: input_idle が false→true(行は同じ Arc)。
+   フレーム M'': drain_search → put_rows(世代+1)。発行 4: 世代が変わる。新しい Arc(中身は発行 2 と同一)。
+   → 「発行 4 回・行の内容が変わるのは 1 回」は、単発打鍵では正しい。ただし put_rows は 2 回走る(世代は 2 つ進む)ので、Vec→Arc 変換(確保 1 回+要素の memcpy)も 2 回走る。変更後に打鍵あたり払うのは「Arc 変換 2 回+Arc::clone 4 回」で、0 ではない。
+ matches は `**cur_rows == *rows && selected == ... && generation == ...` の順で、行(高コスト)を最初に比べる。発行 4 では世代が違うのに、まず別 Arc の中身比較(全 200 行を文字列比較)を払ってから世代で不一致と分かる。実測(t/b.rs): 別 Arc・同一中身の 200 行比較= 1.15us。額は小さいが、世代・selected・input_idle を先に比べる並べ替えは判定の意味を変えず、この比較を消せる。
+ バースト中(連打)は 2 打鍵目以降 armed のまま leading が出ないので、selected==0 のままなら発行は 0 回になる。「打鍵 1 回で 4 回」は孤立した 1 打鍵の話で、連打中の費用ではない。
+ また issue の「打鍵あたり 35–38us」は、4 回×11.5–12.6us = 46–50us と合わない(3 回分の値)。数値の出所が付いていない推定なので、受け入れ時に使わないこと。
+
+[B5] research.md 未解決の疑問(a): 発行判定の切り出し先として「ResultsShared か RowsSnapshot の関数」— 副作用の位置に注意
+ view.rs の発行は guard を取って matches→代入→drop(guard)→wake_results の順(L1153-1170)。切り出す関数が wake_results(app が要る)まで含めるとテストから叩けない。「判定+構築」だけを純関数にし、wake は呼び出し側に残す形でないと単体テスト化できない。研究メモはこの境界を書いていない(壊せたというより欠落)。
+
+========================================================
+■ 壊せなかった項目(試した手順つき)
+========================================================
+
+[K1] 命題 1: results への書き込みは put_rows だけ(enter_tool の mem::take は退避)
+ 試したこと: src-tauri/src 全体で `\.results\b`(results() 呼びを除く)を grep → 書き込みは search_state.rs L273 `self.results = rows;` の 1 件のみ。L441 `std::mem::take(&mut self.results)` が退避。他は読み(L249, 317, 321, 349 clone)。push/truncate/drain/extend/clear/sort/retain の形は 0 件。`&mut self.results` / mem::replace / mem::swap も 0 件(grep)。テストモジュール内も `s.results` 直参照は無く、すべて results() 経由。フィールドは private で、他ファイルからは触れない。
+ put_rows の呼び出し元は L451(enter_tool のツール行・小さい Vec)・L505/L513(on_escape)・L543(reset)・L586(accept_worker_rows)・set_results(L286)。
+ 補足(誤りではないが注意): 「外部からの入口は set_results と accept_worker_rows の 2 つだけ」は「行を引数で受ける入口」としては正しい。ただし Vec→Arc の `.into()` が要る箇所は他に 2 つある — L451(enter_tool が自前で作る rows)と L543(`Vec::new()`。Arc::default() にすれば確保しない。`Vec::new().into()` は 1 回確保する: t/a.rs で allocs=1・static の空 Arc とは別ポインタ)。put_rows を Arc 受けにすると、この 2 つが compile-fail で出る。
+ 偽にする手順: 上の grep を `rg -n 'results' search_state.rs` の全行目視へ広げ、書き込みの形(代入・&mut 借用・メソッド)を 1 件でも見つければ偽。見つからなかった。
+
+[K2] 命題 2: results() の読み手は &[SearchResult] で足りる / restore_results は search_state.rs の外で読まれない
+ 試したこと: リポジトリ全体(--exclude-dir=target)で `\.results\(\)` を grep。コードの読み手は activation.rs 101/350/510/624(.get(i)・.is_empty())、folder_nav.rs 161/200(.get)、view.rs 1137(.is_empty())/1145(スライスとして借用)/1311(.len())、テスト(index・len・iter・is_empty)。Vec 固有 API(capacity・push・into_iter での所有権移動・to_vec 以外)は 0 件。&Arc<[T]> からの deref coercion で &[T] は得られるので型は通る。
+ restore_results: grep の全件が search_state.rs の L82/114/349/441/505/513 だけ。他ファイル・テストからの読みも構築も無し。FolderFrame { / ToolFrame { のリテラル構築は search_state.rs L347/L438 の 2 件だけ(テストにも無い)。
+ 偽にする手順: results() を `&Arc<[T]>` 返しにして cargo build -p snotra を通し、compile-fail を数える(本検査では実行していない。コード変更禁止のため)。
+
+[K3] 命題 3: ↑↓(move_selection)・debounce の armed/disarm・plain_hidden の反転は put_rows を通らず rows_generation を進めない
+ 試したこと: move_selection(search_state.rs L316)は selected だけを書く。呼び出し元は folder_nav.rs on_nav_keys(L152/155)のみ。reset_selection は selected = 0 だけ。Debouncer::on_input / poll / cancel(layout.rs L528-549)は armed のフラグだけ。plain_hidden = plain_results_hidden(view_kind, instant_rows_query.is_some(), indexing_raw)で、indexing_raw は AtomicBool の live read。どれも put_rows を呼ばない。
+ put_rows を呼ぶ run_search 系の全呼び出し(activation.rs 217/222/240/269/286/299・folder_nav.rs 125・frame_stages.rs 91・search_flow.rs 60/258/271/279/287/299)を確認 → どれも毎フレーム呼ばれるものではない(エッジ・イベント駆動)。
+ 変更後の帰結も妥当: ↑↓ のフレームでは発行する Arc は state の Arc の clone で、直前の snapshot と同一ポインタ。
+ ただし条件: 「直前の snapshot」が state の Arc 由来のときだけ。plain_hidden で非表示に倒れたフレームは static の空 Arc、復帰フレームは state の Arc を新規に発行する(研究メモが括弧で書いたとおり)。非表示→復帰の 1 フレームでは ptr_eq でなく中身比較(空 vs 200 行は長さ違いで即 false)が走るが O(1)。
+ 偽にする手順: 発行ブロックにログを仕込み、↑↓ と indexing 反転の各フレームで Arc::as_ptr を比べる(ptr 一致/不一致を数える)。本検査では実行していない。
+
+[K4] 命題 4: std の挙動
+ 試したこと: sync.rs L3588 `impl<T: ?Sized + MarkerEq> ArcEqIdent` が `ptr::eq(..) || **self == **other`(L3589-3592)。MarkerEq は rc.rs L2626-2628 で `impl<T: ?Sized + Eq> MarkerEq for T`。SearchResult は #[derive(Debug, Clone, PartialEq, Eq)](ui_types.rs L11)、IconSource も Eq(L26)なので `[SearchResult]: Eq` が成立。
+ MAX_STATIC_INNER_SLICE_ALIGNMENT = 16(sync.rs L3820)。SearchResult の align は 8(String は usize 整列)なので static の空 inner を共有する分岐(L3872)に入る。
+ 実測(t/a.rs・rustc 1.99.1・カウンタ付きアロケータ): Arc::default() 2 つの確保回数 0・Arc::ptr_eq=true。同一 Arc の `==` は比較関数呼び出し 0 回。From<Vec<T>> は確保 1 回(String の複製なし・要素は memcpy)。Vec::new().into() は確保 1 回で default の static とは別ポインタ。
+ 偽にする手順: t/a.rs の出力に反する値が出れば偽(出なかった)。
+
+[K5] 命題 5 の後段 / 測定環境(result_limit)
+ 試したこと: 実運用 config は %APPDATA%\Snotra\config.toml(snotra-core/src/config/location.rs が保存先の導出元)。[search] に `result_limit = 200` と `recent_limit = 8`、`visible_rows = 10`(appearance)、`normal_mode = "substring"`、`folder_mode = "fuzzy"`、`migemo_enabled = true`。既定 default_result_limit()=200(schema.rs L134)と一致。調査の前提 200 は実運用と同じ。
+ folder の絞り込みも folder::filter_sorted の .take(max) で max=result_limit と同じ上限(engine.rs L46-48)。
+ 補足(測定環境の注意・誤りではない): 空クエリのときの行数は recent_limit=8(200 ではない)。「↑↓ で行を作り直さない」を空クエリで測ると 8 行で、差が出ない。測る行数は 200 行を満たす 1〜2 文字クエリ(例: `c`・`s`。PERFORMANCE.md L2800 の表で 200 件)にすること。#1278 の行の分布(名前 24B・パス 70B)は実運用点から採った値でなく、実 config の行は Start Menu・C:\workspace 配下でパスがもっと長い可能性がある(未測定)。
+ 偽にする手順: config.toml の result_limit を別値にして実行すれば前提が変わる。本機では 200。
+
+[K6] research.md の行番号・シンボル(L169, 221, 248, 272, 284, 316, 349, 441, 505, 513, 543, 572 / results_view.rs L21, L54 / view.rs L1137-1170 / activation.rs・folder_nav.rs の各行 / PERFORMANCE.md L2774 / sync.rs L3588, L3866)
+ すべて実在を grep で確認(一致)。FolderFrame.restore_results は L82・ToolFrame は L114 で一致。
+
+========================================================
+■ ⚠️ 確信の持てない所見
+========================================================
+
+[W1] ⚠️ 無変化フレームの matches の額は小さい(約 1.1us/200 行・合成データ)
+ issue は「main の毎フレームの matches は行の全件を中身で比べる(額は未実測)」。t/b.rs の合成行(名前27B・パス60B前後・200 行)で別 Arc 同一中身の比較が 1.15us、同一 Arc は 0.009us。実 config の行・実 CPU キャッシュ状態(発行ブロックは 1 フレームに 1 回・ほぼコールド)では上下しうる。1 フレーム 16.7ms に対し 0.007% で、今回の変更の価値は「発行時の深い複製(約 12us)を無くす」に集中する。額の主張に 1us を使うなら実データで測り直すこと。
+ 偽にする手順: results_view.rs の隣に matches 単体のプローブを置き、実 index.bin から作った 200 行で測る(未実施)。
+
+[W2] ⚠️ Vec→Arc 変換のコスト(put_rows 側の memcpy)は未測定
+ SearchResult は String×2+IconSource(String を持ちうる)+bool×2 で約 80B 前後。200 行で約 16KB の memcpy+確保 1 回。t/b.rs の「clone Vec + From<Vec>」12.0us は Vec の clone(String 複製)を含むので From<Vec> 単体の額ではない。分離して測っていない。受け入れ条件「確保が行数に比例しない」は put_rows 側の確保(1 回)・バイト(比例)を含めると文言が曖昧になる。発行側とは別の層に帰属する、と書き分けること。
+ 偽にする手順: put_rows 前後で heap_trace::snapshot() の allocs 差を取る(feature 付きビルド・計数専用)。
+
+[W3] ⚠️ view.rs 側の `rows` の組み立て方(空のとき Arc::default() を毎フレーム作る)の費用
+ 非表示フレームは Arc::default()(確保なし・static の参照カウント加減算 1 往復)を毎フレーム作る形になる。確保は 0 だが、原子操作が毎フレーム乗る(無視できる額と見ているが未測定)。代替は Arc を作らず Option で空を表すこと。matches の rows 引数を &Arc にする案と衝突するため、設計時に選ぶ必要がある(研究メモは言及なし)。
+
+[W4] ⚠️ ptr_eq を固定する検知器の席: 「rows() の前後で同じ Arc」案(b)は必要条件にすぎない
+ SearchState 側で move_selection の前後に Arc が同じと固定しても、発行側(view.rs)が Arc::clone を使っていることは何も保証しない(B3 参照)。発行側まで縛るには、発行ブロックを関数へ出して「同じ state→同じ Arc を指す snapshot」を単体テストで固定する案(a)が必須。AGENTS.md「検証の層と、層と層の隙間」が言う境界の穴に当たる。
+ 偽にする手順: 発行側を Arc::from(slice) に変異させたコードで、案(b)のテストだけが緑のまま推移することを確かめる(変異テスト・未実施)。
+
+[W5] ⚠️ 並行性: snapshot の Mutex を握ったまま行う作業が変わる
+ 現行は guard を握った状態で rows.into()(深い複製 12us)を実行する。変更後は Arc::clone だけで guard 保持時間が短くなる(results ウィンドウとの競合が減る方向)。逆方向のリスクは見当たらないが、race-check(AGENTS.md 条件別チェック: 共有状態を扱う変更)の対象かは未判断。

@@ -1137,37 +1137,28 @@ impl EguiView for SearchWindowView {
         let show_results = !self.controller.state().results().is_empty() && !plain_hidden;
         // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results ウィンドウ(ResultsView)が担う。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
-        // 判定は行の列を作る前に行う（/simplify・効率）——無変化フレームで行数ぶんの String
-        // 確保を払わないため、`RowsSnapshot::matches` にスライスのまま突き合わせさせる。
+        // 行は所有者の `Arc` を共有して渡す（`ResultsShared::publish` の doc・#1279）。
         if let Some(shared) = app.try_state::<crate::egui_shell::ResultsShared>() {
-            // 表示すべきでないフレームは空スライスを発行する（rows 空 = results 非表示）。
-            let rows: &[snotra_core::ui_types::SearchResult] = if show_results {
-                self.controller.state().results()
+            // 表示すべきでないフレームは空の行を発行する（rows 空 = results 非表示）。
+            // `Arc::default()` は static を共有し、確保しない。
+            let hidden = std::sync::Arc::default();
+            let rows = if show_results {
+                self.controller.state().results_arc()
             } else {
-                &[]
+                &hidden
             };
             let selected = self.controller.state().selected();
             // 旧 view.rs の icon request ゲート `!self.search_debounce.is_armed()`（連打中は
             // icon worker を積まない・perf 最適化）の後継。ResultsView は search_debounce を
             // 持てないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix・controller 依頼）。
             let input_idle = !self.controller.is_search_armed();
-            {
-                let mut guard = shared.snapshot.lock().unwrap();
-                if !guard.matches(
-                    rows,
-                    selected,
-                    self.controller.state().rows_generation(),
-                    input_idle,
-                ) {
-                    *guard = crate::egui_shell::RowsSnapshot {
-                        rows: rows.into(),
-                        selected,
-                        generation: self.controller.state().rows_generation(),
-                        input_idle,
-                    };
-                    drop(guard);
-                    crate::egui_shell::wake_results(&app);
-                }
+            if shared.publish(
+                rows,
+                selected,
+                self.controller.state().rows_generation(),
+                input_idle,
+            ) {
+                crate::egui_shell::wake_results(&app);
             }
             // クリック逆流の消費(決定 5): 起動ロジックは main の一箇所に保つ。
             // **この消費が snapshot publish の後にある順序は不変条件である**（#699）。

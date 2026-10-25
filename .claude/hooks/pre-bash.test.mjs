@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -16,6 +16,8 @@ import {
   readGitState,
   countUnchecked,
   readPlanState,
+  judgeSummary,
+  readVerifyState,
   segmentEnd,
   gitSegments,
   usesHeredoc,
@@ -25,6 +27,7 @@ import {
   pullWithoutFfOnly,
   judgeCommandShape,
 } from "./pre-bash.mjs";
+import { summaryPathFor } from "../../scripts/verify-tree.mjs";
 
 // CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。どちらでも
 // 落ちないよう、OS 依存のリテラルパスを書かず path.join / tmpdir から組み立てる。
@@ -47,6 +50,11 @@ const PLAN_OPEN = (n = 1) => () => ({ ok: true, exists: true, unchecked: n });
 /** 存在するのに読めない */
 const PLAN_UNREADABLE = () => ({ ok: false, reason: "EACCES" });
 
+/** 道具の要約が green で、要約の sha から HEAD まで workspace/ の外の差分が無い（#1299） */
+const VERIFIED = () => ({ ok: true });
+/** 要約の照合が通らない */
+const NOT_VERIFIED = () => ({ ok: false, reason: "要約の sha のあとに workspace/ の外の変更がある" });
+
 const bash = (command, extra = {}) => ({ tool_name: "Bash", tool_input: { command, ...extra } });
 const pwsh = (command) => ({ tool_name: "PowerShell", tool_input: { command } });
 
@@ -55,6 +63,40 @@ const pwsh = (command) => ({ tool_name: "PowerShell", tool_input: { command } })
 const GH = "gh";
 const PR_CREATE = "pr create";
 const ghPrCreate = (rest = "") => `${GH} ${PR_CREATE}${rest}`;
+
+function git(cwd, args) {
+  return spawnSync("git", args, { cwd, encoding: "utf8" }).stdout.trim();
+}
+/** feat/x ブランチの repo と、HEAD を名乗る green の要約を作る（#1299 の要約ゲートを通る repo） */
+function verifiedRepo() {
+  const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-verify-"));
+  git(dir, ["init", "-q", "-b", "main"]);
+  git(dir, ["config", "user.email", "t@e"]);
+  git(dir, ["config", "user.name", "t"]);
+  git(dir, ["config", "commit.gpgsign", "false"]);
+  // 既定（true）に固定する。開発機の global が false だと非 ASCII のパスが引用されず、
+  // `-z` を外した変異をテストが検知できなくなる（#1299 の委譲で実測）
+  git(dir, ["config", "core.quotepath", "true"]);
+  mkdirSync(path.join(dir, "src"));
+  writeFileSync(path.join(dir, "src", "x.rs"), "fn a() {}\n");
+  writeFileSync(path.join(dir, ".gitignore"), ".claude/worktrees/\n");
+  git(dir, ["add", "."]);
+  git(dir, ["commit", "-q", "-m", "seed"]);
+  git(dir, ["checkout", "-q", "-b", "feat/x"]);
+  writeSummary(dir, { sha: git(dir, ["rev-parse", "HEAD"]), branch: "feat/x", status: "green" });
+  return dir;
+}
+function writeSummary(dir, s) {
+  const p = summaryPathFor(dir, "feat/x");
+  mkdirSync(path.dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify(s));
+}
+function commit(dir, rel, body) {
+  mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+  writeFileSync(path.join(dir, rel), body);
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", rel]);
+}
 
 describe("tokenStart — 区切り文字を消費せずコマンド本体の位置を返す", () => {
   // §2.2: 先頭の区切り文字を食ったまま match.index を使うと `&&` の片方しか
@@ -200,70 +242,70 @@ describe("hasSafeChain — `gh pr create` の前に `git push` が `&&` で走�
 
 describe("decide — 分岐表", () => {
   it("管轄外ツールは allow（判定不能ではない）", () => {
-    expect(decide({ tool_name: "Edit", tool_input: { file_path: "a.ts" } }, UNKNOWN, NO_PLAN).action).toBe("allow");
+    expect(decide({ tool_name: "Edit", tool_input: { file_path: "a.ts" } }, { readVerifyState: VERIFIED, readGitState: UNKNOWN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
   // matcher が部分一致した場合の二重防御。BashOutput の tool_input に command は無い
   it("BashOutput は allow（command が無くてもブロックしない）", () => {
-    expect(decide({ tool_name: "BashOutput", tool_input: { bash_id: "x" } }, UNKNOWN, NO_PLAN).action).toBe("allow");
+    expect(decide({ tool_name: "BashOutput", tool_input: { bash_id: "x" } }, { readVerifyState: VERIFIED, readGitState: UNKNOWN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
   it("対象ツールで command が文字列でなければ block（判定不能）", () => {
-    expect(decide({ tool_name: "Bash", tool_input: {} }, UNKNOWN, NO_PLAN).action).toBe("block");
-    expect(decide({ tool_name: "Bash", tool_input: null }, UNKNOWN, NO_PLAN).action).toBe("block");
+    expect(decide({ tool_name: "Bash", tool_input: {} }, { readVerifyState: VERIFIED, readGitState: UNKNOWN, readPlanState: NO_PLAN }).action).toBe("block");
+    expect(decide({ tool_name: "Bash", tool_input: null }, { readVerifyState: VERIFIED, readGitState: UNKNOWN, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
   // I2: description は判定に使わない
   it("description に該当語があっても command が無害なら allow", () => {
     const payload = bash("ls -la", { description: `${ghPrCreate()} を実行する` });
-    expect(decide(payload, UNKNOWN, NO_PLAN).action).toBe("allow");
+    expect(decide(payload, { readVerifyState: VERIFIED, readGitState: UNKNOWN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
   it("検出しなければ git 状態を読まない", () => {
     const spy = vi.fn(CLEAN);
-    expect(decide(bash("echo hi"), spy, NO_PLAN).action).toBe("allow");
+    expect(decide(bash("echo hi"), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN }).action).toBe("allow");
     expect(spy).not.toHaveBeenCalled();
   });
 
   it("upstream 未設定なら block", () => {
-    expect(decide(bash(ghPrCreate()), NO_UPSTREAM, NO_PLAN).action).toBe("block");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
   it("未 push コミットがあれば block", () => {
-    expect(decide(bash(ghPrCreate()), UNPUSHED, NO_PLAN).action).toBe("block");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: UNPUSHED, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
   it("upstream 設定済み・未 push なしなら allow", () => {
-    expect(decide(bash(ghPrCreate()), CLEAN, NO_PLAN).action).toBe("allow");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
   it("git の状態を確認できなければ block（fail-closed）", () => {
-    expect(decide(bash(ghPrCreate()), UNKNOWN, NO_PLAN).action).toBe("block");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: UNKNOWN, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
   // D3: upstream 未設定でも、鎖が push を先に走らせるなら allow
   it("`git push … && gh pr create` は upstream 未設定でも allow", () => {
     const spy = vi.fn(NO_UPSTREAM);
-    expect(decide(bash(`git push -u origin HEAD && ${ghPrCreate()}`), spy, NO_PLAN).action).toBe("allow");
+    expect(decide(bash(`git push -u origin HEAD && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN }).action).toBe("allow");
     expect(spy).not.toHaveBeenCalled();
   });
 
   // D1: PowerShell tool も同じ判定を受ける
   it("PowerShell tool でも block する", () => {
-    expect(decide(pwsh(ghPrCreate()), NO_UPSTREAM, NO_PLAN).action).toBe("block");
+    expect(decide(pwsh(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
   it("PowerShell tool でも安全な鎖は allow", () => {
-    expect(decide(pwsh(`git push -u origin HEAD && ${ghPrCreate()}`), NO_UPSTREAM, NO_PLAN).action).toBe("allow");
+    expect(decide(pwsh(`git push -u origin HEAD && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
   it("cwd を変える鎖は block（どのリポジトリか判定不能）", () => {
-    expect(decide(bash(`cd ../other && ${ghPrCreate()}`), CLEAN, NO_PLAN).action).toBe("block");
-    expect(decide(pwsh(`Set-Location ../other && ${ghPrCreate()}`), CLEAN, NO_PLAN).action).toBe("block");
+    expect(decide(bash(`cd ../other && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("block");
+    expect(decide(pwsh(`Set-Location ../other && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
   it("cwd 変更が後ろにあるだけなら判定に影響しない", () => {
-    expect(decide(bash(`${ghPrCreate()} && cd ..`), CLEAN, NO_PLAN).action).toBe("allow");
+    expect(decide(bash(`${ghPrCreate()} && cd ..`), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
   it("TARGET_TOOLS は Bash と PowerShell", () => {
@@ -286,26 +328,175 @@ describe("countUnchecked — 未チェック行の数え上げ", () => {
 describe("decide — plan.md ゲート", () => {
   it("未チェック項目が残っていれば block（push の鎖が安全でも）", () => {
     const cmd = `git push -u origin HEAD && ${ghPrCreate()}`;
-    const r = decide(bash(cmd), CLEAN, PLAN_OPEN(3));
+    const r = decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_OPEN(3) });
     expect(r.action).toBe("block");
     expect(r.reason).toContain("3 件");
   });
   it("全項目チェック済みなら push 判定へ進み allow", () => {
-    expect(decide(bash(ghPrCreate()), CLEAN, PLAN_DONE).action).toBe("allow");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_DONE }).action).toBe("allow");
   });
   it("plan.md が無ければこの検査は管轄外（push 判定のみで allow）", () => {
-    expect(decide(bash(ghPrCreate()), CLEAN, NO_PLAN).action).toBe("allow");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
   it("plan.md が存在するのに読めなければ block（fail-closed）", () => {
-    expect(decide(bash(ghPrCreate()), CLEAN, PLAN_UNREADABLE).action).toBe("block");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_UNREADABLE }).action).toBe("block");
   });
   it("gh pr create を検出しなければ plan.md を読まない", () => {
     const spy = vi.fn(NO_PLAN);
-    expect(decide(bash("echo hi"), CLEAN, spy).action).toBe("allow");
+    expect(decide(bash("echo hi"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: spy }).action).toBe("allow");
     expect(spy).not.toHaveBeenCalled();
   });
   it("PowerShell tool でも未チェック項目で block する", () => {
-    expect(decide(pwsh(ghPrCreate()), CLEAN, PLAN_OPEN()).action).toBe("block");
+    expect(decide(pwsh(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_OPEN() }).action).toBe("block");
+  });
+});
+
+describe("decide — 道具の要約ゲート（#1299）", () => {
+  const safe = `git push -u origin HEAD && ${ghPrCreate()}`;
+
+  it("照合が通らなければ block（push の鎖が安全でも）", () => {
+    const r = decide(bash(safe), { readVerifyState: NOT_VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("workspace/ の外");
+  });
+  it("照合が通れば、push 判定へ進む", () => {
+    expect(decide(bash(safe), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
+    expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: UNPUSHED, readPlanState: NO_PLAN }).action).toBe(
+      "block",
+    );
+  });
+  it("reader が渡されなければ block（main() の配線忘れを allow へ倒さない）", () => {
+    const r = decide(bash(safe), { readGitState: CLEAN, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("readVerifyState");
+  });
+  it("gh pr create を検出しなければ要約を読まない", () => {
+    const spy = vi.fn(NOT_VERIFIED);
+    expect(decide(bash("echo hi"), { readVerifyState: spy, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it("plan.md に未チェックが残るなら、そちらの理由で止める（照合より先）", () => {
+    const r = decide(bash(safe), { readVerifyState: NOT_VERIFIED, readGitState: CLEAN, readPlanState: PLAN_OPEN(2) });
+    expect(r.reason).toContain("2 件");
+  });
+});
+
+describe("judgeSummary — 要約の中身の判定", () => {
+  const ok = { sha: "a".repeat(40), branch: "fix/x", status: "green" };
+
+  it("green で、ブランチが一致すれば null（照合は diff へ進む）", () => {
+    expect(judgeSummary(ok, "fix/x")).toBeNull();
+  });
+  it("要約が無ければ、復帰手順つきで止める", () => {
+    const r = judgeSummary(null, "fix/x");
+    expect(r).toContain("要約が無い");
+    expect(r).toContain("--categories");
+  });
+  it("ブランチが違えば止める（slug の衝突で別ブランチの要約を読む形）", () => {
+    expect(judgeSummary(ok, "fix-x")).toContain("ブランチ");
+  });
+  it("green でなければ止める", () => {
+    expect(judgeSummary({ ...ok, status: "red" }, "fix/x")).toContain("red");
+  });
+  it("sha を持たなければ止める", () => {
+    expect(judgeSummary({ ...ok, sha: undefined }, "fix/x")).not.toBeNull();
+  });
+  it("sha が 40 桁の 16 進でなければ止める", () => {
+    expect(judgeSummary({ ...ok, sha: "--output=x" }, "fix/x")).not.toBeNull();
+  });
+});
+
+describe("readVerifyState — 本物の git と要約ファイル", () => {
+  const read = (dir) => readVerifyState(dir, summaryPathFor);
+
+  it("要約が HEAD を名乗れば ok", () => {
+    expect(read(verifiedRepo())).toEqual({ ok: true });
+  });
+  it("workspace/ の中だけのコミットが載っても ok（`/implement` Step 4 の撤去の形）", () => {
+    const dir = verifiedRepo();
+    commit(dir, "workspace/報告.txt", "r\n"); // 非 ASCII: core.quotepath=true の下で引用符で囲まれても接頭辞が当たること
+    expect(read(dir)).toEqual({ ok: true });
+  });
+  it("workspace/ の中と外を混ぜたコミットは、外のパスで止める（並びで外が後ろに来る形）", () => {
+    const dir = verifiedRepo();
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "a.txt"), "w\n");
+    writeFileSync(path.join(dir, "zeta.txt"), "z\n");
+    git(dir, ["add", "-A"]);
+    git(dir, ["commit", "-q", "-m", "mixed"]);
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("zeta.txt");
+  });
+  it("red の要約は、本物の reader を通しても止める", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: git(dir, ["rev-parse", "HEAD"]), branch: "feat/x", status: "red" });
+    expect(read(dir).ok).toBe(false);
+  });
+  it("別ブランチの要約は、本物の reader を通しても止める", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: git(dir, ["rev-parse", "HEAD"]), branch: "feat-x", status: "green" });
+    expect(read(dir).ok).toBe(false);
+  });
+  it("sha の形をしない値は git へ渡さずに止める（`-` で始まる値はオプションとして解釈される）", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: "--output=x", branch: "feat/x", status: "green" });
+    expect(read(dir).ok).toBe(false);
+    expect(existsSync(path.join(dir, "x"))).toBe(false);
+  });
+  it("workspace/ の外のコミットが載れば、そのパスを名指しして止める", () => {
+    const dir = verifiedRepo();
+    commit(dir, "docs/adr/ADR-x.md", "x\n");
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("docs/adr/ADR-x.md");
+  });
+  it("workspace/ の外から中への rename も止める（既定の diff は移動元を出さない）", () => {
+    const dir = verifiedRepo();
+    mkdirSync(path.join(dir, "workspace"));
+    expect(spawnSync("git", ["mv", "src/x.rs", "workspace/x.rs"], { cwd: dir }).status).toBe(0);
+    git(dir, ["commit", "-q", "-m", "mv"]);
+    expect(git(dir, ["show", "--name-only", "--format=", "HEAD"])).toBe("workspace/x.rs");
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("src/x.rs");
+  });
+  it("要約が無ければ止める", () => {
+    const dir = verifiedRepo();
+    rmSync(summaryPathFor(dir, "feat/x"));
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("要約が無い");
+  });
+  it("要約が壊れていれば止める", () => {
+    const dir = verifiedRepo();
+    writeFileSync(summaryPathFor(dir, "feat/x"), "{ broken");
+    expect(read(dir).ok).toBe(false);
+  });
+  it("要約の sha が解決できなければ止める", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: "0".repeat(40), branch: "feat/x", status: "green" });
+    expect(read(dir).ok).toBe(false);
+  });
+  it("detached HEAD なら止める", () => {
+    const dir = verifiedRepo();
+    git(dir, ["checkout", "-q", "--detach"]);
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("detached");
+  });
+  it("ブランチと同名のタグがあっても、ブランチの要約で照合する（`rev-parse --abbrev-ref` は `heads/<name>` を返す）", () => {
+    const dir = verifiedRepo();
+    git(dir, ["tag", "feat/x"]);
+    expect(read(dir)).toEqual({ ok: true });
+  });
+  it("hook が道具を読み込めなかったとき、その理由を拒否文言に載せる", () => {
+    const r = readVerifyState(verifiedRepo(), null, "SyntaxError: boom");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("SyntaxError: boom");
+  });
+  it("summaryPathFor が渡されなければ（hook が道具を読み込めなかった）止める", () => {
+    expect(readVerifyState(verifiedRepo(), null).ok).toBe(false);
   });
 });
 
@@ -393,8 +584,8 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("tool_name=PowerShell");
   });
 
-  it("安全な鎖は git を読まずに exit 0", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-e2e-"));
+  it("安全な鎖は upstream を読まずに exit 0（要約が HEAD を名乗る repo で。upstream は未設定）", () => {
+    const dir = verifiedRepo();
     const res = runHook(
       {
         tool_name: "Bash",
@@ -403,7 +594,30 @@ describe("プロセス起動 — exit code の契約", () => {
       },
       dir,
     );
-    expect(res.status).toBe(0);
+    expect(res.status, res.stderr).toBe(0);
+  });
+
+  // #1299: main() が本物の reader を配線していることを、実行で固定する（注入テストでは測れない）
+  it("要約の sha のあとに workspace/ の外の変更があれば、安全な鎖でも exit 2", () => {
+    const dir = verifiedRepo();
+    commit(dir, "src/y.rs", "fn b() {}\n");
+    const res = runHook(
+      { tool_name: "Bash", tool_input: { command: `git push -u origin HEAD && ${ghPrCreate()}` }, cwd: dir },
+      dir,
+    );
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("src/y.rs");
+  });
+
+  it("要約が無い repo では、安全な鎖でも exit 2 で復帰手順を出す", () => {
+    const dir = verifiedRepo();
+    rmSync(summaryPathFor(dir, "feat/x"));
+    const res = runHook(
+      { tool_name: "Bash", tool_input: { command: `git push -u origin HEAD && ${ghPrCreate()}` }, cwd: dir },
+      dir,
+    );
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("verify:tree");
   });
 
   it("未チェックの plan.md がある repo での gh pr create は exit 2（安全な鎖でも）", () => {
@@ -418,8 +632,8 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("plan.md");
   });
 
-  it("全項目チェック済みの plan.md なら安全な鎖は exit 0", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-e2e-plan-"));
+  it("全項目チェック済みの plan.md なら安全な鎖は exit 0（要約が HEAD を名乗る repo で）", () => {
+    const dir = verifiedRepo();
     mkdirSync(path.join(dir, "workspace"));
     writeFileSync(path.join(dir, "workspace", "plan.md"), "- [x] 済\n", "utf8");
     const res = runHook(
@@ -481,9 +695,12 @@ describe("fail-closed の骨格カナリア", () => {
     expect(block).toMatch(/^if \(invokedDirectly\) \{\s*process\.exitCode = 2;/);
   });
 
-  it("既定の block は try より前にある", () => {
+  // main() は async（#1299）。既定の block を呼び出しより前に置き、rejection を `.catch` で受ける——
+  // 受けなければ、未処理の rejection で Node が 1 を返し fail-open になる
+  it("既定の block は main() の呼び出しより前にあり、rejection を .catch で受ける", () => {
     const block = code.slice(code.indexOf("if (invokedDirectly)"));
-    expect(block.indexOf("process.exitCode = 2;")).toBeLessThan(block.indexOf("try {"));
+    expect(block.indexOf("process.exitCode = 2;")).toBeLessThan(block.indexOf("main()"));
+    expect(block).toMatch(/main\(\)\.catch\(/);
   });
 
   it("process.exit() を使わない（未 flush 出力の切り捨て防止）", () => {
@@ -494,7 +711,7 @@ describe("fail-closed の骨格カナリア", () => {
   // main() が必ず process.platform を渡すからである。この 1 行が抜けると Windows で
   // 3 判定が沈黙で外れる——振る舞いテストからは「非 Windows での正常動作」と見分けがつかない。
   it("main() は decide へ process.platform を渡す", () => {
-    expect(code).toMatch(/decide\(\s*payload,[\s\S]*?process\.platform\s*\)/);
+    expect(code).toMatch(/decide\(\s*payload,\s*\{[\s\S]*?platform:\s*process\.platform,?\s*\}\s*\)/);
   });
 });
 
@@ -785,25 +1002,25 @@ describe("judgeCommandShape — platform ゲート", () => {
   });
 });
 
-describe("decide — 第 4 引数 platform の配線", () => {
+describe("decide — options の platform の配線", () => {
   it("win32 なら Windows 専用判定で block し、git も plan.md も読まない", () => {
     const git = vi.fn(CLEAN);
     const plan = vi.fn(NO_PLAN);
-    expect(decide(bash("cat <<EOF"), git, plan, "win32").action).toBe("block");
+    expect(decide(bash("cat <<EOF"), { readVerifyState: VERIFIED, readGitState: git, readPlanState: plan, platform: "win32" }).action).toBe("block");
     expect(git).not.toHaveBeenCalled();
     expect(plan).not.toHaveBeenCalled();
   });
 
   it("darwin なら同じコマンドが allow", () => {
-    expect(decide(bash("cat <<EOF"), CLEAN, NO_PLAN, "darwin").action).toBe("allow");
+    expect(decide(bash("cat <<EOF"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN, platform: "darwin" }).action).toBe("allow");
   });
 
-  it("既存の 3 引数呼び出しは Windows 専用判定に触れない（I7）", () => {
-    expect(decide(bash("cat <<EOF"), CLEAN, NO_PLAN).action).toBe("allow");
+  it("platform を渡さない呼び出しは Windows 専用判定に触れない（I7）", () => {
+    expect(decide(bash("cat <<EOF"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
   it("PowerShell tool でも同じ判定を受ける", () => {
-    expect(decide(pwsh("git pull origin main"), CLEAN, NO_PLAN, "win32").action).toBe("block");
+    expect(decide(pwsh("git pull origin main"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN, platform: "win32" }).action).toBe("block");
   });
 
   // #772 の検証で「手を抜く読者」が突いた自己分類の余地: 拒否文言[2]は事故の根拠を
@@ -813,7 +1030,7 @@ describe("decide — 第 4 引数 platform の配線", () => {
   it("`\\` パスは PowerShell tool でも block し、文言が両ツール発火を明記する", () => {
     const winPath = `Get-Content C:${"\\"}workspace${"\\"}x.md`;
     for (const payload of [bash(winPath), pwsh(winPath)]) {
-      const r = decide(payload, CLEAN, NO_PLAN, "win32");
+      const r = decide(payload, { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN, platform: "win32" });
       expect(r.action).toBe("block");
       expect(r.reason).toContain("Bash / PowerShell の両方");
     }
@@ -822,13 +1039,13 @@ describe("decide — 第 4 引数 platform の配線", () => {
   // 形の判定は plan.md ゲートより前にある（I/O を要さない判定を先に走らせる）
   it("形の判定は plan.md を読む前に決まる", () => {
     const plan = vi.fn(PLAN_OPEN(3));
-    expect(decide(bash("git pull"), CLEAN, plan, "win32").action).toBe("block");
+    expect(decide(bash("git pull"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: plan, platform: "win32" }).action).toBe("block");
     expect(plan).not.toHaveBeenCalled();
   });
 
   it("description に該当語があっても command が無害なら allow", () => {
     const payload = bash("ls -la", { description: "git pull して cat <<EOF する" });
-    expect(decide(payload, CLEAN, NO_PLAN, "win32").action).toBe("allow");
+    expect(decide(payload, { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN, platform: "win32" }).action).toBe("allow");
   });
 });
 

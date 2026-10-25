@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseCategoryCommands } from "./verify-tree.mjs";
+import { parseCategoryCommands, summaryPathFor } from "./verify-tree.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "verify-tree.mjs");
@@ -124,6 +124,19 @@ describe("parseCategoryCommands — 実際の docs/build-commands.md", () => {
   it("C は実バイナリの起動より前に本体をビルドする（docs/build-commands.md の C 節の前提）", () => {
     const c = parseCategoryCommands(doc, "C").commands;
     expect(c[0]).toBe("cargo build -p snotra");
+  });
+});
+
+describe("summaryPathFor — 要約の既定の置き場（hook と共有する導出）", () => {
+  it("ブランチ名の / などを - に置き換えた、道具の木の隣のパスを返す", () => {
+    const p = summaryPathFor(path.join("C:", "repo"), "fix/pr-gate");
+    expect(p).toBe(path.join("C:", "repo", ".claude", "worktrees", "agent-verify-fix-pr-gate.summary.json"));
+  });
+
+  it("run が書く要約の置き場と一致する", { timeout: T }, () => {
+    const repo = initRepo();
+    expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
+    expect(existsSync(summaryPathFor(repo, "feat/x"))).toBe(true);
   });
 });
 
@@ -362,8 +375,21 @@ describe("verify-tree remove", () => {
 
     expect(r.status, r.output).toBe(0);
     expect(existsSync(verifyTree(repo))).toBe(false);
-    expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(false);
     expect(existsSync(`${verifyTree(repo)}.summary.log`)).toBe(false);
+  });
+
+  it("道具の木を消しても要約は残り、木が消えた時刻を持つ（PR 前ゲートが読む・#1299）", { timeout: T }, () => {
+    const repo = initRepo();
+    const sha = git(repo, ["rev-parse", "HEAD"]);
+    expect(runScript(repo, ["run", "--sha", sha]).status).toBe(0);
+
+    expect(runScript(repo, ["remove"]).status).toBe(0);
+
+    expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(true);
+    const s = summaryOf(repo);
+    expect(s.sha).toBe(sha);
+    expect(s.status).toBe("green");
+    expect(typeof s.removed_at).toBe("string");
   });
 
   it("道具の木が dirty なら消さずに exit 1", { timeout: T }, () => {

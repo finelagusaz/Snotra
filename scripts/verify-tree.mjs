@@ -87,6 +87,15 @@ function parseArgs(argv) {
   return opts;
 }
 
+/** 要約の既定の置き場。PR 前ゲート（`.claude/hooks/pre-bash.mjs`）も同じ導出を使う（#1299） */
+export function summaryPathFor(root, branch) {
+  return `${treePathFor(root, branch)}.summary.json`;
+}
+
+function treePathFor(root, branch) {
+  return path.join(root, ".claude", "worktrees", `agent-verify-${branch.replace(/[^A-Za-z0-9._-]/g, "-")}`);
+}
+
 /** 本体の作業ツリーのルートと、現在のブランチから導いた道具の木のパス */
 function mainContext() {
   const root = git(process.cwd(), ["rev-parse", "--show-toplevel"]);
@@ -95,8 +104,7 @@ function mainContext() {
   }
   const branch = git(root, ["branch", "--show-current"]);
   if (branch === "") throw new EnvError("本体が detached HEAD——道具の木の名前をブランチから決められない");
-  const tree = path.join(root, ".claude", "worktrees", `agent-verify-${branch.replace(/[^A-Za-z0-9._-]/g, "-")}`);
-  return { root, branch, tree };
+  return { root, branch, tree: treePathFor(root, branch) };
 }
 
 /** `.delegate/` の外の変更（追跡ファイルの変更と未追跡ファイル）。`-z` で読む——既定の porcelain は
@@ -203,7 +211,7 @@ function cmdRun(opts) {
 
   // ---- 回す（警告は先に出しておく——回した後に throw して結果を失わないため）
   const warnings = dependencyWarnings(root, sha);
-  const out = path.resolve(opts.out ?? `${tree}.summary.json`);
+  const out = path.resolve(opts.out ?? summaryPathFor(root, branch));
   const log = out.replace(/\.json$/, "") + ".log";
   const fd = openSync(log, "w");
   const results = [];
@@ -281,12 +289,21 @@ function removeTree(root, tree) {
 }
 
 function cmdRemove(opts) {
-  const { root, tree } = mainContext();
+  const { root, branch, tree } = mainContext();
   let ok = true;
   if (existsSync(tree)) ok = removeTree(root, tree) && ok;
   else console.log(`道具の木は無い: ${posix(tree)}`);
-  // 既定の置き場の要約とログ（gitignore 済み）。`--out` で外へ出したものは呼び出し側が持つ
-  if (ok) for (const f of [`${tree}.summary.json`, `${tree}.summary.log`]) rmSync(f, { force: true });
+  // 既定の置き場のログは消す。**要約は残す**——PR 前ゲート（`.claude/hooks/pre-bash.mjs`）が
+  // `gh pr create` の時点で読むため（#1299）。木が消えたことは要約自身に書き足す。
+  // `--out` で外へ出したものは呼び出し側が持つ
+  if (ok) {
+    rmSync(`${tree}.summary.log`, { force: true });
+    const summary = summaryPathFor(root, branch);
+    if (existsSync(summary)) {
+      const s = JSON.parse(readFileSync(summary, "utf8"));
+      writeFileSync(summary, JSON.stringify({ ...s, removed_at: new Date().toISOString() }, null, 2) + "\n");
+    }
+  }
 
   if (opts.delegateTree) {
     const target = canon(opts.delegateTree);

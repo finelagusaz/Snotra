@@ -1,7 +1,9 @@
 // PreToolUse (Bash|PowerShell) ガード。`gh pr create` が (1) 空 PR を作るのを防ぎ、
-// (2) workspace/plan.md に未チェックの作業項目を残したまま PR になるのを防ぐ（#749）。
+// (2) workspace/plan.md に未チェックの作業項目を残したまま PR になるのを防ぎ（#749）、
+// (4) 道具（`npm run verify:tree`）が最後に green を返した sha のあとに `workspace/` の外の変更が
+// 載ったまま PR になるのを防ぐ（#1299。`readVerifyState`）。
 // さらに (3) コマンドの形だけで判定できる規範 5 件を判定する（#768。`judgeCommandShape`)。
-// (3) は常時ロード規範から降ろしたもので、**全コマンドで走る**（(1)(2) は `gh pr create` 検出後のみ）。
+// (3) は常時ロード規範から降ろしたもので、**全コマンドで走る**（(1)(2)(4) は `gh pr create` 検出後のみ）。
 //
 // 設計: payload 全体を grep するのではなく tool_input.command **だけ**を読み、
 // 「コマンド位置」に現れる `gh pr create` を検出して、それが走る瞬間にコミットが
@@ -21,6 +23,8 @@
 // `--no-verify` と同格に人間専用として扱う）:
 //   - `sh -c 'gh pr create'` / `eval` / バッククォート / `$(...)` の内側
 //   - ラッパ経由（`timeout 5 gh pr create` / `nohup` / `xargs gh pr create`）
+//   - 実行ファイルの名前やパスで呼ぶ形（`gh.exe pr create` / `& '<path>/gh.exe' pr create`）と、
+//     `gh api …/pulls` で PR を作る形（検出は `gh` の直後の空白を要求する・#1299 の敵対的調査で実測）
 // 検出を shell パーサ相当まで広げると、payload 全体 grep の誤爆（#482 の D2）を作り直すことになる。
 //
 // 詳細と実測の根拠は issue #482。
@@ -298,14 +302,17 @@ export function judgeCommandShape(command, platform) {
 }
 
 /**
- * 判定の SSOT。`readGitState` を注入することで、分岐表全体が git 無しでテストできる。
+ * 判定の SSOT。reader（`readGitState` / `readPlanState` / `readVerifyState`）を注入することで、
+ * 分岐表全体が git 無しでテストできる。引数は options オブジェクトである（#1299。位置引数のまま
+ * 5 本目を足すと、省略可能な `platform` の後ろに穴が開く・`docs/adr/ADR-command-shape-norms-in-hook.md`）。
  *
  * 「管轄外」と「判定不能」を混同しない。前者は allow（対象ツール以外・`gh pr create` 以外）、
- * 後者は block（見えないものは通さない）。
+ * 後者は block（見えないものは通さない）。**reader は 3 つとも必須で、`gh pr create` の経路で
+ * 渡されていなければ block する**（配線忘れを allow へ倒さない）。
  *
  * `platform` は `judgeCommandShape` へそのまま渡る（省略時の意味はそちらの注釈が SSOT）。
  */
-export function decide(payload, readGitState, readPlanState, platform) {
+export function decide(payload, { readGitState, readPlanState, readVerifyState, platform } = {}) {
   const tool = payload?.tool_name;
   if (!TARGET_TOOLS.includes(tool)) return ALLOW; // 管轄外
 
@@ -326,6 +333,11 @@ export function decide(payload, readGitState, readPlanState, platform) {
     return block("PR 作成の前に作業ディレクトリを変更しています。どのリポジトリに PR が作られるか判定できません。");
   }
 
+  // reader はすべて必須（#1299）。渡されなければ止める——配線忘れを allow へも未捕捉の例外へも倒さない
+  for (const [name, reader] of Object.entries({ readPlanState, readVerifyState, readGitState })) {
+    if (typeof reader !== "function") return block(`${name} が渡されていません（hook の配線の欠陥）。判定できません。`);
+  }
+
   const plan = readPlanState();
   if (!plan.ok) return block(`${plan.reason}。計画の完了状態を判定できません。`);
   if (plan.exists && plan.unchecked > 0) {
@@ -334,6 +346,11 @@ export function decide(payload, readGitState, readPlanState, platform) {
         `項目を完了させて [x] にするか、やらないと決めた項目は計画から外して理由を記録してから、PR を作成してください。`,
     );
   }
+
+  // 道具の要約の照合（#1299）。`hasSafeChain` の allow より前に置く——安全な鎖は「push が先に走る」ことしか
+  // 保証せず、検証とは無関係である
+  const verified = readVerifyState();
+  if (!verified.ok) return block(`${verified.reason}`);
 
   if (hasSafeChain(command)) return ALLOW; // push が `&&` で先行する
 
@@ -401,6 +418,84 @@ export function readPlanState(cwd) {
   }
 }
 
+/** 要約の照合で git を呼ぶときの上限。hook 全体の上限は 30 秒（`.claude/settings.json`）で、越えると
+ *  非ブロッキングのエラー＝素通りになる。`readGitState`（2 本 × 10 秒）と合わせても収まるよう、2 本 × 4 秒にする */
+const VERIFY_GIT_TIMEOUT_MS = 4_000;
+
+const VERIFY_REMEDY =
+  "変更をコミットしてから、本体の作業ツリーで `npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ>` を回し、" +
+  "green の要約を作ってください（カテゴリは `docs/build-commands.md`「変更後の検証チェックリスト」で判定する。E と F は道具が常に回す）。";
+
+/**
+ * 道具の要約の中身の判定（#1299）。照合を続けてよければ null、止めるなら理由を返す。
+ * 照合するのは道具の A〜F だけである——委譲のレビューが見た sha は見ない（裁定は `docs/adr/ADR-pr-gate-verified-sha.md`）。
+ */
+export function judgeSummary(summary, branch) {
+  if (summary == null) return `このブランチ（${branch}）の道具の要約が無い。${VERIFY_REMEDY}`;
+  if (summary.branch !== branch) {
+    return `道具の要約が別のブランチ（${summary.branch}）のものである（今のブランチは ${branch}）。${VERIFY_REMEDY}`;
+  }
+  if (summary.status !== "green") return `道具の要約が green でない（status: ${summary.status}）。${VERIFY_REMEDY}`;
+  // 40 桁の 16 進に限る。`-` で始まる値を git の位置引数へ渡すと、オプション（`--output=<path>` 等）として解釈される
+  // SHA-256 形式の repo（64 桁）では常に止まる（fail-closed。このリポジトリは SHA-1）
+  if (typeof summary.sha !== "string" || !/^[0-9a-f]{40}$/.test(summary.sha)) {
+    const got = typeof summary.sha === "string" ? `（${summary.sha}）` : "（sha が無い）";
+    return `道具の要約の sha が 40 桁の 16 進でない${got}。${VERIFY_REMEDY}`;
+  }
+  return null;
+}
+
+/**
+ * 道具の要約が green で、要約の sha から HEAD までに `workspace/` の外の変更が無いか。
+ * `summaryPathFor` は `scripts/verify-tree.mjs` の同名の関数（`main()` が `gh pr create` を検出したときだけ
+ * 動的に読み込んで渡す）。null なら読み込めなかったので止める。
+ */
+export function readVerifyState(cwd, summaryPathFor, importError = null) {
+  if (typeof summaryPathFor !== "function") {
+    const why = importError ? `（${importError}）` : "";
+    return { ok: false, reason: `要約の置き場を導く scripts/verify-tree.mjs を読み込めませんでした${why}` };
+  }
+  const root = findUp(cwd, ".git");
+  if (root == null) return { ok: false, reason: "リポジトリの外です" };
+  const git = (args) =>
+    spawnSync("git", args, { cwd: root, encoding: "utf8", shell: false, timeout: VERIFY_GIT_TIMEOUT_MS });
+
+  // verify-tree の mainContext と同じ読み方にする（`rev-parse --abbrev-ref HEAD` は、同名のタグがあると
+  // `heads/<name>` を返し、要約の branch と一致しない）
+  const head = git(["branch", "--show-current"]);
+  if (head.error || head.status !== 0) return { ok: false, reason: "今のブランチを読めませんでした" };
+  const branch = head.stdout.trim();
+  if (branch === "") return { ok: false, reason: `detached HEAD です。ブランチから PR を作ってください。` };
+
+  const file = summaryPathFor(root, branch);
+  let summary = null;
+  if (existsSync(file)) {
+    try {
+      summary = JSON.parse(readFileSync(file, "utf8"));
+    } catch (e) {
+      return { ok: false, reason: `道具の要約を読めません（${e.message}）。${VERIFY_REMEDY}` };
+    }
+  }
+  const judged = judgeSummary(summary, branch);
+  if (judged) return { ok: false, reason: judged };
+
+  // 2 端点で比べる（3 点形は、HEAD が sha の祖先へ戻ると空を返す）。`--no-renames`: 既定の rename 検出は、
+  // `workspace/` の外から中への移動で移動元を出さない。`-z`: 引用符で囲まれたパスが接頭辞に当たらなくなる形を防ぐ
+  const diff = git(["diff", "--name-only", "--no-renames", "-z", summary.sha, "HEAD"]);
+  if (diff.error || diff.status !== 0) {
+    return { ok: false, reason: `道具の要約の sha（${summary.sha}）から HEAD までの差分を取れません。${VERIFY_REMEDY}` };
+  }
+  const outside = diff.stdout.split("\0").filter((p) => p !== "" && !p.startsWith("workspace/"));
+  if (outside.length > 0) {
+    const shown = outside.slice(0, 10).join(", ") + (outside.length > 10 ? ` ほか ${outside.length - 10} 件` : "");
+    return {
+      ok: false,
+      reason: `道具の要約の sha（${summary.sha.slice(0, 8)}）のあとに、workspace/ の外の変更が載っています（${shown}）。${VERIFY_REMEDY}`,
+    };
+  }
+  return { ok: true };
+}
+
 /** stderr は exit 2 のときだけ Claude に届く。allow は無出力（沈黙 = 許可）。 */
 function emitBlock(reason, toolName) {
   const who = toolName ? ` (tool_name=${toolName})` : "";
@@ -408,7 +503,7 @@ function emitBlock(reason, toolName) {
   process.exitCode = 2;
 }
 
-function main() {
+async function main() {
   let payload;
   try {
     payload = JSON.parse(readFileSync(0, "utf8"));
@@ -419,9 +514,28 @@ function main() {
   // hook プロセスの cwd ではなく、セッションの作業ディレクトリで git を評価する。
   const cwd = typeof payload?.cwd === "string" && payload.cwd.length > 0 ? payload.cwd : process.cwd();
 
-  // platform は値で渡す（reader 形にしない理由は judgeCommandShape の注釈）。
-  // この 1 行が Windows 専用判定の唯一の配線であり、カナリアと e2e が両方でこれを固定する。
-  const result = decide(payload, () => readGitState(cwd), () => readPlanState(cwd), process.platform);
+  // 要約の置き場の導出は `scripts/verify-tree.mjs` が持つ（写さない）。**`gh pr create` を検出したときだけ**
+  // 動的に読み込む——静的 import にすると、あちらの構文エラー 1 つで全コマンドが止まる（爆発半径）。
+  // 読み込めなければ null と失敗の理由を渡し、reader が止める
+  let summaryPathFor = null;
+  let importError = null;
+  const command = payload?.tool_input?.command;
+  if (typeof command === "string" && tokenStart(GH_PR_CREATE, command) >= 0) {
+    try {
+      ({ summaryPathFor } = await import(new URL("../../scripts/verify-tree.mjs", import.meta.url).href));
+    } catch (e) {
+      importError = e?.message ?? String(e);
+    }
+  }
+
+  const result = decide(payload, {
+    readGitState: () => readGitState(cwd),
+    readPlanState: () => readPlanState(cwd),
+    readVerifyState: () => readVerifyState(cwd, summaryPathFor, importError),
+    // platform は値で渡す（reader 形にしない理由は judgeCommandShape の注釈）。
+    // この 1 行が Windows 専用判定の唯一の配線であり、カナリアと e2e が両方でこれを固定する。
+    platform: process.platform,
+  });
   if (result.action === "allow") {
     process.exitCode = 0;
     return;
@@ -437,11 +551,10 @@ if (invokedDirectly) {
   // 既定は block。allow が確定した経路だけが 0 を書く。
   // Node は未捕捉例外時に process.exitCode を無視して 1 で終了するため、catch は省略できない
   // （exit 1 = 非ブロッキング = コマンドが実行される = fail-open）。
+  // main() は async（要約の置き場を動的 import で読むため・#1299）。rejection は `.catch` で受ける——
+  // 未処理の rejection も Node は 1 で終了させるので、受けなければ fail-open になる。
+  // Node は待ちの残る Promise があるあいだ終了しないので、exitCode は main() の決着後に確定する。
   process.exitCode = 2;
-  try {
-    main();
-  } catch (e) {
-    emitBlock(`HOOK ERROR: ${e?.stack ?? String(e)}`);
-  }
+  main().catch((e) => emitBlock(`HOOK ERROR: ${e?.stack ?? String(e)}`));
   // process.exit() は使わない。stdout/stderr がパイプのとき未 flush 出力を切り捨てる。
 }

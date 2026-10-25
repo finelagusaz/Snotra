@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -74,6 +74,9 @@ function verifiedRepo() {
   git(dir, ["config", "user.email", "t@e"]);
   git(dir, ["config", "user.name", "t"]);
   git(dir, ["config", "commit.gpgsign", "false"]);
+  // 既定（true）に固定する。開発機の global が false だと非 ASCII のパスが引用されず、
+  // `-z` を外した変異をテストが検知できなくなる（#1299 の委譲で実測）
+  git(dir, ["config", "core.quotepath", "true"]);
   mkdirSync(path.join(dir, "src"));
   writeFileSync(path.join(dir, "src", "x.rs"), "fn a() {}\n");
   writeFileSync(path.join(dir, ".gitignore"), ".claude/worktrees/\n");
@@ -379,7 +382,7 @@ describe("decide — 道具の要約ゲート（#1299）", () => {
 });
 
 describe("judgeSummary — 要約の中身の判定", () => {
-  const ok = { sha: "abc", branch: "fix/x", status: "green" };
+  const ok = { sha: "a".repeat(40), branch: "fix/x", status: "green" };
 
   it("green で、ブランチが一致すれば null（照合は diff へ進む）", () => {
     expect(judgeSummary(ok, "fix/x")).toBeNull();
@@ -398,6 +401,9 @@ describe("judgeSummary — 要約の中身の判定", () => {
   it("sha を持たなければ止める", () => {
     expect(judgeSummary({ ...ok, sha: undefined }, "fix/x")).not.toBeNull();
   });
+  it("sha が 40 桁の 16 進でなければ止める", () => {
+    expect(judgeSummary({ ...ok, sha: "--output=x" }, "fix/x")).not.toBeNull();
+  });
 });
 
 describe("readVerifyState — 本物の git と要約ファイル", () => {
@@ -408,8 +414,35 @@ describe("readVerifyState — 本物の git と要約ファイル", () => {
   });
   it("workspace/ の中だけのコミットが載っても ok（`/implement` Step 4 の撤去の形）", () => {
     const dir = verifiedRepo();
-    commit(dir, "workspace/報告 a.txt", "r\n"); // 空白と非 ASCII: 引用符で囲まれても接頭辞が当たること
+    commit(dir, "workspace/報告.txt", "r\n"); // 非 ASCII: core.quotepath=true の下で引用符で囲まれても接頭辞が当たること
     expect(read(dir)).toEqual({ ok: true });
+  });
+  it("workspace/ の中と外を混ぜたコミットは、外のパスで止める（並びで外が後ろに来る形）", () => {
+    const dir = verifiedRepo();
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "a.txt"), "w\n");
+    writeFileSync(path.join(dir, "zeta.txt"), "z\n");
+    git(dir, ["add", "-A"]);
+    git(dir, ["commit", "-q", "-m", "mixed"]);
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("zeta.txt");
+  });
+  it("red の要約は、本物の reader を通しても止める", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: git(dir, ["rev-parse", "HEAD"]), branch: "feat/x", status: "red" });
+    expect(read(dir).ok).toBe(false);
+  });
+  it("別ブランチの要約は、本物の reader を通しても止める", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: git(dir, ["rev-parse", "HEAD"]), branch: "feat-x", status: "green" });
+    expect(read(dir).ok).toBe(false);
+  });
+  it("sha の形をしない値は git へ渡さずに止める（`-` で始まる値はオプションとして解釈される）", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: "--output=x", branch: "feat/x", status: "green" });
+    expect(read(dir).ok).toBe(false);
+    expect(existsSync(path.join(dir, "x"))).toBe(false);
   });
   it("workspace/ の外のコミットが載れば、そのパスを名指しして止める", () => {
     const dir = verifiedRepo();
@@ -957,7 +990,7 @@ describe("judgeCommandShape — platform ゲート", () => {
   });
 });
 
-describe("decide — 第 4 引数 platform の配線", () => {
+describe("decide — options の platform の配線", () => {
   it("win32 なら Windows 専用判定で block し、git も plan.md も読まない", () => {
     const git = vi.fn(CLEAN);
     const plan = vi.fn(NO_PLAN);
@@ -970,7 +1003,7 @@ describe("decide — 第 4 引数 platform の配線", () => {
     expect(decide(bash("cat <<EOF"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN, platform: "darwin" }).action).toBe("allow");
   });
 
-  it("既存の 3 引数呼び出しは Windows 専用判定に触れない（I7）", () => {
+  it("platform を渡さない呼び出しは Windows 専用判定に触れない（I7）", () => {
     expect(decide(bash("cat <<EOF"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 

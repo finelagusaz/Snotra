@@ -96,6 +96,17 @@
 
 - 記録: options オブジェクトへの書き換えの前後で、pre-bash のテストは 188 件 → 188 件、すべて緑だった（新しい照合を足す前に測った）
 
+#### Step 3 の 1 巡目（アンカー `cb09912f`。委譲の報告は `workspace/review-1299-round1.txt`）
+
+- [x] 道具: green（E `npm test` exit 0・665 tests、F `npm run governance:check` exit 0）。`categories_run` は E と F で、変更（hooks・scripts・文書）に見合う。warnings 0
+- [x] 委譲: Critical と High は 0 件。変異は V1〜V7 と追加の V3b・V9・V10 が assert で赤になった。**V8 と V8b（委譲先が足した変異）は緑のまま生き残った**
+- [x] **[Medium] V8 の検知が開発機の global gitconfig に依存していた。** このマシンは `core.quotepath=false` で、非 ASCII のパスが引用されない（`git config --global --get core.quotepath` で確かめた）。テストの repo を `core.quotepath=true` に固定した。テストのコメントの「空白と非 ASCII」は、効いているのが非 ASCII だけなので直した
+- [x] **[Low] V8b**（`-z` は残し改行で分ける）は、1 ファイルの差分しか見ないテストをすり抜けた。workspace/ の中と外を混ぜたコミットのテストを足した
+- [x] **[Low]** ブランチ名を `branch --show-current` で読む（verify-tree と揃える。同名のタグで `heads/<name>` になる形を避ける）。sha は 40 桁の 16 進に限る（`-` で始まる値がオプションとして解釈される形を塞ぐ）。動的 import の失敗理由を拒否文言に載せる。`main()` のコメントを `decide` の呼び出しの隣へ戻す。偽になったテストの名前 2 件を直す
+- [x] **[Low] 散文**: ルート `CLAUDE.md:23` と `docs/hooks.md` の止める条件の列挙をやめ、正本（`judgeSummary` / `readVerifyState`）を指す形にした（detached HEAD が抜けていた）。ADR の「rebase のあとは必ず止まる」を、2 端点の比較に合わせて弱めた
+- [x] **⚠️** V4・V5 が `judgeSummary` の単体テストでしか検知されない件: 本物の reader を通す red・別ブランチのテストを足した
+- [x] **受け入れる**: L2（ソースのカナリアが reader の配線を見ていない）。配線は e2e が実行で固定しており、V3a・V3b で赤になることを委譲先が実測した。timeout の余裕（計算では 28 秒 / 30 秒）は測っていない。超えるのは 4 本すべてが上限まで掛かったときだけである
+
 計画外（PR 本文へ送る）: PR を作ったあとに足したコミットを、`/merge-pr` の側で照合するか（research Q4。#1302 の `eef7a7aa` の形）。別の issue にする。
 
 ## 未確定（実装前に潰す）

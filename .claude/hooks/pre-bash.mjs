@@ -436,7 +436,10 @@ export function judgeSummary(summary, branch) {
     return `道具の要約が別のブランチ（${summary.branch}）のものである（今のブランチは ${branch}）。${VERIFY_REMEDY}`;
   }
   if (summary.status !== "green") return `道具の要約が green でない（status: ${summary.status}）。${VERIFY_REMEDY}`;
-  if (typeof summary.sha !== "string" || summary.sha === "") return `道具の要約が sha を持たない。${VERIFY_REMEDY}`;
+  // 40 桁の 16 進に限る。`-` で始まる値を git の位置引数へ渡すと、オプション（`--output=<path>` 等）として解釈される
+  if (typeof summary.sha !== "string" || !/^[0-9a-f]{40}$/.test(summary.sha)) {
+    return `道具の要約の sha が 40 桁の 16 進でない（${summary.sha}）。${VERIFY_REMEDY}`;
+  }
   return null;
 }
 
@@ -445,19 +448,22 @@ export function judgeSummary(summary, branch) {
  * `summaryPathFor` は `scripts/verify-tree.mjs` の同名の関数（`main()` が `gh pr create` を検出したときだけ
  * 動的に読み込んで渡す）。null なら読み込めなかったので止める。
  */
-export function readVerifyState(cwd, summaryPathFor) {
+export function readVerifyState(cwd, summaryPathFor, importError = null) {
   if (typeof summaryPathFor !== "function") {
-    return { ok: false, reason: "要約の置き場を導く scripts/verify-tree.mjs を読み込めませんでした" };
+    const why = importError ? `（${importError}）` : "";
+    return { ok: false, reason: `要約の置き場を導く scripts/verify-tree.mjs を読み込めませんでした${why}` };
   }
   const root = findUp(cwd, ".git");
   if (root == null) return { ok: false, reason: "リポジトリの外です" };
   const git = (args) =>
     spawnSync("git", args, { cwd: root, encoding: "utf8", shell: false, timeout: VERIFY_GIT_TIMEOUT_MS });
 
-  const head = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+  // verify-tree の mainContext と同じ読み方にする（`rev-parse --abbrev-ref HEAD` は、同名のタグがあると
+  // `heads/<name>` を返し、要約の branch と一致しない）
+  const head = git(["branch", "--show-current"]);
   if (head.error || head.status !== 0) return { ok: false, reason: "今のブランチを読めませんでした" };
   const branch = head.stdout.trim();
-  if (branch === "HEAD") return { ok: false, reason: `detached HEAD です。ブランチから PR を作ってください。` };
+  if (branch === "") return { ok: false, reason: `detached HEAD です。ブランチから PR を作ってください。` };
 
   const file = summaryPathFor(root, branch);
   let summary = null;
@@ -506,25 +512,26 @@ async function main() {
   // hook プロセスの cwd ではなく、セッションの作業ディレクトリで git を評価する。
   const cwd = typeof payload?.cwd === "string" && payload.cwd.length > 0 ? payload.cwd : process.cwd();
 
-  // platform は値で渡す（reader 形にしない理由は judgeCommandShape の注釈）。
-  // この 1 行が Windows 専用判定の唯一の配線であり、カナリアと e2e が両方でこれを固定する。
   // 要約の置き場の導出は `scripts/verify-tree.mjs` が持つ（写さない）。**`gh pr create` を検出したときだけ**
   // 動的に読み込む——静的 import にすると、あちらの構文エラー 1 つで全コマンドが止まる（爆発半径）。
-  // 読み込めなければ null を渡し、reader が止める
+  // 読み込めなければ null と失敗の理由を渡し、reader が止める
   let summaryPathFor = null;
+  let importError = null;
   const command = payload?.tool_input?.command;
   if (typeof command === "string" && tokenStart(GH_PR_CREATE, command) >= 0) {
     try {
       ({ summaryPathFor } = await import(new URL("../../scripts/verify-tree.mjs", import.meta.url).href));
-    } catch {
-      summaryPathFor = null;
+    } catch (e) {
+      importError = e?.message ?? String(e);
     }
   }
 
   const result = decide(payload, {
     readGitState: () => readGitState(cwd),
     readPlanState: () => readPlanState(cwd),
-    readVerifyState: () => readVerifyState(cwd, summaryPathFor),
+    readVerifyState: () => readVerifyState(cwd, summaryPathFor, importError),
+    // platform は値で渡す（reader 形にしない理由は judgeCommandShape の注釈）。
+    // この 1 行が Windows 専用判定の唯一の配線であり、カナリアと e2e が両方でこれを固定する。
     platform: process.platform,
   });
   if (result.action === "allow") {

@@ -138,3 +138,7 @@
 - 要対処: 5 件・すべて不変条件とテスト方針へ反映
 - 未検証: `npm run` 経由の argv — Phase 1 の自己適用で測る
 - 散文の全件列挙: 語 6 / 46 件 / ★未掲載 17（計画へ足した 0）— 17 件は凍結された歴史 12・無関係な「どちらか一方」4（`symmetric-check/SKILL.md`・`architecture.md`・`index_tree.rs`・`egui_shell/mod.rs`）・`docs/design/` の「項目 7」1（別文脈）。名指しの検算対象 `start-issue/SKILL.md` は掲載済みで出た。空白入り・日本語の語は Bash・PowerShell とも 1 語で届いた（件数欄で確認）
+
+### Step 3 — レビュー巡 3（`6d3bccff`・`workspace/review-6d3bccff.md`・道具 green）
+
+- [x] N1・N2 の解消をレビュアーが検算、新所見 0 件。g2 変異は新しい assert で赤（適用は diff で確認）

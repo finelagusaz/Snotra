@@ -135,11 +135,11 @@ allowed-tools:
 
 ## Step 4 — 仕上げ
 
-実装差分は Step 3 で既にコミットされている。ここに残るのは、木の片づけと、`workspace/` を畳む前の回収と、その撤去コミットだけである。
-
-- **木を片づける**: `npm run verify:tree -- remove --delegate-tree <align が出した worktree>`。道具の木と委譲先の木（`.delegate/` だけが残るもの）とそのブランチを消す。委譲先の木は `.delegate/` で意図的に dirty に保ってあるので、`npm run clean:worktrees` は `--force` なしでは拾わない。**exit 1 で止まったら出力を読む**——`.delegate/` 以外の変更が残っていれば中身を確かめ、「ロックされている」なら委譲先がまだ動いているので停止を待って打ち直し（ロックは `--force` 1 回では外れない）、ディレクトリだけが残ったなら `git worktree list` で他のセッションの `agent-*` が無いことを確かめてから `npm run clean:worktrees -- --force` で消す（`--force` は dirty な木をすべて消す）
+実装差分は Step 3 で既にコミットされている。ここに残るのは、`workspace/` を畳む前の回収と、道具の回し直しと、木の片づけと、その撤去コミットだけである。**この順序で行う**——PR 前ゲート（`.claude/hooks/pre-bash.mjs`）は、道具の要約の sha から HEAD までに `workspace/` の外の変更が無いことを照合する（#1299・例外は無い）。ADR の回収コミットは `workspace/` の外に載るので、道具の最後の実行より後に積むと PR が止まる。
 
 - **`workspace/` を削除する前に、否定の知識を ADR へ回収する**（#593）: `plan.md`・本サイクルの検討に「代替案 B を検討して却下した」判断があれば、削除で失う前に `docs/adr/ADR-<slug>.md` を起こす（形式は `docs/adr/ADR-doc-minimization-cap-enforcement.md` に倣う。**連番を振らない**——slug はテーマが決まった時点で決める・#812）。**トリガーは否定の知識が生じたときだけ** — 自明な実装・一本道の選択では作らない。無ければ何もしない。ADR に書くのは**却下した代替案と、却下の理由**である——採用案の再説明を書かない（採用案はコードと `SPEC.md` が持つ）。**「やらないと決めた作業項目」は代替案の却下ではないので、同じ節の `workspace/` 削除条件が挙げる ADR / issue の 2 択のうち issue 側へ送る**
+- **最後の要約から `workspace/` の外が動いたら、道具を回し直す**（ADR を起こした場合など）: `npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ>`。木は warm なので、E と F だけなら数十秒で済む。green でなければ Step 3 へ戻る
+- **木を片づける**: `npm run verify:tree -- remove --delegate-tree <align が出した worktree>`。道具の木と委譲先の木（`.delegate/` だけが残るもの）とそのブランチを消す。**要約は残る**（PR 前ゲートが読む）。委譲先の木は `.delegate/` で意図的に dirty に保ってあるので、`npm run clean:worktrees` は `--force` なしでは拾わない。**exit 1 で止まったら出力を読む**——`.delegate/` 以外の変更が残っていれば中身を確かめ、「ロックされている」なら委譲先がまだ動いているので停止を待って打ち直し（ロックは `--force` 1 回では外れない）、ディレクトリだけが残ったなら `git worktree list` で他のセッションの `agent-*` が無いことを確かめてから `npm run clean:worktrees -- --force` で消す（`--force` は dirty な木をすべて消す）
 - `workspace/` ディレクトリが存在する場合、**`plan.md` の全項目が `- [x]` であることを確認してから**削除してステージに含める（`/start-issue` の引き継ぎバッファは実装完了で役目を終える）。未チェックの項目が残っているなら削除しない——完了させるか、やらないと決めた項目は計画から外して理由を ADR か issue へ記録する。**未チェックを残したままの削除は、PR 前ゲート（PreToolUse hook）の視界から計画を消す**
 - **削除より先に `plan.md` の最終状態をコミットする。** Step 2 が「消し込みをその都度 `- [x]` へ更新」を、Step 3 の 3a が「同じコミットへ含める」を求めているので、それを守っていれば残るのは最後の巡の分だけである。**守らず最後に一括更新した場合、削除の対象は未コミットの実行記録（測定値・変異注入のログ・レビュー対応）を丸ごと抱えている**——「git 履歴から復元可能」が成り立つのはコミット済みの版だけである。`git rm -r workspace/` は独立したコミットにする（squash マージで畳まれるので運用コストは無い）
 - **`git rm` が `error: … has local modifications` で止まったら、それは保護であって障害ではない。** `-f` で押し通すのも（**git 自身が `use … -f to force removal` と勧めてくるが従わない**）、`checkout` 系（`git checkout` / `git checkout-index` / `git restore`）で「戻す」のも、**未コミットの記録を破棄する**（2026-08-07 の #934 サイクルで、`git reset` の直後に `checkout-index -f` を打って実行記録を全損した。控えは無く、会話の一次出力から再構成した）。止まったら**まず何が未コミットかを見て、順序が逆であることを疑う**。ステージだけ取り消すなら `git reset` で止め、**作業ツリーへ触るコマンドを続けて打たない**

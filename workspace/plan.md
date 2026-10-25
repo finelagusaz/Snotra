@@ -88,11 +88,11 @@
 - [x] `main()` を async にして配線し、ファイル冒頭のコメントを直す
 
 ### Phase 3 — 規範と文書
-- [ ] `/implement` Step 4 の順序と、ゲートの 1 文
-- [ ] `/deps-update` Step 4 の 1 行
-- [ ] ルート `CLAUDE.md:23`
-- [ ] `docs/hooks.md` の要約ゲートの箇条と、「見ないコマンド形」の追記
-- [ ] `docs/adr/ADR-pr-gate-verified-sha.md`
+- [x] `/implement` Step 4 の順序と、ゲートの 1 文
+- [x] `/deps-update` Step 4 の 1 行
+- [x] ルート `CLAUDE.md:23`
+- [x] `docs/hooks.md` の要約ゲートの箇条と、「見ないコマンド形」の追記
+- [x] `docs/adr/ADR-pr-gate-verified-sha.md`
 
 - 記録: options オブジェクトへの書き換えの前後で、pre-bash のテストは 188 件 → 188 件、すべて緑だった（新しい照合を足す前に測った）
 

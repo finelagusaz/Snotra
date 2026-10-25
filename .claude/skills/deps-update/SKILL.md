@@ -79,6 +79,7 @@ E2E・スモークテストはローカルで実行せず `Smoke` workflow（`sm
 
 - このスキルで生じた変更（`Cargo.lock`・`package-lock.json`・修復した実コード等）のみをステージする
 - `chore(deps): ...` の conventional commit を作成する。何を更新したかの簡潔な要約を含める
+- コミットしてから `npm run verify:tree -- run --sha HEAD --categories A,C` を回し、green を確かめる。PR 前ゲート（`.claude/hooks/pre-bash.mjs`）は、道具の要約が無いブランチの `gh pr create` を止める（#1299）
 - push して `gh pr create` で PR を作成する
 - PR 本文に更新一覧を載せる。**major bump は ⚠ で明示する**
 

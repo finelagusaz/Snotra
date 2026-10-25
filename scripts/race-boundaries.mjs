@@ -14,7 +14,7 @@
 //   『変更が無い』ではなく『基準が誤っている』と読む」を機構化したもの）。
 //   **merge-base が HEAD と一致すること自体は異常ではない**——この検査は `/implement`「3a. 委譲の前に」から
 //   コミットより前に呼ばれ、初コミット前の feature ブランチでは常にそうなる（実測）
-// - 追跡差分の patch と numstat が食い違えば exit 3（git の設定が出力の形を変えて行を黙って落とす形の閉塞・`readTrackedRows`）
+// - patch のファイル名が変更ファイルの一覧と食い違えば exit 3（git の設定が出力の形を変えて行を黙って落とす形の閉塞・`readTrackedRows`）
 // - **出力は常に ①〜⑧ の全種**。0 件の種別も件数とパターンを印字する——これで
 //   「1 件見つけたら残り 7 種を素通り」という経路が構造的に消える（#800）
 // - 分類本体は入力注入の純関数（scripts/race-boundaries.test.mjs がフィクスチャで検証する）
@@ -51,7 +51,7 @@ export function isCommentLine(text) {
   return /^\s*(\/\/|\/\*|\*[\s/]|#)/.test(text);
 }
 
-/** 差分を読めない、または照合が食い違った（設定や git の版が出力の形を変えた）。main が exit 3 にする。 */
+/** patch のファイル名が変更ファイルの一覧と食い違った（設定や git の版が出力の形を変えた）。main が exit 3 にする。 */
 export class DiffShapeError extends Error {}
 
 /** unified diff（`diff-index -p -U0`）を [{ file, sign, text }] へ分解する。
@@ -75,14 +75,9 @@ export function parseDiff(diffText) {
         oldLeft--;
         if (file) rows.push({ file, sign: "-", text: line.slice(1) });
       } else if (line.startsWith(" ")) {
-        // context 行。`-U0` では出ないが、宣言の行数を正しく減らすために読む
         oldLeft--;
         newLeft--;
-      } else if (!line.startsWith("\\")) {
-        // `\ No newline at end of file` 以外がここに来るのは宣言より行が少ない壊れた hunk——次のファイルの
-        // ヘッダを前のファイルの本文として読まずに止める（委譲レビューが単体で実測）
-        throw new DiffShapeError(`hunk の宣言より本文が短い: ${JSON.stringify(line)}`);
-      }
+      } // `\ No newline at end of file` は数えない
       continue;
     }
     const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
@@ -100,81 +95,21 @@ export function parseDiff(diffText) {
   return rows;
 }
 
-/** 削除されたバイナリのパス。patch は `Binary files a/<path> and /dev/null differ` の 1 行だけを出し
- *  （plumbing ゆえ接頭辞の設定に依らない・実測）、numstat は変更されたバイナリと同じ `-\t-` を出す。
- *  名前が化けていれば集合に入らず、照合がバイナリ扱いのソースとして止める（fail-closed）。 */
-export function deletedBinaryPaths(diffText) {
-  const out = new Set();
-  for (const line of diffText.split("\n")) {
-    const m = /^Binary files a\/(.+) and \/dev\/null differ$/.exec(line);
-    if (m) out.add(m[1]);
-  }
-  return out;
-}
-
-/** `diff-index -M --numstat -z` を Map(新しいパス → { add, del }) へ分解する。バイナリ（`-`）は null。
- *  一時リポジトリで実測した形は、通常 `<add>\t<del>\t<path>\0` と、rename の `<add>\t<del>\t\0<old>\0<new>\0` だった。 */
-export function parseNumstatZ(out) {
-  const map = new Map();
-  const fields = out.split("\0");
-  for (let i = 0; i < fields.length; i++) {
-    if (fields[i] === "" && i === fields.length - 1) break;
-    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(fields[i]);
-    if (!m) throw new DiffShapeError(`numstat の項目を読めない: ${JSON.stringify(fields[i])}`);
-    let file = m[3];
-    if (file === "") {
-      file = fields[i + 2];
-      i += 2;
-      if (file === undefined || file === "") throw new DiffShapeError("numstat の rename に新しいパスが無い");
-    }
-    map.set(file, m[1] === "-" ? null : { add: Number(m[1]), del: Number(m[2]) });
-  }
-  return map;
-}
-
-/** patch から解いた行と numstat の行数の食い違い（空なら一致）。別経路の 2 つの出力を突き合わせるので、
- *  ヘッダの形が変わって名前が化けた・行が落ちた形を、形の種類を列挙せずに捕まえる。
- *  削除されたファイルの行も旧パスで patch 側に現れるので、同じ照合に載る。
- *  バイナリ扱いのソース（`-diff` 属性など）は中身を見られないので、削除されたもの（`deletedBinaries`）を除いて
- *  食い違いとして出す（委譲レビューが実測）。 */
-export function diffMismatches(rows, numstat, deletedBinaries = new Set()) {
-  const parsed = new Map();
-  for (const r of rows) {
-    const c = parsed.get(r.file) ?? { add: 0, del: 0 };
-    if (r.sign === "+") c.add++;
-    else c.del++;
-    parsed.set(r.file, c);
-  }
-  const out = [];
-  for (const [file, c] of parsed) {
-    const n = numstat.get(file);
-    if (n === undefined) out.push(`patch の名前が numstat に無い: ${file}`);
-    else if (n !== null && (n.add !== c.add || n.del !== c.del)) {
-      out.push(`${file}: patch +${c.add}/-${c.del} 行 / numstat +${n.add}/-${n.del} 行`);
-    }
-  }
-  for (const [file, n] of numstat) {
-    if (n === null && SOURCE_EXT.test(file) && !deletedBinaries.has(file)) out.push(`${file}: バイナリ扱いで中身を見られない（.gitattributes の -diff 等）`);
-    else if (n !== null && n.add + n.del > 0 && !parsed.has(file)) {
-      out.push(`${file}: numstat の +${n.add}/-${n.del} 行が patch に無い`);
-    }
-  }
-  return out;
-}
-
-/** 追跡ファイルの差分行（作業ツリー対 mergeBase）。porcelain の `git diff` は出力の形が設定と cwd で変わり、
- *  行が**黙って**落ちた（形を変えた設定はテストの `CONFIGS` が持つ・#1300 の作業中に一時リポジトリで実測）。
- *  plumbing の `diff-index` は quotePath 以外を無視する。照合の相手も plumbing にする——
- *  porcelain の `--numstat` は `diff.relative` で patch と同じだけ狭まり、黙って一致した（実測）。 */
-export function readTrackedRows(git, mergeBase, { includeRemoved = false } = {}) {
-  const patch = git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase);
-  const rows = parseDiff(patch);
-  const numstat = parseNumstatZ(git("-c", "core.quotePath=false", "diff-index", "-M", "--numstat", "-z", mergeBase));
-  // 削除されたバイナリのソースを見逃せるのは、消えた行を母集団へ入れない既定のときだけである——
-  // `--include-removed` では廃止の検査が見るべき行が中身ごと見えないので止める（委譲レビューが実測）
-  const bad = diffMismatches(rows, numstat, includeRemoved ? new Set() : deletedBinaryPaths(patch));
-  if (bad.length > 0) throw new DiffShapeError(bad.join("\n"));
-  return { rows, changedFiles: numstat.size };
+/** 追跡ファイルの差分行（作業ツリー対 mergeBase）と変更ファイルの数。porcelain の `git diff` は出力の形が
+ *  設定と cwd で変わり、行が**黙って**落ちた（形を変えた設定はテストの `CONFIGS` が持つ・#1300 の作業中に実測）。
+ *  plumbing の `diff-index` は quotePath 以外を無視する。
+ *  patch から解いた名前を、`-z` の一覧（quote されない）と突き合わせる——観測した壊れ方はどれも名前が化ける形で
+ *  あり、化けた名前の行はソース拡張子に合わず黙って落ちた。行数までは照合しない（ADR-race-boundaries-git-plumbing）。 */
+export function readTrackedRows(git, mergeBase) {
+  const rows = parseDiff(git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase));
+  const names = new Set(
+    git("-c", "core.quotePath=false", "diff-index", "-M", "--name-only", "-z", mergeBase)
+      .split("\0")
+      .filter((p) => p !== ""),
+  );
+  const unknown = [...new Set(rows.map((r) => r.file))].filter((f) => !names.has(f));
+  if (unknown.length > 0) throw new DiffShapeError(`patch の名前が変更ファイルの一覧に無い: ${unknown.join(", ")}`);
+  return { rows, changedFiles: names.size };
 }
 
 /** 未追跡のソースファイルを 1 件ずつ挙げる。`--untracked-files=all` が無いと新しいディレクトリが
@@ -308,12 +243,12 @@ function main() {
   let rows;
   let changedFiles;
   try {
-    ({ rows, changedFiles } = readTrackedRows(git, mergeBase, { includeRemoved: args.includeRemoved }));
+    ({ rows, changedFiles } = readTrackedRows(git, mergeBase));
   } catch (e) {
     if (!(e instanceof DiffShapeError)) throw e;
     console.error(
-      `差分を読めない、または 2 経路（patch と numstat）が食い違う——母集団を欠いたまま報告しない:\n${e.message}\n` +
-        `git の設定・属性・版が出力の形を変えたか、別々の読み取りの間に作業ツリーが動いた（再実行で消えるなら後者）。`,
+      `差分のファイル名を読めない——母集団を欠いたまま報告しない:\n${e.message}\n` +
+        `git の設定・版が出力の形を変えたか、2 回の読み取りの間に作業ツリーが動いた（再実行で消えるなら後者）。`,
     );
     process.exit(3);
   }

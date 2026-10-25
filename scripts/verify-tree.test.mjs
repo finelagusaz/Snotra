@@ -287,6 +287,16 @@ describe("verify-tree align", () => {
     expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(next);
   });
 
+  it(".delegate/ の外に未追跡のファイル（変異で足したまま）が残っていれば exit 2", { timeout: T }, () => {
+    const repo = initRepo();
+    const wt = agentTree(repo);
+    writeFileSync(path.join(wt, "leftover.test.mjs"), "// mutant\n");
+    const next = commitFile(repo, "next.txt", "next\n");
+
+    expect(runScript(wt, ["align", "--sha", next]).status).toBe(2);
+    expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(next);
+  });
+
   it(".delegate/ に未追跡の報告があっても checkout できる", { timeout: T }, () => {
     const repo = initRepo();
     const wt = agentTree(repo);
@@ -349,6 +359,35 @@ describe("verify-tree remove", () => {
     expect(r.status, r.output).toBe(0);
     expect(existsSync(wt)).toBe(false);
     expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toBe("");
+  });
+
+  it("--delegate-tree は align で detach された木でも、harness の命名のブランチを消す", { timeout: T }, () => {
+    const repo = initRepo();
+    const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
+    git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
+    const next = commitFile(repo, "next.txt", "next\n");
+    expect(runScript(wt, ["align", "--sha", next]).status).toBe(0);
+    mkdirSync(path.join(wt, ".delegate"));
+    writeFileSync(path.join(wt, ".delegate", "round1.txt"), "report\n");
+
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+
+    expect(r.status, r.output).toBe(0);
+    expect(existsSync(wt)).toBe(false);
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toBe("");
+  });
+
+  it("--delegate-tree はロックされた木を消さず、報告も残す", { timeout: T }, () => {
+    const repo = initRepo();
+    const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
+    git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
+    git(repo, ["worktree", "lock", wt]);
+    mkdirSync(path.join(wt, ".delegate"));
+    writeFileSync(path.join(wt, ".delegate", "round1.txt"), "report\n");
+
+    expect(runScript(repo, ["remove", "--delegate-tree", wt]).status).toBe(1);
+    expect(existsSync(path.join(wt, ".delegate", "round1.txt"))).toBe(true);
+    git(repo, ["worktree", "unlock", wt]);
   });
 
   it("--delegate-tree は .delegate/ 以外の変更が残る木を消さない", { timeout: T }, () => {

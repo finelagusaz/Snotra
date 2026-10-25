@@ -103,6 +103,7 @@ function worktrees(root) {
     .map((e) => ({
       path: path.resolve(e.split("\n")[0].slice("worktree ".length)),
       branch: /^branch refs\/heads\/(.+)$/m.exec(e)?.[1] ?? null,
+      locked: /^locked\b/m.test(e),
     }));
 }
 
@@ -124,8 +125,12 @@ function dependencyWarnings(root, sha) {
     return []; // lock を持たない sha
   }
   const installedPath = path.join(root, "node_modules", ".package-lock.json");
-  if (!existsSync(installedPath)) return [`${posix(installedPath)} が無い——木は本体の node_modules を解決するので、依存の版を確かめられない`];
-  const installed = JSON.parse(readFileSync(installedPath, "utf8")).packages ?? {};
+  let installed;
+  try {
+    installed = JSON.parse(readFileSync(installedPath, "utf8")).packages ?? {};
+  } catch {
+    return [`${posix(installedPath)} が読めない——木は本体の node_modules を解決するので、依存の版を確かめられない`];
+  }
   const drift = Object.entries(lock)
     .filter(([name, meta]) => name !== "" && !meta.optional && installed[name]?.version !== meta.version)
     .map(([name, meta]) => `${name}（lock ${meta.version} / 入っている ${installed[name]?.version ?? "無し"}）`);
@@ -172,6 +177,7 @@ function cmdRun(opts) {
   if (head !== sha) throw new EnvError(`sha が本体の HEAD でない（HEAD ${head} / sha ${sha}）`);
 
   // ---- 木を作るか、再利用する
+  git(root, ["worktree", "prune"]); // ディレクトリだけ消えた登録が add を阻まないように
   if (worktrees(root).some((w) => w.path === path.resolve(tree))) {
     const changed = git(tree, ["status", "--porcelain", "--untracked-files=no"]);
     if (changed !== "") throw new EnvError(`再利用する木に追跡ファイルの変更がある: ${posix(tree)}\n${changed}`);
@@ -183,7 +189,8 @@ function cmdRun(opts) {
   const treeHead = git(tree, ["rev-parse", "HEAD"]);
   if (treeHead !== sha) throw new EnvError(`木の HEAD が sha でない（HEAD ${treeHead} / sha ${sha}）`);
 
-  // ---- 回す
+  // ---- 回す（警告は先に出しておく——回した後に throw して結果を失わないため）
+  const warnings = dependencyWarnings(root, sha);
   const out = path.resolve(opts.out ?? `${tree}.summary.json`);
   const log = out.replace(/\.json$/, "") + ".log";
   const fd = openSync(log, "w");
@@ -210,7 +217,7 @@ function cmdRun(opts) {
     handoff: requested.includes("D") ? ["D"] : [],
     status: red ? "red" : "green",
     results,
-    warnings: dependencyWarnings(root, sha),
+    warnings,
     log: posix(log),
   };
   writeFileSync(out, JSON.stringify(summary, null, 2) + "\n");
@@ -224,8 +231,12 @@ function cmdAlign(opts) {
     throw new EnvError(`linked worktree の中で打つこと（ここは本体の作業ツリー: ${posix(tree)}）`);
   }
   const sha = resolveSha(tree, opts.sha);
-  const changed = git(tree, ["status", "--porcelain", "--untracked-files=no"]);
-  if (changed !== "") throw new EnvError(`追跡ファイルの変更が残っている（巻き戻されていない変異か）:\n${changed}`);
+  // 追跡ファイルの変更と、`.delegate/` の外の未追跡ファイル（変異で足したまま残ったファイル——
+  // vitest の include に当たれば次の巡のテストに混ざる）の両方を、巻き戻されていない変異として止める
+  const leftovers = git(tree, ["status", "--porcelain", "--untracked-files=all"])
+    .split("\n")
+    .filter((l) => l !== "" && !l.startsWith(`?? ${DELEGATE_DIR}/`));
+  if (leftovers.length > 0) throw new EnvError(`変更が残っている（巻き戻されていない変異か）:\n${leftovers.join("\n")}`);
   if (git(tree, ["ls-tree", "--name-only", sha, DELEGATE_DIR]) !== "") {
     throw new EnvError(`${DELEGATE_DIR}/ が sha に追跡されている——報告の置き場が checkout と衝突する`);
   }
@@ -239,6 +250,7 @@ function cmdAlign(opts) {
   // ignore されたパスは木を「変更あり」に保たない。checkout 後の sha の .gitignore で判定する
   const ignored = spawnSync("git", ["check-ignore", "-q", `${DELEGATE_DIR}/report.txt`], { cwd: tree });
   if (ignored.status === 0) throw new EnvError(`${DELEGATE_DIR}/ が ignore されている——報告を置いても木が片づけられる`);
+  if (ignored.status !== 1) throw new EnvError(`git check-ignore が判定できなかった（status ${ignored.status}）——ignore されていないとは言えない`);
   console.log(JSON.stringify({ sha, worktree: posix(tree), delegate_dir: posix(path.join(tree, DELEGATE_DIR)) }));
   return 0;
 }
@@ -278,9 +290,16 @@ function cmdRemove(opts) {
       console.error(`${DELEGATE_DIR}/ 以外の変更が残っている——消さない: ${posix(target)}\n${others.join("\n")}`);
       return 1;
     }
+    // ロックされた木は `--force` なしの remove が拒む。先に `.delegate/` を消すと、報告だけ失って木が残る
+    if (entry.locked) {
+      console.error(`ロックされている（委譲先がまだ動いているか）——何も消さない: ${posix(target)}`);
+      return 1;
+    }
+    // align が detach するので、porcelain にはブランチが載らない。harness の命名（`worktree-<木の名前>`）から導く
+    const harnessBranch = `worktree-${path.basename(target)}`;
+    const branch = entry.branch ?? (git(root, ["branch", "--list", harnessBranch]) !== "" ? harnessBranch : null);
     rmSync(path.join(target, DELEGATE_DIR), { recursive: true, force: true });
     if (removeTree(root, target)) {
-      const { branch } = entry;
       if (branch) {
         try {
           git(root, ["branch", "-d", branch]);

@@ -115,15 +115,15 @@
 ## 作業項目
 
 ### Phase 1 — 道具の核（Red → Green）
-- [ ] `scripts/verify-tree.mjs` を空実装で置き、`scripts/verify-tree.test.mjs` が V1〜V6 の性質で Red になることを確かめる
-- [ ] `parseCategoryCommands` を実装し、実文書テストを Green にする
-- [ ] `run` を実装する（木の作成と再利用、HEAD の照合、E と F の常時実行、D の handoff、要約 JSON、exit 0/1/2、依存の警告）
-- [ ] `align` を実装する（linked worktree の確認、追跡ファイルの変更の確認、`.delegate/` の確認、checkout、HEAD の照合）
-- [ ] `remove` を実装する（`--delegate-tree` と、削除後の不在確認を含む）
-- [ ] `package.json` に `verify:tree` を足す
+- [x] `scripts/verify-tree.mjs` を空実装で置き、`scripts/verify-tree.test.mjs` が V1〜V6 の性質で Red になることを確かめる
+- [x] `parseCategoryCommands` を実装し、実文書テストを Green にする
+- [x] `run` を実装する（木の作成と再利用、HEAD の照合、E と F の常時実行、D の handoff、要約 JSON、exit 0/1/2、依存の警告）
+- [x] `align` を実装する（linked worktree の確認、追跡ファイルの変更の確認、`.delegate/` の確認、checkout、HEAD の照合）
+- [x] `remove` を実装する（`--delegate-tree` と、削除後の不在確認を含む）
+- [x] `package.json` に `verify:tree` を足す
 
 ### Phase 2 — 周辺の文書
-- [ ] `docs/build-commands.md` の C ブロックの先頭へ `cargo build -p snotra` を足し、チェックリストの冒頭に道具が読む旨を 1 文書く
+- [x] `docs/build-commands.md` の C ブロックの先頭へ `cargo build -p snotra` を足し、チェックリストの冒頭に道具が読む旨を 1 文書く
 
 ### Phase 3 — 規範
 - [ ] `/implement` SKILL の Step 3 と Step 4、出力欄を書き換える（見出しは保つ）

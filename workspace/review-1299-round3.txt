@@ -1,0 +1,39 @@
+review-1299 round 3 — 2 巡目の所見への修正（f8bfe1be..ec9a4f28）
+align (exit 0): {"sha":"ec9a4f2800b413e37c7d4af79bf19392ac8d654a","worktree":"C:/workspace/Snotra/.claude/worktrees/agent-a0005181fc99520e0","delegate_dir":"C:/workspace/Snotra/.claude/worktrees/agent-a0005181fc99520e0/.delegate"}
+ベースライン: vitest 2 ファイル 248/248 green（global core.quotepath=false のまま）
+基準ハッシュ: pre-bash.mjs 241577cb92f722a53c5bf22f07c35181d95d83cc / pre-bash.test.mjs 476dea8067f301d2218eb506e4508b7473066977
+
+== 変異注入 ==
+コマンド: npx vitest run .claude/hooks/pre-bash.test.mjs scripts/verify-tree.test.mjs。巻き戻しは git checkout --。全変異で巻き戻し後のハッシュが基準と一致。
+
+| 変異 | 結果 | 赤の理由 |
+|---|---|---|
+| F4 branch の読み方を rev-parse --abbrev-ref HEAD に戻す | 赤 2 | assert: 「detached HEAD なら止める」（reason が「このブランチ（HEAD）の要約が無い」で "detached" を含まない）+ 「同名のタグ」（{ok:false} ≠ {ok:true}） |
+| F5 main() の catch で importError = null（理由を捨てる） | 緑 248（生存） | 新しいテストは readVerifyState へ理由を直接渡すので main() を通らない。F5b と同じ「main() の配線」の類で、ADR の受容した残余（「main() が import の失敗理由を reader へ渡す配線は、テストで固定していない」）に該当する |
+| F5c（追加）readVerifyState が理由を文言へ載せない（const why = ""） | 赤 1 | assert: 「hook が道具を読み込めなかったとき、その理由を拒否文言に載せる」 |
+
+timeout・モジュール解決・構文エラーを理由とする赤は 0 件。
+
+== 2 巡目の所見の解消 ==
+R1 解消: F4 が 2 件の assert で赤（上の表）。detached の断言も効いている（F4 で detached のテストが別の理由の緑から赤へ変わった）
+R2 一部解消: reader 側（F5c）は新しい単体テストが検知する。main() 側（F5・F5b）は生存し、ADR が残余として明記した
+R3 解消: judgeSummary({branch,status:"green"}) → 「…16 進でない（sha が無い）。」、sha:"x" → 「（x）」（実行して確認）
+R4 解消: judgeSummary のコメントと ADR の残余に SHA-256 の 1 句が入った
+
+== 修正の周辺のレビュー ==
+Critical / High / Medium: なし
+Low
+S1. ADR-pr-gate-verified-sha.md の追記「失敗したときに止まること自体は、e2e が固定している」は実装より強い。
+    import を壊して block を断言する e2e は無い（pre-bash.test.mjs に import 失敗を起こすテストは無い・grep で確認）。
+    止まることを固定しているのは単体テスト「summaryPathFor が渡されなければ（hook が道具を読み込めなかった）止める」
+    （readVerifyState に null を渡す）であり、main() の catch が null を残す経路は F5 と同じく未固定である
+    （1 巡目の V10 で import を壊すと e2e の allow 系が赤になったが、それは「失敗が allow にならない」ことの断言ではなく、
+    テスト環境で import が成功している前提が崩れたことの検知である）。「単体テストが固定している」に直すのが正確
+S2. 同名タグのテスト名「`rev-parse --abbrev-ref` は `heads/<name>` を返す」は 2 巡目に使い捨て repo で実測した値と一致（問題なし）
+S3. 新しいコメント「SHA-256 形式の repo（64 桁）では常に止まる（fail-closed。このリポジトリは SHA-1）」は ADR の追記と
+    同じ事実の 2 か所目。コード側は判定の隣の注釈で、ADR は残余の記録なので役割は別。挙げる程度ではないが、写しではある
+
+== ⚠️ ==
+- F5 の生存は主の依頼「F4・F5 が assert で赤くなるか」に対しては「ならない」。受け入れた F5b と同じ類なので ADR の残余で
+  覆われているとみなしたが、F5 も受け入れるかは主の判断
+- S1 の「e2e が固定している」の対象が何かの読み違いの余地: もし「import 失敗以外の経路で止まること」を指すならその限りで真

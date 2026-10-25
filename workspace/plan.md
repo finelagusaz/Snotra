@@ -172,6 +172,10 @@
 - [x] **[Low]** SKILL Step 4 に、ロックで exit 1 になったときの手順（委譲先の停止を待つ）を足した
 - [x] **[Low/⚠️] 受け入れる**: ブランチ名を harness の命名 `worktree-<木の名前>` から導いている。命名が変わればブランチが残るが、`clean:worktrees` の孤児掃除（`clean-worktrees.mjs:78-96`）が拾う
 
+#### Step 3 の委譲 3 巡目（アンカー `76dafe04`・報告は `workspace/verify-1298-round3.txt`）
+
+- [x] 検証: E exit 0（26 files・640 tests）、F exit 0。2 巡目の所見 3 件は、委譲先が自分で再現して解消を確かめた（空白入りの名前の報告を自分の木に置き、align が通ることも実測した）。当て直した変異 R5a・R6・Z は、3 本とも assert で赤になった。新しい Critical・High・Medium は無い。収束した
+
 計画外（PR 本文へ送る）: issue の「比べ方」（次の 10 PR で所見の件数と High の採用件数を見る）。この PR の中では測れない。
 
 ## 未確定（実装前に潰す）

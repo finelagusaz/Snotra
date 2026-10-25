@@ -15,6 +15,7 @@ import {
   classify,
   formatReport,
   parseArgs,
+  listUntracked,
 } from "./race-boundaries.mjs";
 
 const kindOf = (kinds, ord) => kinds.find((k) => k.ord === ord);
@@ -178,6 +179,31 @@ describe("parseArgs（--base の必須化）", () => {
 
   it("--include-removed を取る", () => {
     expect(parseArgs(["--base", "main", "--include-removed"]).includeRemoved).toBe(true);
+  });
+});
+
+describe("listUntracked（未追跡ファイルを 1 件ずつ・quote せずに挙げる）", () => {
+  // 実物の git を返す fake。`--short` を素で打つと、新ディレクトリは `?? newdir/` の 1 行に畳まれ
+  // `core.quotePath=true`（git の既定）では日本語パスが `"\346..."` になる——どちらも SOURCE_EXT に合わず
+  // 中のファイルが黙って落ちた（#1300 の作業中に一時リポジトリで実測。追跡の変更と同居すると exit 0 で ① 0 件）。
+  const fakeGit = (args) => {
+    const full = args.includes("--untracked-files=all") && args.includes("-z");
+    return full
+      ? " M lib.rs\0?? newdir/a.rs\0?? 新規.rs\0?? notes.txt\0"
+      : ' M lib.rs\n?? newdir/\n?? "\\346\\226\\260\\350\\246\\217.rs"\n?? notes.txt\n';
+  };
+  const run = (...a) => fakeGit(a);
+
+  it("新しいディレクトリの中のファイルを落とさない", () => {
+    expect(listUntracked(run)).toContain("newdir/a.rs");
+  });
+
+  it("日本語パスを quote 付きで落とさない", () => {
+    expect(listUntracked(run)).toContain("新規.rs");
+  });
+
+  it("追跡ファイルとソース拡張子でないものは入れない", () => {
+    expect(listUntracked(run)).toEqual(["newdir/a.rs", "新規.rs"]);
   });
 });
 

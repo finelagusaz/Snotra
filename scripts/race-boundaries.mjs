@@ -69,8 +69,19 @@ export function parseDiff(diffText) {
   return rows;
 }
 
+/** 未追跡のソースファイルを 1 件ずつ挙げる。`--untracked-files=all` が無いと新しいディレクトリが
+ *  `?? dir/` の 1 行に畳まれ、`-z` が無いと `core.quotePath=true`（git の既定）で日本語パスが quote される——
+ *  どちらも SOURCE_EXT に合わず、中のファイルが**黙って**落ちる（#1300 の作業中に実測）。 */
+export function listUntracked(git) {
+  return git("status", "--porcelain", "-z", "--untracked-files=all")
+    .split("\0")
+    .filter((e) => e.startsWith("?? "))
+    .map((e) => e.slice(3))
+    .filter((p) => SOURCE_EXT.test(p));
+}
+
 /** 未追跡ファイルの全行を「追加行」として母集団へ入れる。
- *  SKILL 段 1 の「`git status --short` が挙げたファイルは、パスではなく中身が対象である」に対応する。 */
+ *  `listUntracked` が挙げたファイルは、パスではなく中身が対象である。 */
 export function untrackedRows(files, readFile) {
   const rows = [];
   for (const file of files) {
@@ -175,11 +186,7 @@ function main() {
   // 素の `git diff <mergeBase>` は作業ツリーまでを含む——`<mergeBase> HEAD` と書くと未コミット分が落ちる。
   // `main...HEAD` を使わないのも同じ理由である（SKILL 段 1・実測 183 行 vs 139 行）。
   const rows = parseDiff(git("diff", "-U0", mergeBase));
-  const untracked = git("status", "--short")
-    .split("\n")
-    .filter((l) => l.startsWith("??"))
-    .map((l) => l.slice(3).trim())
-    .filter((p) => SOURCE_EXT.test(p));
+  const untracked = listUntracked(git);
   const readFile = (f) => {
     try {
       return fs.readFileSync(f, "utf8");
@@ -193,7 +200,7 @@ function main() {
   // 空の母集団のまま先へ進ませない——0 件の報告と「そもそも何も見ていない」を区別できなくなる。
   if (rows.length === 0 && untracked.length === 0) {
     console.error(
-      `基準が誤っている: \`git diff ${mergeBase.slice(0, 8)}\` と \`git status --short\` がともに空。\n` +
+      `基準が誤っている: \`git diff ${mergeBase.slice(0, 8)}\` と未追跡のソースファイル（\`git status --porcelain --untracked-files=all\`）がともに空。\n` +
         `--base に渡した \`${args.base}\` が分岐元でない可能性がある（merge-base = ${mergeBase.slice(0, 8)}）。分岐元のブランチ名を渡し直す。`,
     );
     process.exit(3);

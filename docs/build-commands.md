@@ -8,6 +8,8 @@
 
 変更したファイルの種類に応じて、対応するカテゴリの必須コマンドを実行する。複数カテゴリに該当する場合はすべて実行する。
 
+**各カテゴリの節の最初の `bash` フェンスは、`npm run verify:tree`（`scripts/verify-tree.mjs`）が読んでそのまま回す**——コマンドの正本はこのフェンスであり、道具は写しを持たない。フェンスの外の散文に書いた条件つきのコマンドは道具に届かない（`/implement` が `--also` で足す）。
+
 ### A. Rust ファイル（`*.rs`）を変更した場合
 
 **これらのコマンドが走る Rust の版は `rust-toolchain.toml` が決める**（#1161）。ローカルでも CI でも rustup がそれを読んで override するので、**手元の緑は CI の緑と同じ判定器で得たものである**。固定していなかった頃は、開発者のローカルが CI より古いと「手元では存在しない lint」で CI だけが赤くなった（2026-08-21 実測）。版を上げる契機は `/deps-update` が持つ。
@@ -41,6 +43,7 @@ TS の型検査は #532 SU7 のフロント撤去で消滅した（`tsconfig.jso
 ### C. ウィンドウ生成／表示順・ホットキー・スラッシュコマンドに触れた場合（A／B に追加）
 
 ```bash
+cargo build -p snotra       # 必須: 実バイナリを起動する検査の前に本体を建てる（下の箇条・`cargo test` では更新されない）
 npm test                    # 必須: ユニットテスト（Vitest: .claude/hooks + .githooks + scripts）
 npm run test:powershell     # 必須: Pester（共有 smoke 配管 + 実バイナリ統合）
 npm run smoke:startup       # 必須: 起動時スモーク（trace 出力・検証用プロファイル・非 first-run の検証）

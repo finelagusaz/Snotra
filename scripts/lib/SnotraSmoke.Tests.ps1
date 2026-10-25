@@ -219,7 +219,10 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # ここで止める。実行時の最終値を追うにはハーネス自身を起動する検査が要り、別の費用の話になる。
     # 導出式の中身とプロファイルの置き場も同じく外。
     #
-    # **対象は数え上げているので、4 本目が増えても黙る。** `Resolve-SnotraCargoExecutable` の
+    # **対象は数え上げているので、一覧に無いスクリプトには黙る。** 一覧は resolver の呼び出し元から
+    # 選んだため、直書きの既定を持ち resolver を呼ばないスクリプトは最初から候補に入らない
+    # （#1292: `smoke-egui.ps1` がこの形で #1179 の修正から外れていた。母集団を `$ExePath` の宣言から
+    # 導く形と、残る直書きは #1293）。`Resolve-SnotraCargoExecutable` の
     # 呼び出し元のうち残る 2 本を外しているのは、**それぞれ別の理由**による（実測で確かめた）:
     # `run-pester.ps1` は `-ExePath` に既定値を持たない（明示 override 専用ゆえ入口の述語が当たらない）、
     # `visual-check-colors.ps1` は変数名が `$repositoryRoot` で `-ExePath` param 自体が無い。
@@ -228,7 +231,7 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
     # 正しくパラメータ化されて見える**（実測: `The variable '$harnessName' cannot be retrieved`）。
     It '<_> の既定 ExePath は param から導出へ通り、repoRoot はスクリプト自身の位置から来る（#1179）' -ForEach @(
-        'bench-startup.ps1', 'smoke-startup.ps1', 'visual-input-metrics.ps1'
+        'bench-startup.ps1', 'smoke-egui.ps1', 'smoke-startup.ps1', 'visual-input-metrics.ps1'
     ) {
         # コメント行は除く——除かないと「関数名に触れたコメントを 1 行足す」だけで赤くなり、
         # しかも文言が事実に反する（実測）。
@@ -570,8 +573,8 @@ auto_hide_on_focus_lost = false
         #
         # **打鍵を注入しないのは、注入と 3 段の待ちが 7 か月の間欠失敗の構造的前提
         # そのものだったからである**（#872 本文の要素 1 = 前面窓依存・要素 2 = 実時間
-        # ポーリング）。OS の打鍵がアプリへ届く配線は `smoke-egui.ps1` が release
-        # ビルドで見ている（hotkey VK 列 → `egui_show:done` → 1 文字クエリ →
+        # ポーリング）。OS の打鍵がアプリへ届く配線は `smoke-egui.ps1` が見ている
+        # （CI では release ビルド。hotkey VK 列 → `egui_show:done` → 1 文字クエリ →
         # `egui_results:show`）。
         #
         # `egui_input:focus_state` は #938 が**この回帰の検出器として**置いたもので、

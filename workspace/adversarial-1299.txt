@@ -1,0 +1,156 @@
+adversarial probe #1299 (最終版)
+対象: workspace/research.md。裁定(sha だけ照合 / 例外なし / 要約が無ければ止める)は前提として扱った。
+判定の凡例: 壊せた / 壊せなかった / ⚠(確信が持てない・条件付き)
+
+======================================================================
+A. 特に壊しにいく命題 1〜5
+======================================================================
+
+[命題1] 「今の remove は要約を消す。/implement の流れでは PR を作る時点で要約が無い」
+判定: 壊せなかった(主張は真)。ただし調査書が見落とした続きがある → 所見 F1
+根拠:
+  - scripts/verify-tree.mjs:289 `if (ok) for (const f of [`${tree}.summary.json`, `${tree}.summary.log`]) rmSync(...)`
+  - scripts/verify-tree.test.mjs:365-366 が「消える」を assert している(remove を変えるとこの 2 行も直す必要がある。調査書は触れていない)
+  - .claude/skills/implement/SKILL.md:140 Step 4 の先頭が remove。Step 4 の後に PR。/implement 自体は「コミット作成まで」(description) で PR 作成の手順を持たない(SKILL 内に gh pr create 無し・git grep 済み)
+要約が残る経路(調査書は挙げていない):
+  (a) remove が ok=false(木の削除失敗)で終わったとき → :289 は ok のときだけ消す
+  (b) `--out` で外へ出した場合(消さない:288 のコメント)
+  (c) remove を打たずに PR を作った場合
+  いずれも通常経路ではない。
+この所見を偽にする手順: remove を打たず、tree 削除が失敗する状況を作る → 要約が残る。
+
+[命題2] 「hasSafeChain の allow より前に置けば、すべての gh pr create 経路で走る」
+判定: 壊せた(「すべての」は偽。「検出された gh pr create」に限れば真)
+根拠(pre-bash.mjs の分岐と、decide を使い捨て probe で実測。reader は unpushed:true を返す stub):
+  分岐: ツール名外 ALLOW(:310) → command 非文字列 block → judgeCommandShape → gh 不検出で ALLOW(:322) → cwd 変更 block(:324) → plan(:329) → hasSafeChain ALLOW(:338)
+  実測(block=検出された / allow=素通り):
+    `gh pr create --fill`                           block (検出)
+    `& gh pr create` / `GH_TOKEN=x gh pr create`    block (検出)
+    `gh.exe pr create --fill`                       **allow (検出されない)**
+    `& 'C:/Program Files/GitHub CLI/gh.exe' pr create`  **allow (検出されない)**
+    `gh api repos/o/r/pulls -f title=x -f head=b -f base=main`  **allow**(PR を作れるが pr create ではない)
+    `npm run pr` 等のラッパ                         allow
+  → 新しい検証ゲートは、既存の push/plan ゲートと同じ「検出できる gh pr create」にしか効かない。
+  → `gh.exe` は docs/hooks.md:14 の「見ない形」一覧(sh -c / eval / バッククォート / ラッパ)に**載っていない**。GH_PR_CREATE が `gh\s+` を要求するため。Windows の PowerShell では素の形として現れうる。
+  → CLAUDE.md:24「フックが守る外部 API の不可逆呼び出しは gh pr create だけ」も、gh api 経由の PR 作成が既存の穴。
+  cwd 変更(`cd sub && gh pr create`)は block されるので「素通り」ではなくゲートの前で止まる(これは壊せなかった側)。
+副作用の確認(⚠): 言及でも発火する。`echo x | grep -e a\|gh pr create` は検出される(`|` が区切り扱い)。今回このセッションの私自身の `grep "...\|gh pr create..."` が cwd 変更ゲートで止まった(実体験)。要約必須になると、grep の引数に `|gh pr create` を含むコマンドが「要約が無い」で止まる範囲が広がる(復帰手順 `verify:tree -- run` は無関係な操作を強いる=復帰手順が適用できない拒否になる)。docs/hooks.md:13 が過剰検出は許容と明記しているので設計内だが、拒否文言が「なぜ止めたか/何をするか」を持つ原則(pre-bash.mjs:246)とは衝突する。
+この所見を偽にする手順: GH_PR_CREATE を `gh(?:\.exe)?` に直し、gh api の PR 作成も検出に加える(調査書の射程外・別 issue 相当)。
+
+[命題3] 「git diff --name-only <sha> HEAD から workspace/ を除いて空なら、sha 以降にコード変更は無い」
+判定: 壊せた(rename で偽)。他の 3 形(merge・祖先でない sha・作業ツリー)は条件つき
+使い捨て repo(/tmp 配下・本体には触れていない)での実測:
+  1) src/x.rs → workspace/x.rs へ git mv(コードを workspace/ へ移して消す)
+       既定:            `workspace/x.rs` だけ → workspace/ 除外で空 → **素通り(偽陰性)**
+       --no-renames:    `src/x.rs` と `workspace/x.rs` → 正しく止まる
+     既定の rename 検出が、移動元の src/x.rs を名前から消す。**`--no-renames` が必須**。
+  2) workspace/x.rs → src/y.rs(逆方向): 既定でも `src/y.rs` が出るので止まる(偽陰性にならない)。
+  3) 未コミットの追跡ファイルの変更: `git diff --name-only <sha> HEAD` は 0 件(作業ツリーを見ない)。`git diff --name-only <sha>`(HEAD 省略)なら出る。
+     未追跡の新規ファイルは両形とも 0 件。ただし未コミットは PR のコードに入らないので、問題は「コミットしてから push」の順で別に守られるか。→ 作業ツリーが dirty でも PR は作れる。ゲートが見ない(受容できる残余として ADR に書くべき)。
+  4) sha が HEAD の祖先でない(rebase / main の取り込み): `git diff <sha> HEAD` は 2 つの木の比較なので、取り込んだ他者の変更(src/m.rs)が全部出て**止まる**(偽陰性ではなく偽陽性)。復帰は run のやり直し。fail-closed 方向。main への追従 rebase が普通に起きるので、止まる頻度は低くない(⚠)。
+  5) sha を解決できない(gc / 別 clone): exit 128 `fatal: bad object`。調査書の制約2「判定不能として止める」は成立する(spawnSync の status を見る必要あり)。
+  6) merge commit: 木同士の比較なので間の変更は漏れない。Q2 の「merge commit を挟む履歴で漏れる形」は 2 点比較では**無い**(3 点比較 `sha...HEAD` や `git log` を使うと別)。
+  7) パスの除外: 接頭辞 `workspace/` で、`foo/workspace/x.rs` のような入れ子は除外してはならない(startsWith("workspace/") でルート直下のみ)。調査書は「パスの接頭辞での除外」としか書いておらず、ルート相対であることを明記していない(⚠)。
+この所見を偽にする手順: 1) を再現すればよい。`git diff --name-only --no-renames <sha> HEAD` を使えば偽にならない。
+
+[命題4] 「hook から scripts/verify-tree.mjs を動的 import すれば、全コマンドの起動は重くならない」
+判定: 壊せなかった(結論は真)。ただし理由の説明が過剰で、別の落とし穴がある
+実測(Windows・本機・3 回の中央値):
+  node -e 0                      約 54 ms
+  既存 hook (ls を 1 件)          約 77 ms
+  verify-tree.mjs の import      約 57 ms → 差分は数 ms。lib.mjs(729 行)も node 標準 3 つ(fs/path/child_process)しか import しない(lib.mjs:8-10)。
+  → 「重い import を頂上に置くと全コマンドが遅くなる」は、この対象については数 ms の話。動的 import を選ぶ本当の理由は**壊れ方**:静的 import だと verify-tree.mjs / lib.mjs の構文エラーや解決失敗が、全コマンドを exit 2 で止める(main の catch が全域に効く・pre-bash.mjs:441-445)。起動時間ではなく爆発半径で書くべき(⚠)。
+副作用: verify-tree.mjs は import で何も走らない(:340 は argv[1] と import.meta.url の一致を見る)。→ 壊せなかった。
+テスト環境: vitest.config.ts の include が `.claude/hooks/**` と `scripts/**` の両方を含む。同一 CI ジョブで走るので import は解決できる。hook の起動形は settings.json の `node "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pre-bash.mjs"`(絶対位置は project dir)なので、`new URL("../../scripts/verify-tree.mjs", import.meta.url)` で解決できる(cwd 依存にしない)。
+**別の落とし穴(⚠・重要)**: verify-tree.mjs の mainContext() は `process.cwd()` で git を打ち(:92)、linked worktree なら throw(:93-95)。hook は payload.cwd をセッションの cwd として使い、`process.cwd()` を信用しない(pre-bash.mjs:419-420 のコメント)。調査書の「export する純関数を hook が使う」は、mainContext をそのまま使えないことを書いていない。export すべきは「root と branch から要約パスを導く純関数」で、root/branch の導出は hook 側が payload.cwd で行う必要がある。
+この所見を偽にする手順: lib.mjs に top-level の重い処理があれば偽(無い)。
+
+[命題5] 「要約が無いときに止めると、既存 e2e の期待が変わる」以外に壊すもの
+判定: 壊せた(調査書の列挙は不足)
+(a) 単体テスト: pre-bash.test.mjs の `decide(` 呼び出しは 29 か所(調査書の数と一致)。新しい reader を第 5 引数に足し、**省略時の既定が allow だと、main() の配線忘れが緑のまま通る**(platform と同型の穴。pre-bash.mjs:281-286 が「配線はカナリアと e2e が固定」と書いている)。省略時は block に倒すか、source カナリア(`decide(` の呼び出しに新 reader が渡ること)を足すかを決めておくこと。調査書に無い。
+(b) e2e(:364-)の期待が変わるのは「安全な鎖は exit 0」「全項目チェック済み plan.md なら exit 0」の 2 本だけではない。「git リポジトリ外での gh pr create は exit 2」(:389)は元から block なので変わらない。一方、**e2e の temp dir は git repo ですらない**(mkdtempSync のみ)。新ゲートの肯定ケース(要約あり・sha 一致で exit 0)を作るには、本物の git repo + コミット + 要約 JSON の fixture が要る。単体テストが reader を注入するだけだと、本物の reader(ファイルと git を読む側)が壊れても分岐表は緑(測定環境の罠)。reader の実物は temp repo で通す e2e が最低 1 本要る。
+(c) ほかのスキル: `gh pr create` を打つのは /deps-update Step 4(:82)だけ(git grep 済み)。deps-update は道具を回していない(調査書の通り)。/retrospective・/start-issue は打たない。
+(d) 人間が手で打つ gh pr create: hook はこのリポジトリのセッション内だけ。人間が別端末で打つなら hook 外で影響なし。ただし `!` プレフィクスで打つ場合は Git Bash 経由でも hook を通る(feedback_bang_prefix_runs_bash)。docs-only の chore PR(governance 文書だけ)でも `verify:tree run`(E・F 常時 + 該当カテゴリ)を要求されるので、文書だけの PR にも A〜F の道具の木が必要になる。裁定が「例外なし」なので受容だが、手間の増分は計画に書くべき。
+(e) linked worktree からの PR: readPlanState は findUp(".git")で .git が**ファイル**の linked worktree でも root を linked tree にする。要約は `<main root>/.claude/worktrees/` にあり、verify-tree は linked worktree で run を拒否(:93)。→ linked worktree から PR を作ると復帰手順が適用できない(`run` が拒否する)デッドロック。今の SKILL では起こらないが、調査書は触れていない(⚠)。
+
+======================================================================
+B. 調査書の個別主張の判定(関連ファイル表・既存パターン・制約・疑問)
+======================================================================
+行番号は実物で確認した。
+
+関連ファイル表
+ - decide :308 / readPlanState :393 / findUp :377 / readGitState :349 / GIT_TIMEOUT_MS :42 / import :32-35  → 壊せなかった(行番号すべて一致)
+ - 「.claude/hooks から scripts を import している hook は無い(0 件)」→ 壊せなかった。`git grep scripts/ -- .claude/hooks` はコメントの言及のみ(lsp-config.mjs:15,102・test:629 の python 引数)。import は 0 件
+ - fail-closed の契約 → 壊せなかった(:12-15・:440-445)
+ - テスト行(decide( 29 か所・:364-)→ 壊せなかった(数は 29 で一致)。ただし「数え上げは腐る」ので正本を指すべき(AGENTS.md 検証の作法)
+ - 要約の書き手 cmdRun / slug の導出 → 壊せなかった(:98 と :206)
+ - 「今のままでは PR を作る時点で要約が無い」→ 命題1 の通り壊せなかった
+ - /implement Step 4 「撤去のコミットは workspace/ だけの差分なので照合を通る」→ **壊せた(F1)**
+ - /deps-update Step 4 :79-83 → 壊せなかった(実際は :80-83 が Step 4 見出し〜gh pr create)
+ - /retrospective は PR を作るか書いていない → 壊せなかった
+ - ルート CLAUDE.md:23 が偽になる → 壊せなかった(:23 の 1 行は未 push と plan だけを挙げる)。:24「gh pr create だけ」と、docs/hooks.md の見出し(plan.md ゲート箇条の隣)も更新対象になる
+ - docs/hooks.md の新ゲート箇条 → 壊せなかった。ただし hooks.md:14 の「見ない形」一覧に `gh.exe` が無いのは既存の穴(命題2)
+
+既存パターン
+ - reader 注入と { ok, … } → 壊せなかった
+ - 要約パスを verify-tree の mainContext で導く → ⚠(命題4 の落とし穴。mainContext は process.cwd() と linked worktree 拒否を持つので、そのまま import しても使えない。純関数の切り出しが要る)
+ - git diff --name-only <sha> HEAD → **壊せた**(`--no-renames` が要る・命題3)
+
+技術的制約 1〜7
+ 1. 要約は PR 時点まで残す(summary.json を残し log だけ消す)→ 壊せなかった。ただし test :365-366 の改訂が要る(命題1)
+ 2. 古い要約が残る → 壊せなかった。補足: 同名ブランチを再度切ると前の要約が見えるが、`branch` 照合と sha 照合で止まる。sha が解決できなければ git が exit 128 を返すので status を見る
+ 3. slug の衝突 → 壊せなかった(`feat/a-b` と `feat-a/b` はどちらも `feat-a-b`。`branch` の一致照合で防げる)
+ 4. hasSafeChain より前 → 壊せなかった(命題2 の限定つきで真)
+ 5. 検出後だけで走らせる → 壊せなかった(ただし理由は速度でなく爆発半径・命題4)
+ 6. e2e の期待が変わる → 壊せなかった(命題5 で不足を補う)
+ 7. 照合は道具の A〜F に限る(ADR に残す残余)→ 壊せなかった。残余の中身を具体化すべき: (i) 要約の categories_run が狭くても sha が一致すれば通る(最後の run が `--categories A` だけでも通る)。(ii) status が red でも通る(Q1)。(iii) 道具を回さず sha だけ書き換えた要約でも通る(要約は自己申告・hook は検証できない)
+
+未解決の疑問
+ - Q1 status=red でも止めるか → 裁定「sha だけ」に従えば red でも通る。これは**赤のまま PR になる**を許す。裁定どおりなら ADR に残余として書く。⚠(裁定の解釈が割れる箇所なので確認価値あり)
+ - Q2 2 点比較で merge commit を挟む漏れ → 壊せなかった側の答え: 漏れない(命題3-6)。むしろ偽陽性(rebase 後)の方が問題
+ - Q3 --out を使う経路は今あるか → 答え: リポジトリ内に**無い**。skills・docs・test のどこにも `--out` を渡す呼び出しが無い(`git grep -e --out`)。cmdRun は受け付けるが、実用経路は既定の置き場だけ
+ - Q4 PR 作成後のコミット(#1302 eef7a7aa 型)は射程外 → 壊せなかった。pre-bash は gh pr create の瞬間にしか効かない。ここは /merge-pr 側の話で、別 issue 相当
+ - Q5 clean:worktrees が存在しないブランチの要約を消すか → 答え: **消さない**。scripts/clean-worktrees.mjs は "summary" を扱っていない(grep 0 件)。要約を残す設計にすると、gitignore 済みの小さな JSON がブランチごとに溜まる(害は小さい)。ただし今は remove が消すことで暗黙に掃除されていた点を調査書は書いていない
+
+======================================================================
+C. 調査書が見落としていた所見
+======================================================================
+
+F1 [壊せた・重要] Step 4 の ADR 回収コミットは workspace/ 以外の差分になる
+  - 調査書(research.md:28)は「撤去のコミットは workspace/ だけの差分なので照合を通る」と書くが、同じ Step 4 の 2 つ目の箇条が `docs/adr/ADR-<slug>.md` の新規作成(コミット)を求める(SKILL.md:142)。ADR は workspace/ の外。
+  - Step 4 の順は「remove → ADR 回収 → plan.md 最終状態コミット → git rm -r workspace/」(SKILL.md:140-144)。ADR コミットは最後の run より**後**に載る。
+  - よって否定の知識が生じたサイクル(=ADR を起こすサイクル。#1302 自身がそう:cd2b91a6 は ADR)は、「例外なし」の裁定の下で**必ず止まる**。復帰手順は run のやり直しだが、remove が先に木を消しているので cold の木を作り直す(ADR だけの追加に A〜F を全部回す)。
+  - 取り得る帰結(裁定の範囲で): (i) ADR を remove より前に書かせる順序へ SKILL を直す。(ii) docs/adr/ も除外に含める(これは「workspace/ 以外の差分があれば必ず止める」と矛盾=例外の追加)。どちらにするかは調査書に無い。
+  - この所見を偽にする手順: ADR を起こさないサイクルでは起きない(偽)。
+
+F2 [壊せた] remove の「要約を残す」変更は、残す範囲の定義を要する
+  - 木と log は消して summary.json だけ残すなら、summary.json の `worktree` / `log` フィールドが消えたパスを指す(cmdRun:225,233)。読み手が増える(hook)ので、消えた木への参照が残ることを仕様に書く。
+
+F3 [⚠] 拒否文言の復帰手順
+  - 調査書の復帰手順は `npm run verify:tree -- run --sha HEAD`。run は本体の作業ツリーが clean であることを要求し(:186-187)、`workspace/` が未追跡だと dirty で拒否される(現に git status は `?? workspace/`)。/implement の流れでは plan.md を commit 済みのはずだが、`gh pr create` を打つ時点で workspace/ を未追跡のまま置く人(計画なしタスクで workspace/ を使う等)には復帰手順が適用できない。拒否文言に「先にコミットする」を足すか判断が要る。
+
+F4 [⚠] 測定環境
+  - `.claude/worktrees/` は今、空(ls 済み・Oct 25 16:13 に作られた空ディレクトリ)。つまり**本物の要約ファイルは今存在しない**ので、reader の実物を本物の要約で確かめることは今はできない。調査書の前提(要約は gitignore 済み .claude/worktrees/ に既定で書かれる)は、.gitignore:22 `.claude/worktrees/` と `git check-ignore -v` で確認できた(→ 前提は真)。
+  - hook の起動形(settings.json)は `node "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pre-bash.mjs"`、timeout 30。静的に読むと調査の前提と一致する。新ゲートは git を 1〜2 回呼ぶ(diff)ので GIT_TIMEOUT_MS(10 秒)を再利用し、30 秒の hook timeout に収まる。
+
+======================================================================
+D. 一覧(壊せた / 壊せなかった / ⚠)
+======================================================================
+壊せた:
+  - 命題2 「すべての gh pr create 経路」→ `gh.exe pr create` と gh api 経由は検出されない
+  - 命題3 `git diff --name-only <sha> HEAD` → rename(src→workspace)で偽陰性。`--no-renames` が必須
+  - 命題5 e2e/単体の影響範囲の列挙 → 単体の省略時既定が allow だと配線忘れが緑のまま・e2e の temp dir が git repo でない
+  - F1 「撤去のコミットは workspace/ だけ」→ ADR 回収コミットが workspace/ の外(Step 4 が同じ節で求める)
+  - F2 remove 後の summary.json が消えたパスを指す
+壊せなかった:
+  - 命題1 / 命題4 の結論 / 関連ファイル表の行番号と所在 / 制約 1〜7 / Q4 / 要約パスの導出元(mainContext の slug)
+⚠:
+  - 命題2: grep の引数にある `|gh pr create` の誤発火で、要約必須の拒否が無関係な操作に出る
+  - 命題3: rebase/main 取り込み後の偽陽性(復帰=run のやり直し)。入れ子の workspace/ を除外しない書き方
+  - 命題4: 動的 import の理由は起動時間でなく爆発半径。mainContext は process.cwd() と linked worktree 拒否を持つので hook でそのまま使えない
+  - 命題5(e): linked worktree からの PR はデッドロック
+  - Q1: red でも通る(裁定の解釈)。制約7の残余の具体化(categories_run が狭くても通る・自己申告の要約)
+  - F3: run が要求する clean な本体と、未追跡 workspace/ の衝突
+  - F4: .claude/worktrees/ は空で、本物の要約での reader 実測は未実施(推測で書いた部分は無いが、実物の要約を読む検証はできなかった)
+
+使い捨て repo は /tmp 配下(本体の作業ツリー・ライブの hook には触れていない)。probe スクリプトは scratchpad に置いた。

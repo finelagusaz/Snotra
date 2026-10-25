@@ -186,11 +186,11 @@ describe("listUntracked（未追跡ファイルを 1 件ずつ・quote せずに
   // 実物の git を返す fake。`--short` を素で打つと、新ディレクトリは `?? newdir/` の 1 行に畳まれ
   // `core.quotePath=true`（git の既定）では日本語パスが `"\346..."` になる——どちらも SOURCE_EXT に合わず
   // 中のファイルが黙って落ちた（#1300 の作業中に一時リポジトリで実測。追跡の変更と同居すると exit 0 で ① 0 件）。
+  // 引数の列を丸ごと固定する——`--porcelain=v2` は未追跡を `? path` で出すので、フラグの有無だけを見る
+  // fake では全件が落ちる変異を緑のまま通した（824ec52c のレビュー）
   const fakeGit = (args) => {
-    const full = args.includes("--untracked-files=all") && args.includes("-z");
-    return full
-      ? " M lib.rs\0?? newdir/a.rs\0?? 新規.rs\0?? notes.txt\0"
-      : ' M lib.rs\n?? newdir/\n?? "\\346\\226\\260\\350\\246\\217.rs"\n?? notes.txt\n';
+    expect(args).toEqual(["status", "--porcelain", "-z", "--untracked-files=all"]);
+    return " M lib.rs\0?? newdir/a.rs\0?? 新規.rs\0?? notes.txt\0";
   };
   const run = (...a) => fakeGit(a);
 

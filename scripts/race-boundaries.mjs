@@ -19,6 +19,7 @@
 // - 分類本体は入力注入の純関数（scripts/race-boundaries.test.mjs がフィクスチャで検証する）
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 /** 種別表（序数・名称・パターンの SSOT。#894 以前は SKILL.md 側に写しの表があった）。
  *  **序数 ①〜⑧ は書き換えない** — `docs/adr/ADR-race-check-predicate-and-norm-hardening.md` `docs/adr/ADR-check-skill-skeleton.md`
@@ -187,9 +188,12 @@ function main() {
   // `main...HEAD` を使わないのも同じ理由である（SKILL 段 1・実測 183 行 vs 139 行）。
   const rows = parseDiff(git("diff", "-U0", mergeBase));
   const untracked = listUntracked(git);
+  // `--porcelain` のパスは cwd に依らずルート相対である（`--short` は cwd 相対だった）。cwd 相対で開くと
+  // サブディレクトリから打ったとき件数だけ数えて中身が落ちる（実測）
+  const top = git("rev-parse", "--show-toplevel").trim();
   const readFile = (f) => {
     try {
-      return fs.readFileSync(f, "utf8");
+      return fs.readFileSync(path.join(top, f), "utf8");
     } catch {
       return null;
     }

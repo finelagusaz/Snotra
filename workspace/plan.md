@@ -76,9 +76,9 @@
 ## 作業項目
 
 ### Phase 1 — verify-tree
-- [ ] `summaryPathFor` と `remove` の新しい挙動のテストを書き、今の実装で Red になることを確かめる
-- [ ] `summaryPathFor` を export し、`mainContext` をそれへ寄せる
-- [ ] `remove` を、要約を残して `removed_at` を書き、ログだけを消す形にする
+- [x] `summaryPathFor` と `remove` の新しい挙動のテストを書き、今の実装で Red になることを確かめる
+- [x] `summaryPathFor` を export し、`mainContext` をそれへ寄せる
+- [x] `remove` を、要約を残して `removed_at` を書き、ログだけを消す形にする
 
 ### Phase 2 — pre-bash
 - [ ] 新しい分岐表のテストと e2e を書き、今の実装で Red になることを確かめる

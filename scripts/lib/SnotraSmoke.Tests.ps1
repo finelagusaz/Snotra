@@ -42,6 +42,16 @@ BeforeDiscovery {
     } catch {
         Write-Host "[#866] セッションのロック状態: 判定不能（$($_.Exception.Message)）— Integration は実行する"
     }
+
+    # 既定 ExePath の検査の母集団（#1293）。**discovery 相で作る**——`-ForEach` は discovery で展開されるので、
+    # BeforeAll で作った値は届かない。母集団の意味と射程は当該 Describe のヘッダが正本。
+    # `-Filter '*.ps1'` は Win32 の照合で `.ps1xml` にも当たりうるので、拡張子で絞る。
+    $harnessCodeLines = @{}
+    foreach ($script in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..') -File | Where-Object Extension -eq '.ps1') {
+        $harnessCodeLines[$script.Name] = @(Get-Content -LiteralPath $script.FullName | Where-Object { $_ -notmatch '^\s*#' })
+    }
+    $exePathHarnesses = @($harnessCodeLines.Keys | Where-Object { $harnessCodeLines[$_] -match '^\s*\[string\]\s*\$ExePath\s*=' } | Sort-Object)
+    $exePathMentions = @($harnessCodeLines.Keys | Where-Object { $harnessCodeLines[$_] -match '\$ExePath\b' } | Sort-Object)
 }
 
 Describe 'New-SnotraVerificationProfile' {
@@ -203,6 +213,37 @@ Describe 'Resolve-SnotraCargoExecutable' {
     }
 }
 
+Describe 'Get-SnotraRecordedExePath（#1293 公開される記録のパス）' {
+    BeforeAll {
+        $repositoryRoot = Join-Path $TestDrive 'repo'
+    }
+
+    It 'リポジトリの下の絶対パスはリポジトリ相対になる' {
+        Get-SnotraRecordedExePath -ExePath (Join-Path $repositoryRoot 'target/debug/snotra.exe') -RepositoryRoot $repositoryRoot |
+            Should -Be (Join-Path 'target' (Join-Path 'debug' 'snotra.exe'))
+    }
+
+    It '前方一致するだけの兄弟ディレクトリはリポジトリの外として扱い、そのまま返す' {
+        $sibling = Join-Path "${repositoryRoot}2" 'snotra.exe'
+        Get-SnotraRecordedExePath -ExePath $sibling -RepositoryRoot $repositoryRoot | Should -Be $sibling
+    }
+
+    It 'リポジトリの外の絶対パスはそのまま返す（明示された値）' {
+        $outside = Join-Path $TestDrive 'elsewhere/snotra.exe'
+        Get-SnotraRecordedExePath -ExePath $outside -RepositoryRoot $repositoryRoot | Should -Be $outside
+    }
+
+    It '相対パスはそのまま返す（明示された値で、cwd 相対の意味を変えない）' {
+        Get-SnotraRecordedExePath -ExePath 'target/debug/snotra.exe' -RepositoryRoot $repositoryRoot | Should -Be 'target/debug/snotra.exe'
+    }
+
+    It '空なら $null を返す' {
+        # `Should -BeNullOrEmpty` は空文字も通すので使わない（空文字をそのまま返す実装で緑になった・実測）。
+        $recorded = Get-SnotraRecordedExePath -ExePath '' -RepositoryRoot $repositoryRoot
+        $null -eq $recorded | Should -BeTrue -Because "呼び出し側は `$null を見て「未起動」と書く"
+    }
+}
+
 Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピーから導かれる' {
     # **この性質を守る検査が他に無い**（#1179 で実測）。`$repoRoot` の導出を cwd 起点へ戻すと、
     # Pester も vitest も smoke 自身も**緑のまま** #1179 の欠陥（別の作業コピーを黙って測る）が
@@ -219,20 +260,28 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # ここで止める。実行時の最終値を追うにはハーネス自身を起動する検査が要り、別の費用の話になる。
     # 導出式の中身とプロファイルの置き場も同じく外。
     #
-    # **対象は数え上げているので、一覧に無いスクリプトには黙る。** 一覧は resolver の呼び出し元から
-    # 選んだため、直書きの既定を持ち resolver を呼ばないスクリプトは最初から候補に入らない
-    # （#1292: `smoke-egui.ps1` がこの形で #1179 の修正から外れていた。母集団を `$ExePath` の宣言から
-    # 導く形と、残る直書きは #1293）。`Resolve-SnotraCargoExecutable` の
-    # 呼び出し元のうち残る 2 本を外しているのは、**それぞれ別の理由**による（実測で確かめた）:
-    # `run-pester.ps1` は `-ExePath` に既定値を持たない（明示 override 専用ゆえ入口の述語が当たらない）、
-    # `visual-check-colors.ps1` は変数名が `$repositoryRoot` で `-ExePath` param 自体が無い。
+    # **対象は手で並べず、宣言から導く**（#1293・導出は `BeforeDiscovery`）。かつては resolver の
+    # 呼び出し元を手で並べており、直書きの既定を持ち resolver を呼ばないスクリプトは原理的に候補へ
+    # 入らなかった——#1292 の `smoke-egui.ps1` がこの形で #1179 の修正から外れた。直し損ねたものを
+    # 母集団に入れるには、**直した後の形ではなく、性質を持ちうる側**（既定つきの `$ExePath` の宣言）から取る。
+    #
+    # **導出と述語 (1) は同じ正規表現なので、盲点を共有する**（型無し・属性の前置・1 行の `param(...)` は
+    # どちらにも当たらない）。それを下の補集合の It が受け止める: `$ExePath` を語るスクリプトは、母集団か
+    # 理由つきの許可リストのどちらかに入らなければ赤になる（既知の対象を名指すだけのカナリアでは、
+    # 名指したもの以外が導出から脱落しても緑のまま）。**導出が 0 件なら Pester がコンテナごと
+    # 失敗させる**（空の `-ForEach` は既定で discovery エラー・実測）ので、件数の検査は置かない。
+    #
+    # **射程の外**（どれも、この Describe には映らない）:
+    # - `scripts/` 直下以外の `.ps1`。再帰にすると、補集合の検査でこのファイル自身が `$ExePath` を語る側に
+    #   当たり、許可リストへ自分を足すことになる（実測）。起動ハーネスは `package.json` から呼ばれる直下の入口である
+    # - `$ExePath` 以外の名前で本体のパスを持つ形（`-Exe` への改名を含む）。語が消えると補集合の検査にも映らない
+    # - `<# #>` のブロックコメント。コメントの除外は行頭の `#` しか見ないので、ヘルプの中に関数名や
+    #   行頭の `$repoRoot =` を書くと述語 (2)(3) が数える
     #
     # **`-ForEach` で渡す**（素の `foreach` を使わない）。Pester は discovery と run が別相で、
     # 素のループ変数はテスト**名**には展開されるのに `It` の本体では未設定になる——**壊れているのに
     # 正しくパラメータ化されて見える**（実測: `The variable '$harnessName' cannot be retrieved`）。
-    It '<_> の既定 ExePath は param から導出へ通り、repoRoot はスクリプト自身の位置から来る（#1179）' -ForEach @(
-        'bench-startup.ps1', 'smoke-egui.ps1', 'smoke-startup.ps1', 'visual-input-metrics.ps1'
-    ) {
+    It '<_> の既定 ExePath は param から導出へ通り、repoRoot はスクリプト自身の位置から来る（#1179）' -ForEach $exePathHarnesses {
         # コメント行は除く——除かないと「関数名に触れたコメントを 1 行足す」だけで赤くなり、
         # しかも文言が事実に反する（実測）。
         $harnessLines = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot "../$_") | Where-Object { $_ -notmatch '^\s*#' })
@@ -262,6 +311,21 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
         foreach ($call in $calls) {
             # `-RepositoryRoot:$repoRoot` のコロン記法も正当なので両方受ける。
             $call | Should -Match '-RepositoryRoot[:\s]\s*\$repoRoot' -Because "導出した repoRoot をそのまま渡すこと（別の値を渡すと #1179 が緑のまま復活する）"
+        }
+    }
+
+    # 上の It の母集団から漏れたものを拾う（#1293）。**同じ導出の結果を受け取る**——ここで正規表現を
+    # 書き直すと、片方だけ直したときに食い違う。
+    It '$ExePath を語る直下のスクリプトは、上の母集団か理由つきの許可リストに入る（#1293）' -ForEach @(
+        @{ Harnesses = $exePathHarnesses; Mentions = $exePathMentions }
+    ) {
+        $allowed = @{
+            'run-pester.ps1' = '既定を持たない明示 override 専用（既定の枝が無いので導出する対象が無い）'
+        }
+        $unexplained = @($Mentions | Where-Object { $_ -notin $Harnesses -and -not $allowed.ContainsKey($_) })
+        $unexplained | Should -BeNullOrEmpty -Because "既定つきの宣言として母集団に入らないのに `$ExePath を語るスクリプトは、宣言の書き方が導出から漏れたか、直書きの別経路を持つ（許可するなら理由を書く）"
+        foreach ($name in $allowed.Keys) {
+            $name | Should -BeIn $Mentions -Because "許可した '$name' が `$ExePath を語らなくなったなら、許可を消すこと（古い許可は次の漏れを隠す）"
         }
     }
 }

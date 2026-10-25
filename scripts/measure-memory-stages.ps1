@@ -14,7 +14,7 @@
   以後の SendKeys が Snotra ではなく別窓へ流れて標本が無言で無効になる（実際に踏んだ）。
 
   前提:
-  - release ビルド済み（既定 `target/release/snotra.exe`）
+  - release ビルド済み（既定は cargo の target から release 本体を導く。`CARGO_TARGET_DIR` に追随する）
   - `[hotkey]` が既定の `Ctrl+K` 系であること（段階 B の注入キーは下でハードコード）
   - `[general] auto_hide_on_focus_lost = false` は**推奨であって必須ではない**。上記の
     同一プロセス実行でフォーカスを保つため、`true` のままでも段階列は取れる（実測で
@@ -32,7 +32,8 @@
   段階 C で注入する検索クエリ。開発機の索引に一致する文字列を指定する。
 
 .PARAMETER ExePath
-  計測対象の実行ファイル。
+  計測対象の実行ファイル。空ならこのスクリプトが住むリポジトリの release 本体を導く。
+  明示した相対パスは cwd 相対のまま解釈する。
 
 .EXAMPLE
   npm run measure:memory:stages
@@ -41,15 +42,23 @@
 param(
     [string]$Label = '',
     [string]$Query = 'code',
-    [string]$ExePath = "$PSScriptRoot/../target/release/snotra.exe"
+    # 空なら release 本体を導く（#1179・#1293）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
+    [string]$ExePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
 
 $measure = Join-Path $PSScriptRoot 'measure-memory.ps1'
 if (-not (Test-Path $measure)) { throw "測定器が見つかりません: $measure" }
-if (-not (Test-Path $ExePath)) { throw "実行ファイルが見つかりません: $ExePath（release ビルド済みか確認）" }
+# 導出と存在の確認は、下の `Stop-Process -Name snotra` より前に済ませる——本体が無いのに
+# 実行中の snotra を落としてから止まる、という形を作らない。
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if (-not $ExePath) { $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile release }
+if (-not (Test-Path -LiteralPath $ExePath)) { throw "実行ファイルが見つかりません: $ExePath（先に cargo build --release -p snotra）" }
+$ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は resolver の doc）
+Write-Host "本体: $ExePath"
 
 # `&` = 同一プロセス実行（新コンソールを作らない）。フォーカスを保つための必須条件。
 function Invoke-Stage {

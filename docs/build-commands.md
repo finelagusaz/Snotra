@@ -226,11 +226,11 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 出力は区間ごとの min / p50 / max で、**最小値に畳まない**——このハーネスが答える問いは
 「起動が何 ms か」ではなく「分散がどの区間に住むか」だからである（詳細は PERFORMANCE.md）。
 
-`bench:startup`・`smoke:startup`・`smoke:egui` も既定の本体を `test:powershell` と同じ形で導く
-（`bench:startup` は release、他は debug）。**その起点は
+`-ExePath` の既定を持つ起動ハーネスも、既定の本体を `test:powershell` と同じ形で導く（対象の正本は
+`scripts/lib/SnotraSmoke.Tests.ps1` の既定 ExePath の検査、debug か release かは各スクリプトの既定）。**その起点は
 スクリプトが住むリポジトリであって cwd ではない**ので、worktree から既定のまま回せば worktree の
 本体を測る（#1179。以前は絶対パスが直書きされており、**別の作業コピーを黙って測りながら緑を
-返していた**）。測った本体の絶対パスはいずれも出力の先頭に出る。別の本体を指すときだけ
+返していた**）。測った本体の出し方は `Resolve-SnotraCargoExecutable` の doc が正本である。別の本体を指すときだけ
 `-ExePath <path>` を渡す——明示した相対パスは、これらでは（`test:powershell` と違い）
 cwd 相対のまま解釈される。
 

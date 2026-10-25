@@ -88,6 +88,7 @@ describe("isListedInPlan", () => {
   it("末尾も境界 — a.mdx は a.md の掲載にならない", () => {
     expect(isListedInPlan("a.md", "`a.mdx`")).toBe(false);
     expect(isListedInPlan("a.md", "`a.md`。")).toBe(true);
+    expect(isListedInPlan("a.md", "a.md\\x")).toBe(false);
   });
   it("行頭・バッククォート・空白の後は境界", () => {
     expect(isListedInPlan("AGENTS.md", "AGENTS.md を読む")).toBe(true);

@@ -1,0 +1,34 @@
+{
+  "sha": "c7ca8a557919f064be07da27c46386d0f44aea3c",
+  "branch": "chore/plan-review-prose-sweep",
+  "worktree": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-plan-review-prose-sweep",
+  "categories_requested": [
+    "E",
+    "F"
+  ],
+  "categories_run": [
+    "E",
+    "F"
+  ],
+  "also": [],
+  "handoff": [],
+  "status": "green",
+  "results": [
+    {
+      "category": "E",
+      "command": "npm test",
+      "exit": 0,
+      "started_at": "2026-10-25T10:09:07.502Z",
+      "ended_at": "2026-10-25T10:09:30.048Z"
+    },
+    {
+      "category": "F",
+      "command": "npm run governance:check",
+      "exit": 0,
+      "started_at": "2026-10-25T10:09:30.048Z",
+      "ended_at": "2026-10-25T10:09:30.689Z"
+    }
+  ],
+  "warnings": [],
+  "log": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-plan-review-prose-sweep.summary.log"
+}

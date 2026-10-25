@@ -114,7 +114,7 @@ describe("runGrep", () => {
   ])("%s は throw し、0 件の報告を作らない", (_, r) => {
     expect(() => runGrep("t", { cwd: ".", spawn: spawnReturning(r) })).toThrow();
   });
-  it("母集団の引数: -I・--untracked・-F・workspace 除外", () => {
+  it("母集団の引数: -I・--untracked・-F・--no-column・workspace 除外", () => {
     let args;
     runGrep("t", {
       cwd: ".",
@@ -123,7 +123,7 @@ describe("runGrep", () => {
         return { status: 1, stdout: "", stderr: "" };
       },
     });
-    expect(args).toEqual(expect.arrayContaining(["-I", "--untracked", "-F", "-z", "-e", "t", ":!workspace"]));
+    expect(args).toEqual(expect.arrayContaining(["-I", "--untracked", "-F", "-z", "--no-column", "-e", "t", ":!workspace"]));
   });
 });
 

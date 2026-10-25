@@ -84,8 +84,9 @@ export function isListedInPlan(file, planText) {
   return new RegExp(`(^|[^A-Za-z0-9_./\\\\-])${esc}(?![A-Za-z0-9_/\\\\-])`, "m").test(planText);
 }
 
-/** `git grep` の母集団の引数（語を除く）。見出し行もここから作る——写しを置くと引数だけが変わる。 */
-export const GREP_FLAGS = ["-I", "--untracked", "-n", "-z", "-F", "--no-color"];
+/** `git grep` の母集団の引数（語を除く）。見出し行もここから作る——写しを置くと引数だけが変わる。
+ *  `--no-column`: `grep.column=true` の設定で欄が 1 つ増え、桁番号と NUL が本文へ混ざった（セルフレビューが実測）。 */
+export const GREP_FLAGS = ["-I", "--untracked", "-n", "-z", "-F", "--no-color", "--no-column"];
 export const GREP_PATHSPEC = [".", ":!workspace"];
 
 /** 1 語ぶんの `git grep`。cwd はリポジトリルートを渡す（pathspec `.` は cwd 相対で、サブディレクトリから

@@ -51,13 +51,19 @@ export function isCommentLine(text) {
   return /^\s*(\/\/|\/\*|\*[\s/]|#)/.test(text);
 }
 
+/** 差分を読めない、または照合が食い違った（設定や git の版が出力の形を変えた）。main が exit 3 にする。 */
+export class DiffShapeError extends Error {}
+
 /** unified diff（`diff-index -p -U0`）を [{ file, sign, text }] へ分解する。
- *  `+++ b/<path>` をファイル名の起点にする（`--- a/<path>` は削除専用ファイルでも同じ値を持つ）。
+ *  ファイル名は `+++ b/<path>`、削除されたファイル（`+++ /dev/null`）だけ `--- a/<path>` から取る——
+ *  消えた行を母集団へ入れるかは `selectPopulation` の `--include-removed` だけが決める。
+ *  以前は削除されたファイルの行を捨てており、ファイルごと消した worker が廃止の検査に映らなかった（セルフレビューが実測）。
  *  hunk の本文は `@@ -a,b +c,d @@` が宣言した行数だけ読む——接頭辞で見分けると、`++ ` で始まる追加行
  *  （patch では `+++ …`）をヘッダと誤ってファイル名を切り替えた（委譲レビューが本物の git で実測）。 */
 export function parseDiff(diffText) {
   const rows = [];
   let file = null;
+  let oldFile = null;
   let oldLeft = 0;
   let newLeft = 0;
   for (const line of diffText.split("\n")) {
@@ -83,12 +89,27 @@ export function parseDiff(diffText) {
     if (hunk) {
       oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]);
       newLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    } else if (line.startsWith("--- ")) {
+      const t = line.slice(4).trim();
+      oldFile = t === "/dev/null" ? null : t.replace(/^a\//, "");
     } else if (line.startsWith("+++ ")) {
       const t = line.slice(4).trim();
-      file = t === "/dev/null" ? null : t.replace(/^b\//, "");
+      file = t === "/dev/null" ? oldFile : t.replace(/^b\//, "");
     }
   }
   return rows;
+}
+
+/** 削除されたバイナリのパス。patch は `Binary files a/<path> and /dev/null differ` の 1 行だけを出し
+ *  （plumbing ゆえ接頭辞の設定に依らない・実測）、numstat は変更されたバイナリと同じ `-\t-` を出す。
+ *  名前が化けていれば集合に入らず、照合がバイナリ扱いのソースとして止める（fail-closed）。 */
+export function deletedBinaryPaths(diffText) {
+  const out = new Set();
+  for (const line of diffText.split("\n")) {
+    const m = /^Binary files a\/(.+) and \/dev\/null differ$/.exec(line);
+    if (m) out.add(m[1]);
+  }
+  return out;
 }
 
 /** `diff-index -M --numstat -z` を Map(新しいパス → { add, del }) へ分解する。バイナリ（`-`）は null。
@@ -99,12 +120,12 @@ export function parseNumstatZ(out) {
   for (let i = 0; i < fields.length; i++) {
     if (fields[i] === "" && i === fields.length - 1) break;
     const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(fields[i]);
-    if (!m) throw new Error(`numstat の項目を読めない: ${JSON.stringify(fields[i])}`);
+    if (!m) throw new DiffShapeError(`numstat の項目を読めない: ${JSON.stringify(fields[i])}`);
     let file = m[3];
     if (file === "") {
       file = fields[i + 2];
       i += 2;
-      if (file === undefined || file === "") throw new Error("numstat の rename に新しいパスが無い");
+      if (file === undefined || file === "") throw new DiffShapeError("numstat の rename に新しいパスが無い");
     }
     map.set(file, m[1] === "-" ? null : { add: Number(m[1]), del: Number(m[2]) });
   }
@@ -113,9 +134,10 @@ export function parseNumstatZ(out) {
 
 /** patch から解いた行と numstat の行数の食い違い（空なら一致）。別経路の 2 つの出力を突き合わせるので、
  *  ヘッダの形が変わって名前が化けた・行が落ちた形を、形の種類を列挙せずに捕まえる。
- *  削除されたファイル（`deleted`・`+++ /dev/null`）は patch 側が行を生まないので問わない。それ以外で
- *  バイナリ扱いのソース（`-diff` 属性など）は中身を見られないので食い違いとして出す（委譲レビューが実測）。 */
-export function diffMismatches(rows, numstat, deleted = new Set()) {
+ *  削除されたファイルの行も旧パスで patch 側に現れるので、同じ照合に載る。
+ *  バイナリ扱いのソース（`-diff` 属性など）は中身を見られないので、削除されたもの（`deletedBinaries`）を除いて
+ *  食い違いとして出す（委譲レビューが実測）。 */
+export function diffMismatches(rows, numstat, deletedBinaries = new Set()) {
   const parsed = new Map();
   for (const r of rows) {
     const c = parsed.get(r.file) ?? { add: 0, del: 0 };
@@ -132,10 +154,7 @@ export function diffMismatches(rows, numstat, deleted = new Set()) {
     }
   }
   for (const [file, n] of numstat) {
-    // 外して失う照合が無いのは、削除されたファイルの行を母集団へ入れない設計（`+++ /dev/null`）だからである。
-    // `--include-removed` でそれらの行を入れるように変えるなら、この除外は欠落を隠す
-    if (deleted.has(file)) continue;
-    if (n === null && SOURCE_EXT.test(file)) out.push(`${file}: バイナリ扱いで中身を見られない（.gitattributes の -diff 等）`);
+    if (n === null && SOURCE_EXT.test(file) && !deletedBinaries.has(file)) out.push(`${file}: バイナリ扱いで中身を見られない（.gitattributes の -diff 等）`);
     else if (n !== null && n.add + n.del > 0 && !parsed.has(file)) {
       out.push(`${file}: numstat の +${n.add}/-${n.del} 行が patch に無い`);
     }
@@ -143,22 +162,15 @@ export function diffMismatches(rows, numstat, deleted = new Set()) {
   return out;
 }
 
-/** 照合が食い違った（設定や git の版が出力の形を変えた）。main が exit 3 にする。 */
-export class DiffShapeError extends Error {}
-
-/** 追跡ファイルの差分行（作業ツリー対 mergeBase）。porcelain の `git diff` は出力の形が設定と cwd で変わり
- *  （quotePath・relative・mnemonicPrefix・noprefix・color・external）、6 形とも行が**黙って**落ちた（#1300 の作業中に
- *  一時リポジトリで実測）。plumbing の `diff-index` は残る quotePath 以外を無視する。照合の相手も plumbing にする——
+/** 追跡ファイルの差分行（作業ツリー対 mergeBase）。porcelain の `git diff` は出力の形が設定と cwd で変わり、
+ *  行が**黙って**落ちた（形を変えた設定はテストの `CONFIGS` が持つ・#1300 の作業中に一時リポジトリで実測）。
+ *  plumbing の `diff-index` は quotePath 以外を無視する。照合の相手も plumbing にする——
  *  porcelain の `--numstat` は `diff.relative` で patch と同じだけ狭まり、黙って一致した（実測）。 */
 export function readTrackedRows(git, mergeBase) {
-  const rows = parseDiff(git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase));
+  const patch = git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase);
+  const rows = parseDiff(patch);
   const numstat = parseNumstatZ(git("-c", "core.quotePath=false", "diff-index", "-M", "--numstat", "-z", mergeBase));
-  const deleted = new Set(
-    git("-c", "core.quotePath=false", "diff-index", "-M", "--name-only", "--diff-filter=D", "-z", mergeBase)
-      .split("\0")
-      .filter((p) => p !== ""),
-  );
-  const bad = diffMismatches(rows, numstat, deleted);
+  const bad = diffMismatches(rows, numstat, deletedBinaryPaths(patch));
   if (bad.length > 0) throw new DiffShapeError(bad.join("\n"));
   return rows;
 }

@@ -23,7 +23,7 @@ issue・`workspace/plan.md`・必要なコードと規範を読み、次を主�
 4. `SPEC.md` と関連文書の更新要否が正しい
 5. `## 未確定（実装前に潰す）` に未チェック項目が残っていない
 6. タスク分割の境界が `AGENTS.md`「条件別チェック（トリガー → 参照先）」の既存トリガーを跨いでいない（とくに「新 API の導入と呼び出し点の移行は 1 タスクに束ねる」——分割すると `-D warnings` 下で中間状態が `dead_code` で落ちる）
-7. 変更で偽になる散文（doc comment・`CLAUDE.md`・`SPEC.md` の記述）を含むファイルが変更ファイル一覧に載っている——変更する識別子と、その変更を指す概念ラベル（概念 1 つにつき 1 語で有界）を Bash ツールで `npm run prose:sweep -- --plan workspace/plan.md <語>...` へ渡し、`★未掲載`（計画が一度も名指していないファイル）を 1 件ずつ裁く（PowerShell 経由の `npm run` では `--plan` が黙って落ちた・`docs/build-commands.md`「Windows/macOS/Linux で実行可能」）。手で打つ grep で代えない——切り詰め（`head` / `--include`）が漏れの原因として記録されている（#1142・#1182）。0 件の語は言い換えて打ち直す（ラベルの外れ・物理改行の跨ぎでも 0 になる）。見出し行の件数を `/start-issue`「5b. セルフレビュー（plan-review 固有の補完）」の欄へ渡す
+7. 変更で偽になる散文（doc comment・`CLAUDE.md`・`SPEC.md` の記述）を含むファイルが変更ファイル一覧に載っている——変更する識別子と、その変更を指す概念ラベル（概念 1 つにつき 1 語で有界）を Bash ツールで `npm run prose:sweep -- --plan workspace/plan.md <語>...` へ渡し、`★未掲載`（計画が一度も名指していないファイル）を 1 件ずつ裁く（PowerShell からの打ち方は `docs/build-commands.md`「Windows/macOS/Linux で実行可能」）。手で打つ grep で代えない——切り詰め（`head` / `--include`）が漏れの原因として記録されている（#1142・#1182）。0 件の語は言い換えて打ち直す（ラベルの外れ・物理改行の跨ぎでも 0 になる）。見出し行の件数を `/start-issue`「5b. セルフレビュー（plan-review 固有の補完）」の欄へ渡す
 
 不一致は、答えが決まっていれば計画を修正し、調査や裁定が要るなら未確定欄へ追加する。
 

@@ -69,9 +69,14 @@ export function parseDiff(diffText) {
         oldLeft--;
         if (file) rows.push({ file, sign: "-", text: line.slice(1) });
       } else if (line.startsWith(" ")) {
+        // context 行。`-U0` では出ないが、宣言の行数を正しく減らすために読む
         oldLeft--;
         newLeft--;
-      } // `\ No newline at end of file` は数えない
+      } else if (!line.startsWith("\\")) {
+        // `\ No newline at end of file` 以外がここに来るのは宣言より行が少ない壊れた hunk——次のファイルの
+        // ヘッダを前のファイルの本文として読まずに止める（委譲レビューが単体で実測）
+        throw new DiffShapeError(`hunk の宣言より本文が短い: ${JSON.stringify(line)}`);
+      }
       continue;
     }
     const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
@@ -108,9 +113,9 @@ export function parseNumstatZ(out) {
 
 /** patch から解いた行と numstat の行数の食い違い（空なら一致）。別経路の 2 つの出力を突き合わせるので、
  *  ヘッダの形が変わって名前が化けた・行が落ちた形を、形の種類を列挙せずに捕まえる。
- *  削除されたファイル（`+++ /dev/null`）は patch 側が行を生まないので、追加 0 の項目は欠落を問わない。
+ *  削除されたファイル（`deleted`・`+++ /dev/null`）は patch 側が行を生まないので問わない。それ以外で
  *  バイナリ扱いのソース（`-diff` 属性など）は中身を見られないので食い違いとして出す（委譲レビューが実測）。 */
-export function diffMismatches(rows, numstat) {
+export function diffMismatches(rows, numstat, deleted = new Set()) {
   const parsed = new Map();
   for (const r of rows) {
     const c = parsed.get(r.file) ?? { add: 0, del: 0 };
@@ -127,8 +132,11 @@ export function diffMismatches(rows, numstat) {
     }
   }
   for (const [file, n] of numstat) {
+    if (deleted.has(file)) continue;
     if (n === null && SOURCE_EXT.test(file)) out.push(`${file}: バイナリ扱いで中身を見られない（.gitattributes の -diff 等）`);
-    else if (n !== null && n.add > 0 && !parsed.has(file)) out.push(`${file}: numstat の +${n.add} 行が patch に無い`);
+    else if (n !== null && n.add + n.del > 0 && !parsed.has(file)) {
+      out.push(`${file}: numstat の +${n.add}/-${n.del} 行が patch に無い`);
+    }
   }
   return out;
 }
@@ -143,7 +151,12 @@ export class DiffShapeError extends Error {}
 export function readTrackedRows(git, mergeBase) {
   const rows = parseDiff(git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase));
   const numstat = parseNumstatZ(git("-c", "core.quotePath=false", "diff-index", "-M", "--numstat", "-z", mergeBase));
-  const bad = diffMismatches(rows, numstat);
+  const deleted = new Set(
+    git("-c", "core.quotePath=false", "diff-index", "-M", "--name-only", "--diff-filter=D", "-z", mergeBase)
+      .split("\0")
+      .filter((p) => p !== ""),
+  );
+  const bad = diffMismatches(rows, numstat, deleted);
   if (bad.length > 0) throw new DiffShapeError(bad.join("\n"));
   return rows;
 }

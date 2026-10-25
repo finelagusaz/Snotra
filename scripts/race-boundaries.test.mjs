@@ -90,6 +90,16 @@ describe("parseDiff", () => {
     ]);
   });
 
+  it("context 行は宣言の両側から 1 行ずつ減らし、本文の行にしない", () => {
+    const d = ["+++ b/x.rs", "@@ -1,2 +1,2 @@", " keep", "-old", "+new", "+++ b/y.rs", "@@ -0,0 +1 @@", "+b"].join("\n");
+    expect(parseDiff(d).map((r) => `${r.file}:${r.sign}${r.text}`)).toEqual(["x.rs:-old", "x.rs:+new", "y.rs:+b"]);
+  });
+
+  it("宣言より本文が短い壊れた hunk は、次のファイルのヘッダを本文にせず止める", () => {
+    const d = ["+++ b/x.rs", "@@ -0,0 +1,3 @@", "+a", "diff --git a/y.rs b/y.rs", "+++ b/y.rs"].join("\n");
+    expect(() => parseDiff(d)).toThrow(DiffShapeError);
+  });
+
   it("hunk の宣言を越えた行は本文として読まない", () => {
     const d = ["+++ b/x.rs", "@@ -0,0 +1 @@", "+a", "\\ No newline at end of file", "+++ b/y.rs", "@@ -0,0 +1 @@", "+b"].join("\n");
     expect(parseDiff(d).map((r) => `${r.file}:${r.text}`)).toEqual(["x.rs:a", "y.rs:b"]);
@@ -103,9 +113,9 @@ describe("parseDiff", () => {
 
 describe("parseNumstatZ（`diff-index -M --numstat -z` の形は一時リポジトリで実測した）", () => {
   it("通常・rename・バイナリを新しいパスで引く", () => {
-    const out = "2\t0\tplain.rs\u0000" + "1\t0\t\u0000old.rs\u0000new.rs\u0000" + "-\t-\tb.rs\u0000" + "1\t0\t既存.rs\u0000";
+    const out = "2\t3\tplain.rs\u0000" + "1\t0\t\u0000old.rs\u0000new.rs\u0000" + "-\t-\tb.rs\u0000" + "1\t0\t既存.rs\u0000";
     expect([...parseNumstatZ(out)]).toEqual([
-      ["plain.rs", { add: 2, del: 0 }],
+      ["plain.rs", { add: 2, del: 3 }],
       ["new.rs", { add: 1, del: 0 }],
       ["b.rs", null],
       ["既存.rs", { add: 1, del: 0 }],
@@ -129,8 +139,12 @@ describe("diffMismatches（patch と numstat を別経路で照合する）", ()
 
   it("名前と行数がそろえば空（削除されたファイル・ソースでないバイナリは問わない）", () => {
     const rows = [...add("a.rs", 2), ...del("a.rs", 1), ...add("既存.rs", 1)];
-    const numstat = new Map([["a.rs", ns(2, 1)], ["既存.rs", ns(1)], ["gone.rs", ns(0, 4)], ["icon.png", null]]);
-    expect(diffMismatches(rows, numstat)).toEqual([]);
+    const numstat = new Map([["a.rs", ns(2, 1)], ["既存.rs", ns(1)], ["gone.rs", ns(0, 4)], ["v.ts", null], ["icon.png", null]]);
+    expect(diffMismatches(rows, numstat, new Set(["gone.rs", "v.ts"]))).toEqual([]);
+  });
+
+  it("削除されていないファイルの削除行が丸ごと落ちたら捕まえる", () => {
+    expect(diffMismatches([], new Map([["a.rs", ns(0, 2)]]))).toHaveLength(1);
   });
 
   it("quote・接頭辞で化けた名前を捕まえる", () => {
@@ -288,15 +302,23 @@ describe("listUntracked（未追跡ファイルを 1 件ずつ・quote せずに
 describe("readTrackedRows（plumbing の 2 経路を照合する）", () => {
   const PATCH = ["-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", "mb"];
   const NUMSTAT = ["-c", "core.quotePath=false", "diff-index", "-M", "--numstat", "-z", "mb"];
-  const fakeGit = (patch, numstat) => (...args) => {
+  const DELETED = ["-c", "core.quotePath=false", "diff-index", "-M", "--name-only", "--diff-filter=D", "-z", "mb"];
+  const fakeGit = (patch, numstat, deleted = "") => (...args) => {
     if (JSON.stringify(args) === JSON.stringify(PATCH)) return patch;
     if (JSON.stringify(args) === JSON.stringify(NUMSTAT)) return numstat;
+    if (JSON.stringify(args) === JSON.stringify(DELETED)) return deleted;
     throw new Error(`想定外の引数: ${JSON.stringify(args)}`);
   };
 
   it("引数の列を固定し、照合がそろえば行を返す", () => {
     const rows = readTrackedRows(fakeGit("+++ b/a.rs\n@@ -0,0 +1 @@\n+x\n", "1\t0\ta.rs\u0000"), "mb");
     expect(rows).toEqual([{ file: "a.rs", sign: "+", text: "x" }]);
+  });
+
+  it("削除されたファイルは 3 本目の呼び出しで知り、照合で問わない", () => {
+    const patch = "+++ /dev/null\n@@ -1 +0,0 @@\n-x\n";
+    expect(readTrackedRows(fakeGit(patch, "-\t-\tv.ts\u0000", "v.ts\u0000"), "mb")).toEqual([]);
+    expect(() => readTrackedRows(fakeGit(patch, "-\t-\tv.ts\u0000", ""), "mb")).toThrow(DiffShapeError);
   });
 
   it("食い違えば DiffShapeError（main が exit 3 にする）", () => {
@@ -325,7 +347,8 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
   const env = (extra = {}) => ({ ...process.env, GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: "1", ...extra });
   const g = (...a) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: top, stdio: "pipe", env: env() });
   const write = (f, s) => fs.writeFileSync(path.join(top, f), s);
-  const run = (extra) => spawnSync("node", [script, "--base", "main"], { cwd: path.join(top, "sub"), encoding: "utf8", env: env(extra) });
+  const run = (extra, args = []) =>
+    spawnSync("node", [script, "--base", "main", ...args], { cwd: path.join(top, "sub"), encoding: "utf8", env: env(extra) });
   const inject = (key, value) => ({ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: key, GIT_CONFIG_VALUE_0: value });
 
   beforeEach(() => {
@@ -337,6 +360,8 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
     fs.mkdirSync(path.join(top, "sub"));
     for (const f of ["既存.rs", "top.rs", "sub/s.rs"]) write(f, "fn a() {}\n");
     write("mv.rs", "fn m1() {}\nfn m2() {}\nfn m3() {}\nfn m4() {}\nfn m5() {}\n");
+    write("r.rs", "fn r() { thread::spawn(|| {}); }\nfn keep() {}\n"); // 1 行を書き換える（削除 1・追加 1）
+    write("d.rs", "fn d() { thread::spawn(|| {}); }\n"); // ファイルごと消す
   });
   afterEach(() => {
     fs.rmSync(top, { recursive: true, force: true });
@@ -350,6 +375,8 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
     fs.appendFileSync(path.join(top, "top.rs"), "++ x\n" + SPAWN); // patch では `+++ x` になる行
     g("mv", "mv.rs", "sub/moved.rs");
     fs.appendFileSync(path.join(top, "sub", "moved.rs"), SPAWN);
+    write("r.rs", "fn r() {}\nfn keep() {}\n");
+    fs.rmSync(path.join(top, "d.rs"));
     write("sub/u.rs", "fn c() {}\n"); // 未追跡 1 件——color/external が exit 0 になる形
   };
 
@@ -359,12 +386,23 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
       const r = run(inject(key, value));
       expect(r.stderr).toBe("");
       expect(r.status).toBe(0);
-      // 既存 1・top 2・s 1・moved 1（rename を検出して追加行だけ）・未追跡 u 2（末尾改行の後の空行も数える）
-      expect(r.stdout).toContain("判定対象 7 行");
+      // 既存 1・top 2・s 1・moved 1（rename を検出して追加行だけ）・r 1・未追跡 u 2（末尾改行の後の空行も数える）
+      expect(r.stdout).toContain("判定対象 8 行");
       expect(r.stdout).toContain("① worker の spawn: 4 件");
       for (const f of ["既存.rs", "top.rs", "sub/s.rs", "sub/moved.rs"]) expect(r.stdout).toContain(`    ${f}  /thread::spawn/`);
     });
   }
+
+  it("--include-removed では書き換えで消えた行も入る（削除されたファイルの行は入らない設計のまま）", () => {
+    change();
+    const r = run({}, ["--include-removed"]);
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("判定対象 9 行");
+    expect(r.stdout).toContain("① worker の spawn: 5 件");
+    expect(r.stdout).toContain("    r.rs  /thread::spawn/");
+    expect(r.stdout).not.toContain("    d.rs  /thread::spawn/");
+  });
 
   it("中身を見られないソース（-diff 属性）は exit 3 で止め、0 件の報告を作らない", () => {
     write(".gitattributes", "top.rs -diff\n");

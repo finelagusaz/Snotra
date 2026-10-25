@@ -210,6 +210,17 @@ describe("verify-tree run", () => {
     expect(r.status, r.output).toBe(2);
   });
 
+  it("git の想定外の失敗（再利用する木の checkout が未追跡ファイルと衝突）は、赤（1）ではなく 2", { timeout: T }, () => {
+    const repo = initRepo();
+    expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
+    writeFileSync(path.join(verifyTree(repo), "next.txt"), "untracked in the tree\n");
+    const next = commitFile(repo, "next.txt", "next\n");
+
+    const r = runScript(repo, ["run", "--sha", next]);
+
+    expect(r.status, r.output).toBe(2);
+  });
+
   it("D は回さず handoff と書く。B は受け付けない", { timeout: T }, () => {
     const repo = initRepo();
     const sha = git(repo, ["rev-parse", "HEAD"]);
@@ -313,6 +324,8 @@ describe("verify-tree remove", () => {
 
     expect(r.status, r.output).toBe(0);
     expect(existsSync(verifyTree(repo))).toBe(false);
+    expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(false);
+    expect(existsSync(`${verifyTree(repo)}.summary.log`)).toBe(false);
   });
 
   it("道具の木が dirty なら消さずに exit 1", { timeout: T }, () => {

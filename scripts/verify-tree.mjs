@@ -95,6 +95,17 @@ function mainContext() {
   return { root, branch, tree };
 }
 
+/** 登録された worktree（`git worktree list --porcelain` の各項目）。path は `path.resolve` 済み */
+function worktrees(root) {
+  return git(root, ["worktree", "list", "--porcelain"])
+    .split(/\n\s*\n/)
+    .filter((e) => e.startsWith("worktree "))
+    .map((e) => ({
+      path: path.resolve(e.split("\n")[0].slice("worktree ".length)),
+      branch: /^branch refs\/heads\/(.+)$/m.exec(e)?.[1] ?? null,
+    }));
+}
+
 function resolveSha(cwd, sha) {
   if (!sha) throw new EnvError("--sha が要る");
   try {
@@ -161,11 +172,7 @@ function cmdRun(opts) {
   if (head !== sha) throw new EnvError(`sha が本体の HEAD でない（HEAD ${head} / sha ${sha}）`);
 
   // ---- 木を作るか、再利用する
-  const registered = git(root, ["worktree", "list", "--porcelain"])
-    .split("\n")
-    .filter((l) => l.startsWith("worktree "))
-    .map((l) => path.resolve(l.slice("worktree ".length)));
-  if (registered.includes(path.resolve(tree))) {
+  if (worktrees(root).some((w) => w.path === path.resolve(tree))) {
     const changed = git(tree, ["status", "--porcelain", "--untracked-files=no"]);
     if (changed !== "") throw new EnvError(`再利用する木に追跡ファイルの変更がある: ${posix(tree)}\n${changed}`);
     git(tree, ["checkout", "-q", "--detach", sha]);
@@ -256,11 +263,12 @@ function cmdRemove(opts) {
   let ok = true;
   if (existsSync(tree)) ok = removeTree(root, tree) && ok;
   else console.log(`道具の木は無い: ${posix(tree)}`);
+  // 既定の置き場の要約とログ（gitignore 済み）。`--out` で外へ出したものは呼び出し側が持つ
+  if (ok) for (const f of [`${tree}.summary.json`, `${tree}.summary.log`]) rmSync(f, { force: true });
 
   if (opts.delegateTree) {
     const target = path.resolve(opts.delegateTree);
-    const entries = git(root, ["worktree", "list", "--porcelain"]).split("\n\n");
-    const entry = entries.find((e) => e.startsWith("worktree ") && path.resolve(e.split("\n")[0].slice(9)) === target);
+    const entry = worktrees(root).find((w) => w.path === target);
     if (!entry) throw new EnvError(`登録された worktree でない: ${posix(target)}`);
     if (target === path.resolve(root) || target === path.resolve(tree)) throw new EnvError(`委譲先の木でない: ${posix(target)}`);
     const others = git(target, ["status", "--porcelain", "--untracked-files=all"])
@@ -272,7 +280,7 @@ function cmdRemove(opts) {
     }
     rmSync(path.join(target, DELEGATE_DIR), { recursive: true, force: true });
     if (removeTree(root, target)) {
-      const branch = /^branch refs\/heads\/(.+)$/m.exec(entry)?.[1];
+      const { branch } = entry;
       if (branch) {
         try {
           git(root, ["branch", "-d", branch]);
@@ -295,8 +303,9 @@ function main(argv) {
     if (opts.sub === "remove") return cmdRemove(opts);
     throw new EnvError(`サブコマンドは run / align / remove のいずれか（受け取った値: ${opts.sub}）`);
   } catch (e) {
-    if (!(e instanceof EnvError)) throw e;
-    console.error(`verify-tree: ${e.message}`);
+    // EnvError 以外（git の想定外の失敗など）も 2 にする——未捕捉で落とすと node は exit 1 を返し、
+    // 「検査が赤」と区別できなくなる。exit 1 は cmdRun / cmdRemove の明示的な経路からしか返さない
+    console.error(`verify-tree: ${e instanceof EnvError ? e.message : (e.stderr ?? e.stack ?? e)}`);
     return 2;
   }
 }

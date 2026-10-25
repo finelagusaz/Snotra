@@ -131,7 +131,12 @@
 - [x] `docs/adr/ADR-implement-verification-tool-tree.md` を起こす
 
 ### Phase 4 — 自己適用と記録
-- [ ] 実装順序 5 の自己適用を行い、要約 JSON の sha と exit をこの plan.md に記録する
+- [x] 実装順序 5 の自己適用を行い、要約 JSON の sha と exit をこの plan.md に記録する
+  - 1 巡目 `23cb5744`: green。E `npm test` exit 0（26 files・634 tests が木の中で走ったことをログで確認）、F `npm run governance:check` exit 0（17 件）。warnings 0
+  - 2 巡目 `7de1f6e7`: 同じ木を再利用して green（E・F とも exit 0、warnings 0）。そのあと `remove` が exit 0 で木を消した
+- [x] （計画外・自己適用で判明）`remove` は木を消したが、既定の置き場の要約とログ（gitignore 済み）が残った。`remove` がそれも消すようにし、テストの断言を足した（断言は修正前の実装で赤になることを確かめた）
+- [x] （計画外・3a の `/dry-check`）`worktree list --porcelain` の解析が `cmdRun` と `cmdRemove` で 2 通りに手書きされていたので、`worktrees(root)` にまとめた。`clean-worktrees.mjs` の同じ解析は、export を持たないスクリプトなので維持した
+- [x] （計画外・3a の `/symmetric-check`）`run` の中で git が想定外に失敗すると、未捕捉の例外になり exit 1（赤）に化けていた。`main()` が EnvError 以外も exit 2 にするよう直し、checkout の衝突で再現するテストを足した（修正前の実装で赤になることを確かめた）
 - [x] ルート `CLAUDE.md`「サブエージェント委譲と worktree」の各条項が、この変更の後も要るかを 1 条ずつ判定し、この plan.md に記録する（消さない）
 
 #### ルート `CLAUDE.md`「サブエージェント委譲と worktree」の判定（2026-10-25）

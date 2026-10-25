@@ -443,6 +443,42 @@ function Resolve-SnotraCargoExecutable {
 
 <#
 .SYNOPSIS
+記録（PR へ投稿されうる）に書く本体のパスを返す（#1293）。
+
+.DESCRIPTION
+**このリポジトリは公開されており、`manual-smoke.ps1 -PostToPr` は記録を PR コメントへ投稿する。**
+`Resolve-SnotraCargoExecutable` が返すのは絶対パスなので、そのまま載せると利用者のディレクトリ構成
+（ユーザー名・worktree の置き場）が公開される。
+
+- `RepositoryRoot` の下の絶対パスは、リポジトリ相対にして返す
+- それ以外（リポジトリの外の絶対パス・相対パス）は、渡された値をそのまま返す——明示された値であり、
+  導出が新しく生んだものではない
+- 空なら `$null` を返す（起動していないことの表し方は呼び出し側が決める）
+
+「下にある」の判定は `GetRelativePath` に任せる。**文字列の前方一致で判定しない**——`C:\repo2` は
+`C:\repo` に前方一致する。
+#>
+function Get-SnotraRecordedExePath {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$ExePath,
+        [Parameter(Mandatory)]
+        [string]$RepositoryRoot
+    )
+
+    if ([string]::IsNullOrEmpty($ExePath)) { return $null }
+    if (-not [IO.Path]::IsPathRooted($ExePath)) { return $ExePath }
+    # 外なら `..` 始まりか（別ドライブなら）絶対パスが返る（実測）。
+    $relative = [IO.Path]::GetRelativePath($RepositoryRoot, $ExePath)
+    if ($relative -eq '..' -or $relative.StartsWith("..$([IO.Path]::DirectorySeparatorChar)") -or [IO.Path]::IsPathRooted($relative)) {
+        return $ExePath
+    }
+    $relative
+}
+
+<#
+.SYNOPSIS
 プロセスを停止し、**終了を待つ**（#872 単一インスタンス衝突）。
 
 .DESCRIPTION
@@ -965,6 +1001,7 @@ Export-ModuleMember -Function @(
     'Invoke-SnotraEnvironment'
     'Start-SnotraProcess'
     'Resolve-SnotraCargoExecutable'
+    'Get-SnotraRecordedExePath'
     'Resolve-SnotraExistingProcess'
     'Stop-SnotraProcessAndWait'
     'Read-SnotraTraceEvents'

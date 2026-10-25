@@ -1,6 +1,7 @@
 param(
-  # 検証するバイナリ。既定は debug ビルド（カテゴリ D は `cargo run -p snotra` 相当）。
-  [string]$ExePath = "target/debug/snotra.exe",
+  # 検証するバイナリ。空なら debug 本体を導く（#1179・#1293。カテゴリ D は `cargo run -p snotra` 相当）。
+  # **理由の正本は `Resolve-SnotraCargoExecutable` の doc**。`-NoLaunch` のときは導かない。
+  [string]$ExePath = '',
   # 記録の出力先。既定は `$env:TEMP` 配下（リポジトリを汚さない。PR へ貼るのは -PostToPr）。
   [string]$OutFile = "",
   # 実施する項目番号（省略時は全 13 項目）。例: -Only 2,5,10
@@ -54,6 +55,11 @@ if ([Console]::IsInputRedirected) {
 # 要する本スクリプトを走らせなくても Pester（`npm run test:powershell`）が検証できる。**
 Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/SnotraTraceInvariants.psm1') -Force
+# 本体・記録の commit・投稿先の PR は、**すべてこのスクリプトが住むコピーから取る**（#1293）——
+# cwd が別のコピーだと、測った本体と記録の commit が食い違う。
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+# 記録へ載せるのは明示された値の**元の形**である——下で絶対形へ正規化するので、ここで控える。
+$exePathGiven = $ExePath
 
 # 表示・記録の列順。**判定器から引く**——ここに写しを置くと、判定を 1 つ足したときに
 # モジュール側だけが直り、記録と exit code から新しい不変条件が黙って落ちる（`/symmetric-check`）。
@@ -177,9 +183,9 @@ if ($Only.Count -gt 0) {
 }
 
 # --- 出所の記録（何を検証したのか後から辿れるようにする） ---
-$branch = (git rev-parse --abbrev-ref HEAD 2>$null)
-$sha = (git rev-parse HEAD 2>$null)
-$dirty = (git status --porcelain 2>$null)
+$branch = (git -C $repoRoot rev-parse --abbrev-ref HEAD 2>$null)
+$sha = (git -C $repoRoot rev-parse HEAD 2>$null)
+$dirty = (git -C $repoRoot status --porcelain 2>$null)
 $startedAt = Get-Date
 
 if ([string]::IsNullOrEmpty($OutFile)) {
@@ -200,11 +206,15 @@ Write-Host ""
 $traceFile = $null
 $proc = $null
 if (-not $NoLaunch) {
-  if (-not (Test-Path $ExePath)) {
+  # 導出は起動する枝の中だけで行う——`-NoLaunch` が cargo の有無で落ちないように。
+  if (-not $ExePath) { $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile debug }
+  if (-not (Test-Path -LiteralPath $ExePath)) {
     throw "$ExePath がありません。先に `cargo build -p snotra` を実行してください（-NoLaunch で自分で起動することもできます）"
   }
+  $ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は resolver の doc）
+  Write-Host "本体: $ExePath"
   if ($BinaryMarker) {
-    $bytes = [IO.File]::ReadAllBytes((Resolve-Path $ExePath))
+    $bytes = [IO.File]::ReadAllBytes($ExePath)
     $ascii = [Text.Encoding]::ASCII.GetString($bytes)
     if ($ascii.Contains($BinaryMarker)) {
       Write-Host "バイナリに目印 '$BinaryMarker' を確認しました。" -ForegroundColor Green
@@ -373,7 +383,9 @@ $lines += "|---|---|"
 $lines += "| 実施 | $($startedAt.ToString('yyyy-MM-dd HH:mm')) |"
 $lines += "| branch | ``$branch`` |"
 $lines += "| commit | ``$sha`` |"
-$lines += "| バイナリ | ``$ExePath`` |"
+# 記録は PR へ投稿されうるので、導出した絶対パスをそのまま載せない（`Get-SnotraRecordedExePath` の doc）。
+$recordedExe = Get-SnotraRecordedExePath -ExePath $(if ($exePathGiven) { $exePathGiven } else { $ExePath }) -RepositoryRoot $repoRoot
+$lines += if ($null -eq $recordedExe) { "| バイナリ | 未起動（-NoLaunch） |" } else { "| バイナリ | ``$recordedExe`` |" }
 if ($dirty) { $lines += "| 注意 | **working tree に未コミットの変更あり** |" }
 $lines += "| 目視 | PASS $pass / FAIL $fail / SKIP $skip / 未実施 $($notRun.Count) |"
 if ($null -ne $traceVerdict) {
@@ -458,7 +470,8 @@ if ($proc -and -not $proc.HasExited) {
 }
 
 if ($PostToPr) {
-  $target = if ($Pr -gt 0) { "$Pr" } else { "" }
+  # 番号が無ければ、記録した `$branch`（スクリプトのコピーのブランチ）の PR へ投稿する。cwd のブランチではない。
+  $target = if ($Pr -gt 0) { "$Pr" } elseif ($branch -and $branch -ne 'HEAD') { $branch } else { "" }
   Write-Host ""
   Write-Host "PR へ投稿します..." -ForegroundColor Cyan
   if ($target) { gh pr comment $target --body-file $OutFile }

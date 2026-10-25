@@ -140,15 +140,15 @@
 
 ### Phase 1 — 検知器を導出へ変える（Red を確かめる）
 
-- [ ] `SnotraSmoke.Tests.ps1` の `BeforeDiscovery` に、母集団と言及の 2 つの一覧の導出を足す
-- [ ] 主の It の `-ForEach` を、導いた一覧へ変える
-- [ ] 補集合の It を足す（許可リストは `run-pester.ps1` だけ）
-- [ ] `npm run test:powershell` で、主の It が manual-smoke と measure-memory-stages で赤になり、補集合の It が緑であることを、出力で確かめる
+- [x] `SnotraSmoke.Tests.ps1` の `BeforeDiscovery` に、母集団と言及の 2 つの一覧の導出を足す
+- [x] 主の It の `-ForEach` を、導いた一覧へ変える
+- [x] 補集合の It を足す（許可リストは `run-pester.ps1` だけ）
+- [x] `npm run test:powershell` で、主の It が manual-smoke と measure-memory-stages で赤になり、補集合の It が緑であることを、出力で確かめる
 
 ### Phase 2 — 残る 2 本を導出へ揃える
 
-- [ ] `SnotraSmoke.psm1` に `Get-SnotraRecordedExePath` を足して export し、Pester の It を足す（新しい関数と、manual-smoke の呼び出し点の移行を同じフェーズで行う）
-- [ ] `manual-smoke.ps1`
+- [x] `SnotraSmoke.psm1` に `Get-SnotraRecordedExePath` を足して export し、Pester の It を足す（新しい関数と、manual-smoke の呼び出し点の移行を同じフェーズで行う）
+- [x] `manual-smoke.ps1`
   - param の既定
   - `$repoRoot`
   - git 3 行を `-C $repoRoot` にする
@@ -156,19 +156,20 @@
   - 起動する枝の中だけで導出する
   - 確認・正規化・`本体:`
   - 記録の「バイナリ」行を `Get-SnotraRecordedExePath` 経由にする
-- [ ] `measure-memory-stages.ps1`: param の既定、ヘルプの書き換え（関数名と行頭の `$repoRoot =` を書かない）、import、導出、確認・正規化・`本体:`。導出と確認を `Stop-Process` より前に置く
-- [ ] `pwsh -NoProfile` で、2 本の import と導出の部分だけに相当する式を評価し、導出が通ることを確かめる（アプリは起動しない・3b の ⚠️）
-- [ ] `npm run test:powershell` が緑になる
+- [x] `measure-memory-stages.ps1`: param の既定、ヘルプの書き換え（関数名と行頭の `$repoRoot =` を書かない）、import、導出、確認・正規化・`本体:`。導出と確認を `Stop-Process` より前に置く
+- [x] `pwsh -NoProfile` で、2 本の import と導出の部分だけに相当する式を評価し、導出が通ることを確かめる（アプリは起動しない・3b の ⚠️）
+- [x] `npm run test:powershell` が緑になる
+- [x] （実装中に追加）`manual-smoke.ps1` の記録には、明示された `-ExePath` の**元の形**を渡す。起動する枝で絶対形へ正規化するため、そのまま渡すと、リポジトリの外を指す明示の相対パスが絶対パスとして記録に載る（不変条件「明示された値は今と同じに載せる」を破る）
 
 ### Phase 3 — 文書とヘッダ
 
-- [ ] 検知器のヘッダを書き直す（導出・補集合・射程の外の 3 つ・却下した 2 案・反転の理由）
-- [ ] `docs/build-commands.md` の段落を書き直す（名指しをやめる・出力の全称を消して resolver の doc を指す）
-- [ ] `npm run governance:check` が緑になる
+- [x] 検知器のヘッダを書き直す（導出・補集合・射程の外の 3 つ・却下した 2 案・反転の理由）
+- [x] `docs/build-commands.md` の段落を書き直す（名指しをやめる・出力の全称を消して resolver の doc を指す）
+- [x] `npm run governance:check` が緑になる
 
 ### Phase 4 — 検証
 
-- [ ] `npm test` が緑になる
+- [x] `npm test` が緑になる — 612 件
 - [ ] `measure-memory-stages.ps1` を既定のまま実行する（ユーザーの常用版の終了を確かめてから）。`本体:` と段階列を確かめる
 - [ ] 人へ `npm run smoke:manual -- -Only 1` を依頼する。`本体:` の行と、記録の「バイナリ」行がリポジトリ相対であることを確かめてもらう
 

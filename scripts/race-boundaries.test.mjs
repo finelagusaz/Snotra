@@ -5,6 +5,9 @@
 // 赤フィクスチャの出所は #805 の着手前ゲートで実際に測った差分である——
 // 「文書の散文」「コメント中の語」はどちらも実リポジトリで誤検出を出した形をそのまま写した。
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   KINDS,
   SOURCE_EXT,
@@ -16,6 +19,7 @@ import {
   formatReport,
   parseArgs,
   listUntracked,
+  readerFor,
 } from "./race-boundaries.mjs";
 
 const kindOf = (kinds, ord) => kinds.find((k) => k.ord === ord);
@@ -216,5 +220,20 @@ describe("untrackedRows（未追跡ファイルは中身が対象）", () => {
 
   it("読めないファイルは黙って落とさず、単に行を生まない", () => {
     expect(untrackedRows(["gone.rs"], () => null)).toEqual([]);
+  });
+});
+
+describe("readerFor（ルート相対のパスを cwd に依らず読む）", () => {
+  it("cwd がルートでなくてもルート相対で読む", () => {
+    const top = fs.mkdtempSync(path.join(os.tmpdir(), "rb-"));
+    fs.mkdirSync(path.join(top, "sub"));
+    fs.writeFileSync(path.join(top, "sub", "a.rs"), "thread::spawn(|| {});\n");
+    try {
+      // vitest の cwd はリポジトリルートで、top とは別の場所である
+      expect(readerFor(top)("sub/a.rs")).toBe("thread::spawn(|| {});\n");
+      expect(readerFor(top)("sub/none.rs")).toBe(null);
+    } finally {
+      fs.rmSync(top, { recursive: true, force: true });
+    }
   });
 });

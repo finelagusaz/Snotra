@@ -81,6 +81,18 @@ export function listUntracked(git) {
     .filter((p) => SOURCE_EXT.test(p));
 }
 
+/** `listUntracked` のパスを読む関数。`--porcelain` のパスは cwd に依らずルート相対である（`--short` は
+ *  cwd 相対だった）——cwd 相対で開くと、サブディレクトリから打ったとき件数だけ数えて中身が落ちる（実測）。 */
+export function readerFor(top) {
+  return (f) => {
+    try {
+      return fs.readFileSync(path.join(top, f), "utf8");
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** 未追跡ファイルの全行を「追加行」として母集団へ入れる。
  *  `listUntracked` が挙げたファイルは、パスではなく中身が対象である。 */
 export function untrackedRows(files, readFile) {
@@ -188,16 +200,7 @@ function main() {
   // `main...HEAD` を使わないのも同じ理由である（SKILL 段 1・実測 183 行 vs 139 行）。
   const rows = parseDiff(git("diff", "-U0", mergeBase));
   const untracked = listUntracked(git);
-  // `--porcelain` のパスは cwd に依らずルート相対である（`--short` は cwd 相対だった）。cwd 相対で開くと
-  // サブディレクトリから打ったとき件数だけ数えて中身が落ちる（実測）
-  const top = git("rev-parse", "--show-toplevel").trim();
-  const readFile = (f) => {
-    try {
-      return fs.readFileSync(path.join(top, f), "utf8");
-    } catch {
-      return null;
-    }
-  };
+  const readFile = readerFor(git("rev-parse", "--show-toplevel").trim());
   const all = [...rows, ...untrackedRows(untracked, readFile)];
 
   // SKILL 段 1: 「2 コマンドの出力が両方とも空なら、それは『変更が無い』ではなく『基準が誤っている』と読む」。

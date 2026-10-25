@@ -83,7 +83,7 @@
 
 - [x] `smoke-egui.ps1` の `param()` の既定を `''` にし、コメントを置く
 - [x] `Import-Module` の後へ `$repoRoot` の導出・resolver の呼び出し・`-LiteralPath` での存在の確認・絶対形への正規化・`本体:` の出力を置き、旧い確認を消す
-- [ ] `npm run test:powershell` が緑になる
+- [x] `npm run test:powershell` が緑になる — 委譲先が `f3966aa` で 133 件緑（統合テストを含む）
 
 ### Phase 3 — 文書
 
@@ -93,9 +93,10 @@
 
 ### Phase 4 — 検証
 
-- [ ] `cargo build -p snotra` → 既定のまま `npm run smoke:egui` を 3 回連続で回す。毎回 `本体:` の行が `target\debug\snotra.exe` を指し、緑であることを確かめる
+- [x] `cargo build -p snotra` → 既定のまま `npm run smoke:egui` を 3 回連続で回す。毎回 `本体:` の行が `target\debug\snotra.exe` を指し、緑であることを確かめる — 委譲先の worktree で 3/3 passed。`本体:` は 3 回ともその worktree の `target\debug\snotra.exe`（生ログで確認）
 - [x] `npm test` が緑になる
-- [ ] follow-up issue の本文を書く（母集団を導出する検知器と、残り 2 本の直書き）。起票はユーザーの確認を経る
+- [x] follow-up issue の本文を書く（母集団を導出する検知器と、残り 2 本の直書き）。起票はユーザーの確認を経る — #1293 として起票した（ユーザー:「OK、起票して」）
+- [x] （実装中に追加）検知器のヘッダから #1293 を指す。`workspace/` を消すと撤去の合図が失われるため（委譲先の ⚠️）。あわせて「下の『呼び出し元』」が読み取りにくいという Low の指摘を直す
 
 ## 未確定（実装前に潰す）
 

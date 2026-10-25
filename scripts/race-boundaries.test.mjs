@@ -119,6 +119,11 @@ describe("parseDiff", () => {
     expect(kindOf(run(rows, { includeRemoved: true }), "①").hits).toHaveLength(1);
   });
 
+  it("空白を含むパスの末尾タブ（git が付ける）を落として旧パスを取る", () => {
+    const d = ["--- a/a b.rs\t", "+++ /dev/null", "@@ -1 +0,0 @@", "-x"].join("\n");
+    expect(parseDiff(d)).toEqual([{ file: "a b.rs", sign: "-", text: "x" }]);
+  });
+
   it("新規ファイル（--- /dev/null）の後に削除されたファイルが来ても、旧パスを持ち越さない", () => {
     const d = ["--- /dev/null", "+++ b/new.rs", "@@ -0,0 +1 @@", "+a", "--- a/old.rs", "+++ /dev/null", "@@ -1 +0,0 @@", "-b"].join("\n");
     expect(parseDiff(d).map((r) => `${r.file}:${r.sign}${r.text}`)).toEqual(["new.rs:+a", "old.rs:-b"]);
@@ -335,12 +340,18 @@ describe("readTrackedRows（plumbing の 2 経路を照合する）", () => {
   };
 
   it("引数の列を固定し、照合がそろえば行を返す", () => {
-    const rows = readTrackedRows(fakeGit("+++ b/a.rs\n@@ -0,0 +1 @@\n+x\n", "1\t0\ta.rs\u0000"), "mb");
-    expect(rows).toEqual([{ file: "a.rs", sign: "+", text: "x" }]);
+    const r = readTrackedRows(fakeGit("+++ b/a.rs\n@@ -0,0 +1 @@\n+x\n", "1\t0\ta.rs\u0000"), "mb");
+    expect(r).toEqual({ rows: [{ file: "a.rs", sign: "+", text: "x" }], changedFiles: 1 });
   });
 
   it("削除されたバイナリは patch の 1 行で知り、照合で問わない（変更されたバイナリのソースは止める）", () => {
-    expect(readTrackedRows(fakeGit("Binary files a/v.ts and /dev/null differ\n", "-\t-\tv.ts\u0000"), "mb")).toEqual([]);
+    const gone = fakeGit("Binary files a/v.ts and /dev/null differ\n", "-\t-\tv.ts\u0000");
+    expect(readTrackedRows(gone, "mb")).toEqual({ rows: [], changedFiles: 1 });
+    // --include-removed では消えた中身こそ見るべきなので止める（委譲レビューが実測した欠落）
+    expect(() => readTrackedRows(gone, "mb", { includeRemoved: true })).toThrow(DiffShapeError);
+    // hunk の本文に同じ文字列が現れても、変更された `-diff` ソースを免除しない
+    const body = fakeGit("+++ b/x.rs\n@@ -0,0 +1 @@\n+Binary files a/v.ts and /dev/null differ\n", "1\t0\tx.rs\u0000-\t-\tv.ts\u0000");
+    expect(() => readTrackedRows(body, "mb")).toThrow(DiffShapeError);
     expect(() => readTrackedRows(fakeGit("Binary files a/v.ts and b/v.ts differ\n", "-\t-\tv.ts\u0000"), "mb")).toThrow(
       DiffShapeError,
     );
@@ -424,6 +435,7 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
 
   it("--include-removed では書き換えで消えた行も、削除されたファイルの行も入る", () => {
     change();
+    g("checkout", "--", "v.ts"); // 消したバイナリは --include-removed で止まる（別のテストが固定する）ので戻す
     const r = run({}, ["--include-removed"]);
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
@@ -445,6 +457,31 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
     expect(removed.status).toBe(0);
     expect(removed.stdout).toContain("① worker の spawn: 1 件");
     expect(removed.stdout).toContain("    d.rs  /thread::spawn/");
+  });
+
+  it("中身の見えないソースを消したら、--include-removed でだけ exit 3（既定は消えた行を見ない）", () => {
+    write(".gitattributes", "d.rs -diff\n");
+    g("add", ".");
+    g("commit", "-q", "-m", "init");
+    g("rm", "-q", "d.rs");
+    fs.appendFileSync(path.join(top, "top.rs"), SPAWN);
+    const plain = run();
+    expect(plain.stderr).toBe("");
+    expect(plain.status).toBe(0);
+    const removed = run({}, ["--include-removed"]);
+    expect(removed.status).toBe(3);
+    expect(removed.stdout).toBe("");
+    expect(removed.stderr).toContain("d.rs: バイナリ扱いで中身を見られない");
+  });
+
+  it("バイナリを消しただけのブランチも「基準が誤っている」と誤診しない", () => {
+    g("add", ".");
+    g("commit", "-q", "-m", "init");
+    g("rm", "-q", "v.ts");
+    const r = run();
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("変更ファイル 1 件");
   });
 
   it("中身を見られないソース（-diff 属性）は exit 3 で止め、0 件の報告を作らない", () => {

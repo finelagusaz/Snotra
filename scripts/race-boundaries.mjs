@@ -10,8 +10,8 @@
 // 契約:
 // - 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻に非依存）
 // - `--base` は必須。省略は使用法 + exit 2（リビジョン未固定が同型欠陥の本体・設計書「背景」）
-// - 差分と未追跡がともに空なら exit 3（沈黙経路の閉塞。SKILL 段 1 の「2 コマンドの出力が
-//   両方とも空なら『変更が無い』ではなく『基準が誤っている』と読む」を機構化したもの）。
+// - 変更されたファイルと未追跡のソースがともに無ければ exit 3（沈黙経路の閉塞。「両方とも空なら
+//   『変更が無い』ではなく『基準が誤っている』と読む」を機構化したもの）。
 //   **merge-base が HEAD と一致すること自体は異常ではない**——この検査は `/implement`「3a. 委譲の前に」から
 //   コミットより前に呼ばれ、初コミット前の feature ブランチでは常にそうなる（実測）
 // - 追跡差分の patch と numstat が食い違えば exit 3（git の設定が出力の形を変えて行を黙って落とす形の閉塞・`readTrackedRows`）
@@ -166,13 +166,15 @@ export function diffMismatches(rows, numstat, deletedBinaries = new Set()) {
  *  行が**黙って**落ちた（形を変えた設定はテストの `CONFIGS` が持つ・#1300 の作業中に一時リポジトリで実測）。
  *  plumbing の `diff-index` は quotePath 以外を無視する。照合の相手も plumbing にする——
  *  porcelain の `--numstat` は `diff.relative` で patch と同じだけ狭まり、黙って一致した（実測）。 */
-export function readTrackedRows(git, mergeBase) {
+export function readTrackedRows(git, mergeBase, { includeRemoved = false } = {}) {
   const patch = git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase);
   const rows = parseDiff(patch);
   const numstat = parseNumstatZ(git("-c", "core.quotePath=false", "diff-index", "-M", "--numstat", "-z", mergeBase));
-  const bad = diffMismatches(rows, numstat, deletedBinaryPaths(patch));
+  // 削除されたバイナリのソースを見逃せるのは、消えた行を母集団へ入れない既定のときだけである——
+  // `--include-removed` では廃止の検査が見るべき行が中身ごと見えないので止める（委譲レビューが実測）
+  const bad = diffMismatches(rows, numstat, includeRemoved ? new Set() : deletedBinaryPaths(patch));
   if (bad.length > 0) throw new DiffShapeError(bad.join("\n"));
-  return rows;
+  return { rows, changedFiles: numstat.size };
 }
 
 /** 未追跡のソースファイルを 1 件ずつ挙げる。`--untracked-files=all` が無いと新しいディレクトリが
@@ -212,7 +214,7 @@ export function untrackedRows(files, readFile) {
 
 /** 母集団のフィルタ。既定は「追加行・ソース拡張子・コメントでない」。
  *  削除行は既定で除く——段 2 の主題は「**渡っている**ものを挙げる」であり追加側が主だからである。
- *  廃止・移行を検査するとき（SKILL 段 1 の最後の段落）だけ includeRemoved を立てる。 */
+ *  廃止・移行を検査するとき（`docs/build-commands.md`「Windows/macOS/Linux で実行可能」）だけ includeRemoved を立てる。 */
 export function selectPopulation(rows, { includeRemoved = false } = {}) {
   return rows.filter(
     (r) => (includeRemoved || r.sign === "+") && SOURCE_EXT.test(r.file) && !isCommentLine(r.text),
@@ -302,10 +304,11 @@ function main() {
   }
 
   // `diff-index <mergeBase>`（`--cached` 無し）は作業ツリーまでを含む——`<mergeBase> HEAD` の 2 端点にすると
-  // 未コミット分が落ちる。`main...HEAD` を使わないのも同じ理由である（SKILL 段 1・実測 183 行 vs 139 行）。
+  // 未コミット分が落ちる。`main...HEAD` を使わないのも同じ理由である（実測 183 行 vs 139 行）。
   let rows;
+  let changedFiles;
   try {
-    rows = readTrackedRows(git, mergeBase);
+    ({ rows, changedFiles } = readTrackedRows(git, mergeBase, { includeRemoved: args.includeRemoved }));
   } catch (e) {
     if (!(e instanceof DiffShapeError)) throw e;
     console.error(
@@ -318,9 +321,10 @@ function main() {
   const readFile = readerFor(git("rev-parse", "--show-toplevel").trim());
   const all = [...rows, ...untrackedRows(untracked, readFile)];
 
-  // SKILL 段 1: 「2 コマンドの出力が両方とも空なら、それは『変更が無い』ではなく『基準が誤っている』と読む」。
+  // 変更されたファイルも未追跡のソースも無いなら、それは「変更が無い」ではなく「基準が誤っている」と読む。
   // 空の母集団のまま先へ進ませない——0 件の報告と「そもそも何も見ていない」を区別できなくなる。
-  if (rows.length === 0 && untracked.length === 0) {
+  // 行の数で判定しない——バイナリを消しただけ・中身の変わらない rename だけのブランチは行を生まない（委譲レビューが実測）
+  if (changedFiles === 0 && untracked.length === 0) {
     console.error(
       `基準が誤っている: \`git diff-index ${mergeBase.slice(0, 8)}\` と未追跡のソースファイル（\`git status --porcelain --untracked-files=all\`）がともに空。\n` +
         `--base に渡した \`${args.base}\` が分岐元でない可能性がある（merge-base = ${mergeBase.slice(0, 8)}）。分岐元のブランチ名を渡し直す。`,
@@ -334,7 +338,7 @@ function main() {
     formatReport(kinds, {
       base: args.base,
       mergeBase,
-      changedFiles: new Set(rows.map((r) => r.file)).size,
+      changedFiles,
       untrackedFiles: untracked.length,
       populationLines: population.length,
       includeRemoved: args.includeRemoved,

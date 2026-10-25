@@ -6,7 +6,8 @@ param(
   [string]$OutFile = "",
   # 実施する項目番号（省略時は全 13 項目）。例: -Only 2,5,10
   [int[]]$Only = @(),
-  # 記録を PR コメントとして投稿する（`gh pr comment`）。番号省略時は現ブランチの PR。
+  # 記録を PR コメントとして投稿する（`gh pr comment`）。番号省略時は、このスクリプトが住むコピーの
+  # ブランチの PR（分離 HEAD などでブランチが取れなければ、投稿せずに -Pr を求めて止まる）。
   [switch]$PostToPr,
   [int]$Pr = 0,
   # 変更が入ったバイナリかの確認に使う目印文字列（`docs/build-commands.md`「スモーク運用メモ」）。
@@ -58,7 +59,8 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SnotraTraceInvariants.psm1') -Force
 # 本体・記録の commit・投稿先の PR は、**すべてこのスクリプトが住むコピーから取る**（#1293）——
 # cwd が別のコピーだと、測った本体と記録の commit が食い違う。
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-# 記録へ載せるのは明示された値の**元の形**である——下で絶対形へ正規化するので、ここで控える。
+# 記録には明示された値を**正規化する前の形**で渡す——下で絶対形へ正規化するので、ここで控える
+# （渡した先の `Get-SnotraRecordedExePath` は、リポジトリの下の絶対パスなら明示でも相対に落とす）。
 $exePathGiven = $ExePath
 
 # 表示・記録の列順。**判定器から引く**——ここに写しを置くと、判定を 1 つ足したときに
@@ -471,11 +473,14 @@ if ($proc -and -not $proc.HasExited) {
 
 if ($PostToPr) {
   # 番号が無ければ、記録した `$branch`（スクリプトのコピーのブランチ）の PR へ投稿する。cwd のブランチではない。
-  $target = if ($Pr -gt 0) { "$Pr" } elseif ($branch -and $branch -ne 'HEAD') { $branch } else { "" }
+  # **ブランチが取れないときは gh の既定（cwd のブランチ）へ倒さない**——記録と別の PR へ黙って載る。
+  $target = if ($Pr -gt 0) { "$Pr" } elseif ($branch -and $branch -ne 'HEAD') { $branch } else { $null }
+  if (-not $target) {
+    throw "投稿先の PR を決められません（ブランチ: '$branch'）。記録は $OutFile にあります。-Pr <番号> を渡して再実行するか、手で貼ってください。"
+  }
   Write-Host ""
   Write-Host "PR へ投稿します..." -ForegroundColor Cyan
-  if ($target) { gh pr comment $target --body-file $OutFile }
-  else { gh pr comment --body-file $OutFile }
+  gh pr comment $target --body-file $OutFile
 }
 
 # **検出は exit code、出力は証拠**（#471）。目視と trace のどちらの FAIL でも落とす——

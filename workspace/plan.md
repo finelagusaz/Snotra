@@ -68,17 +68,18 @@
 
 ### Phase 1 — 道具
 
-- [ ] `scripts/prose-sweep.test.mjs` を書き、落ちることを確認する
-- [ ] `scripts/prose-sweep.mjs` を実装して通す
-- [ ] `package.json` に `prose:sweep` を足す
-- [ ] `docs/build-commands.md` にコマンドと bullet を足す
-- [ ] 自己適用を打ち、★未掲載を裁いてセルフレビュー節へ件数を書く
+- [x] `scripts/prose-sweep.test.mjs` を書き、落ちることを確認する（スタブに当てて 30/32 落ち。通った 2 件はスタブの固定値が期待と一致したもの）
+- [x] `scripts/prose-sweep.mjs` を実装して通す（32 passed）
+- [x] `package.json` に `prose:sweep` を足す
+- [x] `docs/build-commands.md` にコマンドと bullet を足す
+- [x] 自己適用を打ち、★未掲載を裁いてセルフレビュー節へ件数を書く
+- [x] （計画外の発見）PowerShell の `npm.ps1` が最初の `--` を食い `--plan` が黙って消えることを実測した。道具の内側からは検知できない（`npm_config_plan` も渡らない・実測）ので、`build-commands.md` と SKILL.md 項目 7 に「Bash で打つ／PowerShell では node を直接」を書く
 
 ### Phase 2 — スキル
 
-- [ ] `.claude/skills/plan-review/SKILL.md` の `allowed-tools`・項目 7・リスク判定・Step 2 冒頭を書き換える
-- [ ] `.claude/skills/start-issue/SKILL.md` 5b の雛形と注記を足す
-- [ ] `npm test` と `npm run governance:check` を通す
+- [x] `.claude/skills/plan-review/SKILL.md` の `allowed-tools`・項目 7・リスク判定・Step 2 冒頭を書き換える
+- [x] `.claude/skills/start-issue/SKILL.md` 5b の雛形と注記を足す（他を序数「項目 7」で指していたのを正準形の見出し参照へ直した・`governance-docs.md`）
+- [x] `npm test` と `npm run governance:check` を通す（704 passed／全検査 passed）
 
 ## 未確定（実装前に潰す）
 
@@ -119,4 +120,4 @@
 - エージェント数: 1（ほか 3b の敵対的調査 1 体）
 - 要対処: 5 件・すべて不変条件とテスト方針へ反映
 - 未検証: `npm run` 経由の argv — Phase 1 の自己適用で測る
-- 散文の全件列挙: 道具が未実装のため手の `git grep`（6 語・切り詰めなし）で代替。実装後に自己適用で打ち直す
+- 散文の全件列挙: 語 6 / 46 件 / ★未掲載 17（計画へ足した 0）— 17 件は凍結された歴史 12・無関係な「どちらか一方」4（`symmetric-check/SKILL.md`・`architecture.md`・`index_tree.rs`・`egui_shell/mod.rs`）・`docs/design/` の「項目 7」1（別文脈）。名指しの検算対象 `start-issue/SKILL.md` は掲載済みで出た。空白入り・日本語の語は Bash・PowerShell とも 1 語で届いた（件数欄で確認）

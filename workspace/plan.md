@@ -164,6 +164,14 @@
 - [x] **[Low] 直さないもの**: シェルの command not found（127）は 1（赤）に数える。cmd.exe はこれを 1 として返すので、道具には区別できない。緑の側へは倒れない
 - [x] **⚠️ V2 の単独性**: 木の HEAD の照合（`:184`）を単独で外しても、テストは赤にならない。正しい checkout のもとではその経路に届かないためで、計画の V2 は「照合を外す＋別の sha へ checkout する」の組で定義している。計画との不整合ではないので、そのまま受け取った
 
+#### Step 3 の委譲 2 巡目（アンカー `eab1770e`・報告は `workspace/verify-1298-round2.txt`）
+
+- [x] 検証: E exit 0（26 files・638 tests）、F exit 0。1 巡目の High と Medium は、委譲先が自分で再現して解消を確かめた
+- [x] 変異 R4・R5・R6 が緑のままだった（検知器が無い）。R5（壊れた `.package-lock.json`）と R6（登録だけが残った木）にはテストを足した。**R4（`check-ignore` が 0 と 1 以外を返す）は受け入れる**——git を壊さないと fixture を作れない。修正は fail-closed の向きなので、外れても安全側の検査が 1 つ消えるだけである
+- [x] **[Low]** porcelain は空白や非 ASCII を含むパスを引用符で囲むので、`?? .delegate/` に当たらず align と remove が詰まっていた。`-z` で読む `changesOutsideDelegate` にまとめ、名前に空白と非 ASCII を含む報告でテストした
+- [x] **[Low]** SKILL Step 4 に、ロックで exit 1 になったときの手順（委譲先の停止を待つ）を足した
+- [x] **[Low/⚠️] 受け入れる**: ブランチ名を harness の命名 `worktree-<木の名前>` から導いている。命名が変わればブランチが残るが、`clean:worktrees` の孤児掃除（`clean-worktrees.mjs:78-96`）が拾う
+
 計画外（PR 本文へ送る）: issue の「比べ方」（次の 10 PR で所見の件数と High の採用件数を見る）。この PR の中では測れない。
 
 ## 未確定（実装前に潰す）

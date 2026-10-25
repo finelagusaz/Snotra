@@ -137,7 +137,7 @@ allowed-tools:
 
 実装差分は Step 3 で既にコミットされている。ここに残るのは、木の片づけと、`workspace/` を畳む前の回収と、その撤去コミットだけである。
 
-- **木を片づける**: `npm run verify:tree -- remove --delegate-tree <align が出した worktree>`。道具の木と委譲先の木（`.delegate/` だけが残るもの）とそのブランチを消す。委譲先の木は `.delegate/` で意図的に dirty に保ってあるので、`npm run clean:worktrees` は `--force` なしでは拾わない。**exit 1 で止まったら出力を読む**——`.delegate/` 以外の変更が残っていれば中身を確かめ、ディレクトリだけが残ったなら `git worktree list` で他のセッションの `agent-*` が無いことを確かめてから `npm run clean:worktrees -- --force` で消す（`--force` は dirty な木をすべて消す）
+- **木を片づける**: `npm run verify:tree -- remove --delegate-tree <align が出した worktree>`。道具の木と委譲先の木（`.delegate/` だけが残るもの）とそのブランチを消す。委譲先の木は `.delegate/` で意図的に dirty に保ってあるので、`npm run clean:worktrees` は `--force` なしでは拾わない。**exit 1 で止まったら出力を読む**——`.delegate/` 以外の変更が残っていれば中身を確かめ、「ロックされている」なら委譲先がまだ動いているので停止を待って打ち直し（ロックは `--force` 1 回では外れない）、ディレクトリだけが残ったなら `git worktree list` で他のセッションの `agent-*` が無いことを確かめてから `npm run clean:worktrees -- --force` で消す（`--force` は dirty な木をすべて消す）
 
 - **`workspace/` を削除する前に、否定の知識を ADR へ回収する**（#593）: `plan.md`・本サイクルの検討に「代替案 B を検討して却下した」判断があれば、削除で失う前に `docs/adr/ADR-<slug>.md` を起こす（形式は `docs/adr/ADR-doc-minimization-cap-enforcement.md` に倣う。**連番を振らない**——slug はテーマが決まった時点で決める・#812）。**トリガーは否定の知識が生じたときだけ** — 自明な実装・一本道の選択では作らない。無ければ何もしない。ADR に書くのは**却下した代替案と、却下の理由**である——採用案の再説明を書かない（採用案はコードと `SPEC.md` が持つ）。**「やらないと決めた作業項目」は代替案の却下ではないので、同じ節の `workspace/` 削除条件が挙げる ADR / issue の 2 択のうち issue 側へ送る**
 - `workspace/` ディレクトリが存在する場合、**`plan.md` の全項目が `- [x]` であることを確認してから**削除してステージに含める（`/start-issue` の引き継ぎバッファは実装完了で役目を終える）。未チェックの項目が残っているなら削除しない——完了させるか、やらないと決めた項目は計画から外して理由を ADR か issue へ記録する。**未チェックを残したままの削除は、PR 前ゲート（PreToolUse hook）の視界から計画を消す**

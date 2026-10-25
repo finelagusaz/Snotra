@@ -95,6 +95,14 @@ function mainContext() {
   return { root, branch, tree };
 }
 
+/** `.delegate/` の外の変更（追跡ファイルの変更と未追跡ファイル）。`-z` で読む——既定の porcelain は
+ *  空白や非 ASCII を含むパスを引用符で囲むので、`?? .delegate/` の接頭辞に当たらなくなる */
+function changesOutsideDelegate(cwd) {
+  return execFileSync("git", ["status", "--porcelain", "-z", "--untracked-files=all"], { cwd, encoding: "utf8", stdio: "pipe" })
+    .split("\0")
+    .filter((e) => e !== "" && !e.startsWith(`?? ${DELEGATE_DIR}/`));
+}
+
 /** 登録された worktree（`git worktree list --porcelain` の各項目）。path は `path.resolve` 済み */
 function worktrees(root) {
   return git(root, ["worktree", "list", "--porcelain"])
@@ -233,9 +241,7 @@ function cmdAlign(opts) {
   const sha = resolveSha(tree, opts.sha);
   // 追跡ファイルの変更と、`.delegate/` の外の未追跡ファイル（変異で足したまま残ったファイル——
   // vitest の include に当たれば次の巡のテストに混ざる）の両方を、巻き戻されていない変異として止める
-  const leftovers = git(tree, ["status", "--porcelain", "--untracked-files=all"])
-    .split("\n")
-    .filter((l) => l !== "" && !l.startsWith(`?? ${DELEGATE_DIR}/`));
+  const leftovers = changesOutsideDelegate(tree);
   if (leftovers.length > 0) throw new EnvError(`変更が残っている（巻き戻されていない変異か）:\n${leftovers.join("\n")}`);
   if (git(tree, ["ls-tree", "--name-only", sha, DELEGATE_DIR]) !== "") {
     throw new EnvError(`${DELEGATE_DIR}/ が sha に追跡されている——報告の置き場が checkout と衝突する`);
@@ -283,9 +289,7 @@ function cmdRemove(opts) {
     const entry = worktrees(root).find((w) => w.path === target);
     if (!entry) throw new EnvError(`登録された worktree でない: ${posix(target)}`);
     if (target === path.resolve(root) || target === path.resolve(tree)) throw new EnvError(`委譲先の木でない: ${posix(target)}`);
-    const others = git(target, ["status", "--porcelain", "--untracked-files=all"])
-      .split("\n")
-      .filter((l) => l !== "" && !l.startsWith(`?? ${DELEGATE_DIR}/`));
+    const others = changesOutsideDelegate(target);
     if (others.length > 0) {
       console.error(`${DELEGATE_DIR}/ 以外の変更が残っている——消さない: ${posix(target)}\n${others.join("\n")}`);
       return 1;

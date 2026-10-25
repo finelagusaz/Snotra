@@ -256,6 +256,33 @@ describe("verify-tree run", () => {
     expect(r.status, r.output).toBe(0);
     expect(summaryOf(repo).warnings.join("\n")).toContain("node_modules/vitest");
   });
+
+  it("入っている依存の記録が壊れていても、回した結果を失わずに警告する", { timeout: T }, () => {
+    const repo = initRepo();
+    const lock = { lockfileVersion: 3, packages: { "": {}, "node_modules/vitest": { version: "5.0.3" } } };
+    const sha = commitFile(repo, "package-lock.json", JSON.stringify(lock));
+    mkdirSync(path.join(repo, "node_modules"));
+    writeFileSync(path.join(repo, "node_modules", ".package-lock.json"), "{ broken");
+
+    const r = runScript(repo, ["run", "--sha", sha]);
+
+    expect(r.status, r.output).toBe(0);
+    const s = summaryOf(repo);
+    expect(s.results.length).toBe(2);
+    expect(s.warnings.join("\n")).toContain("読めない");
+  });
+
+  it("登録だけ残ってディレクトリが消えた道具の木を作り直す", { timeout: T }, () => {
+    const repo = initRepo();
+    const sha = git(repo, ["rev-parse", "HEAD"]);
+    expect(runScript(repo, ["run", "--sha", sha]).status).toBe(0);
+    rmSync(verifyTree(repo), { recursive: true, force: true });
+
+    const r = runScript(repo, ["run", "--sha", sha]);
+
+    expect(r.status, r.output).toBe(0);
+    expect(git(verifyTree(repo), ["rev-parse", "HEAD"])).toBe(sha);
+  });
 });
 
 describe("verify-tree align", () => {
@@ -297,11 +324,12 @@ describe("verify-tree align", () => {
     expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(next);
   });
 
-  it(".delegate/ に未追跡の報告があっても checkout できる", { timeout: T }, () => {
+  it(".delegate/ に未追跡の報告があっても checkout できる（空白と非 ASCII を含む名前でも）", { timeout: T }, () => {
     const repo = initRepo();
     const wt = agentTree(repo);
     mkdirSync(path.join(wt, ".delegate"));
     writeFileSync(path.join(wt, ".delegate", "round1.txt"), "report\n");
+    writeFileSync(path.join(wt, ".delegate", "報告 a.txt"), "report\n");
     const next = commitFile(repo, "next.txt", "next\n");
 
     expect(runScript(wt, ["align", "--sha", next]).status).toBe(0);

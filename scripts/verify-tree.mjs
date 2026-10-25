@@ -23,7 +23,7 @@
 // - 出力するパスは `/` 区切り（pre-bash hook の `usesBackslashPath` を踏ませない）
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sectionOf } from "./governance/lib.mjs";
@@ -40,6 +40,10 @@ function git(cwd, args) {
 }
 
 const posix = (p) => p.split(path.sep).join("/").replaceAll("\\", "/");
+
+/** パスの照合に使う正規形。`path.resolve` は Windows の 8.3 短縮名（`RUNNER~1`）も junction も展開しない
+ *  ので、git が返す長い名前と一致しない（GitHub の Windows runner の `tmpdir()` で実測）。在るものは実体へ解決する */
+const canon = (p) => (existsSync(p) ? realpathSync.native(p) : path.resolve(p));
 
 /**
  * カテゴリ `<X>` の節（`### <X>.` 見出しから次の同レベル見出しまで）の、最初の ` ```bash ` フェンスの
@@ -103,13 +107,13 @@ function changesOutsideDelegate(cwd) {
     .filter((e) => e !== "" && !e.startsWith(`?? ${DELEGATE_DIR}/`));
 }
 
-/** 登録された worktree（`git worktree list --porcelain` の各項目）。path は `path.resolve` 済み */
+/** 登録された worktree（`git worktree list --porcelain` の各項目）。path は `canon` 済み */
 function worktrees(root) {
   return git(root, ["worktree", "list", "--porcelain"])
     .split(/\n\s*\n/)
     .filter((e) => e.startsWith("worktree "))
     .map((e) => ({
-      path: path.resolve(e.split("\n")[0].slice("worktree ".length)),
+      path: canon(e.split("\n")[0].slice("worktree ".length)),
       branch: /^branch refs\/heads\/(.+)$/m.exec(e)?.[1] ?? null,
       locked: /^locked\b/m.test(e),
     }));
@@ -186,7 +190,7 @@ function cmdRun(opts) {
 
   // ---- 木を作るか、再利用する
   git(root, ["worktree", "prune"]); // ディレクトリだけ消えた登録が add を阻まないように
-  if (worktrees(root).some((w) => w.path === path.resolve(tree))) {
+  if (worktrees(root).some((w) => w.path === canon(tree))) {
     const changed = git(tree, ["status", "--porcelain", "--untracked-files=no"]);
     if (changed !== "") throw new EnvError(`再利用する木に追跡ファイルの変更がある: ${posix(tree)}\n${changed}`);
     git(tree, ["checkout", "-q", "--detach", sha]);
@@ -285,10 +289,10 @@ function cmdRemove(opts) {
   if (ok) for (const f of [`${tree}.summary.json`, `${tree}.summary.log`]) rmSync(f, { force: true });
 
   if (opts.delegateTree) {
-    const target = path.resolve(opts.delegateTree);
+    const target = canon(opts.delegateTree);
     const entry = worktrees(root).find((w) => w.path === target);
     if (!entry) throw new EnvError(`登録された worktree でない: ${posix(target)}`);
-    if (target === path.resolve(root) || target === path.resolve(tree)) throw new EnvError(`委譲先の木でない: ${posix(target)}`);
+    if (target === canon(root) || target === canon(tree)) throw new EnvError(`委譲先の木でない: ${posix(target)}`);
     const others = changesOutsideDelegate(target);
     if (others.length > 0) {
       console.error(`${DELEGATE_DIR}/ 以外の変更が残っている——消さない: ${posix(target)}\n${others.join("\n")}`);

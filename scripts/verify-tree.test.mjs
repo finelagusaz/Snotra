@@ -6,7 +6,7 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -403,6 +403,25 @@ describe("verify-tree remove", () => {
     expect(r.status, r.output).toBe(0);
     expect(existsSync(wt)).toBe(false);
     expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toBe("");
+  });
+
+  it("--delegate-tree は、git が返す名前と字面の違うパス（junction 経由）でも同じ木として照合する", { timeout: T }, () => {
+    // GitHub の Windows runner では tmpdir() が 8.3 短縮名（RUNNER~1）を返し、path.resolve では一致しなかった。
+    // 短縮名は手元で作れないので、同じ「字面は違うが実体は同じ」を junction で作る
+    const repo = initRepo();
+    const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
+    git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
+    mkdirSync(path.join(wt, ".delegate"));
+    writeFileSync(path.join(wt, ".delegate", "round1.txt"), "report\n");
+    const alias = mkdtempSync(path.join(tmpdir(), "snotra-verify-tree-alias-"));
+    scratchDirs.push(alias);
+    const link = path.join(alias, "repo");
+    symlinkSync(repo, link, "junction");
+
+    const r = runScript(repo, ["remove", "--delegate-tree", path.join(link, ".claude", "worktrees", "agent-abc")]);
+
+    expect(r.status, r.output).toBe(0);
+    expect(existsSync(wt)).toBe(false);
   });
 
   it("--delegate-tree はロックされた木を消さず、報告も残す", { timeout: T }, () => {

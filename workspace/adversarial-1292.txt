@@ -1,0 +1,91 @@
+adversarial-1292  (敵対的調査・research.md 全主張が母集団)
+調査日 2026-10-25 / ブランチ fix/smoke-egui-default-exepath / 編集・smoke 実行はしていない（シミュレーション用の複製は scratchpad のみ）
+
+=== 0. 測定環境（計器が測る枝と変更が触る枝が同じか）===
+実測:
+  target/debug/snotra.exe    2026-10-09 22:18:20  53,668,864 B
+  target/release/snotra.exe  2026-10-24 23:46:05  11,296,768 B
+  -> research.md の mtime 記述（debug=10-09 / release=10-24）は正しい
+  CARGO_TARGET_DIR = 未設定（空）
+  cargo metadata --no-deps の target_directory = C:\workspace\Snotra\target
+  Resolve-SnotraCargoExecutable -RepositoryRoot C:/workspace/Snotra -Profile debug   -> C:\workspace\Snotra\target\debug\snotra.exe
+                                                                      -Profile release -> C:\workspace\Snotra\target\release\snotra.exe
+  -> 前提は崩れない。resolver は実在の 2 本を指す。
+  ただし: この作業コピーの debug は 16 日古い。変更の検証で既定(debug)を回す前に cargo build -p snotra が必須（research も認めている）。
+  偽にする手順: ls -l --time-style=full-iso target/*/snotra.exe ; echo $CARGO_TARGET_DIR ; cargo metadata --no-deps --format-version 1 | grep target_directory
+
+=== 1. 壊せた項目 ===
+B1. 【文書の更新対象に漏れ（争点 5 の反証）】research.md が挙げる更新対象は build-commands.md の 210 行・229〜234 行だけ。
+    「smoke-egui は release を測る」と読める記述が少なくとも 2 つ残る（どちらもコメント、governance:check は拾わない型）:
+      (a) scripts/lib/SnotraSmoke.Tests.ps1:572-574  「OS の打鍵がアプリへ届く配線は `smoke-egui.ps1` が release ビルドで見ている」
+      (b) scripts/lib/SnotraSmoke.psm1:367-369       「release を使う `smoke-egui` が同じキー注入をしながら一度も踏んでいない（debug のコンソール窓を）…release にこの窓が無いためである」
+    変更後はローカル既定で smoke-egui が debug を測る＝(b) の「踏んでいない」は偽になる（CI だけが release のまま）。(a)(b) とも「CI では」と限定する直しが要る。
+    偽にする手順: git grep -n 'smoke-egui' -- scripts/lib | grep -i release   （2 件出る）
+    ほか歴史文書（docs/superpowers/plans/2026-08-04-main-show-height-derivation.md:298,400 は「cargo build --release の後に npm run smoke:egui」）は
+    変更後に release→debug の逆向き stale を測る手順になるが、計画書は歴史物なので触らない判断で足りる（⚠️ 運用判断）。
+    docs/adr/ADR-harness-executable-path-derivation.md は research どおり凍結。CONTRIBUTING.md:92・AGENTS.md:72・.claude/rules/**・.claude/skills/** に
+    「smoke:egui は release を測る」と読める記述は無かった（git grep -i release を smoke/egui で絞り 0 件）。
+
+B2. 【母集団（争点 4）: 「少なくとも 2 本」は ExePath 名に限れば正しいが、本体パスの直書きは名前を変えるともう 1 本ある】
+    scripts/prepare-sidecar.ps1:11  `$targetDir = if ($Release) { "target/release" } else { "target/debug" }`（cwd 相対・CARGO_TARGET_DIR 非追随）。
+    ただし対象は snotra-settings のサイドカーで snotra.exe ではない。「同じ型」とみなすかは判断が要る（⚠️）。
+    manual-smoke.ps1:3 / measure-memory-stages.ps1:44 は正しく 2 本（下の「壊せなかった」参照）。
+    ほか .github は release.yml:71/74/87/92 等と smoke.yml:116/124/137 が `target/release/...` を明示渡し/直書き（CI の明示であり欠陥ではない）。
+    偽にする手順: git grep -n -E "target[/\\\\]+(debug|release)" -- scripts .github | grep -v Tests
+
+B3. 【作業の流れの所見の言い切り】「#1179 の母集団は resolver を呼ぶスクリプトだったため smoke-egui が候補に入らなかった」は
+    SnotraSmoke.Tests.ps1:222-225 のヘッダ（「対象は数え上げている」）と ADR の代替案 3 つ目からは支持されるが、
+    「最初から候補に入っていなかった」を直接裏づけるのは 480aa1d のコミット本文（「3 ファイル × 11 本」）だけで、
+    smoke-egui を検討して外した/見落とした、のどちらかは記録から決定できない。因果の断定は弱い（⚠️）。
+    偽にする手順: git show 480aa1d | grep -n -i 'smoke-egui'  （0 件なら「検討されなかった」ことまでしか言えない）
+
+=== 2. 壊せなかった項目 ===
+K1. 【争点 1: 既存 Pester 述語 3 つは新 assertion なしで通る】
+    計画どおりに複製した smoke-egui（scratchpad/sim-egui.ps1・parse エラー 0）へ、SnotraSmoke.Tests.ps1:235-262 の述語を逐語で当てた:
+      (1) paramDefaults 件数 1 -> `  [string]$ExePath = '',`  / 剥がし後 `''`  / 許可集合に含まれる = True
+          末尾カンマ付き・カンマ無し・行末コメント付き・`"",` の 4 形すべて剥がして `''`/`""` に落ちる（`\s*,?\s*(#.*)?$` は 1 番目の引数のカンマを正しく扱う）
+      (2) `$repoRoot =` は 1 件・`$PSScriptRoot` を含む = True
+          元の smoke-egui.ps1 に repoRoot/repositoryRoot の語は 0 件（param ブロック内にも本文にも無い）→ 件数 1 を破らない
+      (3) Resolve-SnotraCargoExecutable を含む非コメント行は 1 行、`-RepositoryRoot $repoRoot` を渡している = True
+          （コメント行の言及はフィルタで除かれる）
+    注意: 計画が 2 行以上に折る形（`Resolve-SnotraCargoExecutable` と引数を別行に置く）を採ると (3) は「語を含む行」しか見ないため折れた行で赤になる。1 行で書けば通る。
+    偽にする手順: pwsh -File scratchpad/sim.ps1（上の複製と述語の再現。なお実 Pester は未実行＝⚠️ 下記）
+
+K2. 【争点 2: CI が測るバイナリは変わらない】
+    smoke-egui.ps1 を参照する経路は全件で次のとおり: package.json:14（npm wrapper・既定のまま）, smoke.yml:116（-ExePath target/release/snotra.exe を明示）,
+    smoke.yml:24（paths トリガー）。他スクリプト・.claude/skills/**・.claude/agents/**・release.yml・ci.yml からの呼び出しは 0 件。
+    docs/build-commands.md:250 のフォールトインジェクション例も -ExePath を明示。→ 既定頼りの release 前提呼び出しは無い。
+    副次: smoke.yml の paths に scripts/smoke-egui.ps1 があるため、この PR は CI で Smoke workflow を起動し、新しい $repoRoot/Resolve-Path/Write-Host の行は CI でも実行される。
+    ただし resolver 経由の既定枝（debug 導出）は CI のどこも通らない（明示 ExePath のため）。既定枝の実証はローカル手動のみ。
+    偽にする手順: git grep -n -E 'smoke-egui|smoke:egui' -- . ':!docs' ':!workspace' | grep -v '^scripts/smoke-egui'
+
+K3. 【争点 3 前半: ExePath の使用点】宣言(2)・存在確認(63-64)・使用 151 と 731 の 2 か所のみ。cwd 相対前提のコードは無い
+    （Set-Location/Push-Location は smoke-egui に 0 件。明示相対パスは従来どおり cwd 相対のまま Start-Process へ渡る）。
+    スクリプト内に release/debug/panic の語は 0 件（ExePath の既定値行を除く）。プロファイルは $PSScriptRoot 基準の ..\target\smoke-egui\...（本体の場所と独立）。
+    偽にする手順: grep -n 'ExePath' scripts/smoke-egui.ps1 ; grep -n -i 'release\|debug' scripts/smoke-egui.ps1
+
+K4. 【debug 固有の差が検査を壊す経路を 3 つ探して、2 つは既に塞がれていた】
+    - debug は stderr へ非 JSON の `[index-load] ...` を出す（main.rs:179 の cfg(debug_assertions)）→ SnotraSmoke.psm1:568 が「全行−parse 成功」で数えない規則を持ち、
+      SnotraTraceInvariants の DroppedLineCount にも入れない設計。さらに smoke-egui:526 は捨てた行を failure にしない。
+    - debug はコンソールサブシステム（窓が前面を奪う）→ Start-SnotraProcess が WindowStyle Hidden で起動（psm1:361-378、#872）。smoke-egui も Start-SnotraProcess 経由。
+    - debug_assertions の他の使用は snotra-core の debug_assert（不変条件）のみ。panic=abort は release 専用だが smoke-egui はそれに依存しない。
+    偽にする手順: git grep -n 'debug_assertions' -- '*.rs'
+
+K5. 【争点 4: 2 本の記述】manual-smoke.ps1:3 は `"target/debug/snotra.exe"` の cwd 相対、measure-memory-stages.ps1:44 は
+    `"$PSScriptRoot/../target/release/snotra.exe"`（スクリプト位置基準・CARGO_TARGET_DIR 非追随）。research の記述どおり。
+    run-pester.ps1 は ExePath に既定を持たず repoRoot 基準（欠陥でない）。visual-check-colors/visual-input-metrics/bench-startup/smoke-startup は resolver 経由。
+    measure-memory.ps1 はプロセス名で測る（exe パスを持たない）。occupy-hotkey.ps1 も無関係。
+
+K6. 【争点 5 の既出分】build-commands.md:210（既定 ExePath = target/release）・229-234（「この 2 つでは」＝233 行）は research の指す箇所で実在する。
+    279 行「smoke:startup（既定 ExePath = debug）」は変更後も真。ADR は凍結で触らないという判断は妥当。
+
+=== 3. ⚠️ 確信の持てない所見 ===
+W1 ⚠️ debug での smoke-egui の実行時間余裕・安定性は 1 回の実績（PR #1291 の検証が exit 0）だけ。
+    固定 Sleep（50/120/150/300 ms）と release 前提で調整された待ちが debug（opt-level 0・PERFORMANCE.md の起動 327 ms≒release の 4 倍）で足りるかは未測。
+    観測時間の予算（StartupObserveTimeoutMs 25000 / ObserveTimeoutMs 8000 / PostMortemWaitMs 30000 / 5000 ms の exit/window 待ち）は debug 起動 0.3 s に対し十分だが、
+    Z 押しっぱなしブロック（smoke-egui:536-600）の固定 300 ms/150 ms は debug のフレーム遅延に対する余裕が未確認。smoke を実行できない条件のため測っていない。
+    偽にする手順: ビルド後 `npm run smoke:egui`（debug 既定）を 5 回以上回し、赤の有無を数える（本調査では実施しない）。
+W2 ⚠️ 実 Pester（npm run test:powershell）は未実行。述語は逐語再現で測ったが、-ForEach への 'smoke-egui.ps1' 追加後の Pester 実行結果は未確認。
+W3 ⚠️ 歴史計画書（docs/superpowers/plans/*）の「release の後に npm run smoke:egui」は変更後に逆向き stale になるが、触るかどうかは運用判断。
+W4 ⚠️ B2 の prepare-sidecar.ps1 を「同型の直書き」に数えるか（対象が snotra-settings のサイドカー）。
+W5 ⚠️ B3 の「候補に入らなかった」の因果は記録で決定不能。

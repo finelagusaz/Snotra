@@ -1,0 +1,11 @@
+開始: sha 81f9b96dcf29bbe9e823b63c531ed47f91d3b273
+
+===== 巡 4 最終報告 =====
+対象: sha 81f9b96dcf29bbe9e823b63c531ed47f91d3b273・6 ファイル（ADR / race-boundaries.mjs / race-boundaries.test.mjs / plan.md / workspace の review-plumbing-3.txt と verify-9ca5ecb9.json）。ベースライン 66 passed
+Critical / High / Medium: なし
+Low-F（任意）parseDiff の構造エラー（hunk の宣言より本文が短い）も main では「差分の 2 経路（patch と numstat）が食い違う」の見出しで出る。照合の食い違いではないので見出しが偽になる。直すなら「差分を読めない、または 2 経路が食い違う」。挙動（exit 3）は正しい
+(1) 巡 3 の解消: Medium-B 解消（S5 を再測して赤 9。単体 1 は製品の throw で落ち、本物の git 8 は AssertionError）/ Low-D 解消（main の文言と ADR 帰結から回数が消えた）/ ⚠️-C はコメントで明記された / S4 は赤 1 のまま
+(2) e2e の期待値: 同じ setup を別のハーネス（probe10）で本物の git に組んで走らせ、既定で 判定対象 9 行・① 5 件（n / moved / s / top / 既存）、--include-removed で 11 行・6 件（+ r）を得た。テストの内訳コメント（既存 1・top 2・s 1・moved 1・r 1・n 1・未追跡 u 2）とも一致。固定しているもの: hunk 内の No newline を通す読み（n.rs が旧新とも改行なし）・rename を検出して追加行だけ・1 行書き換えの削除行・削除ファイルの行を入れない設計
+(3) コメントと文言: deleted の continue の隣のコメントは真（D のパスでは patch が +++ /dev/null で行を生まず、numstat は {0,N} か null。外して失う照合は無い。--include-removed で入れるなら欠落を隠す）。ADR「別々の git 呼び出しで読む」も真
+変異（巡 4・巻き戻し後 hash-OK: mjs 8a932984 / test 2d97dfd8）: S4 赤1（assert）/ S5 赤9。生出力は mut-out-r4.txt
+報告が名乗る対象: sha 81f9b96dcf29bbe9e823b63c531ed47f91d3b273・6 ファイル

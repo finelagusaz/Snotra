@@ -61,6 +61,7 @@
 - [x] 巡 1 レビュー対応: hunk の行数で読む `parseDiff`（M-1/M-2）・削除行数の照合（M-2）・バイナリ扱いのソースを exit 3（M-3）・exit 3 の e2e テスト（M-4）・setup の隔離と後始末（L-1）・rename と `++ ` 行の e2e（L-2）・文言（L-3/L-4/L-6/L-7/⚠-1/⚠-3）
 - [x] 巡 2 レビュー対応: numstat の del を fixture と本物の git の書き換えで固定（Medium-A）・削除されたファイルを `--diff-filter=D` で知り照合から外す（Low-A・⚠️-A）・宣言より短い hunk を止める（Low-B）・context 行の fixture（Low-C）
 - [x] 巡 3 レビュー対応: hunk の中の ` No newline` を単体と本物の git（改行で終わらないファイルの書き換え）で固定（Medium-B）・読み取り回数の文言（Low-D）・削除ファイル除外の前提をコメントへ（⚠️-C）
+- [x] 巡 4 レビュー対応: exit 3 の見出しを壊れた hunk にも当てはまる文言へ（Low-F）。巡 4 で Critical/High/Medium 0・緑の変異 0 で収束
 
 ## 人間レビュー
 

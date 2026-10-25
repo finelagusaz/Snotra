@@ -297,7 +297,7 @@ function main() {
   } catch (e) {
     if (!(e instanceof DiffShapeError)) throw e;
     console.error(
-      `差分の 2 経路（patch と numstat）が食い違う——母集団を欠いたまま報告しない:\n${e.message}\n` +
+      `差分を読めない、または 2 経路（patch と numstat）が食い違う——母集団を欠いたまま報告しない:\n${e.message}\n` +
         `git の設定・属性・版が出力の形を変えたか、別々の読み取りの間に作業ツリーが動いた（再実行で消えるなら後者）。`,
     );
     process.exit(3);

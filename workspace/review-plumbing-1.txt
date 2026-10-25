@@ -1,0 +1,142 @@
+開始: sha 27da65b98612d1d895551904c3533b411f330be5
+[実測1] 内容が "++ " で始まる追加行: 新実装 exit 3（patch の名前が numstat に無い: evil）。旧は黙って誤帰属。リポジトリ内の該当行は現状 0 件。
+[実測2] staged/unstaged/ita/stat-dirty/unmerged 衝突: 旧 git diff -U0 と新 readTrackedRows の行集合一致（命題3 真）
+[実測3] diff.dstPrefix/srcPrefix/GIT_EXTERNAL_DIFF/GIT_DIFF_OPTS/diff.algorithm: exit 0 で全行入る
+[実測4] .gitattributes "*.rs -diff" で .rs の追加行が exit 0・① 0 件で黙って落ちる（numstat が -\t- → null で照合対象外）。旧も同じ。ADR 帰結の「残る穴は quote されるパスだけ」と食い違う
+[実測5] --include-removed で内容が "-- " の削除行（"-- thread::spawn(|| {});"）は exit 0・① 0 件で黙って落ちる。照合は + だけを数える
+[実測6] commit.gpgsign=true を環境で注入すると本物の git の 6 テストが setup で落ち、一時ディレクトリが 12 個残った（setup が try の外・g() は隔離されていない）
+[実測7] 変異結果は mut-out.txt を参照。M11（main が照合を素通り）と M10（隔離外し）は緑
+
+===== 最終報告 =====
+対象: sha 27da65b98612d1d895551904c3533b411f330be5・4 ファイル（ADR / race-boundaries.mjs / race-boundaries.test.mjs / workspace/plan.md）
+Critical: なし
+High: なし
+Medium-1 parseDiff が "+++ " / "--- " を接頭辞だけでヘッダと見る（scripts/race-boundaries.mjs:60-64）。内容が "++ " の追加行で patch 行 "+++ evil" が file を evil へ切り替え、新しい照合が exit 3 を出す（正規の差分で道具が止まる）。旧は黙って誤帰属。偽にする手順: 追跡 x.rs に "++ evil" を追加 -> exit 3「patch の名前が numstat に無い: evil」。修正: diff --git 後から最初の @@ までだけをヘッダとし、@@ -a,b +c,d @@ の件数で hunk 本文を数える状態機械
+Medium-2 照合は + 行だけ（diffMismatches が parseNumstatZ の del 列を捨てる）。--include-removed で内容が "-- " の削除行が exit 0 で黙って落ちる。偽にする手順: x.rs から "-- thread::spawn(|| {});" を削除し --include-removed -> exit 0・① 0 件。修正: numstat の del も Map に持ち、includeRemoved 時は - 行数も照合（Medium-1 の修正で根本も消える）
+Medium-3 numstat が "-\t-"（null）の項目は照合の外。.gitattributes "*.rs -diff" で .rs の追加行が exit 0・① 0 件で黙って落ちる（旧も同じ・回帰ではない）。ADR 帰結・冒頭契約 17 行目・diffMismatches の doc「名前が化けた・行が落ちたことは列挙せずに捕まえる」より実装が弱い。修正: null かつ SOURCE_EXT に合うパスを食い違いとして出す（または ADR 帰結に穴として明記）
+Medium-4 main の exit 3 経路に端から端の検知器が無い。変異 M11（main で readTrackedRows を素の parseDiff(diff-index) に戻す）が全緑。修正: 本物の git テストに "++ " 行など食い違いを起こす入力で status 3 と stderr を確かめる 1 件を足す（Medium-1 を直すなら rename の patch/numstat 片側 -M 等）
+Low-1 本物の git テストの setup()（test.mjs の g と setup）は隔離されていない環境で git を回し、try の外にある。commit.gpgsign=true を注入すると 6 件が setup で落ち一時ディレクトリが 12 個残った（実測）。修正: g にも同じ GIT_CONFIG_GLOBAL/NOSYSTEM の env を渡し、setup() を try の内側へ（emptyConfig の生成を先に）
+Low-2 実 git テストに rename ケースが無く、-M（M1/M2/M3）と numstat 側 quotePath（M5）は fake の引数固定だけが赤にする。M5 は -z が quote を無効にするので挙動上 no-op（本物の git テストが緑のまま＝実測）。修正: rename+編集のファイルを setup に 1 つ足す（M1/M2 は exit 3 で赤になる）
+Low-3 ADR「-M 付きの旧新は 3 基準（最大 6.8 万行）」/ commit message「4 基準（最大 13 万行）」/ plan「3 基準 450/8949/68561」が食い違う。数を直すより plan の受け入れ条件（または 1 か所）を正本として指す
+Low-4 main() 269 行の「基準が誤っている: `git diff <mb>`」は diff-index へ移った後も git diff と名乗る。修正: `git diff-index <mb>` へ
+Low-5 parseNumstatZ は -z 無し入力（改行区切り）を throw せず 1 キーの誤った Map にする（/s の (.*) が残り全部を飲む）。下流の照合が捕まえる（M14 赤）ので実害なし。命題 1 の厳密形は偽
+Low-6 plan.md の変更ファイル欄の DIFF_ARGS / NUMSTAT_ARGS は実装に無い。test.mjs の `const g =(...a)` の空白
+⚠️-1 patch と numstat を別々の 2 回で取るため、その間に作業ツリーが書き換わる（保存・cargo fmt）と食い違い exit 3 になり、文言は設定の問題に読める。未実測。案: 文言に「再実行で消えるなら作業ツリーが動いた」を足す
+⚠️-2 同じパスが numstat に 2 項目出る形（typechange 等）では map.set が上書きし合計しない。Windows で作れず未実測
+⚠️-3 ADR 却下 2 の safe.directory の fatal は未検算
+命題 3 真: staged / unstaged / intent-to-add / stat-dirty / 衝突中 unmerged で旧 git diff -U0 と新 readTrackedRows の行集合が一致（実測）
+命題 2: 削除のみ・CRLF+末尾改行なし・バイナリ・rename+編集・空白入りパス・空の新規ファイル・dstPrefix/srcPrefix/GIT_EXTERNAL_DIFF/GIT_DIFF_OPTS/diff.algorithm で exit 0 かつ行が入る（実測）。偽陽性は Medium-1 の形
+M10 補足: 隔離を外しても新実装は緑。旧実装（M13）+ 隔離外しでは 6 件中 5 件だけ赤・noprefix が緑（開発機 ~/.gitconfig は core.quotepath=false）＝commit message の主張を再現
+## M1 -M外し(patch) | status 1 | Tests  2 failed | 53 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 引数の列を固定し、照合がそろえば行を返す
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   ERR: Error: 想定外の引数: ["-c","core.quotePath=false","diff-index","-p","-U0","mb"]
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+## M2 -M外し(numstat) | status 1 | Tests  2 failed | 53 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 引数の列を固定し、照合がそろえば行を返す
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   ERR: Error: 想定外の引数: ["-c","core.quotePath=false","diff-index","--numstat","-z","mb"]
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+## M3 -M外し(両方) | status 1 | Tests  2 failed | 53 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 引数の列を固定し、照合がそろえば行を返す
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   ERR: Error: 想定外の引数: ["-c","core.quotePath=false","diff-index","-p","-U0","mb"]
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+## M4 quotePath外し(patch) | status 1 | Tests  8 failed | 47 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 引数の列を固定し、照合がそろえば行を返す
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > core.quotePath=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.relative=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.mnemonicPrefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.noprefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > color.ui=always でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.external=true でも 3 ファイルの追加行がすべて入る
+   ERR: Error: 想定外の引数: ["diff-index","-M","-p","-U0","mb"]
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+   ERR: AssertionError: expected '差分の 2 経路（patch と numstat）が食い違う——母集団を欠…' to be '' // Object.is equality
+## M5 quotePath外し(numstat) | status 1 | Tests  2 failed | 53 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 引数の列を固定し、照合がそろえば行を返す
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   ERR: Error: 想定外の引数: ["diff-index","-M","--numstat","-z","mb"]
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+## M6 照合分岐1(名前)外し | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > diffMismatches（patch と numstat を別経路で照合する） > quote・接頭辞で化けた名前を捕まえる
+   ERR: AssertionError: expected [ '既.rs: numstat 1 行が patch に無い' ] to have a length of 2 but got 1
+## M7 照合分岐2(行数)外し | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > diffMismatches（patch と numstat を別経路で照合する） > 行数の食い違いを捕まえる
+   ERR: AssertionError: expected [] to have a length of 1 but got +0
+## M8 照合分岐3(欠落)外し | status 1 | Tests  2 failed | 53 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > diffMismatches（patch と numstat を別経路で照合する） > quote・接頭辞で化けた名前を捕まえる
+   FAIL: scripts/race-boundaries.test.mjs > diffMismatches（patch と numstat を別経路で照合する） > patch から行が落ちたファイルを捕まえる（色・外部 diff で +++ が読めない形）
+   ERR: AssertionError: expected [ Array(1) ] to have a length of 2 but got 1
+   ERR: AssertionError: expected [] to have a length of 1 but got +0
+## M8b 分岐3の n>0 外し | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > diffMismatches（patch と numstat を別経路で照合する） > 名前と追加行数がそろえば空
+   ERR: AssertionError: expected [ 'gone.rs: numstat 0 行が patch に無い' ] to deeply equal []
+## M9 rename分岐外し | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > parseNumstatZ（`diff-index -M --numstat -z` の形は一時リポジトリで実測した） > 通常・rename・バイナリを新しいパスで引く
+   ERR: Error: numstat の項目を読めない: "old.rs"
+## M9b i+=2 -> i+=1 | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > parseNumstatZ（`diff-index -M --numstat -z` の形は一時リポジトリで実測した） > 通常・rename・バイナリを新しいパスで引く
+   ERR: Error: numstat の項目を読めない: "new.rs"
+## M11 main が照合を素通り | status 0 | Tests  55 passed (55) | restore hash-OK
+## M12 DiffShapeError->Error | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+## M13 main を旧 git diff へ | status 1 | Tests  6 failed | 49 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > core.quotePath=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.relative=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.mnemonicPrefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.noprefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > color.ui=always でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.external=true でも 3 ファイルの追加行がすべて入る
+   ERR: AssertionError: expected '# 並行境界の候補（race:boundaries）\n\n基準: `gi…' to contain '① worker の spawn: 3 件'
+## M14 numstat -z 外し | status 1 | Tests  8 failed | 47 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 引数の列を固定し、照合がそろえば行を返す
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > core.quotePath=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.relative=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.mnemonicPrefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.noprefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > color.ui=always でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.external=true でも 3 ファイルの追加行がすべて入る
+   ERR: Error: 想定外の引数: ["-c","core.quotePath=false","diff-index","-M","--numstat","mb"]
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+   ERR: AssertionError: expected '差分の 2 経路（patch と numstat）が食い違う——母集団を欠…' to be '' // Object.is equality
+## M15 binary null 外し | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > parseNumstatZ（`diff-index -M --numstat -z` の形は一時リポジトリで実測した） > 通常・rename・バイナリを新しいパスで引く
+   ERR: AssertionError: expected [ [ 'plain.rs', 2 ], …(3) ] to deeply equal [ [ 'plain.rs', 2 ], …(3) ]
+## M16 末尾NUL break外し | status 1 | Tests  10 failed | 45 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > parseNumstatZ（`diff-index -M --numstat -z` の形は一時リポジトリで実測した） > 通常・rename・バイナリを新しいパスで引く
+   FAIL: scripts/race-boundaries.test.mjs > parseNumstatZ（`diff-index -M --numstat -z` の形は一時リポジトリで実測した） > 空の出力は空の Map
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 引数の列を固定し、照合がそろえば行を返す
+   FAIL: scripts/race-boundaries.test.mjs > readTrackedRows（plumbing の 2 経路を照合する） > 食い違えば DiffShapeError（main が exit 3 にする）
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > core.quotePath=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.relative=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.mnemonicPrefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.noprefix=true でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > color.ui=always でも 3 ファイルの追加行がすべて入る
+   FAIL: scripts/race-boundaries.test.mjs > 本物の git に出力の形を変える設定を注入する（fake は作者の想定の写しで、git の実際を見ない） > diff.external=true でも 3 ファイルの追加行がすべて入る
+   ERR: Error: numstat の項目を読めない: ""
+   ERR: AssertionError: expected error to be instance of DiffShapeError
+   ERR: Error {
+   ERR: AssertionError: expected 'file:///C:/workspace/Snotra/.claude/w…' to be '' // Object.is equality
+## M17 throw(rename新パス欠落)外し | status 1 | Tests  1 failed | 54 passed (55) | restore hash-OK
+   FAIL: scripts/race-boundaries.test.mjs > parseNumstatZ（`diff-index -M --numstat -z` の形は一時リポジトリで実測した） > 形の崩れた項目は黙って捨てずに throw する
+   ERR: AssertionError: expected [Function] to throw an error
+## M10 テストの GIT_CONFIG_GLOBAL 隔離外し | status 0 | Tests  55 passed (55) | restore hash-OK
+
+===== 追補（最終） =====
+Medium-4 の訂正: M4 で本物の git の 6 件が stderr 非空で赤になったので exit 3 経路は走っている。正確には「食い違いを起こす入力に対して status 3 と stderr の文言を肯定形で確かめるテストが無い（M11 全緑）」
+赤の理由の内訳: M1/M2/M3/M5/M14 の readTrackedRows 2 件は test1 = fake の throw「想定外の引数」（assert ではない）・test2 = AssertionError「expected error to be instance of DiffShapeError」。M4/M13/M14/M16 の本物 git 6 件は AssertionError（stderr toBe "" / toContain "① worker の spawn: 3 件"）。M6/M7/M8/M8b/M12/M15/M17 は AssertionError。M9/M9b/M16 の parseNumstatZ は製品の throw「numstat の項目を読めない」で it が落ちる（assert ではない・expect 外の例外）
+M10 観測: 新実装では隔離を外しても緑（plumbing + -c）。旧実装（M13）+ 隔離外しでは 6 件中 5 件赤・noprefix だけ緑（開発機 ~/.gitconfig は core.quotepath=false。quotePath=true は env 注入 GIT_CONFIG_COUNT が global に勝つので赤のまま）
+コメント規約（docs/comment-guidelines.md 第一原則）: readTrackedRows doc の 6 設定の列挙は「落ちた（#1300 で実測）」の過去の観測として書かれており該当なし。parseNumstatZ doc の「rename だけ <add>\t<del>\t\0<old>\0<new>\0 になる」は現在形の形の列挙（-C を足せば copy も同形）——Low、「実測した」の過去形か「rename（と copy）」へ
+Phase 2e: scripts の道具・SPEC 対象外。2d: 新しいリソース無し（テストの一時ディレクトリは Low-1）
+報告が名乗る対象: sha 27da65b98612d1d895551904c3533b411f330be5・4 ファイル。変異 19 本すべて巻き戻し後 hash-object 一致（mjs 674bae08 / test 84d77c54）

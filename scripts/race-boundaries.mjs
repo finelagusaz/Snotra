@@ -51,28 +51,43 @@ export function isCommentLine(text) {
   return /^\s*(\/\/|\/\*|\*[\s/]|#)/.test(text);
 }
 
-/** unified diff（`git diff -U0`）を [{ file, sign, text }] へ分解する。
- *  `+++ b/<path>` をファイル名の起点にする（`--- a/<path>` は削除専用ファイルでも同じ値を持つ）。 */
+/** unified diff（`diff-index -p -U0`）を [{ file, sign, text }] へ分解する。
+ *  `+++ b/<path>` をファイル名の起点にする（`--- a/<path>` は削除専用ファイルでも同じ値を持つ）。
+ *  hunk の本文は `@@ -a,b +c,d @@` が宣言した行数だけ読む——接頭辞で見分けると、`++ ` で始まる追加行
+ *  （patch では `+++ …`）をヘッダと誤ってファイル名を切り替えた（委譲レビューが本物の git で実測）。 */
 export function parseDiff(diffText) {
   const rows = [];
   let file = null;
+  let oldLeft = 0;
+  let newLeft = 0;
   for (const line of diffText.split("\n")) {
-    if (line.startsWith("+++ ")) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith("+")) {
+        newLeft--;
+        if (file) rows.push({ file, sign: "+", text: line.slice(1) });
+      } else if (line.startsWith("-")) {
+        oldLeft--;
+        if (file) rows.push({ file, sign: "-", text: line.slice(1) });
+      } else if (line.startsWith(" ")) {
+        oldLeft--;
+        newLeft--;
+      } // `\ No newline at end of file` は数えない
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+    if (hunk) {
+      oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]);
+      newLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    } else if (line.startsWith("+++ ")) {
       const t = line.slice(4).trim();
       file = t === "/dev/null" ? null : t.replace(/^b\//, "");
-    } else if (line.startsWith("--- ") || line.startsWith("@@") || line.startsWith("diff --git")) {
-      // ヘッダ。`--- ` は本文の削除行（`-`）と接頭辞が重なるため、ここで先に食う
-    } else if (line.startsWith("+")) {
-      if (file) rows.push({ file, sign: "+", text: line.slice(1) });
-    } else if (line.startsWith("-")) {
-      if (file) rows.push({ file, sign: "-", text: line.slice(1) });
     }
   }
   return rows;
 }
 
-/** `diff-index -M --numstat -z` を Map(新しいパス → 追加行数) へ分解する。バイナリ（`-`）は null。
- *  項目は `<add>\t<del>\t<path>\0`、rename だけ `<add>\t<del>\t\0<old>\0<new>\0` になる（一時リポジトリで実測）。 */
+/** `diff-index -M --numstat -z` を Map(新しいパス → { add, del }) へ分解する。バイナリ（`-`）は null。
+ *  一時リポジトリで実測した形は、通常 `<add>\t<del>\t<path>\0` と、rename の `<add>\t<del>\t\0<old>\0<new>\0` だった。 */
 export function parseNumstatZ(out) {
   const map = new Map();
   const fields = out.split("\0");
@@ -86,23 +101,34 @@ export function parseNumstatZ(out) {
       i += 2;
       if (file === undefined || file === "") throw new Error("numstat の rename に新しいパスが無い");
     }
-    map.set(file, m[1] === "-" ? null : Number(m[1]));
+    map.set(file, m[1] === "-" ? null : { add: Number(m[1]), del: Number(m[2]) });
   }
   return map;
 }
 
-/** patch から解いた `+` 行と numstat の追加行数の食い違い（空なら一致）。別経路の 2 つの出力を突き合わせるので、
- *  設定や git の版がヘッダの形を変えても、名前が化けた・行が落ちたことは列挙せずに捕まえる。 */
+/** patch から解いた行と numstat の行数の食い違い（空なら一致）。別経路の 2 つの出力を突き合わせるので、
+ *  ヘッダの形が変わって名前が化けた・行が落ちた形を、形の種類を列挙せずに捕まえる。
+ *  削除されたファイル（`+++ /dev/null`）は patch 側が行を生まないので、追加 0 の項目は欠落を問わない。
+ *  バイナリ扱いのソース（`-diff` 属性など）は中身を見られないので食い違いとして出す（委譲レビューが実測）。 */
 export function diffMismatches(rows, numstat) {
   const parsed = new Map();
-  for (const r of rows) if (r.sign === "+") parsed.set(r.file, (parsed.get(r.file) ?? 0) + 1);
+  for (const r of rows) {
+    const c = parsed.get(r.file) ?? { add: 0, del: 0 };
+    if (r.sign === "+") c.add++;
+    else c.del++;
+    parsed.set(r.file, c);
+  }
   const out = [];
-  for (const [file, n] of parsed) {
-    if (!numstat.has(file)) out.push(`patch の名前が numstat に無い: ${file}`);
-    else if (numstat.get(file) !== null && numstat.get(file) !== n) out.push(`${file}: patch ${n} 行 / numstat ${numstat.get(file)} 行`);
+  for (const [file, c] of parsed) {
+    const n = numstat.get(file);
+    if (n === undefined) out.push(`patch の名前が numstat に無い: ${file}`);
+    else if (n !== null && (n.add !== c.add || n.del !== c.del)) {
+      out.push(`${file}: patch +${c.add}/-${c.del} 行 / numstat +${n.add}/-${n.del} 行`);
+    }
   }
   for (const [file, n] of numstat) {
-    if (n !== null && n > 0 && !parsed.has(file)) out.push(`${file}: numstat ${n} 行が patch に無い`);
+    if (n === null && SOURCE_EXT.test(file)) out.push(`${file}: バイナリ扱いで中身を見られない（.gitattributes の -diff 等）`);
+    else if (n !== null && n.add > 0 && !parsed.has(file)) out.push(`${file}: numstat の +${n.add} 行が patch に無い`);
   }
   return out;
 }
@@ -255,7 +281,10 @@ function main() {
     rows = readTrackedRows(git, mergeBase);
   } catch (e) {
     if (!(e instanceof DiffShapeError)) throw e;
-    console.error(`差分の 2 経路（patch と numstat）が食い違う——母集団を欠いたまま報告しない:\n${e.message}`);
+    console.error(
+      `差分の 2 経路（patch と numstat）が食い違う——母集団を欠いたまま報告しない:\n${e.message}\n` +
+        `git の設定・属性・版が出力の形を変えたか、2 回の読み取りの間に作業ツリーが動いた（再実行で消えるなら後者）。`,
+    );
     process.exit(3);
   }
   const untracked = listUntracked(git);
@@ -266,7 +295,7 @@ function main() {
   // 空の母集団のまま先へ進ませない——0 件の報告と「そもそも何も見ていない」を区別できなくなる。
   if (rows.length === 0 && untracked.length === 0) {
     console.error(
-      `基準が誤っている: \`git diff ${mergeBase.slice(0, 8)}\` と未追跡のソースファイル（\`git status --porcelain --untracked-files=all\`）がともに空。\n` +
+      `基準が誤っている: \`git diff-index ${mergeBase.slice(0, 8)}\` と未追跡のソースファイル（\`git status --porcelain --untracked-files=all\`）がともに空。\n` +
         `--base に渡した \`${args.base}\` が分岐元でない可能性がある（merge-base = ${mergeBase.slice(0, 8)}）。分岐元のブランチ名を渡し直す。`,
     );
     process.exit(3);

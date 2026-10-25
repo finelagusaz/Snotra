@@ -27,18 +27,19 @@
 
 - 上の 6 設定のそれぞれで、日本語名・サブディレクトリ外・通常のファイルの追加行がすべて母集団に入る（C で測る）
 - patch の名前が numstat と一致しない、または追加行数が食い違うと exit 3 で止まり、0 件の報告を作らない
-- 既存の挙動（行の集合）は変わらない——基準: このブランチで `main` / `main~40` / `main~200` の 3 基準について、旧 `git diff -U0` と新 `diff-index -M -p -U0` の `parseDiff` 結果が完全一致（450 / 8949 / 68561 行・計測済み）
+- 既存の挙動（行の集合）は変わらない——基準: このブランチで `main`〜`main~600` の 4 基準（作業ツリーを含む）について、旧 `git diff -U0` + 旧 `parseDiff` と新 `readTrackedRows` の行の集合が完全一致（巡 1 の修正後に測り直し済み）
 
 ## 変更ファイル
 
-- `scripts/race-boundaries.mjs`: `DIFF_ARGS` / `NUMSTAT_ARGS`・`parseNumstatZ`・`diffMismatches`・`readTrackedRows(git, base)` を足し、`main()` を差し替える。冒頭の契約欄と `main()` 内コメントを更新
+- `scripts/race-boundaries.mjs`: `parseNumstatZ`・`diffMismatches`・`readTrackedRows(git, base)` を足し、`main()` を差し替える。冒頭の契約欄と `main()` 内コメントを更新
 - `scripts/race-boundaries.test.mjs`: 純関数のテスト・fake git による引数の固定・本物の git での敵対的設定テスト
 - `docs/adr/ADR-race-boundaries-git-plumbing.md`: D と porcelain 継続（設定の列挙で塞ぐ形）の却下
 
 ## 不変条件と異常系
 
-- 照合は numstat の追加行数が数値のファイルだけを見る（バイナリ `-\t-`・mode のみ・削除・stat だけ変わったファイルは追加 0 か非数値）
-- patch 側の名前が numstat に無い → 化けた名前（quote・接頭辞・色）。追加数の不一致 → 行が落ちた
+- 照合は追加・削除の両方の行数を見る。削除されたファイル（追加 0）は欠落を問わない。バイナリ扱いのソースは exit 3
+- patch 側の名前が numstat に無い → 化けた名前（quote・接頭辞・色）。行数の不一致 → 行が落ちた
+- hunk の本文は `@@` が宣言した行数だけ読む（`++ ` / `-- ` で始まる行をヘッダと誤らない）
 - rename は numstat -z で `<add>\t<del>\t\0<old>\0<new>\0` の形（実測）。新しい名前で照合する
 - 照合の相手は plumbing に限る——porcelain `diff --numstat -z` は `diff.relative` で同じだけ狭まり、黙って一致する（実測）
 
@@ -57,6 +58,7 @@
 - [x] `main()` を `readTrackedRows` へ差し替え、照合失敗を exit 3 にする。契約欄とコメントを更新
 - [x] C: 本物の git で 6 設定 × 日本語名・サブディレクトリ外を回すテスト（旧実装で赤になることを確かめる）
 - [x] ADR を起こす
+- [x] 巡 1 レビュー対応: hunk の行数で読む `parseDiff`（M-1/M-2）・削除行数の照合（M-2）・バイナリ扱いのソースを exit 3（M-3）・exit 3 の e2e テスト（M-4）・setup の隔離と後始末（L-1）・rename と `++ ` 行の e2e（L-2）・文言（L-3/L-4/L-6/L-7/⚠-1/⚠-3）
 
 ## 人間レビュー
 

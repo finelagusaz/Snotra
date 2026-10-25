@@ -476,7 +476,7 @@ if ($PostToPr) {
   # **ブランチが取れないときは gh の既定（cwd のブランチ）へ倒さない**——記録と別の PR へ黙って載る。
   $target = if ($Pr -gt 0) { "$Pr" } elseif ($branch -and $branch -ne 'HEAD') { $branch } else { $null }
   if (-not $target) {
-    throw "投稿先の PR を決められません（ブランチ: '$branch'）。記録は $OutFile にあります。-Pr <番号> を渡して再実行するか、手で貼ってください。"
+    throw "投稿先の PR を決められません（ブランチ: '$branch'）。記録は $OutFile にあります。目視をやり直さずに投稿するなら gh pr comment <番号> --body-file `"$OutFile`" を打ってください（次回からは -Pr <番号> を渡せます）。"
   }
   Write-Host ""
   Write-Host "PR へ投稿します..." -ForegroundColor Cyan

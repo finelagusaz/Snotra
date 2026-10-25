@@ -10,15 +10,17 @@
 // 契約:
 // - 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻に非依存）
 // - `--base` は必須。省略は使用法 + exit 2（リビジョン未固定が同型欠陥の本体・設計書「背景」）
-// - 差分と未追跡がともに空なら exit 3（沈黙経路の閉塞。SKILL 段 1 の「2 コマンドの出力が
-//   両方とも空なら『変更が無い』ではなく『基準が誤っている』と読む」を機構化したもの）。
+// - 変更されたファイルと未追跡のソースがともに無ければ exit 3（沈黙経路の閉塞。「両方とも空なら
+//   『変更が無い』ではなく『基準が誤っている』と読む」を機構化したもの）。
 //   **merge-base が HEAD と一致すること自体は異常ではない**——この検査は `/implement`「3a. 委譲の前に」から
 //   コミットより前に呼ばれ、初コミット前の feature ブランチでは常にそうなる（実測）
+// - patch のファイル名が変更ファイルの一覧と食い違えば exit 3（git の設定が出力の形を変えて行を黙って落とす形の閉塞・`readTrackedRows`）
 // - **出力は常に ①〜⑧ の全種**。0 件の種別も件数とパターンを印字する——これで
 //   「1 件見つけたら残り 7 種を素通り」という経路が構造的に消える（#800）
 // - 分類本体は入力注入の純関数（scripts/race-boundaries.test.mjs がフィクスチャで検証する）
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 /** 種別表（序数・名称・パターンの SSOT。#894 以前は SKILL.md 側に写しの表があった）。
  *  **序数 ①〜⑧ は書き換えない** — `docs/adr/ADR-race-check-predicate-and-norm-hardening.md` `docs/adr/ADR-check-skill-skeleton.md`
@@ -49,28 +51,92 @@ export function isCommentLine(text) {
   return /^\s*(\/\/|\/\*|\*[\s/]|#)/.test(text);
 }
 
-/** unified diff（`git diff -U0`）を [{ file, sign, text }] へ分解する。
- *  `+++ b/<path>` をファイル名の起点にする（`--- a/<path>` は削除専用ファイルでも同じ値を持つ）。 */
+/** patch のファイル名が変更ファイルの一覧と食い違った（設定や git の版が出力の形を変えた）。main が exit 3 にする。 */
+export class DiffShapeError extends Error {}
+
+/** unified diff（`diff-index -p -U0`）を [{ file, sign, text }] へ分解する。
+ *  ファイル名は `+++ b/<path>`、削除されたファイル（`+++ /dev/null`）だけ `--- a/<path>` から取る——
+ *  消えた行を母集団へ入れるかは `selectPopulation` の `--include-removed` だけが決める。
+ *  以前は削除されたファイルの行を捨てており、ファイルごと消した worker が廃止の検査に映らなかった（セルフレビューが実測）。
+ *  hunk の本文は `@@ -a,b +c,d @@` が宣言した行数だけ読む——接頭辞で見分けると、`++ ` で始まる追加行
+ *  （patch では `+++ …`）をヘッダと誤ってファイル名を切り替えた（委譲レビューが本物の git で実測）。 */
 export function parseDiff(diffText) {
   const rows = [];
   let file = null;
+  let oldFile = null;
+  let oldLeft = 0;
+  let newLeft = 0;
   for (const line of diffText.split("\n")) {
-    if (line.startsWith("+++ ")) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith("+")) {
+        newLeft--;
+        if (file) rows.push({ file, sign: "+", text: line.slice(1) });
+      } else if (line.startsWith("-")) {
+        oldLeft--;
+        if (file) rows.push({ file, sign: "-", text: line.slice(1) });
+      } else if (line.startsWith(" ")) {
+        oldLeft--;
+        newLeft--;
+      } // `\ No newline at end of file` は数えない
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+    if (hunk) {
+      oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]);
+      newLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    } else if (line.startsWith("--- ")) {
       const t = line.slice(4).trim();
-      file = t === "/dev/null" ? null : t.replace(/^b\//, "");
-    } else if (line.startsWith("--- ") || line.startsWith("@@") || line.startsWith("diff --git")) {
-      // ヘッダ。`--- ` は本文の削除行（`-`）と接頭辞が重なるため、ここで先に食う
-    } else if (line.startsWith("+")) {
-      if (file) rows.push({ file, sign: "+", text: line.slice(1) });
-    } else if (line.startsWith("-")) {
-      if (file) rows.push({ file, sign: "-", text: line.slice(1) });
+      oldFile = t === "/dev/null" ? null : t.replace(/^a\//, "");
+    } else if (line.startsWith("+++ ")) {
+      const t = line.slice(4).trim();
+      file = t === "/dev/null" ? oldFile : t.replace(/^b\//, "");
     }
   }
   return rows;
 }
 
+/** 追跡ファイルの差分行（作業ツリー対 mergeBase）と変更ファイルの数。porcelain の `git diff` は出力の形が
+ *  設定と cwd で変わり、行が**黙って**落ちた（形を変えた設定はテストの `CONFIGS` が持つ・#1300 の作業中に実測）。
+ *  plumbing の `diff-index` は quotePath 以外を無視する。
+ *  patch から解いた名前を、`-z` の一覧（quote されない）と突き合わせる——観測した壊れ方はどれも名前が化ける形で
+ *  あり、化けた名前の行はソース拡張子に合わず黙って落ちた。行数までは照合しない（ADR-race-boundaries-git-plumbing）。 */
+export function readTrackedRows(git, mergeBase) {
+  const rows = parseDiff(git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase));
+  const names = new Set(
+    git("-c", "core.quotePath=false", "diff-index", "-M", "--name-only", "-z", mergeBase)
+      .split("\0")
+      .filter((p) => p !== ""),
+  );
+  const unknown = [...new Set(rows.map((r) => r.file))].filter((f) => !names.has(f));
+  if (unknown.length > 0) throw new DiffShapeError(`patch の名前が変更ファイルの一覧に無い: ${unknown.join(", ")}`);
+  return { rows, changedFiles: names.size };
+}
+
+/** 未追跡のソースファイルを 1 件ずつ挙げる。`--untracked-files=all` が無いと新しいディレクトリが
+ *  `?? dir/` の 1 行に畳まれ、`-z` が無いと `core.quotePath=true`（git の既定）で日本語パスが quote される——
+ *  どちらも SOURCE_EXT に合わず、中のファイルが**黙って**落ちる（#1300 の作業中に実測）。 */
+export function listUntracked(git) {
+  return git("status", "--porcelain", "-z", "--untracked-files=all")
+    .split("\0")
+    .filter((e) => e.startsWith("?? "))
+    .map((e) => e.slice(3))
+    .filter((p) => SOURCE_EXT.test(p));
+}
+
+/** `listUntracked` のパスを読む関数。`--porcelain` のパスは cwd に依らずルート相対である（`--short` は
+ *  cwd 相対だった）——cwd 相対で開くと、サブディレクトリから打ったとき件数だけ数えて中身が落ちる（実測）。 */
+export function readerFor(top) {
+  return (f) => {
+    try {
+      return fs.readFileSync(path.join(top, f), "utf8");
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** 未追跡ファイルの全行を「追加行」として母集団へ入れる。
- *  SKILL 段 1 の「`git status --short` が挙げたファイルは、パスではなく中身が対象である」に対応する。 */
+ *  `listUntracked` が挙げたファイルは、パスではなく中身が対象である。 */
 export function untrackedRows(files, readFile) {
   const rows = [];
   for (const file of files) {
@@ -82,8 +148,8 @@ export function untrackedRows(files, readFile) {
 }
 
 /** 母集団のフィルタ。既定は「追加行・ソース拡張子・コメントでない」。
- *  削除行は既定で除く——段 2 の主題は「**渡っている**ものを挙げる」であり追加側が主だからである。
- *  廃止・移行を検査するとき（SKILL 段 1 の最後の段落）だけ includeRemoved を立てる。 */
+ *  削除行は既定で除く——境界の候補として挙げたいのは変更後に**渡っている**ものであり、追加側が主だからである。
+ *  廃止・移行を検査するとき（`docs/build-commands.md`「Windows/macOS/Linux で実行可能」）だけ includeRemoved を立てる。 */
 export function selectPopulation(rows, { includeRemoved = false } = {}) {
   return rows.filter(
     (r) => (includeRemoved || r.sign === "+") && SOURCE_EXT.test(r.file) && !isCommentLine(r.text),
@@ -172,28 +238,30 @@ function main() {
     process.exit(3);
   }
 
-  // 素の `git diff <mergeBase>` は作業ツリーまでを含む——`<mergeBase> HEAD` と書くと未コミット分が落ちる。
-  // `main...HEAD` を使わないのも同じ理由である（SKILL 段 1・実測 183 行 vs 139 行）。
-  const rows = parseDiff(git("diff", "-U0", mergeBase));
-  const untracked = git("status", "--short")
-    .split("\n")
-    .filter((l) => l.startsWith("??"))
-    .map((l) => l.slice(3).trim())
-    .filter((p) => SOURCE_EXT.test(p));
-  const readFile = (f) => {
-    try {
-      return fs.readFileSync(f, "utf8");
-    } catch {
-      return null;
-    }
-  };
+  // `diff-index <mergeBase>`（`--cached` 無し）は作業ツリーまでを含む——`<mergeBase> HEAD` の 2 端点にすると
+  // 未コミット分が落ちる。`main...HEAD` を使わないのも同じ理由である（実測 183 行 vs 139 行）。
+  let rows;
+  let changedFiles;
+  try {
+    ({ rows, changedFiles } = readTrackedRows(git, mergeBase));
+  } catch (e) {
+    if (!(e instanceof DiffShapeError)) throw e;
+    console.error(
+      `差分のファイル名を読めない——母集団を欠いたまま報告しない:\n${e.message}\n` +
+        `git の設定・版が出力の形を変えたか、2 回の読み取りの間に作業ツリーが動いた（再実行で消えるなら後者）。`,
+    );
+    process.exit(3);
+  }
+  const untracked = listUntracked(git);
+  const readFile = readerFor(git("rev-parse", "--show-toplevel").trim());
   const all = [...rows, ...untrackedRows(untracked, readFile)];
 
-  // SKILL 段 1: 「2 コマンドの出力が両方とも空なら、それは『変更が無い』ではなく『基準が誤っている』と読む」。
+  // 変更されたファイルも未追跡のソースも無いなら、それは「変更が無い」ではなく「基準が誤っている」と読む。
   // 空の母集団のまま先へ進ませない——0 件の報告と「そもそも何も見ていない」を区別できなくなる。
-  if (rows.length === 0 && untracked.length === 0) {
+  // 行の数で判定しない——バイナリを消しただけ・中身の変わらない rename だけのブランチは行を生まない（委譲レビューが実測）
+  if (changedFiles === 0 && untracked.length === 0) {
     console.error(
-      `基準が誤っている: \`git diff ${mergeBase.slice(0, 8)}\` と \`git status --short\` がともに空。\n` +
+      `基準が誤っている: \`git diff-index ${mergeBase.slice(0, 8)}\` と未追跡のソースファイル（\`git status --porcelain --untracked-files=all\`）がともに空。\n` +
         `--base に渡した \`${args.base}\` が分岐元でない可能性がある（merge-base = ${mergeBase.slice(0, 8)}）。分岐元のブランチ名を渡し直す。`,
     );
     process.exit(3);
@@ -205,7 +273,7 @@ function main() {
     formatReport(kinds, {
       base: args.base,
       mergeBase,
-      changedFiles: new Set(rows.map((r) => r.file)).size,
+      changedFiles,
       untrackedFiles: untracked.length,
       populationLines: population.length,
       includeRemoved: args.includeRemoved,

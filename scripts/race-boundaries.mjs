@@ -14,6 +14,7 @@
 //   両方とも空なら『変更が無い』ではなく『基準が誤っている』と読む」を機構化したもの）。
 //   **merge-base が HEAD と一致すること自体は異常ではない**——この検査は `/implement`「3a. 委譲の前に」から
 //   コミットより前に呼ばれ、初コミット前の feature ブランチでは常にそうなる（実測）
+// - 追跡差分の patch と numstat が食い違えば exit 3（git の設定が出力の形を変えて行を黙って落とす形の閉塞・`readTrackedRows`）
 // - **出力は常に ①〜⑧ の全種**。0 件の種別も件数とパターンを印字する——これで
 //   「1 件見つけたら残り 7 種を素通り」という経路が構造的に消える（#800）
 // - 分類本体は入力注入の純関数（scripts/race-boundaries.test.mjs がフィクスチャで検証する）
@@ -67,6 +68,57 @@ export function parseDiff(diffText) {
       if (file) rows.push({ file, sign: "-", text: line.slice(1) });
     }
   }
+  return rows;
+}
+
+/** `diff-index -M --numstat -z` を Map(新しいパス → 追加行数) へ分解する。バイナリ（`-`）は null。
+ *  項目は `<add>\t<del>\t<path>\0`、rename だけ `<add>\t<del>\t\0<old>\0<new>\0` になる（一時リポジトリで実測）。 */
+export function parseNumstatZ(out) {
+  const map = new Map();
+  const fields = out.split("\0");
+  for (let i = 0; i < fields.length; i++) {
+    if (fields[i] === "" && i === fields.length - 1) break;
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(fields[i]);
+    if (!m) throw new Error(`numstat の項目を読めない: ${JSON.stringify(fields[i])}`);
+    let file = m[3];
+    if (file === "") {
+      file = fields[i + 2];
+      i += 2;
+      if (file === undefined || file === "") throw new Error("numstat の rename に新しいパスが無い");
+    }
+    map.set(file, m[1] === "-" ? null : Number(m[1]));
+  }
+  return map;
+}
+
+/** patch から解いた `+` 行と numstat の追加行数の食い違い（空なら一致）。別経路の 2 つの出力を突き合わせるので、
+ *  設定や git の版がヘッダの形を変えても、名前が化けた・行が落ちたことは列挙せずに捕まえる。 */
+export function diffMismatches(rows, numstat) {
+  const parsed = new Map();
+  for (const r of rows) if (r.sign === "+") parsed.set(r.file, (parsed.get(r.file) ?? 0) + 1);
+  const out = [];
+  for (const [file, n] of parsed) {
+    if (!numstat.has(file)) out.push(`patch の名前が numstat に無い: ${file}`);
+    else if (numstat.get(file) !== null && numstat.get(file) !== n) out.push(`${file}: patch ${n} 行 / numstat ${numstat.get(file)} 行`);
+  }
+  for (const [file, n] of numstat) {
+    if (n !== null && n > 0 && !parsed.has(file)) out.push(`${file}: numstat ${n} 行が patch に無い`);
+  }
+  return out;
+}
+
+/** 照合が食い違った（設定や git の版が出力の形を変えた）。main が exit 3 にする。 */
+export class DiffShapeError extends Error {}
+
+/** 追跡ファイルの差分行（作業ツリー対 mergeBase）。porcelain の `git diff` は出力の形が設定と cwd で変わり
+ *  （quotePath・relative・mnemonicPrefix・noprefix・color・external）、6 形とも行が**黙って**落ちた（#1300 の作業中に
+ *  一時リポジトリで実測）。plumbing の `diff-index` は残る quotePath 以外を無視する。照合の相手も plumbing にする——
+ *  porcelain の `--numstat` は `diff.relative` で patch と同じだけ狭まり、黙って一致した（実測）。 */
+export function readTrackedRows(git, mergeBase) {
+  const rows = parseDiff(git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase));
+  const numstat = parseNumstatZ(git("-c", "core.quotePath=false", "diff-index", "-M", "--numstat", "-z", mergeBase));
+  const bad = diffMismatches(rows, numstat);
+  if (bad.length > 0) throw new DiffShapeError(bad.join("\n"));
   return rows;
 }
 
@@ -196,9 +248,16 @@ function main() {
     process.exit(3);
   }
 
-  // 素の `git diff <mergeBase>` は作業ツリーまでを含む——`<mergeBase> HEAD` と書くと未コミット分が落ちる。
-  // `main...HEAD` を使わないのも同じ理由である（SKILL 段 1・実測 183 行 vs 139 行）。
-  const rows = parseDiff(git("diff", "-U0", mergeBase));
+  // `diff-index <mergeBase>`（`--cached` 無し）は作業ツリーまでを含む——`<mergeBase> HEAD` の 2 端点にすると
+  // 未コミット分が落ちる。`main...HEAD` を使わないのも同じ理由である（SKILL 段 1・実測 183 行 vs 139 行）。
+  let rows;
+  try {
+    rows = readTrackedRows(git, mergeBase);
+  } catch (e) {
+    if (!(e instanceof DiffShapeError)) throw e;
+    console.error(`差分の 2 経路（patch と numstat）が食い違う——母集団を欠いたまま報告しない:\n${e.message}`);
+    process.exit(3);
+  }
   const untracked = listUntracked(git);
   const readFile = readerFor(git("rev-parse", "--show-toplevel").trim());
   const all = [...rows, ...untrackedRows(untracked, readFile)];

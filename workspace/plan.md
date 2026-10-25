@@ -172,8 +172,8 @@
 ### Phase 4 — 検証
 
 - [x] `npm test` が緑になる — 612 件
-- [ ] `measure-memory-stages.ps1` を既定のまま実行する（ユーザーの常用版の終了を確かめてから）。`本体:` と段階列を確かめる
-- [ ] 人へ `npm run smoke:manual -- -Only 1` を依頼する。`本体:` の行と、記録の「バイナリ」行がリポジトリ相対であることを確かめてもらう
+- [x] `measure-memory-stages.ps1` を既定のまま実行する（ユーザーの常用版の終了を確かめてから）。`本体:` と段階列を確かめる — ユーザーが前面の端末から実行した（2026-10-25 13:21）。`本体: C:workspaceSnotra	argeteleasesnotra.exe` で、段階 A（PrivWS 18.1 MiB）まで取れた。段階 B は前景が WindowsTerminal のまま止まった。原因は変更前からの前提の不一致で、実 config の hotkey は `Alt+Q`、スクリプトの注入は `^k` のハードコード（121 行目・差分は触れていない）。端末に `^K` が届いていたことと一致する。委譲先の 1 回目（前景が chrome）も同じ原因と読める。段階 B〜D の届かなさは今回の範囲の外
+- [x] 人へ `npm run smoke:manual -- -Only 1` を依頼する。`本体:` の行と、記録の「バイナリ」行がリポジトリ相対であることを確かめてもらう — ユーザーが前面の端末で `pwsh -NoProfile -File scripts/manual-smoke.ps1 -Only 1` を実行した（PowerShell からの `npm run … -- -Only 1` は、`--` を PowerShell が取り除くので `-Only` が npm に食われ、`1` が 1 番目の param `$ExePath` に束縛された。変更前からの挙動）。`本体: C:workspaceSnotra	argetdebugsnotra.exe`。記録は `| バイナリ | targetdebugsnotra.exe |`・commit `8fa23b6`・PASS 1。記録の全体に `Users` を含む行は 0 件
 
 ## 未確定（実装前に潰す）
 

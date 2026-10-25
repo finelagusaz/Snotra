@@ -474,6 +474,17 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
     expect(removed.stderr).toContain("d.rs: バイナリ扱いで中身を見られない");
   });
 
+  it("未追跡のソースしか無い（初コミット前の feature ブランチ）なら止めない", () => {
+    g("add", ".");
+    g("commit", "-q", "-m", "init");
+    write("sub/u.rs", SPAWN);
+    const r = run();
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("変更ファイル 0 件 / 未追跡 1 件");
+    expect(r.stdout).toContain("    sub/u.rs  /thread::spawn/");
+  });
+
   it("バイナリを消しただけのブランチも「基準が誤っている」と誤診しない", () => {
     g("add", ".");
     g("commit", "-q", "-m", "init");

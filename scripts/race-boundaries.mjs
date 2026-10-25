@@ -213,7 +213,7 @@ export function untrackedRows(files, readFile) {
 }
 
 /** 母集団のフィルタ。既定は「追加行・ソース拡張子・コメントでない」。
- *  削除行は既定で除く——段 2 の主題は「**渡っている**ものを挙げる」であり追加側が主だからである。
+ *  削除行は既定で除く——境界の候補として挙げたいのは変更後に**渡っている**ものであり、追加側が主だからである。
  *  廃止・移行を検査するとき（`docs/build-commands.md`「Windows/macOS/Linux で実行可能」）だけ includeRemoved を立てる。 */
 export function selectPopulation(rows, { includeRemoved = false } = {}) {
   return rows.filter(

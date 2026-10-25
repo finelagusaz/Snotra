@@ -55,7 +55,8 @@ export function parseGrepZ(stdout) {
   for (const raw of stdout.split("\n")) {
     if (raw === "") continue;
     const parts = raw.split("\0");
-    const line = Number(parts[1]);
+    // `Number("")` は 0 になるので、数値化の前に桁だけであることを見る
+    const line = /^\d+$/.test(parts[1] ?? "") ? Number(parts[1]) : NaN;
     if (parts.length < 3 || !Number.isInteger(line)) {
       throw new Error(`git grep の出力を解析できない: ${raw}`);
     }
@@ -75,18 +76,23 @@ export function surfaceOf(file) {
   return "コード";
 }
 
-/** パスが計画に現れるか。前後をパス境界で区切る——素の部分一致だとルート `CLAUDE.md` が
- *  `snotra-core/CLAUDE.md` の部分文字列として偽の掲載になる（#1300 の plan-review）。 */
+/** パスが計画の**どこかに**現れるか（変更ファイル一覧に限らない——「触らない」と名指したファイルも掲載に数える。
+ *  ★未掲載が意味するのは「計画が一度も名指していない」である）。前後をパス境界で区切る——素の部分一致だと
+ *  ルート `CLAUDE.md` が `snotra-core/CLAUDE.md`（`\` 区切りでも）の部分文字列として偽の掲載になる（#1300 の plan-review）。 */
 export function isListedInPlan(file, planText) {
   const esc = file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^A-Za-z0-9_./-])${esc}(?![A-Za-z0-9_/-])`, "m").test(planText);
+  return new RegExp(`(^|[^A-Za-z0-9_./\\\\-])${esc}(?![A-Za-z0-9_/\\\\-])`, "m").test(planText);
 }
 
-/** 1 語ぶんの `git grep`。cwd はリポジトリルートを渡す（pathspec `.` は cwd 相対で、`src-tauri` から打つと
- *  母集団が 71 → 2 行に縮む・実測）。status 0 = 一致あり・1 = 一致なし、**それ以外はすべて失敗**
+/** `git grep` の母集団の引数（語を除く）。見出し行もここから作る——写しを置くと引数だけが変わる。 */
+export const GREP_FLAGS = ["-I", "--untracked", "-n", "-z", "-F", "--no-color"];
+export const GREP_PATHSPEC = [".", ":!workspace"];
+
+/** 1 語ぶんの `git grep`。cwd はリポジトリルートを渡す（pathspec `.` は cwd 相対で、サブディレクトリから
+ *  打つと母集団が縮む）。status 0 = 一致あり・1 = 一致なし、**それ以外はすべて失敗**
  *  （`error` = git 不在・`status: null` = maxBuffer 超過かシグナル）。 */
 export function runGrep(term, { cwd, spawn = spawnSync }) {
-  const args = ["grep", "-I", "--untracked", "-n", "-z", "-F", "--no-color", "-e", term, "--", ".", ":!workspace"];
+  const args = ["grep", ...GREP_FLAGS, "-e", term, "--", ...GREP_PATHSPEC];
   const r = spawn("git", args, { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   if (r.error) throw new Error(`git grep を起動できない: ${r.error.message}`);
   if (r.status === 1) return [];
@@ -119,11 +125,11 @@ export function buildReport({ terms, hitsByTerm, planText = null, planPath = nul
     `prose:sweep — 語 ${terms.length} / 総件数 ${byKey.size} 行 / ファイル ${files.length} / ` +
       (planText == null ? "★未掲載 —（--plan なし）" : `★未掲載 ${unlisted}（--plan ${planPath ?? ""}）`),
   );
-  out.push("母集団: git grep -I --untracked -F（.gitignore 尊重・workspace/ を除く・行の種類で落とさない）");
+  out.push(`母集団: git grep ${GREP_FLAGS.join(" ")} -- ${GREP_PATHSPEC.join(" ")}（.gitignore 尊重・行の種類で落とさない）`);
   out.push("", "## 語ごとの件数");
   terms.forEach((t, ti) => {
     const n = hitsByTerm[ti].length;
-    out.push(`- "${t}": ${n}` + (n === 0 ? "  ← 0 件: 語が外れているか物理改行を跨いでいる。言い換えて打ち直す" : ""));
+    out.push(`- "${t}": ${n}` + (n === 0 ? "  ← 0 件: 言い換えて打ち直す（ラベルの外れ・物理改行の跨ぎでも 0 になる）" : ""));
   });
   for (const s of SURFACES) {
     const fs_ = files.filter((f) => surfaceOf(f) === s);

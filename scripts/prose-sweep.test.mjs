@@ -48,6 +48,9 @@ describe("parseGrepZ", () => {
   it("NUL 区切りでない行は黙って捨てずに throw する（-I 欠落のバイナリ行）", () => {
     expect(() => parseGrepZ("Binary file src-tauri/icons/icon.icns matches\n")).toThrow();
   });
+  it("行番号の欄が空なら throw する（Number(\"\") は 0）", () => {
+    expect(() => parseGrepZ("a.md\u0000\u0000t\n")).toThrow();
+  });
 });
 
 describe("surfaceOf", () => {
@@ -78,6 +81,13 @@ describe("isListedInPlan", () => {
     const plan = "| `snotra-core/CLAUDE.md` | 変更 |";
     expect(isListedInPlan("CLAUDE.md", plan)).toBe(false);
     expect(isListedInPlan("snotra-core/CLAUDE.md", plan)).toBe(true);
+  });
+  it("\\ 区切りのサブディレクトリもルートの掲載にならない", () => {
+    expect(isListedInPlan("CLAUDE.md", "snotra-core\\CLAUDE.md")).toBe(false);
+  });
+  it("末尾も境界 — a.mdx は a.md の掲載にならない", () => {
+    expect(isListedInPlan("a.md", "`a.mdx`")).toBe(false);
+    expect(isListedInPlan("a.md", "`a.md`。")).toBe(true);
   });
   it("行頭・バッククォート・空白の後は境界", () => {
     expect(isListedInPlan("AGENTS.md", "AGENTS.md を読む")).toBe(true);

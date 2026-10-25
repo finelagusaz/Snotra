@@ -81,6 +81,17 @@
 - [x] `.claude/skills/start-issue/SKILL.md` 5b の雛形と注記を足す（他を序数「項目 7」で指していたのを正準形の見出し参照へ直した・`governance-docs.md`）
 - [x] `npm test` と `npm run governance:check` を通す（704 passed／全検査 passed）
 
+### Step 3 — レビュー巡 1（`58765a39`・`workspace/review-58765a39.md`・道具 `workspace/verify-58765a39.json` green）
+
+- [x] M1: ★未掲載の意味を「計画が一度も名指していない」と doc と SKILL に明記（照合範囲は絞らない——「触らない」と名指したのも裁いた記録である）
+- [x] L1: 見出しの母集団を `GREP_FLAGS` / `GREP_PATHSPEC` から作る
+- [x] L2: doc の測定値「71 → 2」を帰結へ
+- [x] L3: `\` 区切りもパス境界に（テスト追加・修正前で赤を確認）
+- [x] L4: 行番号欄が空なら throw（テスト追加・修正前で赤を確認）
+- [x] L6: 0 件の原因の断定をやめ「言い換えて打ち直す」と行動を書く（道具と SKILL）
+- [x] W1: PowerShell の件を全称から「#1300 の実測では」へ弱める
+- 受容: L5（`.delegate/` が委譲先の木でだけ母集団に入る。主の木には存在しない）
+
 ## 未確定（実装前に潰す）
 
 （なし）

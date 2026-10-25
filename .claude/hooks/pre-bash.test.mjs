@@ -481,7 +481,19 @@ describe("readVerifyState — 本物の git と要約ファイル", () => {
   it("detached HEAD なら止める", () => {
     const dir = verifiedRepo();
     git(dir, ["checkout", "-q", "--detach"]);
-    expect(read(dir).ok).toBe(false);
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("detached");
+  });
+  it("ブランチと同名のタグがあっても、ブランチの要約で照合する（`rev-parse --abbrev-ref` は `heads/<name>` を返す）", () => {
+    const dir = verifiedRepo();
+    git(dir, ["tag", "feat/x"]);
+    expect(read(dir)).toEqual({ ok: true });
+  });
+  it("hook が道具を読み込めなかったとき、その理由を拒否文言に載せる", () => {
+    const r = readVerifyState(verifiedRepo(), null, "SyntaxError: boom");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("SyntaxError: boom");
   });
   it("summaryPathFor が渡されなければ（hook が道具を読み込めなかった）止める", () => {
     expect(readVerifyState(verifiedRepo(), null).ok).toBe(false);

@@ -437,8 +437,10 @@ export function judgeSummary(summary, branch) {
   }
   if (summary.status !== "green") return `道具の要約が green でない（status: ${summary.status}）。${VERIFY_REMEDY}`;
   // 40 桁の 16 進に限る。`-` で始まる値を git の位置引数へ渡すと、オプション（`--output=<path>` 等）として解釈される
+  // SHA-256 形式の repo（64 桁）では常に止まる（fail-closed。このリポジトリは SHA-1）
   if (typeof summary.sha !== "string" || !/^[0-9a-f]{40}$/.test(summary.sha)) {
-    return `道具の要約の sha が 40 桁の 16 進でない（${summary.sha}）。${VERIFY_REMEDY}`;
+    const got = typeof summary.sha === "string" ? `（${summary.sha}）` : "（sha が無い）";
+    return `道具の要約の sha が 40 桁の 16 進でない${got}。${VERIFY_REMEDY}`;
   }
   return null;
 }

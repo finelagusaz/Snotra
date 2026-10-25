@@ -22,6 +22,8 @@
 - **委譲先の `align` を打つのは指示文である**。打てば HEAD 合わせと「巻き戻されていない変異」の検出は構造で行われるが、打たせることまでは強制できない。報告が sha を名乗ることで、事後に食い違いを見つける経路は残る。
 - **Bash のリダイレクトは隔離された委譲先からも木の外へ書ける**（実測。Write ツールとの非対称）。`.delegate/` の規約は指示文で守らせる。
 - **木を 2 本に分けても並走の競合は残る**。CPU 競合による timeout の赤は道具の再実行で、smoke の単一インスタンスは「C を要求する巡は直列」で避ける。どちらも手順である。
+- **`remove --delegate-tree` は、委譲先のブランチ名を harness の命名（`worktree-<木の名前>`）から導く**。`align` が detach するので、`worktree list --porcelain` にはブランチが載らない。命名が変わればブランチが残るが、`clean:worktrees` の孤児掃除が拾う。
+- **検知器を持たない修正が 1 つある**: `align` は `git check-ignore` が 0 と 1 以外を返したら exit 2 にする（fail-open を塞ぐ）が、その status を返させる fixture は git を壊さないと作れない。シェルの command not found は cmd.exe が 1 として返すので、道具は「赤」と区別できない（緑の側へは倒れない）。
 - **junction 無しの木は本体の `node_modules` を解決する**。依存を変える PR では別の版を測りうるので、道具は sha の lock と `node_modules/.package-lock.json` の食い違いを警告するが、止めはしない。
 
 ---

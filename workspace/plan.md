@@ -76,25 +76,25 @@
 
 ### Phase 1 — 検知器を先に赤にする
 
-- [ ] `SnotraSmoke.Tests.ps1` の `-ForEach` へ `'smoke-egui.ps1'` を足し、ヘッダコメントの対象と除外の記述を事実に合わせる
-- [ ] `npm run test:powershell` が smoke-egui の既定の述語で赤になることを、出力で確かめる
+- [x] `SnotraSmoke.Tests.ps1` の `-ForEach` へ `'smoke-egui.ps1'` を足し、ヘッダコメントの対象と除外の記述を事実に合わせる
+- [x] `npm run test:powershell` が smoke-egui の既定の述語で赤になることを、出力で確かめる
 
 ### Phase 2 — smoke-egui を導出の形へ揃える
 
-- [ ] `smoke-egui.ps1` の `param()` の既定を `''` にし、コメントを置く
-- [ ] `Import-Module` の後へ `$repoRoot` の導出・resolver の呼び出し・`-LiteralPath` での存在の確認・絶対形への正規化・`本体:` の出力を置き、旧い確認を消す
+- [x] `smoke-egui.ps1` の `param()` の既定を `''` にし、コメントを置く
+- [x] `Import-Module` の後へ `$repoRoot` の導出・resolver の呼び出し・`-LiteralPath` での存在の確認・絶対形への正規化・`本体:` の出力を置き、旧い確認を消す
 - [ ] `npm run test:powershell` が緑になる
 
 ### Phase 3 — 文書
 
-- [ ] `docs/build-commands.md` の 210 行目と 229〜234 行目の段落を直し、279 行目の注が真のままであることを読んで確かめる
-- [ ] `SnotraSmoke.Tests.ps1:572-574` と `SnotraSmoke.psm1:367-369` のコメントを、CI では release、と限定する形に直す
-- [ ] `npm run governance:check` が緑になる
+- [x] `docs/build-commands.md` の 210 行目と 229〜234 行目の段落を直し、279 行目の注が真のままであることを読んで確かめる
+- [x] `SnotraSmoke.Tests.ps1:572-574` と `SnotraSmoke.psm1:367-369` のコメントを、CI では release、と限定する形に直す
+- [x] `npm run governance:check` が緑になる
 
 ### Phase 4 — 検証
 
 - [ ] `cargo build -p snotra` → 既定のまま `npm run smoke:egui` を 3 回連続で回す。毎回 `本体:` の行が `target\debug\snotra.exe` を指し、緑であることを確かめる
-- [ ] `npm test` が緑になる
+- [x] `npm test` が緑になる
 - [ ] follow-up issue の本文を書く（母集団を導出する検知器と、残り 2 本の直書き）。起票はユーザーの確認を経る
 
 ## 未確定（実装前に潰す）

@@ -1,5 +1,6 @@
 param(
-  [string]$ExePath = "target/release/snotra.exe",
+  # 空なら debug 本体を導く（#1179・#1292）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
+  [string]$ExePath = '',
   [int]$StartupWaitMs = 4000,
   [int]$ObserveTimeoutMs = 8000,
   # hotkey の仮想キーコード列（カンマ区切り・押下順・解放は逆順）。
@@ -60,9 +61,15 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
 # **同じ導出**を共有する（#757）。
 Import-Module (Join-Path $PSScriptRoot 'lib/SnotraTraceInvariants.psm1') -Force
 
-if (-not (Test-Path $ExePath)) {
-  throw "Executable not found: $ExePath"
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if (-not $ExePath) {
+  $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile debug
 }
+if (-not (Test-Path -LiteralPath $ExePath)) {
+  throw "Executable not found: $ExePath（先に cargo build -p snotra）"
+}
+$ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は resolver の doc）
+Write-Host "本体: $ExePath"
 
 # 検証用プロファイル（#804）。**target/ の下に置く**（visual-check-colors.ps1:54-58 と同じ理由
 # ——cargo clean が掃くので新しい後始末機構を足さない。CARGO_TARGET_DIR を設定している環境では

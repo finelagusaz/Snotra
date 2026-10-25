@@ -207,7 +207,7 @@ cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 
 cargo run -p snotra              # 製品メインウィンドウ（egui 既定・#532 SU7 flip 済み。視覚スモークはこれ）
 npm run verify                   # Rust + node 一括検証（cargo check --workspace + npm test）
 npm run smoke:startup             # 起動時スモーク（trace 出力・検証用プロファイル・非 first-run の検証）
-npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定 ExePath = target/release）
+npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定は debug 本体を導く・CI は release を明示）
 npm run bench:startup             # 起動の端から端までの内訳実測（区間ごとの min/p50/max・詳細: PERFORMANCE.md）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
 npm run measure:memory:stages     # メモリ実測（起動→表示→検索→hide の段階別・前景計測。実行中の snotra を kill する）
@@ -226,11 +226,12 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 出力は区間ごとの min / p50 / max で、**最小値に畳まない**——このハーネスが答える問いは
 「起動が何 ms か」ではなく「分散がどの区間に住むか」だからである（詳細は PERFORMANCE.md）。
 
-`bench:startup` と `smoke:startup` も既定の本体を `test:powershell` と同じ形で導く。**その起点は
+`bench:startup`・`smoke:startup`・`smoke:egui` も既定の本体を `test:powershell` と同じ形で導く
+（`bench:startup` は release、他は debug）。**その起点は
 スクリプトが住むリポジトリであって cwd ではない**ので、worktree から既定のまま回せば worktree の
 本体を測る（#1179。以前は絶対パスが直書きされており、**別の作業コピーを黙って測りながら緑を
-返していた**）。測った本体の絶対パスは両者とも出力の先頭に出る。別の本体を指すときだけ
-`-ExePath <path>` を渡す——明示した相対パスは、この 2 つでは（`test:powershell` と違い）
+返していた**）。測った本体の絶対パスはいずれも出力の先頭に出る。別の本体を指すときだけ
+`-ExePath <path>` を渡す——明示した相対パスは、これらでは（`test:powershell` と違い）
 cwd 相対のまま解釈される。
 
 ## git blame と整形コミット

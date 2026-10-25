@@ -365,8 +365,8 @@ function Start-SnotraProcess {
     # 前面を奪うと、`Set-SnotraForegroundWindow` は本体の窓を前面にできず、注入した打鍵の
     # 宛先が定まらない——CI で実測した前面窓は
     # `title='D:\a\Snotra\Snotra\target\debug\snotra.exe'` だった（run 1280 / 1299）。
-    # **release を使う `smoke-egui` が同じキー注入をしながら一度も踏んでいない**のは、
-    # release にこの窓が無いためである。
+    # **CI の `smoke-egui`（release を明示して渡す）が同じキー注入をしながら一度も踏んでいない**のは、
+    # release にこの窓が無いためである。ローカルの既定は debug なので窓が在り（#1292）、下の `Hidden` が隠す。
     #
     # **`Hidden` は隠すだけで、窓は在る**（実測: `ConsoleWindowClass` が visible=False で残る）。
     # 前面は奪わなくなるが、窓を列挙する種類の検査を足すときは母集団に混じる。作らせない形は

@@ -132,6 +132,8 @@ export function diffMismatches(rows, numstat, deleted = new Set()) {
     }
   }
   for (const [file, n] of numstat) {
+    // 外して失う照合が無いのは、削除されたファイルの行を母集団へ入れない設計（`+++ /dev/null`）だからである。
+    // `--include-removed` でそれらの行を入れるように変えるなら、この除外は欠落を隠す
     if (deleted.has(file)) continue;
     if (n === null && SOURCE_EXT.test(file)) out.push(`${file}: バイナリ扱いで中身を見られない（.gitattributes の -diff 等）`);
     else if (n !== null && n.add + n.del > 0 && !parsed.has(file)) {
@@ -296,7 +298,7 @@ function main() {
     if (!(e instanceof DiffShapeError)) throw e;
     console.error(
       `差分の 2 経路（patch と numstat）が食い違う——母集団を欠いたまま報告しない:\n${e.message}\n` +
-        `git の設定・属性・版が出力の形を変えたか、2 回の読み取りの間に作業ツリーが動いた（再実行で消えるなら後者）。`,
+        `git の設定・属性・版が出力の形を変えたか、別々の読み取りの間に作業ツリーが動いた（再実行で消えるなら後者）。`,
     );
     process.exit(3);
   }

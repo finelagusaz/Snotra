@@ -1,0 +1,17 @@
+開始: sha 9ca5ecb99a8de7f83f6b2e39ebb0628a2e8aeb30
+[中間メモ 巡3] align OK・65 passed。巡2 プローブ再走で Low-A 解消（削除された v.ts で exit 0）。probe8 では両側の No newline・CRLF・空ファイル化・空ファイル削除・rename 系・rm・大小文字だけの rename で throw は発火せず。text と binary を行き来する .rs は exit 3（設計どおり）。大小文字だけの rename は行が無く「基準が誤っている」exit 3（既存挙動）。-M 付きの D 抽出は rename 元を出さない（実測: D は gone.rs のみ、-M 無しなら old.rs も出る）
+
+===== 巡 3 最終報告 =====
+対象: sha 9ca5ecb99a8de7f83f6b2e39ebb0628a2e8aeb30・6 ファイル（ADR / race-boundaries.mjs / race-boundaries.test.mjs / plan.md / workspace の review-plumbing-2.txt と verify-c0461a0e.json）。ベースライン 65 passed
+Critical: なし / High: なし
+Medium-B 新しい throw の No newline 免除がどのテストにも見られていない。変異 S5（免除の判定を外して else で throw）が全 65 緑なのに、製品では旧側の最終行に改行が無いファイルを書き換えた差分がすべて exit 3 になる（本物の git で実測: noeol_both と crlf_noeol_both で「hunk の宣言より本文が短い」）。既存 fixture の No newline 行は hunk が終わった後のヘッダモードにあるので hunk 内を通らない。修正: 単体 fixture（@@ -1 +1 @@ の後に -a・No newline 行・+b・No newline 行）で -a と +b を期待し、本物の git の setup にも改行なしファイルの書き換えを 1 つ足す
+Low-D 3 本目の読み取りを足したのに、main の exit 3 の文言「2 回の読み取りの間に作業ツリーが動いた」と ADR 帰結「patch と numstat を 2 回に分けて読む」が 2 回のまま。数を書かずに「別々の読み取りの間に」とする
+Low-E（残余・設計どおり）SOURCE_EXT に合う本物のバイナリは、削除以外（追加・変更・text とバイナリの行き来）では今も exit 3（実測: text_to_binary_rs / binary_to_text_rs）。binary から text への場合は新しい中身が黙って落ちるのを止めているので正しい。追跡ソース 210 本に該当 0
+⚠️-C deleted による除外は、削除されたファイルの行を母集団へ入れない既存設計（⚠️-B）の上でだけ過不足が無い。D のパスでは numstat が {0,N} か null、patch 側は +++ /dev/null で行を生まないので、除外して失う照合は無い（S1/S2/S10 で赤を確認）。将来 --include-removed が削除ファイルの行を入れるように変えたら、この除外が欠落を隠す
+⚠️-D 大小文字だけの rename（Windows）・内容の変わらない rename だけの差分は行が 0 で「基準が誤っている」exit 3 になる（実測）。旧実装も同じで回帰ではない
+巡 2 の解消: Medium-A 解消（R14 相当は主の測定で赤 8。本物の git の setup に r.rs の書き換えと d.rs の削除、--include-removed の e2e を確認）/ Low-A 解消（probe6 の削除された v.ts で exit 0）/ Low-B 解消（S4 で単体 assert 赤）/ Low-C 解消（S11 で単体 assert 赤）/ ⚠️-A 解消（S3 で単体 assert 赤）
+(2) -M と D 抽出: -M 付きでは rename 元は R で D に出ない（実測: name-status は D gone.rs と R092 old.rs→new.rs、-M 無しなら old.rs も D）。似ていない削除と追加・同名で全面書き換え・rm で index から消したもの・index から消して作業ツリーに戻したもの・別ファイルを削除済みの名前へ mv・rename 先をさらに削除、を --include-removed の有無で回して全部 exit 0
+(3) throw の誤発火: 両側の No newline・CRLF と No newline・空ファイル化・空から改行なしの中身・空ファイルの削除・バイナリの変更（png）・rename 系で発火しない（本物の git で実測）。発火しないことを守るテストが無いのが Medium-B
+逆向きの監査: parseDiff は DiffShapeError の宣言より前の行で使うが、呼ばれるのはモジュール評価の後なので TDZ に当たらない。throw は readTrackedRows の中から出るので main の catch が exit 3 にする。staged/unstaged/ita/衝突の旧新一致は維持（probe2 再走）
+変異（巡 3・ハッシュ照合 mjs 941301b8 / test f46c5a58・11 本すべて hash-OK）: S1 削除集合を渡さない 赤8（本物の git の assert）/ S2 deleted の continue 外し 赤9 / S3 欠落判定を add のみへ 赤1 / S4 throw 外し 赤1 / S5 No newline 免除外し 緑（Medium-B）/ S6 D 抽出の -M 外し 赤3 だが fake の引数一致だけ（rename 元が D に入っても numstat は新しい名前で引くので挙動上は等価）/ S7 diff-filter=d 赤11 / S8 空要素 filter 外し 緑（空文字のキーは照合に現れないので等価）/ S9 D 抽出の quotePath 外し 赤3 だが fake だけ（-z ゆえ等価）/ S10 /dev/null を null にしない 赤9 / S11 context で newLeft を減らさない 赤1。S1・S2 の赤には fake 経由の製品 throw（v.ts の DiffShapeError）が混ざるが、本物の git 側は AssertionError。生出力は mut-out-r3.txt
+報告が名乗る対象: sha 9ca5ecb99a8de7f83f6b2e39ebb0628a2e8aeb30・6 ファイル

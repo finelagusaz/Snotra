@@ -95,6 +95,11 @@ describe("parseDiff", () => {
     expect(parseDiff(d).map((r) => `${r.file}:${r.sign}${r.text}`)).toEqual(["x.rs:-old", "x.rs:+new", "y.rs:+b"]);
   });
 
+  it("hunk の中の `\\ No newline at end of file` は止めずに読み飛ばす", () => {
+    const d = ["+++ b/x.rs", "@@ -1 +1 @@", "-a", "\\ No newline at end of file", "+b", "\\ No newline at end of file"].join("\n");
+    expect(parseDiff(d).map((r) => `${r.sign}${r.text}`)).toEqual(["-a", "+b"]);
+  });
+
   it("宣言より本文が短い壊れた hunk は、次のファイルのヘッダを本文にせず止める", () => {
     const d = ["+++ b/x.rs", "@@ -0,0 +1,3 @@", "+a", "diff --git a/y.rs b/y.rs", "+++ b/y.rs"].join("\n");
     expect(() => parseDiff(d)).toThrow(DiffShapeError);
@@ -362,6 +367,7 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
     write("mv.rs", "fn m1() {}\nfn m2() {}\nfn m3() {}\nfn m4() {}\nfn m5() {}\n");
     write("r.rs", "fn r() { thread::spawn(|| {}); }\nfn keep() {}\n"); // 1 行を書き換える（削除 1・追加 1）
     write("d.rs", "fn d() { thread::spawn(|| {}); }\n"); // ファイルごと消す
+    write("n.rs", "fn n() {}"); // 改行で終わらない——patch の hunk の中に `\ No newline` が入る
   });
   afterEach(() => {
     fs.rmSync(top, { recursive: true, force: true });
@@ -376,6 +382,7 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
     g("mv", "mv.rs", "sub/moved.rs");
     fs.appendFileSync(path.join(top, "sub", "moved.rs"), SPAWN);
     write("r.rs", "fn r() {}\nfn keep() {}\n");
+    write("n.rs", "fn n() { thread::spawn(|| {}); }");
     fs.rmSync(path.join(top, "d.rs"));
     write("sub/u.rs", "fn c() {}\n"); // 未追跡 1 件——color/external が exit 0 になる形
   };
@@ -386,10 +393,10 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
       const r = run(inject(key, value));
       expect(r.stderr).toBe("");
       expect(r.status).toBe(0);
-      // 既存 1・top 2・s 1・moved 1（rename を検出して追加行だけ）・r 1・未追跡 u 2（末尾改行の後の空行も数える）
-      expect(r.stdout).toContain("判定対象 8 行");
-      expect(r.stdout).toContain("① worker の spawn: 4 件");
-      for (const f of ["既存.rs", "top.rs", "sub/s.rs", "sub/moved.rs"]) expect(r.stdout).toContain(`    ${f}  /thread::spawn/`);
+      // 既存 1・top 2・s 1・moved 1（rename を検出して追加行だけ）・r 1・n 1・未追跡 u 2（末尾改行の後の空行も数える）
+      expect(r.stdout).toContain("判定対象 9 行");
+      expect(r.stdout).toContain("① worker の spawn: 5 件");
+      for (const f of ["既存.rs", "top.rs", "sub/s.rs", "sub/moved.rs", "n.rs"]) expect(r.stdout).toContain(`    ${f}  /thread::spawn/`);
     });
   }
 
@@ -398,8 +405,9 @@ describe("本物の git に出力の形を変える設定を注入する（fake 
     const r = run({}, ["--include-removed"]);
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain("判定対象 9 行");
-    expect(r.stdout).toContain("① worker の spawn: 5 件");
+    // 既定の 9 行に、r と n の書き換えで消えた行が 1 行ずつ
+    expect(r.stdout).toContain("判定対象 11 行");
+    expect(r.stdout).toContain("① worker の spawn: 6 件");
     expect(r.stdout).toContain("    r.rs  /thread::spawn/");
     expect(r.stdout).not.toContain("    d.rs  /thread::spawn/");
   });

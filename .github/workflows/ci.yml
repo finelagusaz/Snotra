@@ -144,7 +144,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       # Pester の統合テストが、共有モジュールで作った seed を実際の製品が parse できることと、
-      # Win32/DWM の窓矩形とキャプチャ寸法が一致することを検査する。
+      # Win32/DWM のウィンドウ矩形とキャプチャ寸法が一致することを検査する。
       - name: cargo build (PowerShell integration fixture)
         run: cargo build -p snotra
 

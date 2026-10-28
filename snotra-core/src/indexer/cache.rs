@@ -167,7 +167,7 @@ struct IndexCache<'a> {
     aux: Cow<'a, [u32]>,
     /// 拡張子と、親を持たないエントリのフルパスの intern 表。
     table: Cow<'a, [String]>,
-    /// 保存時に測った整列のフラグ。**5 列と違い、読む側は検証せずそのまま信じる**——
+    /// 保存時に測った整列済みフラグ。**5 列と違い、読む側は検証せずそのまま信じる**——
     /// 理由と被害範囲は [`crate::index_tree::IndexTree::from_parts`] の doc に書いてある
     /// （壊れた値の帰結は同スコアの tie-break の順序に閉じる）。
     sorted_by_path: bool,

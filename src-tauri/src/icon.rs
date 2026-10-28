@@ -468,7 +468,7 @@ mod tests {
         println!("対象 {} 件", paths.len());
 
         // **最初に測る**——先に別の pass を走らせるとシェルのキャッシュが温まり、
-        // 「コールドな初回」の観測ができなくなる（計測順序そのものが観測対象を変える）。
+        // 「キャッシュがコールドな状態での初回要求」の観測ができなくなる（計測順序そのものが観測対象を変える）。
         for round in 1..=2 {
             let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
             let failures: Vec<(String, IconFailure)> = paths

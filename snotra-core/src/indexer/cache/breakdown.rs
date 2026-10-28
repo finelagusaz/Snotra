@@ -98,7 +98,7 @@ impl EntryRepr<'_> {
         // ラベルで探し直す必要は無い）。
         let label = match self {
             Self::Flat(_) => "entries",
-            Self::Tree { .. } => "木（5 列 + 整列のフラグ）",
+            Self::Tree { .. } => "木（5 列 + 整列済みフラグ）",
         };
         let bytes = match self {
             Self::Flat(e) => serialized_len(e)?,
@@ -175,7 +175,7 @@ impl EntryRepr<'_> {
                     items: 5,
                 },
                 CacheByteRow {
-                    label: "sorted_by_path（整列のフラグ）",
+                    label: "sorted_by_path（整列済みフラグ）",
                     bytes: 1,
                     items: 1,
                 },

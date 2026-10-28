@@ -284,9 +284,9 @@ function Invoke-SnotraTraceJudgement {
     foreach ($event in $parsed) {
         switch ($event.Name) {
             $script:EventHideDone {
-                # **連続する egui_hide:done は区間を打ち直さない——開いている区間を延長する。**
+                # **連続する egui_hide:done は区間を開き直さない——開いている区間を延長する。**
                 # `hide_egui_main` は可視性ガードの無い listener からも呼ばれ、遷移を問わず
-                # trace を出す。打ち直すと 2 つの hide に挟まれた違反が評価から消える。
+                # trace を出す。開き直すと 2 つの hide に挟まれた違反が評価から消える。
                 if ($mainState -ne 'hidden') {
                     $openWindow = @{
                         SectionId = (Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq)

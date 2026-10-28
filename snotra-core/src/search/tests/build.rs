@@ -106,7 +106,7 @@ fn assert_engines_agree(
         );
         assert_eq!(
             va.entry.file_name_is_lower_name, vb.entry.file_name_is_lower_name,
-            "{label}/migemo={migemo_enabled}: index {i} の共有のフラグがずれている"
+            "{label}/migemo={migemo_enabled}: index {i} の共有フラグがずれている"
         );
         // **表現そのものも比べる。** 読み替えが一致していても、片方だけが実体を持ち続けて
         // いれば削減が失われている（結果は正しいままなので挙動テストでは捕まらない）。
@@ -282,7 +282,7 @@ fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_so
     );
 }
 
-/// **PATH マージが整列のフラグを下ろすのは、足すエントリが非空のときに限る。**
+/// **PATH マージが整列済みフラグを下ろすのは、足すエントリが非空のときに限る。**
 ///
 /// `SearchEngine::sorted_by_path` は計測ハーネスのための観測口であり、`PathStore::cmp_paths` が
 /// index 比較（速い）とフルパス組み立て（遅い）のどちらを通るかを決める。**計器がこの値を

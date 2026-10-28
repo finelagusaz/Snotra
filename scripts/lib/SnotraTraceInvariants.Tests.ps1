@@ -200,7 +200,7 @@ Describe 'Test-SnotraTraceInvariants — hide 側の非対称' {
         $r.Violations.Count | Should -Be 0
     }
 
-    It '連続する egui_hide:done は区間を打ち直さず、2 つの hide に挟まれた違反が消えない' {
+    It '連続する egui_hide:done は区間を開き直さず、2 つの hide に挟まれた違反が消えない' {
         # `hide_egui_main` は可視性ガードの無い listener からも呼ばれ、egui_hide:done を
         # 無条件に出す。hide ごとに区間を開き直す実装だと、この違反が評価から落ちる。
         $events = @(
@@ -434,7 +434,7 @@ Describe 'Test-SnotraTraceInvariants — Observed（判定器が実際に何を�
         $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
 
         $r.Observed.ResultsShow | Should -Be 2
-        # 連続する hide は区間を打ち直さないので 1 つ。
+        # 連続する hide は区間を開き直さないので 1 つ。
         $r.Observed.HideWindow | Should -Be 1
     }
 

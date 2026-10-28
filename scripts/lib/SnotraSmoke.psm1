@@ -131,7 +131,7 @@ function Get-SnotraSessionLockState {
 画面がロックされていたら、何をすればよいかを名指しして止める。
 
 .DESCRIPTION
-**ロック中は窓が Win32 の視点では生きたままである**（`IsWindowVisible` は真・矩形も妥当・
+**ロック中はウィンドウが Win32 の視点では生きたままである**（`IsWindowVisible` は真・矩形も妥当・
 DPI も正しい）ため、既存のガードはすべて通り、`CopyFromScreen` は**ロック画面の中身を持つ
 有効な Bitmap** を返す。判定側が落ちたとしてもメッセージは色や描画経路を指すので、読んだ人は
 レンダリングを疑い始める（#866 実測）。ここで名指しして止める。
@@ -156,7 +156,7 @@ function Assert-SnotraSessionUnlocked {
         return
     }
     if ($state.Locked) {
-        throw "画面がロックされているため $Operation を実行できません。ロック中は窓が可視のままでも画面に合成されず、キャプチャはロック画面の中身を返します（#866）。画面のロックを解除してから実行してください。"
+        throw "画面がロックされているため $Operation を実行できません。ロック中はウィンドウが可視のままでも画面に合成されず、キャプチャはロック画面の中身を返します（#866）。画面のロックを解除してから実行してください。"
     }
 }
 
@@ -174,7 +174,7 @@ function Initialize-SnotraDpiAwareness {
 
 <#
 .SYNOPSIS
-窓が載っているモニタの実効 DPI を返す（96 が 100%）。
+ウィンドウが載っているモニタの実効 DPI を返す（96 が 100%）。
 
 .DESCRIPTION
 **awareness を通さずに DPI を読むと 96 が返る。** DPI 非対応のプロセスには Win32 が仮想化した
@@ -183,8 +183,8 @@ function Initialize-SnotraDpiAwareness {
 物理 1920x1080 を 1536x864 と報告した——どちらも真っ当な見た目で、倍率を 1 段読み違えさせる。
 ゆえに `Initialize-SnotraDpiAwareness` を先に通す。
 
-**プライマリモニタではなく窓の載るモニタを見る。** 本体は PER_MONITOR_AWARE_V2 で動くため、
-多画面では窓ごとに倍率が違いうる。ピクセルを数える検査は窓の倍率でしか意味を持たない。
+**プライマリモニタではなくウィンドウの載るモニタを見る。** 本体は PER_MONITOR_AWARE_V2 で動くため、
+多画面ではウィンドウごとに倍率が違いうる。ピクセルを数える検査はウィンドウの倍率でしか意味を持たない。
 #>
 function Get-SnotraWindowDpi {
     [CmdletBinding()]
@@ -358,23 +358,23 @@ function Start-SnotraProcess {
     if ($PSBoundParameters.ContainsKey('ArgumentList')) { $startParameters.ArgumentList = $ArgumentList }
     if ($PSBoundParameters.ContainsKey('StandardErrorPath')) { $startParameters.RedirectStandardError = $StandardErrorPath }
     if ($PSBoundParameters.ContainsKey('StandardOutputPath')) { $startParameters.RedirectStandardOutput = $StandardOutputPath }
-    # **debug ビルドはコンソール窓を連れてくる。それを見せない**（#872 の現れ方 1）。
+    # **debug ビルドはコンソールウィンドウを連れてくる。それを見せない**（#872 の現れ方 1）。
     # `main.rs` の `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` により
     # debug はコンソールサブシステムであり、stdio をリダイレクトして起動すると
-    # `ConsoleWindowClass` の窓が**実行ファイルのフルパスを題名にして**作られる。この窓が
-    # 前面を奪うと、`Set-SnotraForegroundWindow` は本体の窓を前面にできず、注入した打鍵の
-    # 宛先が定まらない——CI で実測した前面窓は
+    # `ConsoleWindowClass` のウィンドウが**実行ファイルのフルパスを題名にして**作られる。このウィンドウが
+    # 前面を奪うと、`Set-SnotraForegroundWindow` は本体のウィンドウを前面にできず、注入した打鍵の
+    # 宛先が定まらない——CI で実測した前面ウィンドウは
     # `title='D:\a\Snotra\Snotra\target\debug\snotra.exe'` だった（run 1280 / 1299）。
     # **CI の `smoke-egui`（release を明示して渡す）が同じキー注入をしながら一度も踏んでいない**のは、
-    # release にこの窓が無いためである。ローカルの既定は debug なので窓が在り（#1292）、下の `Hidden` が隠す。
+    # release にこのウィンドウが無いためである。ローカルの既定は debug なのでウィンドウが在り（#1292）、下の `Hidden` が隠す。
     #
-    # **`Hidden` は隠すだけで、窓は在る**（実測: `ConsoleWindowClass` が visible=False で残る）。
-    # 前面は奪わなくなるが、窓を列挙する種類の検査を足すときは母集団に混じる。作らせない形は
-    # `ProcessStartInfo.CreateNoWindow`（実測: 窓 0 個）だが、`Start-Process` が露出しておらず
+    # **`Hidden` は隠すだけで、ウィンドウは在る**（実測: `ConsoleWindowClass` が visible=False で残る）。
+    # 前面は奪わなくなるが、ウィンドウを列挙する種類の検査を足すときは母集団に混じる。作らせない形は
+    # `ProcessStartInfo.CreateNoWindow`（実測: ウィンドウ 0 個）だが、`Start-Process` が露出しておらず
     # `PassThru` 相当・引数のクォート規則・リダイレクトの再導出が要る。この 1 件には見合わない。
     #
     # `-WindowStyle` と `-NoNewWindow` は排他なので分ける。`-NoNewWindow` は子が呼び出し元の
-    # コンソールを使う＝新しい窓を作らないため、こちらも競合相手を増やさない。
+    # コンソールを使う＝新しいウィンドウを作らないため、こちらも競合相手を増やさない。
     if ($NoNewWindow) { $startParameters.NoNewWindow = $true } else { $startParameters.WindowStyle = 'Hidden' }
 
     Invoke-SnotraEnvironment -Variables $variables -ScriptBlock {
@@ -851,7 +851,7 @@ function Wait-SnotraWindow {
     Initialize-SnotraNativeInterop
     # 形は `Set-SnotraForegroundWindow` / `Wait-SnotraTraceCondition` に揃える（#872）——
     # 「評価 → 期限判定 → sleep」。`while (now -lt deadline)` だと、最後の sleep を跨ぐ停止で
-    # **窓が現れていても一度も見ないまま**「現れませんでした」と落ちる。
+    # **ウィンドウが現れていても一度も見ないまま**「現れませんでした」と落ちる。
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
         $handle = [SnotraSmokeInterop.Native]::FindWindowW([NullString]::Value, $Title)
@@ -865,12 +865,12 @@ function Wait-SnotraWindow {
             return $handle
         }
         if ($null -ne $Process -and $Process.HasExited) {
-            throw "本体が終了しました（exit=$($Process.ExitCode)）。窓 '$Title' を観測できません。"
+            throw "本体が終了しました（exit=$($Process.ExitCode)）。ウィンドウ '$Title' を観測できません。"
         }
         if ([DateTime]::UtcNow -ge $deadline) { break }
         Start-Sleep -Milliseconds $PollMs
     }
-    throw "窓 '$Title' が ${TimeoutMs}ms 以内に現れませんでした。"
+    throw "ウィンドウ '$Title' が ${TimeoutMs}ms 以内に現れませんでした。"
 }
 
 function Get-SnotraForegroundWindow {
@@ -881,19 +881,19 @@ function Get-SnotraForegroundWindow {
     return [SnotraSmokeInterop.Native]::GetForegroundWindow()
 }
 
-# 前面を握っている窓を人が読める形にする。**失敗したときの一次証拠**（誰に打鍵が届いていたか）
+# 前面を握っているウィンドウを人が読める形にする。**失敗したときの一次証拠**（誰に打鍵が届いていたか）
 # はその場でしか採れないため、Set-SnotraForegroundWindow の警告へ載せる。
 function Get-SnotraForegroundWindowLabel {
     [CmdletBinding()]
     param()
 
     $handle = Get-SnotraForegroundWindow
-    if ($handle -eq [IntPtr]::Zero) { return '前面窓なし' }
+    if ($handle -eq [IntPtr]::Zero) { return '前面ウィンドウなし' }
 
     $title = New-Object System.Text.StringBuilder 256
     [void][SnotraSmokeInterop.Native]::GetWindowTextW($handle, $title, $title.Capacity)
-    # **クラス名も出す**（#872）。題名だけでは、前面を握っていたのが本体の窓なのか
-    # debug ビルドが連れてくるコンソール窓（`ConsoleWindowClass`）なのかを事後に確定できない。
+    # **クラス名も出す**（#872）。題名だけでは、前面を握っていたのが本体のウィンドウなのか
+    # debug ビルドが連れてくるコンソールウィンドウ（`ConsoleWindowClass`）なのかを事後に確定できない。
     $class = New-Object System.Text.StringBuilder 256
     [void][SnotraSmokeInterop.Native]::GetClassNameW($handle, $class, $class.Capacity)
     [uint32]$ownerPid = 0
@@ -903,13 +903,13 @@ function Get-SnotraForegroundWindowLabel {
 
 <#
 .SYNOPSIS
-窓を前面へ出し、**実際に前面になったか**を返す。
+ウィンドウを前面へ出し、**実際に前面になったか**を返す。
 
 .DESCRIPTION
 `SetForegroundWindow` の戻り値を答えにしない。前面ロックの規則により、**対象が既に前面でも
 FALSE が返る**（CI runner で実測・run #1280）。呼び出し側が知りたいのは「注入した打鍵の宛先が
-その窓に定まったか」であり、それを表すのは `GetForegroundWindow` との一致だけである。
-奪取が一度で通らない環境のために $TimeoutMs まで再試行し、諦めるときは前面を握っていた窓を
+そのウィンドウに定まったか」であり、それを表すのは `GetForegroundWindow` との一致だけである。
+奪取が一度で通らない環境のために $TimeoutMs まで再試行し、諦めるときは前面を握っていたウィンドウを
 警告へ残す。
 #>
 function Set-SnotraForegroundWindow {
@@ -922,10 +922,10 @@ function Set-SnotraForegroundWindow {
     )
 
     Initialize-SnotraNativeInterop
-    # 前面窓が無い環境では GetForegroundWindow も Zero を返す。Zero 同士の一致を「前面化できた」
+    # 前面ウィンドウが無い環境では GetForegroundWindow も Zero を返す。Zero 同士の一致を「前面化できた」
     # と読むと打鍵の宛先が無いまま合格するので、比較の前に落とす（fail-closed）。
     if ($Handle -eq [IntPtr]::Zero) {
-        throw '前面化する窓のハンドルが Zero です。'
+        throw '前面化するウィンドウのハンドルが Zero です。'
     }
 
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
@@ -936,7 +936,7 @@ function Set-SnotraForegroundWindow {
         Start-Sleep -Milliseconds $PollMs
     }
 
-    Write-Warning ("窓 0x$($Handle.ToString('X')) を ${TimeoutMs}ms 以内に前面化できません" +
+    Write-Warning ("ウィンドウ 0x$($Handle.ToString('X')) を ${TimeoutMs}ms 以内に前面化できません" +
         "（前面: $(Get-SnotraForegroundWindowLabel)）。")
     return $false
 }
@@ -954,10 +954,10 @@ function Get-SnotraWindowCapture {
     # **可視判定より先に見る。** ロック中は IsWindowVisible も矩形も真っ当な値を返し、
     # ここから下は最後まで成功して**中身だけが違う Bitmap** を返す（#866）。
     # 判定不能を throw へ倒さない理由は Assert-SnotraSessionUnlocked のコメント。
-    Assert-SnotraSessionUnlocked -Operation '窓のキャプチャ'
+    Assert-SnotraSessionUnlocked -Operation 'ウィンドウのキャプチャ'
 
     if (-not [SnotraSmokeInterop.Native]::IsWindowVisible($Handle)) {
-        throw 'キャプチャ対象の窓が可視ではありません。'
+        throw 'キャプチャ対象のウィンドウが可視ではありません。'
     }
 
     $rect = New-Object SnotraSmokeInterop.Native+RECT
@@ -969,7 +969,7 @@ function Get-SnotraWindowCapture {
     $width = $rect.Right - $rect.Left
     $height = $rect.Bottom - $rect.Top
     if ($width -le 0 -or $height -le 0) {
-        throw "窓の矩形が不正です: ${width}x${height}"
+        throw "ウィンドウの矩形が不正です: ${width}x${height}"
     }
 
     $bitmap = New-Object System.Drawing.Bitmap($width, $height)

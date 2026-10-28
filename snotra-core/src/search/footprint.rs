@@ -61,10 +61,10 @@ impl FootprintRow {
 
 /// **1 つの確保**から成る行。ブロック数の導出（`bytes > 0`）はここ 1 か所に閉じる。
 ///
-/// バイト数を呼び出し側が渡すのは、アリーナの部品（連結バイト列 / オフセット / 旗）が
+/// バイト数を呼び出し側が渡すのは、アリーナの部品（連結バイト列 / オフセット / フラグ）が
 /// 確保バイトを型の側（`footprint_bytes`）で知っているからである。
 ///
-/// **旗 2 本のように 2 つの確保を 1 行へ束ねてはならない**——ブロックを 1 つ数え落とす
+/// **フラグ 2 本のように 2 つの確保を 1 行へ束ねてはならない**——ブロックを 1 つ数え落とす
 /// （**未帰属 +1 blocks として実測に出た**。バイトは合っていたので、バイトだけの検算では
 /// 捕まらない）。
 pub(super) fn arena_part(label: &'static str, bytes: usize, count: usize) -> FootprintRow {
@@ -151,12 +151,12 @@ impl SearchEngine {
             lower_names.len() + 1,
         ));
         rows.push(arena_part(
-            "lower_names（present 旗）",
+            "lower_names（present フラグ）",
             present,
             lower_names.len(),
         ));
 
-        // 比較相手は**解決後**の `lower_name`（鎖の上段が潰れていれば表示名）。旗が立って
+        // 比較相手は**解決後**の `lower_name`（鎖の上段が潰れていれば表示名）。フラグが立って
         // いる分は列に実体を持たないので、ここへは現れない。
         let mut leaked_files =
             FootprintRow::empty("lower_file_names（= lower_names なのに実体を持つ・件数）");
@@ -169,7 +169,7 @@ impl SearchEngine {
         }
         rows.push(leaked_files);
 
-        // **旗は 2 行に分ける。** `arena_part` は「1 行 = 1 確保」でブロックを数えるので、
+        // **フラグは 2 行に分ける。** `arena_part` は「1 行 = 1 確保」でブロックを数えるので、
         // 2 本を束ねると 1 つ数え落とす（**未帰属 +1 blocks として実測に出た**）。
         let (blob, offsets, present, same_as_lower) = lower_file_names.footprint_bytes();
         rows.push(arena_part(
@@ -183,12 +183,12 @@ impl SearchEngine {
             lower_file_names.len() + 1,
         ));
         rows.push(arena_part(
-            "lower_file_names（present 旗）",
+            "lower_file_names（present フラグ）",
             present,
             lower_file_names.len(),
         ));
         rows.push(arena_part(
-            "lower_file_names（same_as_lower 旗）",
+            "lower_file_names（same_as_lower フラグ）",
             same_as_lower,
             lower_file_names.len(),
         ));
@@ -206,7 +206,7 @@ impl SearchEngine {
         // だった。実運用点 112 → 113 の出所であり、額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」が正本）。
         //
         // **アリーナは 2 行に分ける。** `arena_part` は「1 行 = 1 確保」でブロックを数えるので、
-        // 連結バイト列とオフセットを束ねると 1 つ数え落とす（`lower_file_names` の旗 2 本で
+        // 連結バイト列とオフセットを束ねると 1 つ数え落とす（`lower_file_names` のフラグ 2 本で
         // 未帰属 +1 blocks として実測済み）。
         let (blob, offsets) = kana_lower_names.footprint_bytes();
         rows.push(arena_part(

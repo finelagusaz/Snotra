@@ -18,7 +18,7 @@ use crate::str_arena::LowerFileSlot;
 struct CollapseCounts {
     /// `lower_name` が `name` と同一で潰れた件数。
     shared_name: usize,
-    /// `lower_file_name` が `lower_name` と同一で旗が立った件数。
+    /// `lower_file_name` が `lower_name` と同一でフラグが立った件数。
     shared_file: usize,
     /// file name 成分が無い件数（`LowerFileName::Absent` 相当）。
     absent: usize,
@@ -38,7 +38,7 @@ struct CollapseCounts {
 ///
 /// **突き合わせるのは `entry_view` である。** 読み替えの単一点であり、表現の差が製品に
 /// 見える形になるのはここだけである。生の `lower_names[i]` を比べる形にすると
-/// 「どちらも潰れているが旗が違う」食い違いを取り逃す。
+/// 「どちらも潰れているがフラグが違う」食い違いを取り逃す。
 ///
 /// **保存側は実経路（[`crate::indexer::derive_columns`]）を通す**——潰し方を書き起こすと、
 /// 比べているのが 2 つの実装ではなくテストの中の 1 つの実装になる。**`index.bin` は書かない**
@@ -106,7 +106,7 @@ fn assert_engines_agree(
         );
         assert_eq!(
             va.entry.file_name_is_lower_name, vb.entry.file_name_is_lower_name,
-            "{label}/migemo={migemo_enabled}: index {i} の共有の旗がずれている"
+            "{label}/migemo={migemo_enabled}: index {i} の共有のフラグがずれている"
         );
         // **表現そのものも比べる。** 読み替えが一致していても、片方だけが実体を持ち続けて
         // いれば削減が失われている（結果は正しいままなので挙動テストでは捕まらない）。
@@ -242,7 +242,7 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
 ///
 /// **「マージ後に整列を測り直す」形は空振りする**——実運用点で測ったところ、既存の最大パス
 /// `C:\workspace\...` に対し追加の最小パスは `C:\Users\...` で、PATH エントリは必ず途中に入る
-/// （2026-08-13 実測）。ゆえに旗を測り直しても偽にしかならない。**保つべきは旗ではなく範囲である。**
+/// （2026-08-13 実測）。ゆえにフラグを測り直しても偽にしかならない。**保つべきはフラグではなく範囲である。**
 #[test]
 fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_sorted() {
     let mut base = vec![
@@ -282,7 +282,7 @@ fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_so
     );
 }
 
-/// **PATH マージが整列の旗を下ろすのは、足すエントリが非空のときに限る。**
+/// **PATH マージが整列のフラグを下ろすのは、足すエントリが非空のときに限る。**
 ///
 /// `SearchEngine::sorted_by_path` は計測ハーネスのための観測口であり、`PathStore::cmp_paths` が
 /// index 比較（速い）とフルパス組み立て（遅い）のどちらを通るかを決める。**計器がこの値を
@@ -292,20 +292,20 @@ fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_so
 /// **変異を注入して落ちることを実測してある**（2026-08-13）。`extend_with_roots` の早期 return を
 /// `if false && entries.is_empty()` へ潰すと、**腕 3 だけが落ちる**（腕 1 はマージを通らないので
 /// 通過する）。**腕 1 と腕 3 を同じ計算にしてはならない理由がここにある**——同じにすると
-/// この変異で 2 腕が同時に落ち、「空マージが旗を下ろす」退行と「マージ前から旗が偽」の退行を
+/// この変異で 2 腕が同時に落ち、「空マージがフラグを下ろす」退行と「マージ前からフラグが偽」の退行を
 /// 区別できなくなる（レビュー M-2）。
 /// **`Engine::sorted_by_path` の本体を `true` リテラルへ潰す変異でも実測してある**——
 /// 腕 4 の**偽の側だけ**が落ちる（真の側は素通りする）。恒真の退行を捕まえるのはこの 1 本である。
 ///
-/// **腕ごとに守る不変条件が違う。** 腕 1 は基準線（整列済みなら旗が立つ）、腕 2 は「非空の
+/// **腕ごとに守る不変条件が違う。** 腕 1 は基準線（整列済みならフラグが立つ）、腕 2 は「非空の
 /// マージで下りる」、腕 3 は下の「空マージでは下りない」、**腕 4 は `Engine` 段の passthrough を
 /// 両方向で**（真だけでは恒真への退行を通す）。**どれも他の腕では代われない**——1 つを
 /// 付け足しと見て消すと、その不変条件だけが無防備になる。
 ///
 /// **腕 3 が守るのは代理指標との分かれ目である。** `IndexTree::extend_with_roots` は冒頭で
 /// `if entries.is_empty() { return; }` と抜けるので、`include_path_env` が真でも
-/// `scan_path_env` が空 vec を返す構成（ユーザー PATH が空・全件が既存と重複）では旗が
-/// 立ったまま残る。**「`include_path_env` が真なら旗は下りている」は成り立たない**——
+/// `scan_path_env` が空 vec を返す構成（ユーザー PATH が空・全件が既存と重複）ではフラグが
+/// 立ったまま残る。**「`include_path_env` が真ならフラグは下りている」は成り立たない**——
 /// 代理指標で計器を書くと、そこで測った値の帰属が静かに誤る。
 #[test]
 fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
@@ -324,8 +324,8 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
     crate::indexer::sort_entries_canonical(&mut base);
 
     // **`None` は「マージを 1 度も通さない」である。** `Some(vec![])` と同じにしてはならない
-    // ——同じにすると腕 1 と腕 3 が 1 行も違わなくなり、「マージ前から旗が偽」という退行と
-    // 「空マージが旗を下ろす」という退行を区別できなくなる（どちらでも 2 腕が同時に落ちる）。
+    // ——同じにすると腕 1 と腕 3 が 1 行も違わなくなり、「マージ前からフラグが偽」という退行と
+    // 「空マージがフラグを下ろす」という退行を区別できなくなる（どちらでも 2 腕が同時に落ちる）。
     let build = |path_entries: Option<Vec<AppEntry>>| {
         let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
         let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
@@ -335,10 +335,10 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
         material
     };
 
-    // 1. **基準線**——マージを 1 度も通さない。整列済みの入力ゆえ旗は立つ（速い経路）。
+    // 1. **基準線**——マージを 1 度も通さない。整列済みの入力ゆえフラグは立つ（速い経路）。
     assert!(
         SearchEngine::from_material(build(None), false).sorted_by_path(),
-        "整列済みの入力で旗が立っていない（`sort_entries_canonical` を通してある）"
+        "整列済みの入力でフラグが立っていない（`sort_entries_canonical` を通してある）"
     );
 
     let path_entry = || {
@@ -352,7 +352,7 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
     // 2. 非空のマージ = 範囲を測り直さないので「全体が整列している」の主張だけが下りる。
     //
     //    **この fixture はバイト順を崩していない**（`C:\tools\node.exe` は `C:\apps\...` より後ろ・
-    //    実測）。**それが要点である**——旗が下りる理由は順序が崩れたことではなく、
+    //    実測）。**それが要点である**——フラグが下りる理由は順序が崩れたことではなく、
     //    **マージ後に測り直さないこと**である。崩れる fixture を使うと 2 つの理由が同居して、
     //    どちらで下りたのか区別できなくなる（崩れる側は
     //    `path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_sorted` が持つ）。
@@ -362,11 +362,11 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
          入れるなら `extend_with_roots` の doc が却下の理由を持っている）"
     );
 
-    // 3. **空のマージは旗を下ろさない。** ここが代理指標との分かれ目である
-    //    ——腕 1 と違い、`extend_with_path_entries` を**実際に通したうえで**旗が残る。
+    // 3. **空のマージはフラグを下ろさない。** ここが代理指標との分かれ目である
+    //    ——腕 1 と違い、`extend_with_path_entries` を**実際に通したうえで**フラグが残る。
     assert!(
         SearchEngine::from_material(build(Some(Vec::new())), false).sorted_by_path(),
-        "空の PATH マージが旗を下ろした（`extend_with_roots` の早期 return が壊れている）"
+        "空の PATH マージがフラグを下ろした（`extend_with_roots` の早期 return が壊れている）"
     );
 
     // 4. **`Engine` 段の passthrough を両方向で通す。** 計器が読むのはこの段であり、ここが
@@ -667,26 +667,26 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
 
 /// **`Collapsed`（v6 キャッシュ）経路を通す唯一の検知器。**
 ///
-/// 他の旗の検知器（`shared_file_name_flag_is_measured_not_inferred_from_is_folder` /
+/// 他のフラグの検知器（`shared_file_name_flag_is_measured_not_inferred_from_is_folder` /
 /// `shared_lower_name_chain_collapses_both_links`）は**どちらも `Measured` 経路**を通るので、
 /// v6 の展開が壊れてもこの 2 本は緑のままである。ここが守るのは
 /// **`LowerFileName` の 3 状態が `entry_view` の読み替えへ正しく着地すること**——とくに
 /// `Absent` が「file name 成分が無い」のまま残り、`SameAsLowerName` と混ざらないこと。
 ///
 /// **測り直しの有無はここでは測れない**（測り直しても結果は変わらない・`DerivedStrings` の
-/// doc）。索引の内部表現（`is_none` と旗）まで見るのは、**検索結果が正しいまま削減だけが
+/// doc）。索引の内部表現（`is_none` とフラグ）まで見るのは、**検索結果が正しいまま削減だけが
 /// 失われる**形の退行を捕まえるためである。
 #[test]
 fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
     let entries = vec![
         // 1. file name 成分が**無い**（`Absent`）かつ `lower_name` も潰れている。
-        //    **素朴な `None == None` 比較で旗が立つのはこのエントリである。**
+        //    **素朴な `None == None` 比較でフラグが立つのはこのエントリである。**
         AppEntry {
             name: "docs".to_string(),
             target_path: "C:\\docs".to_string(),
             is_folder: true,
         },
-        // 2. file name が `lower_name` と同一（`SameAsLowerName`）。旗が立つべき。
+        // 2. file name が `lower_name` と同一（`SameAsLowerName`）。フラグが立つべき。
         AppEntry {
             name: "same".to_string(),
             target_path: "C:\\real\\same".to_string(),
@@ -724,7 +724,7 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
         false,
     );
 
-    // 1: **旗が立ってはならない。** ここが `Some("docs")` になる実装が、この PR が
+    // 1: **フラグが立ってはならない。** ここが `Some("docs")` になる実装が、この PR が
     // 「結果を壊しうる唯一の点」と名指したものである。
     let absent = engine.entry_view(0);
     assert_eq!(absent.lower_name, "docs");
@@ -734,7 +734,7 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
     );
     assert!(!absent.entry.file_name_is_lower_name);
 
-    // 2: 旗が立ち、`lower_name` へ解決される。
+    // 2: フラグが立ち、`lower_name` へ解決される。
     let shared = engine.entry_view(1);
     assert_eq!(shared.lower_file_name, Some("same"));
     assert!(shared.entry.file_name_is_lower_name);
@@ -762,7 +762,7 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
 /// `SearchEngine::new` が受け取る `AppEntry` の性質ではない。`is_folder` で分岐する実装に
 /// 差し替えたら、下の 1 件目が `Some("tail")` ではなく `Some("alias")` を返して落ちる。
 ///
-/// 2 件目は成立する側で、旗が立って `lower_file_names` から文字列が落ちることを見る
+/// 2 件目は成立する側で、フラグが立って `lower_file_names` から文字列が落ちることを見る
 /// ——**両方を置く**のは、片方だけだと「常に共有しない」実装も「常に共有する」実装も
 /// 通ってしまうためである。
 ///

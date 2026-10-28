@@ -172,7 +172,7 @@ pub(crate) struct ResultsView {
     /// 本 view へ移設——TextureHandle はウィンドウの Context 従属のため、行描画と同じウィンドウに置く）。
     icon_textures: HashMap<String, egui::TextureHandle>,
     /// path→抽出の失敗回数（#692）。**「失敗したか」ではなく「何回失敗したか」を持つ**
-    /// ——一過性の失敗（冷えたシェルのアイコンキャッシュ等）を 1 度で恒久的な欠落として
+    /// ——一過性の失敗（シェルのアイコンキャッシュがコールドである等）を 1 度で恒久的な欠落として
     /// latch すると、その行は可視である限りグレーのプレースホルダのまま戻らない。
     /// 恒久的な失敗（パス不在・decode 不能）は `ICON_MAX_ATTEMPTS` を直接入れて即打ち切る。
     icon_attempts: HashMap<String, u8>,

@@ -167,7 +167,7 @@ struct IndexCache<'a> {
     aux: Cow<'a, [u32]>,
     /// 拡張子と、親を持たないエントリのフルパスの intern 表。
     table: Cow<'a, [String]>,
-    /// 保存時に測った整列の旗。**5 列と違い、読む側は検証せずそのまま信じる**——
+    /// 保存時に測った整列のフラグ。**5 列と違い、読む側は検証せずそのまま信じる**——
     /// 理由と被害範囲は [`crate::index_tree::IndexTree::from_parts`] の doc に書いてある
     /// （壊れた値の帰結は同スコアの tie-break の順序に閉じる）。
     sorted_by_path: bool,
@@ -869,7 +869,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
             char_masks: cache.char_masks.into_owned(),
             file_name_char_masks: cache.file_name_char_masks.into_owned(),
             // **`Collapsed` で渡す。** ここを `Raw` にすると `assemble` が測り直し、
-            // `None` どうしの一致で file name 成分の無いエントリに旗が立つ。
+            // `None` どうしの一致で file name 成分の無いエントリにフラグが立つ。
             lower: Some(CachedLower::Collapsed {
                 lower_names: cache.lower_names.into_owned(),
                 lower_file_names: cache.lower_file_names.into_owned(),

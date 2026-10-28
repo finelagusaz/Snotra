@@ -100,7 +100,7 @@ Describe 'Get-SnotraTraceMarker' {
 }
 
 Describe 'Test-SnotraTraceInvariants — 正常列' {
-    It '閉じた hide 窓・rows>0 の show・hide を挟んだ show で H1/H4/H5 がすべて PASS' {
+    It '閉じた hide 区間・rows>0 の show・hide を挟んだ show で H1/H4/H5 がすべて PASS' {
         $events = @(
             New-TraceEvent 1 'egui_show:done'
             New-TraceEvent 2 'egui_results:show' @{ rows = 3 }
@@ -118,7 +118,7 @@ Describe 'Test-SnotraTraceInvariants — 正常列' {
 }
 
 Describe 'Test-SnotraTraceInvariants — 故意の違反（フォールトインジェクション）' {
-    It 'H1: hide 窓の中に egui_results:show が現れたら FAIL' {
+    It 'H1: hide 区間の中に egui_results:show が現れたら FAIL' {
         $events = @(
             New-TraceEvent 1 'egui_show:done'
             New-TraceEvent 2 'egui_hide:done'
@@ -200,9 +200,9 @@ Describe 'Test-SnotraTraceInvariants — hide 側の非対称' {
         $r.Violations.Count | Should -Be 0
     }
 
-    It '連続する egui_hide:done は窓を打ち直さず、2 つの hide に挟まれた違反が消えない' {
+    It '連続する egui_hide:done は区間を打ち直さず、2 つの hide に挟まれた違反が消えない' {
         # `hide_egui_main` は可視性ガードの無い listener からも呼ばれ、egui_hide:done を
-        # 無条件に出す。hide ごとに窓を開き直す実装だと、この違反が評価から落ちる。
+        # 無条件に出す。hide ごとに区間を開き直す実装だと、この違反が評価から落ちる。
         $events = @(
             New-TraceEvent 1 'egui_show:done'
             New-TraceEvent 2 'egui_hide:done'
@@ -282,7 +282,7 @@ Describe 'Test-SnotraTraceInvariants — 判定不能は PASS へ化けない' {
         @($r.Unjudgeable | Where-Object { $_.Invariant -eq 'H1' }).Count | Should -Be 1
     }
 
-    It '閉じていない hide 窓は、違反が無ければ SKIP（まだ後続が来うる）' {
+    It '閉じていない hide 区間は、違反が無ければ SKIP（まだ後続が来うる）' {
         $events = @(
             New-TraceEvent 1 'egui_show:done'
             New-TraceEvent 2 'egui_hide:done'
@@ -292,7 +292,7 @@ Describe 'Test-SnotraTraceInvariants — 判定不能は PASS へ化けない' {
         Get-Verdict $r 1 'H1' | Should -Be 'SKIP'
     }
 
-    It '閉じていない hide 窓でも、違反があれば FAIL（違反はそれ自体で確定する）' {
+    It '閉じていない hide 区間でも、違反があれば FAIL（違反はそれ自体で確定する）' {
         # smoke-egui は最後まで hidden で終わるため、この非対称が無いと検出器が丸ごと黙る。
         $events = @(
             New-TraceEvent 1 'egui_show:done'
@@ -421,7 +421,7 @@ Describe 'Test-SnotraTraceInvariants — Counts が SKIP の山を隠さない�
 }
 
 Describe 'Test-SnotraTraceInvariants — Observed（判定器が実際に何を見たか）' {
-    It '評価した egui_results:show と hide 窓の件数を返す（呼び出し側が数え直さないため）' {
+    It '評価した egui_results:show と hide 区間の件数を返す（呼び出し側が数え直さないため）' {
         $events = @(
             New-TraceEvent 1 'egui_show:done'
             New-TraceEvent 2 'egui_results:show' @{ rows = 3 }
@@ -434,7 +434,7 @@ Describe 'Test-SnotraTraceInvariants — Observed（判定器が実際に何を�
         $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
 
         $r.Observed.ResultsShow | Should -Be 2
-        # 連続する hide は窓を打ち直さないので 1 つ。
+        # 連続する hide は区間を打ち直さないので 1 つ。
         $r.Observed.HideWindow | Should -Be 1
     }
 

@@ -95,7 +95,7 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
 /// パスに対して先頭のオープナーツール (exe, args) を返す。
 /// 0/1 ツール判定の共通ロジック。
 ///
-/// `is_dir()`（FS I/O）は**必ず config の read guard の外**で行う — 死んだ UNC パスでは
+/// `is_dir()`（FS I/O）は**必ず config の read guard の外**で行う — 応答しない UNC パスでは
 /// SMB タイムアウトまで最大 21 秒ブロックする実測があり、guard の中で呼ぶとその間
 /// `update_config` の書き込みが進めず、設定の適用がそこで止まる（#524。**宛先が engine 錠から
 /// config の `RwLock` へ変わっただけで、規律は同一である**・#1123）。is_dir は config に依存

@@ -43,7 +43,7 @@ pub struct CachedMasks {
 /// **`Option<String>` では足りない。** `None` には「file name 成分が無い」という先客がおり、
 /// そこへ「`lower_names[i]` と同一」を重ねると 2 つの意味が同じ表現に乗る。メモリ側は
 /// `CompactEntry::file_name_is_lower_name`（構造体の空きパディング）で解いたが、**ディスクに
-/// 空きパディングは無い**——旗を別の `Vec<bool>` で持つと 0.30 MiB 余分にかかり、しかも
+/// 空きパディングは無い**——フラグを別の `Vec<bool>` で持つと 0.30 MiB 余分にかかり、しかも
 /// 2 本の Vec の対応がずれても型は何も言わない。3 状態を 1 つの enum に閉じると、
 /// postcard のタグ 1 バイトだけで済み**意味も型に載る**（実測 1.11 MiB 対 1.41 MiB）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

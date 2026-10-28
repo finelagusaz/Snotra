@@ -34,7 +34,7 @@ describe("G-near-heading-refs checkNearHeadingRefs（正準形に見えて隣接
     expect(run("`CLAUDE.md`（ルート）は「何を実現すべきか」を記す\n")).toEqual([]);
   });
 
-  it("窓幅を超えて離れたものは見ない", () => {
+  it("ウィンドウ幅を超えて離れたものは見ない", () => {
     expect(run("`CLAUDE.md` はとても長い説明を挟んでから「Git/GitHub 運用」\n")).toEqual([]);
   });
 

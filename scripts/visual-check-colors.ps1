@@ -12,12 +12,12 @@
   config を 1 枚書いて起動する。**ユーザーの実 config は読みも書きもしない**——退避も復元も
   存在しないので、異常終了しても実 config が検証色のまま残る経路が構造的に無い。
 
-  既定は自動判定である。**各窓が「見せねばならない色」を宣言し**、宣言色がそれぞれ下限占有率以上
+  既定は自動判定である。**各ウィンドウが「見せねばならない色」を宣言し**、宣言色がそれぞれ下限占有率以上
   描かれているかを実ピクセルで測って **exit code で** 返す（#953）。`-Interactive` では起動するだけで
   判定せず、目視項目を読み上げる。
 
-  **窓全体の最頻色では判定しない。** かつてはそうしていたが、その前提（「背景は窓で最も広い色」）は
-  main 窓で偽であり——**入力欄の塗りが背景より広い**（実測 37.6% > 33.3%）——**main はどんな背景色を
+  **ウィンドウ全体の最頻色では判定しない。** かつてはそうしていたが、その前提（「背景はウィンドウで最も広い色」）は
+  main ウィンドウで偽であり——**入力欄の塗りが背景より広い**（実測 37.6% > 33.3%）——**main はどんな背景色を
   指定しても赤**だった。永久に赤いゲートはゲートが無いのと機能的に同じで、正しく動いていた
   results 側の判定まで道連れになる。
 
@@ -30,7 +30,7 @@
 
   **trace は判定に使わない。** 「`set_clear_color` を呼んだ」というログは、その色が画面へ
   出たことを意味しない（`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」・
-  #671 PR A′ で `egui_results:hide` が出るのに窓が残る回帰を smoke が緑のまま通した）。
+  #671 PR A′ で `egui_results:hide` が出るのにウィンドウが残る回帰を smoke が緑のまま通した）。
   ここで判定の根拠にするのは**描かれた結果のピクセル**だけである。
 
 .PARAMETER Color
@@ -67,7 +67,7 @@ $shotDir = Join-Path $PSScriptRoot '..\target\visual-check'
 $profileDir = Join-Path $shotDir 'profile'
 $stderrLog = Join-Path $shotDir 'snotra-stderr.log'
 
-# --- 窓が「見せねばならない色」（#953） ---
+# --- ウィンドウが「見せねばならない色」（#953） ---
 # **3 桁 hex（`#FFF`）の展開はモジュールが持つ**（`ConvertTo-SnotraColorKey`）。ここへ写しを置かない。
 $backgroundKey = ConvertTo-SnotraColorKey -Hex $Color
 $hex = '{0:X6}' -f $backgroundKey   # スクリーンショットのファイル名に使う
@@ -101,11 +101,11 @@ Remove-Item -Path $stderrLog -Force -ErrorAction SilentlyContinue
 # 共通セクションの骨格は共有モジュールが持つ（#843）。visual 固有の general/visual と scan は
 # 呼び出し側から渡し、3 本の seed が同型でないことを保つ。
 # **`auto_hide_on_focus_lost = false` は自動判定の前提である**（既定は true）。スクリプトを走らせた
-# 端末がフォーカスを保つため、既定のままだと窓は可視判定を通った直後に隠れ、**キャプチャは窓が
+# 端末がフォーカスを保つため、既定のままだとウィンドウは可視判定を通った直後に隠れ、**キャプチャはウィンドウが
 # 在った座標の「下にあるもの」を撮る**——実測でエディタが写った。プロファイルを所有する今、
 # この前提は config で表現できる（旧版は実 config を触るため、こう書く選択肢が無かった）。
 $showOnStartup = if ($Interactive) { 'false' } else { 'true' }
-# results を決定的に出すため、専用の索引対象を 3 件置く。1 件では選択行の塗りが窓全体を
+# results を決定的に出すため、専用の索引対象を 3 件置く。1 件では選択行の塗りがウィンドウ全体を
 # 占め、clear color が**宣言した下限（50%）に届かない**。未選択行を 2 件含めて下地を十分露出させる。
 # リポジトリ内の実ファイル名へ依存させないため、名前と検索文字 "z" をここで対にする。
 $scanDir = Join-Path $shotDir 'scan'
@@ -168,8 +168,8 @@ function Test-SeedHealth {
 # Bitmap → 色ヒストグラム（**I/O 側**。判定は `SnotraWindowColors.psm1` の純関数が持つ・#953）。
 #
 # **1 点サンプルではなくヒストグラムで測る。** 1 点は入力欄・角丸・DWM 枠の 1 px ずれで外れる
-# ——この知見は判定方式が変わっても生き続ける。**かつては「背景は窓で最も広い色なので最頻色で
-# 判定する」としていたが、その前提は main 窓で偽だった**（入力欄が過半を占める・#953）。
+# ——この知見は判定方式が変わっても生き続ける。**かつては「背景はウィンドウで最も広い色なので最頻色で
+# 判定する」としていたが、その前提は main ウィンドウで偽だった**（入力欄が過半を占める・#953）。
 function Get-WindowColorHistogram {
     param([Parameter(Mandatory)]$Capture)
 
@@ -188,7 +188,7 @@ function Get-WindowColorHistogram {
     return $counts
 }
 
-# 窓 1 枚を測って判定する。**スクリーンショットの保存はここに残す**——`$Capture.Bitmap` を握るのは
+# ウィンドウ 1 枚を測って判定する。**スクリーンショットの保存はここに残す**——`$Capture.Bitmap` を握るのは
 # 呼び出し側だけで、純関数はヒストグラムしか受け取らないためである。
 function Measure-WindowColors {
     param(
@@ -229,7 +229,7 @@ if ($Interactive) {
     Write-Host '     → 暗いままなら clear color が届いていない（runtime の CLEAR_COLOR が出ている）'
     Write-Host '  2. ホットキー（Alt+Q）で出した瞬間も同色である'
     Write-Host '     → 別の色が一瞬見えてから変わるなら、下地（ネイティブ背景ブラシ）がずれている'
-    Write-Host '  3. 結果リスト窓（何か入力して出す）の背景も同色である'
+    Write-Host '  3. 結果リストウィンドウ（何か入力して出す）の背景も同色である'
     Write-Host '     → main だけ変わって results が暗いなら、results の経路が届いていない'
     Write-Host '  4. 文字を打って件数を変え続けたとき、results がちらつかないこと'
     Write-Host '     → リサイズごとに下地を撃つため全クライアント領域の erase を誘発する。'
@@ -263,16 +263,16 @@ try {
 
     $proc = Start-SnotraProcess -ConfigDir $profileFull -FilePath $exe `
         -StandardErrorPath $stderrLog -NoNewWindow
-    Write-Host "本体を起動しました（pid=$($proc.Id)）。窓の出現を待ちます…"
+    Write-Host "本体を起動しました（pid=$($proc.Id)）。ウィンドウの出現を待ちます…"
 
     $mainHwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 300000 -PollMs 500
 
-    # 最初の present を確実に跨ぐための待ち。ここで待たないと「まだ何も描かれていない窓」を
+    # 最初の present を確実に跨ぐための待ち。ここで待たないと「まだ何も描かれていないウィンドウ」を
     # 撮り、下地（ネイティブブラシ）を clear color と誤って判定しうる——**両者は今や同色なので、
     # この取り違えは判定を緑にする向きに効く**（沈黙経路）。
     Start-Sleep -Seconds 2
 
-    # **窓ごとの「見せねばならない色」と下限はモジュールが持つ**（#953）。ここへ直書きすると
+    # **ウィンドウごとの「見せねばならない色」と下限はモジュールが持つ**（#953）。ここへ直書きすると
     # `run-pester.ps1`（`scripts/lib` だけを走査する）の視界の外に出て、下限を緩める 1 行の編集が
     # 全テスト緑のまま通る。判定側に main / results の分岐は無く、非対称はこのデータに載る。
     # 下限の値と根拠は `Get-SnotraDeclaredColors` の doc が正本。
@@ -288,7 +288,7 @@ try {
 
     # 専用 scan に置いた 3 件を "z" で検索し、results を決定的に出す。
     if (-not (Set-SnotraForegroundWindow -Handle $mainHwnd)) {
-        throw 'main 窓を前面化できず、results を出すキー入力の宛先を確定できませんでした。'
+        throw 'main ウィンドウを前面化できず、results を出すキー入力の宛先を確定できませんでした。'
     }
     Start-Sleep -Milliseconds 100
     $queryVk = [byte][int][char]'Z'
@@ -316,7 +316,7 @@ try {
     # 赤のとき「代わりに何が広く出ているか」の手がかりとして併記する。
     Write-Host ''
     foreach ($result in @($mainResult, $resultsResult)) {
-        Write-Host ("$($result.Label) 窓 $($result.Width)x$($result.Height)（最頻色 $($result.Mode) {0:P1}）" -f $result.ModeShare)
+        Write-Host ("$($result.Label) ウィンドウ $($result.Width)x$($result.Height)（最頻色 $($result.Mode) {0:P1}）" -f $result.ModeShare)
         foreach ($c in $result.Colors) {
             $mark = if ($c.Ok) { '  OK' } else { '不足' }
             Write-Host ("  [$mark] $($c.Label) $($c.Hex): 実測 {0:P1} / 下限 {1:P0}" -f $c.Share, $c.Floor)
@@ -338,14 +338,14 @@ try {
     } else {
         Write-Host '判定: 赤 — 宣言した色が届いていません。上の [不足] を実測占有率で読み分けます:'
         Write-Host '  - 実測 0.0%   = その色がまったく出ていない（経路が切れている・最頻色が手がかり）'
-        Write-Host '  - 0% 超で下限未満 = 出てはいるが面積が足りない（撮れているのが窓でない可能性も）'
+        Write-Host '  - 0% 超で下限未満 = 出てはいるが面積が足りない（撮れているのがウィンドウでない可能性も）'
         Write-Host '  - background の最頻色が #282828 なら、clear color が view から渡っていない'
-        Write-Host "  - 残したスクリーンショット（$shotDir）を見る。観測点が窓でない可能性を切り分ける"
+        Write-Host "  - 残したスクリーンショット（$shotDir）を見る。観測点がウィンドウでない可能性を切り分ける"
     }
     Write-Host ''
     Write-Host '自動判定はここまでです。次の 2 点は目視で確認してください（-Interactive）:'
     Write-Host '  - show の一瞬に別の色が見えないか（下地のずれ）'
-    Write-Host '  - 結果リスト窓をリサイズさせ続けたときにちらつかないか'
+    Write-Host '  - 結果リストウィンドウをリサイズさせ続けたときにちらつかないか'
     Write-Host ''
 } finally {
     if ($mainCapture) { $mainCapture.Bitmap.Dispose() }

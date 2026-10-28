@@ -124,7 +124,7 @@ pub struct SearchEngine {
     /// `to_lower_folded` が恒等関数になる名前——既に小文字の ASCII と、変換対象を持たない
     /// CJK——がそれに当たり、実データでは 86.6% を占める。**`Option` で足りるのは
     /// `lower_names` に「無い」という状態が元から無いからである**（`lower_file_names` の
-    /// `None` は「file name 成分が無い」を先に意味しており、そちらは旗を別に要した）。
+    /// `None` は「file name 成分が無い」を先に意味しており、そちらはフラグを別に要した）。
     /// **型は `Vec<Option<Box<str>>>` ではなく [`LowerNameColumn`]（アリーナ）である**——
     /// 1 エントリ 1 確保をやめ、spine（16 B × 件数）ごと消すための表現で、線上のバイト列は
     /// 変わっていない（正本は `crate::str_arena` の doc）。
@@ -132,7 +132,7 @@ pub struct SearchEngine {
     /// `None` は「file name 成分が無い」。内容が `lower_names[i]` と同一のときは
     /// `CompactEntry::file_name_is_lower_name` が立ち、ここは `None` に潰れている。
     ///
-    /// **ディスク側の 3 状態のうち `SameAsLowerName` はここに残らない**（`assemble` が旗へ
+    /// **ディスク側の 3 状態のうち `SameAsLowerName` はここに残らない**（`assemble` がフラグへ
     /// 移す）ので、列としては [`LowerNameColumn`] と同じ 2 状態で足りる。
     lower_file_names: LowerFileColumn,
     /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
@@ -505,11 +505,11 @@ impl SearchEngine {
     ///
     /// **製品はこれを読んで分岐してはならない**——分岐は `PathStore::cmp_paths` の内側に
     /// 閉じており、そこへ戻すためにこの値を外へ出していない。要るのは 1 つの理由による:
-    /// **パスクエリのフレームコストは、この旗で tie-break の経路が変わる**（真なら index の
-    /// 比較、偽なら両辺のフルパスを組み立てる）。旗は構築時の実測であって契約ではないので、
+    /// **パスクエリのフレームコストは、このフラグで tie-break の経路が変わる**（真なら index の
+    /// 比較、偽なら両辺のフルパスを組み立てる）。フラグは構築時の実測であって契約ではないので、
     /// **計器が「どちらの経路を測ったか」を出力に添えられなければ、その計測値は読めない。**
     ///
-    /// PATH エントリのマージ（`IndexTree::extend_with_roots`）は**非空のときに限り**旗を
+    /// PATH エントリのマージ（`IndexTree::extend_with_roots`）は**非空のときに限り**フラグを
     /// 下ろす。ゆえに「`include_path_env` が真か」は代理指標にならない。
     /// **`pub` にしない。** 唯一の crate 外の読み手は計測ハーネスであり、そちらは
     /// `Engine` の passthrough を通る（そこは `src-tauri/clippy.toml` が製品 crate で禁じている）。

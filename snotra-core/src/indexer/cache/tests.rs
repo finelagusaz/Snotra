@@ -99,7 +99,7 @@ type GoldenFixture = (
 /// - **木の根と非根の両方**（1..2 件目が親子）。根の `aux` はフルパスの id、非根の `aux` は
 ///   拡張子の id という**同じ列の 2 つの意味**が、これで初めて両方バイトに現れる
 /// - **`sorted_by_path` が真になる並び**（`target_path` のバイト昇順）。偽だけを凍結すると、
-///   旗の位置や極性が変わっても 1 バイトも動かない
+///   フラグの位置や極性が変わっても 1 バイトも動かない
 fn golden_fixture() -> GoldenFixture {
     // **バイト昇順で並べる**（`C:\P` < `C:\a` < `C:\d`）。崩すと `sorted_by_path` が偽に
     // なるうえ、`IndexTree::build` の親の二分探索が取りこぼして 2 件目が根になる
@@ -217,7 +217,7 @@ fn index_cache_on_disk_format_is_stable() {
     .expect("凍結 v7 の列が木の不変条件を満たすこと");
     assert!(
         restored.sorted_by_path,
-        "fixture はバイト昇順ゆえ真である（偽だけを凍結すると旗が動いても気づかない）"
+        "fixture はバイト昇順ゆえ真である（偽だけを凍結するとフラグが動いても気づかない）"
     );
     let mut buf = String::new();
     for (i, entry) in entries.iter().enumerate() {
@@ -309,7 +309,7 @@ const GOLDEN_V6: &[u8] = &[
 /// 通る人が最も多い**枝でもある。
 ///
 /// **`CachedLower::Collapsed` で返らなければならない。** `Raw` で返すと `assemble` が
-/// 測り直し、`None` どうしの一致で file name 成分を持たないエントリに旗が立つ。
+/// 測り直し、`None` どうしの一致で file name 成分を持たないエントリにフラグが立つ。
 #[test]
 fn frozen_v6_bytes_load_as_collapsed_through_load_cache_in() {
     let dir = temp_dir("v6_frozen_through_load_cache_in");

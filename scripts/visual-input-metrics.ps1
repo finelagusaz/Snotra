@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-  main 窓の入力欄の縦の幾何を、フォントを差し替えながら実ピクセルで測って**表に出す**（判定しない）。
+  main ウィンドウの入力欄の縦の幾何を、フォントを差し替えながら実ピクセルで測って**表に出す**（判定しない）。
 
 .DESCRIPTION
   Rust 側の検査は egui の論理座標で galley の位置を縛るが、**実機のフォント解決・softbuffer の
@@ -49,7 +49,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/SnotraWindowColors.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/SnotraInputMetrics.psm1') -Force
 
-# 画面ロック中は窓が描かれず、撮った絵が黒一色になる（#866）。
+# 画面ロック中はウィンドウが描かれず、撮った絵が黒一色になる（#866）。
 Assert-SnotraSessionUnlocked -Operation '入力欄の幾何測定'
 
 $exe = if ($ExePath) { $ExePath } else { Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot }
@@ -181,10 +181,10 @@ font_family = "$font"
         $proc = Start-SnotraProcess -ConfigDir $profile.FullPath -FilePath $exe `
             -StandardErrorPath $stderr -NoNewWindow
         $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 120000 -PollMs 500
-        # **窓が出た時点で読む。** 幾何の測定が失敗した行にも倍率は残したい——「測れなかった」と
+        # **ウィンドウが出た時点で読む。** 幾何の測定が失敗した行にも倍率は残したい——「測れなかった」と
         # 「別の倍率で測った」を後から区別できるようにするため。
         $row.Dpi = Get-SnotraWindowDpi -Handle $hwnd
-        # 最初の present を跨ぐ（未描画の窓を撮ると塗りが 1 行も見つからない）。
+        # 最初の present を跨ぐ（未描画のウィンドウを撮ると塗りが 1 行も見つからない）。
         Start-Sleep -Seconds 2
         if (Set-SnotraForegroundWindow -Handle $hwnd) {
             # VK_A..VK_Z は ASCII 大文字と同値。押下と解放を分けて送る（`Send-SnotraKey` の形）。
@@ -237,7 +237,7 @@ font_family = "$font"
 }
 
 Write-Host ''
-Write-Host '入力欄の縦の幾何（Dpi = 窓の載るモニタの実効 DPI・96 が 100%。Skew = 上余白 − 下余白で符号が寄った向きを表す）'
+Write-Host '入力欄の縦の幾何（Dpi = ウィンドウの載るモニタの実効 DPI・96 が 100%。Skew = 上余白 − 下余白で符号が寄った向きを表す）'
 $rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 Write-Host '判定は出さない。値の意味と読み方は scripts/lib/SnotraInputMetrics.psm1 の doc を参照。'
 if ($KeepShots) { Write-Host "スクリーンショット: $outDir" }

@@ -1,4 +1,4 @@
-//! egui/softbuffer メインウィンドウの外殻（#532 SU2〜SU7・唯一の UI 経路）。
+//! egui/softbuffer メインウィンドウのシェル（#532 SU2〜SU7・唯一の UI 経路）。
 //! window 生成（main/results 両ウィンドウ）・共有状態（`EguiShellState`）・config の 1 フレーム読み・
 //! listener の登録・起動時 updater check。
 //! **ウィンドウを操作する実体（show/hide・位置・results のサイズ・wake）は `window_coordinator` に

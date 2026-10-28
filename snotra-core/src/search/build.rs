@@ -31,7 +31,7 @@ use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 /// **分ける理由は「測り直しが無駄だから」であって、「測り直すと壊れるから」ではない。**
 /// 潰し済みの列を測定ループへ流しても結果は変わらない——`measure_derived_sharing` が
 /// `lower_name: &str`（`Option` ではない）を取るため、潰れた要素はループの `let Some(..) else`
-/// で素通りするからである。**「`None` どうしの一致で file name 成分の無いエントリに旗が立つ」
+/// で素通りするからである。**「`None` どうしの一致で file name 成分の無いエントリにフラグが立つ」
 /// という危険は、判定を一元化する前の `Option<&str>` どうしの比較に固有のものだった**
 /// （2026-08-08 に、測り直す実装へ戻す実験で確かめた——検知器は落ちなかった）。
 ///
@@ -240,22 +240,22 @@ impl SearchEngine {
         // （`DerivedStrings` の doc）。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
         // 包んでも Vec 本体は動かない。
         //
-        // **展開を `PathStore::build` より後に置くのは、旗をその場で立てるためである。**
+        // **展開を `PathStore::build` より後に置くのは、フラグをその場で立てるためである。**
         // `mark_file_name_is_lower_name` は `CompactEntry` の空きパディングへ書くので、木が
         // 建つ前には呼べない。位置を控える `Vec<usize>` を挟む形もあるが、**制約に足場で
         // 応えるより、制約が満たされる場所まで展開を遅らせるほうが構造が 1 段浅くなる**
         // （`PathStore::build` は派生文字列を一切見ないので、遅らせる障害は無い）。
         // **どちらの枝も、出口では同じ 2 本の列（`crate::str_arena`）になる。** 潰す判定を
         // 通すかどうかだけが違い、`Collapsed` は記録側が測った結果をそのまま表現として使う
-        // ——ここで測り直すと、`None` どうしの一致で誤った旗が立つ。
+        // ——ここで測り直すと、`None` どうしの一致で誤ったフラグが立つ。
         //
         // **`match` の中で分ける。** 外で `matches!` を取ると、variant を足したときに既定値へ
         // 黙って落ちる——「測らない」へ倒れれば削減だけが減り、「測る」へ倒れれば結果が
         // 壊れる。どちらも沈黙するので、コンパイラに列挙させる。
         let (mut lower_names, mut lower_file_names) = match derived {
-            // **旗はここで立てる**（`mark_file_name_is_lower_name` は `CompactEntry` の空き
+            // **フラグはここで立てる**（`mark_file_name_is_lower_name` は `CompactEntry` の空き
             // パディングへ書くので、木が建った後でしか呼べない）。ディスクは 3 状態を
-            // `LowerFileName` で運び、メモリは「旗 + `Absent`」で表す——**その 2 状態を
+            // `LowerFileName` で運び、メモリは「フラグ + `Absent`」で表す——**その 2 状態を
             // 混ぜてはならない**（`crate::indexer::LowerFileName` の doc）。
             DerivedStrings::Collapsed {
                 lower_names,
@@ -360,7 +360,7 @@ impl SearchEngine {
         //
         // **これで取りこぼさない**——照合が読む文字列（`entry_view` が返す 2 本）は、どれも
         // この 3 本のいずれかの部分文字列である。`lower_names` の `None` は表示名を指す
-        // （1 本目）。file name 側は `Text` なら 3 本目、共有旗が立てば解決後の `lower_name` と
+        // （1 本目）。file name 側は `Text` なら 3 本目、共有フラグが立てば解決後の `lower_name` と
         // 同一なので 1 本目か 2 本目に在る。
         //
         // **区切りを含まない名前しか無いのに `true` へ倒れることはあっても、逆は無い。**

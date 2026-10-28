@@ -20,7 +20,7 @@
 //! #900 以降は `src-tauri/clippy.toml` の `disallowed-methods` が機構で禁じる）。
 //!
 //! **この crate では `panel_fill` / `window_fill` を書かない**——main ウィンドウには読む egui コンテナ
-//! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、消費者ゼロの死んだ書き込みだった
+//! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、誰も読まない書き込み（消費者ゼロ）だった
 //! （spec 決定 2 で撤去）。**揃えるために書き足さないこと**——ただし
 //! **`snotra-settings` には当てはまらない**（あちらは `CentralPanel` を使うので実消費者が在り、
 //! `ctx.set_visuals` こそが正しい API である。`src-tauri/clippy.toml` の禁止が crate スコープに

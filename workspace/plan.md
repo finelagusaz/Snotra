@@ -70,8 +70,8 @@
 
 ### Phase 3 — 検証と後始末
 
-- [ ] `npm run verify:tree` が緑
-- [ ] 別 issue を起票する: (a) 本体検索の名前側の空白正規化（`search/build.rs`・`indexer/columns.rs` `derive_columns`。`index.bin` の版バンプ要否は未測定）、(b) `normalize_query` の借用判定が titlecase 等で所有側と割れる（履歴クエリキーへの影響ゆえ `/persistence-check` 対象）
+- [x] `npm run verify:tree` が緑（第 2 巡 5ca33d57: A・E・F の 10 コマンドすべて exit 0）
+- [x] 別 issue を起票する: (a) 本体検索の名前側の空白正規化（`search/build.rs`・`indexer/columns.rs` `derive_columns`。`index.bin` の版バンプ要否は未測定）、(b) `normalize_query` の借用判定が titlecase 等で所有側と割れる（履歴クエリキーへの影響ゆえ `/persistence-check` 対象） → #1309（a）・#1310（b）
 
 ## 未確定（実装前に潰す）
 

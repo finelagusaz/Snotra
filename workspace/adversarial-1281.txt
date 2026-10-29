@@ -1,0 +1,128 @@
+ADVERSARIAL REVIEW of workspace/research.md (#1281)
+Reviewer environment: host GPDWINMini, Ryzen 7 8840U (16 logical). No repo files edited.
+
+=== BROKEN / MATERIALLY INCOMPLETE ===
+
+B1. [research "技術的制約" bullet 2: "実 index.bin でパスでないクエリの壁時計を測るハーネスが無い。measure_real_index が数えるのは確保だけ"] -- FALSE in letter.
+  tests/search_allocations.rs:453-462 `report_measured` wraps Instant around every query and prints a "µs*" column
+  (header at :464-468; footnote :449 "計数器込み・worker 1 本の値であり、製品の壁時計ではない").
+  measure_real_index (:471) runs non-path sequences c/co/cod/code and s/se/set on the real index via Engine::search.
+  So a (contaminated: counting allocator, 1 worker, 1 sample, not interleaved) wall-time column exists. The true gap is
+  "no interleaved, uninstrumented, multi-worker, dot-query timing on the real index", not "no timing at all".
+  How to falsify: run `cargo test -p snotra-core --release --test search_allocations measure_search_allocations -- --ignored --nocapture`
+  and see whether the real-index rows print a µs* number (they should).
+
+B2. [research omits incremental reuse entirely; it is the main branch-selection gate for BOTH candidates]
+  search.rs:246-258 `can_reuse`: reuse iff mode same, prev_candidates non-empty, norm_query.starts_with(prev_query),
+  `(!plan.has_dot || prev_query.contains('.'))`, !has_path_sep, kana monotonic.
+  Consequences at the real operating point (substring, interactive typing):
+   - A full scan with the dot branch runs essentially ONCE per dot-query: on the keystroke that introduces '.'
+     ("foo" -> "foo." cannot reuse). Later keystrokes ("foo.t", "foo.tx") reuse the (small) set matched by "foo.".
+     Candidate 1's real-world frequency = one full scan per typed dot-query, not per keystroke.
+   - Candidate 2 (find) likewise runs a full scan only on the first keystroke / non-monotonic edits / empty-prev cases;
+     later keystrokes scan only prev_candidates. The first keystroke is typically 1 char, which matches a huge share of
+     entries, so per-match work (with_normalized_key derivation + 3 history lookups, scoring.rs:482-515) can dominate
+     over find cost -- research's microbench is find-only (research itself says so) but the proposed "alternating 3x" must
+     choose queries that are selective AND defeat reuse.
+  Any benchmark for candidate 1 must (a) type a non-dot query first then the dot query so the full scan happens, and
+  (b) reset with a non-matching query (RESET_QUERY "zzzz" pattern in tests/search_allocations.rs:149) between repeats;
+  otherwise it measures the reused small set (a different branch = the "instrument measures a different branch" trap).
+  How to falsify: call search("foo.txt") twice in a row on one engine and time the 2nd (reuse => much faster); or read can_reuse.
+
+B3. [research claim 5 population: "検知器 fuzzy_full_scan_does_not_allocate_per_candidate と path_query_full_scan... は差で判定" -- list is incomplete]
+  Third differential detector omitted: `split_search_allocations_do_not_grow_with_leaf_matches` (search_allocations.rs:370-430)
+  compares 1-worker vs 4-worker allocations with ALLOCS_THRESHOLD=32 / BYTES_THRESHOLD=190_000 (differential too). Also
+  `result_assembly_allocates_once_per_path` (:320, differential FEW vs MANY).
+  Proposition 5 still HOLDS for a constant per-search into_owned() built once on the search-entry thread (cancels in
+  small-vs-large and 1-vs-4 differences). It would NOT hold for option (b)-variants that build a Finder per rayon leaf/fold-init
+  (scales with leaf count => split_search_... turns red), and research's claim "差分型の検知器には効かない" should be scoped
+  to "built once, outside the parallel closure". Also note the absolute `assert_eq!(results.len(), MAX_RESULTS)` fixture checks
+  (:184) are unaffected.
+  How to falsify: construct Finder inside the fold init closure and run split_search_allocations... (expect red).
+
+B4. [research "実測" bullets: the 312,108 / 255,578 (81.9%) flag count]
+  Source test (search/tests/build.rs:890-925) builds the engine through `SearchEngine::new_with_migemo(entries, false)`
+  (Measured path), NOT the product's `Engine::from_material` / Collapsed-from-disk path (build.rs:~253 marks flags from the
+  on-disk LowerFileSlot). By design they agree, and PATH-merge entries (include_path_env = true in real config) are not in the
+  count. So 81.9% is "flags derivable from the real index", not "flags the product loads" (+PATH entries, which are NOT flagged
+  since file_name has extension != name). Direction of error is small; but the research states it as the operating-point fact.
+  How to falsify: print the count from Engine::from_material(load_or_scan_with_stats(...)) with and without extend_with_path_entries.
+
+B5. [research claim 6 / "前例の表は HAL9000 のものなので、この機体のベースラインにならない" -- true for that table, but incomplete]
+  PERFORMANCE.md:1063 records "計測機は GPD WIN MINI / G1617-01 / 23.8 GB" for the path-query frame-cost sections
+  (and :1546 "計器・機体・構成は…同一"). So a same-machine (GPD) precedent for real-index wall-clock exists
+  (path_query_cost.rs). Research implies none; the actual constraint is "no GPD precedent for non-path substring queries".
+  Proposition 6 as worded (HAL9000 tables != baseline here) SURVIVES. hostname = GPDWINMini confirmed.
+
+=== TRIED AND COULD NOT BREAK ===
+
+P1 (candidate 1 equivalence). Holds for Prefix/Substring/Fuzzy.
+  - entry_view (scoring.rs:336-362) returns Some(lower_name) iff flag, and flag is set only when `lower_file_name == Some(lower_name)`
+    (query.rs:136; build.rs Measured path via measure_derived_sharing; Collapsed path from disk).
+  - fuzzy_match_score (scoring.rs:106) is stateless modulo scratch buffers; Substring/Prefix pure.
+  - merge arms (None,None)/(Some,Some same)/(Some,None) collapse as research says. skip_name already forces needs_fn_score=false.
+  - Substring: SUBSTRING_BASE=5000 (scoring.rs:38) <= 9000, so the 9000 shortcut NEVER fires in Substring (hit or miss) => the second
+    find runs on every flagged entry for dot queries (research's "find が 2 回" is right, and also on hits).
+  - Prefix: PREFIX_BASE-len > 9000 unless name > 1000 bytes (impossible: path component <= 255 chars*3B=765B).
+  - Fuzzy: nucleo scores for realistic query lengths are far below 9000 (research right).
+  - Pre-filter untouched by the change (scoring.rs:394-409, function head).
+  Falsify: differential test over real index, flagged-only subset, all 3 modes, dot queries: results must be bit-identical.
+
+P2 (memmem == str::find). Cannot break. Both return leftmost byte match; valid-UTF-8 needle starting with a lead byte
+  cannot match mid-codepoint; empty needle => Some(0) on both (even for empty haystack). Position penalty uses the same value.
+  Sites verified: scoring.rs:208 (kana), :233 (Substring arm), :494 (path). `grep '\.find('` in snotra-core/src finds no other
+  &str-needle find in the search hot path (others are char/closure/iterator find).
+  Note folder.rs:230 uses `contains` (SIMD fast path in std `<&str as Pattern>::is_contained_in`), correctly out of scope.
+
+P3 (bench cannot measure candidate 1). Confirmed. make_bench_entries (performance.rs:9-58): name "Prefix Suffix N" vs target_path
+  "...\\app{N}.lnk" => lower_file_name "appN.lnk" != lower_name, flag never set, and all is_folder=false. SCALING_QUERIES
+  (performance.rs:119) = vis/code/micro/app/sett, no '.', so has_dot branch never runs. Also the alloc test's
+  FUZZY_CASES "." case deliberately uses a differing file_stem (search_allocations.rs:152-153,208-212) so flag stays false:
+  no existing fixture exercises flagged+dot.
+
+P4 (memchr adds no crate). Confirmed: Cargo.lock has exactly one `name = "memchr"` (2.8.3, line 2935), dependency of
+  nucleo-matcher 0.3.1 (lock:3103-3110) and others; snotra-core/Cargo.toml has no memchr; no deny.toml anywhere (find);
+  ci.yml has no deny/audit/vet/machete. Cargo.lock will still change by one line (snotra-core's dependency list) -- not a new package.
+  Caveat (minor): `memchr = "2"` default features unify to `std` for nucleo's memchr; no new crate, possibly no new code.
+
+P5 -- see B3 (survives with scoping).
+
+P6 -- see B5 (survives).
+
+Other research claims checked, unbroken: line numbers (scoring.rs 206/218/233/336/378/441/449/494; search.rs 326/396; query.rs 111);
+  can_reuse reads kana_query & norm_query monotonicity (true, but also reads has_dot/prev_candidates -- see B2); real config:
+  normal_mode="substring", folder_mode="fuzzy", migemo_enabled=false, include_path_env=true (confirmed from config.toml; paths.scan
+  entries not printed). Engine::search (engine.rs:~140) uses normal_mode for ALL index entries including folders, so the flagged
+  folders ARE searched in Substring at the real op point; folder_mode applies only to folder navigation (engine.rs:173, folder.rs).
+  That resolves a worry: the real op point does exercise candidate 1 in Substring mode.
+
+=== ENVIRONMENT / BRANCH-COVERAGE FINDINGS (⚠️ = uncertain) ===
+
+E1. Real operating point branches: Substring (find twice on ~82% flagged entries for dot queries), migemo off => kana_substring_score
+  site NEVER fires (candidate 2's kana sub-site has zero effect here; research already notes), path site fires only for
+  separator queries (path_query_cost.rs) and its cost is dominated by with_normalized_key derivation (ADR-path-query-forward-single-pass.md,
+  PERFORMANCE.md ~1316-1324 show per-byte scan cost is NOT the dominant term; memchr/SIMD `contains` already used there).
+  ⚠️ So Finder gain at the path site is bounded by the find share of a frame that is mostly derivation.
+
+E2. Fuzzy default (other users) flips the priority: candidate 1 is worth MORE (a nucleo match, ~10x a substring find, runs twice for every
+  flagged entry that passes the mask; fn_mask==name_mask for flagged so the mask does not cull the duplicate), candidate 2 is worth
+  ~0 (Fuzzy arm never calls find; only the kana/path sites remain, and kana needs migemo). The existing Fuzzy ladder
+  (bench_fuzzy_search_scaling) has no dot query and no flagged entry, so it cannot show it either. Fuzzy + dot + flagged requires a
+  new fixture (name == file_name, e.g. is_folder=true entries whose name has no dot-stem mismatch). ⚠️ Magnitude unmeasured.
+  Falsify: bench Fuzzy with flagged entries, query "foo.bar", with/without the 1-line change, interleaved x3.
+
+E3. ⚠️ A Finder built unconditionally in QueryPlan would cost an allocation + prefilter setup in Fuzzy/Prefix searches where it is
+  unused (every keystroke). Construct lazily/only for Substring (or only for the 3 sites) -- research's (a)/(b) comparison ignores this.
+
+E4. ⚠️ Research benchmark plan risk: "ラダー(合成)" + "実 index.bin" both ignore PATH merge (include_path_env=true in the real config;
+  search_allocations.rs doc says PATH merge is not passed). PATH entries are unflagged exes and are the ONLY entries where
+  dot queries ("git.exe") produce hits via the fn branch that candidate 1 leaves intact. Result-equality validation must include them
+  (the differential test over flagged-only entries would miss the unflagged fn branch).
+
+E5. ⚠️ Cheaper unconsidered baseline for candidate 2: std `str::contains(&str)` has an x86_64 SIMD fast path (the repo already
+  relies on it: ADR-path-query-forward-single-pass.md:38, PERFORMANCE.md:1240), `str::find(&str)` uses Two-Way. A miss-test via
+  `contains` before `find` (or memmem) is a third arm worth including in the microbench; research compares only find vs memmem.
+  Falsify: add contains+find arm to the scratchpad microbench.
+
+E6. Machine: GPDWINMini = Ryzen 7 8840U, 16 logical processors (like HAL9000's 16 threads, but mobile part, thermal drift).
+  PERFORMANCE.md precedent requires interleaved A/B x3 for that reason; research's microbench note on noise (20 B/vis reversal) is consistent.

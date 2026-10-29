@@ -1,0 +1,31 @@
+# Review round 2 of #1281 — anchor 943bd0f13cc35640cf0c61d0a87ae3845169f907
+
+align exit 0; HEAD = 943bd0f1. Fix diff reviewed: `git diff 1429dd54 943bd0f1` (PERFORMANCE.md, path_store.rs, match_cost.rs; workspace/ skipped as instructed).
+scoring.rs unchanged between anchors (sha256 79c99497… same as round 1), so round-1 mutation logs remain valid for this code.
+
+## (1) Re-check of L2/L3/L4 with the lens that found them
+
+- L3 (match_cost.rs //!): RESOLVED. Now 「書き換えうる … 止まった時点で上書きは済んでいる（防ぐのではなく、走査後の索引を測った表を出さないだけ）」. Checked against code: match_cost.rs:127-131 asserts `cache_hit` right after `load_or_scan_with_stats`, before any measurement in the loop body. Consistent with path_query_cost.rs:22 wording.
+- L4 (path_store.rs doc): RESOLVED. New text 「この読み手は結果を変えない——立っていれば entry_view が既に file name を lower_name へ読み替えており」 matches scoring.rs entry_view (`if entry.file_name_is_lower_name { Some(lower_name) }`) and holds whether or not the flag is correct. See ⚠️ R2-3 for a minor wording residue.
+- L2 (PERFORMANCE.md): PARTIALLY RESOLVED. The original over-claim (listing the equivalence test as a detector of the flag condition) is gone and "12 本" is correct, but the replacement sentence introduces a new false exhaustive enumeration (R2-1) and an over-broad term (R2-2).
+
+## (2) Findings in the fix diff
+
+### R2-1 (Low) PERFORMANCE.md 「等価性の根拠と検知器」 — 「落ちるのは Substring の位置の誤りと、照合器の取り違えである」 is an incomplete enumeration (false as written)
+- Evidence: new mutation m10 (Fuzzy arm `.map(|s| s as i64 + 1)` in `match_score_single_cached`) makes `has_dot_on_shared_file_name_scores_like_the_name` red — basic.rs:389 「Fuzzy "proj.t" left: Some(167) right: Some(166)」 — and it is the ONLY test red (116 passed, 1 failed). So it also catches Fuzzy score errors, and is in fact the sole detector of that mutation. Log: .delegate/mut-m10.log. Restoration verified by sha256 (79c99497…).
+- Fix direction (per AGENTS.md 全称/数え上げ): state what it is (its expected values are built independently from std find / fuzzy_match_score on the name) or use a lower-bound form (「名前の照合のスコアの誤りでは落ちる（例: …）」), not a closed list.
+- How to falsify: show m10 green at 943bd0f1 (`node mut.mjs m10`).
+
+### R2-2 (Low) same sentence — 「照合器の取り違え」 is broader than what the logs show
+- Evidence from round-1 logs: of the finder-swap mutations, only m4 (Substring arm uses `path_finder`) turned this test red. m3 (kana<->path swap), m3k, m3p, m4r (path site uses `substring_finder`) did NOT (`grep -l "has_dot_on_shared_file_name_scores_like_the_name ... FAILED" .delegate/mut-*.log` → only mut-m2.log, mut-m4.log). Structurally expected: the test's queries never reach kana or path matching.
+- Accurate scope: "the Substring arm's finder being replaced", not finder swaps in general.
+- How to falsify: show any of m3/m3k/m3p/m4r turning this test red.
+
+### R2-3 ⚠️ (Low, wording) path_store.rs — 「（偽なら照合が 1 回多いだけ）」
+- Read literally, "flag false" also covers entries whose file name genuinely differs, where the second match is necessary rather than "one extra". The intended reading ("false on an entry where it could have been true") is clear from the preceding sentence of round 1 but was dropped. Suggest 「同一なのに偽なら…」.
+- How to falsify: argue the surrounding context already restricts 偽 to identical-string entries (the field's first paragraph defines 真 only).
+
+### Checked and OK
+- 「条件を反転する変異で 12 本が落ちた」: matches .delegate/mut-m1.log exactly (12 `FAILED`: has_dot_uses_cached_lower_file_name, has_dot_fuzzy_matches_distinct_file_name, 9 search_*ext* tests, incremental_search_no_dot_to_dot_falls_back_to_full_scan). The description 「has_dot_fuzzy_matches_distinct_file_name と、既存の . / 拡張子のテスト群」 fits (the incremental test is a no-dot→dot test).
+- 「フラグの立つエントリでは、条件をどう書いてもスコアが同じになる」: true — any boolean value of `needs_fn_score` on a flagged entry yields max(s,s)=s or None; m1 and m1b both left this test green.
+- L1 decline: accepted; nothing to re-check.

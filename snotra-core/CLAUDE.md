@@ -65,6 +65,7 @@
 - `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）
 - `tests/memory_footprint.rs`（crate ルート統合テスト）: 索引の常駐ヒープをアロケータ実測で取るハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）
 - `tests/path_query_cost.rs`（crate ルート統合テスト）: パスクエリ（`has_path_sep`）全走査のコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）。
+- `tests/match_cost.rs`（crate ルート統合テスト）: 名前の照合の壁時計と結果のダイジェストを、実 `index.bin` と合成の索引で取る計器（`#[ignore]`・手元 release 実行専用。責務と測らない枝は `//!`、計測値は `PERFORMANCE.md`）
 - `tests/search_allocations.rs`（crate ルート統合テスト）: 検索 1 回あたりの一時確保を数える検知器（CI で走る）と計器（`#[ignore]`）。責務と、スレッドローカルで数えてよい理由は `//!`、計測値は `PERFORMANCE.md`。
 
 ## 開発ルール

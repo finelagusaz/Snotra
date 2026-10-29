@@ -126,10 +126,20 @@ p50 のレンジ（µs、3 巡）:
 
 ### Phase 4 — 計器と記録
 
-- [ ] `snotra-core/tests/match_cost.rs` を書く（実 `index.bin` × PATH マージあり・なし × 2 モード、合成ラダー、ダイジェスト、cache-miss の assert）
-- [ ] A（main ＋ 計器のみ）と B（ブランチ先頭）を、巡ごとに順序を入れ替えて 3 巡測る。A1（ダイジェスト一致）と A2（レンジ。合成 300,000 件の Fuzzy `vis` / `code` を含む）を確かめ、worktree を外す
-- [ ] `PERFORMANCE.md` に採否の節を書く（出所・全件走査の打鍵 1 回あたりという額の単位・kana を測っていないこと）
-- [ ] `snotra-core/CLAUDE.md` のモジュール構成と `docs/build-commands.md` に `match_cost` を足す
+- [x] `snotra-core/tests/match_cost.rs` を書く（実 `index.bin` × PATH マージあり・なし × 2 モード、合成ラダー、ダイジェスト、cache-miss の assert）
+- [x] A（main ＋ 計器のみ）と B（ブランチ先頭）を、巡ごとに順序を入れ替えて 3 巡測る。A1（ダイジェスト一致）と A2（レンジ。合成 300,000 件の Fuzzy `vis` / `code` を含む）を確かめ、worktree を外す
+- [x] `PERFORMANCE.md` に採否の節を書く（出所・全件走査の打鍵 1 回あたりという額の単位・kana を測っていないこと）
+- [x] `snotra-core/CLAUDE.md` のモジュール構成と `docs/build-commands.md` に `match_cost` を足す
+
+## 実装後の実測（Phase 4）
+
+2026-10-29・GPDWINMini・A = `feaa2de8` に計器だけを足した版、B = `f3bc8abe`。3 巡回し、2 巡目は B → A の順にした。表と出所の正本は `PERFORMANCE.md`「採用: 名前の照合で結果に寄与しない CPU 時間を払わない（#1281）」。
+
+- **A1**: 全 432 行（72 行 × 2 版 × 3 巡）のダイジェストが版をまたいで一致した。相異なるダイジェストは 36 種あるので、空振りではない
+- **A2**
+  - 効くはずの行では、レンジが分離した
+  - 合成 300,000 件・Fuzzy の `vis` / `code` は A と重なった。試作で見えた上方への分離は再現しなかった
+  - 実 index・PATH マージなし・Fuzzy の `.txt` だけが上へ分離した（A 3,680–4,410 / B 4,469–4,917）。追加の 2 巡では A 3,719–4,224 / B 3,689–3,848 で重なったので、ノイズと判断した
 
 ## 未確定（実装前に潰す）
 

@@ -174,7 +174,7 @@ function Initialize-SnotraDpiAwareness {
 
 <#
 .SYNOPSIS
-ウィンドウが載っているモニタの実効 DPI を返す（96 が 100%）。
+ウィンドウが載っているモニターの実効 DPI を返す（96 が 100%）。
 
 .DESCRIPTION
 **awareness を通さずに DPI を読むと 96 が返る。** DPI 非対応のプロセスには Win32 が仮想化した
@@ -183,7 +183,7 @@ function Initialize-SnotraDpiAwareness {
 物理 1920x1080 を 1536x864 と報告した——どちらも真っ当な見た目で、倍率を 1 段読み違えさせる。
 ゆえに `Initialize-SnotraDpiAwareness` を先に通す。
 
-**プライマリモニタではなくウィンドウの載るモニタを見る。** 本体は PER_MONITOR_AWARE_V2 で動くため、
+**プライマリモニターではなくウィンドウの載るモニターを見る。** 本体は PER_MONITOR_AWARE_V2 で動くため、
 多画面ではウィンドウごとに倍率が違いうる。ピクセルを数える検査はウィンドウの倍率でしか意味を持たない。
 #>
 function Get-SnotraWindowDpi {

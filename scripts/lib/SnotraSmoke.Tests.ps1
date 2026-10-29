@@ -682,7 +682,7 @@ auto_hide_on_focus_lost = false
             # **部分集合が空でないことを別に断言する。** 省くと主語ゼロで自明に緑になる——
             # `focus_state` は show ごと 5 フレームで尽き、show の外では再武装しない。
             $focusRows.Count | Should -BeGreaterThan 0
-            # ウィンドウが focus を持つ最初のフレームで、入力欄も焦点を持っていなければならない。
+            # ウィンドウが focus を持つ最初のフレームで、入力欄もフォーカスを持っていなければならない。
             $focusRows[0].data.has_focus | Should -BeTrue
         } catch {
             Write-Host '--- caret integration stderr trace ---'

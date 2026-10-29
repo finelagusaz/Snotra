@@ -256,7 +256,7 @@ fn measure_path_query_frame_cost() {
 /// **フラグの実効値は出力に添える。** 添えなければ「どちらの経路を測ったか」が分からず、
 /// 数字の帰属ができない（`Engine::sorted_by_path` の doc）。**`include_path_env` が真か**を
 /// 代理指標にしてはならない——`extend_with_roots` は空 vec で早期 return するので、
-/// PATH が空・全件重複の構成では真のままフラグが立つ（検知器は `search/tests/build.rs` の
+/// PATH が空・全件重複の構成ではフラグが立ったまま残る（検知器は `search/tests/build.rs` の
 /// `path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries`）。
 ///
 /// # この計器が単独で捕まえる経路

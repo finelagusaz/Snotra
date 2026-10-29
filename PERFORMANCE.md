@@ -1261,7 +1261,7 @@ name の Fuzzy スコアリング（`Utf32String` の確保 + nucleo マッチ�
 #### 検証
 
 - **結果は集合・順序とも不変**——`skipping_name_scoring_changes_nothing_over_real_index` が
-  **フラグを強制的に立てて最適化を殺した同じエンジン**と実 index 312,108 件 × 10 クエリで突き合わせる。
+  **フラグを強制的に立てて最適化を無効にした同じエンジン**と実 index 312,108 件 × 10 クエリで突き合わせる。
   **件数の一致では足りない**（パスマッチは同点が出やすく、tie-break の経路が変われば順序だけが動く）
 - 検知器は `fuzzy_name_match_survives_when_display_name_contains_path_separator` **だけ**である
   ——`has_path_sep` だけで飛ばす変異を当てると**当時の既存 572 本**と clippy は全て通り、これ 1 本が落ちた

@@ -237,7 +237,7 @@ font_family = "$font"
 }
 
 Write-Host ''
-Write-Host '入力欄の縦の幾何（Dpi = ウィンドウの載るモニタの実効 DPI・96 が 100%。Skew = 上余白 − 下余白で符号が寄った向きを表す）'
+Write-Host '入力欄の縦の幾何（Dpi = ウィンドウの載るモニターの実効 DPI・96 が 100%。Skew = 上余白 − 下余白で符号が寄った向きを表す）'
 $rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 Write-Host '判定は出さない。値の意味と読み方は scripts/lib/SnotraInputMetrics.psm1 の doc を参照。'
 if ($KeepShots) { Write-Host "スクリーンショット: $outDir" }

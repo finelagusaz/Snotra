@@ -81,7 +81,7 @@ fn blur_grace_action(elapsed: Duration, auto_hide: bool) -> BlurAction {
     }
 }
 
-/// blur（focus 喪失）猶予明けに hide 要求を出すべきかの純粋判定。焦点が戻っておらず、
+/// blur（focus 喪失）猶予明けに hide 要求を出すべきかの純粋判定。フォーカスが戻っておらず、
 /// 100ms 猶予が明け、auto_hide が有効なときだけ hide する。
 /// 猶予タイマの発火・repaint 予約という状態は view 側（update）に残す。
 /// **このモジュールの外へ出さない**（#711）——消費点は `blur_grace_action` に一本化してあり、
@@ -390,7 +390,7 @@ mod tests {
         // focused, grace_elapsed, auto_hide。各行は 1 つだけ倒して落ちることを見るので、
         // この 4 行が「3 連言」を一意に固定する（ゲートが 3 つで全部である根拠は関数の doc）。
         assert!(blur_should_hide(false, true, true)); // 全成立 → hide
-        assert!(!blur_should_hide(true, true, true)); // 焦点復帰 → hide しない
+        assert!(!blur_should_hide(true, true, true)); // フォーカス復帰 → hide しない
         assert!(!blur_should_hide(false, false, true)); // 猶予未明け → hide しない
         assert!(!blur_should_hide(false, true, false)); // auto_hide 無効 → hide しない
     }

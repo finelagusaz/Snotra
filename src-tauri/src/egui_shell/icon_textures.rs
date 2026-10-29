@@ -42,8 +42,8 @@ pub(crate) fn png_to_color_image(png: &[u8]) -> Option<egui::ColorImage> {
     Some(egui::ColorImage::new([w, h], pixels))
 }
 
-/// 抽出を諦めるまでの試行回数（#692）。`extract_icon` 内のリトライ（シェルのコールドな
-/// キャッシュ対策）とは別の層で、**worker 往復を含む再試行**の上限である。
+/// 抽出を諦めるまでの試行回数（#692）。`extract_icon` 内のリトライ（シェルのキャッシュが
+/// コールドなときの対策）とは別の層で、**worker 往復を含む再試行**の上限である。
 pub(crate) const ICON_MAX_ATTEMPTS: u8 = 3;
 
 /// path が未取得かつ試行上限に達していないなら true（抽出 worker に積むべきか）。

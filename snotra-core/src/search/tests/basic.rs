@@ -340,6 +340,171 @@ fn has_dot_uses_cached_lower_file_name() {
     assert_eq!(results[0].name, "Dummy");
 }
 
+/// 索引 `i` のスコアを、製品と同じ `QueryPlan` を通して `score_one_entry` から直接読む
+/// （`SearchResult` はスコアを運ばない）。履歴は空なので、返るのは基準スコアそのものである。
+fn score_at(
+    engine: &SearchEngine,
+    i: usize,
+    query: &str,
+    mode: SearchMode,
+    options: SearchOptions,
+) -> Option<i64> {
+    let plan =
+        prepare_query_plan(query, mode, &options).expect("非空クエリは QueryPlan を生成する");
+    let kana_available = !engine.kana_lower_names.is_empty();
+    engine
+        .score_one_entry(i, &plan, mode, kana_available, &empty_history(), options)
+        .map(|s| s.score)
+}
+
+/// file name が name と同一のエントリ（フラグが立つ）を `.` のクエリで引いても、名前で
+/// 照合したときと同じスコアが出る（#1281: 同じ文字列の 2 度目の照合を飛ばしても結果は変わらない）。
+///
+/// 期待値は**照合の部品から独立に**組む——Substring は std の `find`、Fuzzy は
+/// `fuzzy_match_score` に名前を 1 度だけ通した値。
+#[test]
+fn has_dot_on_shared_file_name_scores_like_the_name() {
+    let mut engine = SearchEngine::new(vec![AppEntry {
+        name: "Proj.Tools".to_string(),
+        target_path: "C:\\work\\Proj.Tools".to_string(),
+        is_folder: true,
+    }]);
+    assert!(
+        engine.entry_view(0).entry.file_name_is_lower_name,
+        "前提: name と file name が同一のフォルダにはフラグが立つ"
+    );
+    let lower = engine.entry_view(0).lower_name.to_owned();
+    let options = SearchOptions::default();
+
+    for query in ["proj.t", "j.to", "s.x"] {
+        let want = lower.find(query).map(|idx| 5_000 - idx as i64);
+        assert_eq!(
+            score_at(&engine, 0, query, SearchMode::Substring, options),
+            want,
+            "Substring {query:?}"
+        );
+        let needle = nucleo_matcher::Utf32String::from(query);
+        let want =
+            crate::search::scoring::fuzzy_match_score(&lower, needle.slice(..)).map(i64::from);
+        assert_eq!(
+            score_at(&engine, 0, query, SearchMode::Fuzzy, options),
+            want,
+            "Fuzzy {query:?}"
+        );
+    }
+    // 結果の列でも引ける（スコアの直読みだけでなく、走査の経路を通しても落ちない）。
+    for mode in [SearchMode::Substring, SearchMode::Fuzzy] {
+        let results = engine.search("proj.t", 8, &empty_history(), mode);
+        assert_eq!(results.len(), 1, "{mode:?}");
+    }
+}
+
+/// フラグが立たないエントリ（name ≠ file name）は、`.` のクエリで file name 側に一致する
+/// ——Fuzzy の版（Substring は `has_dot_uses_cached_lower_file_name`）。フラグの条件を
+/// 取り違えて「立たないほうを飛ばす」と、ここが落ちる。
+#[test]
+fn has_dot_fuzzy_matches_distinct_file_name() {
+    let mut engine = SearchEngine::new(vec![AppEntry {
+        name: "Dummy".to_string(),
+        target_path: "C:\\fake\\Tool.EXE".to_string(),
+        is_folder: false,
+    }]);
+    assert!(!engine.entry_view(0).entry.file_name_is_lower_name);
+    let results = engine.search("tool.exe", 8, &empty_history(), SearchMode::Fuzzy);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "Dummy");
+}
+
+/// Substring・kana・パスの位置ペナルティは、非 ASCII を含む haystack でも std の `find` が返す
+/// バイト位置で決まる（#1281: 照合の手段を替えても位置が変わらない）。
+///
+/// **期待値の位置は std の `find` から計算する**——照合器の側から取ると不動点になる。
+#[test]
+fn substring_kana_and_path_positions_agree_with_std_find_on_non_ascii() {
+    let options = SearchOptions::default();
+
+    // Substring: 名前の途中の非 ASCII に一致する。
+    let engine = SearchEngine::new(make_entries(&["日本語ツール設定"]));
+    let lower = engine.entry_view(0).lower_name.to_owned();
+    let idx = lower.find("設定").expect("前提: 名前が クエリを含む") as i64;
+    assert!(idx > 0, "前提: 先頭以外で一致する");
+    assert_eq!(
+        score_at(&engine, 0, "設定", SearchMode::Substring, options),
+        Some(5_000 - idx)
+    );
+
+    // kana: 名前の途中のかなに一致する（名前・file name 側は一致しない）。
+    let migemo = SearchOptions {
+        migemo_enabled: true,
+        migemo_min_chars: 2,
+        ..SearchOptions::default()
+    };
+    let engine = SearchEngine::new_with_migemo(make_entries(&["マイドキュメント"]), true);
+    let plan = prepare_query_plan("dokyu", SearchMode::Substring, &migemo).unwrap();
+    let kana_query = plan
+        .kana_query
+        .clone()
+        .expect("前提: dokyu は kana へ変換できる");
+    let pos = engine
+        .kana_lower_names
+        .get(0)
+        .find(kana_query.as_str())
+        .expect("前提: かな名がクエリを含む") as i64;
+    assert!(pos > 0, "前提: 先頭以外で一致する");
+    assert_eq!(
+        score_at(&engine, 0, "dokyu", SearchMode::Substring, migemo),
+        Some((4_500 - pos).max(1))
+    );
+
+    // パス: 非 ASCII の段を含むパスの途中に一致する（名前は一致しない）。
+    let engine = SearchEngine::new(vec![AppEntry {
+        name: "Alpha".to_string(),
+        target_path: "C:\\日本語\\tool\\alpha.exe".to_string(),
+        is_folder: false,
+    }]);
+    let key = crate::indexer::normalize_entry_key("C:\\日本語\\tool\\alpha.exe");
+    let pos = key.find("tool\\alpha").expect("前提: キーがクエリを含む") as i64;
+    for mode in [SearchMode::Substring, SearchMode::Fuzzy] {
+        assert_eq!(
+            score_at(&engine, 0, "tool\\alpha", mode, options),
+            Some((3_000 - pos.min(500)).max(1)),
+            "{mode:?}"
+        );
+    }
+}
+
+/// `prepare_query_plan` は Substring のときだけ名前の照合器を作る——`match_score_single_cached` の
+/// Substring の腕はこれを `expect` で取り出すので、片側だけ変わると panic になり、Substring
+/// 以外で作ると使われない確保が打鍵ごとに乗る。kana / パスの照合器は needle の有無に一致する。
+#[test]
+fn query_plan_builds_finders_exactly_for_the_needles_in_use() {
+    let migemo = SearchOptions {
+        migemo_enabled: true,
+        migemo_min_chars: 2,
+        ..SearchOptions::default()
+    };
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+        for query in ["dokyu", "tool\\alpha", "app.exe"] {
+            let plan = prepare_query_plan(query, mode, &migemo).unwrap();
+            assert_eq!(
+                plan.substring_finder.is_some(),
+                mode == SearchMode::Substring,
+                "{mode:?} {query:?}"
+            );
+            assert_eq!(
+                plan.kana_finder.is_some(),
+                plan.kana_query.is_some(),
+                "{query:?}"
+            );
+            assert_eq!(
+                plan.path_finder.is_some(),
+                plan.path_query.is_some(),
+                "{query:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn has_dot_handles_missing_file_name_without_panic() {
     let entries = vec![AppEntry {

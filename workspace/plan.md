@@ -111,18 +111,18 @@ p50 のレンジ（µs、3 巡）:
 
 ### Phase 1 — 等価性のテスト
 
-- [ ] `search/tests/basic.rs` に回帰テスト (a)(b)(c) を足し、変更前の木で緑にする（(d) は Phase 3 で `substring_finder` と一緒に足す）
+- [x] `search/tests/basic.rs` に回帰テスト (a)(b)(c) を足し、変更前の木で緑にする（(d) は Phase 3 で `substring_finder` と一緒に足す）
 
 ### Phase 2 — 候補 1
 
-- [ ] `score_one_entry` の `needs_fn_score` にフラグの条件を足し、doc を更新する
-- [ ] `CompactEntry::file_name_is_lower_name` の doc に、2 人目の読み手を足す
+- [x] `score_one_entry` の `needs_fn_score` にフラグの条件を足し、doc を更新する
+- [x] `CompactEntry::file_name_is_lower_name` の doc に、2 人目の読み手を足す
 
 ### Phase 3 — 候補 2
 
-- [ ] `snotra-core/Cargo.toml` に `memchr = "2"` を足す
-- [ ] `QueryPlan` に Finder 3 つを足し、`prepare_query_plan` で作る（Substring の Finder は Substring のときだけ）。回帰テスト (d) を足す
-- [ ] `match_score_single_cached`・`kana_substring_score`・パスの照合を Finder に替え、位置が一致する根拠をコメントに書く
+- [x] `snotra-core/Cargo.toml` に `memchr = "2"` を足す
+- [x] `QueryPlan` に Finder 3 つを足し、`prepare_query_plan` で作る（Substring の Finder は Substring のときだけ）。回帰テスト (d) を足す
+- [x] `match_score_single_cached`・`kana_substring_score`・パスの照合を Finder に替え、位置が一致する根拠をコメントに書く
 
 ### Phase 4 — 計器と記録
 

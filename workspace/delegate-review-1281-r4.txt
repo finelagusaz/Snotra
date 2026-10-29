@@ -1,0 +1,24 @@
+# Review round 4 of #1281 — anchor 7267e7d09072d560c48e27d3f97a7ba7882539df
+
+align exit 0. Diff reviewed: `git diff f9dec691 7267e7d0` — only one line of PERFORMANCE.md outside workspace/ (workspace/ not reviewed). No code changed since round 1 (scoring.rs/basic.rs as in rounds 1–3), so the mutation logs apply.
+
+## (1) Claim-by-claim check of the new sentence
+
+| Claim | Backing | Verdict |
+|---|---|---|
+| 「Substring と Fuzzy のスコアが、名前に照合の部品（std の find と fuzzy_match_score）を 1 度だけ通した値と一致すること」を見る | basic.rs: expected = `lower.find(query).map(|idx| 5_000 - idx)` (Substring) and `fuzzy_match_score(&lower, needle.slice(..))` (Fuzzy), compared with `score_one_entry` via `score_at`; modes are exactly Substring and Fuzzy | True (partial: the test also asserts the flag precondition and a result count of 1 via `engine.search`; omission, not falsehood) |
+| Substring の位置を 1 ずらす → 落ちた | m2 (`idx as i64 + 1`): basic.rs:381 「Substring "proj.t" left: Some(4999) right: Some(5000)」 | Backed |
+| Fuzzy のスコアを 1 ずらす → 落ちた | m10 (`s as i64 + 1`): basic.rs:389 「Fuzzy "proj.t" left: Some(167) right: Some(166)」 | Backed |
+| Substring の腕でパスの照合器を使う → 落ちた | m4: basic.rs:381 「Substring "proj.t" left: None right: Some(5000)」 (m4 used the expect-free `and_then` form; with the committed `expect` the swap panics in this test, still red) | Backed |
+
+Also: across all 15 mutation logs I ran (m1, m1b, m2, m3, m3k, m3p, m4, m4r, m5, m6k, m6p, m7, m8, m10, m11), exactly m2, m4 and m10 made this test fail (`grep -l "has_dot_on_shared_file_name_scores_like_the_name ... FAILED" .delegate/mut-*.log`). So the sentence stays true even if a reader takes the list as exhaustive for the delegated injection.
+
+## (2) Findings in the round-4 diff
+
+None. No new false or over-universal claim found at 7267e7d0. The universal head clause (R3-1/R3-2) is gone; the sentence now reports only observed mutations under a stated source (委譲先の変異注入).
+
+⚠️ (Very low, wording only): 「Substring の腕でパスの照合器を使う」 was measured in the expect-free form, not the committed `expect` form. Both fail this test (assertion vs panic), so the claim holds as written; mentioned only so nobody re-measures with the literal swap and is surprised by a panic instead of an assert.
+
+## Outside the unit I checked
+- The measurement section above this bullet in PERFORMANCE.md (the wall-clock table, 312,108 / 255,578 / 81.9 %, the "1 row where B separated" note) — I never re-measured or cross-checked any timing or count there in any round.
+- Also outside: the unchanged bullet 「2 の位置 … 検知器は同じファイルの次の 2 本」. My logs show these 2 are not the only detectors of the path-site swap (m4r is also caught by four pre-existing Substring path tests), and the new position test alone catches m7/m8. The bullet does not claim exclusivity, so I did not file it.

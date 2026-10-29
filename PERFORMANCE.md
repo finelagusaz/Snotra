@@ -3043,7 +3043,7 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 
 - 1 の等価性は構造から従う。`entry_view` は file name として `lower_name` そのものを返し、照合は純関数なので、2 度目の照合は `max` に何も足さない
   - **条件の取り違えの検知器**は、`search/tests/basic.rs` の `has_dot_fuzzy_matches_distinct_file_name`（フラグの立たないエントリで file name 側に一致することを見る）と、既存の `.` / 拡張子のテスト群である。条件を反転する変異で 12 本が落ちた（委譲先の変異注入・2026-10-29）
-  - 同じファイルの `has_dot_on_shared_file_name_scores_like_the_name` は**等価性の確認であって、条件の検知器ではない**。フラグの立つエントリでは、条件をどう書いてもスコアが同じになるので、条件の変異では落ちない。このテストが見るのは、フラグの立つエントリのスコアが、名前に照合の部品（std の `find` と `fuzzy_match_score`）を 1 度だけ通した値と一致することである。名前の照合の誤りでは落ちる（例: Substring の位置のずれ・Fuzzy のスコアのずれ・Substring の腕でパスの照合器を使う取り違え）
+  - 同じファイルの `has_dot_on_shared_file_name_scores_like_the_name` は**等価性の確認であって、条件の検知器ではない**。フラグの立つエントリでは、条件をどう書いてもスコアが同じになるので、条件の変異では落ちない。このテストが見るのは、フラグの立つエントリについて、Substring と Fuzzy のスコアが、名前に照合の部品（std の `find` と `fuzzy_match_score`）を 1 度だけ通した値と一致することである。委譲先の変異注入では、次の変異でこのテストが落ちた: Substring の位置を 1 ずらす・Fuzzy のスコアを 1 ずらす・Substring の腕でパスの照合器を使う
 - 2 の位置は `str::find` と一致する。needle は妥当な UTF-8 なので、最左のバイト一致は文字境界に来る。検知器は同じファイルの次の 2 本
   - `substring_kana_and_path_positions_agree_with_std_find_on_non_ascii`: 期待値を std の `find` から計算する
   - `query_plan_builds_finders_exactly_for_the_needles_in_use`: 名前の照合器を Substring のときだけ作ることを見る

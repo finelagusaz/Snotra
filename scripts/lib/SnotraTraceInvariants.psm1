@@ -3,21 +3,21 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# results 窓の trace から**不変条件**を判定する純関数群（#757）。
+# results ウィンドウの trace から**不変条件**を判定する純関数群（#757）。
 #
 # **presence 検査とは別物である。** 「イベントが出たか」ではなく `src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」が求める**「起きてはならないことが起きていないか」**を見る。
-# #671 PR A′ は `egui_results:hide` が出たのに窓が残った回帰で、presence を見る smoke は
+# #671 PR A′ は `egui_results:hide` が出たのにウィンドウが残った回帰で、presence を見る smoke は
 # 緑のまま通した。
 #
 # | # | 判定 | 何を捕まえるか |
 # |---|---|---|
-# | H1 | hidden な窓の中に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
+# | H1 | hidden 区間に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
 # | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「件数 0 ⇒ hide」の契約違反（`layout::present_results` の連言②） |
 # | H5 | hide を挟まない連続 `egui_results:show` は異常 | 二重発火抑止（`ResultsWindow.visible` の `swap`）の破れ |
 # | H7 | `egui_search:settled` が `dispatch_seq < pending_seq` で現れたら異常 | seq 照合そのものが外れた（#1004。**射程は下記のとおり狭い**） |
 #
 # **判定不能を PASS へ化けさせない**のがこのモジュールの要石である。「該当イベントが無い」
-# 「`rows` が読めない」「main の可視状態が未観測」「窓が閉じていない」「parse できなかった
+# 「`rows` が読めない」「main の可視状態が未観測」「区間が閉じていない」「parse できなかった
 # 行がある」はすべて SKIP であって合格ではない。
 #
 # 入力は `SnotraSmoke.psm1` の `Read-SnotraTraceEvents` が返す parse 済みオブジェクト列。
@@ -284,9 +284,9 @@ function Invoke-SnotraTraceJudgement {
     foreach ($event in $parsed) {
         switch ($event.Name) {
             $script:EventHideDone {
-                # **連続する egui_hide:done は窓を打ち直さない——開いている窓を延長する。**
+                # **連続する egui_hide:done は区間を開き直さない——開いている区間を延長する。**
                 # `hide_egui_main` は可視性ガードの無い listener からも呼ばれ、遷移を問わず
-                # trace を出す。打ち直すと 2 つの hide に挟まれた違反が評価から消える。
+                # trace を出す。開き直すと 2 つの hide に挟まれた違反が評価から消える。
                 if ($mainState -ne 'hidden') {
                     $openWindow = @{
                         SectionId = (Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq)
@@ -327,13 +327,13 @@ function Invoke-SnotraTraceJudgement {
                             Message   = "main が hidden（seq=$($openWindow.Seq) の $script:EventHideDone 以降）なのに $script:EventResultsShow が出た"
                         }
                     } else {
-                        # 到達しない（hidden 遷移が必ず窓を開く）が、**無記録の else を残さない**
+                        # 到達しない（hidden 遷移が必ず区間を開く）が、**無記録の else を残さない**
                         # ——沈黙経路を作らないと掲げるモジュールの中の抜け穴になる（code-review L1）。
                         $unjudgeable += @{
                             Invariant = 'H1'
                             Seq       = $event.Seq
                             SectionId = $sectionId
-                            Reason    = 'main が hidden なのに hide 窓が開いていない（状態機械の不整合）'
+                            Reason    = 'main が hidden なのに hide 区間が開いていない（状態機械の不整合）'
                         }
                     }
                 } elseif ($mainState -eq 'unknown') {
@@ -433,8 +433,8 @@ function Invoke-SnotraTraceJudgement {
         }
     }
 
-    # --- H1 は窓ごとに締める --------------------------------------------------
-    # **違反は窓が閉じていなくても確定する。無違反は「まだ後続が来うる」ので SKIP。**
+    # --- H1 は区間ごとに締める --------------------------------------------------
+    # **違反は区間が閉じていなくても確定する。無違反は「まだ後続が来うる」ので SKIP。**
     # この非対称が無いと、最後まで hidden で終わる実行（smoke-egui）で検出器が丸ごと黙る。
     foreach ($window in $hideWindows) {
         if ($window.Violated) { continue }
@@ -445,7 +445,7 @@ function Invoke-SnotraTraceJudgement {
                 Invariant = 'H1'
                 Seq       = $window.Seq
                 SectionId = $window.SectionId
-                Reason    = "hide 窓が閉じていない（次の $script:EventShowDone が無い）"
+                Reason    = "hide 区間が閉じていない（次の $script:EventShowDone が無い）"
             }
         }
     }
@@ -685,7 +685,7 @@ function Format-SnotraTraceVerdictTable {
         $lines += "| $($row.Id) | $($row.Title.Replace('|', '\|')) | $($cells -join ' | ') |"
     }
     $lines += ''
-    $lines += 'H1 = hidden な窓に results が現れない / H4 = `rows` が 0 の show が無い / H5 = hide を挟まない連続 show が無い / H7 = pending より古い seq の採り込みが無い'
+    $lines += 'H1 = hidden 区間に results が現れない / H4 = `rows` が 0 の show が無い / H5 = hide を挟まない連続 show が無い / H7 = pending より古い seq の採り込みが無い'
     $lines += '**SKIP は「判定できなかった」であって合格ではない。** 理由は下の一覧にある。'
     $lines += ''
     $lines += '| 不変条件 | PASS | FAIL | SKIP |'

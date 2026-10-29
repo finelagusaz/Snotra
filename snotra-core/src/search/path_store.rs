@@ -84,7 +84,7 @@ pub(super) struct CompactEntry {
     ///
     /// **`is_folder` から推論してはならない。** 実データでは folder の 100% がこれに当たるが、
     /// それは indexer の名前導出規則の帰結であって `SearchEngine::new` が受け取る
-    /// `AppEntry` の性質ではない。旗は構築時に**測った**結果であり（`build.rs` の `assemble`）、
+    /// `AppEntry` の性質ではない。フラグは構築時に**測った**結果であり（`build.rs` の `assemble`）、
     /// 外れた入力は文字列を持ち続けるだけで結果は変わらない（[`PathStore::sorted_by_path`]
     /// と同じ形である）。
     ///
@@ -135,7 +135,7 @@ impl PathStore {
 
     /// `i` の [`CompactEntry::file_name_is_lower_name`] を立てる。
     ///
-    /// **判定はここでしない**——旗の意味は派生文字列（`lower_names` / `lower_file_names`）に
+    /// **判定はここでしない**——フラグの意味は派生文字列（`lower_names` / `lower_file_names`）に
     /// あり、`PathStore` はそれらを知らない。記憶域だけをここが持ち、何を立てるかは
     /// `build.rs` の `assemble` が決める。
     pub(super) fn mark_file_name_is_lower_name(&mut self, i: usize) {
@@ -296,7 +296,7 @@ impl PathStore {
     ///
     /// 製品はこれを読んで分岐しない——分岐は [`Self::cmp_paths`] の内側に閉じている。
     /// 在るのは、**計器が「速い経路と遅い経路のどちらを測ったか」を出力に添えられるようにする
-    /// ため**である。旗は構築時の実測であって契約ではないので、添えなければその計測値は読めない。
+    /// ため**である。フラグは構築時の実測であって契約ではないので、添えなければその計測値は読めない。
     pub(super) fn sorted_by_path(&self) -> bool {
         self.sorted_prefix_len == self.entries.len()
     }
@@ -530,7 +530,7 @@ impl PathStore {
                 parent,
                 aux,
                 is_folder,
-                // 旗は `build.rs` の `assemble` が派生文字列を測ってから立てる。
+                // フラグは `build.rs` の `assemble` が派生文字列を測ってから立てる。
                 // 木は `target_path` の形しか知らないので判定できない。
                 file_name_is_lower_name: false,
             })

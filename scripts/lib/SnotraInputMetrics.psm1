@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-  main 窓の入力欄の**縦の幾何**を、スクリーンショットの実ピクセルから導く純関数群。
+  main ウィンドウの入力欄の**縦の幾何**を、スクリーンショットの実ピクセルから導く純関数群。
 
 .DESCRIPTION
   Rust 側の検査（`view.rs` の `input_text_sits_vertically_centered_for_both_body_and_hint`）は
@@ -35,7 +35,7 @@ Set-StrictMode -Version Latest
 .SYNOPSIS
   行ごとの「入力欄の塗り色の画素数」から、欄の内側の行範囲を導く。
 .DESCRIPTION
-  **窓が宣言した色で探す**——`input_background_color` は config が宣言する値であり、欄の内側は
+  **ウィンドウが宣言した色で探す**——`input_background_color` は config が宣言する値であり、欄の内側は
   その塗りが横一列に長く並ぶ。枠線（focus リング）は塗り色ではないので自然に外れ、**egui 側の
   既定色が変わっても壊れない**。`SnotraWindowColors.psm1` が「宣言された色が届いているか」を
   見るのと同じ思想である（#953）。
@@ -43,7 +43,7 @@ Set-StrictMode -Version Latest
   ゆえに返すのは**内側**そのものであって、枠線の位置ではない。中身（文字・キャレット・IME 帯）
   の余白はこの内側に対して測る。
 
-  塗りの行が 1 つも無いときは `$null` を返す。**窓が出ていない・色の指定が食い違っている**の
+  塗りの行が 1 つも無いときは `$null` を返す。**ウィンドウが出ていない・色の指定が食い違っている**の
   どちらかであり、呼び出し側はそれを「余白 0」と混同してはならない。
 
   **文字やキャレットが乗る行も塗りを含む**——それらは欄の一部を覆うだけで、行全体を潰しはしない。

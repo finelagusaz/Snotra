@@ -5,7 +5,7 @@
 //! [`crate::index_tree::NameArena`] が先に同じことをしており（`PERFORMANCE.md`「採用: 表示名を文字列アリーナで持つ」）、こちらはその適用先を派生文字列の 2 列へ広げる。違いは 2 つ:
 //!
 //! 1. **要素が `None` を取りうる**（実データで `lower_names` の 86.6% / `lower_file_names` の
-//!    81.9% がそれ）。旗は [`Bits`] で持ち、**「長さ 0 のスライス」で代用しない**（[`OptionalStrArena`]）
+//!    81.9% がそれ）。フラグは [`Bits`] で持ち、**「長さ 0 のスライス」で代用しない**（[`OptionalStrArena`]）
 //! 2. **列ごとに線上表現が違う**——`lower_names` は `seq of Option<str>`、`lower_file_names` は
 //!    3 variant の `seq of LowerFileName` である。記憶域を共有し、種（`DeserializeSeed`）だけを
 //!    分ける
@@ -34,9 +34,9 @@ use serde::{Deserialize, Serialize, Serializer};
 // ビット列
 // ---------------------------------------------------------------------------
 
-/// 要素ごとの旗を 1 ビットで持つ列。
+/// 要素ごとのフラグを 1 ビットで持つ列。
 ///
-/// **`Vec<bool>` にしない。** 31 万件で 0.30 MiB を払う一方、ここは 39 KiB で済む——旗 2 本を
+/// **`Vec<bool>` にしない。** 31 万件で 0.30 MiB を払う一方、ここは 39 KiB で済む——フラグ 2 本を
 /// 足しても、この反復が消す spine（4.76 MiB × 2）に対して無視できる額に収まる。
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Bits {
@@ -66,7 +66,7 @@ impl Bits {
         self.len += 1;
     }
 
-    /// `i` 番の旗。**呼び出し側が `i < len` を保証する契約である。**
+    /// `i` 番のフラグ。**呼び出し側が `i < len` を保証する契約である。**
     ///
     /// **「範囲外は panic する」とは書けない。** ビットは 64 個ずつ確保されるので、
     /// `len <= i < words.len() * 64` のウィンドウでは `words` の添字が範囲内に収まり、release では
@@ -114,14 +114,14 @@ impl fmt::Debug for Bits {
 ///
 /// 空文字と区別が付かなくなる。実データのエントリ名は空でないが、**それは indexer の名前導出
 /// 規則の帰結であって列そのものの性質ではない**——`snotra-core/CLAUDE.md` が
-/// 「`is_folder` から推論してはならない」で戒めたのと同じ形の推論依存になる。旗（[`Bits`]）は
+/// 「`is_folder` から推論してはならない」で戒めたのと同じ形の推論依存になる。フラグ（[`Bits`]）は
 /// 39 KiB で済むので、区別を型に載せない理由が無い。
 ///
 /// # 不変条件は検査ではなく構成から従う
 ///
 /// `offsets[0] == 0` / 単調非減少 / `offsets.last() == blob.len()` / 各オフセットが UTF-8 の
 /// 文字境界であること——どれも「`&str` を丸ごと押し込む」形からしか作れない
-/// （[`crate::index_tree::NameArena`] と同じ理屈）。**オフセットの最上位ビットを旗に流用する案は
+/// （[`crate::index_tree::NameArena`] と同じ理屈）。**オフセットの最上位ビットをフラグに流用する案は
 /// これを壊すので採らない。**
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct OptionalStrArena {
@@ -464,7 +464,7 @@ const LOWER_FILE_VARIANTS: &[&str] = &["Absent", "SameAsLowerName", "Text"];
 
 /// `lower_file_names` の列。
 ///
-/// **3 状態を 2 本の旗で持つ。** `strings` の present が `Text`、`same_as_lower` が
+/// **3 状態を 2 本のフラグで持つ。** `strings` の present が `Text`、`same_as_lower` が
 /// `SameAsLowerName`、どちらも立たないのが `Absent` である。**1 本へ混ぜてはならない**——
 /// 「無い」と「同一」は別の状態であり、混ぜると `entry_view` が file name 成分を持たない
 /// エントリに対して `lower_name` を返す（`crate::indexer::LowerFileName` の doc が正本）。
@@ -497,8 +497,8 @@ impl LowerFileColumn {
     /// `i` 番が持つ独自の文字列（`Text` なら中身、他は `None`）。
     ///
     /// **索引のホットパスはこちらを使う**（`SearchEngine::entry_view`）——メモリ側の列に
-    /// `SameAsLowerName` は残らない（`assemble` が `CompactEntry` の旗へ移す）ので、
-    /// 3 状態を組み立て直す必要が無く、旗の側を読まずに済む。
+    /// `SameAsLowerName` は残らない（`assemble` が `CompactEntry` のフラグへ移す）ので、
+    /// 3 状態を組み立て直す必要が無く、フラグの側を読まずに済む。
     #[inline]
     pub(crate) fn text_at(&self, i: usize) -> Option<&str> {
         self.strings.get(i)
@@ -550,7 +550,7 @@ impl LowerFileColumn {
 
     /// 常駐ヒープの内訳を数えるための素（計測専用）。`(blob, offsets, present, same_as_lower)`。
     ///
-    /// **旗 2 本を足して 1 つで返してはならない。** 呼び出し側（`search/footprint.rs` の
+    /// **フラグ 2 本を足して 1 つで返してはならない。** 呼び出し側（`search/footprint.rs` の
     /// `arena_part`）は「1 行 = 1 確保」でブロックを数えるので、束ねた瞬間に 1 つ数え落とす
     /// ——**未帰属 +1 blocks として実測に出た**（2026-08-12。バイトは合っていたので、
     /// バイトだけを見る検算では捕まらない）。
@@ -746,7 +746,7 @@ mod tests {
 
     /// **`None` と `Some("")` は別の状態である。**
     ///
-    /// 旗を持たず「長さ 0 のスライス」で `None` を表す実装にすると、この 2 つが同じに見える
+    /// フラグを持たず「長さ 0 のスライス」で `None` を表す実装にすると、この 2 つが同じに見える
     /// ——`lower_names` では「表示名と同一」と「小文字化したら空になった」が混ざり、
     /// `entry_view` が別の文字列を返す。実データにこの形は無いが、それは indexer の名前導出
     /// 規則の帰結であって列の性質ではない。

@@ -39,7 +39,7 @@ Describe 'Find-SnotraFieldBounds' {
             Should -BeNullOrEmpty
     }
 
-    It '塗りが 1 行も無ければ null を返す（窓が出ていない・色の指定が食い違う）' {
+    It '塗りが 1 行も無ければ null を返す（ウィンドウが出ていない・色の指定が食い違う）' {
         Find-SnotraFieldBounds -FillHits (@(0) * 100) -MinHits 100 | Should -BeNullOrEmpty
     }
 }

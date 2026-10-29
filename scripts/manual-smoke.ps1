@@ -26,7 +26,7 @@ param(
 #
 # **trace には性質の違う 2 つが載る**（#757）。混ぜて読んではならない:
 #
-# 1. **presence（診断）** — 「そのイベントが出たか」。`egui_results:hide` は出るのに窓が残る、
+# 1. **presence（診断）** — 「そのイベントが出たか」。`egui_results:hide` は出るのにウィンドウが残る、
 #    という #671 PR A′ の回帰を presence を見る smoke は緑のまま通した。**合否ではない**。
 #    目視が「駄目だった」ときに次の一手を選ぶための材料である
 # 2. **不変条件（合否）** — H1 / H4 / H5。「起きてはならないことが起きていないか」を見るので
@@ -82,10 +82,10 @@ $script:InvariantNames = Get-SnotraTraceInvariantNames
 $items = @(
   @{ id = 1; title = "show → 1 文字打鍵でフォーカスを奪わない"
      inv = "#646 PR2（results は raw 3 操作・tao の SW_SHOW は活性化する）"
-     steps = @("ホットキーで検索窓を出す", "1 文字打つ（results 窓が main の直下に出る）", "続けて 2 文字目を打つ")
-     expect = "2 文字目が入力欄に入る。フォーカスが results 窓へ移らない"
+     steps = @("ホットキーで検索ウィンドウを出す", "1 文字打つ（results ウィンドウが main の直下に出る）", "続けて 2 文字目を打つ")
+     expect = "2 文字目が入力欄に入る。フォーカスが results ウィンドウへ移らない"
      trace = @("egui_show:done", "egui_results:show") }
-  @{ id = 2; title = "hide で両窓が同時に消える"
+  @{ id = 2; title = "hide で両ウィンドウが同時に消える"
      inv = "#671 PR A′（main_visible=false は results.hide() の前）・#646 PR2（raw 3 操作）"
      steps = @("results が出ている状態にする", "ホットキーで隠す")
      expect = "main と results が同時に消える。**results だけが最前面に残らない**"
@@ -97,7 +97,7 @@ $items = @(
      trace = @("egui_launch", "egui_results:hide") }
   @{ id = 4; title = "main のドラッグに results が追従する"
      inv = "#646 PR2 決定 10（position_results_below_main の第 2 消費者 = Moved リスナー）"
-     steps = @("results を出した状態で、入力欄以外の余白をドラッグして窓を動かす")
+     steps = @("results を出した状態で、入力欄以外の余白をドラッグしてウィンドウを動かす")
      expect = "ドラッグ**中**も results が main の直下に追従する（離した後だけでなく）"
      trace = @() }
   @{ id = 5; title = "visual 設定の変更が results に反映される"
@@ -108,7 +108,7 @@ $items = @(
   @{ id = 6; title = "設定画面の間だけ最前面が外れる"
      inv = "#749（z-order は window_coordinator の責務に含めなかった: main は commands/window.rs・results は ResultsWindow）"
      steps = @("results を出した状態で設定画面を開く", "設定画面を閉じる")
-     expect = "開いている間は両窓が設定画面の背後へ回り、閉じると両方とも最前面に戻る"
+     expect = "開いている間は両ウィンドウが設定画面の背後へ回り、閉じると両方とも最前面に戻る"
      trace = @() }
   @{ id = 7; title = "件数でも表示位置でも results の高さが変わらない"
      inv = "#835（高さは visible_rows 分の固定・作業領域でクランプしない）"
@@ -119,7 +119,7 @@ $items = @(
 **3 回とも results の高さが同じ**（visible_rows 分・既定 8 行）。候補が 1 件でも 200 件でも、画面のどこにいても変わらない。
   → **高さが動いたら FAIL**（実件数フィットか下端クランプが復活している）
 3 番目では results が作業領域からはみ出し、タスクバーの下・画面の外へ沈む——**これは仕様である**（SPEC.md §4.5・#835 でクランプを撤去した）。**最下端では 1 行も見えないことがあり、それも仕様**（位置を動かせば直る）
-main 窓自身は別軸で見る: **バー（帯）そのものが作業領域の下端を超えていたら FAIL**——#738 で「ポインタを離した時点でバー矩形を作業領域内へ戻す」を入れた（SPEC.md §8.2「表示中の作業領域への復帰」）。ただし status 行・toast 行が出て**伸びた分**のはみ出しは仕様である（§4.7・バーの位置は行の出没で動かさない）
+main ウィンドウ自身は別軸で見る: **バー（帯）そのものが作業領域の下端を超えていたら FAIL**——#738 で「ポインタを離した時点でバー矩形を作業領域内へ戻す」を入れた（SPEC.md §8.2「表示中の作業領域への復帰」）。ただし status 行・toast 行が出て**伸びた分**のはみ出しは仕様である（§4.7・バーの位置は行の出没で動かさない）
 "@
      trace = @() }
   @{ id = 8; title = "hide → 再 show で位置が保たれる"
@@ -134,7 +134,7 @@ main 窓自身は別軸で見る: **バー（帯）そのものが作業領域�
      trace = @("egui_show:done") }
   @{ id = 10; title = "hide 中の font_size 変更が再 show の 1 フレーム目から効く"
      inv = "#749（reset_size_guard は同一フレームの drive より前）"
-     steps = @("検索窓を隠す", "隠したまま設定画面で font_size を変える", "ホットキーで出して 1 文字打つ")
+     steps = @("検索ウィンドウを隠す", "隠したまま設定画面で font_size を変える", "ホットキーで出して 1 文字打つ")
      expect = "results が**最初のフレームから**新しい行高で出る（一瞬だけ旧行高で出て直る、が無い）"
      trace = @("egui_show:done", "egui_results:show") }
   # --- #666 段 3（view.rs の責務分割）で追加した 3 項目 ---
@@ -242,7 +242,7 @@ if (-not $NoLaunch) {
     if ($null -eq $savedTrace) { Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue }
     else { $env:SNOTRA_TRACE = $savedTrace }
   }
-  Write-Host "起動しました（pid=$($proc.Id)・trace=$traceFile）。ホットキーで検索窓を出せます。" -ForegroundColor Green
+  Write-Host "起動しました（pid=$($proc.Id)・trace=$traceFile）。ホットキーで検索ウィンドウを出せます。" -ForegroundColor Green
   Start-Sleep -Milliseconds 1500
 }
 
@@ -288,7 +288,7 @@ function Show-Trace([string[]]$patterns, [array]$sectionList) {
       $tail = if ($hits.Count -gt 0) { $hits[-1] } else { "(観測なし)" }
       Write-Host ("  {0,-22} {1} 件  最後: {2}" -f $p, $hits.Count, $tail) -ForegroundColor DarkGray
     }
-    Write-Host "  ※ 上の presence は診断であって合否ではない（#671 PR A′: hide の trace は出たのに窓は残った）" -ForegroundColor DarkGray
+    Write-Host "  ※ 上の presence は診断であって合否ではない（#671 PR A′: hide の trace は出たのにウィンドウは残った）" -ForegroundColor DarkGray
   }
 
   # 不変条件は presence と違い**合否を名乗れる**（#757）。ここまでの全区間で判定する。
@@ -442,7 +442,7 @@ if ($null -ne $traceVerdict) {
 }
 
 $lines += ""
-$lines += "**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: ``egui_results:hide`` は出たのに窓は残った）。"
+$lines += "**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: ``egui_results:hide`` は出たのにウィンドウは残った）。"
 $lines += "合否を名乗れるのは H1 / H4 / H5 の不変条件（``scripts/lib/SnotraTraceInvariants.psm1``）と目視だけである。"
 
 Set-Content -Path $OutFile -Value ($lines -join "`n") -Encoding UTF8

@@ -1,9 +1,9 @@
 param(
   [int]$Iterations = 5,
   [int]$WaitMs = 1800,
-  # 最初の trace 1 行が出るまでの予算（#690 follow-up）。これを過ぎたら諦めて観測窓へ進み、
+  # 最初の trace 1 行が出るまでの予算（#690 follow-up）。これを過ぎたら諦めて $WaitMs の観測に移り、
   # 結果として trace 0 件になれば失敗する。**$WaitMs とは役割が別**——こちらは起動を待つ
-  # 時間、$WaitMs は最初の trace 以降にイベントを集める窓。実測分散（0.6s〜8s超）に対する
+  # 時間、$WaitMs は最初の trace 以降にイベントを集める時間。実測分散（0.6s〜8s超）に対する
   # 余裕として 12s を既定にする。
   [int]$FirstTraceTimeoutMs = 12000,
   # 空なら debug 本体を導く（#1179）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
@@ -70,7 +70,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
   $proc = Start-SnotraProcess -ConfigDir $profileFull -Trace -FilePath $ExePath `
     -StandardErrorPath $errPath -StandardOutputPath $outPath
 
-  # **最初の trace が出るまで待ってから、観測窓 $WaitMs を開く**（#690 follow-up）。
+  # **最初の trace が出るまで待ってから、$WaitMs の観測を始める**（#690 follow-up）。
   #
   # 旧実装は固定 $WaitMs（1,800ms）だけ待って打ち切っていた。しかし同一 runner・同一
   # バイナリで最初の trace までが **0.6s / 5.2s / 8s超** と大きくばらつくことを実測して
@@ -78,11 +78,11 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # trace 0 件・それでも不在だけを見る検査は自明に成立するので緑だった）。
   #
   # 固定待機を一律に伸ばすと 5 起動 × 予算が常時かかる。最初の 1 行を待つ形なら、
-  # 速い起動は速いまま・遅い起動だけ待つ。$WaitMs は**最初の trace 以降**の観測窓として
+  # 速い起動は速いまま・遅い起動だけ待つ。$WaitMs は**最初の trace 以降**の観測時間として
   # 残す——ここを縮めると後続の first-run イベントを取りこぼし、検査が痩せる。
   # **待つのは「最初の行」ではなく「最初の `[trace]` 行」である**（#786）。行の存在だけを
-  # 見ると、アプリが最初に stderr へ出す `[index-load] ...`（非 trace の診断行）で抜けてしまい、
-  # 観測窓が**まだ 1 件も trace が出ていない時点**で開く——#690 が塞いだはずの穴が同じ
+  # 見ると、アプリが最初に stderr へ出す `[index-load] ...`（非 trace の診断行）で待ちが抜け、
+  # 観測が**まだ 1 件も trace が出ていない時点**で始まってしまう——#690 が塞いだはずの穴が同じ
   # 関数の中で開いたままだった。**キャッシュが温まっているほど `[index-load]` が早く出るので、
   # 開発機ほど早く失敗する**（CI と手元で挙動が分かれる）。
   #
@@ -119,7 +119,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
   }
 
   # **trace が 0 件ならイベント不在の検査は自明に成立する**——空振りの合格である。
-  # #690 の調査で、冷えた CI runner の初回起動が 20 秒間 trace を 1 行も出さない状態を
+  # #690 の調査で、CI runner のコールドスタートが 20 秒間 trace を 1 行も出さない状態を
   # 実測した。その状態でも本 smoke は緑を返していた（アサーションが不在の検査だけゆえ）。
   # SNOTRA_TRACE=1 の起動は最低でも `hotkey:registered` を出すため、0 件は異常である。
   if ($events.Count -eq 0) {

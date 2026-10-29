@@ -20,7 +20,7 @@
 //! #900 以降は `src-tauri/clippy.toml` の `disallowed-methods` が機構で禁じる）。
 //!
 //! **この crate では `panel_fill` / `window_fill` を書かない**——main ウィンドウには読む egui コンテナ
-//! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、消費者ゼロの死んだ書き込みだった
+//! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、誰も読まない書き込みだった
 //! （spec 決定 2 で撤去）。**揃えるために書き足さないこと**——ただし
 //! **`snotra-settings` には当てはまらない**（あちらは `CentralPanel` を使うので実消費者が在り、
 //! `ctx.set_visuals` こそが正しい API である。`src-tauri/clippy.toml` の禁止が crate スコープに
@@ -248,7 +248,7 @@ pub(crate) struct SearchInputParams {
 /// - テーマ 3 値 → `search_input_ui_applies_theme_values_to_child_ui_in_the_first_pass`
 /// - キャレット → `kittest_restored_frame_appends_same_frame_input_at_end`
 /// - focus → `kittest_first_frame_requests_focus_before_text_edit`（判定フレームの開始時点で
-///   焦点を持たない状態を作る。作らないと `!has_focus` ガードで要求が走らず縛れない・実測）
+///   フォーカスを持たない状態を作る。作らないと `!has_focus` ガードで要求が走らず縛れない・実測）
 /// - 対照（縛れているかの検算）→ `kittest_without_focus_request_the_same_input_is_dropped`
 ///
 /// **適用先は `ctx` ではなくこの `ui` である**（#751・ここが機序の正本）。egui 0.35.0 の
@@ -326,7 +326,7 @@ pub(crate) fn search_input_ui(
             }
             // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
             // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
-            // 構築の**後**に要求すると、そのフレームに載っていた文字は焦点の無い widget の
+            // 構築の**後**に要求すると、そのフレームに載っていた文字はフォーカスの無い widget の
             // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
             // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
             // `Memory` に残るので初回だけ）。ウィンドウは可視・前面・focus 済みで「打てるはず」に
@@ -877,7 +877,7 @@ impl EguiView for SearchWindowView {
         // **かつてここに「ウィンドウに focus があるのに入力欄が持たないなら移す」があった**（#872/#936
         // で TextEdit の構築前へ移設）。ここに置くと、そのフレームに載っていた文字は既に
         // 捨てられた後であり、効くのは次のフレームからだった。**移設は挙動を 1 フレーム
-        // 早めるだけで、回復の速さは変わらない**——このフレームで焦点を失った場合（Escape 等）、
+        // 早めるだけで、回復の速さは変わらない**——このフレームでフォーカスを失った場合（Escape 等）、
         // 旧: このフレームの末尾で要求 → 次フレームの widget が持つ / 新: 次フレームの構築前に
         // 要求 → 同じ widget が持つ、で一致する。**2 か所で要求しない**（#700 と同じ理由）。
         // **show ごとに最初の数フレームだけ、入力欄が打鍵を受け取れる状態だったかを残す**
@@ -1650,7 +1650,7 @@ mod tests {
         });
         assert_eq!(
             after_text, "",
-            "構築後に要求すると、そのフレームの文字は焦点の無い widget を素通りして捨てられる"
+            "構築後に要求すると、そのフレームの文字はフォーカスの無い widget を素通りして捨てられる"
         );
     }
 
@@ -1689,7 +1689,7 @@ mod tests {
     ///
     /// **縛るのは `move_text_cursor_to_end` の位置だけである**——それが `TextEdit` の後ろへ
     /// 動けば落ちる。**focus 要求の位置はこの検査では縛れない**（判定フレームの開始時点で
-    /// 既に焦点が立っており、`!has_focus` ガードで要求が走らないため・実測）。そちらは
+    /// 既にフォーカスを持っており、`!has_focus` ガードで要求が走らないため・実測）。そちらは
     /// `kittest_first_frame_requests_focus_before_text_edit` が持つ。
     ///
     /// **`step()` を使う（`run()` ではない）。** `run()` は再描画要求が尽きるまで複数フレーム
@@ -1735,20 +1735,20 @@ mod tests {
     /// **プロセス起動後の最初のフレーム**を再現する（#872/#936 の実害そのもの）。
     ///
     /// **上の検査は focus の並びを縛れない**（実測）。判定フレームより前に `step()` を回すため、
-    /// その時点で widget は既に焦点を持ち、`!has_focus` ガードで focus 要求が**そもそも走らない**
+    /// その時点で widget は既にフォーカスを持ち、`!has_focus` ガードで focus 要求が**そもそも走らない**
     /// ——ゆえに要求を `TextEdit` の後ろへ動かしても通る。縛れているのはキャレットの側だけである。
     ///
-    /// こちらは事前の `step()` を置かない。widget がまだ焦点を持たないフレームに文字が載る形は
-    /// **起動直後の初回 show そのもの**であり、要求が構築の後ろにあれば文字は焦点の無い widget の
+    /// こちらは事前の `step()` を置かない。widget がまだフォーカスを持たないフレームに文字が載る形は
+    /// **起動直後の初回 show そのもの**であり、要求が構築の後ろにあれば文字はフォーカスの無い widget の
     /// 横を素通りして捨てられる。
     #[test]
     fn kittest_first_frame_requests_focus_before_text_edit() {
         let id = egui::Id::new("search_input");
         let mut harness = caret_harness(id, true);
 
-        // **判定フレームの開始時点で焦点を持っていない状態を作る。** `Harness` は構築の時点で
+        // **判定フレームの開始時点でフォーカスを持っていない状態を作る。** `Harness` は構築の時点で
         // 既にフレームを 1 枚走らせるため、「`step()` を呼ばない」だけでは足りない（実測: それだけ
-        // では焦点が立っていて、要求を後ろへ動かしても通ってしまった）。
+        // ではフォーカスを持っていて、要求を後ろへ動かしても通ってしまった）。
         harness.ctx.memory_mut(|m| m.surrender_focus(id));
 
         harness
@@ -1784,7 +1784,7 @@ mod tests {
         assert_eq!(
             harness.state().buf.as_str(),
             "alpha",
-            "焦点が無ければ文字は入らない"
+            "フォーカスが無ければ文字は入らない"
         );
     }
 

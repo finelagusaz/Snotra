@@ -447,9 +447,9 @@ fn fuzzy_name_match_survives_when_display_name_contains_path_separator() {
     assert_eq!(results[0].name, "c:\\tool");
 }
 
-/// **PATH 併合が積むような形のエントリで、旗が静かに立たない。**
+/// **PATH 併合が積むような形のエントリで、フラグが静かに立たない。**
 ///
-/// 上のテストは旗が**落ちる**向き（結果が壊れる）を守る。こちらは**立つ**向きを守る——旗が
+/// 上のテストはフラグが**落ちる**向き（結果が壊れる）を守る。こちらは**立つ**向きを守る——フラグが
 /// 立つと `score_one_entry` は全件で name の Fuzzy スコアリングを通し、**削減だけが全損する**。
 /// 結果は正しいままなので、既存の挙動テストは 1 本も落ちない（#1057 のレビュー M-3）。
 ///
@@ -478,7 +478,7 @@ fn path_env_merge_does_not_raise_any_name_has_path_sep() {
 
     assert!(
         !engine.any_name_has_path_sep,
-        "PATH 併合で旗が立った。name の Fuzzy スコアリングが全件で走り #1057 の削減が\
+        "PATH 併合でフラグが立った。name の Fuzzy スコアリングが全件で走り #1057 の削減が\
          全損する（**結果は正しいままなので他のテストは 1 本も落ちない**）"
     );
 }
@@ -559,7 +559,7 @@ fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
 
 /// **実 index 全件で、name スコアリングを飛ばしても結果が集合・順序とも変わらない。**
 ///
-/// 比較相手は「旗を強制的に立てて最適化を殺した同じエンジン」である（#1057）。合成 fixture では
+/// 比較相手は「フラグを強制的に立てて最適化を無効にした同じエンジン」である（#1057）。合成 fixture では
 /// なく実運用点の 31 万件で突き合わせるのが要点で、**件数の一致では足りない**——パスマッチは
 /// 同点が出やすく、tie-break の経路が変われば順序だけが動く。ゆえに `(name, path)` の列を
 /// 順序ごと比べる。
@@ -573,7 +573,7 @@ fn skipping_name_scoring_changes_nothing_over_real_index() {
     let n = entries.len();
     let mut optimized = SearchEngine::new_with_migemo(entries.clone(), false);
     let mut baseline = SearchEngine::new_with_migemo(entries, false);
-    // 旗を立てる = 「区切りを含む表示名が在る」＝ 飛ばさない＝ 改修前と同じ経路。
+    // フラグを立てる = 「区切りを含む表示名が在る」＝ 飛ばさない＝ 改修前と同じ経路。
     baseline.any_name_has_path_sep = true;
     assert!(
         !optimized.any_name_has_path_sep,

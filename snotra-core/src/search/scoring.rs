@@ -336,13 +336,13 @@ impl SearchEngine {
     pub(super) fn entry_view(&self, i: usize) -> EntryView<'_> {
         let entry = self.entries.get(i);
         // 鎖を上から解く（`build.rs` の `assemble`）。`lower_names[i]` の `None` は
-        // 「表示名と同一」、`lower_file_names[i]` の共有旗は「解決後の `lower_name` と
+        // 「表示名と同一」、`lower_file_names[i]` の共有フラグは「解決後の `lower_name` と
         // 同一」を意味する。
         //
         // **`None` の枝だけがアリーナを引く。** 表示名は [`PathStore`] の連結バイト列に在り、
         // `entry` と同じキャッシュラインには載らない（オフセット表と blob の 2 読み）。
         // 実データでこの枝は 86.6% を通るが、通った先で読むのは**どのみち照合に要る文字列**
-        // であって余分な読みではない。旗の枝（下）は今も分岐だけで済む。
+        // であって余分な読みではない。フラグの枝（下）は今も分岐だけで済む。
         let lower_name = self
             .lower_names
             .get(i)
@@ -350,7 +350,7 @@ impl SearchEngine {
         EntryView {
             entry,
             lower_name,
-            // 旗が立つエントリは `lower_file_names[i]` が `None` に潰してあり、内容は
+            // フラグが立つエントリは `lower_file_names[i]` が `None` に潰してあり、内容は
             // `lower_name` と**バイト一致する**（構築時に測って落とした・`build.rs` の
             // `assemble`）。**追加のメモリ読みは無い**——`entry` も `lower_name` も既に
             // 手元にあり、分岐が読むのは同じキャッシュラインの `bool` 1 つである。

@@ -1074,7 +1074,7 @@ mod tests {
         assert!(matching_results(&cmds, "xyz", no_env).is_empty());
     }
 
-    /// 2 つの旗はどちらも UI 側の分岐を通す条件である（`src-tauri` の
+    /// 2 つのフラグはどちらも UI 側の分岐を通す条件である（`src-tauri` の
     /// `launcher_controller` を読んで確かめた）。
     /// `is_folder` が true だと→キーが `path`（URL や `exe args`）をディレクトリとして
     /// 展開しにいく。

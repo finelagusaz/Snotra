@@ -206,7 +206,7 @@ mod tests {
     };
     use std::borrow::Cow;
 
-    /// **`lower_file` が `None` のとき、共有の旗を立ててはならない。**
+    /// **`lower_file` が `None` のとき、共有フラグを立ててはならない。**
     ///
     /// `None` は「file name 成分が無い」であって「`lower_name` と同一」ではない。ここを
     /// 取り違えると `entry_view` が `Some(lower_name)` を返し、file name を持たないエントリが

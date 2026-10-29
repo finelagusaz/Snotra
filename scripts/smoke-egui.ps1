@@ -10,7 +10,7 @@ param(
   # pwsh -File / npm 経由で配列引数が壊れないよう文字列で受けて内部で分割する。
   [string]$HotkeyVks = "18,81"
   ,
-  # results 窓の検証に使う検索クエリ（1 文字想定）。既定 "z" は seed が置くダミー
+  # results ウィンドウの検証に使う検索クエリ（1 文字想定）。既定 "z" は seed が置くダミー
   # zsnotrasmoke.exe に一致する（#804: 検証用プロファイルを**常に** seed するので、
   # 既定が空振りすることはない）。
   # **空文字を明示的に渡すと下の guard でアプリを起こさずに落ちる**——これが
@@ -18,7 +18,7 @@ param(
   [string]$ResultsQuery = "z"
   ,
   # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#690 follow-up）。
-  # **観測窓を広げる前に遅延を測るため**の予算であって、合否には影響しない（失敗は失敗のまま）。
+  # **観測時間を延ばす前に遅延を測るため**の予算であって、合否には影響しない（失敗は失敗のまま）。
   # 0 を渡すと事後観測を行わない。
   [int]$PostMortemWaitMs = 30000
   ,
@@ -28,7 +28,7 @@ param(
   # **この二極の原因は未解明**であり、この予算は原因究明までの緩和にすぎない。
   #
   # **壁時計から起動レイテンシを推定してはならない**（一度誤った）: seed の print から
-  # hotkey 観測までの壁時計には、下の `Add-Type`（実行時 C# コンパイル・冷えた runner で
+  # hotkey 観測までの壁時計には、下の `Add-Type`（実行時 C# コンパイル・コールドスタート直後の runner で
   # 7〜25s 変動）を含む**起動前**の時間が乗る。起動起点の計測（$launchedAt）だけが
   # アプリの遅延を表す。
   # 以降の観測（show/hide/results）はアプリが温まった後ゆえ `ObserveTimeoutMs` のまま。
@@ -37,7 +37,7 @@ param(
 )
 
 # egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3。
-# results 窓の検証は #671/#673 サイクル PR A で追加）。
+# results ウィンドウの検証は #671/#673 サイクル PR A で追加）。
 # 起動 → keybd_event で hotkey 注入（既定は起動時の `hotkey:registered` trace から導出した VK 列。
 # 明示 -HotkeyVks 指定時のみそちらを使う） → trace `egui_show:done` 観測 →
 # （索引内容を制御できるとき）1 文字クエリを注入して `egui_results:show` 観測 → Escape 注入 →
@@ -99,7 +99,7 @@ results window coverage would be SKIPPED: -ResultsQuery が空である。
 "@
 }
 
-# results 窓の検証用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
+# results ウィンドウの検証用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
 # 拡張子だけで判定する: snotra-core/src/indexer.rs の matches_extension）。
 # 名前は既存の索引と衝突しにくい接頭辞にし、-ResultsQuery 既定の "z" で引けるようにする。
 $scanDir = Join-Path $env:TEMP "snotra_smoke_scan"
@@ -201,9 +201,9 @@ function Show-FailureEvidence {
   $all = @(Get-Content -Path $Path -ErrorAction SilentlyContinue)
   Write-Host ("trace 行数: {0}" -f $all.Count)
 
-  # **窓を広げる前に、まず遅延を測る。**「なぜか通った」で終わらせないため。
+  # **観測時間を延ばす前に、まず遅延を測る。**「なぜか通った」で終わらせないため。
   # 0 行かつプロセス生存のときだけ、追加で待って最初の 1 行が出るかを見る。
-  # 出れば「遅延」（何 ms かが分かる＝観測窓を決める根拠になる）、出なければ
+  # 出れば「遅延」（何 ms かが分かる＝観測時間を決める根拠になる）、出なければ
   # 「未到達/ハング」で、両者は対処が違う。失敗時だけ走るので通常時間には効かない。
   if ($all.Count -eq 0 -and $alive -and $PostMortemWaitMs -gt 0) {
     Write-Host ("0 行。事後観測に入る（最大 {0:N0} ms・最初の 1 行が出るかを測る）..." -f $PostMortemWaitMs)
@@ -219,9 +219,9 @@ function Show-FailureEvidence {
     }
     if ($all.Count -gt 0) {
       $total = ((Get-Date) - $LaunchedAt).TotalMilliseconds
-      Write-Host ("**遅延**: 最初の trace は起動から約 {0:N0} ms 後に出た（ハングではない）。観測窓の根拠にできる。" -f $total) -ForegroundColor Yellow
+      Write-Host ("**遅延**: 最初の trace は起動から約 {0:N0} ms 後に出た（ハングではない）。観測時間を決める根拠にできる。" -f $total) -ForegroundColor Yellow
     } else {
-      Write-Host ("**未到達**: 追加 {0:N0} ms 待っても 1 行も出ない。窓を広げても解決しない。" -f $PostMortemWaitMs) -ForegroundColor Red
+      Write-Host ("**未到達**: 追加 {0:N0} ms 待っても 1 行も出ない。観測時間を延ばしても解決しない。" -f $PostMortemWaitMs) -ForegroundColor Red
     }
   }
 
@@ -346,7 +346,7 @@ try {
       (($firstRunEvents | ForEach-Object { "  " + $_.Line }) -join "`n"))
   }
 
-  # results 窓の検証（#671/#673 サイクル PR A）。**#804 以降は常に走る**——検証用プロファイルを
+  # results ウィンドウの検証（#671/#673 サイクル PR A）。**#804 以降は常に走る**——検証用プロファイルを
   # 常に seed するので `$ResultsQuery` は起動前の guard で非空が保証されている。下の条件に
   # `IsNullOrEmpty` が残っているのは防御であって、skip の経路が生きているという意味ではない。
   $resultsChecked = $false
@@ -387,9 +387,9 @@ try {
   # その所要を判定する不変条件は無い（SnotraTraceInvariants.psm1 の一覧に載っていない）。
   # 下の Ctrl+H ブロックが「3 文字になった」ことの根拠に読むので、ブロックが走らない経路でも定義しておく。
   $pathTyped = $null
-  # 窓が出ている根拠が要る（$resultsChecked のブロックが egui_results:show を観測済み）ため、
+  # ウィンドウが出ている根拠が要る（$resultsChecked のブロックが egui_results:show を観測済み）ため、
   # 既存の 1 文字クエリ注入・Escape 注入と同じく $failures.Count -eq 0 でガードする——
-  # 窓が無い状態で注入すると、キューへ送った打鍵が前面の別アプリへ飛ぶ。
+  # ウィンドウが無い状態で注入すると、キューへ送った打鍵が前面の別アプリへ飛ぶ。
   if ($failures.Count -eq 0 -and $resultsChecked) {
     # 先行の 1 文字クエリが入力欄に残っているため、消してから打鍵する（既存の再注入前と
     # 同じ Backspace 作法・356〜362 行）。送らないと "c" が残ったまま "c:\" ではなく
@@ -470,7 +470,7 @@ try {
   }
 
   if ($failures.Count -eq 0) {
-    # Escape 注入（表示中の egui 窓がフォーカスを持つ前提）
+    # Escape 注入（表示中の egui ウィンドウがフォーカスを持つ前提）
     Send-SnotraKey -VirtualKey $VK_ESCAPE
     Start-Sleep -Milliseconds 50
     Send-SnotraKey -VirtualKey $VK_ESCAPE -Up
@@ -494,7 +494,7 @@ try {
     # **判定の正本は `lib/SnotraTraceInvariants.psm1` の H1 である**（#757）。以前はここに
     # 生行の正規表現で書かれており、`manual-smoke.ps1` に同じ不変条件を足すと導出が 2 か所に
     # なるので移した。オーケストレーション（静定待ち・ゲート・失敗文言）はここに残る。
-    # smoke の実行は最後まで hidden で終わるため hide 窓は閉じない——**違反は窓が閉じて
+    # smoke の実行は最後まで hidden で終わるため hide 区間は閉じない——**違反は区間が閉じて
     # いなくても FAIL、無違反は SKIP** という H1 の非対称がこの経路を成立させている。
     if ($resultsChecked -and $failures.Count -eq 0) {
       Start-Sleep -Milliseconds 1500
@@ -745,7 +745,7 @@ try {
   foreach ($round in 1..2) {
     # **presence ではなく increment で待つ**（是正 A）。round 2 の待ちが round 1 の行へ
     # 即座に一致して戻ると、round 1 の hide が効かなかった場合でも round 2 は可視のままの
-    # 窓をトグルし、`Wait-SnotraWindow` は `IsWindowVisible` しか見ないので通ってしまい、
+    # ウィンドウをトグルし、`Wait-SnotraWindow` は `IsWindowVisible` しか見ないので通ってしまい、
     # #755/#801 が現れる局面を一度も観測しないまま緑になる。打鍵の前に件数を数え、
     # `件数 + 1` を待つことで自分が引き起こした新しい 1 件だけを待つ。
     $showBaseline = Get-SnotraTraceEventCount -Path $toastErrPath -EventName 'egui_show:done'
@@ -784,7 +784,7 @@ try {
     # 判別したいのは「バー 1 行（43 論理 px）」と「バー + toast（86 論理 px）」で、
     # 差は 43 論理 px ある。1.5 倍を閾値に置けば、ずれに影響されず両者を分けられる。
     if ($size2.H -lt 1.5 * $barPx) {
-      $failures += ("toast ありの show #{0}: 窓が toast 行を含む高さになっていない（DWM 高さ {1}px / バー 1 行 ≒ {2:N0}px・#755）" -f $round, $size2.H, $barPx)
+      $failures += ("toast ありの show #{0}: ウィンドウが toast 行を含む高さになっていない（DWM 高さ {1}px / バー 1 行 ≒ {2:N0}px・#755）" -f $round, $size2.H, $barPx)
       $scenario2Failed = $true
     }
     Write-Host ("toast ありの show #{0}: DWM {1}x{2}・payload height {3}（バー 1 行 ≒ {4:N0}px）" -f `
@@ -829,7 +829,7 @@ try {
     }
 
     # **show の位置決めの退行（#878 の継ぎ目 2）はここでしか見えない。** show はバー矩形を
-    # OS へ書かずに導くようになったので、導出が壊れても窓の実サイズは 2 手目の `set_size` が
+    # OS へ書かずに導くようになったので、導出が壊れてもウィンドウの実サイズは 2 手目の `set_size` が
     # 決める（＝ DWM で測る幅・高さは正しいまま）し、位置のずれは可視中のクランプが次の
     # フレームで戻す。**発火しないことが正常である。**
     $rectMismatch = @(Test-SnotraNoTraceEventInWindow @seqArgs -EventName 'egui_main:bar_rect_mismatch')

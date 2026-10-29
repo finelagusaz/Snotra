@@ -71,7 +71,7 @@ enum EntryRepr<'a> {
     ///
     /// **`sorted_by_path` も持つ。** 1 バイトしか無いが、`IndexCache` に居る以上
     /// 帰属しなければ残余が 0 にならない——そして残余の検算は、列を 1 本落とした誤りと
-    /// 旗を落とした誤りを区別しない（実際に 5 列だけを数えて +1 B で落ちた）。
+    /// フラグを落とした誤りを区別しない（実際に 5 列だけを数えて +1 B で落ちた）。
     Tree {
         /// **アリーナだが、線上のバイト列は `seq of str` のままである**（[`NameArena`]）。
         /// ゆえに `serialized_len` の勘定も帰属の割り方も v7 の頃と変わらない。
@@ -98,7 +98,7 @@ impl EntryRepr<'_> {
         // ラベルで探し直す必要は無い）。
         let label = match self {
             Self::Flat(_) => "entries",
-            Self::Tree { .. } => "木（5 列 + 整列の旗）",
+            Self::Tree { .. } => "木（5 列 + 整列済みフラグ）",
         };
         let bytes = match self {
             Self::Flat(e) => serialized_len(e)?,
@@ -162,7 +162,7 @@ impl EntryRepr<'_> {
                 parent,
                 aux,
                 table,
-                // **`..` を書かない。** 値は読まない（旗は真偽によらず 1 バイト）が、列を
+                // **`..` を書かない。** 値は読まない（フラグは真偽によらず 1 バイト）が、列を
                 // 足したときにここを触り忘れたらコンパイルを止めるのが網羅的分解の役目
                 // である——`footprint_rows` と同じ規律（`search/footprint.rs` の `//!`）。
                 // 残余の検算は `#[ignore]` の計器でしか走らないので、
@@ -175,7 +175,7 @@ impl EntryRepr<'_> {
                     items: 5,
                 },
                 CacheByteRow {
-                    label: "sorted_by_path（整列の旗）",
+                    label: "sorted_by_path（整列済みフラグ）",
                     bytes: 1,
                     items: 1,
                 },

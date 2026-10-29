@@ -155,7 +155,7 @@ Describe 'Start-SnotraProcess' {
         }
     }
 
-    It 'コンソール窓を見せずに起動する（debug ビルドが前面を奪うのを防ぐ）' {
+    It 'コンソールウィンドウを見せずに起動する（debug ビルドが前面を奪うのを防ぐ）' {
         # 回帰テスト: #872 現れ方 1（機序は `Start-SnotraProcess` のコメントが正本）。
         # **通った実行では発火しない**ため、この不変条件はここでしか観測されない。
         Mock -ModuleName SnotraSmoke Start-Process { }
@@ -549,7 +549,7 @@ Describe 'ConvertFrom-SnotraWtsInfoEx（#866 ロック検出の解釈）' {
 Describe 'Assert-SnotraSessionUnlocked（#866 倒す向きの非対称）' {
     It 'ロックと判定できたら止める' {
         Mock -ModuleName SnotraSmoke Get-SnotraSessionLockState { [pscustomobject]@{ Locked = $true } }
-        { Assert-SnotraSessionUnlocked -Operation '窓のキャプチャ' } | Should -Throw '*画面がロックされている*'
+        { Assert-SnotraSessionUnlocked -Operation 'ウィンドウのキャプチャ' } | Should -Throw '*画面がロックされている*'
     }
 
     It '非ロックなら素通りする' {
@@ -566,28 +566,28 @@ Describe 'Assert-SnotraSessionUnlocked（#866 倒す向きの非対称）' {
 Describe 'Set-SnotraForegroundWindow（#1280 前面化の判定）' {
     # 前面を奪えない状況は runner でしか起きないため、**ここでしか通らない経路**を実ハンドルで踏む。
     # 実機配管側は成功パスしか通らず、この分岐を検査しない。
-    It '前面になれない窓は、API の戻り値ではなく実際の前面状態で false になる' {
+    It '前面になれないウィンドウは、API の戻り値ではなく実際の前面状態で false になる' {
         $warnings = @()
         Set-SnotraForegroundWindow -Handle ([IntPtr]::new(-1)) -TimeoutMs 200 -PollMs 50 `
             -WarningVariable warnings -WarningAction SilentlyContinue | Should -BeFalse
         ($warnings -join "`n") | Should -BeLike '*前面*'
     }
 
-    It '既に前面である窓は true になる（SetForegroundWindow が FALSE を返しても）' {
+    It '既に前面であるウィンドウは true になる（SetForegroundWindow が FALSE を返しても）' {
         $current = Get-SnotraForegroundWindow
         if ($current -eq [IntPtr]::Zero) {
-            Set-ItResult -Skipped -Because '前面窓が無い環境では一致を確かめられない'
+            Set-ItResult -Skipped -Because '前面ウィンドウが無い環境では一致を確かめられない'
         }
         Set-SnotraForegroundWindow -Handle $current -TimeoutMs 1000 -PollMs 50 | Should -BeTrue
     }
 
-    It 'ハンドルが Zero なら「前面窓なし」と一致させずに落とす' {
+    It 'ハンドルが Zero なら「前面ウィンドウなし」と一致させずに落とす' {
         { Set-SnotraForegroundWindow -Handle ([IntPtr]::Zero) } | Should -Throw '*Zero*'
     }
 }
 
 Describe '実機配管' -Tag Integration -Skip:$sessionLocked {
-    It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法が窓矩形と一致する' {
+    It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法がウィンドウ矩形と一致する' {
         $profile = Join-Path $TestDrive 'integration-profile'
         $stderr = Join-Path $TestDrive 'integration.err'
         $created = New-SnotraVerificationProfile -ProfileDir $profile -GeneralSection @'
@@ -636,14 +636,14 @@ auto_hide_on_focus_lost = false
         # `docs/superpowers/specs/2026-08-05-caret-test-mechanism-design.md`）。
         #
         # **打鍵を注入しないのは、注入と 3 段の待ちが 7 か月の間欠失敗の構造的前提
-        # そのものだったからである**（#872 本文の要素 1 = 前面窓依存・要素 2 = 実時間
+        # そのものだったからである**（#872 本文の要素 1 = 前面ウィンドウ依存・要素 2 = 実時間
         # ポーリング）。OS の打鍵がアプリへ届く配線は `smoke-egui.ps1` が見ている
         # （CI では release ビルド。hotkey VK 列 → `egui_show:done` → 1 文字クエリ →
         # `egui_results:show`）。
         #
         # `egui_input:focus_state` は #938 が**この回帰の検出器として**置いたもので、
         # 偽に戻れば起動直後の打鍵が再び捨てられている（機序の正本は `view.rs` の
-        # 当該コメント）。**前面化は残す**——focus 要求は `pre.focused`（窓の OS focus）に
+        # 当該コメント）。**前面化は残す**——focus 要求は `pre.focused`（ウィンドウの OS focus）に
         # 条件づけられており、前面を奪えなければ `has_focus` は真にならない。
         $profile = Join-Path $TestDrive 'caret-profile'
         $stderr = Join-Path $TestDrive 'caret.err'
@@ -682,7 +682,7 @@ auto_hide_on_focus_lost = false
             # **部分集合が空でないことを別に断言する。** 省くと主語ゼロで自明に緑になる——
             # `focus_state` は show ごと 5 フレームで尽き、show の外では再武装しない。
             $focusRows.Count | Should -BeGreaterThan 0
-            # 窓が focus を持つ最初のフレームで、入力欄も焦点を持っていなければならない。
+            # ウィンドウが focus を持つ最初のフレームで、入力欄もフォーカスを持っていなければならない。
             $focusRows[0].data.has_focus | Should -BeTrue
         } catch {
             Write-Host '--- caret integration stderr trace ---'

@@ -11,14 +11,14 @@
   **サンプリングは `measure-memory.ps1` を `&` で呼んで再利用する（重複実装しない）。**
   `&` は同一プロセスで .ps1 を実行するのでコンソールが増えない。ここが本質で、
   `pwsh -File measure-memory.ps1` と書くと**新しいコンソールがフォーカスを奪い**、
-  以後の SendKeys が Snotra ではなく別窓へ流れて標本が無言で無効になる（実際に踏んだ）。
+  以後の SendKeys が Snotra ではなく別のウィンドウへ流れて標本が無言で無効になる（実際に踏んだ）。
 
   前提:
   - release ビルド済み（既定は cargo の target から release 本体を導く。`CARGO_TARGET_DIR` に追随する）
   - `[hotkey]` が既定の `Ctrl+K` 系であること（段階 B の注入キーは下でハードコード）
   - `[general] auto_hide_on_focus_lost = false` は**推奨であって必須ではない**。上記の
     同一プロセス実行でフォーカスを保つため、`true` のままでも段階列は取れる（実測で
-    B/C/D とも成立）。ただし外的要因でフォーカスが逸れると窓が hide して PrivWS が
+    B/C/D とも成立）。ただし外的要因でフォーカスが逸れるとウィンドウが hide して PrivWS が
     trim 後の値へ落ち、段階列が無言で壊れる。長時間の計測や無人実行では false にする
   - **実行中の snotra を kill する**（`smoke-egui.ps1` と同じくローカル実行時は注意）
 
@@ -85,7 +85,7 @@ Add-Type -Namespace SnotraMeasure -Name Win32 -MemberDefinition @'
 '@
 
 # SendKeys は「前景ウィンドウ」へ届く。Snotra が前景でないまま打鍵すると、キーは
-# 別窓へ流れ、段階 C が「検索していないのに成長ゼロの標本」として**無言で**残る
+# 別のウィンドウへ流れ、段階 C が「検索していないのに成長ゼロの標本」として**無言で**残る
 # （2 回踏んだ）。打つ前に前景の PID を確かめ、違えば止める——
 # 「測れなかった」と「増えなかった」を区別できない測定器は使えない。
 function Assert-SnotraForeground {
@@ -96,7 +96,7 @@ function Assert-SnotraForeground {
     $ours = @(Get-Process -Name snotra -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
     if ($ours -notcontains $fgPid) {
         $who = (Get-Process -Id $fgPid -ErrorAction SilentlyContinue).ProcessName
-        throw "[$Stage] 前景が Snotra ではない（PID $fgPid = $who）。この状態の打鍵は別窓へ流れ、標本が無言で無効になる。"
+        throw "[$Stage] 前景が Snotra ではない（PID $fgPid = $who）。この状態の打鍵は別のウィンドウへ流れ、標本が無言で無効になる。"
     }
 }
 

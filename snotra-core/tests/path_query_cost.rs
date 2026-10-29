@@ -10,7 +10,7 @@
 //! （`IndexMaterial::extend_with_path_entries`）を通し、実 config の `normal_mode` をそのまま使う。
 //! `measure_path_query_frame_cost` の側は据え置く——過去の全表との比較可能性がそこに掛かっている。
 //! 2 つの計器は同一構成で一致することを実測してある（`PERFORMANCE.md`「実運用点のパスクエリのフレームコスト」）。
-//! **旗（`Engine::sorted_by_path`）を出力に添えるのが要点である**——`cmp_paths` の経路がそれで変わり、
+//! **フラグ（`Engine::sorted_by_path`）を出力に添えるのが要点である**——`cmp_paths` の経路がそれで変わり、
 //! `c:\` の p50 が数千 µs 動く。
 //!
 //! **実 `index.bin` に対して測るのが要点である。** パス長がコストを支配し、
@@ -247,16 +247,16 @@ fn measure_path_query_frame_cost() {
 /// - **PATH エントリのマージを通らない。** `load_or_scan_with_stats` を呼ぶだけで
 ///   `IndexMaterial::extend_with_path_entries` を通さないため、索引は
 ///   `sorted_by_path = true`（速い経路）のまま測られる。実起動は `include_path_env` が真なら
-///   マージするので、`IndexTree::extend_with_roots` が旗を下ろし、tie-break が
+///   マージするので、`IndexTree::extend_with_roots` がフラグを下ろし、tie-break が
 ///   `PathStore::cmp_paths` の**両辺フルパス組み立て**へ落ちる
 /// - **`normal_mode` が実 config の値とは限らない。** #1057 / #1059 の表は
 ///   `SNOTRA_CONFIG_DIR` を temp へ向けて `fuzzy` に差し替えて測っている。`substring` では
 ///   `score_one_entry` の `skip_name` が発火しない（あれは Fuzzy を要求する）
 ///
-/// **旗の実効値は出力に添える。** 添えなければ「どちらの経路を測ったか」が分からず、
+/// **フラグの実効値は出力に添える。** 添えなければ「どちらの経路を測ったか」が分からず、
 /// 数字の帰属ができない（`Engine::sorted_by_path` の doc）。**`include_path_env` が真か**を
 /// 代理指標にしてはならない——`extend_with_roots` は空 vec で早期 return するので、
-/// PATH が空・全件重複の構成では真のまま旗が立つ（検知器は `search/tests/build.rs` の
+/// PATH が空・全件重複の構成ではフラグが立ったまま残る（検知器は `search/tests/build.rs` の
 /// `path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries`）。
 ///
 /// # この計器が単独で捕まえる経路

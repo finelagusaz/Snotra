@@ -1,5 +1,5 @@
 adversarial review of research.md (issue #1284). No repo edits; scratch crate at
-C:/Users/Eoh/AppData/Local/Temp/claude/C--workspace-Snotra/b6b72235-8b12-4d28-ab35-c71616ac779d/scratchpad/adv (path-dep on snotra-core).
+the session scratchpad (outside the repo; path-dep on snotra-core).
 
 === BROKEN (research.md is wrong or misleading) ===
 

@@ -25,8 +25,9 @@
 //!   `migemo_enabled` をそのまま使う）
 //! - フォルダ展開の中の絞り込み（`folder.rs`）。検索の照合とは別の経路である
 //!
-//! **実 `index.bin` を書き換えない**——`load_or_scan_with_stats` が cache-miss したら全走査が走り
-//! `index.bin` を上書きするので、その時点で assert で止める。
+//! **実 `index.bin` を書き換えうる**——`load_or_scan_with_stats` が cache-miss すると、全走査が
+//! 走って `index.bin` を上書きする。この計器はそれを assert で検知して止めるが、**止まった時点で
+//! 上書きは済んでいる**（防ぐのではなく、走査後の索引を測った表を出さないだけである）。
 
 use std::hash::{Hash, Hasher};
 use std::time::Instant;

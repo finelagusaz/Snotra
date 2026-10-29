@@ -2,6 +2,7 @@
 
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
+use crate::search::SearchOptions;
 
 pub(super) fn make_entries(names: &[&str]) -> Vec<AppEntry> {
     names
@@ -16,6 +17,15 @@ pub(super) fn make_entries(names: &[&str]) -> Vec<AppEntry> {
 
 pub(super) fn empty_history() -> HistoryStore {
     HistoryStore::empty()
+}
+
+/// migemo を有効にした検索オプション（2 文字から kana 照合が走る）。
+pub(super) fn migemo_config() -> SearchOptions {
+    SearchOptions {
+        migemo_enabled: true,
+        migemo_min_chars: 2,
+        ..SearchOptions::default()
+    }
 }
 
 /// worker が `threads` 本の rayon プール（rayon の分割を通すテスト用）。

@@ -1,16 +1,8 @@
 //! migemo（ローマ字→かな）検索・単調性・条件付き kana 構築のテスト。
 
-use super::common::{empty_history, make_entries};
+use super::common::{empty_history, make_entries, migemo_config};
 use crate::indexer::AppEntry;
 use crate::search::*;
-
-fn migemo_config() -> SearchOptions {
-    SearchOptions {
-        migemo_enabled: true,
-        migemo_min_chars: 2,
-        ..SearchOptions::default()
-    }
-}
 
 #[test]
 fn kana_search_disabled_by_default() {

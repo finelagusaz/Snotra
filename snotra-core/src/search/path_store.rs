@@ -82,6 +82,11 @@ pub(super) struct CompactEntry {
     /// `Box<str>` を持たない（`None` に潰してある）。読み替えは `SearchEngine::entry_view`
     /// の 1 点だけで行う。
     ///
+    /// **読み手はもう 1 つある**——`SearchEngine::score_one_entry` が、`.` を含むクエリで
+    /// 同じ文字列を 2 度照合しないためにこれを見る（#1281）。この読み手は結果を変えない——
+    /// 立っていれば `entry_view` が既に file name を `lower_name` へ読み替えており、照合を
+    /// 飛ばしても同じ値を捨てるだけである（同一なのに偽なら、照合が 1 回多いだけ）。
+    ///
     /// **`is_folder` から推論してはならない。** 実データでは folder の 100% がこれに当たるが、
     /// それは indexer の名前導出規則の帰結であって `SearchEngine::new` が受け取る
     /// `AppEntry` の性質ではない。フラグは構築時に**測った**結果であり（`build.rs` の `assemble`）、

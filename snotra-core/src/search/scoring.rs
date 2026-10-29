@@ -10,7 +10,8 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str, Utf32String};
+use memchr::memmem::Finder;
+use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
 
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::history::HistoryStore;
@@ -203,36 +204,41 @@ impl Ord for ScoredEntry<'_> {
 /// 先頭マッチが高スコアになる意図は保たれており、SPEC.md §4.2 に準拠。
 /// kana_lower_name が常にひらがな/カタカナであることは保証されない（漢字はそのまま通過）が、
 /// kana_query は常に純ひらがな（ASCII アルファベット残留ガード後）のため実運用上問題なし。
-fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
-    kana_lower_name
-        .find(kana_query)
+///
+/// `kana_query` は [`QueryPlan::kana_finder`]（検索 1 回に 1 度だけ作る照合器）で受け取る。
+/// 位置が `str::find` と一致する根拠はそのフィールドの doc。
+fn kana_substring_score(kana_lower_name: &str, kana_query: &Finder<'_>) -> Option<i64> {
+    kana_query
+        .find(kana_lower_name.as_bytes())
         .map(|pos| (score_tier::KANA_BASE - pos as i64).max(1))
 }
 
-/// 小文字化済みの名前 1 つをスコアリングする。`needle_u32` は `query` の UTF-32 形（検索 1 回に
-/// 1 度だけ作る）でなければならない。Fuzzy の照合は [`fuzzy_match_score`] が行う。
+/// 小文字化済みの名前 1 つをスコアリングする。照合の材料（`norm_query` とその UTF-32 形・
+/// 部分文字列の照合器）は `plan` が検索 1 回に 1 度だけ作ったものを使う。Fuzzy の照合は
+/// [`fuzzy_match_score`] が行う。
 ///
 /// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕から呼ぶ [`fuzzy_match_score`] の中に閉じてある**
 /// ——呼び出し側がスレッドローカルを知らずに済むためであって、速さのためではない（Substring の
 /// 全件走査で差が測れなかった・実測は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
-fn match_score_single_cached(
-    mode: SearchMode,
-    lower_name: &str,
-    query: &str,
-    needle_u32: &Utf32String,
-) -> Option<i64> {
+fn match_score_single_cached(mode: SearchMode, lower_name: &str, plan: &QueryPlan) -> Option<i64> {
     match mode {
         SearchMode::Prefix => {
-            if lower_name.starts_with(query) {
+            if lower_name.starts_with(plan.norm_query.as_ref()) {
                 Some(score_tier::PREFIX_BASE - lower_name.len() as i64)
             } else {
                 None
             }
         }
-        SearchMode::Substring => lower_name
-            .find(query)
+        // 位置が `str::find` と一致する根拠は `QueryPlan::substring_finder` の doc。
+        SearchMode::Substring => plan
+            .substring_finder
+            .as_ref()
+            .expect("prepare_query_plan は Substring のとき substring_finder を作る")
+            .find(lower_name.as_bytes())
             .map(|idx| score_tier::SUBSTRING_BASE - idx as i64),
-        SearchMode::Fuzzy => fuzzy_match_score(lower_name, needle_u32.slice(..)).map(|s| s as i64),
+        SearchMode::Fuzzy => {
+            fuzzy_match_score(lower_name, plan.needle_u32.slice(..)).map(|s| s as i64)
+        }
     }
 }
 
@@ -372,6 +378,8 @@ impl SearchEngine {
     /// - bitmask pre-filter を関数**先頭**に置く（`entry_view` / [`utf32_haystack`] より前）。
     ///   pre-filter で落ちる候補に UTF-32 変換コストを掛けないため。
     /// - `has_dot` の file_name 短絡（`name_score <= 9000`）を保存する（MATCHER 呼び出し回数）。
+    ///   `CompactEntry::file_name_is_lower_name` が立つエントリでは file_name を照合しない
+    ///   （同じ文字列の 2 度目の照合は結果に寄与しない・#1281）。
     ///
     /// ホットループから呼ばれるため `#[inline]`、全引数を参照/Copy で受け取り fold 内 codegen を保つ。
     #[inline]
@@ -435,7 +443,7 @@ impl SearchEngine {
         let name_score = if skip_name {
             None
         } else {
-            match_score_single_cached(mode, v.lower_name, norm_query_str, &plan.needle_u32)
+            match_score_single_cached(mode, v.lower_name, plan)
         };
 
         let primary_score = if plan.has_dot {
@@ -446,11 +454,17 @@ impl SearchEngine {
             // `skip_name` のとき file_name も飛ばす——同じ論証が効く（file name 成分は
             // 区切りを含まず、`any_name_has_path_sep` は両方を測っている）。**ここを閉じないと
             // `name_score = None` が `needs_fn_score = true` を招き、削減が半分になる。**
-            let needs_fn_score = !skip_name && name_score.is_none_or(|s| s <= 9000);
+            //
+            // **file name が name と同一のエントリでは照合しない**（#1281）——`entry_view` は
+            // file name として `lower_name` そのものを返し、照合は純関数なので、2 度目は
+            // `name_score` と同じ値になって `max` に何も足さない。実データではフォルダのほぼ
+            // 全件に立ち、Fuzzy では nucleo の照合 1 回ぶんに当たる。
+            let needs_fn_score = !skip_name
+                && !v.entry.file_name_is_lower_name
+                && name_score.is_none_or(|s| s <= 9000);
             let fn_score = if needs_fn_score {
-                v.lower_file_name.and_then(|fn_name| {
-                    match_score_single_cached(mode, fn_name, norm_query_str, &plan.needle_u32)
-                })
+                v.lower_file_name
+                    .and_then(|fn_name| match_score_single_cached(mode, fn_name, plan))
             } else {
                 None
             };
@@ -467,8 +481,8 @@ impl SearchEngine {
         // kana_available=false（migemo 無効で構築＝空のアリーナ）のときは
         // self.kana_lower_names.get(i) に到達させない（panic ガード）。
         let kana_score = if primary_score.is_none() && kana_available {
-            plan.kana_query
-                .as_deref()
+            plan.kana_finder
+                .as_ref()
                 .and_then(|kq| kana_substring_score(self.kana_lower_names.get(i), kq))
         } else {
             None
@@ -490,8 +504,9 @@ impl SearchEngine {
             // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
             // スコア PATH_BASE(3000) は Kana(4500) より低く、名前マッチを常に優先する。
             let score = score.or_else(|| {
-                plan.path_query.as_deref().and_then(|pq| {
-                    let pos = key.find(pq)?;
+                // 照合は検索 1 回に 1 度だけ作った照合器で行う（`QueryPlan::path_finder`）。
+                plan.path_finder.as_ref().and_then(|pq| {
+                    let pos = pq.find(key.as_bytes())?;
                     Some(
                         (score_tier::PATH_BASE - (pos as i64).min(score_tier::PATH_POS_CAP)).max(1),
                     )

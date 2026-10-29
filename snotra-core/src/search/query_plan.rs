@@ -12,6 +12,7 @@
 
 use std::borrow::Cow;
 
+use memchr::memmem::Finder;
 use nucleo_matcher::Utf32String;
 
 use crate::query::{
@@ -52,6 +53,19 @@ pub(super) struct QueryPlan<'a> {
     pub(super) path_query: Option<String>,
     /// パスクエリの履歴照合キー（`normalize_history_query_key` 由来）。`path_query` とは別。
     pub(super) path_history_key: Option<String>,
+    /// `norm_query` の部分文字列照合器。**Substring モードのときだけ `Some`**（他のモードは
+    /// 名前を `find` で照合しないので、使われない確保を打鍵ごとに乗せない）。
+    ///
+    /// **3 つの照合器はどれも検索 1 回に 1 度だけ作る**（#1281）。`str::find` は呼ぶたびに
+    /// needle の前処理（Two-Way）をやり直すので、全件走査では候補の数だけそれを払っていた。
+    /// 位置は `str::find` と一致する——needle は妥当な UTF-8 なので、最左のバイト一致は
+    /// 必ず文字境界に来る。rayon の葉や fold-init で作り直してはならない（葉の数だけ確保が乗る）。
+    pub(super) substring_finder: Option<Finder<'static>>,
+    /// `kana_query` の照合器（`kana_query` が `Some` のときだけ `Some`）。
+    pub(super) kana_finder: Option<Finder<'static>>,
+    /// `path_query` の照合器（`path_query` が `Some` のときだけ `Some`）。**`path_query` の
+    /// 有無の判定は `path_query` の側で行う**——同じ意味の述語を 2 つの名前に分けない。
+    pub(super) path_finder: Option<Finder<'static>>,
 }
 
 /// 検索呼び出しの候補準備フェーズ。クエリを解析して [`QueryPlan`] を組み立てる。
@@ -128,7 +142,15 @@ pub(super) fn prepare_query_plan<'a>(
         None
     };
 
+    let substring_finder =
+        (mode == SearchMode::Substring).then(|| Finder::new(norm_query.as_bytes()).into_owned());
+    let kana_finder = kana_query.as_deref().map(|k| Finder::new(k).into_owned());
+    let path_finder = path_query.as_deref().map(|p| Finder::new(p).into_owned());
+
     Some(QueryPlan {
+        substring_finder,
+        kana_finder,
+        path_finder,
         norm_query,
         has_dot,
         has_path_sep,

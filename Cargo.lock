@@ -4816,6 +4816,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dirs",
+ "memchr",
  "nucleo-matcher",
  "percent-encoding",
  "postcard",

@@ -1,6 +1,6 @@
 //! 基本検索・拡張子照合・アクセント正規化・空クエリ履歴候補のテスト。
 
-use super::common::{empty_history, make_entries};
+use super::common::{empty_history, make_entries, migemo_config};
 use crate::indexer::AppEntry;
 use crate::search::*;
 
@@ -434,11 +434,7 @@ fn substring_kana_and_path_positions_agree_with_std_find_on_non_ascii() {
     );
 
     // kana: 名前の途中のかなに一致する（名前・file name 側は一致しない）。
-    let migemo = SearchOptions {
-        migemo_enabled: true,
-        migemo_min_chars: 2,
-        ..SearchOptions::default()
-    };
+    let migemo = migemo_config();
     let engine = SearchEngine::new_with_migemo(make_entries(&["マイドキュメント"]), true);
     let plan = prepare_query_plan("dokyu", SearchMode::Substring, &migemo).unwrap();
     let kana_query = plan
@@ -478,11 +474,7 @@ fn substring_kana_and_path_positions_agree_with_std_find_on_non_ascii() {
 /// 以外で作ると使われない確保が打鍵ごとに乗る。kana / パスの照合器は needle の有無に一致する。
 #[test]
 fn query_plan_builds_finders_exactly_for_the_needles_in_use() {
-    let migemo = SearchOptions {
-        migemo_enabled: true,
-        migemo_min_chars: 2,
-        ..SearchOptions::default()
-    };
+    let migemo = migemo_config();
     for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
         for query in ["dokyu", "tool\\alpha", "app.exe"] {
             let plan = prepare_query_plan(query, mode, &migemo).unwrap();

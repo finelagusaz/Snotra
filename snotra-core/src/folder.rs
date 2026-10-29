@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::history::HistoryStore;
 use crate::indexer::is_hidden_or_system;
-use crate::query::to_lower_folded;
+use crate::query::{normalize_query, to_lower_folded};
 use crate::search::{SearchMode, fuzzy_match_score};
 use crate::ui_types::{IconSource, SearchResult};
 
@@ -44,8 +44,8 @@ pub(crate) fn read_dir_entries(
 ) -> std::io::Result<Vec<DirEntryData>> {
     let read_dir = std::fs::read_dir(dir)?;
     let mut entries = Vec::new();
-    let filter_lower = to_lower_folded(filter);
-    let needle = Utf32String::from(filter_lower.as_str());
+    let filter_norm = normalize_query(filter);
+    let needle = Utf32String::from(filter_norm.as_ref());
 
     for entry in read_dir {
         let Ok(entry) = entry else {
@@ -54,7 +54,7 @@ pub(crate) fn read_dir_entries(
 
         let name = entry.file_name().to_string_lossy().to_string();
 
-        if !filter.is_empty() && !matches_filter(&name, &filter_lower, &needle, mode) {
+        if !filter_norm.is_empty() && !matches_filter(&name, &filter_norm, &needle, mode) {
             continue;
         }
 
@@ -198,14 +198,14 @@ pub fn filter_sorted(
     mode: SearchMode,
     max: usize,
 ) -> Vec<SearchResult> {
-    if filter.is_empty() {
+    let filter_norm = normalize_query(filter);
+    if filter_norm.is_empty() {
         return cached.iter().take(max).cloned().collect();
     }
-    let filter_lower = to_lower_folded(filter);
-    let needle = Utf32String::from(filter_lower.as_str());
+    let needle = Utf32String::from(filter_norm.as_ref());
     cached
         .iter()
-        .filter(|r| matches_filter(&r.name, &filter_lower, &needle, mode))
+        .filter(|r| matches_filter(&r.name, &filter_norm, &needle, mode))
         .take(max)
         .cloned()
         .collect()
@@ -221,14 +221,18 @@ pub fn error_result(dir: &Path) -> Vec<SearchResult> {
     }]
 }
 
-/// `needle` は `filter_lower` の UTF-32 形（`Utf32String::from`・呼び出し 1 回に 1 度）でなければならない。
-/// Fuzzy の照合は検索と同じ [`fuzzy_match_score`] を通す（#1276）。
-fn matches_filter(name: &str, filter_lower: &str, needle: &Utf32String, mode: SearchMode) -> bool {
-    let name_lower = to_lower_folded(name);
+/// `filter_norm` は絞り込みを [`normalize_query`] へ通したもの、`needle` はその UTF-32 形
+/// （`Utf32String::from`・呼び出し 1 回に 1 度）でなければならない。Fuzzy の照合は検索と同じ
+/// [`fuzzy_match_score`] を通す（#1276）。
+///
+/// **名前の側も同じ [`normalize_query`] を通す**（`SPEC.md`「4.2 クエリ正規化」・#1284）。片側だけ別の
+/// 正規化にすると、連続空白や全角空白を含む名前で一致が割れる。
+fn matches_filter(name: &str, filter_norm: &str, needle: &Utf32String, mode: SearchMode) -> bool {
+    let name_norm = normalize_query(name);
     match mode {
-        SearchMode::Prefix => name_lower.starts_with(filter_lower),
-        SearchMode::Substring => name_lower.contains(filter_lower),
-        SearchMode::Fuzzy => fuzzy_match_score(&name_lower, needle.slice(..)).is_some(),
+        SearchMode::Prefix => name_norm.starts_with(filter_norm),
+        SearchMode::Substring => name_norm.contains(filter_norm),
+        SearchMode::Fuzzy => fuzzy_match_score(&name_norm, needle.slice(..)).is_some(),
     }
 }
 
@@ -750,11 +754,13 @@ mod tests {
         filter: &str,
         mode: crate::search::SearchMode,
     ) -> Vec<DirEntryData> {
-        let filter_lower = to_lower_folded(filter);
-        let needle = Utf32String::from(filter_lower.as_str());
+        let filter_norm = normalize_query(filter);
+        let needle = Utf32String::from(filter_norm.as_ref());
         entries
             .into_iter()
-            .filter(|e| filter.is_empty() || matches_filter(&e.name, &filter_lower, &needle, mode))
+            .filter(|e| {
+                filter_norm.is_empty() || matches_filter(&e.name, &filter_norm, &needle, mode)
+            })
             .collect()
     }
 
@@ -850,6 +856,74 @@ mod tests {
             8,
         );
         assert_eq!(out.len(), 1);
+    }
+
+    /// 絞り込みと名前の両辺に `SPEC.md`「4.2 クエリ正規化」の空白の正規化を通す（#1284）。
+    ///
+    /// 名前の側には Windows のファイル名に置ける空白（連続空白・U+3000・NBSP）を使う。返る名前は元の綴りの
+    /// まま（期待値を元の綴りで書くことがその検査を兼ねる）。**空白だけの絞り込みは空と同じく全件である。**
+    ///
+    /// 回帰テスト: 絞り込み側と名前側のどちらか片方だけを `to_lower_folded` へ戻しても落ちる。
+    #[test]
+    fn filter_normalizes_whitespace_on_both_sides_in_every_mode() {
+        use crate::search::SearchMode;
+        let names = [
+            "report.txt",
+            "a b.txt",
+            "a  b.txt",
+            "a\u{3000}b.txt",
+            "a\u{a0}b.txt",
+            "zzz.md",
+        ];
+        let cached: Vec<SearchResult> = names.iter().map(|n| sr(n)).collect();
+        let a_b = vec![names[1], names[2], names[3], names[4]];
+        let cases: [(&str, Vec<&str>); 5] = [
+            ("report ", vec![names[0]]),
+            (" report", vec![names[0]]),
+            ("a  b", a_b.clone()),
+            ("a b", a_b),
+            ("   ", names.to_vec()),
+        ];
+        // 全組を集めてから 1 度だけ比べる——組ごとに assert すると、最初に落ちた組より後ろが報告から消える。
+        let mut got = Vec::new();
+        let mut want = Vec::new();
+        for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+            for (filter, expected) in &cases {
+                let out: Vec<String> = filter_sorted(&cached, filter, mode, 8)
+                    .into_iter()
+                    .map(|r| r.name)
+                    .collect();
+                got.push((mode, *filter, out));
+                want.push((
+                    mode,
+                    *filter,
+                    expected.iter().map(|s| s.to_string()).collect(),
+                ));
+            }
+        }
+        assert_eq!(got, want);
+    }
+
+    /// `read_dir_entries` の照合も同じ正規化を通す（#1284）。製品の打鍵は `filter_sorted` だけを通るが、
+    /// 同じ `matches_filter` を共有する経路が片側だけ古い正規化に残らないことを固定する。
+    #[test]
+    fn list_folder_filter_trims_whitespace() {
+        let dir = temp_dir_with_contents("filter_trim");
+        fs::write(dir.join("report.txt"), "").unwrap();
+        fs::write(dir.join("other.md"), "").unwrap();
+
+        let results = list_folder(
+            &dir,
+            "report ",
+            SearchMode::Fuzzy,
+            true,
+            &empty_history(),
+            100,
+        );
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["report.txt"]);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

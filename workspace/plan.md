@@ -60,13 +60,13 @@
 
 ### Phase 1 — テスト（Red）
 
-- [ ] `filter_sorted` の 3 モード表駆動テストと `list_folder` の末尾空白テストを追加し、失敗を確認する
+- [x] `filter_sorted` の 3 モード表駆動テストと `list_folder` の末尾空白テストを追加し、失敗を確認する（Red 実測: 2 本とも正規化の欠落を主張した assert で落ちた）
 
 ### Phase 2 — 実装（Green）
 
-- [ ] `read_dir_entries` / `filter_sorted` / `matches_filter` を `normalize_query` へ切り替え、空判定を正規化後の値で行う
-- [ ] `read_dir_entries_for_test` を製品側と同じ形へ揃える
-- [ ] `matches_filter` の doc と引数名を更新する
+- [x] `read_dir_entries` / `filter_sorted` / `matches_filter` を `normalize_query` へ切り替え、空判定を正規化後の値で行う
+- [x] `read_dir_entries_for_test` を製品側と同じ形へ揃える
+- [x] `matches_filter` の doc と引数名を更新する
 
 ### Phase 3 — 検証と後始末
 

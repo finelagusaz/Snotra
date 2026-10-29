@@ -904,8 +904,8 @@ mod tests {
         assert_eq!(got, want);
     }
 
-    /// `read_dir_entries` の照合も同じ正規化を通す（#1284）。製品の打鍵は `filter_sorted` だけを通るが、
-    /// 同じ `matches_filter` を共有する経路が片側だけ古い正規化に残らないことを固定する。
+    /// `read_dir_entries` も同じ [`matches_filter`] を通るので、絞り込み側の正規化がこの経路でも揃うことを
+    /// 固定する（#1284）。
     #[test]
     fn list_folder_filter_trims_whitespace() {
         let dir = temp_dir_with_contents("filter_trim");

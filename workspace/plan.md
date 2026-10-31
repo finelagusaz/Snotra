@@ -12,7 +12,7 @@ SPEC §4.2 が「クエリおよびエントリ名」に課す 1 つの正規化
 4. **#1310**: 借用で返す条件と所有で組み立てる結果が、全コードポイントで一致する。ASCII の小文字・数字・記号と単一の空白だけの入力は、確保なしで借用を返す
 5. **冪等性**: 全コードポイントで `normalize_for_match(normalize_for_match(c)) == normalize_for_match(c)`。折りたたんだあとにもう一度小文字化して閉じる
 6. 本体検索で、名前 `資料　2024`（U+3000）・`a  b`（連続空白）・` app`（前の空白）が、クエリ `資料 2024`・`a b`・`app` に、Prefix / Substring で一致する
-7. `index.bin` の版を 8 へ上げる（`lower_names` / `lower_file_names` の意味が変わるため）。v7 を読んだときに旧い意味の派生の列を使わない（扱いは「未確定」）
+7. `index.bin` の版を 8 へ上げる（`lower_names` / `lower_file_names` の意味が変わるため）。v7 を読んだときに旧い意味の派生の列を使わない（cache-miss・「未確定」の裁定）
 8. SPEC §4.2 に 2 点を足す。(a) 空白類（タブ・NBSP・全角空白など）は半角空白に揃える（クエリ側の既存の挙動を明文化し、名前側にも及ぶことを示す）。(b) 正規化後に空なら、その面の空の扱いに従う（挙動は変えない。ユーザー裁定）
 9. パスマッチの系統（`path_query`・`path_store.rs`・`indexer/keys.rs` の `normalize_entry_key`）は**範囲外**で変えない
 
@@ -78,8 +78,8 @@ SPEC §4.2 が「クエリおよびエントリ名」に課す 1 つの正規化
 
 ## フェーズ 2 — 永続化
 
-- [ ] `INDEX_CACHE_VERSION` 8 と、チェックリストの全項目（v7 は cache-miss）
-- [ ] v2〜v6 の `Skip` の腕が旧い意味の列を製品の経路へ返すかを確かめ、返すなら直す
+- [x] `INDEX_CACHE_VERSION` 8 と、チェックリストの全項目（v7 は cache-miss） — フィールドは増えないので 1・3・5〜7 は該当なし。(a) breakdown は v7 も同じ構造体で読む・(b) 版の帰属のテストに v7 = cache-miss・(c) `GOLDEN_V7` を本物の凍結バイト列として残し `frozen_v7_is_a_cache_miss_and_is_not_rewritten`（`Write` でバイト列不変）と `breakdown_still_reads_the_frozen_v7`・golden は `GOLDEN_V8` を別に置いた
+- [x] v2〜v6 の `Skip` の腕が旧い意味の列を製品の経路へ返すかを確かめ、返すなら直す — **返さない**。`Skip` を渡す入口は `load_cached_entries` だけで、それは `.material.tree().materialize()` しか使わず派生の列を捨てる（`git grep LegacyUpgrade::Skip`）。直さない
 - [ ] 却下した v7 の扱い（木から導き直す A・木専用の導出 C・版を上げない D/E）を ADR に残す（`/implement` Step 4）
 
 ## フェーズ 3 — 文書

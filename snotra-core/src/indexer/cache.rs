@@ -44,7 +44,7 @@ const INDEX_MAGIC: [u8; 4] = *b"INDX";
 /// が `5` のまま取り残され、「現行は v5。実運用点は v6 のまま」という**それ自体が矛盾した**
 /// 文を出し続けた（現行が v5 なら v6 は存在しえない）。
 #[doc(hidden)]
-pub const INDEX_CACHE_VERSION: u32 = 7;
+pub const INDEX_CACHE_VERSION: u32 = 8;
 
 /// `load_or_scan_with_stats` の各フェーズ所要時間。
 ///
@@ -845,7 +845,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
     let bytes = bf.load_bytes()?;
     let read_took = read_started.elapsed();
 
-    // v7 (現行): 木の列 + ビットマスク + **共有を潰した** lower names。
+    // 現行版: 木の列 + ビットマスク + **共有を潰した** lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
     if let Ok(cache) =
         try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
@@ -884,6 +884,13 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         });
     }
 
+    // **v7 は読まない（cache-miss ＝ 1 回だけの全走査）。** 線上表現は現行版と同じだが、
+    // `lower_names` / `lower_file_names` とマスクは照合用の正規化を 1 つにする前の意味で
+    // 書かれている（名前の空白を正規化していない・#1309）。v7 は `entries` を持たないので、
+    // 旧版枝のように手に持った走査結果から導き直して書き戻すことができない——木から作り
+    // 直すと「indexer.rs の索引更新の契機」が戒める複製が戻る。却下した扱いは
+    // `docs/adr/ADR-index-v7-cache-miss.md`。
+    //
     // v6 フォールバック: `target_path` を全件そのまま持つ形式。**読めるが確保が 312,691 回
     // 余分にかかる**——フルパスの `String` を作り、木へ組み替えた段で即座に捨てる。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {

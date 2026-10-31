@@ -261,12 +261,18 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
     let bytes = bf.load_bytes()?;
     let file_len = bytes.len();
 
-    if let Ok(c) =
-        try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
-    {
+    // **v7 も同じ構造体で読む**（線上表現は現行版と同じ。違うのは派生の列の意味だけで、
+    // 計器が数えるのはバイトである）。v7 は「実運用点に今まさに置かれている版」であり、
+    // ここで黙ると版を上げた直後にだけ測れなくなる。
+    let current = [INDEX_CACHE_VERSION, 7].into_iter().find_map(|v| {
+        try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, v)
+            .ok()
+            .map(|c| (v, c))
+    });
+    if let Some((version, c)) = current {
         drop(bytes);
         return build_breakdown(
-            INDEX_CACHE_VERSION,
+            version,
             file_len,
             c.built_at,
             c.config_hash,

@@ -1,0 +1,83 @@
+敵対的調査 #1309/#1310 (research.md の主張を壊しにいった結果)
+実測の足場: scratchpad の adv crate (nucleo-matcher 0.3 だけに依存。query.rs の to_lower_folded / normalize_query を写して全コードポイントを走査)。
+  C:/Users/Eoh/AppData/Local/Temp/claude/C--workspace-Snotra/182251bb-b52b-46a9-a2ec-a5c6e94dfbd4/scratchpad/adv/src/main.rs
+
+== 命題 1: 名前側の派生文字列の作り手は挙げた箇所で全部 ==
+判定: 壊せなかった（ただし隣に別の小文字化が 1 系統ある。作り手の列挙漏れではない）
+根拠:
+  - git grep -n "to_lower_folded|normalize_query|lower_file_name(|normalize_history_query_key|to_kana(" をテスト・md 除外で全 crate に当てた。非テストの作り手は
+    search/build.rs:117,123,139（compute_wave1）, :498（kana_for_cached。木から作る）, indexer/columns.rs:185-186（derive_entry_lowers）,
+    query.rs:145（lower_file_name）, folder.rs:110（整列キー）, folder.rs:47,201,231,757（絞り込み）だけ。egui-runtime / src-tauri / settings には 0 件。
+  - extend_cached_masks（incremental / PATH 追記）は derive_entry_lowers / derive_entry_collapsed 経由（columns.rs:236-270）で独立実装を持たない。
+  - entry_view（search/scoring.rs:342）は読み替えだけ（lower_names の None → 名前、フラグ → lower_name）で作らない。
+  - migemo は作り手を増やさない。かなは kana_lower_names（build.rs:139 と :498 の 2 箇所とも to_kana(to_lower_folded(name))）、クエリ側 kana_query は norm_query から（query_plan.rs:98-107）。
+  - 注意（隣の系統）: パスマッチは normalize_query を通らない。query_plan.rs:124-133 の path_query は ch.to_lowercase() だけ（折りたたみなし・空白保持）、名前側は
+    search/path_store.rs:495 と indexer/keys.rs:54 の to_lowercase。「照合用の正規化」は実質 3 系統（本体 / フォルダ / パス）で、入口を 1 本にしても
+    パス系は意図的に別（CLAUDE.md「incremental cache とパスクエリの非互換」）。research.md はこれを触れていないので、範囲外と明記すべき。
+偽にする手順: 非テストで名前を小文字化して照合に使う .rs を 1 つ見つける（例: git grep "to_lowercase()" snotra-core/src。現状は config/opener/instant/hotkey のみで名前の照合ではない）。
+
+== 命題 2: v7 は派生列を捨てて木から導き直せる ==
+判定: 部分的に壊せた（「その経路が既にある」は偽。部品はあるが v7 の枝にはまだ無い）
+根拠:
+  - indexer/cache.rs:842-: load_cache_in の v7 枝（:850-885）は lower_names / lower_file_names を CachedLower::Collapsed で必ず渡す。捨てる分岐は無い。
+    「lower: None」を返す枝は v3（同ファイル下方、lower: None）だけで、それは entries を持つ旧版用。v7 は木（IndexTree::from_parts）を持つので None を渡せば
+    new_with_cached_masks の None 腕（wave1_from_tree = tree.materialize → compute_wave1、build.rs:104-109）で導き直せる。つまり実現は「v7 枝で lower: None にする」程度で小さいが、今は無い。
+  - そのままでは毎起動 Wave1 を払う: 枝は upgrade_save: None（cache.rs:882）。v8 へ書き戻すには finish_legacy_read(Write) 相当（entries から導出する upgrade_legacy_cache_in）へ繋ぐ必要がある。
+    v7 のバイト列配置を変えないなら IndexCacheV7 の凍結 struct は不要（同じ IndexCache を version=7 で読むだけ）だが、版をまたぐ「直前の版の凍結バイト列」テストは数え直しが要る。
+  - 版を上げなかった場合の害: lower_names の None（= 名前と同一）は「名前に空白の正規化対象が無い」前提の圧縮。"a  b" は v7 では None（lower==name）で保存済みなので、
+    新入口で作る派生とずれる。extend_cached_masks（追記）は新入口、既存列は旧意味、で同一索引内に 2 つの意味が混ざる。版を上げる必要性は正しい。
+  - マスクは捨てなくてよい: name_char_mask は ASCII なら char_bitmask、非 ASCII なら u64::MAX（query.rs:84-90）。U+3000 / NBSP を含む名前は旧 mask が MAX（安全な上位集合）で、
+    新入口後に ASCII になっても偽陰性は出ない（性能だけの差）。char_bitmask は a-z0-9 のみで空白は見ない。
+偽にする手順: v7 の index.bin を load_cache_in に通し、lower: None を渡す変更を加えて "a  b" の名前が Substring "a b" で当たることを確認する（当たれば導き直しは成立）。当たらなければ命題は偽。
+
+== 命題 3: #1310 を直すと history.bin のクエリキーがずれうる。migrate はクエリキーを読み込み時に正規化し直すか ==
+判定: 壊せなかった（正規化し直す）。ただし別の既存欠陥を 1 つ発見（下の追加所見 A）
+根拠:
+  - history.rs:125-132 from_loaded が migrate_normalize_keys を無条件に呼ぶ（load / load_in 共通。版で分岐しない）。
+  - history.rs:396-402 で outer キー（クエリ）を normalize_history_query_key(&q_key) へ通し、衝突は加算で統合する。
+  - よって 31 字を含む旧キーは新しい normalize_query で正規化し直される（再保存は dirty 次第だが、メモリ上の照合は一致する）。
+偽にする手順: normalize_query を直し、旧実装で作った history.bin（Lt 文字入りクエリ）を load_in してから query_count(同クエリ) が 0 を返せば偽。
+
+== 命題 4: 入口を寄せたとき結果が変わるのは「空白を含む名前」と「#1310 の 31 字」だけ ==
+判定: 壊せた（「だけ」は偽。むしろ名前側の 31 字は変わらない）
+根拠（全コードポイント走査）:
+  - to_lower_folded と normalize_query は非空白の全コードポイントで 0 件の差。空白類は 25 字（0x9-0xd, 0x20, 0x85, 0xa0, 0x1680, 0x2000-0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000）。
+  - #1310 の 31 字は「借用判定」の欠陥で、to_lower_folded は元々正しく小文字化する。名前側を normalize_query へ寄せても名前側の結果は 31 字では変わらない。
+    変わるのはクエリ側の借用経路（クエリ単独）だけ。「名前側が変わるのは空白だけ」が正確。
+  - 名前側で変わるもの（具体）: (a) 連続空白 "a  b" → "a b"、(b) タブ・NBSP・U+3000 → ' '（"a\u3000b" の lower は今は U+3000 のまま。日本語のファイル名では全角空白が実在し得る）、
+    (c) 前後空白の除去（" a" → "a"。Prefix 判定 lower_name.starts_with(norm_query)（scoring.rs:226）の結果が変わる）、(d) 名前が空白だけ → 空文字列の lower_name。
+  - 副作用: lower_name_is_name の共有（measure_derived_sharing）が空白を含む CJK 名で偽になる。今は「変換対象を持たない CJK」が None に潰れている（search.rs:124 の doc）ので、
+    U+3000 入りの名前は実体を持つようになる（削減量の低下のみ。正しさは不変）。
+  - has_path_sep: 空白の正規化はパス区切りを作らず消さない。contains_path_sep(query.trim()) と contains_path_sep(norm_query) は一致のまま（¥ は normalize が触らない）。壊せなかった。
+  - incremental cache の単調性（SPEC 4.2.1 の prefix 拡張）: 名前側の変更は両辺が同じ正規化を通る方向なので Substring/Fuzzy とも単調のまま。壊せなかった（ただし検査は読解のみ。実走はしていない）。
+  - パスクエリとの相互作用: path_query は別系統（命題 1 の注意）。名前側のパス照合は normalized_key（to_lowercase）で、入口を寄せても変わらない。壊せなかった。
+偽にする手順: 名前 "a\u3000b" を含む索引で、クエリ "a b" の Substring 結果が入口変更の前後で同一なら (b) は無効。
+
+== 命題 5: ASCII 小文字だけの入力で借用を保ったまま #1310 を直せる ==
+判定: 壊せなかった
+根拠: 借用の述語に `|| ch.to_lowercase().next() != Some(ch) || ch.to_lowercase().count() > 1` を足した版を、非空白の全コードポイントで「所有側の結果 == ch（1 文字）」と突き合わせた。
+  - 現行述語で「借用なのに所有側と結果が違う」: 31 字ちょうど（1c5, 1c8, 1cb, 1f2, 1f88-1f8f, 1f98-1f9f, 1fa8-1faf, 1fbc, 1fcc, 1ffc）。#1310 と一致。
+  - 修正案で「借用なのに結果が違う」: 0 件。
+  - nucleo_normalize は ASCII 全 128 字で恒等（確認済み）。よって ASCII は is_ascii 先頭分岐（is_ascii_uppercase だけ見る）で to_lowercase() を呼ばずに済み、ホットパスの借用と確保なしは保てる。
+  - 逆向きの過剰確保（借用してよいのに所有）は元からあり（is_uppercase なのに小文字化で不変な 数学英数字など）、結果は同一なので害は無い。
+偽にする手順: 修正した述語を全コードポイント走査で当てて、借用 かつ 結果差 が 1 件でも出れば偽。
+
+== 追加所見 A（⚠️ 研究メモの前提を弱める）: normalize_query は冪等ではない ==
+判定: 壊せた（query.rs:5 の「正規化は冪等」と history.rs:384 のコメントは 51 字で偽）
+根拠: 単一文字 nq(nq(c)) != nq(c) が 51 字（U+1A6, 262, 26A, 274, 280, 281, 28F, 299, 29B, 29C, 29F, 1D00-1D1F の一部, 1E82, 1E83, 2071, 2095-209C, 2183, 2184, A7AE）。
+  原因は「小文字化してから折りたたむ」順で、折りたたみの出力が大文字になる（例: ɢ → G）。2 回目の適用で g になる。
+  影響: (1) migrate_normalize_keys は冪等を前提に毎回の読み込みで再適用するので、該当キーは保存 → 読み込みで g へ動き、record_launch が作る G と一致しなくなる（既存の実害。#1310 の 31 字とは別集合）。
+  (2) CLAUDE.md「実装前チェック」の冪等性テストを全コードポイントで書くと 51 字で落ちる。この PR の範囲に入れるか別 issue かをユーザーに確認する価値がある。
+偽にする手順: scratchpad の adv を cargo run --offline で実行し "nq non-idempotent" 行が 0 なら偽。
+
+== 追加所見 B（⚠️ 確信なし）: 測定環境 ==
+  - 実機の index.bin のヘッダ（先頭 8 バイト）は 49 4e 44 58 07 00 00 00 = "INDX" + 版 7。research.md の「v7 の枝が要る」は実運用の状態と一致する。サイズは 664,996 バイトで、research.md が引く「312,690 件」級の索引ではなく小さい（旧 PERFORMANCE の実測点とは別の個人環境。性能の議論に実機の値を使う場合は要注意）。
+  - config.toml の migemo_enabled = true（migemo_min_chars = 2）。かなの経路（kana_for_cached）は実運用で生きている。かなの入口を寄せる判断（未解決の疑問 3）は実機に効く。
+  - 実機の索引バイト列に連続空白（0x20 0x20）と U+3000（E3 80 80）の並びは 0 件（件数だけ数えた。パスは出力していない）。この実機では名前側の変更で結果が変わる名前が（少なくとも名前・パスの列には）見つからない。
+    回帰の実機確認で変化を観察したいなら、空白入りのフォルダ・ファイルを一時的に用意する必要がある。NBSP 相当（C2 A0）は 113 件だが可変長整数などと区別できず、⚠️ 確信なし。
+  - history.bin は 1,374 バイトで、31 字・51 字のキーを持つかは確認していない（中身を出さない方針）。
+
+== まとめ ==
+壊せた: 命題 4 の「だけ」（名前側で変わるのは空白だけ。全角空白・前後空白・Prefix 判定も含む。31 字は名前側では変わらない）、命題 2 の「経路が既にある」、追加所見 A（冪等でない 51 字）
+壊せなかった: 命題 1（作り手の網羅。ただしパス系の別正規化 1 系統を範囲外と明記すべき）、命題 3（migrate が読み込み時にクエリキーを再正規化）、命題 5（借用の修正は成立）、has_path_sep・incremental cache の単調性・パスクエリの相互作用
+⚠️: 追加所見 B（実機の索引が小さいこと・連続空白と U+3000 が無いこと）、incremental 単調性は読解のみで実走していない

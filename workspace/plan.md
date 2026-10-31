@@ -61,6 +61,8 @@
 
 - [x] 2 巡目（c91b18a8）: 道具 green。1 巡目の所見はすべて解消（同じ方法で再測）。Critical / High / Medium 0。Low⚠ 4 のうち「`workspace/` も履歴に残る」の言い過ぎを「残りうる」へ直した。他 3 件（harness の注入はサブエージェントから測れない・plan の件数・rules 変更の合意）は記録のみ／件数は直した。報告は `workspace/review-1330-r2.md`・`verify-1330-r2.json`
 
+- [x] 3 巡目（19352497）: 道具 green。直した 1 文は真（main へ残った実例 #1217 と、通常は PR 前に消える根拠の両方を委譲が確認）。指摘 0。報告は `workspace/review-1330-r3.md`・`verify-1330-r3.json`
+
 ## plan-review 結果
 
 - リスク: 高（常時ロードの規範文書の圧縮・`--deep`）

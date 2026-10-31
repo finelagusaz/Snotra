@@ -192,7 +192,9 @@ pub fn normalize_for_match(s: &str) -> Cow<'_, str> {
     }
 
     // 写した結果が空白になる文字も空白の連続として扱い、圧縮と前後の除去を写したあとの
-    // 列に当てる——そうしないと 2 回目の適用で結果が変わる。
+    // 列に当てる。今の nucleo の表にそういう文字は無い（全コードポイントで 0 件）が、
+    // 表が変わって現れれば、ここで扱わない限り 2 回目の適用で結果が変わる——そのときは
+    // 冪等性の検知器が落ちる。
     let mut out = String::with_capacity(trimmed.len());
     let mut pending_space = false;
     for ch in trimmed.chars() {
@@ -314,7 +316,7 @@ mod tests {
 
     #[test]
     fn requires_alloc_for_fullwidth_space() {
-        let q = normalize_for_match("foo　bar");
+        let q = normalize_for_match("foo\u{3000}bar");
         assert!(matches!(q, Cow::Owned(_)));
         assert_eq!(q, "foo bar");
     }
@@ -329,7 +331,7 @@ mod tests {
     /// 正規化後に空なら空を返す。空の扱いは呼び出し側の面が決める（SPEC §4.2）。
     #[test]
     fn whitespace_only_normalizes_to_empty() {
-        assert_eq!(normalize_for_match(" 	　 "), "");
+        assert_eq!(normalize_for_match(" \t\u{3000}\u{a0}"), "");
     }
 
     #[test]

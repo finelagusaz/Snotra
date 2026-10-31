@@ -866,14 +866,14 @@ mod tests {
             data.query
                 .entry(key.to_string())
                 .or_default()
-                .insert("c:akeapp.lnk".to_string(), count);
+                .insert("c:\\fake\\app.lnk".to_string(), count);
         }
         let migrated = migrate_normalize_keys(data);
         assert_eq!(migrated.query.len(), 2);
         for (query, want) in [("ɢ", 5), ("ǅ", 5)] {
             let key = normalize_history_query_key(query);
             assert_eq!(
-                migrated.query[key.as_ref()]["c:akeapp.lnk"],
+                migrated.query[key.as_ref()]["c:\\fake\\app.lnk"],
                 want,
                 "{query:?}"
             );

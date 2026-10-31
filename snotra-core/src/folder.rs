@@ -746,6 +746,31 @@ mod tests {
         );
     }
 
+    /// **並べ替えのキーも照合の入口を通す**（#1309）。前に空白を持つ名前は、その空白を除いた
+    /// 名前の位置に並ぶ。キーだけを別の写像（空白を触らない小文字化と折りたたみ）へ戻すと、
+    /// `' '` が英字より前に来て ` b` が `a` より先になる。
+    #[test]
+    fn sort_key_trims_leading_whitespace_like_the_filter() {
+        let hist = HistoryStore::empty();
+        let entries = vec![
+            DirEntryData {
+                path: "C:\\d\\ b".into(),
+                name: " b".into(),
+                is_folder: false,
+            },
+            DirEntryData {
+                path: "C:\\d\\a".into(),
+                name: "a".into(),
+                is_folder: false,
+            },
+        ];
+        let sorted = sort_entries_unlimited(entries, &hist);
+        assert_eq!(
+            sorted.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["a", " b"]
+        );
+    }
+
     /// read_dir_entries のフィルタ段だけをテストで再現する（実 I/O を避ける）。matches_filter は
     /// private だが同一モジュールから呼べる。
     #[cfg(test)]

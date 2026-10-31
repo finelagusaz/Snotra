@@ -218,6 +218,25 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
             target_path: "C:\\apps\\Café.lnk".to_string(),
             is_folder: false,
         },
+        // 空白類（全角空白・連続空白・前の空白）を名前とファイル名の両方に持つ（#1309）。
+        // 記録側（`derive_entry_lowers`）・かなの 2 経路・`lower_file_name` のどれか 1 か所だけが
+        // 空白を正規化しない写像へ戻ると、ここで記録側と構築側がずれる。アクセントだけの
+        // fixture では、空白を触らない旧い写像との差が現れない。
+        AppEntry {
+            name: "資料\u{3000}2024".to_string(),
+            target_path: "C:\\docs\\資料\u{3000}2024.txt".to_string(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "a  b".to_string(),
+            target_path: "C:\\apps\\a  b.lnk".to_string(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: " App".to_string(),
+            target_path: "C:\\apps\\ App.exe".to_string(),
+            is_folder: false,
+        },
     ];
     // **製品と同じ並びで木を建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す）。
     crate::indexer::sort_entries_canonical(&mut entries);

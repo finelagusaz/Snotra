@@ -87,6 +87,10 @@ SPEC §4.2 が「クエリおよびエントリ名」に課す 1 つの正規化
 - [x] SPEC §4.2 の 2 点 — 空の扱いは実装で確かめた（検索は UI の `trim().is_empty()` が空クエリへ倒し、正規化で消えるのは空白類だけなので一致する。フォルダは `filter_norm.is_empty()` で絞り込みなし）
 - [x] `snotra-core/CLAUDE.md` と doc の散文 — 旧 API の名前は `git grep` で `PERFORMANCE.md` の過去の記録 2 行（凍結の扱い）以外 0 件。v7 を「木の形式」として描く doc（`index_tree.rs`・`search/tests/*`）は v7 以降で真のまま置いた
 
+## 検証とレビュー（/implement Step 3）
+
+- [x] 1 巡目（fefe7d85）: 道具 green（A・E・F）。委譲は Critical 0・High 1（名前側の記録・かな・ファイル名の空白の正規化を守る検知器が無い。変異 4 つが生存）・Low 7。全件対処——A/B の fixture に空白類の名前とファイル名を足し、受け入れ条件 6 にファイル名の例、並べ替えキーのテスト、散文と計器の名乗り、テストの form feed を直した。`derive_entry_lowers` を旧い写像へ戻す変異が落ちることを主が自分で測った。報告は `workspace/review-1309-r1.md`・`verify-1309-r1.json`
+
 ## 未確定（実装前に潰す）
 
 - [x] **v7 の `index.bin` を読んだときの扱い** — **B: v7 を cache-miss として扱い、1 回だけ全走査して v8 で書く**に決めた（ユーザー裁定）。木から導き直す案（A・C）は `derive_columns(entries: Vec<AppEntry>)` が `AppEntry` の列を要るため、木から作り直すと `snotra-core/CLAUDE.md`「indexer.rs の索引更新の契機」が戒める複製（v7 の枝の昇格）が復活するので却下。派生の列だけ導き直して書き戻さない案は、明示的な再構築をしない利用者は毎起動 Wave 1 を払い続け、同節が挙げる「新形式の削減を永久に受け取らない」の形になるので却下。v2〜v6 の枝は `upgrade_legacy_cache_in` が `entries` から導き直して現行版で書くので、新しい規則が自然に当たる。**費用は、更新後の初回起動で 1 回だけの全走査**（大きな環境で 22〜30 秒）。直前の版を受け取る側の 3 項は「v7 は cache-miss になる」を確かめる形で置く

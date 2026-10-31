@@ -294,6 +294,16 @@ fn measure_real_index_footprint() {
         Some(v) if v == indexer::INDEX_CACHE_VERSION => {
             println!("  on-disk 形式: v{v}（現行）");
         }
+        // **製品が読まない旧版は cache-miss（全走査の枝）である。** フォールバック枝と名乗ると、
+        // 測った枝を偽って名乗る（版のリテラルで分けない——ロードが当たったかで分ける）。
+        Some(v) if !result.stats.cache_hit => {
+            println!(
+                "  on-disk 形式: v{v} — 製品が読まない旧版である。**以下は全走査（cache-miss）の\
+                 枝の数字であり、現行 v{} の常駐ではない。** この実行が現行版を書き出したので、\
+                 もう 1 回走らせて測り直すこと",
+                indexer::INDEX_CACHE_VERSION
+            );
+        }
         Some(v) => {
             println!(
                 "  on-disk 形式: v{v} — 旧版である。**以下はフォールバック枝の数字であり、\

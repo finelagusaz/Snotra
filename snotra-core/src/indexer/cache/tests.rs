@@ -287,6 +287,10 @@ const GOLDEN_V8: &[u8] = &[
 /// **v8 化の前に実際に書かれていた v7 バイト列**（線上表現は v8 と同じで、派生の列だけが
 /// 照合用の正規化を 1 つにする前の意味を持つ・#1309）。`config_hash` は 12345。
 ///
+/// **この fixture の名前は空白類を持たないので、派生の列は新旧どちらの正規化でも同じであり、
+/// `GOLDEN_V8` との差は版のバイトだけである。** v7 を読まないことを守るのは版の判定であって、
+/// 列の中身ではない。
+///
 /// 製品はこれを読まない（cache-miss）。読むのは内訳の計器だけである——検知器は
 /// `frozen_v7_is_a_cache_miss_and_is_not_rewritten` と
 /// `breakdown_still_reads_the_frozen_v7`。
@@ -321,9 +325,8 @@ const GOLDEN_V6: &[u8] = &[
 /// `try_deserialize_with_header` を直接呼ぶので、`load_cache_in` の枝選択・`config_hash` の
 /// 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない。
 ///
-/// **v6 は「全ユーザーの `index.bin` が今まさに置かれている版」である。** v7 が現行に
-/// なったことでフォールバック枝へ落ちた——つまりこの枝は新設であり、かつ**最初に
-/// 通る人が最も多い**枝でもある。
+/// **v6 は、v7 が現行になったときにフォールバック枝へ落ちた版である。** そのとき
+/// この枝は新設であり、かつ**最初に通る人が最も多い**枝でもあった。
 ///
 /// **`CachedLower::Collapsed` で返らなければならない。** `Raw` で返すと `assemble` が
 /// 測り直し、`None` どうしの一致で file name 成分を持たないエントリにフラグが立つ。
@@ -943,7 +946,7 @@ fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
          `upgrade_legacy_cache_in` のクロージャを一度も通っていないことを意味する）"
     );
 
-    // 現行版（v7）: 昇格しないので save 時間は乗らない。
+    // 現行版: 昇格しないので save 時間は乗らない。
     let current_dir = temp_dir("upgrade_save_current");
     let config_hash = 42u64;
     let derived = derive_columns(entries);
@@ -967,7 +970,7 @@ fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
     assert!(cache_bin_file_in(&current_dir).save_bytes(&bytes), "save");
 
     let current_result =
-        load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write).expect("v7 が読めること");
+        load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write).expect("現行版が読めること");
     assert_eq!(
         current_result.upgrade_save, None,
         "現行版は昇格しないので枝を通らないこと（`Some` は速さに関わらず\

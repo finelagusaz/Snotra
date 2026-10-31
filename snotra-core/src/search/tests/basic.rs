@@ -627,6 +627,16 @@ fn entry_name_whitespace_is_normalized_like_the_query() {
             );
         }
     }
+
+    // ファイル名の側（`lower_file_name`）も同じ入口を通る。`.` を含むクエリだけが
+    // ファイル名で照合されるので、名前では一致しえない形で確かめる。
+    let mut engine = SearchEngine::new(make_entries(&["a  b"]));
+    let results = engine.search("a b.lnk", 8, &empty_history(), SearchMode::Prefix);
+    assert_eq!(
+        results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["a  b"],
+        "ファイル名 `a  b.lnk` がクエリ `a b.lnk` に一致しない"
+    );
 }
 
 #[test]

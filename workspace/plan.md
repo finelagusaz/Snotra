@@ -55,6 +55,10 @@
 - [x] 参照元 P1〜P7 を直す
 - [x] 検算（集合差・消した語彙の `git grep`・`governance:check`） — 落ちた識別子はルート 30・AGENTS 18 で、裁定で消した条項・機構の説明・経緯のいずれか。消した語彙（実行にバイアス・4点セット・手順 6・消した憲章の項）は凍結層の外で 0 件。`governance:check` 全 17 件 passed
 
+## 検証とレビュー（/implement Step 3）
+
+- [x] 1 巡目（db59c129）: 道具 green（A・E・F）。委譲は Critical / High 0・Medium 2（`.claude/rules/src-tauri.md` が中身の移った「事前調査」を指す——独立導出が名指していたが計画に載せ漏れた・`rust-toolchain.toml` の新しい引用が根拠の向きが逆）・Low 6。L3（「即実行」の削除）は裁定済みで対処しない。それ以外を対処（`manual-smoke.ps1` の帰属の誤りも直し、その正準形の参照が物理改行で折れたのを `governance:check` が捕まえたので 1 行に収めた）。計器の検算: 参照された見出しを縮めると赤。見出しを残して中身だけ移す形は緑のまま（M1 がその実例）。報告は `workspace/review-1330-r1.md`・`verify-1330-r1.json`
+
 ## plan-review 結果
 
 - リスク: 高（常時ロードの規範文書の圧縮・`--deep`）

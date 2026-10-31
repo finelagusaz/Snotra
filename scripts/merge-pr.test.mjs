@@ -62,12 +62,13 @@ function fake(over = {}) {
     readFile: () => "本文\n",
     mainRoot: () => "/repo",
     verify: over.verify ?? (() => ({ ok: true })),
-    sleep: () => {},
+    sleep: (ms) => sleeps.push(ms),
     out: (s) => out.push(s),
     err: (s) => out.push(s),
   };
   const out = [];
-  return { deps, calls, out, text: () => out.join("\n") };
+  const sleeps = [];
+  return { deps, calls, out, sleeps, text: () => out.join("\n") };
 }
 const ok = (v) => ({ status: 0, stdout: JSON.stringify(v), stderr: "" });
 const preview = (patch) =>
@@ -280,6 +281,66 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     expect(r.code).toBe(3);
     // 宣言外 close の検出でも 3 になるので、止めた理由まで見る（終了コードだけでは上限判定を消しても緑）
     expect(r.text).toContain("上限");
+  });
+  // ---- 観測のループ（#1321）。待ちは 3 段（状態・検算・closed 検索）すべてに掛かる ----
+  const TWO = ["7", "--closes", "3,4", "--body-file", "b.md"];
+  const twoRefs = preview({
+    closingIssuesReferences: [3, 4].map((number) => ({ number, repository: { name: "r", owner: { login: "o" } } })),
+  });
+  // 観測の回数は、`issue view` の 1 件目（#3）が呼ばれた回数で数える（呼び出し回数はサブコマンドごとに数えられるため）
+  const byRound = (fn) => {
+    let round = 0;
+    return (_, args) => {
+      if (args[2] === "3") round++;
+      return fn(round, args[2]);
+    };
+  };
+  it("2 件のうち 1 件だけが遅れて閉じる（PR #1313 の実形）→ 待って観測し直し、0", () => {
+    const f = fake({
+      "pr view:pre": twoRefs,
+      "issue view": byRound((round, n) => ok({ state: n === "4" && round === 1 ? "OPEN" : "CLOSED" })),
+      "issue list": ok([{ number: 3 }, { number: 4 }]),
+    });
+    expect(run(TWO, "/repo", f.deps)).toBe(0);
+    expect(f.sleeps).toEqual([5_000]);
+    expect(f.text()).toContain("観測 2 回・待ち計 5 秒");
+  });
+  it("検算の検索に PR が後から現れる → 待って観測し直し、0", () => {
+    const f = fake({ "pr list:merged": (n) => ok(n === 1 ? [] : [{ number: 7 }]) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.sleeps).toEqual([5_000]);
+  });
+  it("最後まで揃わなければ、待ちを使い切って 3（観測 4 回・待ち計 30 秒）", () => {
+    const f = fake({ "issue view": ok({ state: "OPEN" }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.sleeps).toEqual([5_000, 10_000, 15_000]);
+    expect(f.text()).toContain("観測 4 回・待ち計 30 秒");
+    expect(f.text()).toContain("o/r#3 が閉じていない");
+  });
+  it("検算が最後まで通らなければ、closed の検索を信用しない——宣言外の close も未反映も出さない（依存の順）", () => {
+    const f = fake({ "pr list:merged": ok([]), "issue list": ok([{ number: 5 }]) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.text()).toContain("検算");
+    expect(f.text()).not.toContain("#5");
+    expect(f.text()).not.toContain("索引が未反映");
+  });
+  it("揃っていて宣言外の close があれば、待たずに 3（宣言外は待ちの判定に入れない）", () => {
+    const f = fake({ "issue list": ok([{ number: 3 }, { number: 5 }]) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.sleeps).toEqual([]);
+    expect(f.text()).toContain("#5");
+  });
+  it("検索が上限に達したら、待たずに打ち切る", () => {
+    const many = Array.from({ length: SEARCH_LIMIT }, (_, i) => ({ number: i === 0 ? 3 : 1000 + i }));
+    const f = fake({ "issue view": ok({ state: "OPEN" }), "issue list": ok(many) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.sleeps).toEqual([]);
+  });
+  it("揃えば観測 1 回で 0（正常なマージに待ちの費用は掛からない）", () => {
+    const f = fake();
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.sleeps).toEqual([]);
+    expect(f.text()).toContain("観測 1 回・待ち計 0 秒");
   });
   it("事後の gh が失敗しても 3（2 ではない——マージは済んでいる）", () => {
     const r = post({ "issue view": { status: 1, stdout: "", stderr: "x" } });

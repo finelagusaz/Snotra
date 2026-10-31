@@ -1,0 +1,38 @@
+レビュー 4 巡目 + 変異注入 — アンカー sha a8ede6abad74fa3ff158eba7f274a527167b2add（eef37148 の上に修正 1 コミット）
+align: exit 0、worktree HEAD = a8ede6ab、作業ツリー clean（.delegate/ のみ未追跡）
+ベースライン: npx vitest run scripts/merge-pr.test.mjs .claude/hooks/pre-bash.test.mjs → 2 files / 320 tests 全緑（merge-pr.test は 99）
+
+結論: 指摘 0 件（Critical / High / Medium / Low / ⚠ いずれも 0）。変異 10 本はすべて検知、生存 0。
+
+== 前巡の指摘の検算 ==
+R3-1 解消: 道具のメッセージは「/merge-pr の『マージ後に要確認が出たとき（exit 3）』」になり、SKILL.md:49 の見出しと逐語で一致する。
+  firstline.mjs の実測（gh が非 0 → 状態取得失敗）で、出力の最初の行にこの文言が載ることを確かめた。
+R3-2 解消: SKILL.md:52-54 の手作業 3 点を、道具の事後検証（scripts/merge-pr.mjs）と 1 項ずつ突き合わせた。
+  1 番 `gh issue view <N> -R <owner/repo> --json state` が CLOSED
+    ↔ 道具の宣言した issue ごとの view -R（他リポジトリを含む）。一致
+  2 番 `gh pr list --state merged --search "merged:>=<mergedAt>" -L 200` に当の PR が現れる。mergedAt は --jq の生文字列
+    ↔ 道具の ISO 検査と検算（-L 200）。一致
+  3 番 `gh issue list --state closed --search "closed:>=<mergedAt>" -L 200`
+    ↔ 道具の closed 検索。3 つの判定とも一致した
+    - 宣言したこのリポジトリの issue が現れるまで打ち直す ↔ 索引の再試行
+    - 200 件で信用しない ↔ 上限の判定
+    - 宣言外が無い ↔ undeclared の検出
+  過不足は見つからなかった。道具の再試行は 5 秒・10 秒の 2 回に固定されているが、手作業の「時間を置いて」は回数を定めない。
+  人の作業としては妥当と見て、指摘にしない。
+R3-3 解消: null の throw のテストが 3 つの catch（マージ前→2・マージ区間→3・事後→3）へ当たるようになった。
+  前巡で生き残った R3b・R3c は、当て直して両方とも赤になった。
+
+== 変異注入（巻き戻しのたびに git hash-object が `git show a8ede6ab:scripts/merge-pr.mjs | git hash-object --stdin` と一致することを確認。
+   モジュール解決・timeout・SyntaxError の信号なし） ==
+R1  ghNote を判定の前へ戻す                      → 検知（4 件赤。AssertionError）
+R1b exit 1 の終端から ghNote を落とす              → 検知（AssertionError）
+R1c 成否不明の 3 の終端から ghNote を落とす         → 検知（AssertionError）
+R1d 事後検証の 3 の終端から ghNote を落とす         → 検知（AssertionError）
+R1e exit 0 の終端から ghNote を落とす              → 検知（AssertionError）
+R2  引き直しを消す                                 → 検知（AssertionError: expected 1 to be 0）
+R3  describe を `e.message ?? e` 相当に戻す        → 検知（3 件赤）
+R3b マージ前の catch だけ戻す                      → 検知（前巡は生存）
+R3c マージ区間の catch だけ戻す                    → 検知（前巡は生存）
+R3d 事後の catch だけ `e.stack ?? e` に戻す         → 検知
+R3 系の赤は、run 自身が投げた TypeError（Cannot read properties of null）による。守りたい退行（未捕捉で node が exit 1）の症状そのものなので、検知に数えた。
+生の出力: .delegate/mutation-raw-a8ede6ab.txt

@@ -467,6 +467,22 @@ export function readVerifyState(cwd, summaryPathFor, importError = null) {
   const branch = head.stdout.trim();
   if (branch === "") return { ok: false, reason: `detached HEAD です。ブランチから PR を作ってください。` };
 
+  return verifiedSummaryState({ root, branch, target: "HEAD", summaryPathFor });
+}
+
+/**
+ * `branch` の道具の要約が green で、要約の sha から `target` までに `workspace/` の外の変更が無いか。
+ * 消費者は 2 つ: PR 前ゲート（`readVerifyState` が `target: "HEAD"` で呼ぶ）と、マージの道具
+ * （`scripts/merge-pr.mjs` が PR の head の sha と head ブランチ名で呼ぶ・#1312）。判定を写さないために共有する。
+ * `target` は git が解決できる rev であること（commit を手元へ取ってくるのは呼び出し側の仕事）。
+ */
+export function verifiedSummaryState({ root, branch, target, summaryPathFor }) {
+  // 要約の sha と同じ理由（`-` で始まる値を git の位置引数へ渡さない）で、HEAD か 40 桁の 16 進に限る
+  if (target !== "HEAD" && !/^[0-9a-f]{40}$/.test(String(target))) {
+    return { ok: false, reason: `照合の相手（${target}）が HEAD でも 40 桁の 16 進でもありません` };
+  }
+  const git = (args) =>
+    spawnSync("git", args, { cwd: root, encoding: "utf8", shell: false, timeout: VERIFY_GIT_TIMEOUT_MS });
   const file = summaryPathFor(root, branch);
   let summary = null;
   if (existsSync(file)) {
@@ -481,9 +497,9 @@ export function readVerifyState(cwd, summaryPathFor, importError = null) {
 
   // 2 端点で比べる（3 点形は、HEAD が sha の祖先へ戻ると空を返す）。`--no-renames`: 既定の rename 検出は、
   // `workspace/` の外から中への移動で移動元を出さない。`-z`: 引用符で囲まれたパスが接頭辞に当たらなくなる形を防ぐ
-  const diff = git(["diff", "--name-only", "--no-renames", "-z", summary.sha, "HEAD"]);
+  const diff = git(["diff", "--name-only", "--no-renames", "-z", summary.sha, target]);
   if (diff.error || diff.status !== 0) {
-    return { ok: false, reason: `道具の要約の sha（${summary.sha}）から HEAD までの差分を取れません。${VERIFY_REMEDY}` };
+    return { ok: false, reason: `道具の要約の sha（${summary.sha}）から ${target} までの差分を取れません。${VERIFY_REMEDY}` };
   }
   const outside = diff.stdout.split("\0").filter((p) => p !== "" && !p.startsWith("workspace/"));
   if (outside.length > 0) {

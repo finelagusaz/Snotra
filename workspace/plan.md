@@ -79,21 +79,21 @@
 
 ## フェーズ 1 — 共有のための切り出し
 
-- [ ] `pre-bash.mjs` の `verifiedSummaryState` を切り出し、既存の hook テストが前後で同件数・全緑であることを確かめ、HEAD 以外の target のテストを足す
-- [ ] `verify-tree.mjs` の `mainRoot` を切り出し、verify-tree テストが前後で同件数・全緑であることを確かめる
+- [x] `pre-bash.mjs` の `verifiedSummaryState` を切り出し、既存の hook テストが前後で同件数・全緑であることを確かめ、HEAD 以外の target のテストを足す — 216 → 216（既存）+ 5（新規）= 221、全緑。target を HEAD へ戻す変異で新規 2 件が赤（Red 確認）
+- [x] `verify-tree.mjs` の `mainRoot` を切り出し、verify-tree テストが前後で同件数・全緑であることを確かめる — 32 → 32、全緑
 
 ## フェーズ 2 — 道具
 
-- [ ] 純関数とテストを書く（Red を確かめてから Green）
-- [ ] `run` と経路テストを書く
-- [ ] `package.json` へ `merge:pr` を登録し、`docs/build-commands.md` へ 1 行足す
+- [x] 純関数とテストを書く（Red を確かめてから Green） — スタブで 44 件赤 → 実装で 56 件緑
+- [x] `run` と経路テストを書く — no-op の run で 28 件赤・3 件が終了コードしか見ておらず通ったので呼び出しの assert を足した → 87 件緑。実物の gh でマージ済み #1311 に当てて読みの経路を確認（exit 1 で止まり書き込みに届かない）
+- [x] `package.json` へ `merge:pr` を登録し、`docs/build-commands.md` へ 1 行足す
 
 ## フェーズ 3 — 文書
 
-- [ ] `/merge-pr` の SKILL を道具中心へ書き直す
-- [ ] `ADR-squash-merge-issue-autoclose` へ追記節を足す
-- [ ] `docs/hooks.md` の「要約ゲート」へ 1 句足す
-- [ ] ルート `CLAUDE.md` の 3 か所を直す
+- [x] `/merge-pr` の SKILL を道具中心へ書き直す
+- [x] `ADR-squash-merge-issue-autoclose` へ追記節を足す
+- [x] `docs/hooks.md` の「要約ゲート」へ 1 句足す
+- [x] ルート `CLAUDE.md` の 3 か所を直す
 
 ## 未確定（実装前に潰す）
 
@@ -124,6 +124,7 @@
 ### 未検証
 - `--match-head-commit` で拒まれたときの gh の stderr と終了コード（実装時に一度観測してからフィクスチャにする）
 - マージ直後の検索インデックスの遅延（再試行し、それでも現れなければ exit 3 で倒す）
+- （実装時に判明）PowerShell から `npm run merge:pr -- ...` が最初の `--` を食うかの実測は、マージを伴う道具の実行として auto mode の分類器に拒否された。SKILL は `prose:sweep` の実測（同じ `npm.ps1` の機序）に倣い、PowerShell では `node scripts/merge-pr.mjs` を直接打つと書いた
 
 ### 判断
 - 実装着手: 可（人間レビュー承認済み）

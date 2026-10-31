@@ -18,6 +18,7 @@ import {
   readPlanState,
   judgeSummary,
   readVerifyState,
+  verifiedSummaryState,
   segmentEnd,
   gitSegments,
   usesHeredoc,
@@ -497,6 +498,41 @@ describe("readVerifyState — 本物の git と要約ファイル", () => {
   });
   it("summaryPathFor が渡されなければ（hook が道具を読み込めなかった）止める", () => {
     expect(readVerifyState(verifiedRepo(), null).ok).toBe(false);
+  });
+});
+
+describe("verifiedSummaryState — HEAD 以外の照合の相手（マージの道具の使い方・#1312）", () => {
+  // 道具は今のブランチではなく PR の head ブランチ名と head の sha で照合する。HEAD は main に居てよい
+  const check = (dir, target, branch = "feat/x") => verifiedSummaryState({ root: dir, branch, target, summaryPathFor });
+
+  it("今のブランチが別でも、名指したブランチの要約と sha で照合する", () => {
+    const dir = verifiedRepo();
+    const head = git(dir, ["rev-parse", "HEAD"]);
+    git(dir, ["checkout", "-q", "main"]);
+    expect(check(dir, head)).toEqual({ ok: true });
+  });
+  it("要約の sha から target までに workspace/ の外の変更があれば、そのパスで止める（HEAD は見ない）", () => {
+    const dir = verifiedRepo();
+    commit(dir, "src/y.rs", "fn b() {}\n");
+    const moved = git(dir, ["rev-parse", "HEAD"]);
+    git(dir, ["checkout", "-q", "main"]); // HEAD は要約より前。HEAD と比べる実装なら別の答えになる
+    const r = check(dir, moved);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("src/y.rs");
+  });
+  it("要約の branch が名指したブランチと違えば止める（`/` と `-` が潰れて同じ置き場になる形）", () => {
+    const dir = verifiedRepo();
+    writeSummary(dir, { sha: git(dir, ["rev-parse", "HEAD"]), branch: "feat-x", status: "green" });
+    expect(check(dir, git(dir, ["rev-parse", "HEAD"])).ok).toBe(false);
+  });
+  it("target が HEAD でも 40 桁の 16 進でもなければ、git へ渡さずに止める", () => {
+    const dir = verifiedRepo();
+    const r = check(dir, "--output=y");
+    expect(r.ok).toBe(false);
+    expect(existsSync(path.join(dir, "y"))).toBe(false);
+  });
+  it("手元に無い sha は止める（取ってくるのは呼び出し側）", () => {
+    expect(check(verifiedRepo(), "1".repeat(40)).ok).toBe(false);
   });
 });
 

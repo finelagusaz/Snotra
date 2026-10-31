@@ -60,7 +60,7 @@ const INDEX_WIRE_SINCE: u32 = 7;
 /// **`cache_load` と `total` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
 /// 項目が無い処理は `total` にしか効かず、差を読む者がいなければ計測上は存在しないままに
 /// なる（**規則の正本はここ**。反復 6 で実際に踏んだ経緯は
-/// `snotra-core/CLAUDE.md`「indexer.rs の索引更新の契機」が持つ）。
+/// `PERFORMANCE.md`「採用: 背景再スキャンの比較を digest へ（ロード 395 → 312 ms・反復 6）」が持つ）。
 ///
 /// **全項目を丸めずに [`Duration`] で運ぶ**（#1027 で `total` だけ、#1178 で残りを移した）。
 /// ミリ秒への丸めは表示境界（`src-tauri` の `startup.rs` の `to_ms`・`main.rs` の
@@ -415,7 +415,8 @@ fn scan_and_sort_timed(scan: &[ScanPath], show_hidden_system: bool) -> Scanned {
 /// `load_or_scan_with_stats` と同じ手順を `dir` 注入で行う（統合テスト用）。
 ///
 /// **製品の入口（`Config::config_dir()` を解決する側）でテストを書かないこと。**
-/// 実 `%APPDATA%\Snotra` を読み書きし、テスト実行が実運用のデータを動かす（#1013 の Gotcha）。
+/// 実 `%APPDATA%\Snotra` を読み書きし、テスト実行が実運用のデータを動かす（#1013・
+/// `snotra-core/CLAUDE.md`「開発ルール」）。
 ///
 /// **「`load_or_scan` と同じで、ただし〜」と書いてはならない**（かつてそう書いていた）。その関数は #984 で削除され、この doc だけが実在しない名前を基準に自分を説明する状態になっていた。
 fn load_or_scan_with_stats_in(
@@ -877,8 +878,8 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         let masks = CachedMasks {
             char_masks: cache.char_masks.into_owned(),
             file_name_char_masks: cache.file_name_char_masks.into_owned(),
-            // **`Collapsed` で渡す。** ここを `Raw` にすると `assemble` が測り直し、
-            // `None` どうしの一致で file name 成分の無いエントリにフラグが立つ。
+            // **`Collapsed` で渡す。** ここを `Raw` にすると `assemble` が全件を測り直す（結果は
+            // 変わらず、費用だけが掛かる。理由は `search/build.rs` の `DerivedStrings` の doc）。
             lower: Some(CachedLower::Collapsed {
                 lower_names: cache.lower_names.into_owned(),
                 lower_file_names: cache.lower_file_names.into_owned(),
@@ -1043,6 +1044,15 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
 /// `index.bin` の scan + save 区間を直列化する書き込みロック。
 /// 書き手（`rebuild_and_save` / cache-miss save / ロードの旧版枝の昇格）が共有する。
 /// `save_cache_sorted` 自体はロックを取らない（呼び出し側が保持する契約）。
+///
+/// **形式昇格だけは、読みがロックの外にある。** 内容を決めてから保存するまでの間に別の書き手が
+/// 新しい索引を書き終えると、昇格がそれを古い内容で上書きしうる。**このウィンドウが今日開かない
+/// のは機構ではなく順序による**——製品でこの経路を通る呼び出し元は `main` の起動段の 1 つだけで、
+/// もう一方の書き手（索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。
+/// **ロード後に走りうる書き手をこの経路へ足す日には、ウィンドウが戻る。** 他の 2 つの書き手は
+/// 走査から保存までを 1 回のロック取得で覆うので、構造的に開かない。
+///
+/// **プロセスをまたぐ同時起動は守らない**——このロックはプロセス大域の `static` である。
 static INDEX_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// 書き込みロックをブロッキングで取得し、クロージャを実行して結果を返す。

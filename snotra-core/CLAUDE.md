@@ -1,273 +1,119 @@
 # snotra-core
 
-純ロジック lib crate。Win32 非依存でユニットテスト可能。
+UI 非依存の純ロジック lib crate（Win32 を使うモジュールもある）。新規ロジックは可能な限りここへ置き、ユニットテストで守る。
 
-- 各ルールは「**太字 = 守る指示**、後続 = 理由・経緯」の形式。迷ったら太字部分に従えば安全。**例外は名前の索引である**——ロック最小化パターンの名前・件数パラメータの対応・エントリ名の導出は、指示ではなく引くための見出しとして太字にしている
-- 本ファイルの構成: モジュール構成（責務 + モジュール別の不変条件）→ 開発ルール・実装前チェック → クロスモジュール不変条件 → データ永続化 → モジュール別の詳細規約
+各項目は編集の瞬間に守る指示である。理由・経緯・測定値は書かず、正本（`//!` / `///` / `docs/adr/` / `PERFORMANCE.md`）を指す。
 
 ## モジュール構成
 
-各モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す。`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる（#562）。
+責務は各ファイルの `//!` が正本。ここはファイルの索引と、1 ファイルの `//!` に収まらない不変条件だけを置く。ユニットテストは対象モジュールの子（`tests.rs` / `tests/`）に置き、親の private を直接読む（テストのために可視性を広げない）。
 
-- `lib.rs`: モジュール宣言のみ（責務を持たない）
-- `engine.rs` — 検索・履歴・設定を単一ロックに統合する facade（責務は `//!`）。`index_stale` ledger の契約も `//!` が正本（消費者は `snotra` crate の `indexing.rs` / `config_watcher.rs`）
-- `config.rs` — `config.toml` の集約型 `Config` と、責務ごとに分けた子モジュールの索引（責務は `//!`）
-  - `config/schema.rs` — セクション型・要素型と既定値（責務は `//!`）。以下は名前の索引:
-    - **件数パラメータ**（#388 で役割に合わせて改名済み）: `appearance.visible_rows` = 可視行数 / `search.result_limit` = **検索・フォルダの結果リスト最大長**（`Engine::search`/`capture_folder_list_context` の fetch_limit）/ `search.recent_limit` = 空クエリ recent 件数（`recent_history`）
-  - `config/paths.rs` — 探索パス（`[paths]`）の型と、そのキー正規化・重複マージ（責務は `//!`）。正規化の 2 つ（`normalize_scan_path_key` / `normalize_extensions`）は `opener.rs` が共有するため `pub(crate)` で出す（依存の向きは下の `opener.rs` 節）
-  - `config/location.rs` — 保存先ディレクトリの解決（責務は `//!`）
-  - `config/io.rs` — `config.toml` の読み書きと TOML 文字列との相互変換（責務は `//!`）。読み込み失敗の扱い分け（不在 / 内容破損 / 一時的失敗）は下の「データ永続化の注意」が正本
-  - `config/migrate.rs` — デシリアライズ後の後処理（責務は `//!`）
-  - `config/validate.rs` — 保存前の整合性検証（責務は `//!`）
-  - ユニットテストは対象モジュールの子として置く（`config/tests.rs` は `Config` 全体の serde、責務ごとの分は `config/schema/tests.rs` / `config/paths/tests.rs` / `config/location/tests.rs` / `config/io/tests.rs` / `config/migrate/tests.rs` / `config/validate/tests.rs`）——親の private を直接読むため、テストのために製品側の可視性を広げなくてよい
-- `opener.rs` — 外部ツール起動ルールの解析・正規化・マッチングと Win プリセット検出（責務は `//!`、公開 API 契約は各 `///` を正とする。`config.rs` から分離・#435）
-  - **依存方向は `config.rs` → `opener.rs` に保つ**: `OpenerRule`/`OpenerTool` は `Config.openers` として config.toml に紐づく serde 型のため型定義はこちらに置き、`config.rs` が `pub use crate::opener::{...}` で re-export して `snotra_core::config::...` の既存呼び出し元パスを維持する
-  - 逆方向の依存として `normalize_opener_target` が `config/paths.rs::normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`、`paths.scan` の正規化とも共有する汎用ヘルパー）を使う
-- `hotkey.rs` — 永続ホットキー文字列の意味解析とシステムショートカット競合判定（責務は `//!`）。`HotkeyConfig` は serde 互換のため `config.rs` から re-export し、設定検証・UI・Win32 platform は同じ `ParsedHotkey` を消費する。文字列 parser を下流へ複製しない
-- `search.rs` — 検索順位計算・履歴ブースト・incremental search キャッシュ・空クエリ時履歴候補（責務・スコア階層は `//!` と `SearchEngine` の struct doc）。以下は複数ファイルにまたがる不変条件（単一ファイルのものは各 `//!` / `///` が正本・#1240）:
-  - **並列の列は添字で対応づけて持つ**（cache locality）: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` をその形で持つ。**すべてが `Vec` ではない**——`lower_names` / `lower_file_names` は `str_arena` のアリーナ、表示名と `kana_lower_names` は `index_tree` の `NameArena` である。**エントリ数に比例する確保を持つ列は 1 つも残っていない**（migemo 有効時も。額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」）
-  - **正規化キー（履歴照合・パスマッチ）は索引に持たない**: `target_path` から `normalize_entry_key_into` で導出し、スレッドローカルのバッファへ詰め直す（唯一の経路は `search/scoring.rs` の `with_normalized_key`）。**正規化比較を別実装で書き起こしてはならない**——記録側と照合側が同じ関数を通ることがバイト一致の根拠であり、1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが消える）
-  - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
-  - `search/scoring.rs` — スコアリング・順位計算（#600 で分離。責務は `//!`）
-  - `search/query_plan.rs` — クエリ計画の純粋導出（#599 で分離。責務は `//!`）
-  - **整列は真偽ではなく「先頭から何件までか」で持つ**（`sorted_prefix_len`・#1067）: `PathStore::cmp_paths` は両辺が範囲の中にあるときだけ index 比較で即返る。**PATH マージ（`IndexTree::extend_with_roots`）は末尾へ足すだけなので範囲を壊さない**——真偽で持つと 100 件足しただけで 312,108 件ぶんの高速路まで落ち、`c:\` の p50 に 7,700〜8,900 µs 乗る（額は `PERFORMANCE.md`「採用: 整列している**範囲**を捨てない」が正本）。**`index.bin` は「全体が整列か」の `bool` のままである**（保存時に導き、読み戻しで `len` か `0` へ戻す）ので版バンプは要らない。**「マージ後に測り直す」形にしてはならない**——実運用点では PATH エントリが必ず途中に入るので偽にしかならない（実測）
-  - `search/path_store.rs` — `target_path` をフォルダ木の接頭辞共有から組み立てる索引側の表現（責務・組み立ての 2 系統は `//!`）
-  - `search/build.rs` — 索引の構築処理と全コンストラクタ（#598 で分離。責務は `//!`）
-  - **重複する派生文字列は索引に持たず、鎖で共有する**（反復 4・5）: `lower_file_names[i]` → `lower_names[i]` → 表示名（`PathStore::name_at`）の順に、`assemble` が構築時に**測って**上流と一致するものを `None` へ潰す（実測 9.71 + 9.80 MiB / 526,316 ブロック）。`lower_names` の `None` は「表示名と同一」、`lower_file_names` の共有は `CompactEntry.file_name_is_lower_name`（空きパディングゆえ 12 B のまま）で表す——**`lower_file_names` の `None` には「file name 成分が無い」という先客がいる**ため、そちらだけフラグを要した。読み替えは `SearchEngine::entry_view` の 1 点で、同じ順に解決する
-    - **判定を全部済ませてから落とす**（鎖ゆえ、先に上流を潰すと下流の比較相手が消える）。**潰す位置はビットマスク確定より後**でなければならない（先に潰すと `file_char_mask(None) == 0` で pre-filter が false negative を出す）。どちらの誤りも**結果は正しいまま削減だけが減る**ので挙動テストでは捕まらない——検知器は `search/tests/build.rs` が索引の `is_none` まで見る
-    - **`is_folder` から推論してはならない**——実データの folder 100% で成り立つのは indexer の名前導出規則の帰結であって、`SearchEngine::new` が受け取る `AppEntry` の性質ではない（検知器は `shared_file_name_flag_is_measured_not_inferred_from_is_folder`）
-    - **`index.bin`（v6）でも同じ潰し方を保つ**（反復 8）。ディスクだけが全件を実体で持っていた頃は、読んで確保して `assemble` が即座に捨てていた（実測 21.63 → 1.90 MiB・確保 -527,000）。**表現は `Option<String>` と 3 状態の `LowerFileName`（`Absent` / `SameAsLowerName` / `Text`）に分かれる**——`lower_file_names` の `None` には「file name 成分が無い」という先客がおり、メモリ側は `CompactEntry` の空きパディングで解いたが**ディスクに空きパディングは無い**
-    - **潰し済みかどうかは型で区別する**（`CachedLower::{Collapsed, Raw}` → `DerivedStrings::{Collapsed, Measured}`）。**同じ型で渡してはならない**——`assemble` の共有判定は「全要素が `Some`」を前提にしており、潰し済みの列を流すと `lower_file_names[i]` と `lower_names[i]` がどちらも `None` のときに「一致」と読まれ、**file name 成分を持たないエントリにフラグが立つ**（実データのフォルダ 256,262 件すべてが該当し、`entry_view` はそれらの file name として `lower_name` を返す。結果は「それらしく」出るので挙動テストでは捕まらない）
-    - **派生の共有判定は `query::measure_derived_sharing` を通す**——記録側（`save_cache_sorted_in`）・追記側（`extend_cached_masks`）・適用側（`assemble`）が同じ関数を通ることだけが、ディスクとメモリで潰れ方が一致する根拠になる（`normalize_entry_key_into` と同じ理屈）。別実装を書くと、その経路の分だけが索引の読み替えとずれ、**スコアという形で静かに現れる**
-    - **記録側が潰したものを、cache-miss の枝がそのまま索引の表現に使う**（反復 11）。導出は `derive_columns`（I/O を持たない）が持ち、`save_cache_sorted_in` はそれを書いてから `CachedMasks` へ畳んで返す——かつては**計算して書いた直後に捨て、`new_from_tree` が全件を実体化してから同じものを作り直していた**（額は `PERFORMANCE.md`「採用: 保存が返した派生データを cache-miss がそのまま使う」が正本）。**どのコンストラクタが選ばれるかを決めるのは材料が派生データを持つかと `CachedLower` の variant だけであり、`cache_changed` ではない**（分岐は `SearchEngine::from_material` の 1 か所に閉じ、条件の正本は `save_cache_sorted` と `load_cache_in` の分岐）。両経路が同じ表現へ着地することを CI で守るのは `search/tests/build.rs` の合成 fixture（`save_side_collapse_and_assemble_measurement_agree_at_entry_view`）である——実データ全件を突き合わせる相方は `#[ignore]` かつ scan パスが空なら自己スキップするので、**規模と実際のパスの形（深い鎖・根と非根の混在・非 ASCII・大文字の拡張子）は手元で明示的に走らせたときしか検証されない**。実データの原文は `common::real_scanned_entries`（ファイルシステム走査）から取る——`index.bin` から取ると組み直し対組み直しの不動点になる。PATH マージ（`IndexMaterial::extend_with_path_entries`・木とマスクを組のまま運ぶ理由はその doc が正本）を守るのは `search/tests/build.rs` の `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree`（追記の欠落・マスクの取り落とし）と `path_merge_extends_the_tree_even_without_derived_data`（派生データが無いときの木の伸び）で、**3 種の変異を注入してどれかが落ちることを実測してある**。**crate 外からは迂回できない**（`IndexTree::extend_with_roots` も `pub(crate)`）が、**crate 内では書ける**——`snotra-core` の中に PATH マージの呼び出し点は無いので、現状は残余ではなく余地である
-  - `search/footprint.rs` — 常駐ヒープの内訳を数える計測専用の走査（責務は `//!`）
-  - **ユニットテストは `search/tests/` へ機能別に置く**（#597 で分割。責務は各ファイルの `//!`・製品コードは `search.rs` のまま）: 索引 `search/tests/mod.rs`、共通 fixture `search/tests/common.rs`、`search/tests/basic.rs`（基本検索・拡張子・正規化）/ `search/tests/ranking.rs`（top-k・タイブレーク・ビットマスク）/ `search/tests/incremental.rs`（incremental キャッシュ）/ `search/tests/migemo.rs`（かな検索・条件付き構築）/ `search/tests/path.rs`（パスマッチ）/ `search/tests/build.rs`（構築の不変条件。余剰容量は検索結果を変えないため挙動テストでは捕まらない）/ `search/tests/performance.rs`（`#[ignore]` ベンチ・メモリ計測）
-- `history.rs` — 起動履歴・クエリ別履歴・フォルダ展開履歴の管理とバイナリ永続化（責務・`top_n` の live-read は `//!`）
-- `folder.rs` — フォルダ内エントリの列挙とフィルタ/ソート（責務は `//!`）
-- `indexer.rs` — 索引の材料（木と派生データの組）を運ぶ `IndexMaterial` と、責務別サブモジュールの索引・re-export（責務は `//!`）
-  - `indexer/scan.rs` — スキャン対象の列挙・走査中の重複排除・正準整列（責務は `//!`。下の「`scan_all` の重複排除」「エントリ名の導出ルール」）
-  - `indexer/keys.rs` — パスキーの正規化（責務は `//!`。契約は下の「`normalize_entry_key` の冪等性契約」）
-  - `indexer/columns.rs` — 派生データ（マスク 2 本・派生文字列 2 本）の型と導出（責務は `//!`）
-  - `indexer/cache.rs` — `index.bin` の入出力・版のフォールバック鎖・書き込みの排他（責務は `//!`。下の「index.bin 書き込みの排他」「IndexCache バージョン変更チェックリスト」「indexer.rs の索引更新の契機」）
-  - `indexer/cache/breakdown.rs` — 計測専用: `index.bin` のオンディスク内訳（責務は `//!`）
-  - `indexer/path_env.rs` — `PATH` 環境変数からの追加スキャン（責務は `//!`）
-  - ユニットテストは対象モジュールの子として置く（`indexer/tests.rs` / `indexer/scan/tests.rs` / `indexer/columns/tests.rs` / `indexer/cache/tests.rs` / `indexer/path_env/tests.rs`）——親の private を直接読むため、テストのために製品側の可視性を広げなくてよい。共有治具（直列化ガードと作業ディレクトリ）は `indexer/test_support.rs` に 1 つだけ持つ（ガードを写すと相互排除が消える）
-- `query.rs` — クエリ/履歴キーの正規化と文字ビットマスク（責務は `//!`）
-- `str_arena.rs` — 疎な派生文字列の列（`lower_names` / `lower_file_names`）を、要素ごとの確保を持たない表現で保つ（責務は `//!`）
-- `index_tree.rs` — `target_path` をフォルダ木の接頭辞共有で表す、オンディスクと索引が共有する表現（責務は `//!`）
-- `binfmt.rs` — `magic` + `version` 付きバイナリ入出力の共通処理（責務は `//!`）
-- `error.rs` — crate 共通の error 型（責務は `//!`）
-- `window_data.rs` — ウィンドウ位置（`window.bin`）の保存/復元（責務は `//!`）
-- `autostart.rs` — Windows のログオン時自動起動（`HKCU\...\Run`）の登録・解除・状態取得（責務は `//!`）。ユニットテストは `autostart/tests.rs`（純粋部のみ——OS I/O を測ると開発機の実スタートアップ登録を書き換えるため）
-- `win_registry.rs` — Win32 レジストリの `HKEY` の RAII と `HKCU` 配下のキー開き（責務は `//!`）。`indexer/path_env.rs` と `autostart.rs` が共有する
-- `instant.rs` — インスタントコマンド（プレフィックス起動の URL/コマンド）の展開（責務は `//!`、公開 API 契約は各 `///`）
-- `ui_types.rs` — 検索結果として UI 層へ渡すデータ型（責務は `//!`）
-- `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）
-- `tests/memory_footprint.rs`（crate ルート統合テスト）: 索引の常駐ヒープをアロケータ実測で取るハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）
-- `tests/path_query_cost.rs`（crate ルート統合テスト）: パスクエリ（`has_path_sep`）全走査のコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）。
-- `tests/match_cost.rs`（crate ルート統合テスト）: 名前の照合の壁時計と結果のダイジェストを、実 `index.bin` と合成の索引で取る計器（`#[ignore]`・手元 release 実行専用。責務と測らない枝は `//!`、計測値は `PERFORMANCE.md`）
-- `tests/search_allocations.rs`（crate ルート統合テスト）: 検索 1 回あたりの一時確保を数える検知器（CI で走る）と計器（`#[ignore]`）。責務と、スレッドローカルで数えてよい理由は `//!`、計測値は `PERFORMANCE.md`。
+- `lib.rs`（宣言のみ）・`engine.rs`・`error.rs`・`binfmt.rs`・`window_data.rs`・`instant.rs`・`ui_types.rs`・`folder.rs`・`history.rs`・`query.rs`・`str_arena.rs`・`index_tree.rs`・`win_registry.rs`
+- `autostart.rs`（テスト `autostart/tests.rs` は純粋部のみ——OS I/O は開発機の実登録を書き換える）
+- `hotkey.rs` — 永続ホットキー文字列の parser はここだけに置き、設定検証・UI・Win32 platform は `ParsedHotkey` を消費する（下流へ複製しない）
+- `opener.rs` — **依存方向は `config.rs` → `opener.rs` に保つ**（型は `opener.rs` に置き `config.rs` が re-export）。逆向きは `config/paths.rs` の `normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`）を使う 1 本だけ
+- `config.rs` と子 `config/schema.rs`・`config/paths.rs`・`config/location.rs`・`config/io.rs`・`config/migrate.rs`・`config/validate.rs`（テストは `config/tests.rs` と各子の `tests.rs`）
+  - 件数パラメータの名前の索引: `appearance.visible_rows` = 可視行数 / `search.result_limit` = 検索・フォルダの結果リスト最大長（`Engine::search` と `capture_folder_list_context` の fetch_limit）/ `search.recent_limit` = 空クエリの recent 件数
+- `search.rs` と子 `search/build.rs`・`search/query_plan.rs`・`search/scoring.rs`・`search/path_store.rs`・`search/footprint.rs`。テストは `search/tests/` に機能別（`mod.rs`・`common.rs`・`basic.rs`・`ranking.rs`・`incremental.rs`・`migemo.rs`・`path.rs`・`build.rs`・`performance.rs`）
+  - **並列の列は添字で対応づけて持つ**: `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks`。すべてが `Vec` ではない（`lower_names` / `lower_file_names` は `str_arena`、表示名と `kana_lower_names` は `index_tree` の `NameArena`）。列を足すときは下の「実装前チェック（必須）」
+- `indexer.rs` と子 `indexer/scan.rs`・`indexer/keys.rs`・`indexer/columns.rs`・`indexer/cache.rs`・`indexer/cache/breakdown.rs`・`indexer/path_env.rs`。共有治具は `indexer/test_support.rs` の 1 つだけ（ガードを写すと相互排除が消える）
+- crate ルートの統合テスト（手元専用の計器か CI で走る検知器かは各 `//!`・計測値は `PERFORMANCE.md`）: `tests/search_frame_cost.rs`・`tests/memory_footprint.rs`・`tests/path_query_cost.rs`・`tests/match_cost.rs`・`tests/dir_stat_cost.rs`・`tests/search_allocations.rs`
 
 ## 開発ルール
 
-- 新規ロジックは可能な限りこの crate に追加してテスト可能性を維持する
-- `#[cfg(test)]` でユニットテストを必ず書く
-- **ユニットテストの fixture に `HistoryStore::load()` を使わない**（#963）。実 `%APPDATA%\Snotra\history.bin` を読むため開発者のマシン状態で結果が変わり、しかも CI のランナーにはそのファイルが無いので**食い違いは CI では緑のまま開発機でだけ現れる**。空は `HistoryStore::empty()`、特定の内容は `HistoryStore::load_in` へ注入する。実運用の姿を測る計測ハーネス（`tests/` の `#[ignore]` ベンチ）だけは `load()` のままでよい
-- 検索スコア計算は `search.rs`、フォルダ列挙は `folder.rs` に集約（DRY）
-- **UI 表示文字列を持たない**: エラーは `is_error: true` フラグや専用の error 型で呼び出し側へ伝え、ユーザー向け文言の組み立て・表示は UI 層（`src-tauri/src/egui_shell/strings.rs`・`snotra-settings/src/i18n.rs`）の責務。ここに表示メッセージを埋め込まない
-  - **「Win32 非依存の純ロジック層」ではない**: `indexer/path_env.rs` / `win_registry.rs` / `autostart.rs` がレジストリ API を呼び、`Cargo.toml` は `[target.'cfg(windows)'.dependencies]` で `windows` crate を持つ。**表示文字列を持たない規範はそれとは独立に成り立つ**——UI 非依存であることが理由であって、Win32 非依存であることが理由ではない
-- **`#[cfg(windows)]` で Win32 依存コードを追加する場合**: テストも `#[cfg(windows)]` で囲むか、OS リソースが存在しない環境でも安全にスキップできるよう `if let Some(...) =` パターンを使う。`assert!(value.is_some())` のような環境前提アサーションは環境依存テストになる
+- **UI 表示文字列を持たない。** エラーは `is_error: true` や専用の error 型で返し、文言は UI 層（`src-tauri/src/egui_shell/strings.rs`・`snotra-settings/src/i18n.rs`）が組み立てる。理由は UI 非依存であること（Win32 非依存ではない）
+- **テストから実 `%APPDATA%\Snotra` に触れない。** 読む側: fixture に `HistoryStore::load()` を使わない（空は `HistoryStore::empty()`、内容は `HistoryStore::load_in` へ注入。食い違いは CI では緑のまま開発機でだけ出る・#963）。書く側: `Config::config_dir()` を内部で解決する製品の入口を通るテストへ記録を足すと、テストは緑のまま実ファイルを書く。dir を注入する入口（`load_cache_in` / `save_cache_sorted_in` の形）へ寄せ、`SNOTRA_CONFIG_DIR` で迂回しない（プロセス大域ゆえ並列の他テストを動かす）。検算はフルテスト前後で実ファイルが変わらないことを測る。`tests/` の `#[ignore]` 計器だけは `load()` でよい
+- `#[cfg(windows)]` のテストは `#[cfg(windows)]` で囲むか `if let Some(..) =` でスキップする。`assert!(value.is_some())` のような環境前提のアサーションを書かない
 
 ## 実装前チェック（必須）
 
-- 共通原則は `AGENTS.md`「事前調査（レビュー未然防止）」に従う
-- `search.rs` で `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する
-- `search.rs` の top-k 更新ロジックを変更する場合は、入力順を変えても結果が不変であるテストを追加または更新する
-- `SearchEngine` にフィールドを追加する前に: 既存の並列 Vec で代替できないか、あるいは**そもそも持たずに導出できないか**を先に検討する。再利用・導出できれば 5 箇所同時更新・IndexCache バージョンバンプが不要になる。**導出を選ぶ判断は「その読みが早期 return の前にあるか後ろにあるか」で決まる**——同じフィールドでも、フィルタとして使われる読みと通過後の装飾として使われる読みではコストの桁が違う（`normalized_keys` は後者が主で導出へ移せた・`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）
-- `SearchEngine` に新しい並列 Vec フィールドを追加するとき: `EntryView` 構造体・`entry_view()` メソッド・`assemble()` 内の `debug_assert!` **と `shrink_to_fit()`**（余剰容量は索引が伸長しないぶん最後まで常駐する。理由は `assemble` の doc、検知は `search/tests/build.rs`）を同時に更新し、全 Vec 長の同期を保つ。Wave 1 の文字列正規化は `compute_wave1` に、Wave 2 のビットマスク計算は `compute_wave2` に追加する（`new()` / `new_with_migemo()` / `new_from_tree()` / `new_with_cached_masks()` が共有。木を受け取る経路は `wave1_from_tree` 経由で `compute_wave1` を通る）
-- **`kana_lower_names` / `kana_char_masks` は条件付き構築（migemo 有効時のみ）で長さ `{0, entries.len()}` の例外**:
-  - `assemble` の `debug_assert!` は他 5 Vec を `== entries.len()` で検証するが、kana 系 2 Vec は「両方空 or 両方 `== entries.len()`」を許す
-  - `kana_lower_names.get(i)` / `kana_char_masks[i]` へアクセスする全箇所は `is_empty()` ガードを通す（`kana_char_masks` は `kana_lower_names` から `compute_kana_char_masks` で導出し、3 コンストラクタ全経路で `assemble` 直前に構築する）
-  - 条件分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の `CachedLower` variant で分かれる両パスに**同時に**入れる（片方だけだと migemo ON でも空になる）
-  - migemo は index 構築入力なので、engine の `IndexInputs`（`config_watcher` の kick 判定と `complete_index_drain` の re-diff が共有する**単一定義**）に含める（#347 Phase 2 で `needs_reindex` / in-flight `needs_rebuild` を `IndexInputs` に統合・削除済み）
-- incremental search キャッシュに述語や状態を追加するとき: 状態は `IncrementalCache` 型に集約済み（#601。`prev_query` / `prev_candidates` / `prev_mode` / `prev_kana_query`）。read（`can_reuse`）と write（`update`）を**対で**変更し、`.claude/rules/snotra-core-search.md` の手順で単調性を検証する（旧 `/cache-check` は #894 で同 rule へ吸収）。read が参照する全フィールドを `update` が書くこと（型に閉じたので対称更新漏れは起きにくいが、フィールド追加時は両メソッドを同時に触る）
-- `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
-- `folder.rs` のソート順変更時: 順序（先頭要素が最良）と 2 段階の構造（O(N) 平均の top-k 選択 ＋ 安定ソート）は `//!` が正本——崩さない。入力順に依存しないことを確認するテスト（`score_entries_top_k_order_independent_of_input_order`）を通す
+- `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する。top-k 更新を変えたら入力順を変えても結果が不変なテストを足す/直す
+- `SearchEngine` にフィールドを足す前に、既存の列で代替できないか・導出できないかを検討する。導出の可否は「その読みが早期 return の前か後か」で決まる（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）
+- 並列の列を足すときは同時に触る: `EntryView`・`entry_view()`・`assemble()` の `debug_assert!` と `shrink_to_fit()`。Wave 1 の文字列正規化は `compute_wave1`、Wave 2 のマスクは `compute_wave2` に足す（全コンストラクタが共有する）
+- kana 2 列（`kana_lower_names` / `kana_char_masks`）は migemo 有効時だけ建つ。アクセスは `is_empty()` ガードを通し、構築の分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の `CachedLower` 両 variant へ**同時に**入れる（片方だけだと migemo ON でも空になる）。migemo の切り替えは `IndexInputs` の差分による再構築で反映される
+- 派生文字列の潰しは、ビットマスクを確定した**後**に行う（理由と検知器は `indexer/columns.rs` の `derive_entry_lowers` の doc）
+- `query.rs` の正規化を変えたら、タブ・全角スペース・NBSP を `' '` に揃えるテストと、全コードポイントの検知器（`normalize_for_match_*_on_every_codepoint`）を通す
 
 ## クロスモジュール不変条件
 
 ### `normalize_entry_key` の冪等性契約
 
-`indexer::normalize_entry_key` は「小文字化 + `/` → `\\`」の正規化関数。**2回適用しても1回と同じ結果になる（冪等）** ことが設計契約であり、`migrate_normalize_keys_is_idempotent` テストで保証されている。以下の3モジュールが依存する:
-
-- `indexer/scan.rs`: スキャン時の重複排除キー
-- `history.rs`: 全記録・参照・マイグレーションのキー正規化
-- `search.rs` / `search/scoring.rs`: 履歴照合とパスマッチのキー（索引には持たず `with_normalized_key` が導出する）
-
-**規則の定義は `normalize_entry_key_into` 1 つである**（`normalize_entry_key` はその薄い包み）。記録側と照合側が同じ関数を通ることがバイト一致の根拠なので、**この関数を迂回する正規化比較を書かないこと**。ASCII 高速路は分岐しても結果が変わらない（ASCII 範囲では Unicode 小文字化と ASCII 小文字化が一致する）ことに依存しており、実インデックスの全パスでの一致を `tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key` が固定する。
-
-**同じ関数に「末尾セグメントだけ」を通す派生が 1 つある**（`indexer/keys.rs` の `normalize_file_name_key_into`・反復 9）。PATH スキャンが既存エントリを素通しするための**篩**であり、判定ではない。照合する両辺が同じ手順を通ることだけが「偽陰性を出さない」の根拠なので、**ここでも別実装を書き起こしてはならない**（規則の全文と健全性の論証はその関数の doc）。
-
-この関数の正規化ルールを変更する場合は、3モジュール全てへの影響と冪等性テストを確認する。
+- `indexer::normalize_entry_key` は**冪等**である（規則の定義は `normalize_entry_key_into` の doc、検知器は `migrate_normalize_keys_is_idempotent`）。依存するモジュールは `git grep normalize_entry_key` で数える
+- **記録側と照合側は同じ関数を通す。別実装を足さない。** 1 バイトずれても結果は沈黙でずれる（ブーストやスコアだけが消える）。パスキーは `normalize_entry_key_into`（末尾セグメント版 `normalize_file_name_key_into` も含む）、照合用の名前とクエリは `query::normalize_for_match`、派生文字列の共有判定は `query::measure_derived_sharing` を通す。パスマッチの系統（`search/query_plan.rs` の `path_query`・`search/path_store.rs`）は、照合用の名前とは別の正規化である
+- 規則を変えるときは、依存するモジュールすべてと冪等性を確かめる
 
 ### `char_bitmask` は `query.rs` に一元化済み
 
-`query::char_bitmask()` が唯一の定義（bits 0-25 = a-z, bits 26-35 = 0-9）。`search.rs` と `indexer/columns.rs` の両方がこの関数を import して使用する。ロジックを変更する場合は `query.rs` の1箇所のみ修正すればよい。
-
-**エントリ単位のマスク導出・file_name 導出も `query.rs` に集約済み**（issue #437）: 「ascii なら `char_bitmask`、非 ascii なら `u64::MAX`」は `query::name_char_mask()`、file_name 側の `None→0` を含む版は `query::file_char_mask()`、`target_path` から小文字 file_name を導出する処理は `query::lower_file_name()` に一元化。`search.rs`（Wave 2 / Wave 1）と `indexer/columns.rs`（`derive_columns` / `extend_cached_masks`）が共有する。検索ホットパスのため3関数とも `#[inline]`。
-
-### hidden/system 判定は `indexer::is_hidden_or_system` に一元化済み
-
-`indexer/scan.rs` の `is_hidden_or_system(meta) -> bool`（true = hidden または system）が唯一の定義。`folder.rs::read_dir_entries` はこれを import して使う（旧 `folder.rs::is_hidden_or_system` は逆極性の別定義だったため削除・統合済み、issue #437）。
-
-### `query.rs` の正規化と `Cow<str>` 遅延アロケーション
-
-**照合用の正規化の入口は `normalize_for_match()` の 1 つである**（クエリ側も名前側も通る・#1309）。`Cow<str>` を返し、1 文字の写像がどの文字も変えず、空白が単一の `' '` だけなら借用（ゼロアロケーション）、それ以外は所有に切り替わる。**借用の判定は組み立てと同じ 1 文字の写像に「恒等か」を問う形で書く**——別の条件を書くと、片方だけが変わる文字で 2 パスが割れる（#1310 では titlecase の 31 字がそうだった）。一致と冪等性は全コードポイントの検知器（`query.rs` の `normalize_for_match_*_on_every_codepoint`）が固定する。照合に使う派生文字列を、この関数を迂回して作らない。
+マスクとその派生（`name_char_mask` / `file_char_mask` / `lower_file_name`）は `query.rs` だけが定義する。`search.rs` と `indexer/columns.rs` は import して使い、手書きしない。
 
 ### incremental cache とパスクエリの非互換
 
-`has_path_sep` 時は incremental search を無条件で無効化する。理由: `norm_query`（アクセント折畳み・スペース圧縮）と `path_query`（生クエリベース・アクセント保持・スペース保持）で正規化が異なり、`norm_query` の `starts_with` では `path_query` の単調性を保証できない。パス区切りを含むクエリは稀なため性能影響は無視できる。将来 incremental を有効化するには `prev_path_query` を別途保持して単調性を検証する必要がある。
-
-**非互換は「読まない」だけでなく「書かない」でもある**（#1070）。読み手が `can_reuse` 1 つしか無いのだから、パスクエリで全一致 index を集める意味は無い——実運用点では索引の全件が `c:\` にマッチするため、読まれないまま捨てられる `Vec` が毎打鍵の裾に積まれていた（額は `PERFORMANCE.md`「採用: パスクエリで再利用されえない候補を集めない」が正本）。**収集（write）と再利用（read）は `IncrementalCache::caches_candidates` の 1 本を必ず通す**——片側だけ変わるドリフト（集めないのに読む＝結果が欠ける）を防ぐ根拠はそれだけである。**ただし述語を 1 本にしても「どちらのフィールドを見るか」の誤りは残る**——`plan.has_path_sep` と `plan.norm_query_has_path_sep` は現在の `nucleo-matcher` の下では外延的に一致するので書き換えても挙動テストは緑のままで、その前提が崩れた版では `can_reuse` が単調性の無いまま真を返しうる（前提と射程は `search/scoring.rs` の `skip_name` のコメント）。**read 側の述語は最適化ではなく正しさを担う**——収集（write）は前回の `plan` で、再利用（read）は今回の `plan` で評価されるため、「非パス → パス」の遷移では `prev_candidates` が非空のまま read 側だけが偽になる。**安全性を正規化器の挙動へ立脚させてはならない**——論証は「集めなければ `prev_candidates` が空になり `!is_empty()` が落ちて全件走査へ倒れる。全件走査は母集団そのもの」だけで閉じる（却下した論証経路は `docs/adr/ADR-path-query-tail-top-k.md`）。
+`has_path_sep` のクエリでは incremental search を使わない。収集と再利用は `IncrementalCache::caches_candidates` の 1 本を通し、read 側の述語が正しさを担う（論証は `can_reuse` / `caches_candidates` の doc、却下した経路は `docs/adr/ADR-path-query-tail-top-k.md`）。
 
 ## データ永続化の注意
 
-- シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）
-- **データの意味（セマンティクス）を変更する場合もバージョン番号をバンプする**。バイト列のフォーマットが同一でも、値の解釈が変わればデータ破損と同じ（例: 絶対座標→モニター相対座標。旧データをそのまま新セマンティクスで読むと位置がずれる）
-- `deserialize_failed → save()` パターン（デコード失敗時に空データを即時上書き保存）は HistoryStore など学習データを持つモジュールでデータ喪失を招く。フォールバック読み込みを先に試み、次回の通常 save() で新形式に昇格させること
-- **読み込み失敗は種類で扱いを分ける（`Config::load`）**:
-  - 不在（`NotFound`）= 既定値を生成・保存
-  - 内容破損（TOML parse 失敗・非 UTF-8 `InvalidData`）= `config.toml.bak` へ退避し既定値・**保存しない**
-  - 一時的失敗（権限・ロック等）= 退避も上書きもせず既定値・**保存しない**
-  - `Err(_)` 一括 first-run 扱いは一時的失敗で実データを既定値に潰す。**1分岐だけ直しても同じ `match` の兄弟分岐に同じ破壊的フォールバックが残る**ため、読み込み失敗を直すときは全分岐の保全方針を揃える（#338/#343: アドバーサリアルレビューが兄弟分岐＝read 失敗 arm の漏れと「後続 save で破損元が失われる」非対称を検出した）
-- **TOML フィールドを別の struct に移動するとき**: 旧フィールドを削除するのではなく `#[serde(default, skip_serializing)] pub field: Option<T>` として残し、`apply_migrations()` で `self.old.field.take()` → 新フィールドへ代入する。`Config::default()` の明示的 struct 初期化に `field: None` を追加するのを忘れない。また、`apply_migrations()` には複数のマイグレーションが存在するため、一部だけをテストする場合でも他の副作用（`additional → scan` 移行等）を踏まえたアサーション順序・内容を設計する
-- **serde 表現（enum variant・`#[serde(untagged/flatten/tag)]`）を変更するときは、旧オンディスク形式が deserialize できるテストを「新形式の往復」とは別に必ず追加する**:
-  - 旧形式が新構造体に deserialize 失敗すると `toml::from_str::<Config>` が失敗 → `config.toml.bak` 退避 → **全設定リセット**（`apply_migrations()` は deserialize の後に走るため移行では救えない）＝データ損失
-  - 旧形式は untagged の `Legacy { .. }` variant 等で必ず受理し、移行を `apply_migrations()` で行う
-  - 新形式の往復テストだけでは parse 失敗を検出できず false-green になる（#394: 多観点レビューが `toml` で実証）
-- **オンディスクのシリアライズ struct をリファクタするとき（「バイト形式不変」を主張する場合も含む）は、後方互換を *旧形式の凍結バイト列* を入力にした load テストで証明する**:
-  - 新コードの出力を golden 化しても保証されるのは forward-stability だけで、「新出力＝旧形式」を独立には証明しない（形式が壊れていても新 golden がそれを凍結して素通りする）
-  - 正しい向きは「旧形式の凍結バイト列 → 新コードで deserialize できる」の検証
-  - 形式を変える計画は着手前に最小 spike で往復バイト一致を実証してから plan を建てる（前提が崩れれば approach 自体が不成立）
-  - #461: owned/borrowed struct の `Cow` 統合で当初 golden を新コード出力から採取し forward-stability のみになっていたのを code-reviewer が検出、凍結バイト列からの deserialize に修正した
+- シリアライザを替えるとき・**データの意味を変えるとき**は、どちらも版をバンプし旧形式のフォールバックを足す（バイト列が同じでも解釈が変われば破損と同じ）
+- `deserialize_failed → save()`（デコード失敗で空データを即保存）をしない。フォールバック読み込みを先に試し、次の通常 save で新形式へ昇格させる
+- **読み込み失敗は種類で扱いを分ける**（区分と各枝の保全は `config/io.rs` の `LoadOutcome` / `load_from_dir_reporting` の doc）。1 分岐を直すときは同じ `match` の兄弟分岐の保全方針も揃える
+- TOML フィールドを別 struct へ移すときは削除せず `#[serde(default, skip_serializing)] pub field: Option<T>` で残し、`apply_migrations()` で `take()` して移す。`Config::default()` の明示初期化に `field: None` を足す。部分的なテストでも他の移行の副作用を踏まえてアサーションを組む
+- serde 表現（variant・`untagged` / `flatten` / `tag`）を変えるときは、旧形式が deserialize できるテストを新形式の往復とは別に足す。旧形式が parse に失敗すると `.bak` 退避で全設定が消え、`apply_migrations()` では救えない。旧形式は `Legacy { .. }` variant 等で受理する
+- オンディスク struct を触るときは（「バイト形式不変」を主張する場合も）、後方互換を**旧形式の凍結バイト列**からの load で証明する。新コードの出力を golden にしても forward-stability しか示さない。形式を変える計画は、着手前に最小 spike で往復バイト一致を確かめてから建てる
 
 ## history.rs のキー正規化に関するチェックリスト
 
-`history.rs` のパスキー形式（`normalize_entry_key` の適用有無など）を変更したとき、以下の3者が揃っているか確認する。**クエリキーの正規化は `query.rs::normalize_history_query_key` に一元化済み**（`normalize_for_match` + パス区切り `/` `¥` → `\` 統一）。新しいコードパスで手書き重複を追加せず、このヘルパーを使うこと:
+パスキーの形式を変えたら 3 者を同時に揃える（片方だけ直すと互換性バグが残る）:
 
-1. **新規記録** (`record_launch` / `record_folder_expansion`): 書き込み時に正規化しているか
-2. **既存データ移行** (`load()` 内 `migrate_normalize_keys`): デシリアライズ直後に全キーを正規化しているか
-3. **外部向け参照 API** (`get_global_stats` / `query_count_normalized` 等): 参照時に正規化を内部で完結させているか
+1. 新規記録（`record_launch` / `record_folder_expansion`）で正規化しているか
+2. 既存データ移行（`load()` 内 `migrate_normalize_keys`）で全キーを正規化しているか
+3. 外部向け参照 API（`get_global_stats` / `query_count_normalized` 等）が正規化を内部で完結させているか
 
-「新規記録だけ直した」「参照だけ直した」は必ず互換性バグを残す。3者同時に揃える。
-
-## 内部キー形式の知識を漏洩させない
-
-raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は、呼び出し側に「キーの形式（正規化済みか否か）」の知識を強制する。同等の encapsulated API が存在する場合は必ずそちらを使う。存在しない場合は作る（DRY）。
-
-- 悪例: `get_query_stats(&norm_query)` → 呼び出し側が `m.get(&entry.target_path)` と元ケースで引く
-- 良例: `query_count_normalized(&norm_query, &entry.target_path)` → 正規化を内部で完結
+クエリキーは `query::normalize_history_query_key` を使う。raw なマップを返して呼び出し側にキー形式を知らせる pub API を作らず、`query_count_normalized` の形で包む。
 
 ## IndexCache バージョン変更チェックリスト
 
-`indexer/cache.rs` の `IndexCache` にフィールドを追加する場合、以下を全て更新する:
+`indexer/cache.rs` の `IndexCache` にフィールドを足すときは全部を揃える（1 つ欠けるとキャッシュヒット時とミス時で結果が違う）:
 
-1. **`IndexCache<'a>` 構造体**: 新フィールドを `Cow<'a, [T]>` で追加（owned/borrowed は #461 で `Cow` 統合済み。save は `Cow::Borrowed` で全件 clone 回避、load は `IndexCache<'static>` へ Owned deserialize）
-2. **バージョン番号**: `INDEX_CACHE_VERSION` をバンプ
-3. **旧バージョン用フォールバック構造体**: 旧スキーマを `IndexCacheVN` として残す
-4. **`load_cache()`**: 新バージョン → 旧バージョンのフォールバックチェーンを追加（Cow フィールドは `.into_owned()` で `CachedMasks`/`entries` へ）。**各枝で `LoadCacheResult.version` に読めた版を入れる**——鎖のどの枝で読めたのかを外から見る手段はこれしか無く、取り違えても検索結果は正しいまま枝選択の退行が残る（フィールドの doc が正本）。昇格そのものは「旧版枝に入ったこと」が条件ゆえ**新しい版を足すたびに手当てする必要はない**（→「indexer.rs の索引更新の契機」）
-5. **`save_cache_sorted()`**: 新フィールドの計算ロジックを追加（`Cow::Borrowed` で渡す）
-6. **`CachedMasks` 構造体**: 新フィールドを `Option<T>` で追加（旧キャッシュでは None）
-7. **`SearchEngine::new_with_cached_masks()`**: 新パラメータを受け取り、None 時は自前で計算
+1. `IndexCache<'a>` に `Cow<'a, [T]>` で追加（save は `Cow::Borrowed`）
+2. `INDEX_CACHE_VERSION` をバンプ
+3. 旧スキーマを `IndexCacheVN` として残す
+4. `load_cache_in` のフォールバック鎖へ枝を足し、各枝で `LoadCacheResult.version` に読めた版を入れる
+5. `save_cache_sorted` に新フィールドの計算を足す
+6. `CachedMasks` に `Option<T>` で追加（旧キャッシュでは `None`）
+7. `SearchEngine::new_with_cached_masks()` で受け取り、`None` なら自前で計算する
+8. **直前の版を受け取る側を数え直す**（版を上げた瞬間、直前の版が全ユーザーの手元の版になる）: (a) `cache_byte_breakdown_in` の鎖（`INDEX_WIRE_SINCE` の doc）、(b) `load_cache_in_reports_the_version_it_actually_read` の枝、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは枝選択を通らない）。枝の数を散文に書かない
+9. golden bytes（`index_cache_on_disk_format_is_stable`）を更新する
 
-1つでも欠けるとキャッシュヒット時/ミス時で異なる結果を返す。
+データの意味だけを変えて版を上げるときも、8 と 9 は要る。
 
-**版を 1 つ上げると、直前の版が「全ユーザーの `index.bin` が今まさに置かれている版」へ変わる**（反復 10 で 4 件の取りこぼしが同時に出た）。ゆえにチェックリストへもう 1 項として、**直前の版を受け取る側を全部数え直す**: (a) `cache_byte_breakdown_in` の鎖（現行版だけを読む形にすると**一番測りたい相手にだけ黙る**）、(b) `load_cache_in_reports_the_version_it_actually_read` の枝（この値だけが昇格判定の入力で、取り違えても**検索結果は正しいまま**）、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは枝選択・`config_hash` 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない）。**枝の数を散文に書かないこと**——版を足したときにその数だけが腐り、しかも「揃っている」と読める。
-
-**派生文字列 2 列も同じ形である**（#1003 の次の反復）。`lower_names` は `Cow<'a, LowerNameColumn>`（線上は `seq of Option<str>`）、`lower_file_names` は `Cow<'a, LowerFileColumn>`（線上は 3 variant の `seq of LowerFileName`）で、どちらも要素ごとの `String` を作らない。**`IndexCacheV6` も同じ列の型で読む**——線上表現が v7 と同一だからであり、`Vec<Option<String>>` へ戻すと旧版枝でだけ per-entry の確保が復活する。守るのは `str_arena` の `lower_name_column_wire_format_is_identical_to_vec_of_option_string` / `lower_file_column_wire_format_is_identical_to_vec_of_lower_file_name` で、**2 列とも変異注入で「golden は素通りし、この 2 本だけが落ちる」ことを実測してある**（射程は `str_arena` の `//!`——タグの並べ替えは golden も捕まえる）。
-
-**`names` の型は `Vec<String>` ではないが、線上のバイト列は seq of str である**（#1003）。`IndexCache.names: Cow<'a, NameArena>` は要素ごとの `String` を作らずに 1 本のバッファへ流し込むための表現であり、**線上表現を保っていることが「版を上げずに型を替えられた」根拠のすべてである**。`NameArena` の `Serialize` / `Deserialize` に触るときは、それが**全ユーザーの `index.bin` を版はそのままに読めなくする**変更になりうると承知して触ること（症状は破損ではなく cache-miss ＝ 22〜30 秒の全走査）。守るのは `index_tree.rs` の `arena_wire_format_is_identical_to_vec_of_string` であって golden bytes ではない——**golden の fixture は名前の形を混ぜて持たないので素通りする**（`serialize` に `trim_end` を挟む変異で実測）。
-
-**on-disk 形式の安定ガード**: 旧 `IndexCacheRef`（borrowed 双子）は #461 で `Cow` 統合され消滅した（owned/borrowed のフィールド順ズレ→`index.bin` 無言破損の footgun が型として解消）。統合後は save/load が単一 struct を共有するためフィールド reorder が roundtrip テストを素通りする。**バイト形式の絶対安定は `index_cache_on_disk_format_is_stable`（golden bytes）がガードする**。フィールド追加・順序変更で `INDEX_CACHE_VERSION` をバンプしたら、この golden bytes も更新すること。
+**版を上げずに型を替えるなら、線上表現を 1 バイトも変えない。** `names`（`NameArena`）と派生文字列 2 列（`str_arena`）がこの形で、守るのは golden ではなく `*_wire_format_is_identical_to_*` の検知器である（射程は `index_tree.rs` / `str_arena.rs` の doc）。崩すと全ユーザーが版はそのままに読めなくなる（症状は cache-miss の全走査）。
 
 ## engine.rs のロック最小化パターン
 
-`Engine` は Tauri 側で `Mutex<Engine>` に包まれる。**`Config` だけはその錠の外から読める**——`Arc<RwLock<Config>>` で持ち、`config_handle()` が同じ `Arc` を渡す（#1032・契約の正本は同メソッドと `config` フィールドの doc）。**実運用点での lock 保持時間の正本も同メソッドの doc である**（#1128）——`PERFORMANCE.md` にこの値の記録は無く、そちらへ足さずコードの doc を正本にした理由は `ADR-measurement-canon-in-code-doc`。**読みだけが外に出ており、書き（`update_config`）は `&mut self` ＝ `Mutex<Engine>` の内側に残る。この非対称を崩してはならない**——`complete_index_drain` の「index を swap してから現在の `IndexInputs` と照合する」原子性は、書き手が外側の錠を要求することだけで成り立っている（#347/#348-A の lost-update 対策）。ロック保持時間を最小化するためのパターンは他に 3 つある:
-
-- **`FolderListContext`**: ロック内で `capture_folder_list_context()` してスナップショットを取得 → ロック外で I/O（`read_dir_entries`）→ ロック内で `finalize_folder_list()` でスコアリング。設定変更との微小な不整合は許容する設計判断
-- **`PrebuiltIndex`**: ロック外で構築 → ロック内で `apply_prebuilt_index()` でスワップ。SearchEngine の構築コスト（Wave 1/2 の並列計算）をロック外に追い出す。**入口は `PrebuiltIndex::from_material` の 1 つである**——派生データの有無で建て方が分かれるのは `SearchEngine::from_material` の 1 か所に閉じており、呼び出し点は分岐を持たない。`PrebuiltIndex::new` は `#[cfg(test)]` ゆえ製品から呼べない
-- **`PreparedHistorySave`**: ロック内で剪定・シリアライズ済み snapshot を取得 → ロック外で `save()`。process-wide の書き込み mutex と history path ごとの完了 sequence により、並行した古い snapshot が新しい `history.bin` を上書きしない。終了時の `prepare_history_flush` は、通常保存が prepare 済み・未書込のウィンドウを回収するため `dirty_count` に関係なく最終 snapshot を生成する
-
-新しい Engine メソッドを追加するとき、I/O やインデックス構築をロック内で行わないよう注意する。
+- `Config` だけは `Mutex<Engine>` の外から読める（`config_handle()`）が、書き（`update_config`）は `&mut self` のまま内側に置く。この非対称を崩さない（理由は `engine.rs` の `config` フィールドの doc）
+- `FolderListContext`: ロック内でスナップショット → ロック外で I/O → ロック内で `finalize_folder_list()`
+- `PrebuiltIndex`: ロック外で構築 → ロック内でスワップ。入口は `PrebuiltIndex::from_material` の 1 つ
+- `PreparedHistorySave`: ロック内で snapshot → ロック外で `save()`
+- 新しい `Engine` メソッドで I/O や索引構築をロック内に入れない
 
 ## index.bin 書き込みの排他（INDEX_WRITE_LOCK）
 
-`index.bin` を scan+save する経路は**すべて `INDEX_WRITE_LOCK`（`indexer/cache.rs` の module-level `static Mutex<()>`）を経由する**。`BinFile::save` の tmp→rename は固定 tmp 名（`index.bin.tmp`）での原子的置換であり、単一書き手が前提。複数経路が同時に書くと tmp ファイルを食い合い破損する。
-
-- 走査して書く経路（`rebuild_and_save` / `load_or_scan_with_stats` の cache-miss 枝）: `with_index_write_lock`（blocking）で取得
-- 走査せずに書く経路（ロードの旧版枝からの形式昇格・`upgrade_legacy_cache_in`）: 同じく `with_index_write_lock`。読めた旧版の走査結果をそのまま現行版で書き直すだけで、索引の中身は変えない
-
-**世代機構（読んだ時点の世代を控え、保存の直前に照合する）は #1023 で撤去した。** 守っていたのは「**内容を決めてから保存するまでの間に、別の書き手が新しい索引を書き終える**」ウィンドウであり、それを持つ書き手は背景再スキャンだけだった——22〜30 秒の走査をロックの**外**で終えてから、保存のためにロックを取りに行っていた。今の書き手 3 つのうち 2 つ（cache-miss 枝・`rebuild_and_save`）は走査から保存までを 1 回のロック取得で覆うので、このウィンドウは構造的に開かない。
-
-**例外は形式昇格である**——`index.bin` を読むのはロックの外で、保存だけがロックの内側にある。**そのウィンドウが今日開かないのは機構ではなく順序による**: 製品でこの経路を通る呼び出し元は `main` の起動段の 1 つだけで、もう一方の書き手（索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。**ロード後に走りうる書き手をこの経路へ足す日には、ウィンドウが戻る。** なお**プロセスをまたぐ同時起動は世代機構でも守れていなかった**——世代は `INDEX_WRITE_LOCK` と同じくプロセス大域の `static` であり、射程が同じだからである。
-- `save_cache_sorted` 自身はロックを取らない（呼び出し側が保持する契約）。ロック取得済みのクロージャ内から呼ぶ。`save_cache_sorted` がロックを取ると自己デッドロックする
-- **`index.bin` を書く新しい経路を追加するときは、必ず `with_index_write_lock` を経由させる**
+- **`index.bin` を書く新しい経路は必ず `with_index_write_lock` を経由させる**（固定 tmp 名の置換ゆえ単一書き手が前提）。`save_cache_sorted` 自身はロックを取らない
+- 形式昇格の枝は読みがロックの外にあり、そのウィンドウは起動順序だけで閉じている（`INDEX_WRITE_LOCK` の doc）。ロード後に走りうる書き手を足すときは見直す
 
 ## indexer.rs の索引更新の契機
 
-**索引の中身が更新される契機は明示操作の 3 つだけである**（初回構築・`/s` による手動再構築・設定変更による再構築。`SPEC.md` §3.3）。キャッシュヒットの起動は `index.bin` を読むだけで、背景での走査は行わない。自動の背景再スキャンを間引くのではなく撤去した根拠と、そこで捨てた設計（`built_at` を使う間引き）の中身は `docs/adr/ADR-rescan-explicit-only.md` が正本。
-
-**ただし「更新の契機」と「`index.bin` を書く契機」は同じではない。** 書く側には 4 つ目があり、それが下の形式昇格である——キャッシュヒットの起動でも、置かれているのが旧版なら書き戻す。**中身は変わらないので更新ではない**が、「読んで終わり」とも読まないこと。
-
-- **`cache_load` と `total` の間に処理を足すときは、`LoadOrScanStats` に並ぶ項目を必ず作る**（正本はその struct の doc）。反復 6 で実際に踏んだ——ロード直後に居た全エントリ複製がどのフェーズ計測にも現れず、起動段の live ブロックの 1/3 を占めたまま見えなかった。残余は `tests/memory_footprint.rs` が毎回出す
-- **旧版の `index.bin` の現行版への書き戻しは `load_cache_in` の旧版枝（`upgrade_legacy_cache_in`）へ置く。** かつては背景再スキャンが担っていたが、索引の中身が変わらない間は save の契機が来ず、そのユーザーの `index.bin` は旧版のまま何日でも残り、新形式の削減を**永久に受け取らない**問題を持っていた（2026-08-07 実測: v5 導入後の実運用点が v4 のまま残り、毎起動で `normalized_keys` 35.98 MiB を読んでは捨てていた。**症状は「遅い」だけで検索結果は正しいまま**ゆえ挙動テストでは捕まらない）。ロードのたびに必ず通る旧版枝へ移すことでこの経路への依存を断った。**「昇格をロード側に置いてはならない」の射程は v7 の枝だけである**——v7 は木を直読みするので `entries: Vec<AppEntry>` が存在せず、木から作り直すと反復 6 で消した 62.5 MiB の複製が復活する。v2〜v6 の枝は走査結果 `cache.entries` を手に持って `IndexTree::build` へ渡す 1 行の置換で済むため、複製は発生しない。検知器は `load_cache_upgrades_a_legacy_format_in_place` と `load_cache_does_not_rewrite_when_the_format_is_current` の対
-- **`save_cache_sorted(_in)` を呼ぶ直前に `sort_entries_canonical` を通す**（契約の正本は同関数の doc）。親の解決が整列済みを前提に二分探索するため、崩すと木が平たくなりフルパスが `table` へ実体で戻る。**守るのは正しさではなくサイズである**——未整列でも `IndexTree::build` は別の親を返さず、取りこぼしが根になるだけなので検索結果は変わらない。検知器は `legacy_upgrade_sorts_before_saving_so_the_tree_stays_shared` で、**射程は昇格枝に限る**——3 つの書き手のうち入力の並びが自分の制御下に無いのはそこだけだからである（他の 2 つは自分で走査した結果を数行上で整列させる）
-- **形式昇格は `built_at` を打ち直さない**（`BuiltAt::{Scanned, Carried}`）。走査していない書き手が現在時刻を打つと、設定アプリの最終構築日時が**最も索引が古い層**——旧版のまま放置していたユーザー——にだけ「たった今構築した」と嘘をつく。理由の正本は `BuiltAt` の doc、検知器は `upgrade_carries_the_built_at_it_read`（両方向）
+- 更新の契機と `index.bin` を書く契機は別である（`indexer/cache.rs` の `//!`）。旧版の書き戻しは `load_cache_in` の旧版枝（`upgrade_legacy_cache_in`）に置く
+- **木を直に読む版（`entries` を持たない版）の枝で、木から作り直して昇格させない**——ロード直後に全エントリの複製が戻る（却下した案は `docs/adr/ADR-index-v7-cache-miss.md`）
 
 ## `scan_all` の重複排除
 
-**`scan_all` の重複排除は根ごとに `check`/`record` を割り当てる**（`root_roles`）。積むのは「後続の根と重なる」根だけで、先行とだけ重なる根は照合のみでキーを積まない——木の走査は同じディレクトリを二度読まないので、1 回の走査の中で同じ正規化キーが二度現れる経路は**根が入れ子のとき以外に無い**（`dedup_scan_paths` は完全一致マージのみゆえ入れ子の根は表現可能であり、**素で消すことはできない**）。実運用点は最大の根 `C:\` が最後に来るため、その根ぶんの `String` 確保が消える（額は `PERFORMANCE.md`「採用: `scan_all` の `seen` を根ごとの役割（`check`/`record`）で条件づける」が正本）。**検知器は両方向を固定する**（`scan_all_dedups_when_roots_are_nested` / `scan_all_dedups_when_the_child_root_comes_first`）——役割は木の深さではなく**走査順**の関数なので、親が先・子が先で役割が入れ替わり、それでも重複排除が成立することを走査結果で見る。**「片方では捕まらない変異が在る」とは書かない**——2 根の治具でそれを示せる変異は見つかっておらず（役割の入れ替えも結線の破壊も両順序で対称に落ちる）、示せない必然を理由として書けば規範に反する。**退行の射程は 2 段に分かれる**: `root_roles` の役割割り当ての退行（例: 最大の根が積む側に回る）は `root_roles_over_the_real_shape_leave_the_largest_root_inert` が捕まえる——ここは CI で守られる。一方、`Dedup::accept` の照合枝で確保が復活する退行や `scan_all` の結線そのものの退行は、走査結果が同じままなので挙動テストでも `root_roles` の単体テストでも捕まらない。捕まえるのは `tests/memory_footprint.rs` の確保回数だけで、これは `#[ignore]` の手動計測ゆえ CI は守らない
+根ごとの役割（`root_roles`）で照合と記録を分けている（機序は `indexer/scan.rs` の `root_roles` の doc）。CI が守らない退行の射程は `Dedup::accept` の doc。
 
 ## エントリ名の導出ルール
 
-`indexer/scan.rs` のスキャンでは:
-- **ファイル**: `file_stem()` を `name` に使用（拡張子なし）。例: `firefox.lnk` → `name: "firefox"`
-- **フォルダ**: `file_name()` を `name` に使用（そのまま）。例: `Projects/` → `name: "Projects"`
-
-`folder.rs` のフォルダ内列挙では `file_name()` をそのまま使う（拡張子付き）。この違いは意図的で、フォルダ展開時にはファイル拡張子がフィルタリングの手がかりになるため。
-
-**エントリ名導出は共通関数へ括り出さない**（issue #997）: #995 で生じた `index_tree.rs` の fixture は `0bb7b11` で利用対象と一緒に撤去済み。現行の導出は `indexer/scan.rs` 内で拡張子照合・空名除外・再帰継続・重複排除の各処理に隣接し、共通関数はそれらを束ねないためインラインを維持する。別モジュールに実行可能な消費者が再び生じたら再検討する。
+`indexer/scan.rs` はファイルを `file_stem()`（拡張子なし）、フォルダを `file_name()` で名付ける。`folder.rs` のフォルダ内列挙は拡張子付きの `file_name()`（展開時は拡張子が手がかりになるため）。この導出は共通関数へ括り出さない（各処理に隣接しており束ねる消費者が無い・#997。別モジュールに消費者が生じたら再検討）。
 
 ## Config のデシリアライズ経路
 
-`Config::load()` はデシリアライズ後に `apply_migrations()` で後処理（レガシーフィールド移行・正規化・システムショートカットフォールバック）を実行する。**Config をデシリアライズする新しい経路**（インポート、テスト用ファクトリ等）を追加するときは、`apply_migrations()` の適用要否を明示的に判断する。迂回すると旧版データの移行漏れ（例: `paths.additional` の消失）が起きる。
-
-### `Option<T>` フィールドを migration の「明示設定か否か」の sentinel に使う場合
-
-`None` = TOML 未記載、`Some(v)` = 明示設定 として使う場合、`SearchConfig::default()` は **`None` を返すこと**。`Some(default_value)` を返すと、`[search]` セクション全体が TOML に存在しない場合でも serde が `SearchConfig::default()` を使うため `Some(v)` になり、`apply_migrations()` の `is_none()` チェックが常に false になって legacy 値の移行が起きなくなる。
-
-- 正しいパターン: `Default` → `None`、使用時に `effective_*()` アクセサで `unwrap_or_else(default_fn)` する
-- migration 後の「None を解消する」処理 (`get_or_insert_with`) は `apply_migrations()` の最後にまとめて実行する
-- `reset_to_default()` でも `Config::default()` 後に `apply_migrations()` を呼び、None を解消してから保存する
-
-## Gotcha（計測の罠）
-
-**ここに貯めるのは「対象ではなく**計器の方が**壊れていた」事例だけである。** 同型を踏んだら 1 件足す。挙動の不変条件は上の各節が正本であり、ここへ写さない。
-
-### 走査の進行・終端を I/O 読み取り回数で判定してはならない（使うのは CPU 時間とスレッド数）
-
-`scan_all` のような長い走査を**プロセスの外から**測るときの話である（2026-08-09・#1001 で実測）。
-
-- **PowerShell 7 の `Get-Process` は `ReadOperationCount` を持たない**（返るのは .NET の `System.Diagnostics.Process`。あの値は PS 5.1 の WMI 由来）。**空値が 0 として計算に混ざり**、「増分が閾値未満なら頭打ち」の判定が走査の途中で誤発火した——走っているのに「終わった」と読んだ。I/O カウンタが要るなら `Get-CimInstance Win32_Process`
-- **取り直しても値はほぼ動かない。** `read_dir` はメタデータ操作で `OtherOperationCount` 側に立つため、31 万ディレクトリを歩いても読み取り回数は 16 のままだった
-- 実際に効いたのは `TotalProcessorTime`（走査中は 1 コアを使い切るので増分 ≒ 経過秒）と `Threads.Count`（作業スレッドの消滅）で、**独立な 2 つの信号が同じ時刻を指したことが「その区間は再スキャンだった」の帰属の根拠**になった
-- 一般形: **「計器が黙っている」と「対象が止まっている」は別である。** 全部 0・全部空の観測量は、まず計器の欠落を疑う
-
-### 製品の入口を通るテストは、その経路へ計器を足した瞬間に実 `%APPDATA%\Snotra` を書き始める
-
-**しかもテストは全部通ったままである**（判定が 1 つも変わらないため）。#1013 で当時の背景再スキャンに記録を足したところ、`Config::config_dir()` を内部で解決する入口を通る既存テスト 2 本が実 `rescan-log.jsonl` へ書き始めた（実測: 当該ファイルの全 36 行がテスト由来・実起動由来 0 行）。上限つきの記録なら、テスト実行が実運用の記録枠を食いつぶす。
-
-- 直し方は **dir 注入の入口**（`load_cache_in` / `save_cache_sorted_in` のように `dir: &Path` を取る形）へ寄せること
-- **`SNOTRA_CONFIG_DIR` で迂回してはならない**——プロセス大域の env であり、並列実行中の他テストの保存先まで動かす
-- **検算は「フルテスト実行の前後でファイルの行数が変わらないこと」を実測する。** 緑であることは根拠にならない
-- 同型の先例が「開発ルール」の `HistoryStore::load()` 禁止（#963）である——**あちらは実データを読む側、こちらは書く側**。読む側は結果が環境で揺れ、書く側は結果が揺れないまま実データを汚す
+- `Config` をデシリアライズする新しい経路（インポート・テスト用ファクトリ等）は `apply_migrations()` の要否を明示的に判断する（迂回すると旧版の移行が漏れる）
+- `Option<T>` を「明示設定か」の sentinel に使うなら、`Default` は `None` を返す（`Some` だと `[search]` 不在でも `is_none()` が偽になり移行が起きない）。使う側は `effective_*()` で既定へ解決し、`get_or_insert_with` は `apply_migrations()` の最後にまとめる。既定へ戻すときは `Config::normalized_default()`（移行を通した既定値）を使う（検知器 `normalized_default_resolves_all_migration_sentinels`）

@@ -77,16 +77,16 @@
 
 ## フェーズ 1 — 退去
 
-- [ ] R2 `Dedup::accept` の doc
-- [ ] R3 `PERFORMANCE.md`「この文書へ記録するときの規約」
-- [ ] R4 `INDEX_WRITE_LOCK` の doc
-- [ ] F1〜F3 コードの側の同じ偽
+- [x] R2 `Dedup::accept` の doc
+- [x] R3 `PERFORMANCE.md`「この文書へ記録するときの規約」
+- [x] R4 `INDEX_WRITE_LOCK` の doc
+- [x] F1〜F3 コードの側の同じ偽
 
 ## フェーズ 2 — 書き換え
 
-- [ ] 草案へ修正を当て、`snotra-core/CLAUDE.md` を置き換える
-- [ ] 参照元 P1〜P7 を直す
-- [ ] 検算（集合差・消した語彙の `git grep`・`governance:check`・`cargo doc`）
+- [x] 草案へ修正を当て、`snotra-core/CLAUDE.md` を置き換える
+- [x] 参照元 P1〜P7 を直す
+- [x] 検算（集合差・消した語彙の `git grep`・`governance:check`・`cargo doc`） — 集合差で落ちた識別子 253 語は、正本がコード側・退去先・撤去済みのいずれか（敵対的調査が確かめていなかった hidden/system の単一定義は `indexer/scan.rs` の `is_hidden_or_system` の doc にあることを主が確認）。消した見出しの語彙は凍結層の外で 0 件。`governance:check` 全 17 件 passed・`cargo doc` 警告 0・fmt 差分なし
 
 ## plan-review 結果
 

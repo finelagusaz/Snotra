@@ -1,9 +1,8 @@
-//! パスキーの正規化（小文字化 + `/` → `\`）と、その末尾セグメント版。
+//! パスキーの正規化（前後空白の除去・小文字化・`/` → `\`）と、その末尾セグメント版。
 //!
 //! **規則の定義はこのモジュールに閉じる。** 記録側（`super::scan` の重複排除・`crate::history`）と
 //! 照合側（`crate::search`）が同じ関数を通ることがバイト一致の根拠であり、正規化比較を別実装で
-//! 書き起こしてはならない。冪等性の契約と依存する 3 モジュールの一覧は
-//! `snotra-core/CLAUDE.md`「`normalize_entry_key` の冪等性契約」。
+//! 書き起こしてはならない。冪等性の契約は `snotra-core/CLAUDE.md`「`normalize_entry_key` の冪等性契約」。
 
 pub fn normalize_entry_key(path: &str) -> String {
     let mut normalized = String::with_capacity(path.len());

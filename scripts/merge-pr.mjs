@@ -106,8 +106,8 @@ export function isIsoTimestamp(s) {
 class EnvError extends Error {}
 
 const SHA = /^[0-9a-f]{40}$/;
-/** 宣言した issue が事後の検索に現れるまでの再試行（索引の遅延）。間隔はミリ秒 */
-const SEARCH_RETRIES = [5_000, 10_000];
+/** 事後検証の観測が揃うまでの待ち（close の反映と索引の遅延）。間隔はミリ秒。先頭はマージ直後の状態の引き直しにも使う */
+const SEARCH_RETRIES = [5_000, 10_000, 15_000];
 
 const realDeps = {
   exec: (cmd, args, cwd) => spawnSync(cmd, args, { cwd, encoding: "utf8", shell: false }),
@@ -253,53 +253,77 @@ export function run(argv, cwd, deps = realDeps) {
   }
 
   const findings = [];
+  let observations = 0;
+  let waited = 0;
   try {
     if (!isIsoTimestamp(mergedAt)) throw new PostError(`mergedAt が ISO 8601 でない（${JSON.stringify(mergedAt)}）。検索に渡せない`);
 
     const declared = opts.closes.map((r) => normalizeRef(r, repo));
-    // (1) 宣言した issue は番号で引く（検索の索引に依らない）
-    for (const ref of declared) {
-      const [owner_repo, n] = ref.split("#");
-      const s = json(deps, root, ["issue", "view", n, "-R", owner_repo, "--json", "state"], PostError);
-      if (s.state !== "CLOSED") findings.push(`宣言した ${ref} が閉じていない（${s.state}）`);
-    }
-
-    // 検算: 同じ時刻の形で、当の PR が merged の検索に現れること
-    const prs = json(deps, root, ["pr", "list", "--state", "merged", "--search", `merged:>=${mergedAt}`, "--json", "number", "-L", String(SEARCH_LIMIT)], PostError);
-    if (!prs.some((p) => String(p.number) === opts.pr)) {
-      throw new PostError(`merged:>=${mergedAt} の検索に #${opts.pr} が現れない。検索が効いていないので、閉じた issue の一覧を信用できない`);
-    }
-
-    // (3) マージ以降に閉じた issue。宣言した同リポジトリの issue が現れるまで待つ（索引の遅延）
     const local = declared.filter((r) => r.startsWith(`${repo}#`)).map((r) => r.split("#")[1]);
-    let closed;
-    for (let attempt = 0; ; attempt++) {
-      closed = json(deps, root, ["issue", "list", "--state", "closed", "--search", `closed:>=${mergedAt}`, "--json", "number", "-L", String(SEARCH_LIMIT)], PostError);
-      if (closed.length >= SEARCH_LIMIT) throw new PostError(`closed:>=${mergedAt} の検索が上限 ${SEARCH_LIMIT} 件に達した。打ち切りと区別できない`);
-      const seen = new Set(closed.map((i) => String(i.number)));
-      const unseen = local.filter((n) => !seen.has(n));
-      if (unseen.length === 0) break;
-      if (attempt >= SEARCH_RETRIES.length) {
-        throw new PostError(`宣言した issue（${unseen.map((n) => `#${n}`).join(", ")}）が closed の検索に現れない。索引が未反映で、検索を信用できない`);
+
+    // 1 回分の観測。3 段（宣言した issue の状態・検算・closed の検索）をすべて引く。マージと close の反映、
+    // 検索の索引は秒単位で遅れるので、どの段も「揃うまで待つ」の対象にする（#1321）
+    const observe = () => {
+      // 宣言した issue は番号で引く（検索の索引に依らない）
+      const notClosed = [];
+      const openLocal = new Set();
+      for (const ref of declared) {
+        const [owner_repo, n] = ref.split("#");
+        const s = json(deps, root, ["issue", "view", n, "-R", owner_repo, "--json", "state"], PostError);
+        if (s.state !== "CLOSED") {
+          notClosed.push(`${ref} が閉じていない（${s.state}）`);
+          if (owner_repo === repo) openLocal.add(n);
+        }
       }
+      // 検算: 同じ時刻の形で、当の PR が merged の検索に現れること。通らなければ closed の検索を信用しない
+      const prs = json(deps, root, ["pr", "list", "--state", "merged", "--search", `merged:>=${mergedAt}`, "--json", "number", "-L", String(SEARCH_LIMIT)], PostError);
+      const verified = prs.some((p) => String(p.number) === opts.pr);
+      const closed = json(deps, root, ["issue", "list", "--state", "closed", "--search", `closed:>=${mergedAt}`, "--json", "number", "-L", String(SEARCH_LIMIT)], PostError);
+      // 上限への到達は待っても解消しないので、その場で打ち切る
+      if (closed.length >= SEARCH_LIMIT) throw new PostError(`closed:>=${mergedAt} の検索が上限 ${SEARCH_LIMIT} 件に達した。打ち切りと区別できない`);
+      const numbers = closed.map((i) => String(i.number));
+      // 閉じていないと番号で確かめた issue は、検索に現れなくて当然である。索引の未反映には数えない
+      const unseen = local.filter((n) => !numbers.includes(n) && !openLocal.has(n));
+      return { notClosed, verified, unseen, numbers };
+    };
+
+    // 揃うまで観測し直す。宣言外の close は待っても消えない所見なので、揃ったかの判定には入れない
+    let obs;
+    for (let attempt = 0; ; attempt++) {
+      observations = attempt + 1;
+      obs = observe();
+      if (obs.notClosed.length === 0 && obs.verified && obs.unseen.length === 0) break;
+      if (attempt >= SEARCH_RETRIES.length) break;
       deps.sleep(SEARCH_RETRIES[attempt]);
+      waited += SEARCH_RETRIES[attempt];
     }
-    const undeclared = closed.map((i) => String(i.number)).filter((n) => !local.includes(n));
-    if (undeclared.length > 0) {
-      findings.push(
-        `宣言していない issue がマージ以降に閉じた: ${undeclared.map((n) => `#${n}`).join(", ")}。並行する作業が閉じた可能性もあるので、各 issue の timeline で閉じた主体を確かめ、このマージが閉じたなら gh issue reopen <N>`,
-      );
+
+    for (const r of obs.notClosed) findings.push(`宣言した ${r}`);
+    // 依存の順を保つ: 検算が通らない観測の closed 一覧からは、何も結論しない
+    if (!obs.verified) {
+      findings.push(`検算が通らない: merged:>=${mergedAt} の検索に #${opts.pr} が現れない。検索が効いていないので、閉じた issue の一覧を信用できない`);
+    } else if (obs.unseen.length > 0) {
+      findings.push(`宣言した issue（${obs.unseen.map((n) => `#${n}`).join(", ")}）が closed の検索に現れない。索引が未反映で、検索を信用できない`);
+    } else {
+      const undeclared = obs.numbers.filter((n) => !local.includes(n));
+      if (undeclared.length > 0) {
+        findings.push(
+          `宣言していない issue がマージ以降に閉じた: ${undeclared.map((n) => `#${n}`).join(", ")}。並行する作業が閉じた可能性もあるので、各 issue の timeline で閉じた主体を確かめ、このマージが閉じたなら gh issue reopen <N>`,
+        );
+      }
     }
   } catch (e) {
     // 想定外の例外も 3 にする——未捕捉で落とすと node は exit 1（「マージしていない」）を返す
     findings.push(`事後検証を確かめられない: ${e instanceof PostError ? e.message : describe(e, true)}`);
   }
 
+  // 観測回数と待ちの合計は、索引の反映の遅れを次の実マージから溜めるために常に出す（#1321）
+  const tally = `\n（事後検証: 観測 ${observations} 回・待ち計 ${waited / 1000} 秒）`;
   if (findings.length > 0) {
-    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${ghNote}`);
+    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${tally}${ghNote}`);
     return 3;
   }
-  deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）${ghNote}`);
+  deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）${tally}${ghNote}`);
   return 0;
 }
 

@@ -15,13 +15,13 @@
    - e. head ブランチを base にする open PR が無い（`delete_branch_on_merge: true` ゆえフラグに依らず検査する）
    - f. 道具の要約の照合を、hook と共有する `verifiedSummaryState`（下表）に `branch: headRefName`・`target: headRefOid` で当てる。head の commit が手元に無ければ、道具の側で `git fetch origin refs/pull/<N>/head` してから当てる（fetch は共有関数の外。hook の 4 秒の git 予算に載せない）。要約が無いときは止め、迂回口は作らない。出力には復帰手順（`gh pr checkout <N>` → `npm run verify:tree -- run --sha HEAD ...` → 再実行）を書く。Dependabot の PR もこの手順で復帰でき、道具を経ずに Web UI でマージすれば残余になる。GitHub の "Update branch" で main を取り込んだ head も、取り込みが `workspace/` の外を動かしていれば止まる（fail-closed の向き。復帰は同じ手順）
 3. マージは `gh pr merge <N> --squash --body-file <path> --match-head-commit <headRefOid>` の 1 回だけ。gh は `shell: false` で呼ぶ
-4. マージを試みたら、gh の終了コードに依らず `gh pr view --json state,mergedAt` で成否を確定する。`MERGED` でなければ exit 1
-5. **マージ後**の検証。ここで落ちたら exit 3 を返し、出力の最初の行で「マージ済み」と名乗る
+4. マージを試みたら、gh の終了コードに依らず `gh pr view --json state,mergedAt` で成否を確定する。`MERGED` でなければ、gh pr merge が非 0 なら exit 1、0 なら反映の遅れでありうるので exit 3（委譲レビュー W-2 で改めた）
+5. **マージ後**の検証。ここで落ちたら exit 3 を返し、出力の最初の行で「マージ済み」と名乗る（成否そのものを確かめられないときは「成否を確かめられない」と名乗る・委譲レビュー M-3）
    - (1) 宣言した issue を番号ごとに `gh issue view --json state` で引き、すべて `CLOSED` か
    - (3) `mergedAt` が ISO 8601（`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`）であることを検めてから、`gh issue list --state closed --search "closed:>=<mergedAt>" -L <上限> --json number` を打つ。件数が上限に達したら exit 3（検算不能）。宣言外の番号があれば報告して exit 3。並行セッションの可能性を併記し、reopen はしない
    - 検算: `gh pr list --state merged --search "merged:>=<mergedAt>"` に当の PR が現れること（時刻の形が効いている証拠）。現れなければ exit 3。宣言した issue が (3) に現れなければ短く再試行し、それでも現れなければ「検索が未反映」として exit 3。**0 件を「該当なし」として 0 で返す経路を持たない**
    - (2)「残すと決めた issue が OPEN か」は、b の完全一致（予防）と (3) の宣言外の検出（事後）が覆う
-6. 終了コード: 0 = マージ済みで事後検証もすべて緑・1 = マージ前に止めた（マージしていない）・2 = 走らなかった（使用法・環境・linked worktree・マージ前の gh/git の失敗。マージしていない）・3 = **マージ済み**だが、事後検証が赤か検算不能（reopen などの判断が要る）。0〜2 は既存の道具と同じ意味で、3 を足すのは「マージしたか」を終了コードだけで読めるようにするため
+6. 終了コード: 0 = マージ済みで事後検証もすべて緑・1 = マージ前に止めた（マージしていない）・2 = 走らなかった（使用法・環境・linked worktree・マージ前の gh/git の失敗。マージしていない）・3 = **マージを試みたあと**の要確認（事後検証が赤・検算不能・成否を確かめられない。reopen などの判断が要る）。0〜2 は既存の道具と同じ意味で、3 を足すのは「マージしたか」を終了コードだけで読めるようにするため
 7. root は `scripts/verify-tree.mjs` と同じ導き方で決める（git-dir と common-dir が一致しなければ exit 2）。linked worktree から打たれた場合に、hook の `findUp` 型の取り違えを起こさない
 8. hook（`pre-bash.mjs`）の挙動は変えない。照合を切り出して共有したあとも、既存の hook テストは件数・結果とも変わらない（新しいテストは件数に別勘定で足す）
 9. `/merge-pr` は user 起動専用のままにする。道具を経ない `gh pr merge`（Web UI・手打ち）は `--no-verify` と同格の人間専用の迂回として、残余に明記する
@@ -33,7 +33,7 @@
 | `.claude/hooks/pre-bash.mjs` | `readVerifyState` から、要約の読み込み → `judgeSummary` → 2 端点の diff → `workspace/` の外の抽出を、`export function verifiedSummaryState({ root, branch, target, summaryPathFor })` へ切り出す。`readVerifyState` は root とブランチを導いたうえで `target: "HEAD"` を渡して呼ぶだけにする。挙動は変えない。JSDoc に消費者が 2 つ（hook と `scripts/merge-pr.mjs`）あることを書く。拒否文言（`VERIFY_REMEDY`）はそのままにし、道具はマージ時の復帰手順を自分で足す |
 | `.claude/hooks/pre-bash.test.mjs` | `verifiedSummaryState` に `target` として HEAD 以外の sha を渡すケースを足す（要約の sha と target の間に `workspace/` の外の変更がある・無い・要約の branch が違う）。既存ケースは変更しない |
 | `scripts/verify-tree.mjs` | `mainContext` から root の導出（linked worktree の拒否まで）を `export function mainRoot(cwd)` へ切り出し、`mainContext` はそれを呼ぶ。挙動は不変 |
-| `scripts/merge-pr.mjs`（新規） | 道具本体。判定は入力注入の純関数（`parseArgs`・`checkClosingRefs`・`checkTitle`・`checkBodyKeywords`・`checkIsoTimestamp`・`judgePostMerge`）と、`gh` / `git` の実行器を注入する `run(opts, exec)` |
+| `scripts/merge-pr.mjs`（新規） | 道具本体。判定は入力注入の純関数（実装での名前: `parseArgs`・`findClosingKeywords`・`titleClosesIssue`・`normalizeRef`・`diffClosing`・`isIsoTimestamp`）と、`gh` / `git` / 要約の照合を注入する `run(argv, cwd, deps)`（計画時の仮名から改めた・委譲レビュー L-3） |
 | `scripts/merge-pr.test.mjs`（新規） | 純関数のフィクスチャと、偽の実行器による経路のテスト（下の「テスト方針」） |
 | `package.json` | `"merge:pr": "node scripts/merge-pr.mjs"` |
 | `.claude/skills/merge-pr/SKILL.md` | 手順を「道具を走らせて出力を読む」へ縮める。起動形は Git Bash では `npm run merge:pr -- ...`、PowerShell では `node scripts/merge-pr.mjs ...`（`npm.ps1` が最初の `--` を食う・`docs/build-commands.md` の `prose:sweep` の注記と同じ。実装時に実測して決める）。終了コードごとに次の一手を書く。exit 1 で人へ返されたときの本文の直し方（9 形の注意）・件名は PR タイトルで直すこと・タイトルの型名の直後に番号を置かない注意・reopen・`--auto` を使わないこと・道具を経ないマージは残余であること、は残す。「唯一の防御」の宣言は偽になるので消す。「`--delete-branch` を付ける前に」の節は、道具がフラグに依らず検査することを書いて縮める。経緯（`--subject` の実測・`ConvertFrom-Json` の実測）は ADR の追記へ移す。frontmatter の `description` と `allowed-tools`（`Bash(npm *)` / `Bash(node *)` を足す）も直す |

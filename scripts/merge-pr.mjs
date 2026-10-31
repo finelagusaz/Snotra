@@ -67,10 +67,11 @@ export function parseArgs(argv) {
   return out;
 }
 
-// 9 形（close / fix / resolve とその -s / -d 形）。コロンの有無・他リポジトリ・issue URL を含め、
-// 大文字小文字を問わない。過剰検出の側へ倒す（拾い損ねると一覧に現れないまま閉じる）
+// 9 形（close / fix / resolve とその -s / -d 形）。コロンの有無・他リポジトリ・issue URL・`GH-N` を含め、
+// 大文字小文字を問わない。過剰検出の側へ倒す（拾い損ねると一覧に現れないまま閉じる。`GH-N` が close に
+// 効くかは確かめていないが、拾っても失うのは再実行 1 回である）
 const KEYWORD = String.raw`\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b`;
-const TARGET = String.raw`(?:[\w.-]+\/[\w.-]+#\d+|#\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)`;
+const TARGET = String.raw`(?:[\w.-]+\/[\w.-]+#\d+|#\d+|GH-\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)`;
 const CLOSING = new RegExp(String.raw`${KEYWORD}\s*:?\s*${TARGET}`, "gi");
 const TITLE_TYPE = new RegExp(String.raw`^\s*${KEYWORD}(?:\([^)]*\))?!?\s*:\s*${TARGET}`, "i");
 
@@ -146,9 +147,9 @@ export function run(argv, cwd, deps = realDeps) {
 
   // ---- マージ前: 読みをすべて終えてから書く ----
   let pr, repo, root;
+  const bodyPath = path.resolve(cwd, opts.bodyFile);
   try {
     root = deps.mainRoot(cwd);
-    const bodyPath = path.resolve(cwd, opts.bodyFile);
     const body = deps.readFile(bodyPath);
     repo = json(deps, root, ["repo", "view", "--json", "nameWithOwner"], EnvError).nameWithOwner;
     pr = json(
@@ -208,31 +209,34 @@ export function run(argv, cwd, deps = realDeps) {
       deps.err(`merge-pr: マージしていない（#${opts.pr}）。止めた理由 ${refusals.length} 件:\n${refusals.map((r) => `- ${r}`).join("\n")}`);
       return 1;
     }
+  } catch (e) {
+    // EnvError 以外（verify-tree の linked worktree の拒否・JSON の破損など）も 2 にする。この try はマージより前だけを囲む
+    deps.err(`merge-pr: マージしていない（#${opts.pr}）。${e instanceof EnvError ? e.message : (e.message ?? e)}`);
+    return 2;
+  }
 
-    // ---- マージ: 確認した head にだけ当てる ----
+  // ---- マージ: 確認した head にだけ当てる。ここから先で 2 は返さない ----
+  let mergedAt;
+  let mergeStatus;
+  try {
     const merged = deps.exec(
       "gh",
       ["pr", "merge", opts.pr, "--squash", "--body-file", bodyPath, "--match-head-commit", pr.headRefOid],
       root,
     );
+    mergeStatus = merged.status;
     if (merged.status !== 0) deps.err(`merge-pr: gh pr merge が exit ${merged.status} を返した。成否は PR の状態で確かめる\n${merged.stderr ?? ""}`);
-  } catch (e) {
-    // EnvError 以外（verify-tree の linked worktree の拒否・JSON の破損など）も 2 にする。ここはすべてマージより前
-    deps.err(`merge-pr: マージしていない（#${opts.pr}）。${e instanceof EnvError ? e.message : (e.message ?? e)}`);
-    return 2;
-  }
 
-  // ---- マージ後: ここから先の失敗はすべて 3 ----
-  let mergedAt;
-  try {
     const state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
     if (state.state !== "MERGED") {
-      deps.err(`merge-pr: マージされていない（#${opts.pr} は ${state.state}）。上の gh の出力を読み、原因を直して再実行する`);
+      // gh が成功を返したのに MERGED でないのは反映の遅れでありうる——「マージしていない」と断定しない
+      if (mergeStatus === 0) throw new PostError(`gh pr merge は成功を返したが、#${opts.pr} は ${state.state} である`);
+      deps.err(`merge-pr: マージしていない（#${opts.pr} は ${state.state}）。上の gh の出力を読み、原因を直して再実行する`);
       return 1;
     }
     mergedAt = state.mergedAt;
   } catch (e) {
-    deps.err(`merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} で状態を見る\n${e.message}`);
+    deps.err(`merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} で状態を見る\n${e.message ?? e}`);
     return 3;
   }
 

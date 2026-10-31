@@ -1,0 +1,33 @@
+{
+  "sha": "96c8962d9fc7bbe516162a952b97c7f55220c821",
+  "branch": "chore/merge-pr-tool",
+  "worktree": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-merge-pr-tool",
+  "categories_requested": [
+    "E"
+  ],
+  "categories_run": [
+    "E",
+    "F"
+  ],
+  "also": [],
+  "handoff": [],
+  "status": "green",
+  "results": [
+    {
+      "category": "E",
+      "command": "npm test",
+      "exit": 0,
+      "started_at": "2026-10-31T02:59:23.156Z",
+      "ended_at": "2026-10-31T02:59:46.816Z"
+    },
+    {
+      "category": "F",
+      "command": "npm run governance:check",
+      "exit": 0,
+      "started_at": "2026-10-31T02:59:46.816Z",
+      "ended_at": "2026-10-31T02:59:47.575Z"
+    }
+  ],
+  "warnings": [],
+  "log": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-merge-pr-tool.summary.log"
+}

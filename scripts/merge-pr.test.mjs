@@ -99,6 +99,7 @@ describe("run — 正常経路", () => {
     let probes = 0;
     const f = fake({ "cat-file": () => ({ status: probes++ === 0 ? 1 : 0, stdout: "", stderr: "" }) });
     expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.calls).toContain("fetch"); // 無いと indexOf が -1 を返し、下の比較だけでは素通りする
     expect(f.calls.indexOf("fetch")).toBeLessThan(f.calls.indexOf("pr merge"));
   });
 });
@@ -118,7 +119,9 @@ describe("run — マージ前に止める（gh pr merge を呼ばない・exit 
       "x/y#3",
     ],
     ["宣言した issue を本文が閉じない", { "pr view:pre": preview({ closingIssuesReferences: [] }) }, "o/r#3"],
-    ["タイトルの型名の直後に番号", { "pr view:pre": preview({ title: "fix: #3 直す" }) }, "タイトル"],
+    // 2 つの検査の片方だけに当たるタイトルをそれぞれ置く（両方に当たる 1 種類では片方を消しても緑のまま）
+    ["タイトルの型名（scope つき）の直後に番号", { "pr view:pre": preview({ title: "fix(core): #985 直す" }) }, "タイトル"],
+    ["タイトルの散文の closing keyword", { "pr view:pre": preview({ title: "chore: closes #3" }) }, "タイトル"],
     ["base にする open PR がある", { "pr list:open": ok([{ number: 8 }]) }, "#8"],
     ["要約の照合に通らない", { verify: () => ({ ok: false, reason: "要約が無い" }) }, "gh pr checkout 7"],
   ])("%s", (_, over, expected) => {
@@ -182,6 +185,18 @@ describe("run — マージの成否は PR の状態で確定する", () => {
     expect(run(ARGS, "/repo", f.deps)).toBe(1);
     expect(f.calls).not.toContain("issue list");
   });
+  it("gh pr merge が成功を返したのに MERGED でなければ、反映の遅れでありうるので 3（1 と断定しない）", () => {
+    const f = fake({ "pr view:post": ok({ state: "OPEN", mergedAt: null }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+  });
+  it("gh pr merge の呼び出しが例外を投げても 2 ではなく 3（マージの後かもしれない）", () => {
+    const f = fake({
+      "pr merge": () => {
+        throw new Error("boom");
+      },
+    });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+  });
   it("状態を確かめられなければ 3（マージしたかもしれない）", () => {
     const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "x" } });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
@@ -229,7 +244,10 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
   });
   it(`検索が上限（${SEARCH_LIMIT} 件）に達したら打ち切りと区別できないので 3`, () => {
     const many = Array.from({ length: SEARCH_LIMIT }, (_, i) => ({ number: i === 0 ? 3 : 1000 + i }));
-    expect(post({ "issue list": ok(many) }).code).toBe(3);
+    const r = post({ "issue list": ok(many) });
+    expect(r.code).toBe(3);
+    // 宣言外 close の検出でも 3 になるので、止めた理由まで見る（終了コードだけでは上限判定を消しても緑）
+    expect(r.text).toContain("上限");
   });
   it("事後の gh が失敗しても 3（2 ではない——マージは済んでいる）", () => {
     const r = post({ "issue view": { status: 1, stdout: "", stderr: "x" } });
@@ -283,6 +301,7 @@ describe("findClosingKeywords — GitHub が close に使う 9 形", () => {
     "| 1 | fixes #3 |",
     "- [x] closes #4",
     "partially fixes #5",
+    "closes GH-6",
   ])("コロン・他リポジトリ・URL・表・チェックリスト・散文の中も拾う: %s", (text) => {
     expect(findClosingKeywords(text)).toHaveLength(1);
   });

@@ -327,6 +327,21 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     expect(f.text()).not.toContain("#5");
     expect(f.text()).not.toContain("索引が未反映");
   });
+  it("他リポジトリの同じ番号が OPEN でも、このリポジトリの issue の索引の未反映は出す（OPEN の除外は同リポジトリに限る）", () => {
+    const f = fake({
+      "pr view:pre": preview({
+        closingIssuesReferences: [
+          { number: 3, repository: { name: "r", owner: { login: "o" } } },
+          { number: 3, repository: { name: "y", owner: { login: "x" } } },
+        ],
+      }),
+      "issue view": (_, args) => ok({ state: args[4] === "x/y" ? "OPEN" : "CLOSED" }),
+      "issue list": ok([]),
+    });
+    expect(run(["7", "--closes", "3,x/y#3", "--body-file", "b.md"], "/repo", f.deps)).toBe(3);
+    expect(f.text()).toContain("x/y#3 が閉じていない");
+    expect(f.text()).toContain("索引が未反映");
+  });
   it("揃っていて宣言外の close があれば、待たずに 3（宣言外は待ちの判定に入れない）", () => {
     const f = fake({ "issue list": ok([{ number: 3 }, { number: 5 }]) });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);

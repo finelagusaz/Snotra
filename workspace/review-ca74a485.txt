@@ -1,0 +1,22 @@
+review-ca74a485 — 2 巡目。アンカー sha ca74a485aa61f055cae9e7b411cf49f29d4b017f（前回 7338bf57 からの修正差分）
+align: exit 0、HEAD = ca74a485 を確認。復元後の merge-pr.mjs の sha256 d0ae35b3…abd75 = git show ca74a485:scripts/merge-pr.mjs と一致。git status は .delegate/ のみ
+
+== 前回指摘の解消（自分で測った） ==
+Medium-1: 解消。X1b（上限以外の例外を待って再観測）を当て直すと「事後の gh が失敗しても 3」が赤（AssertionError: expected [5000,10000,15000] to deeply equal []）
+Low-2: 解消。修正を戻す変異 R1（unseen から !openLocal.has(n) を外す）で「最後まで揃わなければ…」が赤（not to contain '索引が未反映'）
+Low-1: 解消。SKILL.md の見出しの 3 語「検算が通らない」「索引が未反映」「事後検証を確かめられない」は、どれも出力の文言に逐語で含まれる（merge-pr.mjs の所見の組み立てと catch）。括弧の「上限への到達・gh の失敗・mergedAt の形」は catch へ行く PostError と一致。想定外の例外（describe(e, true)）も同じ接頭句だが、括弧に書かれていない（Low に満たない・補足）
+
+== 修正差分の周辺のレビュー ==
+- openLocal は owner_repo === repo のときだけ足すので、他リポジトリの宣言は local にも unseen にも入らない。declared は normalizeRef 済みで、local の startsWith(`${repo}#`) と同じ repo 文字列を比べるので食い違わない
+- 宣言外の判定（obs.numbers.filter((n) => !local.includes(n))）は local を使い、openLocal は使わない。OPEN の宣言 issue が観測の途中で閉じて numbers に現れても、local に入っているので宣言外にはならない
+- 挙動の変化（改善）: 宣言 issue が OPEN でも、検算が通り unseen が空になれば宣言外の close が所見に出るようになった（旧実装では unseen の所見の陰に隠れていた）。どちらにしても exit 3 なので、終了コードの意味は変わらない
+- ⚠A: 宣言した同リポジトリの issue がすべて OPEN のときは、closed の検索に宣言 issue が現れることで「索引が新しい」と確かめる手段が無くなる。そのため、宣言外の所見は古い索引から読んだ下限になる。過少報告にしかならず、notClosed で必ず exit 3 になるので、実害は小さい
+- ⚠B（Low/検知器の穴）: 変異 R2（`if (owner_repo === repo)` を外して、他リポジトリの OPEN の番号も openLocal に足す）が 106/106 緑で生存。実装は正しい。生きる条件は、同じ番号を他リポジトリとこのリポジトリの両方で宣言し（例 o/r#3 と x/y#3）、x/y#3 が OPEN、o/r#3 が閉じているのに索引に未反映、という場合。このとき o/r#3 の未反映が隠れて、宣言外の所見が古い索引から出る。x/y#3 の notClosed で exit 3 になるので、影響は過少報告だけ。テストを足すなら、その形の宣言で「索引が未反映」を含むことを見る
+
+== 変異（1 本ずつ・ハッシュで復元を確認・赤はすべて AssertionError、timeout やモジュール解決失敗による赤は無い） ==
+X1b gh 失敗（上限以外）で待つ: 検知
+R1  Low-2 の修正を戻す: 検知
+R2  openLocal を他リポジトリへ広げる: 生存（⚠B）
+R3  （無効: 置換が `|| false` の等価変異だったので数えない）
+
+結論: Critical/High/Medium 0 件。Low 相当は ⚠B（テストの穴 1 本・実害は過少報告だけ）のみ

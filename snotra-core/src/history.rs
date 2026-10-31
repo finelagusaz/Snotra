@@ -856,6 +856,30 @@ mod tests {
         assert_eq!(twice.query["app"]["c:\\fake\\app.lnk"], 2);
     }
 
+    /// **旧い正規化で記録したクエリキーは、読み込み時の移行で新しい規則へ収束する**（#1309）。
+    /// 旧い実装は `ɢ` を `G` と記録し（冪等でない）、`ǅ` をそのまま借用で返していた（#1310）。
+    /// `history.bin` の版を上げないのは、この移行が読み込みのたびに無条件で走るからである。
+    #[test]
+    fn migrate_normalize_keys_merges_query_keys_recorded_by_the_old_normalizer() {
+        let mut data = HistoryData::default();
+        for (key, count) in [("G", 2), ("g", 3), ("ǅ", 1), ("ǆ", 4)] {
+            data.query
+                .entry(key.to_string())
+                .or_default()
+                .insert("c:akeapp.lnk".to_string(), count);
+        }
+        let migrated = migrate_normalize_keys(data);
+        assert_eq!(migrated.query.len(), 2);
+        for (query, want) in [("ɢ", 5), ("ǅ", 5)] {
+            let key = normalize_history_query_key(query);
+            assert_eq!(
+                migrated.query[key.as_ref()]["c:akeapp.lnk"],
+                want,
+                "{query:?}"
+            );
+        }
+    }
+
     #[test]
     fn migrate_normalize_keys_normalizes_query_inner_map() {
         let mut data = HistoryData::default();

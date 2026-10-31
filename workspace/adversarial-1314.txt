@@ -1,0 +1,75 @@
+# 敵対的調査 #1314 — research.md の反証試行（結果）
+
+## 壊せた
+
+1. 命題1「生きた参照は表のものだけ」— 壊せた。表に無い生きた参照
+   （MSYS_NO_PATHCONV=1 git grep -n -E "/implement|implement" で列挙。
+   注意: Bash では git grep "/implement" が先頭 / のパス変換で 0 件を返す。最初の 3 回は 0 件だった）
+   - docs/check-skill-skeleton-design.md:119  `/implement`「3a. 委譲の前に」（正準形・G-heading-refs が照合する）
+   - docs/check-skill-skeleton-design.md:167  `/implement`「Step 4 — 仕上げ」（正準形。同上）
+   - .claude/hooks/pre-bash.test.mjs:415       `/implement` Step 4（非正準形・照合されない）
+   - scripts/verify-tree.mjs:3                 `/implement` Step 3（非正準形・照合されない）
+   - .claude/skills/start-issue/SKILL.md:102   `/implement` Step 5 以降（既に存在しない Step 5 を指す元からの stale。#1314 の範囲外）
+   - RETROSPECTIVE.md:27 と start-issue/SKILL.md:82 は、行110 末尾「注入するのはこのエージェントだけである: 主エージェントは同じ木へ注入しない」へ散文で依存する
+   - .claude/agents/ には 0 件。
+   偽にする手順: 上の git grep を再実行。
+   帰結: 見出しを保てば正準形は緑のまま。非正準形（Step 3/4）は見出しを改番しても検知されない（今回は改番しないので無害）。
+
+2. 命題3「既に在る所」— 表が過小。行126（SendMessage の利点・#934 で 2 巡目が ⚠1 件を決着し 7 件）は
+   表で「—」だが、PR #958 本文 line 22 に在る（gh pr view 958 --json body -q .body | sed -n 22p:
+   「2 巡目が ⚠ 1 件を独立検証して真と決着させ…修正周辺の所見を別に 7 件」）。
+   行113 は PR #1302 だけでなく docs/adr/ADR-implement-verification-tool-tree.md:15
+   （harness が変更の無い木を片づける・SendMessage 再開で本体で動く）にも在る。
+   偽にする手順: 上の gh / grep。結論は消す側に有利（行126 の経緯は消してよい）。
+
+3. 命題2・行77 — 壊せた。括弧「ただし MODULE_INDEX_CRATES に載っている crate に限る／判定は basename を見るだけで…
+   同名が同じ節で既に言及されていれば緑のまま通る」は、「索引漏れは governance:check が捕捉する」という保証の射程を
+   限定する条件であり、経緯ではない。限定ごと消すと無条件の全称になり、AGENTS.md「保証を宣言する文の隣に…」と
+   .claude/rules/governance-docs.md「機構の実装の詳細を散文へ写さない」に反する。
+   ADR-module-index-reverse-scope（line 7・77・79）は同名の死角を持つが、#701・#1008 は ADR に無く
+   scripts/governance/checks/G-module-index.mjs:23-38 の doc に在る。
+   → 残すなら「捕捉は MODULE_INDEX_CRATES の crate に限り、同名は素通り。範囲は G-module-index.mjs / ADR を引け」の
+   射程の 1 文を本文に残す。#1008/#701/#1214 の番号と事件の再話は消してよい。
+   偽にする手順: 括弧を削った版を読み、MODULE_INDEX_CRATES 外の crate で .rs を足して緑になる例を作る。
+
+4. 命題2・行145（部分的に壊せた）— 「git 自身が `use … -f to force removal` と勧めてくるが従わない」は経緯ではなく、
+   禁止だけでは git の勧告に負けるという対策そのもの（PR #958 本文 line 34「禁止だけ書くと『git が言うのだから』で越えられる…」）。
+   「checkout 系 3 コマンドの名指し」も規則本体。消してよいのは「2026-08-07・#934・checkout-index -f で全損・控え無く再構成」だけ。
+   全損の再話は PR #958 本文 line 11（squash commit d9b5444a）に在る。#934 issue 本文・コメントに全損・7 件・⚠ の記述は無い
+   （gh issue view 934 の body+comments を grep して 0 件）→ research.md の「issue でなく PR」は正しい。
+
+## 壊せなかった
+
+5. 命題5・測定環境「governance:check は SKILL.md の見出しを検知するか」— 壊せなかった（計器は届く）。
+   scripts/governance/lib.mjs:595 headingRefDocs は全 .md（docs/adr・docs/superpowers・workspace を除く）、governanceDocs も
+   /^\.claude\/skills\/[^/]+\/SKILL\.md$/ を含む。resolveRefTarget は `/implement` を .claude/skills/implement/SKILL.md へ解決する。
+   実測: git archive HEAD を scratchpad の複製へ展開。基準は「全検査 passed（検査 17 件）」。
+   `### 3b. 委譲へ渡すもの` を `…渡す物` に改変すると start-issue/SKILL.md:82 と CLAUDE.md:65 の 2 件が赤。
+   `### 3a. 委譲の前に` を `3a. 前` に改変すると docs/check-skill-skeleton-design.md:119 と scripts/race-boundaries.mjs:15 が赤（コメントの腕も効く）。
+   照合は前方一致・アンカーは ATX 見出し／番号付きリスト項目／太字リードの 3 種（G-heading-refs.mjs 冒頭）。
+   残余: docs/adr/ 内の参照は走査外（lib.mjs:601）。ADR が引く「1a」「出力」「Step 3 — 検証とレビュー（委譲・最大5サイクル）」は
+   見出しを保てば実在するが検査は守らない。ADR-pr-gate-verified-sha.md:5 は 3c の太字文（行127）を引くので、その文の逐語維持が要る（検査対象外）。
+
+6. 命題4「行18 の較正は残す」— 壊せなかった。safety-nets.md:33 が「どのモデルのどの癖への栓かを条項に添える」を要求。
+   #1230 の着地は SKILL.md 以外に無い（#1230 を含む .md は governance-docs.md / safety-nets.md の別文脈の引用のみ）。
+   較正を縮めるのは可、モデル名と癖の向きは名乗ったまま残すこと。
+
+7. 命題3・行84 — 壊せなかった。ADR-implement-verification-delegated-to-worktree.md:5-8 に「2026-08-19・2 回・mtime 鑑定・変異注入の汚染」が在る。
+   ただし行84 の太字文「別の木で走らせても 2 つの報告が別の版へ向かないのは…sha を機械可読で名乗るから」は経緯でなく設計の理由
+   （tool-tree ADR:22 に近い文はあるが同一ではない）→ 縮めて残す方が安全。
+
+8. 命題2・行101・110・113 — 壊せなかった（大半）。101 の「C を要求する巡は直列／それ以外は並走可」は規則で、
+   「smoke は既に起動していると throw」の理由は ADR-implement-verification-tool-tree.md:24 と SnotraSmoke.psm1 に在る。
+   110 の「timeout とモジュール解決の失敗は検知に数えない」は規則（safety-nets.md の #1201 とも整合）。
+   消してよいのは「(#1154・#1179 で委譲先自身の並走による timeout の赤が出た)」の事件部分だけ。
+   113 の「`report*.md` は Write が拒否される」「木の外へ書かせない」は規則・操作条件ゆえ残す（経緯は「#1298 で実測」だけ）。
+
+9. 命題3・行113/145 の所在 — PR #1302 (19443bb7)・PR #958 (d9b5444a) とも MERGED。本文に `.delegate/`・checkout-index が在る。研究の主張は正しい。
+
+## ⚠ 確信なし
+
+A. 行34 の fail-closed 非対称・行31 の #821: 研究は「規則の一部として短く残す」。行34 は経緯でなく設計の理由で、既存の置き場は
+   docs/superpowers/plans/2026-07-26-skill-workflow-boundary.md:401 だけ（履歴層・非規範）。ADR は無い。1 文に縮めて本文に残す案に異論は無い。
+B. 行110 末尾の「注入するのはこのエージェントだけである」は逐語維持を推奨（RETROSPECTIVE.md:27・start-issue:82 が頼る。照合機構は無い）。
+C. 検収の目安（バイト/行）は #1314 に基準が無い。ADR-doc-promise-over-area-ratchet が面積の合否を置かない前提とは矛盾しない。
+D. 「本文中の issue 参照は 16 種」と issue の「17」の差は今回数えていない（未検証）。

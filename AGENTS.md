@@ -54,7 +54,7 @@
 | worker spawn・channel・フレーム drain・Tauri listener・スレッド/ウィンドウをまたぐ共有状態・フレーム内 live-read・paint 後の遅延処理を追加/変更、または async 関数を追加/変更 | `/race-check` |
 | 網羅性が要件（全文監査・全箇所改名・コンパイラを持たない機構の廃止） | **その一覧の母集団を誰が知っているか**から始める（`docs/development-principles.md`「列挙の完全性」）＋ `/plan-review`「Step 2b」 |
 | 検査・検証手段を新設する、またはどの手段で保証するか決める | `docs/development-principles.md`「検証の層と、層と層の隙間」 |
-| 調査・測定のための一時的な足場（script・workflow・env フック・製品コード内の計装）を新設/撤去 | 新設時: 撤去条件と撤去対象を**その成果物自身の doc へ**書く。撤去時: 引用されうる値が `PERFORMANCE.md` へ出所つきで着地しているかを確かめてから消す（書き方は `PERFORMANCE.md`「この文書へ記録するときの規約」）。実 config・実索引で測った生ログは**リポジトリの外**に置き（`workspace/` も squash で main の履歴に残る）、コミットしてよいのは経路を数えた派生表だけ——trace は利用者の実パスを載せ、このリポジトリは公開されている |
+| 調査・測定のための一時的な足場（script・workflow・env フック・製品コード内の計装）を新設/撤去 | 新設時: 撤去条件と撤去対象を**その成果物自身の doc へ**書く。撤去時: 引用されうる値が `PERFORMANCE.md` へ出所つきで着地しているかを確かめてから消す（書き方は `PERFORMANCE.md`「この文書へ記録するときの規約」）。実 config・実索引で測った生ログは**リポジトリの外**に置き（`workspace/` に置いてコミットすれば、squash で main の履歴に残りうる）、コミットしてよいのは経路を数えた派生表だけ——trace は利用者の実パスを載せ、このリポジトリは公開されている |
 | セーフティネット（hook・CI・`.githooks/`・`.claude/settings.json`・rules・skills・規範）を新設/変更 | `.claude/rules/safety-nets.md`（規範文書は自動配送されないので手で読む）。**足す前に「壊れたとき緑のまま推移するか」を問う**——推移しないなら機構を置かない |
 | 機構・層・ファイル群を撤去する | 削除したファイル名とその層の語彙を `git grep` で数え、「在る前提で書いている」出現を直す。識別子の残存 0 件を根拠にしない（散文の語彙は映らない）。作法は `docs/development-principles.md`「撤去（消す変更）の作法」 |
 | ガバナンス文書（`*.md`・rules・skills・workflow）・`.rs` コメントの見出し参照を変更 | `npm run governance:check`（PR では CI が常時実行） |

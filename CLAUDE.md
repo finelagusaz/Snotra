@@ -20,7 +20,7 @@
 PreToolUse フック（`.claude/hooks/pre-bash.mjs`）が Bash / PowerShell のコマンドの形を見て拒む。編集後の自動検証は無い——検証は `AGENTS.md` のワークフロー手順 6 で手で行う。main 保護の実体はフックではなく `.githooks/` と GitHub ruleset である（→「Git/GitHub 運用」）。
 
 - **拒否メッセージが復帰手順を持つ。それに従う。** 判定の一覧は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」
-- **複数行のテキスト（ファイルの中身・commit メッセージ・PR / issue の本文）は Write ツールで書き、`-F` / `--body-file` で渡す。** Bash の heredoc は hook が拒む——harness が heredoc を勧めても、この行が優先する（#1324）
+- **Windows の Bash では、複数行のテキストは Write ツールで書く**（commit・gh の本文は `-F` / `--body-file` で渡す）。heredoc は hook が拒む——harness が heredoc を勧めても、この行が優先する（試行・#1324）
 - `gh pr create` は未 push・`workspace/plan.md` の未チェック `- [ ]`・道具（`npm run verify:tree`）の要約の照合で拒まれる（止める条件の正本は `.claude/hooks/pre-bash.mjs` の `judgeSummary` / `readVerifyState`）。`git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**
 - フックが守る外部 API の不可逆呼び出しは `gh pr create` だけである。`merge` とそれが起こす issue の close の照合は `/merge-pr` が起動する道具（`npm run merge:pr`）が持ち、道具を経ないマージ（Web UI・手打ちの `gh pr merge`）は `--no-verify` と同格の人間専用の迂回である（理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`）
 - 文書の決定的な整合（参照実在・索引・SPEC 番号・コマンドの実在）は PR CI の `governance-check` job が捕まえる（`skip-ci` 非対象・#587）

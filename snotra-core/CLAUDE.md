@@ -6,7 +6,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 ## モジュール構成
 
-責務は各ファイルの `//!` が正本。ここはファイルの索引と、1 ファイルの `//!` に収まらない不変条件だけを置く。ユニットテストは対象モジュールの子（`tests.rs` / `tests/`）に置き、親の private を直接読む（テストのために可視性を広げない）。
+責務は各ファイルの `//!` が正本。ここはファイルの索引と、1 ファイルの `//!` に収まらない不変条件だけを置く。ユニットテストは対象モジュールの子（`tests.rs` / `tests/`、またはインラインの `mod tests`）に置き、親の private を直接読む（テストのために可視性を広げない）。
 
 - `lib.rs`（宣言のみ）・`engine.rs`・`error.rs`・`binfmt.rs`・`window_data.rs`・`instant.rs`・`ui_types.rs`・`folder.rs`・`history.rs`・`query.rs`・`str_arena.rs`・`index_tree.rs`・`win_registry.rs`
 - `autostart.rs`（テスト `autostart/tests.rs` は純粋部のみ——OS I/O は開発機の実登録を書き換える）
@@ -29,22 +29,22 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 - `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する。top-k 更新を変えたら入力順を変えても結果が不変なテストを足す/直す
 - `SearchEngine` にフィールドを足す前に、既存の列で代替できないか・導出できないかを検討する。導出の可否は「その読みが早期 return の前か後か」で決まる（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）
-- 並列の列を足すときは同時に触る: `EntryView`・`entry_view()`・`assemble()` の `debug_assert!` と `shrink_to_fit()`。Wave 1 の文字列正規化は `compute_wave1`、Wave 2 のマスクは `compute_wave2` に足す（全コンストラクタが共有する）
-- kana 2 列（`kana_lower_names` / `kana_char_masks`）は migemo 有効時だけ建つ。アクセスは `is_empty()` ガードを通し、構築の分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の `CachedLower` 両 variant へ**同時に**入れる（片方だけだと migemo ON でも空になる）。migemo の切り替えは `IndexInputs` の差分による再構築で反映される
-- 派生文字列の潰しは、ビットマスクを確定した**後**に行う（理由と検知器は `indexer/columns.rs` の `derive_entry_lowers` の doc）
+- 並列の列を足すときは同時に触る: `EntryView`・`entry_view()`・`assemble()` の `debug_assert!` と `shrink_to_fit()`。Wave 1 の文字列正規化は `compute_wave1`、Wave 2 のマスクは `compute_wave2` に足す。**この 2 つを通るのは `Vec` と木から建てる経路だけで、`new_with_cached_masks` の `Collapsed` / `Raw` 枝は通らない**——キャッシュに載る列は下の「IndexCache バージョン変更チェックリスト」も当てる。要素ごとの確保を持つ列（`Vec<String>` 等）にせず、`str_arena` / `NameArena` の表現で持つ
+- kana 2 列（`kana_lower_names` / `kana_char_masks`）は、製品の経路では migemo 有効時だけ建つ。アクセスは `is_empty()` ガードを通し、構築の分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の `CachedLower` 両 variant へ**同時に**入れる（片方だけだと migemo ON でも空になる）。migemo の切り替えは `IndexInputs` の差分による再構築で反映される
+- 派生文字列の潰しは、ビットマスクを確定した**後**に行う（理由と検知器は `indexer/columns.rs` の `derive_entry_lowers` / `derive_entry_collapsed` の doc）
 - `query.rs` の正規化を変えたら、タブ・全角スペース・NBSP を `' '` に揃えるテストと、全コードポイントの検知器（`normalize_for_match_*_on_every_codepoint`）を通す
 
 ## クロスモジュール不変条件
 
 ### `normalize_entry_key` の冪等性契約
 
-- `indexer::normalize_entry_key` は**冪等**である（規則の定義は `normalize_entry_key_into` の doc、検知器は `migrate_normalize_keys_is_idempotent`）。依存するモジュールは `git grep normalize_entry_key` で数える
-- **記録側と照合側は同じ関数を通す。別実装を足さない。** 1 バイトずれても結果は沈黙でずれる（ブーストやスコアだけが消える）。パスキーは `normalize_entry_key_into`（末尾セグメント版 `normalize_file_name_key_into` も含む）、照合用の名前とクエリは `query::normalize_for_match`、派生文字列の共有判定は `query::measure_derived_sharing` を通す。パスマッチの系統（`search/query_plan.rs` の `path_query`・`search/path_store.rs`）は、照合用の名前とは別の正規化である
+- `indexer::normalize_entry_key` は**冪等**である（規則の定義は `indexer/keys.rs` の `//!` と `normalize_entry_key_into`、検知器は `migrate_normalize_keys_is_idempotent`）。依存するモジュールは `git grep normalize_entry_key` で数える
+- **記録側と照合側は同じ関数を通す。別実装を足さない。** 1 バイトずれても結果は沈黙でずれる（ブーストやスコアだけが消える）。パスキーは `normalize_entry_key_into`（末尾セグメント版 `normalize_file_name_key_into` も含む）、照合用の名前とクエリは `query::normalize_for_match`、派生文字列の共有判定は `query::measure_derived_sharing` を通す。照合側の `search/path_store.rs` だけは、性能のためにパスキーの規則を再実装している（一致は `search/tests/path.rs` の `path_store_cursor_matches_*` の 2 本が守る）。パスキーの規則を変えたら、ここと `tests/path_query_cost.rs` の写しも直す。クエリ側の `path_query`（`search/query_plan.rs`）は照合用の名前とも別の正規化である
 - 規則を変えるときは、依存するモジュールすべてと冪等性を確かめる
 
 ### `char_bitmask` は `query.rs` に一元化済み
 
-マスクとその派生（`name_char_mask` / `file_char_mask` / `lower_file_name`）は `query.rs` だけが定義する。`search.rs` と `indexer/columns.rs` は import して使い、手書きしない。
+`char_bitmask` 系のマスクとその派生（`name_char_mask` / `file_char_mask` / `lower_file_name`）は `query.rs` だけが定義する。`search.rs` と `indexer/columns.rs` は import して使い、手書きしない。
 
 ### incremental cache とパスクエリの非互換
 

@@ -878,8 +878,8 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         let masks = CachedMasks {
             char_masks: cache.char_masks.into_owned(),
             file_name_char_masks: cache.file_name_char_masks.into_owned(),
-            // **`Collapsed` で渡す。** ここを `Raw` にすると `assemble` が全件を測り直す（結果は
-            // 変わらず、費用だけが掛かる。理由は `search/build.rs` の `DerivedStrings` の doc）。
+            // **`Collapsed` で渡す**——記録側が潰した列である。`Raw`（未測定の全件）とは型が違い、
+            // 取り違えはコンパイルを通らない（分ける理由は `CachedLower` の doc）。
             lower: Some(CachedLower::Collapsed {
                 lower_names: cache.lower_names.into_owned(),
                 lower_file_names: cache.lower_file_names.into_owned(),

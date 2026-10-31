@@ -1,0 +1,90 @@
+{
+  "sha": "a4f2ac22a5edcd02a7142e70bf82167983003881",
+  "branch": "chore/core-claude-slim",
+  "worktree": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-core-claude-slim",
+  "categories_requested": [
+    "A"
+  ],
+  "categories_run": [
+    "A",
+    "E",
+    "F"
+  ],
+  "also": [],
+  "handoff": [],
+  "status": "green",
+  "results": [
+    {
+      "category": "A",
+      "command": "cargo fmt --all -- --check",
+      "exit": 0,
+      "started_at": "2026-10-31T13:38:37.531Z",
+      "ended_at": "2026-10-31T13:38:38.628Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo check --workspace",
+      "exit": 0,
+      "started_at": "2026-10-31T13:38:38.628Z",
+      "ended_at": "2026-10-31T13:39:25.921Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "exit": 0,
+      "started_at": "2026-10-31T13:39:25.921Z",
+      "ended_at": "2026-10-31T13:39:29.721Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra-core",
+      "exit": 0,
+      "started_at": "2026-10-31T13:39:29.721Z",
+      "ended_at": "2026-10-31T13:39:56.532Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra-egui-runtime",
+      "exit": 0,
+      "started_at": "2026-10-31T13:39:56.532Z",
+      "ended_at": "2026-10-31T13:40:44.452Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra",
+      "exit": 0,
+      "started_at": "2026-10-31T13:40:44.452Z",
+      "ended_at": "2026-10-31T13:41:27.418Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra-settings",
+      "exit": 0,
+      "started_at": "2026-10-31T13:41:27.418Z",
+      "ended_at": "2026-10-31T13:41:44.933Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo doc --workspace --no-deps --document-private-items",
+      "exit": 0,
+      "started_at": "2026-10-31T13:41:44.933Z",
+      "ended_at": "2026-10-31T13:41:47.305Z"
+    },
+    {
+      "category": "E",
+      "command": "npm test",
+      "exit": 0,
+      "started_at": "2026-10-31T13:41:47.305Z",
+      "ended_at": "2026-10-31T13:42:11.624Z"
+    },
+    {
+      "category": "F",
+      "command": "npm run governance:check",
+      "exit": 0,
+      "started_at": "2026-10-31T13:42:11.624Z",
+      "ended_at": "2026-10-31T13:42:12.266Z"
+    }
+  ],
+  "warnings": [],
+  "log": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-core-claude-slim.summary.log"
+}

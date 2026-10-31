@@ -1,0 +1,67 @@
+レビュー 2 巡目 + 変異注入 — アンカー sha 27b80a9efd6379230e6b6836b2653ae035a957e5（96c8962d の上に修正 1 コミット）
+align: exit 0、worktree HEAD = 27b80a9e、作業ツリー clean（.delegate/ のみ未追跡）
+ベースライン: npx vitest run scripts/merge-pr.test.mjs .claude/hooks/pre-bash.test.mjs → 312 tests 全緑（merge-pr.test は 91）
+
+== 前巡の指摘の検算（自分の道具で測った） ==
+M-1 解消: M5 を当て直して赤（AssertionError: expected 'merge-pr: マージ済み…' to contain '上限'）
+M-2 解消: X12 を当て直して赤（expected [...] to include 'fetch'）
+L-1 解消: X5 赤（"fix(core): #985 直す" で expected 0 to be 1）、X6 赤（"chore: closes #3" で同上）
+M-3 一部解消: SKILL.md:39 の exit 3 の行は「マージを試みたあとの要確認」に直った。ただし新しい文言の「出力の最初の行」の主張は偽（下の R2-1）
+L-4 解消: SKILL.md:36 が射程（このリポジトリ・他リポジトリは事後に見ない）を明記した
+L-2 解消: scripts/merge-pr.mjs:212-241。マージ前の try（:149-216）は refusals → 1、例外 → 2 だけを返し、gh pr merge 以降は別の try で、
+  例外はすべて :238-241 の 3。N2（catch を「PostError 以外は 2」へ戻す旧構造の回帰）は赤で検知した
+L-3 解消: workspace/plan.md:36 が実装名へ直った
+W-1 解消: CLAUDE.md:24 は「`merge` とそれが起こす issue の close の照合は道具が持つ」になり、`close` を迂回扱いする文は消えた
+W-2 解消: :231-234 で mergeStatus === 0 かつ非 MERGED は PostError → 3。N1・N3 で検知した
+W-3 解消: TARGET に GH-\d+（:74）。N4 で検知した（単体テストの "closes GH-6"）
+W-4: 主が実測で解消したとのこと。私は再測していない（gh を打つ検査は担当外として扱った）
+
+== 新しい指摘 ==
+Critical / High: なし
+
+Medium
+R2-1 SKILL.md:39 の「出力の最初の行が『マージ済み』なら事後検証が赤、『成否を確かめられない』なら…」が、gh pr merge が非 0 を返した経路で偽
+  scripts/merge-pr.mjs:228 は、gh pr merge が非 0 のとき「merge-pr: gh pr merge が exit N を返した。成否は PR の状態で確かめる」を
+  最初に出力する。その後の経路は 2 通りある。
+  (a) MERGED → 事後検証で赤 → exit 3
+  (b) 状態を取れない → exit 3
+  どちらでも最初の行は「マージ済み」でも「成否を確かめられない」でもない。
+  実測: 偽の deps で run を回した（scratchpad の firstline.mjs）
+    gh 非0・MERGED・宣言外 close → exit=3 最初の行=「merge-pr: gh pr merge が exit 1 を返した。成否は PR の状態で確かめる」
+    gh 非0・状態取得失敗        → exit=3 最初の行=同上
+  plan.md 受け入れ条件 5「出力の最初の行で『マージ済み』と名乗る」も同じ経路で偽（前巡では見落としていた。修正で増えた誤りではない）。
+  直し方の候補: 「最初の行」ではなく「merge-pr: マージ済み / マージの成否を確かめられない の行」で読ませる。
+  あるいは gh の非 0 の通知を判定の行のあとへ回す。
+  テスト側は describe 名（「最初に『マージ済み』を名乗る」）があるだけで、行の位置を assert していない。
+
+Low
+R2-2 SKILL.md:51-55 の exit 3「成否を確かめられない」で MERGED だったときの次の一手が足りない
+  「MERGED なら下の 2 点へ」とあるが、この経路では道具の事後検証（宣言 issue の CLOSED 確認・closed:>= 検索・merged:>= の検算）は
+  1 つも走っていない。道具を再実行すると PR が OPEN でないので exit 1 で止まる。下の 2 点（宣言外 close の timeline・
+  「確かめられない」なら手で引き直す）は事後検証を手で全部やる指示としては読みにくい。
+  また、新しい箇条と次の箇条のあいだに空行があり、リストが loose に分かれる（体裁のみ）。
+R2-3（参考・前巡からの残余）: `e.message ?? e` / `e.stack ?? e` は e が null/undefined のとき catch の中で TypeError を投げ、
+  node の未捕捉例外（exit 1）になる。対象はマージ区間の catch（:239）と事後検証の catch。何かが null を throw したときだけ起きるので理論上の残余。
+
+⚠
+- W2-1 mergeStatus が非 0 で、gh の実体はマージを通したのに直後の view が反映前の OPEN を返すと exit 1（「マージしていない」）になる
+  （:231-235）。W-2 の裏側で、gh が失敗を返す × 反映遅延の組み合わせ。起きにくいので受容でよいかもしれない。
+
+修正差分で新しく 3 が 1/2 へ、1/2 が 3 へ漏れる経路は見つからなかった
+- マージ前: bodyPath を try の外へ出した（:150）。path.resolve は文字列に対して投げないので、例外が try を外れる経路は増えていない
+- :210 の return 1 と :215 の return 2 は、どちらも gh pr merge より前にある
+- マージ区間: return 1 は「gh が非 0 かつ非 MERGED」だけ（X8 で検知）。ほかはすべて 3
+- 事後: 変更なし（前巡で確認済み）
+
+== 変異注入（各回 vitest の AssertionError で赤であること、モジュール解決失敗・timeout・SyntaxError の信号なし、
+   巻き戻し後 git hash-object が `git show 27b80a9e:<file> | git hash-object --stdin` と一致したことを確認） ==
+M5  SEARCH_LIMIT の上限判定を消す                      → 検知（前巡は生存）
+X5  run でタイトルの型名検査を消す                      → 検知（前巡は生存）
+X6  run でタイトルの keyword 検査を消す                 → 検知（前巡は生存）
+X12 fetch を省く                                        → 検知（前巡は生存）
+N1  成功なのに非 MERGED → 3 を消す（1 へ落ちる）        → 検知
+N2  マージ区間の catch を「PostError 以外は 2」に        → 検知（pr merge の例外 → 3 のテスト）
+N3  mergeStatus を記録しない                            → 検知
+X8  非 MERGED かつ gh 失敗の 1 を消す                   → 検知
+N4  GH-N を TARGET から外す                             → 検知
+生存 0。生の出力: .delegate/mutation-raw-27b80a9e.txt

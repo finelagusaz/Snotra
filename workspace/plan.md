@@ -16,7 +16,7 @@
    - f. 道具の要約の照合を、hook と共有する `verifiedSummaryState`（下表）に `branch: headRefName`・`target: headRefOid` で当てる。head の commit が手元に無ければ、道具の側で `git fetch origin refs/pull/<N>/head` してから当てる（fetch は共有関数の外。hook の 4 秒の git 予算に載せない）。要約が無いときは止め、迂回口は作らない。出力には復帰手順（`gh pr checkout <N>` → `npm run verify:tree -- run --sha HEAD ...` → 再実行）を書く。Dependabot の PR もこの手順で復帰でき、道具を経ずに Web UI でマージすれば残余になる。GitHub の "Update branch" で main を取り込んだ head も、取り込みが `workspace/` の外を動かしていれば止まる（fail-closed の向き。復帰は同じ手順）
 3. マージは `gh pr merge <N> --squash --body-file <path> --match-head-commit <headRefOid>` の 1 回だけ。gh は `shell: false` で呼ぶ
 4. マージを試みたら、gh の終了コードに依らず `gh pr view --json state,mergedAt` で成否を確定する。`MERGED` でなければ、gh pr merge が非 0 なら exit 1、0 なら反映の遅れでありうるので exit 3（委譲レビュー W-2 で改めた）
-5. **マージ後**の検証。ここで落ちたら exit 3 を返し、出力の最初の行で「マージ済み」と名乗る（成否そのものを確かめられないときは「成否を確かめられない」と名乗る・委譲レビュー M-3）
+5. **マージ後**の検証。ここで落ちたら exit 3 を返し、出力の最初の行で「マージ済み」と名乗る（成否そのものを確かめられないときは「成否を確かめられない」と名乗る・委譲レビュー M-3。gh pr merge の失敗の通知は判定の行のあとへ添え、最初の行は常に判定にする・同 R2-1。gh が失敗を返して直後が非 MERGED なら、1 度待って引き直してから exit 1 と断定する・同 W2-1）
    - (1) 宣言した issue を番号ごとに `gh issue view --json state` で引き、すべて `CLOSED` か
    - (3) `mergedAt` が ISO 8601（`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`）であることを検めてから、`gh issue list --state closed --search "closed:>=<mergedAt>" -L <上限> --json number` を打つ。件数が上限に達したら exit 3（検算不能）。宣言外の番号があれば報告して exit 3。並行セッションの可能性を併記し、reopen はしない
    - 検算: `gh pr list --state merged --search "merged:>=<mergedAt>"` に当の PR が現れること（時刻の形が効いている証拠）。現れなければ exit 3。宣言した issue が (3) に現れなければ短く再試行し、それでも現れなければ「検索が未反映」として exit 3。**0 件を「該当なし」として 0 で返す経路を持たない**

@@ -132,6 +132,9 @@ const json = (deps, cwd, args, Fail) => JSON.parse(call(deps, cwd, "gh", args, F
 /** マージを試みたあとの「確かめられなかった」（exit 3） */
 class PostError extends Error {}
 
+/** catch した値を文字列にする。`null` / `undefined` を throw されても catch の中で TypeError を投げない */
+const describe = (e, stack = false) => String((stack ? e?.stack : undefined) ?? e?.message ?? e);
+
 /**
  * 道具の本体。終了コードを返す。`deps` はテストが gh / git / 要約の照合を差し替えるための口
  */
@@ -211,13 +214,14 @@ export function run(argv, cwd, deps = realDeps) {
     }
   } catch (e) {
     // EnvError 以外（verify-tree の linked worktree の拒否・JSON の破損など）も 2 にする。この try はマージより前だけを囲む
-    deps.err(`merge-pr: マージしていない（#${opts.pr}）。${e instanceof EnvError ? e.message : (e.message ?? e)}`);
+    deps.err(`merge-pr: マージしていない（#${opts.pr}）。${describe(e)}`);
     return 2;
   }
 
   // ---- マージ: 確認した head にだけ当てる。ここから先で 2 は返さない ----
   let mergedAt;
   let mergeStatus;
+  let ghNote = "";
   try {
     const merged = deps.exec(
       "gh",
@@ -225,18 +229,26 @@ export function run(argv, cwd, deps = realDeps) {
       root,
     );
     mergeStatus = merged.status;
-    if (merged.status !== 0) deps.err(`merge-pr: gh pr merge が exit ${merged.status} を返した。成否は PR の状態で確かめる\n${merged.stderr ?? ""}`);
+    // gh の失敗は判定の行のあとへ添える——出力の最初の行は常に判定（マージ済み／していない／確かめられない）にする
+    if (merged.status !== 0) ghNote = `\n（gh pr merge は exit ${merged.status} を返した）\n${merged.stderr ?? ""}`.trimEnd();
 
-    const state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
+    let state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
     if (state.state !== "MERGED") {
       // gh が成功を返したのに MERGED でないのは反映の遅れでありうる——「マージしていない」と断定しない
       if (mergeStatus === 0) throw new PostError(`gh pr merge は成功を返したが、#${opts.pr} は ${state.state} である`);
-      deps.err(`merge-pr: マージしていない（#${opts.pr} は ${state.state}）。上の gh の出力を読み、原因を直して再実行する`);
+      // gh が失敗を返しても反映が遅れているだけかもしれないので、1 度だけ待って引き直してから断定する
+      deps.sleep(SEARCH_RETRIES[0]);
+      state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
+    }
+    if (state.state !== "MERGED") {
+      deps.err(`merge-pr: マージしていない（#${opts.pr} は ${state.state}）。gh の出力を読み、原因を直して再実行する${ghNote}`);
       return 1;
     }
     mergedAt = state.mergedAt;
   } catch (e) {
-    deps.err(`merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} で状態を見る\n${e.message ?? e}`);
+    deps.err(
+      `merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} --json state,mergedAt で状態を見る（/merge-pr「マージ後に要確認が出たとき」）\n${describe(e)}${ghNote}`,
+    );
     return 3;
   }
 
@@ -280,14 +292,14 @@ export function run(argv, cwd, deps = realDeps) {
     }
   } catch (e) {
     // 想定外の例外も 3 にする——未捕捉で落とすと node は exit 1（「マージしていない」）を返す
-    findings.push(`事後検証を確かめられない: ${e instanceof PostError ? e.message : (e.stack ?? e)}`);
+    findings.push(`事後検証を確かめられない: ${e instanceof PostError ? e.message : describe(e, true)}`);
   }
 
   if (findings.length > 0) {
-    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}`);
+    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${ghNote}`);
     return 3;
   }
-  deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）`);
+  deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）${ghNote}`);
   return 0;
 }
 

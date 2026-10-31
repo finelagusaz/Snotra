@@ -197,6 +197,33 @@ describe("run — マージの成否は PR の状態で確定する", () => {
     });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
   });
+  it("gh pr merge が失敗を返し、直後は OPEN でも、引き直して MERGED なら事後検証へ進む（反映の遅れ）", () => {
+    const f = fake({
+      "pr merge": { status: 1, stdout: "", stderr: "timeout" },
+      "pr view:post": (n) => ok(n === 1 ? { state: "OPEN", mergedAt: null } : { state: "MERGED", mergedAt: "2026-10-31T01:02:03Z" }),
+    });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.calls.filter((c) => c === "pr view:post")).toHaveLength(2);
+  });
+  it.each([
+    ["gh 非 0 → MERGED → 宣言外 close", { "pr merge": { status: 1, stdout: "", stderr: "w" }, "issue list": ok([{ number: 3 }, { number: 5 }]) }, 3, "merge-pr: マージ済み"],
+    ["gh 非 0 → 状態を取れない", { "pr merge": { status: 1, stdout: "", stderr: "w" }, "pr view:post": { status: 1, stdout: "", stderr: "x" } }, 3, "merge-pr: マージの成否を確かめられない"],
+    ["gh 非 0 → OPEN のまま", { "pr merge": { status: 1, stdout: "", stderr: "w" }, "pr view:post": ok({ state: "OPEN", mergedAt: null }) }, 1, "merge-pr: マージしていない"],
+    ["gh 非 0 → MERGED → 緑", { "pr merge": { status: 1, stdout: "", stderr: "w" } }, 0, "merge-pr: マージ済み"],
+  ])("出力の最初の行は常に判定である（gh の失敗の通知はそのあと）: %s", (_, over, code, head) => {
+    const f = fake(over);
+    expect(run(ARGS, "/repo", f.deps)).toBe(code);
+    expect(f.text().split("\n")[0]).toMatch(new RegExp(`^${head}`));
+    expect(f.text()).toContain("gh pr merge は exit 1");
+  });
+  it("null を throw されても catch の中で落ちず 3（node の exit 1 に化けない）", () => {
+    const f = fake({
+      "issue view": () => {
+        throw null;
+      },
+    });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+  });
   it("状態を確かめられなければ 3（マージしたかもしれない）", () => {
     const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "x" } });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);

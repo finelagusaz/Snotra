@@ -263,7 +263,7 @@ fn measure_real_index_footprint() {
 
     // **ロードより前に読む。** cache-miss の枝はこの区間の中で現行版を書き出すので、
     // あとから読むと「測る前に何が置かれていたか」ではなく「測ったあと何が残ったか」に
-    // なってしまう——旧版を測った実行が v7 と自称する。
+    // なってしまう——旧版を測った実行が現行版と自称する。
     let on_disk_version = on_disk_index_version();
 
     // 実起動と同じ経路を辿る: load_or_scan_with_stats が返す `IndexMaterial` を `from_material` へ渡し、Wave 1 をスキップする。**派生データを捨てる形で代用すると**再計算が走り、ピークも構築コストも別物になる。

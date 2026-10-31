@@ -148,7 +148,7 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
 }
 
 /// Wave 2: lower_names / lower_file_names からビットマスクを並列構築する。
-/// to_lower_folded が主要な Latin アクセントを ASCII へ折り畳み済み（é→e）のため、
+/// normalize_for_match が主要な Latin アクセントを ASCII へ折り畳み済み（é→e）のため、
 /// ここで非 ASCII として残る name は典型的には CJK・アラビア文字など。
 /// u64::MAX は任意の query_mask に対して (query_mask & u64::MAX) == query_mask を
 /// 満たすため、これらのエントリはクエリに依らず bitmask pre-filter を常に通過する。

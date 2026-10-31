@@ -221,11 +221,11 @@ pub fn error_result(dir: &Path) -> Vec<SearchResult> {
     }]
 }
 
-/// `filter_norm` は絞り込みを [`normalize_query`] へ通したもの、`needle` はその UTF-32 形
+/// `filter_norm` は絞り込みを [`normalize_for_match`] へ通したもの、`needle` はその UTF-32 形
 /// （`Utf32String::from`・呼び出し 1 回に 1 度）でなければならない。Fuzzy の照合は検索と同じ
 /// [`fuzzy_match_score`] を通す（#1276）。
 ///
-/// **名前の側も同じ [`normalize_query`] を通す**（`SPEC.md`「4.2 クエリ正規化」・#1284）。片側だけ別の
+/// **名前の側も同じ [`normalize_for_match`] を通す**（`SPEC.md`「4.2 クエリ正規化」・#1284）。片側だけ別の
 /// 正規化にすると、連続空白や全角空白を含む名前で一致が割れる。
 fn matches_filter(name: &str, filter_norm: &str, needle: &Utf32String, mode: SearchMode) -> bool {
     let name_norm = normalize_for_match(name);
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn folder_cmp_is_total_order_by_path() {
-        // "Café" と "Cafe" は to_lower_folded で同キー化する（アクセント畳込み）。
+        // "Café" と "Cafe" は normalize_for_match で同キー化する（アクセント畳込み）。
         // path tie-breaker が無いと select_nth_unstable の境界順が read_dir 順へ漏れる。
         // empty_history() は既存 folder テストのヘルパー（`HistoryStore::empty()`）。
         let hist = empty_history();
@@ -863,7 +863,7 @@ mod tests {
     /// 名前の側には Windows のファイル名に置ける空白（連続空白・U+3000・NBSP）を使う。返る名前は元の綴りの
     /// まま（期待値を元の綴りで書くことがその検査を兼ねる）。**空白だけの絞り込みは空と同じく全件である。**
     ///
-    /// 回帰テスト: 絞り込み側と名前側のどちらか片方だけを `to_lower_folded` へ戻しても落ちる。
+    /// 回帰テスト: 絞り込み側と名前側のどちらか片方だけを、空白を正規化しない写像（小文字化と折りたたみだけ）へ戻しても落ちる。
     #[test]
     fn filter_normalizes_whitespace_on_both_sides_in_every_mode() {
         use crate::search::SearchMode;

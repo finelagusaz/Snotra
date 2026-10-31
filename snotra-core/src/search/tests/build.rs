@@ -881,7 +881,7 @@ fn shared_lower_name_chain_collapses_both_links() {
 /// 共有による読み替えが、潰す前の導出と 1 バイトも違わないことを実インデックスの全件で確かめる。
 ///
 /// **共有は最適化であって意味の変更ではない。** `entry_view` が返す 2 つの文字列は、索引が
-/// それを持っていようといまいと導出（`to_lower_folded` / `query::lower_file_name`）と
+/// それを持っていようといまいと導出（`query::normalize_for_match` / `query::lower_file_name`）と
 /// 一致しなければならない——ずれると `lower_name` はタイブレークの並びが、`lower_file_name` は
 /// `has_dot` クエリの拡張子マッチが**静かに**変わる（クラッシュせず、順位だけが動く）。
 /// 実インデックスが無ければ自動スキップする corpus であり、機構としての保証は上の合成

@@ -1,8 +1,10 @@
 //! クエリと履歴キーの正規化、および文字存在ビットマスク計算。
 //!
-//! `normalize_query`（小文字化・アクセント折畳み・空白圧縮。ASCII 小文字のみなら `Cow` で
-//! ゼロアロケーション）、履歴クエリキー正規化 `normalize_history_query_key`、検索/インデクサ
-//! 双方が使う `char_bitmask`（bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化は冪等。
+//! 照合用の正規化の唯一の入口 `normalize_for_match`（クエリとエントリ名の両側が通る・
+//! SPEC §4.2。変える文字が無ければ `Cow` で借用）、履歴クエリキー正規化
+//! `normalize_history_query_key`、検索/インデクサ双方が使う `char_bitmask`
+//! （bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等であることは全コードポイントの
+//! 検知器で固定してある。
 
 use std::borrow::Cow;
 
@@ -15,7 +17,7 @@ pub fn to_kana(s: &str) -> String {
     s.to_hiragana()
 }
 
-/// `normalize_query` + パス区切り文字（`/` `¥`）を `\` に統一する。
+/// [`normalize_for_match`] + パス区切り文字（`/` `¥`）を `\` に統一する。
 /// 履歴キーの正規化はこの関数に一元化する（DRY）。
 /// `record_launch`・`query_count`・`migrate_normalize_keys`・`search.rs` の
 /// `path_history_key` が全て同じ正規化を使うことを保証する。
@@ -63,7 +65,7 @@ pub fn char_bitmask(lower: &str) -> u64 {
 
 /// Character-presence bitmask for a single lowercase entry name (or file name).
 /// ASCII strings get the bit-exact mask from [`char_bitmask`]; non-ASCII strings
-/// (typically CJK, Arabic, etc. — `to_lower_folded` already folds Latin accents to
+/// (typically CJK, Arabic, etc. — `normalize_for_match` already folds Latin accents to
 /// ASCII) get `u64::MAX` so `(query_mask & u64::MAX) == query_mask` always holds and
 /// the entry is never excluded by the bitmask pre-filter.
 ///
@@ -91,7 +93,7 @@ pub fn file_char_mask(lower_file_name: Option<&str>) -> u64 {
 /// 鎖は `lower_file_name` → `lower_name` → `name` の順で、各段が上流と一致すれば持たずに済む。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DerivedSharing {
-    /// `lower_name` が `name` とバイト一致する（`to_lower_folded` が恒等関数になる名前）。
+    /// `lower_name` が `name` とバイト一致する（`normalize_for_match` が名前をそのまま返す）。
     pub lower_name_is_name: bool,
     /// `lower_file_name` が `lower_name` とバイト一致する。
     ///
@@ -434,13 +436,13 @@ mod tests {
 
     #[test]
     fn history_query_key_folds_accents() {
-        // normalize_query が é→e に折りたたむことを確認
+        // normalize_for_match が é→e に折りたたむことを確認
         assert_eq!(normalize_history_query_key("café\\foo"), "cafe\\foo");
     }
 
     #[test]
     fn history_query_key_collapses_spaces() {
-        // normalize_query が連続スペースを圧縮することを確認
+        // normalize_for_match が連続スペースを圧縮することを確認
         assert_eq!(
             normalize_history_query_key("my  tools\\foo"),
             "my tools\\foo"
@@ -449,7 +451,7 @@ mod tests {
 
     #[test]
     fn history_query_key_no_path_sep_passthrough() {
-        // パス区切りなしの場合は normalize_query と同じ
+        // パス区切りなしの場合は normalize_for_match と同じ
         assert_eq!(normalize_history_query_key("hello"), "hello");
     }
 

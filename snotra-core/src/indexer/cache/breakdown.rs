@@ -294,8 +294,8 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
         );
     }
 
-    // **v6 を落とさない。** v7 が現行になった瞬間、v6 は「実運用点に実際に置かれている版」に
-    // なった——ここを飛ばすと、置き換えようとしている当の形式でだけ計器が黙る
+    // **v6 を落とさない。** v7 が現行になったとき、v6 は「実運用点に実際に置かれている版」に
+    // なった——旧版を飛ばすと、置き換えようとしている当の形式でだけ計器が黙る
     // （実測で踏んだ: 実 `index.bin` が v6 のとき「読めなかったためスキップ」と出た）。
     if let Ok(c) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
         drop(bytes);

@@ -381,7 +381,7 @@ fn migrate_time_unit_if_legacy(version: u32, mut data: HistoryData) -> HistoryDa
 
 /// デシリアライズ直後に全パスキーを正規化するマイグレーション。
 /// 旧バージョンで大文字・小文字が混在したキーを統一し、衝突時は加算/max で統合する。
-/// normalize_entry_key / normalize_query は冪等なので、正規化済みデータへの再適用も安全。
+/// normalize_entry_key / normalize_for_match は冪等なので、正規化済みデータへの再適用も安全。
 fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
     // global: キー正規化。衝突は launch_count 加算、last_launched は max
     let mut new_global: FxHashMap<String, GlobalEntry> = FxHashMap::default();
@@ -393,7 +393,7 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
     }
 
     // query: outer キー（クエリ）は normalize_history_query_key で正規化
-    // （normalize_query + パス区切り統一）。inner キー（パス）は normalize_entry_key で正規化。
+    // （normalize_for_match + パス区切り統一）。inner キー（パス）は normalize_entry_key で正規化。
     // 衝突時はカウント加算。
     let mut new_query: FxHashMap<String, FxHashMap<String, u32>> = FxHashMap::default();
     for (q_key, app_map) in data.query {

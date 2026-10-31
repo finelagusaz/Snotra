@@ -134,7 +134,7 @@ pub struct LoadOrScanResult {
 }
 
 /// v5 フォーマット: ビットマスクに加えて lower_names / lower_file_names を保存。
-/// 起動時に SearchEngine の Wave 1（to_lower_folded）を完全スキップできる。
+/// 起動時に SearchEngine の Wave 1（normalize_for_match）を完全スキップできる。
 ///
 /// **v4 との差は `normalized_keys` を持たないことだけである**（実測 35.56 MiB / 312,377 件）。
 /// `target_path` から `normalize_entry_key_into` で導出できる純粋な派生であり、検索時に
@@ -322,7 +322,7 @@ fn cache_bin_file_in(dir: &Path) -> BinFile {
 /// **索引本体を読まない。** 設定アプリがこれを呼ぶので、17 MiB の確保を持ち込まない。
 ///
 /// **`built_at` が全版で先頭フィールドであることは、観測された性質であって契約ではない**
-/// （v2〜v7 の 6 版で確認した）。新しい版を足すときも先頭へ置くこと——この依存は
+/// （v2 から現行版まで確認した）。新しい版を足すときも先頭へ置くこと——この依存は
 /// `index_cache_on_disk_format_is_stable` の assertion 1 本が固定している。
 pub fn index_built_at_in(dir: &Path) -> Option<u64> {
     // u64 の postcard varint は最大 10 バイト。
@@ -657,18 +657,18 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMat
 
 /// キャッシュ読み込み結果。
 struct LoadCacheResult {
-    /// 索引の材料。**v7 は木をディスクから直接読み、旧版は `target_path` から建て直す。**
+    /// 索引の材料。**現行版は木をディスクから直接読み、旧版は `target_path` から建て直す。**
     ///
     /// **通る構築子は `upgrade`（[`LegacyUpgrade`]）で分かれる。** `Write` はどの版でも
     /// `upgrade_legacy_cache_in` 経由で [`IndexMaterial::derived`]（自分で導出した組・
     /// 長さを検証しない）を通る。`Skip` はディスクの生データをそのまま使うため、
-    /// マスクを持つ版（v3〜v7）は [`IndexMaterial::from_untrusted`]（列長を検証する）、
+    /// マスクを持つ旧版（v3〜v6）は [`IndexMaterial::from_untrusted`]（列長を検証する）、
     /// マスクを持たない v2 だけ `from_tree` を通る。
     material: IndexMaterial,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read` へ運ぶ）。
     read: Duration,
     /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
-    /// （`LoadOrScanStats::cache_save` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
+    /// （`LoadOrScanStats::cache_save` へ運ぶ）。昇格が走らなかった枝（現行版・
     /// `LegacyUpgrade::Skip`）では `None`。
     ///
     /// **`Some` を作れるのは [`upgrade_legacy_cache_in`] の内側だけである。** ゆえに

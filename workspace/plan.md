@@ -25,7 +25,7 @@ SPEC §4.2 が「クエリおよびエントリ名」に課す 1 つの正規化
 | `snotra-core/src/indexer/columns.rs` | `derive_entry_lowers` を新しい入口へ |
 | `snotra-core/src/folder.rs` | `normalize_query` と `build_sort_keys` の `to_lower_folded` を新しい入口へ |
 | `snotra-core/src/search/query_plan.rs`・`history.rs` | `normalize_query` の呼び出しを新しい入口へ |
-| `snotra-core/src/indexer/cache.rs` | `INDEX_CACHE_VERSION` を 8 へ。v7 を旧版の枝へ（扱いは「未確定」）。`snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」の全項目と、直前の版を受け取る側の 3 項（breakdown の鎖・版の帰属のテスト・v7 の凍結バイト列を `load_cache_in` 経由で読むテスト）。golden bytes の更新 |
+| `snotra-core/src/indexer/cache.rs` | `INDEX_CACHE_VERSION` を 8 へ。v7 は cache-miss（「未確定」の裁定）。`snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」の全項目と、直前の版を受け取る側の 3 項（breakdown の鎖・版の帰属のテスト・v7 の凍結バイト列を `load_cache_in` 経由で読むテスト）。golden bytes の更新 |
 | テスト（`search/tests/basic.rs` など） | 受け入れ条件 6 の名前の一致。既存テストの `normalize_query` / `to_lower_folded` の参照を移す |
 | `SPEC.md` | §4.2 に受け入れ条件 8 の 2 点 |
 | `snotra-core/CLAUDE.md` | 「`query.rs` の正規化と `Cow<str>` 遅延アロケーション」を新しい入口の名前へ。`to_lower_folded` を名指す散文（`search.rs` の doc・`cache.rs` の doc など）を直す（G-stale-identifiers が見る） |
@@ -80,12 +80,12 @@ SPEC §4.2 が「クエリおよびエントリ名」に課す 1 つの正規化
 
 - [x] `INDEX_CACHE_VERSION` 8 と、チェックリストの全項目（v7 は cache-miss） — フィールドは増えないので 1・3・5〜7 は該当なし。(a) breakdown は v7 も同じ構造体で読む・(b) 版の帰属のテストに v7 = cache-miss・(c) `GOLDEN_V7` を本物の凍結バイト列として残し `frozen_v7_is_a_cache_miss_and_is_not_rewritten`（`Write` でバイト列不変）と `breakdown_still_reads_the_frozen_v7`・golden は `GOLDEN_V8` を別に置いた
 - [x] v2〜v6 の `Skip` の腕が旧い意味の列を製品の経路へ返すかを確かめ、返すなら直す — **返さない**。`Skip` を渡す入口は `load_cached_entries` だけで、それは `.material.tree().materialize()` しか使わず派生の列を捨てる（`git grep LegacyUpgrade::Skip`）。直さない
-- [ ] 却下した v7 の扱い（木から導き直す A・木専用の導出 C・版を上げない D/E）を ADR に残す（`/implement` Step 4）
+- [x] 却下した v7 の扱い（木から導き直す A・木専用の導出 C・版を上げない D/E）を ADR に残す — `docs/adr/ADR-index-v7-cache-miss.md`。コードの説明から参照するので、Step 4 を待たず実装のコミットに含めた
 
 ## フェーズ 3 — 文書
 
-- [ ] SPEC §4.2 の 2 点
-- [ ] `snotra-core/CLAUDE.md` と doc の散文
+- [x] SPEC §4.2 の 2 点 — 空の扱いは実装で確かめた（検索は UI の `trim().is_empty()` が空クエリへ倒し、正規化で消えるのは空白類だけなので一致する。フォルダは `filter_norm.is_empty()` で絞り込みなし）
+- [x] `snotra-core/CLAUDE.md` と doc の散文 — 旧 API の名前は `git grep` で `PERFORMANCE.md` の過去の記録 2 行（凍結の扱い）以外 0 件。v7 を「木の形式」として描く doc（`index_tree.rs`・`search/tests/*`）は v7 以降で真のまま置いた
 
 ## 未確定（実装前に潰す）
 

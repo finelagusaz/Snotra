@@ -36,7 +36,7 @@ pub(super) struct QueryPlan<'a> {
     /// **`norm_query` が**パス区切りを含むか（[`Self::has_path_sep`] は**生クエリ**を見る）。
     ///
     /// **2 つを取り違えてはならない。** name の Fuzzy マッチが使う needle は `norm_query` で
-    /// あり、`normalize_query` はアクセントを畳む。`¥`(U+00A5) が畳まれる版では生クエリに
+    /// あり、`normalize_for_match` はアクセントを畳む。`¥`(U+00A5) が畳まれる版では生クエリに
     /// 区切りが在っても needle には無く、`has_path_sep` を条件に name スコアリングを飛ばすと
     /// **`¥` 入りクエリで name マッチだけが静かに消える**（#1057）。
     /// パスマッチの発火（`path_query`）は従来どおり `has_path_sep` が決める。
@@ -111,7 +111,7 @@ pub(super) fn prepare_query_plan<'a>(
 
     // Path matching: クエリにパス区切り文字（\ / ¥）を含む場合、normalized_key（フルパス）
     // に対して Substring マッチを試みる。
-    // normalize_query() は連続スペースを潰すが normalize_entry_key() は保持するため、
+    // normalize_for_match() は連続スペースを潰すが normalize_entry_key() は保持するため、
     // パスマッチ用クエリは生クエリから normalize_entry_key() 相当で正規化する。
     // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
     // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
@@ -134,7 +134,7 @@ pub(super) fn prepare_query_plan<'a>(
     } else {
         None
     };
-    // 履歴キー: normalize_history_query_key で一元化（normalize_query + パス区切り統一）。
+    // 履歴キー: normalize_history_query_key で一元化（normalize_for_match + パス区切り統一）。
     // path_query は生クエリベースでスペース/アクセントの扱いが異なるため別途作る。
     let path_history_key: Option<String> = if has_path_sep {
         Some(normalize_history_query_key(query).into_owned())

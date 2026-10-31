@@ -1,10 +1,12 @@
 ---
 name: merge-pr
-description: "PR を squash マージするときに使用。issue auto-close の誤爆を防ぐ、マージ直前の closingIssuesReferences 確認・本文編集・マージ後 3 点検証の手順。"
+description: "PR を squash マージするときに使用。道具（npm run merge:pr）が閉じる issue の宣言との照合・道具の要約の照合・マージ後の検証を行い、このスキルは終了コードごとの次の一手を持つ。"
 disable-model-invocation: true
 argument-hint: "[PR 番号]"
 allowed-tools:
   - Bash(gh *)
+  - Bash(npm run merge:pr *)
+  - Bash(node scripts/merge-pr.mjs *)
   - Read
   - Write
 ---
@@ -13,107 +15,47 @@ PR を squash マージする。
 
 対象: $ARGUMENTS
 
-## この手順が唯一の防御である理由
+マージで閉じる issue を決めるのは **PR 本文**であり、`gh pr merge` の引数では抑止できない。PR テンプレートが `Closes` を埋めるため、書いた覚えが無くても残る。確認とマージ後の検証は道具 `scripts/merge-pr.mjs` が構造で持つ（使い方・照合の中身・終了コードの正本はその冒頭）。機構の理由と却下した案は `docs/adr/ADR-squash-merge-issue-autoclose.md`。
 
-マージで閉じる issue を決めるのは **PR 本文**である。`gh pr merge` の `--subject` / `--body-file` では抑止できない（#488 実測）。
+## 1. 宣言と本文を用意する
 
-auto-close は本文の**どこにあっても**走る。対象は `close` / `fix` / `resolve` 系の 9 形で、大文字小文字を問わない。表やチェックリストの中の行も効く。
+- **このマージで閉じる issue を決める。** 閉じないなら `none`
+- squash commit の本文を一時ファイルへ書く（`--body-file`。省けないのは、省くと PR 説明文がそのまま squash 本文になるため）。**closing keyword を書かない**——道具は見つけたら止める
+- 件名は PR タイトルから組まれる。変えるなら `gh pr edit <PR> --title` で PR タイトルの方を直す（件名を逐語で渡すと `(#N)` が付かず、main 保護ゆえ恒久的に失われる）
 
-PR テンプレートが `Closes` を埋めるため、**書いた覚えが無くても残る**。
+## 2. 道具を走らせる
 
-hook もこれを見ていない（ルート `CLAUDE.md`「フック」の「外部 API の不可逆呼び出し」の条項）。
+打つ（Git Bash）: `npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>`
 
-**機構がここに無いので、下の手順が唯一の防御である。**
+PowerShell からは `node scripts/merge-pr.mjs <PR> --closes ... --body-file ...` と打つ（`npm.ps1` が最初の `--` を食う・`docs/build-commands.md`「Windows/macOS/Linux で実行可能」）。
 
-なぜこの機構になるかは `docs/adr/ADR-squash-merge-issue-autoclose.md` が持つ。2 経路の可視性の非対称・マージ方式では逃げられないこと・squash 設定と復元レシピ。
+## 3. 終了コードで次の一手が決まる
 
-## 手順
+| exit | 意味 | 次の一手 |
+|---|---|---|
+| 0 | マージ済み。宣言した issue がすべて閉じ、このリポジトリで宣言外は閉じていない（他リポジトリの close はマージ前の照合で防ぐだけで、事後には見ない） | なし |
+| 1 | **マージしていない。** 止めた理由が全件並ぶ | 理由ごとに直して再実行する（下の「止められたとき」） |
+| 2 | **マージしていない。** 走らなかった（使用法・linked worktree・gh / git の失敗） | メッセージに従って前提を直し、再実行する |
+| 3 | **マージを試みたあとの要確認。** 出力の最初の行（判定）が「マージ済み」なら事後検証が赤、「成否を確かめられない」ならマージされたかどうかも分からない。gh 自身の失敗の通知は判定のあとに添えられる | 下の「マージ後に要確認が出たとき」 |
 
-squash マージでは常にこの順で行う。`<PR>` は PR 番号、`<issue>` は issue 番号。
+### 止められたとき（exit 1）
 
-### 1. 閉じる issue の一覧を見る
+- **宣言に無い issue を PR 本文が閉じる**: 閉じたくないなら PR 本文から closing keyword を外す（`gh pr edit <PR> --body-file <tmp>`）。認識されるのは `close` / `fix` / `resolve` 系の 9 形で、大文字小文字を問わず、表やチェックリストの中の行も、1 行に同居する複数の参照も効く。**どの語が効いたかを推測せず、外したら道具を再実行して一覧で確かめる**
+- **PR タイトルが issue を閉じる形**: `fix: #985 …` のように closing keyword の型名の直後へ番号を置くと閉じる（コロンを挟んでも効く）。番号は末尾へ回すか括弧で包む。`chore:` / `refactor:` が安全なのは型名が keyword でないからであって、形が安全だからではない
+- **このブランチを base にする open PR がある**: リポジトリ設定でマージ後に head が自動で消え、base を消された PR は `CLOSED` になり reopen できない（#830 が #829 の取り直し）。下流を先にマージするか retarget する
+- **道具の要約の照合に通らない**: 出力の「復帰」の手順どおり、PR の head で `verify:tree` を回し直す（PR を作ったあとに足したコミット・Dependabot の PR もこの形で止まる）
+- **CLEAN でない**: 必須チェックの未通過・衝突・レビュー待ちを解消する。`--auto` は確認とマージを引き離すので**使わない**
 
-打つ: `gh pr view <PR> --json closingIssuesReferences`
+### マージ後に要確認が出たとき（exit 3）
 
-**マージ直前に必ず打つ。** これが GitHub の計算した「いま閉じる issue」である。
+- **「成否を確かめられない」**: まず `gh pr view <PR> --json state,mergedAt --jq .` で状態を見る。`MERGED` でなければ、原因を直して道具を再実行する。**`MERGED` なら道具の事後検証は 1 つも走っていない**（再実行しても PR が OPEN でないので exit 1 で止まる）ので、次の 3 つを手で行う
+  1. 宣言した issue ごとに `gh issue view <N> -R <owner/repo> --json state` が `CLOSED` であること
+  2. `mergedAt` の生文字列（`--jq .mergedAt`）で `gh pr list --state merged --search "merged:>=<mergedAt>" -L 200` を打ち、当の PR が現れること（現れなければ時刻の形が効いておらず、次の検索を信用しない）
+  3. `gh issue list --state closed --search "closed:>=<mergedAt>" -L 200` に、宣言外の issue が無いこと。**ただし**、宣言したこのリポジトリの issue がまだ現れていなければ索引が未反映なので、時間を置いて打ち直す（0 件を「宣言外なし」と読まない）。200 件に達したら打ち切りと区別できないので信用しない
+- **宣言外の issue が閉じていた**: その issue の timeline で閉じた主体を確かめる。このマージが閉じたなら `gh issue reopen <N>`。close イベントは履歴に残り、close を契機に動く下流は巻き戻らない——**reopen は回復であって、事前確認を省く免罪符ではない**
+- **事後検証を確かめられない**（検算・上限・索引の未反映）: 出力が名指す検索や状態を、上の 1〜3 の形で手で引き直す。**検索の 0 件を「該当なし」と読まない**（ISO 8601 でない時刻は、エラーを出さず 0 件を返す）
 
-### 2. 閉じたくない issue が在れば、本文を編集する
+## 道具が守らないもの
 
-打つ: `gh pr edit <PR> --body-file <tmp>`
-
-編集したら手順 1 をやり直す。**一覧から消えるまで繰り返す。**
-
-⚠ どの行のどの語が効いたかを推測しない。認識されるのは 9 形（`close/closes/closed`・`fix/fixes/fixed`・`resolve/resolves/resolved`）で、大文字小文字を問わない。表やチェックリストの中の行も、1 行に同居する複数の参照も効く。
-
-**編集を終えてよいと決めるのは一覧であって、自分のキーワード走査ではない。**
-
-マージ時の `--subject` / `--body-file` では止められない。
-
-### 3. squash commit のメッセージを整える
-
-打つ: `--body-file <tmp>` だけを渡す。
-
-⚠ **`--subject` を渡してはならない。** 件名は渡した文字列が**逐語で**使われ、リポジトリ設定 `squash_merge_commit_title: PR_TITLE` が組む `タイトル (#N)` の `(#N)` が付かない。**main は保護されていて amend も force-push もできないので、マージした瞬間に恒久的に失われる**——`git log` から PR を辿る手掛かりはこれしか無い。**件名も CI もすべて緑のまま起きる**（2026-08-27 実測: `--subject` を渡した `5a30985d` だけが直前の 2 コミットの `(#1194)` `(#1193)` に相当する参照を持たない。同時に `gh api repos/<owner>/<repo> --jq .squash_merge_commit_title` がその設定値を返すことを確認した）。
-
-件名を変えたいなら **PR タイトルの方を直す**（`gh pr edit <PR> --title`）。それが `(#N)` を保つ唯一の経路である。
-
-⚠ **closing keyword を書いてはならない。** 散文の "partially fixes #N" も効く。書くと手順 1 の一覧に現れないまま閉じる。
-
-⚠ **conventional commit の型名も keyword になる。この警告が当たるのは PR タイトルである。** `fix: #985 …` のように `fix` / `close` / `resolve` 系の型の直後へ issue 番号を置くと閉じる——GitHub は `Closes: #10` のようにコロンを挟む形も認識し、**commit message 経由の close は PR を linked pull request に載せない**ので手順 1 の一覧にも現れない（GitHub docs「Linking a pull request to an issue」）。番号は末尾へ回すか括弧で包む。**`chore:` / `refactor:` の前例を根拠にしてはならない**——それらが安全なのは型名が keyword でないからであって、形が安全だからではない。
-
-**PR タイトルが当たる面である、というのは上の 2 つからの導出であって別に測ってはいない**（件名が PR タイトルから組まれること・commit message の keyword が閉じること）。ゆえに **PR タイトルは手順 1 の一覧に現れない経路を持ちうる**と読み、型名の直後へ番号を置かない。
-
-`--body-file` を省けば squash 本文は **PR 説明文そのもの**になる（表・チェックリスト込みで冗長）。
-
-### 4. マージ後に 3 点を確認する
-
-⚠ **`gh pr view <PR> --json closingIssuesReferences` を数えるだけでは足りない。** それは PR 本文からその瞬間に再計算される値であって、閉じた事実そのものではない。
-
-**(1) 取り直した一覧の全件が、意図どおり閉じたか**
-
-**(2) 残すと決めた issue が今も `OPEN` か**
-
-打つ: `gh issue view <issue> --json state`
-
-正しく動いていれば、それらは (1) の一覧に現れない。**ゆえに一覧を数えるだけでは、守りたい当の issue を一度も見ないことになる。**
-
-**(3) 知らないうちに閉じた issue が無いか**
-
-打つ: `gh issue list --state closed --search "closed:>=<mergedAt>"`
-
-時刻: `gh pr view <PR> --json mergedAt --jq .mergedAt`
-
-これは 2 つの一覧のどちらにも属さない issue を拾う、唯一の接地した観測点である。
-
-⚠ **0 件は「該当なし」を意味しない。** ISO 8601 でない時刻は、エラーを出さず 0 件を返す。
-
-0 件を受け取る前に、検索が効いていることを確かめる。
-
-- (1) に issue が在る → その issue が (3) の一覧にも現れることを見る。現れないなら、閉じなかったのではなく検索が効いていない
-- (1) が空 → 突き合わせる相手がいない。既知の閉じた issue を含む境界（`closed:>=<日付>` の形）で同じ検索を打ち、形が効いていることを確かめる
-
-実測 2026-08-10: PowerShell の `ConvertFrom-Json` は `gh pr view <PR> --json mergedAt` の値を DateTime へ変換する。`08/10/2026 10:26:23` の形へ崩れ、0 件で沈黙した。`--jq` で生文字列を取れば起きない。同日、(1) が空の PR でもこの検算で 0 件を受け取った。
-
-### 誤って閉じていたら
-
-打つ: `gh issue reopen <issue>`
-
-close イベントは履歴に残る。close を契機に動く下流は巻き戻らない。**reopen は回復であって、事前確認を省く免罪符ではない。**
-
-## 手順 1 の一覧が「閉じる issue のすべて」になる条件
-
-手順 3 を守り、かつ確認からマージまで PR 本文が変わらないこと。
-
-本文を凍結する機構は無い。`gh pr merge --auto` は確認とマージを引き離すため**使わない**。
-
-## `--delete-branch` を付ける前に
-
-打つ: `gh pr list --state open --base <branch> --json number`
-
-**そのブランチを base にする open PR が無いことを確認する。**
-
-⚠ base ブランチを消された PR は、GitHub が自動で `CLOSED` にする。**reopen できない**（`Cannot change the base branch of a closed pull request`・実測）。
-
-復旧には下流を main の上へ rebase し、PR を取り直すことになる（#830 が #829 の取り直しである）。
-
-stacked PR では、**下流を先にマージするか retarget してから**消す。
+- **道具を経ないマージ**（Web UI・手打ちの `gh pr merge`）は、`--no-verify` と同格の人間専用の迂回である。hook は `gh pr merge` を見ない
+- **確認からマージまでの PR 本文の変化**: head は `--match-head-commit` で固定されるが、本文を凍結する機構は無い。道具を走らせているあいだに本文を編集しない

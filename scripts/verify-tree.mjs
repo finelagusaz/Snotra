@@ -96,12 +96,21 @@ function treePathFor(root, branch) {
   return path.join(root, ".claude", "worktrees", `agent-verify-${branch.replace(/[^A-Za-z0-9._-]/g, "-")}`);
 }
 
-/** 本体の作業ツリーのルートと、現在のブランチから導いた道具の木のパス */
-function mainContext() {
-  const root = git(process.cwd(), ["rev-parse", "--show-toplevel"]);
+/**
+ * 本体の作業ツリーのルート。linked worktree からは要約の置き場（本体の `.claude/worktrees/`）を正しく導けないので
+ * 拒む。マージの道具（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う
+ */
+export function mainRoot(cwd) {
+  const root = git(cwd, ["rev-parse", "--show-toplevel"]);
   if (git(root, ["rev-parse", "--git-dir"]) !== git(root, ["rev-parse", "--git-common-dir"])) {
     throw new EnvError(`本体の作業ツリーから打つこと（ここは linked worktree: ${root}）`);
   }
+  return root;
+}
+
+/** 本体の作業ツリーのルートと、現在のブランチから導いた道具の木のパス */
+function mainContext() {
+  const root = mainRoot(process.cwd());
   const branch = git(root, ["branch", "--show-current"]);
   if (branch === "") throw new EnvError("本体が detached HEAD——道具の木の名前をブランチから決められない");
   return { root, branch, tree: treePathFor(root, branch) };

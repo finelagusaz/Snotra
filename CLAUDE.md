@@ -13,7 +13,7 @@
 
 - **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` の各 hook が commit / 非 FF merge / rebase / push を拒み（`githooks.test.mjs` で実測）、GitHub ruleset `default` が main への直接 push を拒む（実測）
 - **Layer 1（`.githooks/`）は best-effort である** — hook は追跡ファイルゆえ、含まないコミットの checkout は fail-open。`cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` も `pre-commit` を呼ばず**沈黙で main が進む**（実測）。**取りこぼしは push 時に GitHub ruleset が捕捉する**（不在検知は意図的に置かない）
-- **squash マージは `/merge-pr` の手順で行う** — マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない（#488 実測）。手順の全文は `/merge-pr`、機構の理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`。`gh pr merge --auto` は確認とマージを引き離すため**使わない**
+- **squash マージは `/merge-pr` から道具（`npm run merge:pr`）で行う** — マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない（#488 実測）。閉じる issue の宣言との照合・道具の要約の照合・マージ後の検証は道具が持ち、終了コードの読み方は `/merge-pr`、機構の理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`。`gh pr merge --auto` は確認とマージを引き離すため**使わない**
 
 ## フック（.claude/settings.json）
 
@@ -21,7 +21,7 @@ PreToolUse フック（`.claude/hooks/pre-bash.mjs`）が Bash / PowerShell の�
 
 - **拒否メッセージが復帰手順を持つ。それに従う。** 判定の一覧は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」
 - `gh pr create` は未 push・`workspace/plan.md` の未チェック `- [ ]`・道具（`npm run verify:tree`）の要約の照合で拒まれる（止める条件の正本は `.claude/hooks/pre-bash.mjs` の `judgeSummary` / `readVerifyState`）。`git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**
-- フックが守る外部 API の不可逆呼び出しは `gh pr create` だけである。`merge` / `close` の残余は `/merge-pr` の手順が持つ（理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`）
+- フックが守る外部 API の不可逆呼び出しは `gh pr create` だけである。`merge` とそれが起こす issue の close の照合は `/merge-pr` が起動する道具（`npm run merge:pr`）が持ち、道具を経ないマージ（Web UI・手打ちの `gh pr merge`）は `--no-verify` と同格の人間専用の迂回である（理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`）
 - 文書の決定的な整合（参照実在・索引・SPEC 番号・コマンドの実在）は PR CI の `governance-check` job が捕まえる（`skip-ci` 非対象・#587）
 - フックを改修するときは `docs/hooks.md` を読む
 
@@ -57,7 +57,7 @@ PreToolUse フック（`.claude/hooks/pre-bash.mjs`）が Bash / PowerShell の�
 
 | スキル（user 起動専用） | 使うとき |
 |---|---|
-| `/merge-pr`          | PR の squash マージ実行（closingIssuesReferences 確認 → 本文編集 → マージ後 3 点検証） |
+| `/merge-pr`          | PR の squash マージ実行（道具 `npm run merge:pr` を走らせ、終了コードごとに次の一手を取る） |
 | `/health-check`      | 定期・サイクル完了後の governance:check + 意味的整合（報告のみ・修正しない） |
 | `/retrospective`     | サイクル終了後の教訓抽出・残タスク振り分け・RETROSPECTIVE.md 上書き |
 | `/deps-update`       | cargo/npm 依存の一括更新と PR 作成・CI 確認（マージは手動） |

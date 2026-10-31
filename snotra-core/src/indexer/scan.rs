@@ -62,6 +62,10 @@ struct RootRole {
 /// （`src-tauri` の `icon_pipeline_cost_probe` が `Config::default_scan_paths()` を直接渡す）。
 ///
 /// 根は一桁ゆえ全ペア走査で無料である。
+///
+/// **役割は木の深さではなく走査順の関数である。** ゆえに重複排除の検知器は、親の根が先・子の根が
+/// 先の両順序を固定する（`scan_all_dedups_when_roots_are_nested` /
+/// `scan_all_dedups_when_the_child_root_comes_first`）。
 fn root_roles(scan_paths: &[ScanPath]) -> Vec<RootRole> {
     let keys: Vec<String> = scan_paths
         .iter()
@@ -96,6 +100,12 @@ impl Dedup {
     /// 照合は [`normalize_entry_key_into`] で 1 本のバッファへ詰め直し、`HashSet<String>` を
     /// `&str` で引く（`Borrow<str>`）。**記録側と照合側が同じ関数を通ることがバイト一致の
     /// 根拠である**——別実装を書き起こしてはならない。
+    ///
+    /// **この関数の照合枝で確保が戻る退行は、CI では捕まらない。** 走査結果が同じままなので
+    /// 挙動テストにも `root_roles` の単体テストにも映らず、`tests/memory_footprint.rs` の確保
+    /// 回数（`#[ignore]` の手動計測）だけが見る。`scan_all` の結線の退行も同じである。確保の側で
+    /// CI が守るのは、役割の割り当て（`root_roles_over_the_real_shape_leave_the_largest_root_inert`）
+    /// までである。
     fn accept(&mut self, path: &str) -> bool {
         let Some(set) = self.set.as_mut() else {
             return true;

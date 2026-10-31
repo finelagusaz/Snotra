@@ -184,7 +184,7 @@ fn apply_config_change(app: &AppHandle) {
 /// 適用しない。適用すると `result_limit` 等が default に落ち、live-read 化した履歴剪定が
 /// default 上限で走って `history.bin` が不可逆に縮む（データ損失）うえ、default scan で
 /// 誤った再構築も走る。`Config::load` の「一時的失敗は退避も上書きもしない」保全方針
-/// （snotra-core/CLAUDE.md）を apply 側にも揃える。ファイルは無傷なので、次の保存イベントで
+/// （`snotra_core::config` の `LoadOutcome` の doc）を apply 側にも揃える。ファイルは無傷なので、次の保存イベントで
 /// 正規の変更を拾う。`RecoveredFromCorrupt`（真の破損・.bak 退避済み）は #343 の意図的 default
 /// 適用なので適用する。
 pub(crate) fn should_apply_config_change(outcome: LoadOutcome) -> bool {

@@ -328,8 +328,8 @@ const GOLDEN_V6: &[u8] = &[
 /// **v6 は、v7 が現行になったときにフォールバック枝へ落ちた版である。** そのとき
 /// この枝は新設であり、かつ**最初に通る人が最も多い**枝でもあった。
 ///
-/// **`CachedLower::Collapsed` で返らなければならない。** `Raw` で返すと `assemble` が
-/// 測り直し、`None` どうしの一致で file name 成分を持たないエントリにフラグが立つ。
+/// **`CachedLower::Collapsed` で返らなければならない。** v6 の列は記録側が潰したものであり、
+/// 未測定の全件を表す `Raw` ではない（分ける理由は `CachedLower` の doc）。
 #[test]
 fn frozen_v6_bytes_load_as_collapsed_through_load_cache_in() {
     let dir = temp_dir("v6_frozen_through_load_cache_in");

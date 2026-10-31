@@ -773,7 +773,7 @@ pub(super) fn read_window_borders(_window: &tauri::Window) -> WindowBorders {
 /// **移すなら [`derive_bar_rect_phys`] と同時でなければならない**（同じ物理バー高が 2 通りに
 /// 導出される状態が復活する）。さらに [`read_placement_relative`] が `window.bin` へ保存する値の
 /// 意味が黙って変わり、既存プロファイルの復元位置が一斉にずれてそのまま再永続化される
-/// ——#755 / #801 が起こした事故と同じ形なので、`/persistence-check` の 4 点セットが要る。
+/// ——#755 / #801 が起こした事故と同じ形なので、`/persistence-check` が要る。
 #[cfg(windows)]
 fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor> {
     let (Ok(pos), Some(geom)) = (window.outer_position(), read_frame_geom(window)) else {

@@ -216,13 +216,18 @@ describe("run — マージの成否は PR の状態で確定する", () => {
     expect(f.text().split("\n")[0]).toMatch(new RegExp(`^${head}`));
     expect(f.text()).toContain("gh pr merge は exit 1");
   });
-  it("null を throw されても catch の中で落ちず 3（node の exit 1 に化けない）", () => {
+  // catch は 3 か所（マージ前・マージ区間・事後）にあり、それぞれへ null を届ける
+  it.each([
+    ["マージ前（2）", "repo view", 2],
+    ["マージ区間（3）", "pr merge", 3],
+    ["事後（3）", "issue view", 3],
+  ])("null を throw されても catch の中で落ちない（node の exit 1 に化けない）: %s", (_, key, code) => {
     const f = fake({
-      "issue view": () => {
+      [key]: () => {
         throw null;
       },
     });
-    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(run(ARGS, "/repo", f.deps)).toBe(code);
   });
   it("状態を確かめられなければ 3（マージしたかもしれない）", () => {
     const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "x" } });

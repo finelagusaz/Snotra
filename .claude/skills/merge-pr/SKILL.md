@@ -49,9 +49,9 @@ PowerShell からは `node scripts/merge-pr.mjs <PR> --closes ... --body-file ..
 ### マージ後に要確認が出たとき（exit 3）
 
 - **「成否を確かめられない」**: まず `gh pr view <PR> --json state,mergedAt --jq .` で状態を見る。`MERGED` でなければ、原因を直して道具を再実行する。**`MERGED` なら道具の事後検証は 1 つも走っていない**（再実行しても PR が OPEN でないので exit 1 で止まる）ので、次の 3 つを手で行う
-  1. 宣言した issue ごとに `gh issue view <N> --json state` が `CLOSED` であること
-  2. `mergedAt` の生文字列（`--jq .mergedAt`）で `gh pr list --state merged --search "merged:>=<mergedAt>"` を打ち、当の PR が現れること（現れなければ時刻の形が効いておらず、次の検索を信用しない）
-  3. `gh issue list --state closed --search "closed:>=<mergedAt>" -L 200` に、宣言外の issue が無いこと
+  1. 宣言した issue ごとに `gh issue view <N> -R <owner/repo> --json state` が `CLOSED` であること
+  2. `mergedAt` の生文字列（`--jq .mergedAt`）で `gh pr list --state merged --search "merged:>=<mergedAt>" -L 200` を打ち、当の PR が現れること（現れなければ時刻の形が効いておらず、次の検索を信用しない）
+  3. `gh issue list --state closed --search "closed:>=<mergedAt>" -L 200` に、宣言外の issue が無いこと。**ただし**、宣言したこのリポジトリの issue がまだ現れていなければ索引が未反映なので、時間を置いて打ち直す（0 件を「宣言外なし」と読まない）。200 件に達したら打ち切りと区別できないので信用しない
 - **宣言外の issue が閉じていた**: その issue の timeline で閉じた主体を確かめる。このマージが閉じたなら `gh issue reopen <N>`。close イベントは履歴に残り、close を契機に動く下流は巻き戻らない——**reopen は回復であって、事前確認を省く免罪符ではない**
 - **事後検証を確かめられない**（検算・上限・索引の未反映）: 出力が名指す検索や状態を、上の 1〜3 の形で手で引き直す。**検索の 0 件を「該当なし」と読まない**（ISO 8601 でない時刻は、エラーを出さず 0 件を返す）
 

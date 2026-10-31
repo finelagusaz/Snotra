@@ -247,7 +247,7 @@ export function run(argv, cwd, deps = realDeps) {
     mergedAt = state.mergedAt;
   } catch (e) {
     deps.err(
-      `merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} --json state,mergedAt で状態を見る（/merge-pr「マージ後に要確認が出たとき」）\n${describe(e)}${ghNote}`,
+      `merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} --json state,mergedAt で状態を見る（/merge-pr の「マージ後に要確認が出たとき（exit 3）」）\n${describe(e)}${ghNote}`,
     );
     return 3;
   }

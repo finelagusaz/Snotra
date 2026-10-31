@@ -1,0 +1,71 @@
+レビュー 3 巡目 + 変異注入 — アンカー sha eef37148354fe8b0a13e4edcf497157ece676956（27b80a9e の上に修正 1 コミット）
+align: exit 0、worktree HEAD = eef37148、作業ツリー clean（.delegate/ のみ未追跡）
+ベースライン: npx vitest run scripts/merge-pr.test.mjs .claude/hooks/pre-bash.test.mjs → 318 tests 全緑（merge-pr.test は 97）
+参考: node scripts/governance-check.mjs → 全検査 passed（17 件）。カテゴリ F の正式な検証は別の道具の担当
+
+== 前巡の指摘の検算（firstline.mjs を全終端へ広げて実測。偽の deps、out/err の順に記録） ==
+R2-1 解消。各経路の最初の行は次のとおりで、どれも判定の行だった。
+  gh 非0 → MERGED → 宣言外 close   : exit 3。最初の行「マージ済み…ただし要確認」。ghNote あり
+  gh 非0 → 状態取得失敗            : exit 3。最初の行「マージの成否を確かめられない」。ghNote あり
+  gh 非0 → OPEN → OPEN             : exit 1。最初の行「マージしていない（#7 は OPEN）」。ghNote あり。sleep 1 回・view 2 回
+  gh 非0 → OPEN → 取得失敗         : exit 3。最初の行「成否を確かめられない」。ghNote あり
+  gh 非0 → OPEN → MERGED           : exit 0。最初の行「マージ済み…（宣言どおり）」。ghNote あり
+  gh 非0 → MERGED → 緑             : exit 0。最初の行「マージ済み」。ghNote あり
+  gh 0 → OPEN                      : exit 3。最初の行「成否を確かめられない」。sleep なし
+  gh が例外                        : exit 3。最初の行「成否を確かめられない」
+  ghNote が添えられるのは、gh pr merge が非 0 を返したときに到達しうる 4 つの終端（exit 1・成否不明の 3・事後検証の 3・exit 0）すべてだった。
+  例外の経路では ghNote は空のまま（status を読む前に投げるため）。
+R2-2 解消（SKILL.md:51-54）。ただし手作業の 3 点と道具のあいだに差が残る（下の R3-2）。空行は消えた。
+R2-3 解消。実測で次を確かめた。
+  - 事後で null を throw → exit 3
+  - マージ前で null を throw → exit 2（「マージしていない（#7）。null」）
+  describe = String((stack ? e?.stack : undefined) ?? e?.message ?? e) は null と undefined で "null" と "undefined" を返す。
+W2-1 解消。引き直しは gh が非 0 で非 MERGED のときだけ（:236-242）。gh が 0 で非 MERGED のときは引き直さずに 3。
+
+引き直しで 1/3 の取り違えが新しく生まれていないか
+  - 2 回目の view が失敗 → PostError → 3（「成否不明」）。1 回目の OPEN を根拠に 1 とは言わない。安全側
+  - 2 回目が MERGED → 事後検証へ進む。OPEN か CLOSED → 1
+  - gh が 0 の経路は引き直しを通らない
+  - 取り違えは見つからなかった
+  - 費用: --match-head-commit の不一致などの正当な失敗でも、毎回 5 秒待つ（SEARCH_RETRIES[0]）。受容範囲と見る
+
+== 新しい指摘 ==
+Critical / High / Medium: なし
+
+Low
+R3-1 SKILL への参照の文言が見出しと逐語で一致しない
+  道具のメッセージ（scripts/merge-pr.mjs:250）は /merge-pr「マージ後に要確認が出たとき」を指す。
+  実際の見出しは SKILL.md:49 の「マージ後に要確認が出たとき（exit 3）」。人が探すには足りる。
+  governance:check は通る（文字列リテラルなので G-heading-refs の対象外とみられる）。
+R3-2 SKILL の手作業 3 点（SKILL.md:52-54）が、道具の事後検証（scripts/merge-pr.mjs:257-288）より弱い。3 か所に差がある。
+  a. 1 番の `gh issue view <N>` に `-R <owner/repo>` が無い。道具は宣言の他リポジトリ分も -R で引く（:262）
+  b. 2 番の `gh pr list --state merged --search ...` に `-L` が無い。gh の既定は 30 件で、道具は -L 200（:268）。
+     30 件より多くマージされた後だと、当の PR が窓から外れて「現れない」と読む（fail-closed 側。実害は小さい）
+  c. 3 番に、道具が行う 2 つの判定が無い。
+     - 件数が 200 に達したら信用しない（:278）
+     - 宣言した同リポジトリの issue が検索に現れることを、索引が反映された証拠にする（:279-284）
+     手で 0 件を見たとき、索引の遅延と「宣言外なし」を区別できない。
+     下の箇条の「検索の 0 件を『該当なし』と読まない」が一部を覆っている。
+R3-3 検知器の穴（変異 R3b・R3c が生存）: null の throw のテストは事後検証の catch にしか当たっていない。
+  - マージ前の catch（:217）を `e.message ?? e` に戻しても全緑
+  - マージ区間の catch（:250）を `e.message ?? e` に戻しても全緑
+  実物の deps（spawnSync・JSON.parse）は null を投げないので、理論上の穴。
+
+⚠
+- 変異 R3 と R3d の赤は AssertionError ではない。run 自身が投げた TypeError（Cannot read properties of null (reading 'stack')）で、
+  vitest がテストを落とした。これは守りたい退行そのもの（未捕捉で node が exit 1）の症状なので、検知に数えた。
+  ハーネスの失敗（モジュール解決・timeout・SyntaxError）ではないことは出力で確かめた。
+
+== 変異注入（巻き戻しのたびに git hash-object が `git show eef37148:scripts/merge-pr.mjs | git hash-object --stdin` と一致することを確認。
+   モジュール解決・timeout・SyntaxError の信号なし） ==
+R1  ghNote を判定の前へ戻す（旧形の deps.err）            → 検知（4 件赤。AssertionError: 最初の行が判定に一致しない）
+R1b exit 1 の終端から ghNote を落とす                      → 検知
+R1c 成否不明 3 の終端から ghNote を落とす                  → 検知
+R1d 事後検証 3 の終端から ghNote を落とす                  → 検知
+R1e exit 0 の終端から ghNote を落とす                      → 検知
+R2  引き直しを消す                                         → 検知（expected 1 to be 0）
+R3  describe を `e.message ?? e` 相当に戻す                → 検知（run が TypeError を投げて赤。⚠ 参照）
+R3b マージ前の catch だけ `e.message ?? e` に戻す          → **生存**（R3-3）
+R3c マージ区間の catch だけ `e.message ?? e` に戻す        → **生存**（R3-3）
+R3d 事後の catch だけ `e.stack ?? e` に戻す                → 検知（同上の TypeError）
+生の出力: .delegate/mutation-raw-eef37148.txt

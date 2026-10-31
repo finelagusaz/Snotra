@@ -14,8 +14,8 @@ use crate::str_arena::{LowerFileColumn, LowerNameColumn};
 use super::super::AppEntry;
 
 use super::{
-    INDEX_CACHE_VERSION, INDEX_MAGIC, IndexCache, IndexCacheV4, IndexCacheV5, IndexCacheV6,
-    cache_bin_file_in,
+    INDEX_CACHE_VERSION, INDEX_MAGIC, INDEX_WIRE_SINCE, IndexCache, IndexCacheV4, IndexCacheV5,
+    IndexCacheV6, cache_bin_file_in,
 };
 
 /// `index.bin` の 1 項目が占めるオンディスクのバイト数。
@@ -261,14 +261,16 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
     let bytes = bf.load_bytes()?;
     let file_len = bytes.len();
 
-    // **v7 も同じ構造体で読む**（線上表現は現行版と同じ。違うのは派生の列の意味だけで、
-    // 計器が数えるのはバイトである）。v7 は「実運用点に今まさに置かれている版」であり、
-    // ここで黙ると版を上げた直後にだけ測れなくなる。
-    let current = [INDEX_CACHE_VERSION, 7].into_iter().find_map(|v| {
-        try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, v)
-            .ok()
-            .map(|c| (v, c))
-    });
+    // **現行の線上表現で書かれた旧版も同じ構造体で読む**（範囲の理由は `INDEX_WIRE_SINCE` の
+    // doc）。直前の版は「実運用点に今まさに置かれている版」であり、ここで黙ると版を上げた
+    // 直後にだけ測れなくなる。
+    let current = (INDEX_WIRE_SINCE..=INDEX_CACHE_VERSION)
+        .rev()
+        .find_map(|v| {
+            try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, v)
+                .ok()
+                .map(|c| (v, c))
+        });
     if let Some((version, c)) = current {
         drop(bytes);
         return build_breakdown(

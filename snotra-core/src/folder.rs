@@ -751,20 +751,8 @@ mod tests {
     /// `' '` が英字より前に来て ` b` が `a` より先になる。
     #[test]
     fn sort_key_trims_leading_whitespace_like_the_filter() {
-        let hist = HistoryStore::empty();
-        let entries = vec![
-            DirEntryData {
-                path: "C:\\d\\ b".into(),
-                name: " b".into(),
-                is_folder: false,
-            },
-            DirEntryData {
-                path: "C:\\d\\a".into(),
-                name: "a".into(),
-                is_folder: false,
-            },
-        ];
-        let sorted = sort_entries_unlimited(entries, &hist);
+        let sorted =
+            sort_entries_unlimited(vec![make_file(" b"), make_file("a")], &empty_history());
         assert_eq!(
             sorted.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
             ["a", " b"]

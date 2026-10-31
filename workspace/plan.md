@@ -51,9 +51,9 @@
 
 ## フェーズ 1 — 書き換え
 
-- [ ] ルート `CLAUDE.md` と `AGENTS.md` を草案で置き換える
-- [ ] 参照元 P1〜P7 を直す
-- [ ] 検算（集合差・消した語彙の `git grep`・`governance:check`）
+- [x] ルート `CLAUDE.md` と `AGENTS.md` を草案で置き換える
+- [x] 参照元 P1〜P7 を直す
+- [x] 検算（集合差・消した語彙の `git grep`・`governance:check`） — 落ちた識別子はルート 30・AGENTS 18 で、裁定で消した条項・機構の説明・経緯のいずれか。消した語彙（実行にバイアス・4点セット・手順 6・消した憲章の項）は凍結層の外で 0 件。`governance:check` 全 17 件 passed
 
 ## plan-review 結果
 

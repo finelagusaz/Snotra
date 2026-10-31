@@ -1,0 +1,52 @@
+review-7338bf57 — アンカー sha 7338bf576bc5281aafa82f5a1416bf11402cc543（fix/merge-pr-post-retry、base main）
+align: exit 0（HEAD = 対象 sha を確認）。対象: scripts/merge-pr.mjs / scripts/merge-pr.test.mjs / .claude/skills/merge-pr/SKILL.md
+ベースライン: npx vitest run scripts/merge-pr.test.mjs → 106 passed
+
+== レビュー ==
+Critical: なし
+High: なし
+
+Medium-1（検知器の穴）: 「観測の途中で gh が失敗したら待たずに exit 3」（plan.md「不変条件と異常系」）を固定するテストが無い。
+  変異 X1b（observe() の例外のうち「上限」以外を捕まえて sleep → 再観測し、尽きたら再送出）が 106/106 緑で生存。
+  既存の「事後の gh が失敗しても 3（2 ではない）」（merge-pr.test.mjs の post 系末尾）は終了コードと「マージ済み」しか見ず、f.sleeps を見ない。
+  実装（merge-pr.mjs の observe 内の json(...PostError) → 外側 catch）自体は正しく、待たずに 3 になる。穴はテスト側。
+  対処案: 同テストで expect(f.sleeps).toEqual([]) を足す。
+
+Low-1（SKILL と出力の不一致）: SKILL.md「マージ後に要確認が出たとき（exit 3）」の見出し語「**事後検証を確かめられない**（検算・上限・索引の未反映）」は出力の接頭句を引いている。
+  新実装では検算・索引の未反映は通常の所見（「検算が通らない: …」「宣言した issue（…）が closed の検索に現れない…」）になり、
+  「事後検証を確かめられない:」の接頭句が付くのは上限・gh 失敗・mergedAt の形・想定外の例外だけ（merge-pr.mjs 事後ブロックの catch）。
+  読者が出力の語で SKILL を引くと、検算・未反映の 2 つが見出しに一致しない。追記した 1 句（「最大 30 秒」「観測 N 回・待ち計 S 秒」）は実装と一致（SEARCH_RETRIES 合計 30_000・tally の書式は逐語一致）。
+
+Low-2 / ⚠（既存挙動の持ち越し・回帰ではない）: 宣言した同リポジトリの issue が本当に OPEN のまま尽きると、所見が 2 件並ぶ——「宣言した o/r#N が閉じていない（OPEN）」と「宣言した issue（#N）が closed の検索に現れない。索引が未反映で…」。
+  後者の原因は索引ではなく close されていないこと。旧実装も (1) の所見 + unseen の PostError で同じく 2 件だった。
+  あわせて、この形では unseen 非空ゆえ宣言外 close の判定が出ない（旧実装も throw で同じ）。宣言外はマージ前の extra 照合で止めるので実害は小さい。
+  notClosed に入った local の番号を unseen から除けば誤読は消える。
+
+確認した点（問題なし）:
+- ループの出口: 揃った（break）／尽きた（attempt >= 3 で break、sleep は 3 回・観測 4 回）の両方で、以後の findings 組み立ては最後の観測 obs だけから行う。尽きたときに obs が undefined になる経路は無い（observe が throw すれば catch へ飛ぶ）。
+- 依存の順: !verified → 検算の所見のみ。unseen / undeclared はどちらも verified の else 側にしかない。notClosed は issue view 由来で検索に依存しないので、検算不通過でも出るのは正しい。
+- SEARCH_LIMIT: observe 内で throw → 待たずに 3（テストあり・変異 M6 で検知）。
+- observations / waited: observations は観測の開始時に attempt+1、waited は sleep の直後に加算。mergedAt 不正時は「観測 0 回・待ち計 0 秒」で出る。observe の途中で gh が落ちた回も 1 回に数える（⚠: 「完了した観測」ではなく「開始した観測」の数。出力の語「観測 N 回」と僅かにずれるが実害は無い）。
+- 終了コード: 0 = findings 0、3 = findings あり／例外。exit 1/2 の経路は変わっていない。マージ直後の引き直しは SEARCH_RETRIES[0] = 5_000 のまま（意図どおり）。
+- 宣言なし（--closes none）: declared/local 空 → notClosed・unseen 空 → 判定は verified のみ。既存テスト緑。
+
+⚠（確信度の低い所見）:
+- ⚠1 揃った判定を通っても、宣言外の close の検出は「揃った 1 回の観測」に対してだけ行う。揃った後に遅れて索引へ載る宣言外 close は見えない（旧実装も同じ。意図的構造「宣言外は待ちに入れない」の帰結）。
+- ⚠2 検算が 1 回目から通っていて、宣言 issue の close だけが遅れる場合も、毎回 pr list:merged を引き直す（呼び出し費用のみ・正しさに影響なし）。
+
+== 変異注入（1 本ずつ・内容ハッシュで復元を確認: 058053697caebc253b2ea82d6df28ada47381802ca28c91f7b30367ea2444aff・すべて AssertionError で赤、timeout / モジュール解決失敗なし） ==
+M1 ループを 1 回で抜ける（attempt >= 0 で break）: 検知（4 件赤。例「2 件のうち 1 件だけが遅れて閉じる」expected 3 to be 0、「最後まで揃わなければ」expected [] to equal [5000,10000,15000]）
+M2 揃った判定から verified を外す: 検知（1 件赤「検算の検索に PR が後から現れる」expected 3 to be 0）——検知は 1 テストのみ
+M3 揃った判定から notClosed を外す: 検知（2 件赤「2 件のうち 1 件だけ…」「最後まで揃わなければ」）
+M4 揃った判定に宣言外の close を足す: 検知（1 件赤「揃っていて宣言外の close があれば、待たずに 3」expected [5000,10000,15000] to equal []）
+M5 検算不通過でも宣言外 close を所見に出す: 検知（1 件赤「検算が最後まで通らなければ…」not to contain '#5'）——検知は 1 テストのみ
+M6 SEARCH_LIMIT 到達で throw せず待つ: 検知（1 件赤「検索が上限に達したら、待たずに打ち切る」expected [5000,10000,15000] to equal []）
+M7 waited を加算しない: 検知（2 件赤 '観測 2 回・待ち計 5 秒' / '観測 4 回・待ち計 30 秒' を含まない）
+M8 SEARCH_RETRIES を 2 段に戻す: 検知（1 件赤 expected [5000,10000] to equal [5000,10000,15000]）
+追加プローブ:
+X1  観測中の例外をすべて捕まえて待ってから再送出: 検知（上限テストが偶然捕まえる）
+X1b 同上だが「上限」の例外は除く（= gh 失敗だけ待つ）: **生存**（106/106 緑）→ Medium-1
+X2  揃った判定から unseen を外す: 検知（「索引の遅延: 宣言した issue が後から現れれば 0」）
+X3  notClosed の所見を出さない: 検知（2 件赤）
+X4  観測回数を常に 1: 検知（2 件赤）
+最終状態: scripts/merge-pr.mjs のハッシュは対象 sha と一致・git status clean（.delegate/ を除く）

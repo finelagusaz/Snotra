@@ -266,10 +266,14 @@ export function run(argv, cwd, deps = realDeps) {
     const observe = () => {
       // 宣言した issue は番号で引く（検索の索引に依らない）
       const notClosed = [];
+      const openLocal = new Set();
       for (const ref of declared) {
         const [owner_repo, n] = ref.split("#");
         const s = json(deps, root, ["issue", "view", n, "-R", owner_repo, "--json", "state"], PostError);
-        if (s.state !== "CLOSED") notClosed.push(`${ref} が閉じていない（${s.state}）`);
+        if (s.state !== "CLOSED") {
+          notClosed.push(`${ref} が閉じていない（${s.state}）`);
+          if (owner_repo === repo) openLocal.add(n);
+        }
       }
       // 検算: 同じ時刻の形で、当の PR が merged の検索に現れること。通らなければ closed の検索を信用しない
       const prs = json(deps, root, ["pr", "list", "--state", "merged", "--search", `merged:>=${mergedAt}`, "--json", "number", "-L", String(SEARCH_LIMIT)], PostError);
@@ -278,7 +282,8 @@ export function run(argv, cwd, deps = realDeps) {
       // 上限への到達は待っても解消しないので、その場で打ち切る
       if (closed.length >= SEARCH_LIMIT) throw new PostError(`closed:>=${mergedAt} の検索が上限 ${SEARCH_LIMIT} 件に達した。打ち切りと区別できない`);
       const numbers = closed.map((i) => String(i.number));
-      const unseen = local.filter((n) => !numbers.includes(n));
+      // 閉じていないと番号で確かめた issue は、検索に現れなくて当然である。索引の未反映には数えない
+      const unseen = local.filter((n) => !numbers.includes(n) && !openLocal.has(n));
       return { notClosed, verified, unseen, numbers };
     };
 

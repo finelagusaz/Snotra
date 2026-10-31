@@ -311,11 +311,14 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     expect(f.sleeps).toEqual([5_000]);
   });
   it("最後まで揃わなければ、待ちを使い切って 3（観測 4 回・待ち計 30 秒）", () => {
-    const f = fake({ "issue view": ok({ state: "OPEN" }) });
+    // 本当に OPEN のままの issue は、closed の検索にも現れない（実際の GitHub と同じ形）
+    const f = fake({ "issue view": ok({ state: "OPEN" }), "issue list": ok([]) });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
     expect(f.sleeps).toEqual([5_000, 10_000, 15_000]);
     expect(f.text()).toContain("観測 4 回・待ち計 30 秒");
     expect(f.text()).toContain("o/r#3 が閉じていない");
+    // 本当に OPEN の issue は closed の検索に現れなくて当然なので、索引の未反映とは言わない
+    expect(f.text()).not.toContain("索引が未反映");
   });
   it("検算が最後まで通らなければ、closed の検索を信用しない——宣言外の close も未反映も出さない（依存の順）", () => {
     const f = fake({ "pr list:merged": ok([]), "issue list": ok([{ number: 5 }]) });
@@ -343,9 +346,11 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     expect(f.text()).toContain("観測 1 回・待ち計 0 秒");
   });
   it("事後の gh が失敗しても 3（2 ではない——マージは済んでいる）", () => {
-    const r = post({ "issue view": { status: 1, stdout: "", stderr: "x" } });
-    expect(r.code).toBe(3);
-    expect(r.text).toContain("マージ済み");
+    const f = fake({ "issue view": { status: 1, stdout: "", stderr: "x" } });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.text()).toContain("マージ済み");
+    // gh の失敗は反映の遅れではないので待たない（待つ変異は終了コードだけでは捕まらない）
+    expect(f.sleeps).toEqual([]);
   });
 });
 

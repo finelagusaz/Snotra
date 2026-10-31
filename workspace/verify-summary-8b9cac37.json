@@ -1,0 +1,33 @@
+{
+  "sha": "8b9cac370fecb6c733d95e09f33f4386c6e50019",
+  "branch": "fix/merge-pr-post-retry",
+  "worktree": "C:/workspace/Snotra/.claude/worktrees/agent-verify-fix-merge-pr-post-retry",
+  "categories_requested": [
+    "E"
+  ],
+  "categories_run": [
+    "E",
+    "F"
+  ],
+  "also": [],
+  "handoff": [],
+  "status": "green",
+  "results": [
+    {
+      "category": "E",
+      "command": "npm test",
+      "exit": 0,
+      "started_at": "2026-10-31T04:51:41.013Z",
+      "ended_at": "2026-10-31T04:52:04.594Z"
+    },
+    {
+      "category": "F",
+      "command": "npm run governance:check",
+      "exit": 0,
+      "started_at": "2026-10-31T04:52:04.594Z",
+      "ended_at": "2026-10-31T04:52:05.197Z"
+    }
+  ],
+  "warnings": [],
+  "log": "C:/workspace/Snotra/.claude/worktrees/agent-verify-fix-merge-pr-post-retry.summary.log"
+}

@@ -1,0 +1,13 @@
+review-8b9cac37 — 3 巡目。アンカー sha 8b9cac370fecb6c733d95e09f33f4386c6e50019
+align: exit 0、HEAD = 8b9cac37 を確認。差分（ca74a485..8b9cac37）は scripts/merge-pr.test.mjs のテスト 1 本の追加と workspace/review-ca74a485.txt の追加だけ。merge-pr.mjs は変わっていない（sha256 d0ae35b3…abd75 で前巡と同一）
+
+== テストの意図の確認 ==
+- 偽の issue view は args[4]（-R の値）で応答を分ける。merge-pr.mjs の呼び出しは ["issue","view",n,"-R",owner_repo,...] なので、x/y#3 だけが OPEN、o/r#3 は CLOSED になる。ねらった実形と一致
+- issue list は [] なので、o/r#3 は検索に現れない（索引の未反映）。宣言は "3,x/y#3" で、pre の closingIssuesReferences と一致する。マージ前に止められず、事後検証まで届く
+- 見ているのは「x/y#3 が閉じていない」と「索引が未反映」の 2 点。終了コードだけを見て緑になる形ではない
+
+== 変異（1 本ずつ・内容ハッシュで復元を確認・赤はすべて AssertionError） ==
+R2  `if (owner_repo === repo)` を外す: 検知（新テストが赤 expected … to contain '索引が未反映'。107 件中 1 件が赤）
+R2b 条件を `owner_repo !== repo` に逆転（裏取り）: 検知（2 件赤: 新テストと「最後まで揃わなければ…」）
+
+結論: 指摘 0 件（Critical/High/Medium/Low/⚠ すべてなし）。対象 sha 8b9cac370fecb6c733d95e09f33f4386c6e50019

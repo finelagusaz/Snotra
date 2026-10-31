@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::index_tree::IndexTree;
 use crate::query::{
-    file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
+    file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, normalize_for_match,
 };
 use crate::str_arena::{LowerFileColumn, LowerFileSlot, LowerNameColumn};
 
@@ -182,7 +182,7 @@ pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
 /// 潰さない列（`CachedLower::Raw`）へ追記する経路と、マスクだけを要する経路（`lower` が
 /// `None`）がこれを直接呼ぶ。潰した形が要るなら [`derive_entry_collapsed`] を呼ぶ。
 fn derive_entry_lowers(entry: &AppEntry) -> (u64, u64, String, Option<String>) {
-    let lower_name = to_lower_folded(&entry.name);
+    let lower_name = normalize_for_match(&entry.name).into_owned();
     let lower_file = lower_file_name(&entry.target_path);
     let char_mask = name_char_mask(&lower_name);
     let file_mask = file_char_mask(lower_file.as_deref());

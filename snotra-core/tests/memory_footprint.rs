@@ -263,7 +263,7 @@ fn measure_real_index_footprint() {
 
     // **ロードより前に読む。** cache-miss の枝はこの区間の中で現行版を書き出すので、
     // あとから読むと「測る前に何が置かれていたか」ではなく「測ったあと何が残ったか」に
-    // なってしまう——旧版を測った実行が v7 と自称する。
+    // なってしまう——旧版を測った実行が現行版と自称する。
     let on_disk_version = on_disk_index_version();
 
     // 実起動と同じ経路を辿る: load_or_scan_with_stats が返す `IndexMaterial` を `from_material` へ渡し、Wave 1 をスキップする。**派生データを捨てる形で代用すると**再計算が走り、ピークも構築コストも別物になる。
@@ -290,19 +290,30 @@ fn measure_real_index_footprint() {
     // フォールバック枝で読まれ、木は `target_path` を実体化してから建て直される
     // ——現行版の削減はそこには現れないのに、出力の見た目は成功時とまったく同じである
     // （昇格の機序は `snotra-core/CLAUDE.md`「index.bin 書き込みの排他」）。
-    match on_disk_version {
-        Some(v) if v == indexer::INDEX_CACHE_VERSION => {
-            println!("  on-disk 形式: v{v}（現行）");
+    //
+    // **先にロードが当たったかで分け、版はその中で見る**（版のリテラルで分けない）。当たらな
+    // かったなら版が何であれ全走査の枝であり、フォールバック枝や現行版と名乗ると測った枝を
+    // 偽って名乗る。
+    let current = indexer::INDEX_CACHE_VERSION;
+    if !result.stats.cache_hit {
+        match on_disk_version {
+            Some(v) => println!(
+                "  on-disk 形式: v{v} — ロードが当たらなかった（製品が読まない版・config の\
+                 不一致・破損のいずれか）。**以下は全走査（cache-miss）の枝の数字である。**\
+                 この実行が現行 v{current} を書き出したので、もう 1 回走らせて測り直すこと"
+            ),
+            None => println!("  on-disk 形式: index.bin を読めなかった（全走査の枝である）"),
         }
-        Some(v) => {
-            println!(
+    } else {
+        match on_disk_version {
+            Some(v) if v == current => println!("  on-disk 形式: v{v}（現行）"),
+            Some(v) => println!(
                 "  on-disk 形式: v{v} — 旧版である。**以下はフォールバック枝の数字であり、\
-                 現行 v{} の常駐ではない。** 昇格させてから測り直すこと（アプリを 1 回起動\
-                 すればロードの旧版枝が現行版へ書き戻す）",
-                indexer::INDEX_CACHE_VERSION
-            );
+                 現行 v{current} の常駐ではない。** この実行のロードの旧版枝が現行版へ書き戻した\
+                 ので、もう 1 回走らせて測り直すこと"
+            ),
+            None => println!("  on-disk 形式: ロード前に版を読めなかった（版は不明）"),
         }
-        None => println!("  on-disk 形式: index.bin を読めなかった（全走査の枝である）"),
     }
     report("index.bin ロード（entries + masks）", t0, t1, n);
     // **フェーズ内訳を出す。** 製品が既に測っている（`LoadOrScanStats`）のに、ここが壁時計だけを

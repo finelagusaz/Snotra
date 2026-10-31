@@ -14,8 +14,8 @@ use crate::str_arena::{LowerFileColumn, LowerNameColumn};
 use super::super::AppEntry;
 
 use super::{
-    INDEX_CACHE_VERSION, INDEX_MAGIC, IndexCache, IndexCacheV4, IndexCacheV5, IndexCacheV6,
-    cache_bin_file_in,
+    INDEX_CACHE_VERSION, INDEX_MAGIC, INDEX_WIRE_SINCE, IndexCache, IndexCacheV4, IndexCacheV5,
+    IndexCacheV6, cache_bin_file_in,
 };
 
 /// `index.bin` の 1 項目が占めるオンディスクのバイト数。
@@ -261,12 +261,20 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
     let bytes = bf.load_bytes()?;
     let file_len = bytes.len();
 
-    if let Ok(c) =
-        try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
-    {
+    // **現行の線上表現で書かれた旧版も同じ構造体で読む**（範囲の理由は `INDEX_WIRE_SINCE` の
+    // doc）。直前の版は「実運用点に今まさに置かれている版」であり、ここで黙ると版を上げた
+    // 直後にだけ測れなくなる。
+    let current = (INDEX_WIRE_SINCE..=INDEX_CACHE_VERSION)
+        .rev()
+        .find_map(|v| {
+            try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, v)
+                .ok()
+                .map(|c| (v, c))
+        });
+    if let Some((version, c)) = current {
         drop(bytes);
         return build_breakdown(
-            INDEX_CACHE_VERSION,
+            version,
             file_len,
             c.built_at,
             c.config_hash,
@@ -288,8 +296,8 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
         );
     }
 
-    // **v6 を落とさない。** v7 が現行になった瞬間、v6 は「実運用点に実際に置かれている版」に
-    // なった——ここを飛ばすと、置き換えようとしている当の形式でだけ計器が黙る
+    // **v6 を落とさない。** v7 が現行になったとき、v6 は「実運用点に実際に置かれている版」に
+    // なった——旧版を飛ばすと、置き換えようとしている当の形式でだけ計器が黙る
     // （実測で踏んだ: 実 `index.bin` が v6 のとき「読めなかったためスキップ」と出た）。
     if let Ok(c) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
         drop(bytes);

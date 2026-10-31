@@ -218,6 +218,25 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
             target_path: "C:\\apps\\Café.lnk".to_string(),
             is_folder: false,
         },
+        // 空白類（全角空白・連続空白・前の空白）を名前とファイル名の両方に持つ（#1309）。
+        // 記録側（`derive_entry_lowers`）・かなの 2 経路・`lower_file_name` のどれか 1 か所だけが
+        // 空白を正規化しない写像へ戻ると、ここで記録側と構築側がずれる。アクセントだけの
+        // fixture では、空白を触らない旧い写像との差が現れない。
+        AppEntry {
+            name: "資料\u{3000}2024".to_string(),
+            target_path: "C:\\docs\\資料\u{3000}2024.txt".to_string(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "a  b".to_string(),
+            target_path: "C:\\apps\\a  b.lnk".to_string(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: " App".to_string(),
+            target_path: "C:\\apps\\ App.exe".to_string(),
+            is_folder: false,
+        },
     ];
     // **製品と同じ並びで木を建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す）。
     crate::indexer::sort_entries_canonical(&mut entries);
@@ -881,7 +900,7 @@ fn shared_lower_name_chain_collapses_both_links() {
 /// 共有による読み替えが、潰す前の導出と 1 バイトも違わないことを実インデックスの全件で確かめる。
 ///
 /// **共有は最適化であって意味の変更ではない。** `entry_view` が返す 2 つの文字列は、索引が
-/// それを持っていようといまいと導出（`to_lower_folded` / `query::lower_file_name`）と
+/// それを持っていようといまいと導出（`query::normalize_for_match` / `query::lower_file_name`）と
 /// 一致しなければならない——ずれると `lower_name` はタイブレークの並びが、`lower_file_name` は
 /// `has_dot` クエリの拡張子マッチが**静かに**変わる（クラッシュせず、順位だけが動く）。
 /// 実インデックスが無ければ自動スキップする corpus であり、機構としての保証は上の合成
@@ -897,7 +916,7 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
         .iter()
         .map(|e| {
             (
-                crate::query::to_lower_folded(&e.name),
+                crate::query::normalize_for_match(&e.name).into_owned(),
                 crate::query::lower_file_name(&e.target_path),
             )
         })
@@ -954,7 +973,7 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
 /// 経路にしか無い——**塊が 1 つしか出ず底上げが常に 0 だから**である。
 #[test]
 fn kana_column_survives_chunked_parallel_merge() {
-    use crate::query::{to_kana, to_lower_folded};
+    use crate::query::{normalize_for_match, to_kana};
 
     let n = crate::search::build::KANA_CHUNK * 2 + 1;
     // 長さが 1〜4 文字で散る名前（`i` の 10 進表記をカタカナの数字へ写す）。
@@ -991,7 +1010,7 @@ fn kana_column_survives_chunked_parallel_merge() {
     // **索引が持つ名前と突き合わせる。** 入力の並びではなく索引の並びを基準にするので、
     // `derive_columns` が並べ替えても成立し、塊の入れ替わりだけが検出される。
     for i in 0..n {
-        let want = to_kana(&to_lower_folded(engine.entries.name_at(i)));
+        let want = to_kana(&normalize_for_match(engine.entries.name_at(i)));
         assert_eq!(
             engine.kana_lower_names.get(i),
             want,

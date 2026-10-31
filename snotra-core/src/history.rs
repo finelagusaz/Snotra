@@ -381,7 +381,7 @@ fn migrate_time_unit_if_legacy(version: u32, mut data: HistoryData) -> HistoryDa
 
 /// デシリアライズ直後に全パスキーを正規化するマイグレーション。
 /// 旧バージョンで大文字・小文字が混在したキーを統一し、衝突時は加算/max で統合する。
-/// normalize_entry_key / normalize_query は冪等なので、正規化済みデータへの再適用も安全。
+/// normalize_entry_key / normalize_for_match は冪等なので、正規化済みデータへの再適用も安全。
 fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
     // global: キー正規化。衝突は launch_count 加算、last_launched は max
     let mut new_global: FxHashMap<String, GlobalEntry> = FxHashMap::default();
@@ -393,7 +393,7 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
     }
 
     // query: outer キー（クエリ）は normalize_history_query_key で正規化
-    // （normalize_query + パス区切り統一）。inner キー（パス）は normalize_entry_key で正規化。
+    // （normalize_for_match + パス区切り統一）。inner キー（パス）は normalize_entry_key で正規化。
     // 衝突時はカウント加算。
     let mut new_query: FxHashMap<String, FxHashMap<String, u32>> = FxHashMap::default();
     for (q_key, app_map) in data.query {
@@ -423,7 +423,7 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
 mod tests {
     use super::*;
     use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
-    use crate::query::normalize_query;
+    use crate::query::normalize_for_match;
 
     /// テスト用の作業ディレクトリを作り直して返す。
     ///
@@ -481,7 +481,7 @@ mod tests {
         let path = "C:\\fake\\notepad.lnk";
         let query = "note";
         let path_key = normalize_entry_key(path);
-        let query_key = normalize_query(query).into_owned();
+        let query_key = normalize_for_match(query).into_owned();
 
         // Simulate record_launch logic without save()
         store
@@ -533,7 +533,7 @@ mod tests {
         let mut store = fresh_store();
         let path = "C:\\fake\\app.lnk";
         let path_key = normalize_entry_key(path);
-        let key = normalize_query("foo bar");
+        let key = normalize_for_match("foo bar");
         *store
             .data
             .query
@@ -854,6 +854,30 @@ mod tests {
         assert_eq!(twice.global["c:\\fake\\app.lnk"].launch_count, 5);
         assert_eq!(once.query["app"]["c:\\fake\\app.lnk"], 2);
         assert_eq!(twice.query["app"]["c:\\fake\\app.lnk"], 2);
+    }
+
+    /// **旧い正規化で記録したクエリキーは、読み込み時の移行で新しい規則へ収束する**（#1309）。
+    /// 旧い実装は `ɢ` を `G` と記録し（冪等でない）、`ǅ` をそのまま借用で返していた（#1310）。
+    /// `history.bin` の版を上げないのは、この移行が読み込みのたびに無条件で走るからである。
+    #[test]
+    fn migrate_normalize_keys_merges_query_keys_recorded_by_the_old_normalizer() {
+        let mut data = HistoryData::default();
+        for (key, count) in [("G", 2), ("g", 3), ("ǅ", 1), ("ǆ", 4)] {
+            data.query
+                .entry(key.to_string())
+                .or_default()
+                .insert("c:\\fake\\app.lnk".to_string(), count);
+        }
+        let migrated = migrate_normalize_keys(data);
+        assert_eq!(migrated.query.len(), 2);
+        for (query, want) in [("ɢ", 5), ("ǅ", 5)] {
+            let key = normalize_history_query_key(query);
+            assert_eq!(
+                migrated.query[key.as_ref()]["c:\\fake\\app.lnk"],
+                want,
+                "{query:?}"
+            );
+        }
     }
 
     #[test]

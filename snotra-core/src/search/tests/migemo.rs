@@ -39,6 +39,27 @@ fn kana_search_matches_katakana_entry() {
     );
 }
 
+/// **名前のかなも、照合の入口で空白を正規化してから作る**（#1309）。クエリのかなは正規化済みの
+/// クエリから作るので、名前の全角空白が残るとかなどうしの照合が外れる。かなの 2 経路
+/// （Wave 1 と木の経路）の突き合わせは片方だけの退行しか捕まえないので、挙動で固定する。
+#[test]
+fn kana_search_matches_entry_with_fullwidth_space() {
+    let entries = make_entries(&["ドキュメント\u{3000}メモ"]);
+    let mut engine = SearchEngine::new(entries);
+    let h = empty_history();
+    let results = engine.search_with_options(
+        "dokyumento memo",
+        8,
+        &h,
+        SearchMode::Substring,
+        migemo_config(),
+    );
+    assert_eq!(
+        results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["ドキュメント\u{3000}メモ"]
+    );
+}
+
 #[test]
 fn fuzzy_kana_match_skips_latin_bitmask_prefilter() {
     // "chatto" と "tyatto" は kana に正規化するとどちらも「ちゃっと」になる。

@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::history::HistoryStore;
 use crate::indexer::is_hidden_or_system;
-use crate::query::{normalize_query, to_lower_folded};
+use crate::query::normalize_for_match;
 use crate::search::{SearchMode, fuzzy_match_score};
 use crate::ui_types::{IconSource, SearchResult};
 
@@ -44,7 +44,7 @@ pub(crate) fn read_dir_entries(
 ) -> std::io::Result<Vec<DirEntryData>> {
     let read_dir = std::fs::read_dir(dir)?;
     let mut entries = Vec::new();
-    let filter_norm = normalize_query(filter);
+    let filter_norm = normalize_for_match(filter);
     let needle = Utf32String::from(filter_norm.as_ref());
 
     for entry in read_dir {
@@ -107,7 +107,7 @@ fn build_sort_keys(entries: &[SearchResult], history: &HistoryStore) -> Vec<(Str
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            let lower = to_lower_folded(&e.name);
+            let lower = normalize_for_match(&e.name).into_owned();
             let exp_count = if e.is_folder {
                 history.folder_expansion_count(&e.path)
             } else {
@@ -198,7 +198,7 @@ pub fn filter_sorted(
     mode: SearchMode,
     max: usize,
 ) -> Vec<SearchResult> {
-    let filter_norm = normalize_query(filter);
+    let filter_norm = normalize_for_match(filter);
     if filter_norm.is_empty() {
         return cached.iter().take(max).cloned().collect();
     }
@@ -221,14 +221,14 @@ pub fn error_result(dir: &Path) -> Vec<SearchResult> {
     }]
 }
 
-/// `filter_norm` は絞り込みを [`normalize_query`] へ通したもの、`needle` はその UTF-32 形
+/// `filter_norm` は絞り込みを [`normalize_for_match`] へ通したもの、`needle` はその UTF-32 形
 /// （`Utf32String::from`・呼び出し 1 回に 1 度）でなければならない。Fuzzy の照合は検索と同じ
 /// [`fuzzy_match_score`] を通す（#1276）。
 ///
-/// **名前の側も同じ [`normalize_query`] を通す**（`SPEC.md`「4.2 クエリ正規化」・#1284）。片側だけ別の
+/// **名前の側も同じ [`normalize_for_match`] を通す**（`SPEC.md`「4.2 クエリ正規化」・#1284）。片側だけ別の
 /// 正規化にすると、連続空白や全角空白を含む名前で一致が割れる。
 fn matches_filter(name: &str, filter_norm: &str, needle: &Utf32String, mode: SearchMode) -> bool {
-    let name_norm = normalize_query(name);
+    let name_norm = normalize_for_match(name);
     match mode {
         SearchMode::Prefix => name_norm.starts_with(filter_norm),
         SearchMode::Substring => name_norm.contains(filter_norm),
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn folder_cmp_is_total_order_by_path() {
-        // "Café" と "Cafe" は to_lower_folded で同キー化する（アクセント畳込み）。
+        // "Café" と "Cafe" は normalize_for_match で同キー化する（アクセント畳込み）。
         // path tie-breaker が無いと select_nth_unstable の境界順が read_dir 順へ漏れる。
         // empty_history() は既存 folder テストのヘルパー（`HistoryStore::empty()`）。
         let hist = empty_history();
@@ -746,6 +746,19 @@ mod tests {
         );
     }
 
+    /// **並べ替えのキーも照合の入口を通す**（#1309）。前に空白を持つ名前は、その空白を除いた
+    /// 名前の位置に並ぶ。キーだけを別の写像（空白を触らない小文字化と折りたたみ）へ戻すと、
+    /// `' '` が英字より前に来て ` b` が `a` より先になる。
+    #[test]
+    fn sort_key_trims_leading_whitespace_like_the_filter() {
+        let sorted =
+            sort_entries_unlimited(vec![make_file(" b"), make_file("a")], &empty_history());
+        assert_eq!(
+            sorted.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["a", " b"]
+        );
+    }
+
     /// read_dir_entries のフィルタ段だけをテストで再現する（実 I/O を避ける）。matches_filter は
     /// private だが同一モジュールから呼べる。
     #[cfg(test)]
@@ -754,7 +767,7 @@ mod tests {
         filter: &str,
         mode: crate::search::SearchMode,
     ) -> Vec<DirEntryData> {
-        let filter_norm = normalize_query(filter);
+        let filter_norm = normalize_for_match(filter);
         let needle = Utf32String::from(filter_norm.as_ref());
         entries
             .into_iter()
@@ -863,7 +876,7 @@ mod tests {
     /// 名前の側には Windows のファイル名に置ける空白（連続空白・U+3000・NBSP）を使う。返る名前は元の綴りの
     /// まま（期待値を元の綴りで書くことがその検査を兼ねる）。**空白だけの絞り込みは空と同じく全件である。**
     ///
-    /// 回帰テスト: 絞り込み側と名前側のどちらか片方だけを `to_lower_folded` へ戻しても落ちる。
+    /// 回帰テスト: 絞り込み側と名前側のどちらか片方だけを、空白を正規化しない写像（小文字化と折りたたみだけ）へ戻しても落ちる。
     #[test]
     fn filter_normalizes_whitespace_on_both_sides_in_every_mode() {
         use crate::search::SearchMode;

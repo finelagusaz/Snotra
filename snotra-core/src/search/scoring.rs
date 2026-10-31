@@ -517,7 +517,7 @@ impl SearchEngine {
 
             let (global_launches, last_launched) = history.get_global_stats_normalized(key);
             // 履歴キーは record_launch の保存形式に合わせる:
-            // normalize_query() + パス区切り統一。path_query は生クエリベースで
+            // normalize_for_match() + パス区切り統一。path_query は生クエリベースで
             // スペース/アクセントが異なるため履歴キーには使わない。
             let history_query_key = plan.path_history_key.as_deref().unwrap_or(norm_query_str);
             let qcount = history.query_count_pre_normalized(history_query_key, key) as i64;

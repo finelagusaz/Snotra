@@ -149,7 +149,7 @@ fn path_match_yen_sign_normalized() {
 
 #[test]
 fn path_match_consecutive_spaces_preserved() {
-    // パス成分に連続スペースを含む場合、normalize_query() で潰されない
+    // パス成分に連続スペースを含む場合、normalize_for_match() で潰されない
     let entries = vec![make_entry("app", "C:\\My  Tools\\app.exe")];
     let mut engine = SearchEngine::new(entries);
     let results = engine.search("My  Tools\\", 8, &empty_history(), SearchMode::Substring);

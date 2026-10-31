@@ -44,7 +44,16 @@ const INDEX_MAGIC: [u8; 4] = *b"INDX";
 /// が `5` のまま取り残され、「現行は v5。実運用点は v6 のまま」という**それ自体が矛盾した**
 /// 文を出し続けた（現行が v5 なら v6 は存在しえない）。
 #[doc(hidden)]
-pub const INDEX_CACHE_VERSION: u32 = 7;
+pub const INDEX_CACHE_VERSION: u32 = 8;
+
+/// 現行の線上表現（[`IndexCache`]）で書かれた最初の版。
+///
+/// これより後の版上げは派生の列の意味だけを変えた（v8・#1309）。**製品はこの範囲の旧版を
+/// 読まない**が、内訳の計器（`cache_byte_breakdown_in`）は同じ構造体で読む——数えるのは
+/// バイトであって意味ではないからである。**線上表現を変えて版を上げるときだけ、これを
+/// 上げる**（意味だけの版上げでは触らない。版のリテラルを計器に焼き込むと、次の意味だけの
+/// 版上げで直前の版——実運用点に今まさに置かれている版——を計器が黙って落とす）。
+const INDEX_WIRE_SINCE: u32 = 7;
 
 /// `load_or_scan_with_stats` の各フェーズ所要時間。
 ///
@@ -134,7 +143,7 @@ pub struct LoadOrScanResult {
 }
 
 /// v5 フォーマット: ビットマスクに加えて lower_names / lower_file_names を保存。
-/// 起動時に SearchEngine の Wave 1（to_lower_folded）を完全スキップできる。
+/// 起動時に SearchEngine の Wave 1（normalize_for_match）を完全スキップできる。
 ///
 /// **v4 との差は `normalized_keys` を持たないことだけである**（実測 35.56 MiB / 312,377 件）。
 /// `target_path` から `normalize_entry_key_into` で導出できる純粋な派生であり、検索時に
@@ -322,7 +331,7 @@ fn cache_bin_file_in(dir: &Path) -> BinFile {
 /// **索引本体を読まない。** 設定アプリがこれを呼ぶので、17 MiB の確保を持ち込まない。
 ///
 /// **`built_at` が全版で先頭フィールドであることは、観測された性質であって契約ではない**
-/// （v2〜v7 の 6 版で確認した）。新しい版を足すときも先頭へ置くこと——この依存は
+/// （v2 から現行版まで確認した）。新しい版を足すときも先頭へ置くこと——この依存は
 /// `index_cache_on_disk_format_is_stable` の assertion 1 本が固定している。
 pub fn index_built_at_in(dir: &Path) -> Option<u64> {
     // u64 の postcard varint は最大 10 バイト。
@@ -657,18 +666,18 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMat
 
 /// キャッシュ読み込み結果。
 struct LoadCacheResult {
-    /// 索引の材料。**v7 は木をディスクから直接読み、旧版は `target_path` から建て直す。**
+    /// 索引の材料。**現行版は木をディスクから直接読み、旧版は `target_path` から建て直す。**
     ///
     /// **通る構築子は `upgrade`（[`LegacyUpgrade`]）で分かれる。** `Write` はどの版でも
     /// `upgrade_legacy_cache_in` 経由で [`IndexMaterial::derived`]（自分で導出した組・
     /// 長さを検証しない）を通る。`Skip` はディスクの生データをそのまま使うため、
-    /// マスクを持つ版（v3〜v7）は [`IndexMaterial::from_untrusted`]（列長を検証する）、
+    /// マスクを持つ旧版（v3〜v6）は [`IndexMaterial::from_untrusted`]（列長を検証する）、
     /// マスクを持たない v2 だけ `from_tree` を通る。
     material: IndexMaterial,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read` へ運ぶ）。
     read: Duration,
     /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
-    /// （`LoadOrScanStats::cache_save` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
+    /// （`LoadOrScanStats::cache_save` へ運ぶ）。昇格が走らなかった枝（現行版・
     /// `LegacyUpgrade::Skip`）では `None`。
     ///
     /// **`Some` を作れるのは [`upgrade_legacy_cache_in`] の内側だけである。** ゆえに
@@ -845,7 +854,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
     let bytes = bf.load_bytes()?;
     let read_took = read_started.elapsed();
 
-    // v7 (現行): 木の列 + ビットマスク + **共有を潰した** lower names。
+    // 現行版: 木の列 + ビットマスク + **共有を潰した** lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
     if let Ok(cache) =
         try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
@@ -884,6 +893,13 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         });
     }
 
+    // **v7 は読まない（cache-miss ＝ 1 回だけの全走査）。** 線上表現は現行版と同じだが、
+    // `lower_names` / `lower_file_names` とマスクは照合用の正規化を 1 つにする前の意味で
+    // 書かれている（名前の空白を正規化していない・#1309）。v7 は `entries` を持たないので、
+    // 旧版枝のように手に持った走査結果から導き直して書き戻すことができない——木から作り
+    // 直すと「indexer.rs の索引更新の契機」が戒める複製が戻る。却下した扱いは
+    // `docs/adr/ADR-index-v7-cache-miss.md`。
+    //
     // v6 フォールバック: `target_path` を全件そのまま持つ形式。**読めるが確保が 312,691 回
     // 余分にかかる**——フルパスの `String` を作り、木へ組み替えた段で即座に捨てる。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {

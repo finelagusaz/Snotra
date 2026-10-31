@@ -5,7 +5,7 @@ use super::super::keys::normalize_entry_key;
 use super::*;
 use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
 use crate::indexer::test_support::{INDEX_LOCK_TEST_GUARD, temp_dir};
-use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_lower_folded};
+use crate::query::{file_char_mask, lower_file_name, name_char_mask, normalize_for_match};
 use crate::str_arena::LowerFileSlot;
 use std::fs;
 
@@ -177,7 +177,7 @@ fn index_cache_on_disk_format_is_stable() {
         try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
 
     assert_eq!(
-        bytes, GOLDEN_V7,
+        bytes, GOLDEN_V8,
         "on-disk 形式が変化した。IndexCache のフィールド順/型変更は既存 index.bin を破損する。\
          意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
     );
@@ -193,8 +193,8 @@ fn index_cache_on_disk_format_is_stable() {
     );
 
     let restored: IndexCache<'static> =
-        try_deserialize_with_header(GOLDEN_V7, INDEX_MAGIC, INDEX_CACHE_VERSION)
-            .expect("凍結 v7 バイトがロードできること");
+        try_deserialize_with_header(GOLDEN_V8, INDEX_MAGIC, INDEX_CACHE_VERSION)
+            .expect("凍結 v8 バイトがロードできること");
     assert!(matches!(restored.names, Cow::Owned(_)));
     assert_eq!(restored.names.len(), 4);
     assert_eq!(restored.names.get(0), "Projects");
@@ -214,7 +214,7 @@ fn index_cache_on_disk_format_is_stable() {
         restored.table.into_owned(),
         restored.sorted_by_path,
     )
-    .expect("凍結 v7 の列が木の不変条件を満たすこと");
+    .expect("凍結 v8 の列が木の不変条件を満たすこと");
     assert!(
         restored.sorted_by_path,
         "fixture はバイト昇順ゆえ真である（偽だけを凍結するとフラグが動いても気づかない）"
@@ -224,7 +224,7 @@ fn index_cache_on_disk_format_is_stable() {
         restored_tree.path_into(&mut buf, i);
         assert_eq!(
             buf, entry.target_path,
-            "凍結 v7 から組み直したフルパスが原文とずれている（index {i}）"
+            "凍結 v8 から組み直したフルパスが原文とずれている（index {i}）"
         );
     }
 
@@ -260,9 +260,9 @@ fn index_tree_raw_matches_frozen_v6_specimen() {
     assert!(!expected.is_empty(), "凍結 v6 が空では接地にならない");
 }
 
-/// 凍結 golden（`golden_fixture` の serialize 出力・INDX magic + version 7 ヘッダー込み）。
+/// 凍結 golden（`golden_fixture` の serialize 出力・INDX magic + version 8 ヘッダー込み）。
 ///
-/// **この定数が持つのは forward-stability だけである。** v7 は現行版ゆえ「v7 として実際に
+/// **この定数が持つのは forward-stability だけである。** 現行版ゆえ「その版として実際に
 /// 書かれていた旧バイト列」が存在せず、新コードの出力を凍結する以外に採りようがない
 /// （`snotra-core/CLAUDE.md`「データ永続化の注意」が禁じている向きは、**旧形式の後方互換を
 /// 新出力の golden で代用すること**である）。後方互換はここではなく `GOLDEN_V6` /
@@ -273,6 +273,27 @@ fn index_tree_raw_matches_frozen_v6_specimen() {
 /// `SameAsLowerName` = 1、`Text` = 2 + 文字列。`lower_names` 側は `Option` の
 /// `None` = 0 / `Some` = 1 + 文字列。タグの割り当てを変えると（＝ variant の宣言順を
 /// 入れ替えると）既存の `index.bin` を無言で誤読するので、ここが落ちる。
+const GOLDEN_V8: &[u8] = &[
+    73, 78, 68, 88, 8, 0, 0, 0, 128, 226, 207, 170, 6, 4, 8, 80, 114, 111, 106, 101, 99, 116, 115,
+    3, 97, 112, 112, 7, 70, 105, 114, 101, 102, 111, 120, 4, 100, 111, 99, 115, 4, 1, 0, 0, 1, 4,
+    255, 255, 255, 255, 15, 0, 255, 255, 255, 255, 15, 255, 255, 255, 255, 15, 4, 2, 1, 3, 4, 5, 0,
+    4, 46, 101, 120, 101, 11, 67, 58, 92, 80, 114, 111, 106, 101, 99, 116, 115, 19, 67, 58, 92, 97,
+    112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 7, 67, 58, 92, 100,
+    111, 99, 115, 1, 185, 96, 4, 171, 1, 205, 1, 239, 1, 33, 4, 18, 52, 86, 120, 4, 1, 8, 112, 114,
+    111, 106, 101, 99, 116, 115, 0, 1, 7, 102, 105, 114, 101, 102, 111, 120, 0, 4, 0, 2, 7, 97,
+    112, 112, 46, 101, 120, 101, 2, 11, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 1,
+];
+
+/// **v8 化の前に実際に書かれていた v7 バイト列**（線上表現は v8 と同じで、派生の列だけが
+/// 照合用の正規化を 1 つにする前の意味を持つ・#1309）。`config_hash` は 12345。
+///
+/// **この fixture の名前は空白類を持たないので、派生の列は新旧どちらの正規化でも同じであり、
+/// `GOLDEN_V8` との差は版のバイトだけである。** v7 を読まないことを守るのは版の判定であって、
+/// 列の中身ではない。
+///
+/// 製品はこれを読まない（cache-miss）。読むのは内訳の計器だけである——検知器は
+/// `frozen_v7_is_a_cache_miss_and_is_not_rewritten` と
+/// `breakdown_still_reads_the_frozen_v7`。
 const GOLDEN_V7: &[u8] = &[
     73, 78, 68, 88, 7, 0, 0, 0, 128, 226, 207, 170, 6, 4, 8, 80, 114, 111, 106, 101, 99, 116, 115,
     3, 97, 112, 112, 7, 70, 105, 114, 101, 102, 111, 120, 4, 100, 111, 99, 115, 4, 1, 0, 0, 1, 4,
@@ -287,8 +308,8 @@ const GOLDEN_V7: &[u8] = &[
 /// **v7 化の前に実際に書かれていた v6 バイト列**（`target_path` を実体で全件持つ形式）。
 /// `config_hash` は 12345、entries は Firefox / Projects / docs の 3 件。
 ///
-/// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては `GOLDEN_V7` の
-/// doc が正本。v6 と v7 で同じであり、変えれば既存の `index.bin` を無言で誤読する）。
+/// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては `GOLDEN_V8` の
+/// doc が正本。版をまたいで同じであり、変えれば既存の `index.bin` を無言で誤読する）。
 const GOLDEN_V6: &[u8] = &[
     73, 78, 68, 88, 6, 0, 0, 0, 128, 226, 207, 170, 6, 3, 7, 70, 105, 114, 101, 102, 111, 120, 19,
     67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 0, 8,
@@ -304,9 +325,8 @@ const GOLDEN_V6: &[u8] = &[
 /// `try_deserialize_with_header` を直接呼ぶので、`load_cache_in` の枝選択・`config_hash` の
 /// 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない。
 ///
-/// **v6 は「全ユーザーの `index.bin` が今まさに置かれている版」である。** v7 が現行に
-/// なったことでフォールバック枝へ落ちた——つまりこの枝は新設であり、かつ**最初に
-/// 通る人が最も多い**枝でもある。
+/// **v6 は、v7 が現行になったときにフォールバック枝へ落ちた版である。** そのとき
+/// この枝は新設であり、かつ**最初に通る人が最も多い**枝でもあった。
 ///
 /// **`CachedLower::Collapsed` で返らなければならない。** `Raw` で返すと `assemble` が
 /// 測り直し、`None` どうしの一致で file name 成分を持たないエントリにフラグが立つ。
@@ -512,7 +532,10 @@ fn v4_index_bin_loads_through_load_cache_in_with_wave1_skipped() {
 /// `config_hash` も治具の走査対象と噛み合わない——「その `dir` を走査した結果が
 /// v4 で載っている」状況を作るには、エントリそのものを v4 で書く必要がある。
 fn write_v4_cache_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
-    let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+    let lower_names: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_for_match(&e.name).into_owned())
+        .collect();
     let lower_file_names: Vec<Option<String>> = entries
         .iter()
         .map(|e| lower_file_name(&e.target_path))
@@ -923,7 +946,7 @@ fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
          `upgrade_legacy_cache_in` のクロージャを一度も通っていないことを意味する）"
     );
 
-    // 現行版（v7）: 昇格しないので save 時間は乗らない。
+    // 現行版: 昇格しないので save 時間は乗らない。
     let current_dir = temp_dir("upgrade_save_current");
     let config_hash = 42u64;
     let derived = derive_columns(entries);
@@ -947,7 +970,7 @@ fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
     assert!(cache_bin_file_in(&current_dir).save_bytes(&bytes), "save");
 
     let current_result =
-        load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write).expect("v7 が読めること");
+        load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write).expect("現行版が読めること");
     assert_eq!(
         current_result.upgrade_save, None,
         "現行版は昇格しないので枝を通らないこと（`Some` は速さに関わらず\
@@ -1131,8 +1154,8 @@ fn load_cache_upgrades_a_legacy_v2_format_in_place() {
 /// 現在時刻へ動くので粒度に依存しない。
 #[test]
 fn load_cache_does_not_rewrite_when_the_format_is_current() {
-    // v7 の `Write` 枝は分岐しないためロックは取らないが、`Write` を渡す以上は将来の
-    // 退行（v7 判定漏れで旧版枝へ落ちる等）に備えて直列化しておく（Minor 7 の指摘）。
+    // 現行版の `Write` 枝は分岐しないためロックは取らないが、`Write` を渡す以上は将来の
+    // 退行（現行版の判定漏れで旧版枝へ落ちる等）に備えて直列化しておく（Minor 7 の指摘）。
     let _guard = INDEX_LOCK_TEST_GUARD
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -1163,13 +1186,53 @@ fn load_cache_does_not_rewrite_when_the_format_is_current() {
         try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
     assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
 
-    let result = load_cache_in(&dir, config_hash, LegacyUpgrade::Write).expect("v7 が読めること");
+    let result =
+        load_cache_in(&dir, config_hash, LegacyUpgrade::Write).expect("現行版が読めること");
     assert_eq!(result.version, INDEX_CACHE_VERSION);
     assert_eq!(
         index_built_at_in(&dir),
         Some(1_700_000_000),
         "現行版のロードで index.bin を書き直してはならない"
     );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **v7 は cache-miss であり、ロードは書き戻さない**（#1309）。v7 の派生の列は照合用の
+/// 正規化を 1 つにする前の意味で書かれているので、読めば旧い意味の列で検索することになる。
+/// 置き換えは呼び出し側の全走査（cache-miss 枝）が行い、ロードはファイルに触らない。
+///
+/// **`Write` を渡す。** 旧版枝へ誤って落ちれば昇格の書き戻しが起き、バイト列が変わる。
+#[test]
+fn frozen_v7_is_a_cache_miss_and_is_not_rewritten() {
+    let _guard = INDEX_LOCK_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let dir = temp_dir("frozen_v7_cache_miss");
+    fs::write(dir.join("index.bin"), GOLDEN_V7).expect("write v7 index.bin");
+
+    assert!(
+        load_cache_in(&dir, 12345, LegacyUpgrade::Write).is_none(),
+        "v7 を読めた扱いにしてはならない（旧い意味の派生の列を使う）"
+    );
+    assert_eq!(
+        fs::read(dir.join("index.bin")).expect("read back"),
+        GOLDEN_V7,
+        "cache-miss のロードで index.bin を書き換えてはならない"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **内訳の計器は、製品が読まなくなった v7 も読む。** 版を上げた直後の実運用点は v7 の
+/// まま置かれており、計器がそこで黙ると一番測りたい相手にだけ測れなくなる。
+#[test]
+fn breakdown_still_reads_the_frozen_v7() {
+    let dir = temp_dir("frozen_v7_breakdown");
+    fs::write(dir.join("index.bin"), GOLDEN_V7).expect("write v7 index.bin");
+
+    let breakdown = cache_byte_breakdown_in(&dir).expect("計器は v7 を読めること");
+    assert_eq!(breakdown.version, 7);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -1354,7 +1417,10 @@ fn load_cache_in_reports_the_version_it_actually_read() {
         is_folder: false,
     }];
     let config_hash = 4242u64;
-    let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+    let lower_names: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_for_match(&e.name).into_owned())
+        .collect();
     let lower_file_names: Vec<Option<String>> = entries
         .iter()
         .map(|e| lower_file_name(&e.target_path))
@@ -1377,8 +1443,18 @@ fn load_cache_in_reports_the_version_it_actually_read() {
     );
     let _ = fs::remove_dir_all(&dir);
 
-    // v6: `target_path` を実体で全件持つ形式。**実運用点が今まさに置かれている版**であり、
-    // ここを `INDEX_CACHE_VERSION` と取り違えると全ユーザーが永久に昇格しない。
+    // v7: 線上表現は現行版と同じだが、読まない（cache-miss）。**実運用点が今まさに
+    // 置かれている版**であり、現行版の枝で読めてしまうと旧い意味の派生の列を使い続ける。
+    let dir = temp_dir("version_reported_v7");
+    fs::write(dir.join("index.bin"), GOLDEN_V7).expect("write v7");
+    assert!(
+        load_cache_in(&dir, 12345, LegacyUpgrade::Skip).is_none(),
+        "v7 は cache-miss でなければならない"
+    );
+    let _ = fs::remove_dir_all(&dir);
+
+    // v6: `target_path` を実体で全件持つ形式。ここを `INDEX_CACHE_VERSION` と取り違えると
+    // v6 のユーザーが永久に昇格しない。
     let dir = temp_dir("version_reported_v6");
     let v6 = IndexCacheV6 {
         built_at: 0,

@@ -1,8 +1,10 @@
 //! クエリと履歴キーの正規化、および文字存在ビットマスク計算。
 //!
-//! `normalize_query`（小文字化・アクセント折畳み・空白圧縮。ASCII 小文字のみなら `Cow` で
-//! ゼロアロケーション）、履歴クエリキー正規化 `normalize_history_query_key`、検索/インデクサ
-//! 双方が使う `char_bitmask`（bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化は冪等。
+//! 照合用の正規化の唯一の入口 `normalize_for_match`（クエリとエントリ名の両側が通る・
+//! SPEC §4.2。変える文字が無ければ `Cow` で借用）、履歴クエリキー正規化
+//! `normalize_history_query_key`、検索/インデクサ双方が使う `char_bitmask`
+//! （bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等であることは全コードポイントの
+//! 検知器で固定してある。
 
 use std::borrow::Cow;
 
@@ -15,23 +17,12 @@ pub fn to_kana(s: &str) -> String {
     s.to_hiragana()
 }
 
-/// Lowercase + accent-fold a string using nucleo's normalization table.
-/// This aligns with nucleo's fuzzy matcher behavior (é→e, ü→u, etc.).
-/// Order: lowercase first, then normalize — nucleo's table covers both cases
-/// (É→e, é→e) so the result is equivalent to nucleo's internal normalize→casefold.
-pub fn to_lower_folded(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| c.to_lowercase())
-        .map(nucleo_normalize)
-        .collect()
-}
-
-/// `normalize_query` + パス区切り文字（`/` `¥`）を `\` に統一する。
+/// [`normalize_for_match`] + パス区切り文字（`/` `¥`）を `\` に統一する。
 /// 履歴キーの正規化はこの関数に一元化する（DRY）。
 /// `record_launch`・`query_count`・`migrate_normalize_keys`・`search.rs` の
 /// `path_history_key` が全て同じ正規化を使うことを保証する。
 pub fn normalize_history_query_key(query: &str) -> Cow<'_, str> {
-    let nq = normalize_query(query);
+    let nq = normalize_for_match(query);
     if nq.contains('/') || nq.contains('\u{00a5}') {
         Cow::Owned(nq.replace(['/', '\u{00a5}'], "\\"))
     } else {
@@ -74,7 +65,7 @@ pub fn char_bitmask(lower: &str) -> u64 {
 
 /// Character-presence bitmask for a single lowercase entry name (or file name).
 /// ASCII strings get the bit-exact mask from [`char_bitmask`]; non-ASCII strings
-/// (typically CJK, Arabic, etc. — `to_lower_folded` already folds Latin accents to
+/// (typically CJK, Arabic, etc. — `normalize_for_match` already folds Latin accents to
 /// ASCII) get `u64::MAX` so `(query_mask & u64::MAX) == query_mask` always holds and
 /// the entry is never excluded by the bitmask pre-filter.
 ///
@@ -102,7 +93,7 @@ pub fn file_char_mask(lower_file_name: Option<&str>) -> u64 {
 /// 鎖は `lower_file_name` → `lower_name` → `name` の順で、各段が上流と一致すれば持たずに済む。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DerivedSharing {
-    /// `lower_name` が `name` とバイト一致する（`to_lower_folded` が恒等関数になる名前）。
+    /// `lower_name` が `name` とバイト一致する（`normalize_for_match` が名前をそのまま返す）。
     pub lower_name_is_name: bool,
     /// `lower_file_name` が `lower_name` とバイト一致する。
     ///
@@ -146,52 +137,82 @@ pub fn lower_file_name(target_path: &str) -> Option<String> {
     std::path::Path::new(target_path)
         .file_name()
         .and_then(|f| f.to_str())
-        .map(to_lower_folded)
+        .map(|f| normalize_for_match(f).into_owned())
 }
 
-pub fn normalize_query(query: &str) -> Cow<'_, str> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return Cow::Borrowed("");
-    }
+/// 1 文字ぶんの照合用の写像。小文字化 → 折りたたみ → 小文字化の順である。
+///
+/// **最後の小文字化が冪等性を閉じる。** nucleo の表は小文字を大文字へ写すことがあり
+/// （`ʀ` → `R`・U+0262 `ɢ` → `G`）、そこで止めると 2 回目の適用で結果が変わる。
+#[inline]
+fn fold_char(c: char) -> impl Iterator<Item = char> {
+    c.to_lowercase()
+        .map(nucleo_normalize)
+        .flat_map(char::to_lowercase)
+}
 
-    // Check if the string needs allocation: contains uppercase, accented chars,
-    // or multiple adjacent whitespaces
-    let mut needs_alloc = false;
+/// [`fold_char`] が `c` をそれ自身 1 文字へ写すか。借用の判定は、組み立てと同じ写像に
+/// この問いを当てるだけで決める——別の条件を書くと、片方だけが変わる文字で割れる（#1310）。
+#[inline]
+fn folds_to_itself(c: char) -> bool {
+    if c.is_ascii() {
+        // ASCII では nucleo の表は恒等であり、変わるのは大文字だけ（全コードポイントの
+        // 検知器がこの近道も通す）。
+        return !c.is_ascii_uppercase();
+    }
+    let mut it = fold_char(c);
+    it.next() == Some(c) && it.next().is_none()
+}
+
+/// 照合用の正規化の唯一の入口（SPEC §4.2）。クエリとエントリ名の両側がこれを通る。
+///
+/// 前後の空白を除き、空白類（`char::is_whitespace`）を `' '` へ揃えて連続を 1 つに圧縮し、
+/// 各文字に [`fold_char`] を当てる。変える文字が無ければ trim 済みの入力を借用で返す
+/// （ASCII の小文字と単一の空白だけのクエリは確保しない）。
+///
+/// 借用と所有の一致・冪等性は、全コードポイントの検知器で固定してある
+/// （`normalize_for_match_agrees_with_the_owned_reference_on_every_codepoint`・
+/// `normalize_for_match_is_idempotent_on_every_codepoint`）。
+pub fn normalize_for_match(s: &str) -> Cow<'_, str> {
+    let trimmed = s.trim();
+
     let mut prev_space = false;
-    for ch in trimmed.chars() {
+    let borrowable = trimmed.chars().all(|ch| {
         if ch.is_whitespace() {
-            if prev_space || ch != ' ' {
-                needs_alloc = true;
-                break;
-            }
+            let single = ch == ' ' && !prev_space;
             prev_space = true;
+            single
         } else {
-            if ch.is_uppercase() || nucleo_normalize(ch) != ch {
-                needs_alloc = true;
-                break;
-            }
             prev_space = false;
+            folds_to_itself(ch)
         }
-    }
-
-    if !needs_alloc {
+    });
+    if borrowable {
         return Cow::Borrowed(trimmed);
     }
 
-    // Allocate and build ONLY if necessary
+    // 写した結果が空白になる文字も空白の連続として扱い、圧縮と前後の除去を写したあとの
+    // 列に当てる。今の nucleo の表にそういう文字は無い（全コードポイントで 0 件）が、
+    // 表が変わって現れれば、ここで扱わない限り 2 回目の適用で結果が変わる——そのときは
+    // 冪等性の検知器が落ちる。
     let mut out = String::with_capacity(trimmed.len());
-    let mut prev_space_build = false;
-
+    let mut pending_space = false;
+    let mut push = |q: char| {
+        if q.is_whitespace() {
+            pending_space = !out.is_empty();
+        } else {
+            if pending_space {
+                out.push(' ');
+                pending_space = false;
+            }
+            out.push(q);
+        }
+    };
     for ch in trimmed.chars() {
         if ch.is_whitespace() {
-            if !prev_space_build {
-                out.push(' ');
-                prev_space_build = true;
-            }
+            push(' ');
         } else {
-            out.extend(ch.to_lowercase().map(nucleo_normalize));
-            prev_space_build = false;
+            fold_char(ch).for_each(&mut push);
         }
     }
 
@@ -201,9 +222,10 @@ pub fn normalize_query(query: &str) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DerivedSharing, measure_derived_sharing, normalize_history_query_key, normalize_query,
-        to_kana, to_lower_folded,
+        DerivedSharing, measure_derived_sharing, normalize_for_match, normalize_history_query_key,
+        to_kana,
     };
+    use nucleo_matcher::chars::normalize as nucleo_normalize;
     use std::borrow::Cow;
 
     /// **`lower_file` が `None` のとき、共有フラグを立ててはならない。**
@@ -277,65 +299,72 @@ mod tests {
 
     #[test]
     fn trim_and_lowercase() {
-        assert_eq!(normalize_query("  HeLLo  "), "hello");
+        assert_eq!(normalize_for_match("  HeLLo  "), "hello");
     }
 
     #[test]
     fn collapse_whitespace() {
-        assert_eq!(normalize_query("a   b\t\tc"), "a b c");
+        assert_eq!(normalize_for_match("a   b\t\tc"), "a b c");
     }
 
     #[test]
     fn requires_alloc_for_tabs() {
-        let q = normalize_query("foo\tbar");
+        let q = normalize_for_match("foo\tbar");
         assert!(matches!(q, Cow::Owned(_)));
         assert_eq!(q, "foo bar");
     }
 
     #[test]
     fn requires_alloc_for_fullwidth_space() {
-        let q = normalize_query("foo　bar");
+        let q = normalize_for_match("foo\u{3000}bar");
         assert!(matches!(q, Cow::Owned(_)));
         assert_eq!(q, "foo bar");
     }
 
     #[test]
+    fn requires_alloc_for_nbsp() {
+        let q = normalize_for_match("foo bar");
+        assert!(matches!(q, Cow::Owned(_)));
+        assert_eq!(q, "foo bar");
+    }
+
+    /// 正規化後に空なら空を返す。空の扱いは呼び出し側の面が決める（SPEC §4.2）。
+    #[test]
+    fn whitespace_only_normalizes_to_empty() {
+        assert_eq!(normalize_for_match(" \t\u{3000}\u{a0}"), "");
+    }
+
+    #[test]
     fn accent_folding_resume() {
-        assert_eq!(normalize_query("résumé"), "resume");
+        assert_eq!(normalize_for_match("résumé"), "resume");
+        assert_eq!(normalize_for_match("RÉSUMÉ"), "resume");
     }
 
     #[test]
     fn accent_folding_cafe() {
-        assert_eq!(normalize_query("Café"), "cafe");
+        assert_eq!(normalize_for_match("Café"), "cafe");
     }
 
     #[test]
     fn accent_folding_naive() {
-        assert_eq!(normalize_query("naïve"), "naive");
+        assert_eq!(normalize_for_match("naïve"), "naive");
     }
 
     #[test]
     fn accent_folding_allocates() {
-        let q = normalize_query("café");
+        let q = normalize_for_match("café");
         assert!(matches!(q, Cow::Owned(_)));
     }
 
     #[test]
     fn ascii_only_borrows() {
-        let q = normalize_query("hello");
+        let q = normalize_for_match("hello");
         assert!(matches!(q, Cow::Borrowed(_)));
     }
 
     #[test]
-    fn to_lower_folded_strips_accents() {
-        assert_eq!(to_lower_folded("Café"), "cafe");
-        assert_eq!(to_lower_folded("RÉSUMÉ"), "resume");
-        assert_eq!(to_lower_folded("naïve"), "naive");
-    }
-
-    #[test]
-    fn to_lower_folded_ascii_unchanged() {
-        assert_eq!(to_lower_folded("Hello World"), "hello world");
+    fn lowercases_ascii_and_keeps_single_spaces() {
+        assert_eq!(normalize_for_match("Hello World"), "hello world");
     }
 
     #[test]
@@ -403,13 +432,13 @@ mod tests {
 
     #[test]
     fn history_query_key_folds_accents() {
-        // normalize_query が é→e に折りたたむことを確認
+        // normalize_for_match が é→e に折りたたむことを確認
         assert_eq!(normalize_history_query_key("café\\foo"), "cafe\\foo");
     }
 
     #[test]
     fn history_query_key_collapses_spaces() {
-        // normalize_query が連続スペースを圧縮することを確認
+        // normalize_for_match が連続スペースを圧縮することを確認
         assert_eq!(
             normalize_history_query_key("my  tools\\foo"),
             "my tools\\foo"
@@ -418,7 +447,7 @@ mod tests {
 
     #[test]
     fn history_query_key_no_path_sep_passthrough() {
-        // パス区切りなしの場合は normalize_query と同じ
+        // パス区切りなしの場合は normalize_for_match と同じ
         assert_eq!(normalize_history_query_key("hello"), "hello");
     }
 
@@ -427,5 +456,82 @@ mod tests {
         // ASCII 小文字 + バックスラッシュのみの場合は Cow::Borrowed
         let result = normalize_history_query_key("tool\\editor");
         assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    /// 常に所有で組み立てる素朴な参照実装。借用の判定を持たないので、`normalize_for_match`
+    /// の借用路と所有路のどちらがずれても、この出力との不一致として現れる（#1310）。
+    fn reference_normalize(s: &str) -> String {
+        let mapped: String = s
+            .chars()
+            .flat_map(|c| -> Vec<char> {
+                if c.is_whitespace() {
+                    vec![' ']
+                } else {
+                    c.to_lowercase()
+                        .map(nucleo_normalize)
+                        .flat_map(char::to_lowercase)
+                        .collect()
+                }
+            })
+            .collect();
+        mapped.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// 全コードポイントを、#1310 の表の文脈と空白をはさむ文脈に置いた入力。
+    fn all_codepoint_inputs() -> impl Iterator<Item = String> {
+        (0..=0x10FFFF_u32).filter_map(char::from_u32).flat_map(|c| {
+            [
+                format!("{c}"),
+                format!("a{c}"),
+                format!("A{c}x"),
+                format!("x  {c}"),
+                format!("{c} {c}"),
+            ]
+        })
+    }
+
+    fn report(failures: &[String]) -> String {
+        format!(
+            "{} 件: {:?}",
+            failures.len(),
+            failures.iter().take(8).collect::<Vec<_>>()
+        )
+    }
+
+    /// **借用で返す条件と、所有で組み立てる結果が、全コードポイントで一致する**（#1310）。
+    /// 借用で返るのは、組み立てた結果が trim 済みの入力と等しいときに限る——不一致は、
+    /// 借用路が「変わらない」と判定した文字を所有路が変える形でしか起きない。
+    #[test]
+    fn normalize_for_match_agrees_with_the_owned_reference_on_every_codepoint() {
+        let failures: Vec<String> = all_codepoint_inputs()
+            .filter(|s| normalize_for_match(s) != reference_normalize(s).as_str())
+            .map(|s| format!("{:?}", s))
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "参照実装との不一致 {}",
+            report(&failures)
+        );
+    }
+
+    /// **正規化は冪等で、出力を入れ直すと借用で返る。** 履歴のキーは読み込みのたびに
+    /// `migrate_normalize_keys` で正規化し直されるので、冪等でない文字を含むキーは
+    /// 記録時の形と食い違う。`normalize_history_query_key` も同じ性質を持つ。
+    #[test]
+    fn normalize_for_match_is_idempotent_on_every_codepoint() {
+        let mut failures = Vec::new();
+        for s in all_codepoint_inputs() {
+            let once = normalize_for_match(&s).into_owned();
+            let twice = normalize_for_match(&once);
+            if twice != once.as_str() || !matches!(twice, Cow::Borrowed(_)) {
+                failures.push(format!("{:?} -> {:?} -> {:?}", s, once, twice));
+            }
+            let key = normalize_history_query_key(&s).into_owned();
+            let key2 = normalize_history_query_key(&key);
+            if key2 != key.as_str() || !matches!(key2, Cow::Borrowed(_)) {
+                failures.push(format!("history {:?} -> {:?} -> {:?}", s, key, key2));
+            }
+        }
+        assert!(failures.is_empty(), "冪等でない {}", report(&failures));
     }
 }

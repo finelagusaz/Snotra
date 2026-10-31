@@ -90,6 +90,7 @@ SPEC §4.2 が「クエリおよびエントリ名」に課す 1 つの正規化
 ## 検証とレビュー（/implement Step 3）
 
 - [x] 1 巡目（fefe7d85）: 道具 green（A・E・F）。委譲は Critical 0・High 1（名前側の記録・かな・ファイル名の空白の正規化を守る検知器が無い。変異 4 つが生存）・Low 7。全件対処——A/B の fixture に空白類の名前とファイル名を足し、受け入れ条件 6 にファイル名の例、並べ替えキーのテスト、散文と計器の名乗り、テストの form feed を直した。`derive_entry_lowers` を旧い写像へ戻す変異が落ちることを主が自分で測った。報告は `workspace/review-1309-r1.md`・`verify-1309-r1.json`
+- [x] 2 巡目（d9815054）: 道具 green（A・E・F）。前巡で生存した 5 変異はすべて検知。Critical / High 0・Low 2（計器の文言が条件より狭い原因を断定・2 つの腕の指示の食い違い）・⚠ 1（かな 2 か所を同時に戻す変異が生存）。全件対処——文言を直し、`kana_search_matches_entry_with_fullwidth_space` を足して同時の変異で落ちることを主が測った。報告は `workspace/review-1309-r2.md`・`verify-1309-r2.json`
 
 ## 未確定（実装前に潰す）
 

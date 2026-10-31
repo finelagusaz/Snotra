@@ -20,7 +20,7 @@ use crate::index_tree::{IndexTree, NameArena};
 use crate::indexer::{AppEntry, CachedLower, CachedMasks, IndexMaterial};
 use crate::query::{
     contains_path_sep, file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask,
-    to_kana, to_lower_folded,
+    normalize_for_match, to_kana,
 };
 use crate::str_arena::{LowerFileColumn, LowerFileSlot, LowerNameColumn};
 
@@ -114,7 +114,7 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
                 || {
                     entries
                         .iter()
-                        .map(|e| to_lower_folded(&e.name).into_boxed_str())
+                        .map(|e| normalize_for_match(&e.name).into_owned().into_boxed_str())
                         .collect::<Vec<_>>()
                 },
                 || {
@@ -136,7 +136,7 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
                 // 全件を `to_kana` して数えるしかなく、この枝ではその 1 パスのほうが高くつく。
                 let mut arena = NameArena::with_capacity(entries.len(), 0);
                 for e in entries {
-                    arena.push(&to_kana(&to_lower_folded(&e.name)));
+                    arena.push(&to_kana(&normalize_for_match(&e.name)));
                 }
                 arena
             } else {
@@ -495,7 +495,7 @@ impl SearchEngine {
                         let mut blob = String::new();
                         let mut offsets = Vec::with_capacity(idxs.len());
                         for i in idxs {
-                            blob.push_str(&to_kana(&to_lower_folded(tree.name_at(i))));
+                            blob.push_str(&to_kana(&normalize_for_match(tree.name_at(i))));
                             offsets.push(blob.len() as u32);
                         }
                         (blob, offsets)

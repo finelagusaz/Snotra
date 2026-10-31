@@ -423,7 +423,7 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
 mod tests {
     use super::*;
     use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
-    use crate::query::normalize_query;
+    use crate::query::normalize_for_match;
 
     /// テスト用の作業ディレクトリを作り直して返す。
     ///
@@ -481,7 +481,7 @@ mod tests {
         let path = "C:\\fake\\notepad.lnk";
         let query = "note";
         let path_key = normalize_entry_key(path);
-        let query_key = normalize_query(query).into_owned();
+        let query_key = normalize_for_match(query).into_owned();
 
         // Simulate record_launch logic without save()
         store
@@ -533,7 +533,7 @@ mod tests {
         let mut store = fresh_store();
         let path = "C:\\fake\\app.lnk";
         let path_key = normalize_entry_key(path);
-        let key = normalize_query("foo bar");
+        let key = normalize_for_match("foo bar");
         *store
             .data
             .query

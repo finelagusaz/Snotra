@@ -16,7 +16,7 @@ use memchr::memmem::Finder;
 use nucleo_matcher::Utf32String;
 
 use crate::query::{
-    char_bitmask, contains_path_sep, normalize_history_query_key, normalize_query, to_kana,
+    char_bitmask, contains_path_sep, normalize_for_match, normalize_history_query_key, to_kana,
 };
 
 use super::{SearchMode, SearchOptions, kana_char_mask};
@@ -75,7 +75,7 @@ pub(super) fn prepare_query_plan<'a>(
     mode: SearchMode,
     options: &SearchOptions,
 ) -> Option<QueryPlan<'a>> {
-    let norm_query = normalize_query(query);
+    let norm_query = normalize_for_match(query);
     if norm_query.is_empty() {
         return None;
     }

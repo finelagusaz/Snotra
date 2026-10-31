@@ -606,6 +606,29 @@ fn substring_matches_accented_entry() {
     assert_eq!(results[0].name, "Résumé Builder");
 }
 
+/// **名前の側も空白を正規化する**（`SPEC.md`「4.2 クエリ正規化」・#1309）。全角空白・連続空白・
+/// 前の空白を持つ名前が、正規化したクエリに Prefix / Substring で一致する。名前側だけが
+/// 小文字化と折りたたみしか当てていなかった頃は、3 つとも外れた。
+#[test]
+fn entry_name_whitespace_is_normalized_like_the_query() {
+    let cases = [
+        ("資料\u{3000}2024", "資料 2024"),
+        ("a  b", "a b"),
+        (" app", "app"),
+    ];
+    for mode in [SearchMode::Prefix, SearchMode::Substring] {
+        for (name, query) in cases {
+            let mut engine = SearchEngine::new(make_entries(&[name]));
+            let results = engine.search(query, 8, &empty_history(), mode);
+            assert_eq!(
+                results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+                [name],
+                "{mode:?}: 名前 {name:?} がクエリ {query:?} に一致しない"
+            );
+        }
+    }
+}
+
 #[test]
 fn history_boost_unified_across_accent_variants() {
     // "résumé" で起動記録 → "resume" で検索時に履歴ブーストが効く

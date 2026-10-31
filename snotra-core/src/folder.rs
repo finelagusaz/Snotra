@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::history::HistoryStore;
 use crate::indexer::is_hidden_or_system;
-use crate::query::{normalize_query, to_lower_folded};
+use crate::query::normalize_for_match;
 use crate::search::{SearchMode, fuzzy_match_score};
 use crate::ui_types::{IconSource, SearchResult};
 
@@ -44,7 +44,7 @@ pub(crate) fn read_dir_entries(
 ) -> std::io::Result<Vec<DirEntryData>> {
     let read_dir = std::fs::read_dir(dir)?;
     let mut entries = Vec::new();
-    let filter_norm = normalize_query(filter);
+    let filter_norm = normalize_for_match(filter);
     let needle = Utf32String::from(filter_norm.as_ref());
 
     for entry in read_dir {
@@ -107,7 +107,7 @@ fn build_sort_keys(entries: &[SearchResult], history: &HistoryStore) -> Vec<(Str
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            let lower = to_lower_folded(&e.name);
+            let lower = normalize_for_match(&e.name).into_owned();
             let exp_count = if e.is_folder {
                 history.folder_expansion_count(&e.path)
             } else {
@@ -198,7 +198,7 @@ pub fn filter_sorted(
     mode: SearchMode,
     max: usize,
 ) -> Vec<SearchResult> {
-    let filter_norm = normalize_query(filter);
+    let filter_norm = normalize_for_match(filter);
     if filter_norm.is_empty() {
         return cached.iter().take(max).cloned().collect();
     }
@@ -228,7 +228,7 @@ pub fn error_result(dir: &Path) -> Vec<SearchResult> {
 /// **名前の側も同じ [`normalize_query`] を通す**（`SPEC.md`「4.2 クエリ正規化」・#1284）。片側だけ別の
 /// 正規化にすると、連続空白や全角空白を含む名前で一致が割れる。
 fn matches_filter(name: &str, filter_norm: &str, needle: &Utf32String, mode: SearchMode) -> bool {
-    let name_norm = normalize_query(name);
+    let name_norm = normalize_for_match(name);
     match mode {
         SearchMode::Prefix => name_norm.starts_with(filter_norm),
         SearchMode::Substring => name_norm.contains(filter_norm),
@@ -754,7 +754,7 @@ mod tests {
         filter: &str,
         mode: crate::search::SearchMode,
     ) -> Vec<DirEntryData> {
-        let filter_norm = normalize_query(filter);
+        let filter_norm = normalize_for_match(filter);
         let needle = Utf32String::from(filter_norm.as_ref());
         entries
             .into_iter()

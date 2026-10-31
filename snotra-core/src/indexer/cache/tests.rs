@@ -5,7 +5,7 @@ use super::super::keys::normalize_entry_key;
 use super::*;
 use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
 use crate::indexer::test_support::{INDEX_LOCK_TEST_GUARD, temp_dir};
-use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_lower_folded};
+use crate::query::{file_char_mask, lower_file_name, name_char_mask, normalize_for_match};
 use crate::str_arena::LowerFileSlot;
 use std::fs;
 
@@ -512,7 +512,10 @@ fn v4_index_bin_loads_through_load_cache_in_with_wave1_skipped() {
 /// `config_hash` も治具の走査対象と噛み合わない——「その `dir` を走査した結果が
 /// v4 で載っている」状況を作るには、エントリそのものを v4 で書く必要がある。
 fn write_v4_cache_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
-    let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+    let lower_names: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_for_match(&e.name).into_owned())
+        .collect();
     let lower_file_names: Vec<Option<String>> = entries
         .iter()
         .map(|e| lower_file_name(&e.target_path))
@@ -1354,7 +1357,10 @@ fn load_cache_in_reports_the_version_it_actually_read() {
         is_folder: false,
     }];
     let config_hash = 4242u64;
-    let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+    let lower_names: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_for_match(&e.name).into_owned())
+        .collect();
     let lower_file_names: Vec<Option<String>> = entries
         .iter()
         .map(|e| lower_file_name(&e.target_path))

@@ -897,7 +897,7 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
         .iter()
         .map(|e| {
             (
-                crate::query::to_lower_folded(&e.name),
+                crate::query::normalize_for_match(&e.name).into_owned(),
                 crate::query::lower_file_name(&e.target_path),
             )
         })
@@ -954,7 +954,7 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
 /// 経路にしか無い——**塊が 1 つしか出ず底上げが常に 0 だから**である。
 #[test]
 fn kana_column_survives_chunked_parallel_merge() {
-    use crate::query::{to_kana, to_lower_folded};
+    use crate::query::{normalize_for_match, to_kana};
 
     let n = crate::search::build::KANA_CHUNK * 2 + 1;
     // 長さが 1〜4 文字で散る名前（`i` の 10 進表記をカタカナの数字へ写す）。
@@ -991,7 +991,7 @@ fn kana_column_survives_chunked_parallel_merge() {
     // **索引が持つ名前と突き合わせる。** 入力の並びではなく索引の並びを基準にするので、
     // `derive_columns` が並べ替えても成立し、塊の入れ替わりだけが検出される。
     for i in 0..n {
-        let want = to_kana(&to_lower_folded(engine.entries.name_at(i)));
+        let want = to_kana(&normalize_for_match(engine.entries.name_at(i)));
         assert_eq!(
             engine.kana_lower_names.get(i),
             want,

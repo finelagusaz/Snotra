@@ -50,8 +50,8 @@
 
 ### Phase 1 — 変換核と影運転
 
-- [ ] `keyboard.rs` に `KeyboardTranslator` と写像を作り、単体テストを Red → Green で書く（下の「テスト方針」の 1）
-- [ ] subclass に `WM_SETFOCUS` / `WM_KILLFOCUS` とキーのメッセージを足す。**この段では egui へ送らず、作ったイベントを `SNOTRA_EGUI_INPUT sub_key` / `sub_text`（D9） の trace にだけ出す**（影運転）。tao の経路は従来どおり egui へ渡す
+- [x] `keyboard.rs` に `KeyboardTranslator` と写像を作り、単体テストを Red → Green で書く（下の「テスト方針」の 1）
+- [x] subclass に `WM_SETFOCUS` / `WM_KILLFOCUS` とキーのメッセージを足す。**この段では egui へ送らず、作ったイベントを `SNOTRA_EGUI_INPUT sub_key` / `sub_text`（D9） の trace にだけ出す**（影運転）。tao の経路は従来どおり egui へ渡す
 - [ ] 影運転で、同じ打鍵について tao の経路（`push_key` / Commit）と subclass の経路（`sub_key` / `sub_text`）が同じ egui イベント列になることを確かめる。対象は英字・数字（Shift あり・なし）・記号・Ctrl+A/C/X/V/H/Z・↑↓←→・Enter・Escape・Backspace・Alt+英字（D2 の確認）・テンキー。`keybd_event` の注入と、手打ちの日本語 IME（変換中の英字・Enter・確定）で行う。結果は計画の末尾「影運転の記録」へ書く
 
 ### Phase 2 — 切り替え

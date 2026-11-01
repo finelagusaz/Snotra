@@ -205,8 +205,66 @@ impl InputState {
         self.native_pixels_per_point
     }
 
-    pub(crate) fn push_ime_event(&mut self, event: egui::ImeEvent) {
-        self.raw.events.push(egui::Event::Ime(event));
+    /// subclass から届いた 1 件を egui のイベントへ積む（#1289）。
+    pub(crate) fn push_native_input(&mut self, input: crate::keyboard::NativeInput) {
+        use crate::keyboard::NativeInput;
+        match input {
+            NativeInput::Ime(event) => self.raw.events.push(egui::Event::Ime(event)),
+            NativeInput::Key {
+                key,
+                physical_key,
+                pressed,
+                repeat,
+            } => self.push_key(key, physical_key, pressed, repeat),
+            NativeInput::Text(text) => self
+                .raw
+                .events
+                .push(egui::Event::Ime(egui::ImeEvent::Commit(text))),
+        }
+    }
+
+    /// キー 1 件を積む。**修飾はここで載せる**——tao の `ModifiersChanged` の保持値（`self.modifiers`）
+    /// であり、AltGr のとき Ctrl・Alt を外した値である（tao の `get_agnostic_mods`）。subclass の
+    /// `GetKeyState` で取ると AltGr+C/X/V が Copy/Cut/Paste になる。
+    fn push_key(
+        &mut self,
+        key: egui::Key,
+        physical_key: Option<egui::Key>,
+        pressed: bool,
+        repeat: bool,
+    ) {
+        if pressed && self.modifiers.command {
+            match key {
+                egui::Key::C => {
+                    self.raw.events.push(egui::Event::Copy);
+                    return;
+                }
+                egui::Key::X => {
+                    self.raw.events.push(egui::Event::Cut);
+                    return;
+                }
+                egui::Key::V => {
+                    if let Ok(mut clipboard) = arboard::Clipboard::new()
+                        && let Ok(text) = clipboard.get_text()
+                        && !text.is_empty()
+                    {
+                        self.raw
+                            .events
+                            .push(egui::Event::Paste(text.replace("\r\n", "\n")));
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        self.raw.events.push(egui::Event::Key {
+            key,
+            physical_key,
+            pressed,
+            repeat,
+            modifiers: self.modifiers,
+        });
     }
 
     pub(crate) fn on_window_event(&mut self, event: &WindowEvent<'_>) -> bool {
@@ -371,38 +429,25 @@ impl InputState {
         }
 
         if let Some(key) = active_key {
-            if pressed && self.modifiers.command {
-                match key {
-                    egui::Key::C => {
-                        self.raw.events.push(egui::Event::Copy);
-                        return;
-                    }
-                    egui::Key::X => {
-                        self.raw.events.push(egui::Event::Cut);
-                        return;
-                    }
-                    egui::Key::V => {
-                        if let Ok(mut clipboard) = arboard::Clipboard::new()
-                            && let Ok(text) = clipboard.get_text()
-                            && !text.is_empty()
-                        {
-                            self.raw
-                                .events
-                                .push(egui::Event::Paste(text.replace("\r\n", "\n")));
-                        }
-                        return;
-                    }
-                    _ => {}
-                }
+            let physical_key = key_from_key_code(event.physical_key);
+            // 影運転（#1289 Phase 1）: subclass の `sub_key` と同じ形で並べて比べる。
+            if input_trace_enabled() {
+                input_trace(
+                    "tao_key",
+                    &format!(
+                        "state={} key={key:?} physical={physical_key:?} repeat={}",
+                        if pressed { "down" } else { "up" },
+                        event.repeat
+                    ),
+                );
             }
-
-            self.raw.events.push(egui::Event::Key {
-                key,
-                physical_key: key_from_key_code(event.physical_key),
-                pressed,
-                repeat: event.repeat,
-                modifiers: self.modifiers,
-            });
+            let is_shortcut = pressed
+                && self.modifiers.command
+                && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
+            self.push_key(key, physical_key, pressed, event.repeat);
+            if is_shortcut {
+                return;
+            }
         }
 
         // **通常文字はここで積む**（#1266）。tao 0.37 は `WM_CHAR` を直前の `WM_KEYDOWN` に連結して
@@ -412,6 +457,11 @@ impl InputState {
         // `admit_key` の後に置くこと（合成 press も文字を持つ・理由は `admit_key` の doc）。前へ動かすと
         // `scripts/smoke-egui.ps1` の押しっぱなしの Z の打鍵が赤にする（#1274）。
         if let Some(text) = typed_text_event(pressed, event.text_with_all_modifiers()) {
+            if input_trace_enabled()
+                && let egui::Event::Ime(egui::ImeEvent::Commit(committed)) = &text
+            {
+                input_trace("tao_text", &format!("chars={}", committed.chars().count()));
+            }
             self.raw.events.push(text);
         }
     }

@@ -3,6 +3,7 @@
 mod env;
 mod ime;
 mod input;
+mod keyboard;
 mod monitor;
 mod proof;
 mod raster;

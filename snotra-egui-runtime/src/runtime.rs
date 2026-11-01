@@ -538,7 +538,7 @@ impl EguiWindow {
 
     fn drain_native_ime(&mut self) {
         for event in self.ime.drain() {
-            self.input.push_ime_event(event);
+            self.input.push_native_input(event);
         }
     }
 

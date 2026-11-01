@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     ffi::c_void,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::mpsc::{self, Receiver, Sender},
@@ -9,24 +9,37 @@ use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::InvalidateRect,
     UI::{
-        Input::Ime::{
-            CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, CPS_CANCEL, GCS_COMPATTR,
-            GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, HIMC, IME_COMPOSITION_STRING,
-            ImmGetCompositionStringW, ImmGetContext, ImmNotifyIME, ImmReleaseContext,
-            ImmSetCandidateWindow, ImmSetCompositionWindow, NI_COMPOSITIONSTR,
+        Input::{
+            Ime::{
+                CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, CPS_CANCEL, GCS_COMPATTR,
+                GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, HIMC, IME_COMPOSITION_STRING,
+                ImmGetCompositionStringW, ImmGetContext, ImmNotifyIME, ImmReleaseContext,
+                ImmSetCandidateWindow, ImmSetCompositionWindow, NI_COMPOSITIONSTR,
+            },
+            KeyboardAndMouse::{
+                GetAsyncKeyState, GetKeyState, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, VK_SHIFT,
+            },
         },
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-        WindowsAndMessaging::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION},
+        WindowsAndMessaging::{
+            WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KILLFOCUS,
+            WM_SETFOCUS,
+        },
     },
 };
 
 use super::{active_range_chars, logical_ime_rect_to_physical};
 use crate::RuntimeError;
+use crate::keyboard::{self, KeyboardTranslator, NativeInput, PhysicalScan, Translation};
 
 const IME_SUBCLASS_ID: usize = 0x534E_4F54_5241_494D;
 
 struct CallbackState {
-    sender: Sender<egui::ImeEvent>,
+    sender: Sender<NativeInput>,
+    /// subclass proc（イベントループのスレッド）だけが触る。**借用は変換の 1 呼び出しの間だけ持ち、
+    /// 送信・`InvalidateRect`・`DefSubclassProc` の前に手放す**——`DefSubclassProc` の中で同じ proc が
+    /// 再入しうるため、持ったまま進むと二重借用になる（`catch_unwind` が飲み込み、打鍵が黙って消える）。
+    keyboard: RefCell<KeyboardTranslator>,
 }
 
 pub(crate) struct PlatformIme {
@@ -34,7 +47,7 @@ pub(crate) struct PlatformIme {
     // to be Send even though Tauri invokes it on the main thread, so retain the
     // stable handle value and reconstruct the typed wrapper only at API calls.
     hwnd_value: isize,
-    receiver: Receiver<egui::ImeEvent>,
+    receiver: Receiver<NativeInput>,
     // SetWindowSubclass stores this allocation's address in dwRefData. It must
     // outlive the subclass and is released only after RemoveWindowSubclass.
     _callback_state: Box<CallbackState>,
@@ -45,7 +58,10 @@ impl PlatformIme {
     pub(crate) fn new(window: &tauri::Window) -> Result<Self, RuntimeError> {
         let hwnd = window.hwnd()?;
         let (sender, receiver) = mpsc::channel();
-        let callback_state = Box::new(CallbackState { sender });
+        let callback_state = Box::new(CallbackState {
+            sender,
+            keyboard: RefCell::new(KeyboardTranslator::default()),
+        });
         let callback_ptr = (&*callback_state) as *const CallbackState as usize;
 
         // tauri::Window::hwnd() は tauri が依存する windows 版の HWND を返す。当 crate は
@@ -76,7 +92,7 @@ impl PlatformIme {
         })
     }
 
-    pub(crate) fn drain(&self) -> Vec<egui::ImeEvent> {
+    pub(crate) fn drain(&self) -> Vec<NativeInput> {
         self.receiver.try_iter().collect()
     }
 
@@ -215,6 +231,34 @@ unsafe extern "system" fn ime_subclass_proc(
             return;
         };
 
+        // 影運転（#1289 Phase 1）: キーボード由来は trace にだけ出し、egui へはまだ送らない。
+        let keyboard_events = match message {
+            WM_SETFOCUS => {
+                let held = held_keys();
+                state.keyboard.borrow_mut().on_focus_gained(held);
+                Vec::new()
+            }
+            WM_KILLFOCUS => state.keyboard.borrow_mut().on_focus_lost(),
+            m if keyboard::is_keyboard_message(m) => {
+                let scan = physical_scan(wparam.0 as u16, lparam.0 as u32);
+                // SAFETY: GetKeyState reads this thread's keyboard state.
+                let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
+                let translation = state.keyboard.borrow_mut().on_message(
+                    m,
+                    wparam.0,
+                    lparam.0 as u32,
+                    scan,
+                    shift,
+                );
+                trace_suppressed(m, scan, &translation);
+                translation.events
+            }
+            _ => Vec::new(),
+        };
+        for event in &keyboard_events {
+            trace_shadow(event);
+        }
+
         let events = ime_events_for(
             message,
             lparam.0 as u32,
@@ -229,7 +273,7 @@ unsafe extern "system" fn ime_subclass_proc(
             if trace {
                 trace_ime_event(&event);
             }
-            let _ = state.sender.send(event);
+            let _ = state.sender.send(NativeInput::Ime(event));
         }
         // tao は preedit も確定も WindowEvent にしない（ここが送る）。後続のウィンドウイベントが
         // あればその処理前に `drain_native_ime` が回収し、無ければこの再描画要求が
@@ -263,6 +307,75 @@ fn trace_ime_event(event: &egui::ImeEvent) {
             text.chars().count()
         ),
         _ => {}
+    }
+}
+
+/// `WM_SETFOCUS` の瞬間に押されているキー（#927）。tao の `get_async_kbd_state` → 合成 press と
+/// 同じ集合を、物理キーとして返す。
+fn held_keys() -> Vec<PhysicalScan> {
+    (0x08u16..=0xFE)
+        // SAFETY: GetAsyncKeyState only reads the global key state.
+        .filter(|&vk| unsafe { GetAsyncKeyState(vk as i32) } < 0)
+        .filter_map(|vk| scan_from_vk(vk).filter(|scan| scan.0 & 0xFF != 0))
+        .collect()
+}
+
+/// キーのメッセージの物理キー。lParam の 16–23 bit がスキャンコード、24 bit が拡張キー。
+/// **スキャンコードが 0 なら VK から導く**（`keybd_event(vk, 0, …)` の注入はこの形で届く・tao と同じ）。
+/// 取り込み（[`held_keys`]）と同じ関数で導くので、抑止の鍵が両側で揃う。
+fn physical_scan(vk: u16, lparam: u32) -> PhysicalScan {
+    let scan = ((lparam >> 16) & 0xFF) as u16;
+    if scan == 0 {
+        return scan_from_vk(vk).unwrap_or(PhysicalScan(0));
+    }
+    let extended = lparam & (1 << 24) != 0;
+    PhysicalScan(scan | if extended { 0xE000 } else { 0 })
+}
+
+fn scan_from_vk(vk: u16) -> Option<PhysicalScan> {
+    // SAFETY: MapVirtualKeyW is a pure lookup in the current keyboard layout.
+    let mapped = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC_EX) };
+    let extended = matches!(mapped & 0xFF00, 0xE000 | 0xE100);
+    (mapped != 0).then_some(PhysicalScan(
+        (mapped & 0xFF) as u16 | if extended { 0xE000 } else { 0 },
+    ))
+}
+
+/// 抑止した打鍵を残す（`SNOTRA_EGUI_INPUT`・#872/#936 の型 B）。落とした側も残さなければ沈黙になる。
+fn trace_suppressed(message: u32, scan: PhysicalScan, translation: &Translation) {
+    if translation.suppressed && crate::input::input_trace_enabled() {
+        crate::input::input_trace(
+            "drop_key",
+            &format!(
+                "msg={message:#06x} scan={:#06x} reason=held_since_focus_gain",
+                scan.0
+            ),
+        );
+    }
+}
+
+/// 影運転（#1289 Phase 1）: subclass が作ったキーボード由来のイベントを trace にだけ出す。
+fn trace_shadow(event: &NativeInput) {
+    if !crate::input::input_trace_enabled() {
+        return;
+    }
+    match event {
+        NativeInput::Key {
+            key,
+            physical_key,
+            pressed,
+            repeat,
+        } => crate::input::input_trace(
+            "sub_key",
+            &format!(
+                "state={} key={key:?} physical={physical_key:?} repeat={repeat}",
+                if *pressed { "down" } else { "up" }
+            ),
+        ),
+        NativeInput::Text(text) => {
+            crate::input::input_trace("sub_text", &format!("chars={}", text.chars().count()))
+        }
+        NativeInput::Ime(_) => {}
     }
 }
 

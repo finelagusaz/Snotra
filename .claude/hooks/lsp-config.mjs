@@ -17,7 +17,8 @@
  *   この判定が捕まえるのはこの形である
  * - rust-analyzer のバイナリが無い（toolchain の入れ替え・pin の変更で component が落ちる）: 沈黙する。
  *   cargo / clippy / test は緑のまま、`LSP` ツールだけが `crashed with exit code 1` を返す（#1239）。
- *   2026-08-24 には 11 時間気づかれなかった（#1177）。守り手は `rust-toolchain.toml` の `components` の宣言で、
+ *   2026-08-24 には 11 時間気づかれなかった（#1177）。診断は `checkOnSave: false` で切ってあるので、
+ *   plugin の使用カウンタが 0 でも報せは無い。守り手は `rust-toolchain.toml` の `components` の宣言で、
  *   この判定が見るのは宣言までである（下の toolchain の節）
  * - plugin の load 自体が失敗する（trust 未受諾・マニフェスト不正・パス解決失敗・名前の不一致）: 沈黙しない。
  *   公式 plugin を無効化してあるので、`.rs` の navigation が消える形で現れる（エラーは debug log にしか出ない）
@@ -30,8 +31,7 @@
  *   ファイルを読むので緑のままである。`.claude/lsp/` を持たない古い枝の worktree は公式 plugin へ落ち、
  *   どの場合も LSP サーバはちょうど 1 つになる
  * - `.claude/settings.local.json` は project より優先され、そこへ `enabledPlugins` を書けば plugin を無効化できる。
- *   この判定は `.claude/settings.json` しか読まないので、リポジトリからは守れない（現在そのキーは書かれていない）。
- *   gitignore 済みだが、実在検査は ignore 対象を免除するので参照してよい（#1088）
+ *   この判定は `.claude/settings.json` しか読まないので、リポジトリからは守れない（現在そのキーは書かれていない）
  *
  * **判定を非 test の `.mjs` に置くのは 2 つの理由による。** (1) 稼働中の `.claude/settings.json` へ
  * 変異を当てずに複製へ当てられる

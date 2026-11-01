@@ -1,0 +1,31 @@
+{
+  "sha": "f125249ded18ecd248575efd550c3be83ce576b7",
+  "branch": "chore/hooks-doc-contract-only",
+  "worktree": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-hooks-doc-contract-only",
+  "categories_requested": [],
+  "categories_run": [
+    "E",
+    "F"
+  ],
+  "also": [],
+  "handoff": [],
+  "status": "green",
+  "results": [
+    {
+      "category": "E",
+      "command": "npm test",
+      "exit": 0,
+      "started_at": "2026-11-01T04:20:47.679Z",
+      "ended_at": "2026-11-01T04:21:11.423Z"
+    },
+    {
+      "category": "F",
+      "command": "npm run governance:check",
+      "exit": 0,
+      "started_at": "2026-11-01T04:21:11.423Z",
+      "ended_at": "2026-11-01T04:21:12.030Z"
+    }
+  ],
+  "warnings": [],
+  "log": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-hooks-doc-contract-only.summary.log"
+}

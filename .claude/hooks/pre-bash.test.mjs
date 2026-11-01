@@ -1171,7 +1171,9 @@ describe("settings.json ドリフト検出カナリア", () => {
   });
 
   // hook 全体の timeout を越えると非ブロッキングのエラー＝素通りになる。`gh pr create` の
-  // 1 回で走る git は readGitState の 2 本と要約の照合の 2 本で、最悪はその和である
+  // 1 回で走る git は readGitState の 2 本と要約の照合の 2 本で、最悪はその和である。
+  // 本数は手で書いている——git 呼び出しを足したら、ここの係数も足す（本数の増加はこのテストでは落ちない）。
+  // 残りの約 2 秒に Node の起動と動的 import が入る
   it("git 呼び出しの上限の和が hook の timeout に収まる", () => {
     const budgetMs = preToolUse[0].hooks[0].timeout * 1000;
     expect(GIT_TIMEOUT_MS * 2 + VERIFY_GIT_TIMEOUT_MS * 2).toBeLessThan(budgetMs);

@@ -16,7 +16,8 @@
 //     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする
 //   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
 //     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
-// 後者は development-principles §6 の一般則（構文的位置で判定単位を定義する）からの意図的な逸脱であり、
+// 後者は `docs/development-principles.md`「構造的設計原則と強制の階梯」の一般則（検出は構造化された信号で行い、
+// 判定単位は構文的位置で定義する）からの意図的な逸脱であり、
 // 引用の内側の言及でも発火する。この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
 // 例外を一般則の側へ書き戻さずここに置く理由は `docs/adr/ADR-command-shape-norms-in-hook.md`。
 //
@@ -296,7 +297,7 @@ const SHAPE_REMEDY = Object.freeze({
  * ような `{ ok: false }` を持つ reader 形にすると、失敗しえないものへ失敗の表現を与えて嘘になる。
  *
  * **`platform` が渡されないときは Windows 専用判定を発火させない。** これは「判定不能」ではなく
- * 「規範の射程外」であり、block へ倒すと非 Windows で false block になる。この状態へ至るのは
+ * 「規範の射程外」であり、block へ倒すと非 Windows で false block になる。製品コードでこの状態へ至るのは
  * 呼び出し側が `decide` へ platform を渡さないとき（options ごと省く・options に platform を入れない）で、
  * `main()` の配線はソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の両方で走る）が固定する。
  *

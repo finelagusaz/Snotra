@@ -502,6 +502,8 @@ impl EguiWindow {
                         let _ = clipboard.set_text(text.clone());
                     }
                 }
+                // X11 / Wayland の PRIMARY 選択向けで、Windows に相当する置き場が無い。
+                egui::OutputCommand::TextSelectionSettled(_) => {}
                 egui::OutputCommand::CopyImage(_) => {
                     log::warn!("copying egui images is not implemented in this runtime");
                 }

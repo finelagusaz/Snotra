@@ -47,11 +47,13 @@ fn font_covers_cjk(bytes: &[u8], face_index: u32) -> bool {
 /// （呼び出し側が `set_fonts` 自体を避ける）。
 ///
 /// **両フォントとも `&'static [u8]` で受け取り [`egui::FontData::from_static`] で積む。**
-/// epaint の `blob_from_font_data` は `data.clone().font` を match の**前**に評価するため、
-/// `Cow::Owned`（= `from_owned`）ではフォント全体が深くコピーされ、`FontDefinitions` 側と
-/// Blob 側の 2 本が常駐する。`Cow::Borrowed` なら複製されるのは参照だけである。
-/// 実測がこれを二重に裏づける: user_font は `from_owned` で 20.6 MiB ≒ 2 × ファイル 10.21 MiB、
-/// jp_font は `from_static` で 12.9 MiB ≒ 1 × ファイル 13.26 MiB だった（#689）。
+/// 守っているのは「フォントのバイト列が 1 本しか常駐しない」ことである。egui 0.36 までは
+/// `FontData.font` が `Cow` で、`from_owned`（`Cow::Owned`）だと epaint が Blob を作るときに
+/// フォント全体を深くコピーし、2 本が常駐した（実測: user_font は `from_owned` で 20.6 MiB ≒
+/// 2 × ファイル 10.21 MiB、jp_font は `from_static` で 12.9 MiB ≒ 1 × 13.26 MiB・#689）。
+/// 0.37 は `FontData.font` を `Arc` にし、epaint は内部でもその `Arc` を共有する
+/// （`face_store.rs` / `font_face.rs` が `Arc::clone`）ので、`from_owned` でも二重化しない。
+/// 静的参照で積む形はそのまま保っている。
 fn font_definitions(
     jp_bytes: Option<&'static [u8]>,
     user: Option<(&'static [u8], u32)>,
@@ -123,8 +125,8 @@ static USER_FONTS: OnceLock<Mutex<HashMap<String, ResolvedFont>>> = OnceLock::ne
 /// 見つからなければ None（呼び出し側が jp_font 単一へフォールバック）。Database は
 /// 解決後に drop（非常駐・列挙コストはフォント設定時の一度きり）。
 ///
-/// バイト列を `'static` へ leak するのは [`font_definitions`] が `from_static` で積むため。
-/// `from_owned` だと epaint が Blob 生成時にフォント全体を深くコピーし、常駐が 2 倍になる。
+/// バイト列を `'static` へ leak するのは [`font_definitions`] が `from_static` で積むため
+/// （egui 0.36 まで `from_owned` が常駐を 2 倍にした経緯は同関数の doc）。
 fn resolve_font_family(name: &str) -> Option<(&'static [u8], u32)> {
     let cache = USER_FONTS.get_or_init(|| Mutex::new(HashMap::new()));
     // poison からは回復する（release は panic=abort ゆえ実際には起きないが、
@@ -274,21 +276,18 @@ mod tests {
     }
 
     #[test]
-    fn font_definitions_registers_both_fonts_as_borrowed() {
-        // **常駐 2 倍化に対する退行テスト。** epaint の `blob_from_font_data` は
-        // `data.clone().font` を match の前に評価するため、`Cow::Owned`（= `from_owned`）
-        // だとフォント全体が深くコピーされ FontDefinitions 側と Blob 側の 2 本が残る。
-        // `from_static` → `Cow::Borrowed` なら複製されるのは参照だけ。
-        // ここが Owned に戻ると**数値でしか気づけない**（描画も型検査も通る）ので型で縛る。
-        use std::borrow::Cow;
+    fn font_definitions_registers_both_fonts_without_copy() {
+        // **常駐 2 倍化に対する退行テスト。** 積んだバイト列が、渡した静的スライスそのものを
+        // 指すことを見る（どこかで複製されれば別の番地になる）。複製は**数値でしか気づけない**
+        // （描画も型検査も通る）ので番地で縛る。経緯は `font_definitions` の doc。
         let jp: &'static [u8] = &[0u8; 4];
-        let user: &'static [u8] = &[0u8; 4];
+        let user: &'static [u8] = &[1u8; 4];
         let fonts = font_definitions(Some(jp), Some((user, 0)));
-        for key in ["jp_font", "user_font"] {
+        for (key, src) in [("jp_font", jp), ("user_font", user)] {
             let data = fonts.font_data.get(key).expect("font registered");
             assert!(
-                matches!(data.font, Cow::Borrowed(_)),
-                "{key} が Cow::Owned で積まれている（from_owned だと epaint が全体を複製し常駐が 2 倍になる）"
+                std::ptr::eq(data.bytes().as_ptr(), src.as_ptr()),
+                "{key} のバイト列が複製されて積まれている（常駐が 2 倍になる）"
             );
         }
     }
@@ -307,7 +306,7 @@ mod tests {
         let mut checked = 0usize;
         for (name, data) in &defaults.font_data {
             assert!(
-                !super::font_covers_cjk(&data.font, data.index),
+                !super::font_covers_cjk(data.bytes(), data.index),
                 "egui 同梱フォント {name} が CJK をカバーすると誤判定された（判定が緩すぎる）"
             );
             checked += 1;

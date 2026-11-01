@@ -204,7 +204,7 @@ user_font 自身が CJK をカバーするなら jp_font（`YuGothM.ttc` 13.26 M
 
 ### 採用: user_font も `from_static` で積む（epaint の全体複製を止める）
 
-`from_owned` で積んだフォントが epaint 側で丸ごと複製される。**機構の正本は
+egui 0.36 までは `from_owned` で積んだフォントが epaint 側で丸ごと複製された（0.37 で解消）。**機構の正本は
 `egui_shell/font_stack.rs` の `font_definitions` の doc コメント**（epaint のどの関数がどう
 複製するかはそこに書く。ここで再記述すると epaint の更新時に二重メンテになる）。
 jp_font は元から `from_static` だったが user_font だけ `from_owned` のままで、

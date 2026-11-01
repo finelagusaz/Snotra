@@ -183,7 +183,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
         tr.t(TrKey::ModalAddScanPath)
     };
 
-    let modal = egui::Modal::new(egui::Id::new("index_modal"));
+    let modal = egui::Modal::new(egui::Id::unique("index_modal"));
 
     let resp = modal.show(ctx, |ui| {
         style::modal_header(ui, title);

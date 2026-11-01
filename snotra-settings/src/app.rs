@@ -337,7 +337,7 @@ impl SettingsApp {
         // Rationale: when sentinel has focus, sidebar_focused is still false (previous frame),
         // so auto-sync does not fire (its guard is `self.sidebar_focused`). Sentinel detection
         // then sets sidebar_focused=true before surrendering focus, leaving no race window.
-        let sidebar_sentinel_id = egui::Id::new("sidebar_sentinel");
+        let sidebar_sentinel_id = egui::Id::unique("sidebar_sentinel");
 
         // Single memory read for both focus-sync checks below.
         let focused_id = ctx.memory(|m| m.focused());
@@ -532,11 +532,11 @@ impl SettingsApp {
                         // 明示 id がないと RTL（矩形固定）のボタン auto-id がフレーム間で変化して egui の
                         // `warn_if_rect_changes_id`（debug 限定の赤枠）が発火する。`push_id`/`id_salt`
                         // （`IdSource::Child`）は unique_id に親カウンタを混ぜるため解消できず、
-                        // `UiBuilder::id`（`IdSource::Explicit`）のみがカウンタ混入を断つ（#456）。
+                        // `UiBuilder::scope_id`（`IdSource::Explicit`）のみがカウンタ混入を断つ（#456）。
                         // `with_layout` は `scope_builder(UiBuilder::new().layout(..), ..)` の薄いラッパ
-                        // なので、`.id()` を足すだけでレイアウト・挙動は不変。
+                        // なので、`.scope_id()` を足すだけでレイアウト・挙動は不変。
                         let action_group = egui::UiBuilder::new()
-                            .id(egui::Id::new("footer_actions"))
+                            .scope_id(egui::Id::unique("footer_actions"))
                             .layout(egui::Layout::right_to_left(egui::Align::Center));
                         ui.scope_builder(action_group, |ui| {
                             ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
@@ -848,7 +848,12 @@ mod tests {
         // スタートアップ登録は固定値で構築する。**実 OS を読ませない**——読ませると
         // このハーネスを使う全テストの初期状態が開発機のレジストリに依存する。
         let app = SettingsApp::new(config, false, None, LoadOutcome::Loaded, false);
-        Harness::new_ui_state(|ui, app: &mut SettingsApp| app.ui_impl(ui), app)
+        // **グリフの欠落を許す**（egui_kittest 0.37 は既定で panic する）。ハーネスは日本語
+        // フォントを読まず、言語選択肢などの日本語は描けない。kittest が見るのは操作と状態で
+        // あって描画ではない（`snotra-settings/CLAUDE.md`「境界（kittest で検証できないもの）」）。
+        Harness::builder()
+            .allow_missing_glyphs()
+            .build_ui_state(|ui, app: &mut SettingsApp| app.ui_impl(ui), app)
     }
 
     fn en_config() -> Config {
@@ -983,7 +988,7 @@ mod tests {
     // 破棄で dirty が解消するとフッターの status ラベル（「未保存の変更があります」）が消え、
     // 前置ウィジェット数が変わる。アクションボタン群を RTL（右寄せ・矩形固定）で並べているため、
     // 明示 id を与えないと配下ボタンの auto-id がフレーム間で変化し「同矩形・別 id」警告が出る。
-    // ボタン群コンテナの明示 id（`UiBuilder::id`）がこれを防ぐことを保証する。
+    // ボタン群コンテナの明示 id（`UiBuilder::scope_id`）がこれを防ぐことを保証する。
     //
     // 検出マーカー: `warn_if_rect_changes_id` は赤 2px 枠を `Color32::RED`（egui context.rs で
     // ハードコード）で描く。`check_for_id_clash`（ID 重複）の 1px 枠は `error_fg_color`（既定で

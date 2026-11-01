@@ -200,7 +200,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut InstantTabSt
         tr.t(TrKey::ModalAddInstant)
     };
 
-    let modal = egui::Modal::new(egui::Id::new("instant_modal"));
+    let modal = egui::Modal::new(egui::Id::unique("instant_modal"));
 
     let resp = modal.show(ctx, |ui| {
         style::modal_header(ui, title);

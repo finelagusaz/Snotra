@@ -139,7 +139,7 @@
 - [x] 段 2-3: `.rs` の指しの付け替えと偽の訂正（上の表の全行）
 - [x] 段 2-4: 本書の書き直し（「書き直した本書の構成」）
 - [x] 段 2-5: 外部文書の付け替え（rules・code-reviewer・SPEC・PERFORMANCE・psm1）
-- [ ] 段 2-6: 検証（カテゴリ A・`cargo doc`・`governance:check`・集合差・取りこぼしの `git grep`）
+- [x] 段 2-6: 検証（カテゴリ A・`cargo doc`・`governance:check`・集合差・取りこぼしの `git grep`）
 - [x] 段 2-7: 削除台帳・字数・太字数・分類件数を数える（PR 本文の材料）
 
 ## 未確定（実装前に潰す）

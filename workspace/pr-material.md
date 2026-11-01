@@ -108,11 +108,11 @@
 
 ## 直さなかった参照
 
-- `hide_request.rs` の `//!` は計画では「ウィンドウ生成の制約」への指しを残す予定だったが、旧い指しがずれていた（可視性の閉包はその節に無い）ので括弧ごと `hide_egui_main` の doc へ付け替えた
-
 - `docs/adr/`・`docs/superpowers/`・`docs/design/` が消えた見出しを指していても直さない（凍結された歴史・`ADR-adr-frozen-history`）
 
 ## 付け替えた参照
+
+- `hide_request.rs` の `//!` は計画では「ウィンドウ生成の制約」への指しを残す予定だったが、旧い指しがずれていた（可視性の閉包はその節に無い）ので括弧ごと `hide_egui_main` の doc へ付け替えた
 
 - 消えた見出しを指していた `.rs`・SPEC・PERFORMANCE・architecture・rules・code-reviewer・psm1 の指しを移設先へ。`main.rs` の `(src-tauri/CLAUDE.md)` 2 本は本書に該当記述が無かったので `docs/architecture.md`「起動シーケンスと初期化順序」へ
 - G-heading-refs が bullet のリード文を指す参照も照合することを、消えた見出しの参照を 2 本注入して確かめた（2 件とも赤）

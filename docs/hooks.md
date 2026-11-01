@@ -4,7 +4,7 @@
 
 - エージェントが日常操作でフックにどう**応答するか**の正本は、常時ロードの `CLAUDE.md`「フック」節である。本ファイルは、そこから移した判定の一覧と内訳も持つ。
 - 設計哲学（検出は構造化信号で行い、fail-closed を既定値に埋める）の正本は `docs/development-principles.md`「構造的設計原則と強制の階梯」である。本ファイルはそのフックへの具体化を持つ。
-- セーフティネットが**効いているか**の検証手順（フォールトインジェクション等）は `.claude/rules/safety-nets.md`（フック改修時に自動配送される）。
+- セーフティネットが**効いているか**の検証手順（故障注入等）は `.claude/rules/safety-nets.md`（フック改修時に自動配送される）。
 
 ## PreToolUse（pre-bash.mjs）の実装契約
 
@@ -16,16 +16,15 @@
 - **判定単位は 2 種類ある**（#768）。
   - **コマンド位置**: `gh pr create` / `git` の各判定は、コマンド位置に現れる呼び出しを起点とする。`git` 系はさらに次の区切りまでのセグメントに閉じるので、`grep -n "--no-verify" CLAUDE.md` では発火しない。
   - **コマンド全体**: heredoc 演算子・`\` パス・非 ASCII の 3 判定。この 3 つの失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い。§6 の一般則（構文的位置で判定単位を定義する）からの意図的な逸脱であり、代償として引用の内側の言及でも発火する。この過剰検出（`echo "&& gh pr create"` / `git commit -m "fix: C:\path"`）は fail-closed 方向ゆえ許容し、テストで意図として固定する。
-- **見ないコマンド形がある**（#482・受容する性質）。いずれも `gh` がコマンド位置に、直後の空白つきで現れない形である（#1299 の敵対的調査で実測）。
-  - `sh -c '...'` / `eval` / バッククォート / ラッパ経由（`timeout 5 gh pr create` / `xargs`）
-  - 実行ファイルの名前やパスで呼ぶ形（`gh.exe pr create` / `& '<path>/gh.exe' pr create`）
-  - `gh api …/pulls` で PR を作る形
+- **見ないコマンド形がある**（#482・受容する性質）。
+  - `sh -c '...'` / `eval` / バッククォート / ラッパ経由（`timeout 5 gh pr create` / `xargs`）: `gh` がコマンド位置に現れない。
+  - 実行ファイルの名前やパスで呼ぶ形（`gh.exe pr create` / `& '<path>/gh.exe' pr create`）と、`gh api …/pulls` で PR を作る形: 検出は `gh` の直後の空白を要求する（#1299 の敵対的調査で実測）。
 
   これらは事故モードではなく意図的迂回であり、`--no-verify` と同格に**人間専用**として扱う。検出を shell パーサ相当まで広げると、payload 全体 grep の誤爆を作り直すことになる。
 - **plan.md ゲート**（#749: 計画に書いた作業の実行漏れを PR 前に捕捉する）— `gh pr create` を検出したとき、リポジトリルートの `workspace/plan.md` に未チェックの `- [ ]`（`* [ ]` も数える）が残っていれば block する。
   - **ルートの導出**: cwd から最近接の `.git` へ遡る。`.git` が見つからなければ cwd を root とみなす（従来挙動）。
   - **発火点**: push 検査と同じコマンド位置検出であり、新しい発火点を作らない。
-  - **倒し方**: plan.md が存在するのに読めない → block。存在しない → 管轄外（計画なしタスク・他リポジトリを塞がない）。
+  - **倒し方**: plan.md が存在するのに読めない → block。存在しない → 管轄外（計画無しのタスク・他リポジトリを塞がない）。
   - **テスト**: `decide(payload, { readGitState, readPlanState, readVerifyState, platform })` の注入で、ファイルシステム無しにテストできる。
   - plan.md のコードブロック内の `- [ ]` への過剰検出は受容する（fail-closed 方向）。
 - **要約ゲート**（#1299）— `gh pr create` を検出したとき、道具（`npm run verify:tree`）の要約と照合する。
@@ -33,7 +32,7 @@
   - **骨子**: 今のブランチの要約が green であり、要約の sha から HEAD までの差分（`git diff --name-only --no-renames -z`・2 端点）に `workspace/` の外のパスが無いこと。**止める条件の正本は `judgeSummary` / `readVerifyState` である**（ここに列挙しない）。
   - **マージ時の再照合**: 要約の読み込みから diff までを `verifiedSummaryState` に切り出してある。マージの道具（`scripts/merge-pr.mjs`・#1312）が、同じ照合を PR の head ブランチと head の sha へ当てる。PR を作ったあとに足したコミットは、マージ時にここで止まる。
   - **例外は無い**: 照合するのは道具の A〜F だけで、委譲のレビューが見た sha は見ない。却下した代替と受容した残余は `docs/adr/ADR-pr-gate-verified-sha.md`。
-  - **実装上の制約**: 要約の置き場は `scripts/verify-tree.mjs` の `summaryPathFor` で導出し、`gh pr create` の検出後にだけ動的 import する（写さない。静的 import にすると構文エラー 1 つで全コマンドが止まる）。reader の git 呼び出しは 2 本 × 4 秒に抑える。hook 全体の上限（`.claude/settings.json` の 30 秒）を越えると素通りになる。
+  - **実装上の制約**: 要約の置き場は `scripts/verify-tree.mjs` の `summaryPathFor` で導出し、`gh pr create` の検出後にだけ動的 import する（写さない。静的 import にすると構文エラー 1 つで全コマンドが止まる）。reader の git 呼び出しは 2 本 × 4 秒に抑える。フック全体の上限（`.claude/settings.json` の 30 秒）を越えると素通りになる。
 
 ### コマンドの形で判定する規範 5 件（#768）
 
@@ -52,7 +51,7 @@
   - **渡されないときは Windows 専用判定を発火させない。** これは「判定不能」ではなく「規範の射程外」である。block へ倒すと、非 Windows で false block になる。
   - `main()` の配線は、ソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の双方で走る）が固定する。却下した代替（`undefined` を Windows へ倒す案）は `docs/adr/ADR-command-shape-norms-in-hook.md`。
 - **爆発半径が `gh pr create` 系の判定（push 検査・plan.md ゲート・要約ゲート）と違う。** `gh pr create` 系は検出後にだけ走るが、この 5 判定は**全 Bash/PowerShell コマンド**で走る。ゆえに**全域関数でなければならない**。
-  - throw すれば `main()` の catch が exit 2 を書き、セッションの全コマンドが止まる。hang すれば、hook の timeout まで全コマンドが待つ。
+  - throw すれば `main()` の catch が exit 2 を書き、セッションの全コマンドが止まる。hang すれば、フックの timeout まで全コマンドが待つ。
   - `usesHeredoc` は全候補を走査するが、終端行の索引を 1 パスで作ることで線形に保つ（候補ごとに全文走査する素朴形は、候補 2 万件で 1812ms・実測）。
 - **受容する未対応リスク**（いずれも fail-closed の設計方針の下で意図的に残す）。検出の有無にかかわらず、規範に反する形は人間専用の意図的迂回であり、上の `sh -c` 項と同格に扱う。
   - **区切りの走査はシェルの構文を理解しない。** 区切り文字が構文の内側にあるとセグメントが早く切れ、見落とす。該当するのは引用内（`git commit -m "a;b" --no-verify`）と、行継続をまたぐ形（`git commit \` + 改行 + `--no-verify`。PowerShell のバッククォート継続も同型）である。
@@ -61,7 +60,7 @@
   - **コマンド文字列に現れない非 ASCII は見えない**（`python foo.py` でスクリプト側が出す形）。コマンドの形には判定材料が無い。
   - **`\` 判定は上表の 3 形しか見ない。** `.\scripts\x.ps1` のような相対形も、接頭辞を持たない `docs\hooks.md` も検出されない（`.\` は PowerShell では動くため誤爆の代償が大きく、形を絞った）。規範としては、コマンドに書くパスの区切りを `/` にする。
   - **`pull` はブランチを見ない。** `git pull --rebase` も feature ブランチでの pull も止まる（過剰検出）。ブランチ判定は `readGitState` の責務を広げるため採らない。
-  - **`.githooks/_lib.sh` は拒否メッセージで `--no-verify` による迂回を案内する。** そこには「人間専用。エージェントは使用禁止」と明記してある。この hook が拒むのはエージェントの実行であり、人間の判断を妨げないので、両者は矛盾しない。
+  - **`.githooks/_lib.sh` は拒否メッセージで `--no-verify` による迂回を案内する。** そこには「人間専用。エージェントは使用禁止」と明記してある。このフックが拒むのはエージェントの実行であり、人間の判断を妨げないので、両者は矛盾しない。
 
 ## Claude Code の RA インスタンスと hook の分担
 

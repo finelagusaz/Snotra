@@ -231,8 +231,10 @@ unsafe extern "system" fn ime_subclass_proc(
             return;
         };
 
-        // 影運転（#1289 Phase 1）: キーボード由来は trace にだけ出し、egui へはまだ送らない。
-        let keyboard_events = match message {
+        // **キーボードの持ち主はこの subclass だけである**（#1289）。tao の `KeyboardInput` /
+        // `ReceivedImeText` は egui へ渡さない（`input.rs`）。変換核の借用は各呼び出しの間だけ持ち、
+        // Win32 の読み（`held_keys`・`physical_scan`・`GetKeyState`）は借用の外で済ませる。
+        let events: Vec<NativeInput> = match message {
             WM_SETFOCUS => {
                 let held = held_keys();
                 state.keyboard.borrow_mut().on_focus_gained(held);
@@ -253,31 +255,32 @@ unsafe extern "system" fn ime_subclass_proc(
                 trace_suppressed(m, scan, &translation);
                 translation.events
             }
-            _ => Vec::new(),
+            _ => ime_events_for(
+                message,
+                lparam.0 as u32,
+                || ImeContext::acquire(hwnd)?.composition_string(GCS_RESULTSTR),
+                || read_preedit(hwnd),
+            )
+            .into_iter()
+            .map(NativeInput::Ime)
+            .collect(),
         };
-        for event in &keyboard_events {
-            trace_shadow(event);
-        }
-
-        let events = ime_events_for(
-            message,
-            lparam.0 as u32,
-            || ImeContext::acquire(hwnd)?.composition_string(GCS_RESULTSTR),
-            || read_preedit(hwnd),
-        );
         if events.is_empty() {
             return;
         }
-        let trace = crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE");
+        let ime_trace = crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE");
         for event in events {
-            if trace {
-                trace_ime_event(&event);
+            match &event {
+                NativeInput::Ime(ime) if ime_trace => trace_ime_event(ime),
+                NativeInput::Ime(_) => {}
+                keyboard_event => trace_keyboard_event(keyboard_event),
             }
-            let _ = state.sender.send(NativeInput::Ime(event));
+            let _ = state.sender.send(event);
         }
-        // tao は preedit も確定も WindowEvent にしない（ここが送る）。後続のウィンドウイベントが
+        // tao は preedit・確定・打鍵のどれも egui へ渡さない（ここが送る）。後続のウィンドウイベントが
         // あればその処理前に `drain_native_ime` が回収し、無ければこの再描画要求が
-        // `RedrawRequested` → `render` の drain で回収する。
+        // `RedrawRequested` → `render` の drain で回収する。直前のキー押下を持たない
+        // `PostMessage(WM_CHAR)`（#1269）は tao のイベントを伴わないので、この要求だけが拾う。
         // SAFETY: hwnd is the window currently dispatching this callback.
         unsafe {
             let _ = InvalidateRect(Some(hwnd), None, false);
@@ -287,8 +290,10 @@ unsafe extern "system" fn ime_subclass_proc(
     if owned {
         LRESULT(0)
     } else {
-        // SAFETY: every non-IME message must continue through tao's own window procedure,
-        // which remains responsible for key events (and the text they carry).
+        // SAFETY: every non-IME message must continue through tao's own window procedure.
+        // Key messages are observed above but never consumed, so the system menu, Alt+F4 and
+        // tao's own bookkeeping (modifiers, focus) keep working. Nothing touches `ref_data`
+        // after this call: tao may destroy the window — and drop `CallbackState` — inside it.
         unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
     }
 }
@@ -354,8 +359,10 @@ fn trace_suppressed(message: u32, scan: PhysicalScan, translation: &Translation)
     }
 }
 
-/// 影運転（#1289 Phase 1）: subclass が作ったキーボード由来のイベントを trace にだけ出す。
-fn trace_shadow(event: &NativeInput) {
+/// subclass が egui へ送るキーボード由来のイベントを 1 件 1 行で残す（`SNOTRA_EGUI_INPUT`・
+/// #872/#936 の型 B）。tao の到着（`rx_key`）と突き合わせると、配送と適用の層を分けられる。
+/// 文字の内容は出さない（件数だけ）。
+fn trace_keyboard_event(event: &NativeInput) {
     if !crate::input::input_trace_enabled() {
         return;
     }
@@ -366,14 +373,14 @@ fn trace_shadow(event: &NativeInput) {
             pressed,
             repeat,
         } => crate::input::input_trace(
-            "sub_key",
+            "push_key",
             &format!(
                 "state={} key={key:?} physical={physical_key:?} repeat={repeat}",
                 if *pressed { "down" } else { "up" }
             ),
         ),
         NativeInput::Text(text) => {
-            crate::input::input_trace("sub_text", &format!("chars={}", text.chars().count()))
+            crate::input::input_trace("push_text", &format!("chars={}", text.chars().count()))
         }
         NativeInput::Ime(_) => {}
     }

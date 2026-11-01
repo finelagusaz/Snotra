@@ -52,19 +52,24 @@
 
 - [x] `keyboard.rs` に `KeyboardTranslator` と写像を作り、単体テストを Red → Green で書く（下の「テスト方針」の 1）
 - [x] subclass に `WM_SETFOCUS` / `WM_KILLFOCUS` とキーのメッセージを足す。**この段では egui へ送らず、作ったイベントを `SNOTRA_EGUI_INPUT sub_key` / `sub_text`（D9） の trace にだけ出す**（影運転）。tao の経路は従来どおり egui へ渡す
-- [ ] 影運転で、同じ打鍵について tao の経路（`push_key` / Commit）と subclass の経路（`sub_key` / `sub_text`）が同じ egui イベント列になることを確かめる。対象は英字・数字（Shift あり・なし）・記号・Ctrl+A/C/X/V/H/Z・↑↓←→・Enter・Escape・Backspace・Alt+英字（D2 の確認）・テンキー。`keybd_event` の注入と、手打ちの日本語 IME（変換中の英字・Enter・確定）で行う。結果は計画の末尾「影運転の記録」へ書く
+- [x] 影運転で、同じ打鍵について tao の経路（`push_key` / Commit）と subclass の経路（`sub_key` / `sub_text`）が同じ egui イベント列になることを確かめる。対象は英字・数字（Shift あり・なし）・記号・Ctrl+A/C/X/V/H/Z・↑↓←→・Enter・Escape・Backspace・Alt+英字（D2 の確認）・テンキー。`keybd_event` の注入と、手打ちの日本語 IME（変換中の英字・Enter・確定）で行う。結果は計画の末尾「影運転の記録」へ書く
 
 ### Phase 2 — 切り替え
 
-- [ ] subclass のキーイベントを `mpsc` へ送る形に切り替え、影運転の trace を消す（**足場の撤去はこの切り替えそのもの**）
-- [ ] `input.rs` から tao 由来のキー経路を消し、`KeyboardInput` を trace だけにする。`runtime.rs` の wake（D5）
-- [ ] smoke の新設 2 本と `SnotraSmoke.psm1` の注入関数。#1274 の節のコメントの書き換え
-- [ ] #1269 の残余を `PostMessage(WM_CHAR)` の smoke で測り直す
+- [x] subclass のキーイベントを `mpsc` へ送る形に切り替え、影運転の trace を消す（**足場の撤去はこの切り替えそのもの**）
+- [x] `input.rs` から tao 由来のキー経路を消し、`KeyboardInput` を trace だけにする。`runtime.rs` の wake（D5）
+- [x] smoke の新設 2 本と `SnotraSmoke.psm1` の注入関数。#1274 の節のコメントの書き換え
+- [x] #1269 の残余を `PostMessage(WM_CHAR)` の smoke で測り直す（2026-11-02・ローカルの smoke:egui で `p` が 2→3 で入った＝解消。Phase 3 で `CLAUDE.md` の受容する残余から外す）
 
 ### Phase 3 — 文書
 
 - [ ] `snotra-egui-runtime/CLAUDE.md`（モジュール構成・不変条件 3 項）と ADR
 - [ ] `windows_ime.rs` / `input.rs` / `runtime.rs` の doc とコメントの残骸を、撤去した語彙（`admit_key`・`held_since_focus_gain`・`text_with_all_modifiers`・`synthetic`・`合成 press`）で `git grep` して直す
+
+## 影運転の記録
+
+- 2026-11-02・`97a2c4f1`（debug）・`workspace/shadow-1289.ps1`（`keybd_event` の注入・検証用プロファイル）: 英字・Shift+英字・数字・Shift+数字・テンキー・OEM・Space・Ctrl+A/C/V/Z/H・↑↓←→・Home/End・Backspace/Delete・Tab・Alt+A・F1・Escape。**`tao_key` 44 件と `sub_key` 44 件、`tao_text` 8 件と `sub_text` 8 件が、順序まで一致**（Alt+A の `WM_SYSCHAR` は両経路とも文字になる＝D2 を実測で確認）
+- 2026-11-02・同じ版・ユーザーの手打ち（日本語配列・日本語 IME を手で入れた。確定・続け打ち・Escape での取り消し・変換中の Ctrl+V・IME オフで Ctrl+A → Delete → `xyz`）: **`tao_key` / `sub_key` 181 件、`tao_text` / `sub_text` 3 件（`xyz`）が順序まで一致**。変換中の `VK_PROCESSKEY` の英字も一致（D1）。変換と確定の間に subclass へ `WM_CHAR` は来ておらず（`sub_text` は `xyz` の 3 件だけ）、IME 由来の文字が二重に入る経路は観測されなかった。IME の確定は subclass の既存経路から 9 件、tao の tripwire（`push_text`）は 0 件
 
 ## 不変条件と異常系
 

@@ -1,10 +1,9 @@
-use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use tauri_runtime_wry::tao::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    keyboard::{Key, KeyCode, ModifiersState},
+    keyboard::ModifiersState,
 };
 
 pub(crate) struct InputState {
@@ -12,14 +11,6 @@ pub(crate) struct InputState {
     native_pixels_per_point: f32,
     pointer_pos: egui::Pos2,
     started_at: Instant,
-    /// focus を獲得した瞬間に既に押されていたキー（#927）。**press を release まで抑止する**
-    /// ——判定は `admit_key`、そこに機序と一次資料を書いた。
-    ///
-    /// **`Focused(false)` で全消去し、focus セッションを越えない。** 抑止したキーの release が
-    /// 届かない経路（release 時にウィンドウが focus を失っている）で抑止が持ち越されると、以後
-    /// Escape が永久に効かなくなる——fail-closed の側へ倒れるため、消去点を持つことが
-    /// 抑止そのものと同じだけ重要である。
-    held_since_focus_gain: HashSet<KeyCode>,
     /// 現在の修飾キー状態。**egui 0.36 で `RawInput::modifiers` が消え、保持側がこちらへ移った**
     /// （upstream の `Remove Modifiers from RawInput and make it a egui::Event`）。egui へは
     /// `Event::ModifiersChanged` として流しつつ、`PointerButton` / `MouseWheel` / `Key` の
@@ -77,44 +68,6 @@ pub(crate) fn input_trace(kind: &str, detail: &str) {
     eprintln!("SNOTRA_EGUI_INPUT {kind} ts_ms={ts_ms} {detail}");
 }
 
-/// このキーイベントを egui へ渡すか（#927）。`true` = 渡す。`held` は副作用として更新する。
-///
-/// **tao は `WM_SETFOCUS` を受けたとき、その瞬間に押されている全キーの `Pressed` を合成する**
-/// （`tao-0.37.2/src/platform_impl/windows/keyboard.rs:103-107` の `get_async_kbd_state()` →
-/// `synthesize_kbd_state(ElementState::Pressed, …)`）。**合成 press は文字も持つ**
-/// （`create_synthetic` が `text_with_all_modifiers` を埋める・同 `:478`）ので、ここで落とした
-/// press は文字も入れない（#1266 で文字を `KeyEvent` から取るようになった帰結。focus 獲得時に
-/// 押していたキーは、release まで文字も入らない）。設定ウィンドウを Escape の **down** で
-/// 閉じると、本体が focus を取り戻した瞬間にこの合成 press が届き、Escape ラダーが走って
-/// **1 回の押下で 2 つのウィンドウが閉じる**（#927 の症状。実測: 本体が受けた press は `synthetic=true`）。
-///
-/// ゆえに **focus 獲得時に押されていたキーは、release されるまで press を渡さない**。
-/// 抑止は Escape に限らない——`Z` を押しっぱなしで設定を閉じると検索欄へ合成 press が届く（実測）。
-///
-/// **非合成の press も抑止対象に含める**のは、物理キーボードのオートリピートが focus 移行を
-/// 跨いで新しい前面ウィンドウへ届く可能性を塞ぐためである（`keybd_event` はリピートを生まないので
-/// 注入では測れない。#927 の (A)）。
-///
-/// **release は常に渡す**——落とすと egui の `keys_down` に押しっぱなしが残る。egui へ渡らな
-/// かった press に対応する release が渡ることは無害である（`key_released` / `keys_down` を読む
-/// 消費者はこの crate にも `src-tauri/src/egui_shell/` にも無い・grep 実測）。
-fn admit_key(
-    is_synthetic: bool,
-    pressed: bool,
-    physical: KeyCode,
-    held: &mut HashSet<KeyCode>,
-) -> bool {
-    if !pressed {
-        held.remove(&physical);
-        return true;
-    }
-    if is_synthetic {
-        held.insert(physical);
-        return false;
-    }
-    !held.contains(&physical)
-}
-
 impl InputState {
     pub(crate) fn new(native_pixels_per_point: f32) -> Self {
         Self {
@@ -122,7 +75,6 @@ impl InputState {
             native_pixels_per_point,
             pointer_pos: egui::Pos2::ZERO,
             started_at: Instant::now(),
-            held_since_focus_gain: HashSet::new(),
             modifiers: egui::Modifiers::default(),
             frame_count: 0,
             last_take_trace: None,
@@ -277,20 +229,8 @@ impl InputState {
                 self.native_pixels_per_point = *scale_factor as f32;
             }
             WindowEvent::Focused(focused) => {
-                // **focus を失ったら抑止を全消去する**（#927）。tao は `WM_KILLFOCUS` でも
-                // 合成 release を先に送る（`tao-0.37.2/src/platform_impl/windows/event_loop.rs`
-                // の `lose_active_focus` は `keyboard_callback`〔`:943`〕より後の `match msg`
-                // 〔`:1736` / `:1753`〕で走る）ので、到着順に関わらずここで空になる。
-                // **`Focused(true)` では消さない**——合成 press は `Focused(true)` より**先**に届くため
-                // （`gain_active_focus` も同じく `match msg` の中〔`:1734` / `:1745`〕）、ここで消すと
-                // 直前に立てた抑止を自分で捨てる。**0.37 で保証は弱まった**: 合成 press は
-                // `PendingEventQueue::complete_multi`（`keyboard.rs:827`）で未完了のキー処理の後ろへ
-                // 回されうる一方、`Focused(true)` は即時に出る。崩れるのは遅れた press が次の
-                // `Focused(false)` より後に届く並びだけで、そのときは抑止が立たずに press が 1 回
-                // 渡る（fail-open 側。Escape が効かなくなる側ではない）——受容する残余。
-                if !*focused {
-                    self.held_since_focus_gain.clear();
-                }
+                // focus 獲得時の抑止（#927）はここでは扱わない——subclass が `WM_SETFOCUS` /
+                // `WM_KILLFOCUS` で持つ（`keyboard.rs` の `KeyboardTranslator`）。
                 self.raw.focused = *focused;
                 self.raw.events.push(egui::Event::WindowFocused(*focused));
             }
@@ -344,55 +284,13 @@ impl InputState {
                     modifiers: self.modifiers,
                 });
             }
-            WindowEvent::KeyboardInput {
-                event,
-                is_synthetic,
-                ..
-            } => {
-                let pressed = event.state == ElementState::Pressed;
-                if !admit_key(
-                    *is_synthetic,
-                    pressed,
-                    event.physical_key,
-                    &mut self.held_since_focus_gain,
-                ) {
-                    // **落とした側も残す**（#872/#936）——`push_key` はここより下流ゆえ、
-                    // 抑止した打鍵は残さなければ沈黙になる。
-                    if input_trace_enabled() {
-                        input_trace(
-                            "drop_key",
-                            &format!(
-                                "state={} physical={:?} synthetic={is_synthetic} reason=held_since_focus_gain",
-                                if pressed { "down" } else { "up" },
-                                event.physical_key,
-                            ),
-                        );
-                    }
-                    return true;
-                }
-                self.on_keyboard_event(event)
-            }
-            // **Windows では発火しないはずの tripwire である**（#1266）。tao 0.37 がこれを送るのは
-            // `WM_IME_ENDCOMPOSITION` だけで、`windows_ime.rs` の subclass はそれを tao へ通さない
-            // （確定は subclass が `GCS_RESULTSTR` から読んで送る）。**ここに `push_text` が出たら
-            // その抑止が破れており、確定が二重に入っている。** 消さずに残すのは、破れたときに
-            // 確定を落とす側ではなく trace に現れる側へ倒すためである。
-            WindowEvent::ReceivedImeText(text) => {
-                let committed = committed_text_event(text);
-                // **落とした側も残す**（#872/#936）。`committed_text_event` は制御文字と空を
-                // 弾くので、「届いたのに egui へ渡らなかった」経路がここにも在る。
-                input_trace(
-                    "push_text",
-                    &format!(
-                        "chars={} committed={}",
-                        text.chars().count(),
-                        committed.is_some()
-                    ),
-                );
-                if let Some(event) = committed {
-                    self.raw.events.push(event);
-                }
-            }
+            // **キーボード由来は tao から受け取らない**（#1289）。打鍵・文字・IME 確定はすべて
+            // `windows_ime.rs` の subclass が Win32 メッセージから作り、`push_native_input` で積む。
+            // tao の `KeyboardInput` は従来どおり発火するが、egui へ渡すと二重に入る。到着は
+            // `runtime.rs` の `rx_key` / `rx_text` が引き当ての前に残す。`ReceivedImeText` は
+            // Windows では 0 件が正常（subclass が `WM_IME_ENDCOMPOSITION` を tao へ通さない）で、
+            // `rx_text` に現れたらその抑止が破れている tripwire である。
+            WindowEvent::KeyboardInput { .. } | WindowEvent::ReceivedImeText(_) => return false,
             WindowEvent::CloseRequested => {
                 self.raw
                     .viewports
@@ -405,65 +303,6 @@ impl InputState {
         }
 
         true
-    }
-
-    fn on_keyboard_event(&mut self, event: &tauri_runtime_wry::tao::event::KeyEvent) {
-        let pressed = event.state == ElementState::Pressed;
-        let active_key =
-            key_from_tao(&event.logical_key).or_else(|| key_from_key_code(event.physical_key));
-
-        // **`mapped` を残す**（#872/#936）: `key_from_tao` / `key_from_key_code` が両方 None なら
-        // この打鍵は egui へ 1 件も積まれずに消える。「届いたが実らなかった」の最も内側の経路で
-        // あり、外からは沈黙としか見えない。
-        if input_trace_enabled() {
-            input_trace(
-                "push_key",
-                &format!(
-                    "state={} physical={:?} repeat={} mapped={}",
-                    if pressed { "down" } else { "up" },
-                    event.physical_key,
-                    event.repeat,
-                    active_key.is_some()
-                ),
-            );
-        }
-
-        if let Some(key) = active_key {
-            let physical_key = key_from_key_code(event.physical_key);
-            // 影運転（#1289 Phase 1）: subclass の `sub_key` と同じ形で並べて比べる。
-            if input_trace_enabled() {
-                input_trace(
-                    "tao_key",
-                    &format!(
-                        "state={} key={key:?} physical={physical_key:?} repeat={}",
-                        if pressed { "down" } else { "up" },
-                        event.repeat
-                    ),
-                );
-            }
-            let is_shortcut = pressed
-                && self.modifiers.command
-                && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
-            self.push_key(key, physical_key, pressed, event.repeat);
-            if is_shortcut {
-                return;
-            }
-        }
-
-        // **通常文字はここで積む**（#1266）。tao 0.37 は `WM_CHAR` を直前の `WM_KEYDOWN` に連結して
-        // `KeyEvent` にだけ載せ、`ReceivedImeText` には載せない（0.35 は `minimal_ime` が載せていた）。
-        // IME 確定は `windows_ime.rs` の subclass が `GCS_RESULTSTR` から読むので、この経路と
-        // 二重にならない——tao は `event_info` の無い IME 由来の `WM_CHAR` を `KeyEvent` にしない。
-        // `admit_key` の後に置くこと（合成 press も文字を持つ・理由は `admit_key` の doc）。前へ動かすと
-        // `scripts/smoke-egui.ps1` の押しっぱなしの Z の打鍵が赤にする（#1274）。
-        if let Some(text) = typed_text_event(pressed, event.text_with_all_modifiers()) {
-            if input_trace_enabled()
-                && let egui::Event::Ime(egui::ImeEvent::Commit(committed)) = &text
-            {
-                input_trace("tao_text", &format!("chars={}", committed.chars().count()));
-            }
-            self.raw.events.push(text);
-        }
     }
 }
 
@@ -495,62 +334,6 @@ fn touch_phase(phase: TouchPhase) -> egui::TouchPhase {
     }
 }
 
-fn is_printable_char(character: char) -> bool {
-    !character.is_ascii_control() && character != '\u{7f}'
-}
-
-/// 打鍵 1 回が egui へ入れる文字（#1266）。渡すのは `KeyEvent::text_with_all_modifiers` であって
-/// `KeyEvent.text` ではない——後者は Ctrl を外した文字（Ctrl+A で `"a"`）を返すので、Ctrl 併用の
-/// ショートカットが文字も入れてしまう。前者は `WM_CHAR` の中身そのもの（Ctrl+A で `"\x01"`）で、
-/// tao 0.35 が `ReceivedImeText` として送っていた文字列と同じだから、弾き方も
-/// [`committed_text_event`] をそのまま使える。
-fn typed_text_event(pressed: bool, text_with_all_modifiers: Option<&str>) -> Option<egui::Event> {
-    if !pressed {
-        return None;
-    }
-    committed_text_event(text_with_all_modifiers?)
-}
-
-fn committed_text_event(text: &str) -> Option<egui::Event> {
-    (!text.is_empty() && text.chars().all(is_printable_char))
-        .then(|| egui::Event::Ime(egui::ImeEvent::Commit(text.to_owned())))
-}
-
-fn key_from_key_code(key: tauri_runtime_wry::tao::keyboard::KeyCode) -> Option<egui::Key> {
-    use egui::Key;
-    use tauri_runtime_wry::tao::keyboard::KeyCode;
-
-    Some(match key {
-        KeyCode::KeyA => Key::A,
-        KeyCode::KeyB => Key::B,
-        KeyCode::KeyC => Key::C,
-        KeyCode::KeyD => Key::D,
-        KeyCode::KeyE => Key::E,
-        KeyCode::KeyF => Key::F,
-        KeyCode::KeyG => Key::G,
-        KeyCode::KeyH => Key::H,
-        KeyCode::KeyI => Key::I,
-        KeyCode::KeyJ => Key::J,
-        KeyCode::KeyK => Key::K,
-        KeyCode::KeyL => Key::L,
-        KeyCode::KeyM => Key::M,
-        KeyCode::KeyN => Key::N,
-        KeyCode::KeyO => Key::O,
-        KeyCode::KeyP => Key::P,
-        KeyCode::KeyQ => Key::Q,
-        KeyCode::KeyR => Key::R,
-        KeyCode::KeyS => Key::S,
-        KeyCode::KeyT => Key::T,
-        KeyCode::KeyU => Key::U,
-        KeyCode::KeyV => Key::V,
-        KeyCode::KeyW => Key::W,
-        KeyCode::KeyX => Key::X,
-        KeyCode::KeyY => Key::Y,
-        KeyCode::KeyZ => Key::Z,
-        _ => return None,
-    })
-}
-
 pub fn modifiers_from_tao(modifiers: ModifiersState) -> egui::Modifiers {
     let ctrl = modifiers.control_key();
     let mac_cmd = cfg!(target_os = "macos") && modifiers.super_key();
@@ -568,171 +351,9 @@ pub fn modifiers_from_tao(modifiers: ModifiersState) -> egui::Modifiers {
     }
 }
 
-pub fn key_from_tao(key: &Key<'_>) -> Option<egui::Key> {
-    use egui::Key as EguiKey;
-
-    match key {
-        Key::ArrowDown => Some(EguiKey::ArrowDown),
-        Key::ArrowLeft => Some(EguiKey::ArrowLeft),
-        Key::ArrowRight => Some(EguiKey::ArrowRight),
-        Key::ArrowUp => Some(EguiKey::ArrowUp),
-        Key::Escape => Some(EguiKey::Escape),
-        Key::Tab => Some(EguiKey::Tab),
-        Key::Backspace => Some(EguiKey::Backspace),
-        Key::Enter => Some(EguiKey::Enter),
-        Key::Insert => Some(EguiKey::Insert),
-        Key::Delete => Some(EguiKey::Delete),
-        Key::Home => Some(EguiKey::Home),
-        Key::End => Some(EguiKey::End),
-        Key::PageUp => Some(EguiKey::PageUp),
-        Key::PageDown => Some(EguiKey::PageDown),
-        Key::Space => Some(EguiKey::Space),
-        Key::F1 => Some(EguiKey::F1),
-        Key::F2 => Some(EguiKey::F2),
-        Key::F3 => Some(EguiKey::F3),
-        Key::F4 => Some(EguiKey::F4),
-        Key::F5 => Some(EguiKey::F5),
-        Key::F6 => Some(EguiKey::F6),
-        Key::F7 => Some(EguiKey::F7),
-        Key::F8 => Some(EguiKey::F8),
-        Key::F9 => Some(EguiKey::F9),
-        Key::F10 => Some(EguiKey::F10),
-        Key::F11 => Some(EguiKey::F11),
-        Key::F12 => Some(EguiKey::F12),
-        Key::F13 => Some(EguiKey::F13),
-        Key::F14 => Some(EguiKey::F14),
-        Key::F15 => Some(EguiKey::F15),
-        Key::F16 => Some(EguiKey::F16),
-        Key::F17 => Some(EguiKey::F17),
-        Key::F18 => Some(EguiKey::F18),
-        Key::F19 => Some(EguiKey::F19),
-        Key::F20 => Some(EguiKey::F20),
-        Key::Character(value) => key_from_character(value),
-        _ => None,
-    }
-}
-
-fn key_from_character(value: &str) -> Option<egui::Key> {
-    use egui::Key;
-
-    Some(match value.to_ascii_lowercase().as_str() {
-        "0" => Key::Num0,
-        "1" => Key::Num1,
-        "2" => Key::Num2,
-        "3" => Key::Num3,
-        "4" => Key::Num4,
-        "5" => Key::Num5,
-        "6" => Key::Num6,
-        "7" => Key::Num7,
-        "8" => Key::Num8,
-        "9" => Key::Num9,
-        "a" => Key::A,
-        "b" => Key::B,
-        "c" => Key::C,
-        "d" => Key::D,
-        "e" => Key::E,
-        "f" => Key::F,
-        "g" => Key::G,
-        "h" => Key::H,
-        "i" => Key::I,
-        "j" => Key::J,
-        "k" => Key::K,
-        "l" => Key::L,
-        "m" => Key::M,
-        "n" => Key::N,
-        "o" => Key::O,
-        "p" => Key::P,
-        "q" => Key::Q,
-        "r" => Key::R,
-        "s" => Key::S,
-        "t" => Key::T,
-        "u" => Key::U,
-        "v" => Key::V,
-        "w" => Key::W,
-        "x" => Key::X,
-        "y" => Key::Y,
-        "z" => Key::Z,
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// #927: focus 獲得時の合成 press は egui へ渡さず、抑止対象として記録する。
-    /// **この 1 件が「1 回の押下で設定ウィンドウと本体の 2 つが閉じる」を止めている唯一の判定である。**
-    #[test]
-    fn synthetic_press_at_focus_gain_is_not_admitted() {
-        let mut held = HashSet::new();
-
-        assert!(!admit_key(true, true, KeyCode::Escape, &mut held));
-        assert!(held.contains(&KeyCode::Escape));
-    }
-
-    /// #927 (A): 抑止中は**非合成**の press も渡さない（物理オートリピートが focus 移行を
-    /// 跨いで届く経路。`keybd_event` では生成できないため注入では測れない）。
-    #[test]
-    fn physical_repeat_while_held_is_not_admitted() {
-        let mut held = HashSet::new();
-        admit_key(true, true, KeyCode::Escape, &mut held);
-
-        assert!(!admit_key(false, true, KeyCode::Escape, &mut held));
-    }
-
-    /// release は渡し、抑止を解く。**渡す側も外す側も落とせない**——渡さなければ egui の
-    /// `keys_down` に押しっぱなしが残り、外さなければ次の press が永久に届かない。
-    #[test]
-    fn release_is_admitted_and_lifts_suppression() {
-        let mut held = HashSet::new();
-        admit_key(true, true, KeyCode::Escape, &mut held);
-
-        assert!(admit_key(false, false, KeyCode::Escape, &mut held));
-        assert!(!held.contains(&KeyCode::Escape));
-    }
-
-    /// **抑止は 1 回の押下で終わる**（fail-closed の防止）: release 後の press は通常どおり渡る。
-    /// これが破れると Escape が永久に効かなくなる——症状が #927 より重い。
-    #[test]
-    fn press_after_release_is_admitted_again() {
-        let mut held = HashSet::new();
-        admit_key(true, true, KeyCode::Escape, &mut held);
-        admit_key(false, false, KeyCode::Escape, &mut held);
-
-        assert!(admit_key(false, true, KeyCode::Escape, &mut held));
-    }
-
-    /// 抑止はキーごとである（Escape を抑止していても他のキーの打鍵は届く）。
-    #[test]
-    fn other_keys_are_unaffected_by_suppression() {
-        let mut held = HashSet::new();
-        admit_key(true, true, KeyCode::Escape, &mut held);
-
-        assert!(admit_key(false, true, KeyCode::KeyA, &mut held));
-    }
-
-    /// focus 喪失時の合成 release（tao が `WM_KILLFOCUS` で作る）も渡す——押しっぱなしのまま
-    /// focus を失ったキーを egui 側で開放するのがこのイベントの役目である。
-    #[test]
-    fn synthetic_release_is_admitted() {
-        let mut held = HashSet::new();
-        admit_key(true, true, KeyCode::Escape, &mut held);
-
-        assert!(admit_key(true, false, KeyCode::Escape, &mut held));
-        assert!(held.is_empty());
-    }
-
-    /// #927: 抑止は focus セッションを越えない。**release が届かない経路**（release 時にウィンドウが
-    /// focus を失っている）で持ち越されると、以後 Escape が効かなくなる。
-    #[test]
-    fn losing_focus_clears_suppression() {
-        let mut input = InputState::new(1.0);
-        input.held_since_focus_gain.insert(KeyCode::Escape);
-
-        input.on_window_event(&WindowEvent::Focused(false));
-
-        assert!(input.held_since_focus_gain.is_empty());
-    }
 
     #[test]
     fn modifiers_preserve_windows_shortcut_semantics() {
@@ -747,61 +368,87 @@ mod tests {
         assert!(!modifiers.mac_cmd);
     }
 
-    #[test]
-    fn navigation_keys_are_mapped() {
-        assert_eq!(key_from_tao(&Key::ArrowUp), Some(egui::Key::ArrowUp));
-        assert_eq!(key_from_tao(&Key::Enter), Some(egui::Key::Enter));
-        assert_eq!(key_from_tao(&Key::Escape), Some(egui::Key::Escape));
-    }
-
-    #[test]
-    fn latin_shortcut_characters_are_mapped_case_insensitively() {
-        assert_eq!(key_from_tao(&Key::Character("a")), Some(egui::Key::A));
-        assert_eq!(key_from_tao(&Key::Character("V")), Some(egui::Key::V));
-    }
-
-    #[test]
-    fn received_ime_text_filters_control_characters() {
-        assert_eq!(
-            committed_text_event("日本語"),
-            Some(egui::Event::Ime(egui::ImeEvent::Commit(
-                "日本語".to_owned()
-            )))
-        );
-        assert_eq!(committed_text_event("\r"), None);
-        assert_eq!(committed_text_event(""), None);
-    }
-
-    /// #1266: 通常文字は `KeyEvent::text_with_all_modifiers`（＝ `WM_CHAR` の中身）から取る。
-    /// 旧 tao の `ReceivedImeText` と同じ文字列なので、弾き方も同じになる。
-    #[test]
-    fn typed_text_commits_printable_characters_on_press() {
-        assert_eq!(
-            typed_text_event(true, Some("a")),
-            Some(egui::Event::Ime(egui::ImeEvent::Commit("a".to_owned())))
-        );
-        // AltGr 相当（印字可能な記号）も入る。
-        assert_eq!(
-            typed_text_event(true, Some("@")),
-            Some(egui::Event::Ime(egui::ImeEvent::Commit("@".to_owned())))
-        );
-        // サロゲートペアは 1 文字として入る（旧経路は 1 コード単位ずつ復号して捨てていた）。
-        assert_eq!(
-            typed_text_event(true, Some("😀")),
-            Some(egui::Event::Ime(egui::ImeEvent::Commit("😀".to_owned())))
-        );
-    }
-
-    /// Ctrl 併用は `text_with_all_modifiers` が制御文字（Ctrl+A なら `"\x01"`）を返すので弾かれる。
-    /// 呼び出し点で `KeyEvent.text` と取り違える形はこのテストに映らない（`KeyEvent` を組み立てられない）
-    /// ——それは `scripts/smoke-egui.ps1` の Ctrl+H の打鍵が捕まえる（#1268）。
-    #[test]
-    fn typed_text_drops_control_characters_and_releases() {
-        for control in ["\x01", "\r", "\u{8}", "\t", "\u{1b}"] {
-            assert_eq!(typed_text_event(true, Some(control)), None, "{control:?}");
+    fn native_key(key: egui::Key, pressed: bool) -> crate::keyboard::NativeInput {
+        crate::keyboard::NativeInput::Key {
+            key,
+            physical_key: Some(key),
+            pressed,
+            repeat: false,
         }
-        assert_eq!(typed_text_event(false, Some("a")), None);
-        assert_eq!(typed_text_event(true, None), None);
+    }
+
+    fn drain_events(input: &mut InputState) -> Vec<egui::Event> {
+        input.take(4096, PhysicalSize::new(100, 100), 1.0).events
+    }
+
+    /// #1289 D3: subclass のキーには修飾が無く、drain の時点で tao の `ModifiersChanged` の保持値を載せる。
+    #[test]
+    fn native_key_carries_modifiers_held_from_tao() {
+        let mut input = InputState::new(1.0);
+        input.on_window_event(&WindowEvent::ModifiersChanged(ModifiersState::SHIFT));
+        drain_events(&mut input);
+
+        input.push_native_input(native_key(egui::Key::A, true));
+        let events = drain_events(&mut input);
+        assert_eq!(
+            events,
+            vec![egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: Some(egui::Key::A),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            }]
+        );
+    }
+
+    /// Ctrl+C / Ctrl+X は Copy / Cut になり、Key としては積まない（現行の `on_keyboard_event` と同じ）。
+    #[test]
+    fn command_c_and_x_become_copy_and_cut() {
+        let mut input = InputState::new(1.0);
+        input.on_window_event(&WindowEvent::ModifiersChanged(ModifiersState::CONTROL));
+        drain_events(&mut input);
+
+        input.push_native_input(native_key(egui::Key::C, true));
+        input.push_native_input(native_key(egui::Key::X, true));
+        assert_eq!(
+            drain_events(&mut input),
+            vec![egui::Event::Copy, egui::Event::Cut]
+        );
+    }
+
+    /// AltGr のとき tao は Ctrl・Alt を外した修飾を送る（`get_agnostic_mods`）。その状態の C は
+    /// Copy にならない——subclass の `GetKeyState` で修飾を取らない理由（plan-review 要対処 1）。
+    #[test]
+    fn altgr_c_is_not_copy() {
+        let mut input = InputState::new(1.0);
+        input.on_window_event(&WindowEvent::ModifiersChanged(ModifiersState::empty()));
+        drain_events(&mut input);
+
+        input.push_native_input(native_key(egui::Key::C, true));
+        assert!(matches!(
+            drain_events(&mut input).as_slice(),
+            [egui::Event::Key {
+                key: egui::Key::C,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn native_text_and_ime_become_ime_events() {
+        let mut input = InputState::new(1.0);
+        input.push_native_input(crate::keyboard::NativeInput::Text("a".to_owned()));
+        input.push_native_input(crate::keyboard::NativeInput::Ime(egui::ImeEvent::Commit(
+            "日本".to_owned(),
+        )));
+        assert_eq!(
+            drain_events(&mut input),
+            vec![
+                egui::Event::Ime(egui::ImeEvent::Commit("a".to_owned())),
+                egui::Event::Ime(egui::ImeEvent::Commit("日本".to_owned())),
+            ]
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 - `lib.rs`: 公開API
 - `env.rs`: trace ハッチ（`SNOTRA_EGUI_*_TRACE`）の env 述語。**空文字を「未設定」として扱う唯一の場所**（#872）
 - `input.rs`: Taoイベントからegui入力への純粋変換
+- `keyboard.rs`: キーボードの Win32 メッセージを egui 入力へ写す純粋な変換核（subclass が使う）
 - `ime.rs`: IME未確定範囲とDPI座標の純粋変換
 - `windows_ime.rs`: IMM32 の preedit と確定の取得、候補ウィンドウ位置、subclassの所有/破棄
 - `raster.rs`: egui Meshを CPU 側でラスタライズする純関数群（`renderer.rs`が消費）

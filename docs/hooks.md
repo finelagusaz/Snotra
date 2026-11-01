@@ -1,23 +1,42 @@
 # フックの実装契約と保守
 
-このリポジトリの Claude Code フック（PreToolUse = `.claude/hooks/pre-bash.mjs` の 1 本だけ）を**改修**するときの実装契約・機構・保守規律。編集後の自動検証（PostToolUse）は 2026-09-29 に撤去した（`ADR-meta-harness-thinning`）——検証は手動（`docs/build-commands.md`「変更後の検証チェックリスト」）と CI が持つ。
+このリポジトリの Claude Code フック（PreToolUse = `.claude/hooks/pre-bash.mjs` の 1 本）を**改修**するときの実装契約・機構・保守規律。編集後の自動検証（PostToolUse）は 2026-09-29 に撤去した（`ADR-meta-harness-thinning`）。検証は手動（`docs/build-commands.md`「変更後の検証チェックリスト」）と CI が持つ。
 
-- エージェントが日常操作でフックにどう**応答するか**は、常時ロードの `CLAUDE.md`「フック」節が SSOT。本ファイルはそこから退去させた**一覧と内訳**も併せ持つ。
-- 設計哲学（検出は構造化信号で行い、fail-closed を既定値に埋める）は `docs/development-principles.md`「構造的設計原則と強制の階梯」が SSOT。本ファイルはそのフック具体化＝運用 specifics を持つ。
-- セーフティネットが**効いているか**の検証手順（フォールトインジェクション等）は `.claude/rules/safety-nets.md`（フック改修時に自動配送される）。
+- エージェントが日常操作でフックにどう**応答するか**の正本は、常時ロードの `CLAUDE.md`「フック」節である。本ファイルは、そこから移した判定の一覧と内訳も持つ。
+- 設計哲学（検出は構造化信号で行い、fail-closed を既定値に埋める）の正本は `docs/development-principles.md`「構造的設計原則と強制の階梯」である。本ファイルはそのフックへの具体化を持つ。
+- セーフティネットが**効いているか**の検証手順（故障注入等）は `.claude/rules/safety-nets.md`（フック改修時に自動配送される）。
 
 ## PreToolUse（pre-bash.mjs）の実装契約
 
-- **fail-closed 骨格** — `exit 2` だけがツールをブロックする（#482 実測）。`exit 0` は許可、それ以外の非ゼロ（Node が未捕捉例外で返す **1** を含む）は「非ブロッキングエラー」でコマンドはそのまま実行される。ゆえに**既定の `process.exitCode` を 2 に置き、許可が確定した経路だけが 0 を書く**。原理は development-principles §7。**判定不能はすべて block へ倒す** — payload 破損・`command` が非文字列・git 状態が読めない・鎖の途中で `cd`・道具の要約が読めない・reader が渡されない。この fail-closed の骨格を壊してはならない。`main()` は async であり（要約ゲートの動的 import のため）、起動側は既定の 2 を置いてから `main().catch(…)` で rejection を受ける（受けなければ Node が 1 を返し fail-open になる）。
-- **読むのは `tool_input.command` だけである**（#482）。`description` や payload 全体を grep してはならない（「言及」と「実行」を区別しない検出器は誤爆する）。原理は development-principles §6。
-- **判定の起点はコマンド位置である。ただし全判定がそこに閉じるわけではない**（#768 で緩めた・**全称表現を実装より強く書かないため明記する**）。`gh pr create` / `git` の各判定は「コマンド位置に現れる呼び出し」を起点とし、`git` 系はさらに**次の区切りまでのセグメント**に閉じるので `grep -n "--no-verify" CLAUDE.md` では発火しない。一方 **heredoc 演算子・`\` パス・非 ASCII の 3 判定はコマンド全体を見る** — この 3 つの失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には「言及と実行を分ける構文的位置」が存在しないためである。§6 の一般則（構文的位置で判定単位を定義する）は正しいままで、ここはその**意図的な逸脱**であり、代償として引用の内側の言及でも発火する。過剰検出（`echo "&& gh pr create"` / `git commit -m "fix: C:\path"`）は fail-closed 方向ゆえ許容し、テストで意図として固定する。
-- **見ないコマンド形がある**（#482・受容する性質）。`sh -c '...'` / `eval` / バッククォート / ラッパ経由（`timeout 5 gh pr create` / `xargs`）は「gh がコマンド位置に現れない」ため検出しない。実行ファイルの名前やパスで呼ぶ形（`gh.exe pr create` / `& '<path>/gh.exe' pr create`）と、`gh api …/pulls` で PR を作る形も検出しない（検出は `gh` の直後の空白を要求する・#1299 の敵対的調査で実測）。これは事故モードではなく意図的迂回であり、`--no-verify` と同格に**人間専用**として扱う。検出を shell パーサ相当まで広げると payload 全体 grep の誤爆を作り直すことになる。
-- **plan.md ゲート** — `gh pr create` 検出時、リポジトリルート（cwd から最近接 `.git` へ遡って導出）の `workspace/plan.md` に未チェックの `- [ ]`（`* [ ]` も数える）が残っていれば block する（#749: 計画に書いた作業の実行漏れを PR 前に捕捉する）。判定点は push 検査と同じコマンド位置検出であり、新しい発火点を作らない。fail-closed の倒し方: 存在するのに読めない → block、存在しない → 管轄外（計画なしタスク・他リポジトリを塞がない）、`.git` が見つからない → cwd を root とみなす（従来挙動）。`decide(payload, { readGitState, readPlanState, readVerifyState, platform })` の注入でファイルシステム無しにテストできる。plan.md のコードブロック内の `- [ ]` への過剰検出は受容する（fail-closed 方向）。
-- **要約ゲート** — `gh pr create` 検出時、plan.md ゲートの後・安全な push の鎖の allow より前に、道具（`npm run verify:tree`）の要約を照合する（#1299）。骨子は「今のブランチの要約が green で、要約の sha から HEAD までの差分（`git diff --name-only --no-renames -z`・2 端点）に `workspace/` の外のパスが無い」であり、**止める条件の正本は `judgeSummary` / `readVerifyState` である**（ここに列挙しない）。要約の読み込みから diff までは `verifiedSummaryState` に切り出してあり、マージの道具（`scripts/merge-pr.mjs`・#1312）が同じ照合を PR の head ブランチと head の sha へ当てる（PR を作ったあとに足したコミットは、マージ時にここで止まる）。**例外は無い**——照合するのは道具の A〜F だけで、委譲のレビューが見た sha は見ない。却下した代替と受容した残余は `docs/adr/ADR-pr-gate-verified-sha.md`。要約の置き場の導出は `scripts/verify-tree.mjs` の `summaryPathFor` を `gh pr create` の検出後だけ動的 import して使う（写さない。静的 import は構文エラー 1 つで全コマンドを止める）。reader の git 呼び出しは 2 本 × 4 秒に抑える——hook 全体の上限（`.claude/settings.json` の 30 秒）を越えると素通りになる。
+- **fail-closed 骨格**（#482 実測）— ツールをブロックするのは `exit 2` だけである。`exit 0` は許可、それ以外の非ゼロ（Node が未捕捉例外で返す **1** を含む）は「非ブロッキングエラー」で、コマンドはそのまま実行される。
+  - ゆえに**既定の `process.exitCode` を 2 に置き、許可が確定した経路だけが 0 を書く**。原理は development-principles §7。
+  - **判定不能はすべて block へ倒す** — payload 破損・`command` が非文字列・git 状態が読めない・鎖の途中で `cd`・道具の要約が読めない・reader が渡されない。
+  - `main()` は async である（要約ゲートの動的 import のため）。起動側は既定値の 2 を置いてから `main().catch(…)` で rejection を受ける。受けなければ Node が 1 を返し、fail-open になる。
+- **読むのは `tool_input.command` だけである**（#482）。`description` や payload 全体を grep しない（「言及」と「実行」を区別しない検出器は誤爆する）。原理は development-principles §6。
+- **判定単位は 2 種類ある**（#768）。
+  - **コマンド位置**: `gh pr create` / `git` の各判定は、コマンド位置に現れる呼び出しを起点とする。`git` 系はさらに次の区切りまでのセグメントに閉じるので、`grep -n "--no-verify" CLAUDE.md` では発火しない。
+  - **コマンド全体**: heredoc 演算子・`\` パス・非 ASCII の 3 判定。この 3 つの失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い。§6 の一般則（構文的位置で判定単位を定義する）からの意図的な逸脱であり、代償として引用の内側の言及でも発火する。この過剰検出（`echo "&& gh pr create"` / `git commit -m "fix: C:\path"`）は fail-closed 方向ゆえ許容し、テストで意図として固定する。
+- **見ないコマンド形がある**（#482・受容する性質）。
+  - `sh -c '...'` / `eval` / バッククォート / ラッパ経由（`timeout 5 gh pr create` / `xargs`）: `gh` がコマンド位置に現れない。
+  - 実行ファイルの名前やパスで呼ぶ形（`gh.exe pr create` / `& '<path>/gh.exe' pr create`）と、`gh api …/pulls` で PR を作る形: 検出は `gh` の直後の空白を要求する（#1299 の敵対的調査で実測）。
+
+  これらは事故モードではなく意図的迂回であり、`--no-verify` と同格に**人間専用**として扱う。検出を shell パーサ相当まで広げると、payload 全体 grep の誤爆を作り直すことになる。
+- **plan.md ゲート**（#749: 計画に書いた作業の実行漏れを PR 前に捕捉する）— `gh pr create` を検出したとき、リポジトリルートの `workspace/plan.md` に未チェックの `- [ ]`（`* [ ]` も数える）が残っていれば block する。
+  - **ルートの導出**: cwd から最近接の `.git` へ遡る。`.git` が見つからなければ cwd を root とみなす（従来挙動）。
+  - **発火点**: push 検査と同じコマンド位置検出であり、新しい発火点を作らない。
+  - **倒し方**: plan.md が存在するのに読めない → block。存在しない → 管轄外（計画無しのタスク・他リポジトリを塞がない）。
+  - **テスト**: `decide(payload, { readGitState, readPlanState, readVerifyState, platform })` の注入で、ファイルシステム無しにテストできる。
+  - plan.md のコードブロック内の `- [ ]` への過剰検出は受容する（fail-closed 方向）。
+- **要約ゲート**（#1299）— `gh pr create` を検出したとき、道具（`npm run verify:tree`）の要約と照合する。
+  - **順序**: plan.md ゲートの後、安全な push の鎖の allow より前に置く。
+  - **骨子**: 今のブランチの要約が green であり、要約の sha から HEAD までの差分（`git diff --name-only --no-renames -z`・2 端点）に `workspace/` の外のパスが無いこと。**止める条件の正本は `judgeSummary` / `readVerifyState` である**（ここに列挙しない）。
+  - **マージ時の再照合**: 要約の読み込みから diff までを `verifiedSummaryState` に切り出してある。マージの道具（`scripts/merge-pr.mjs`・#1312）が、同じ照合を PR の head ブランチと head の sha へ当てる。PR を作ったあとに足したコミットは、マージ時にここで止まる。
+  - **例外は無い**: 照合するのは道具の A〜F だけで、委譲のレビューが見た sha は見ない。却下した代替と受容した残余は `docs/adr/ADR-pr-gate-verified-sha.md`。
+  - **実装上の制約**: 要約の置き場は `scripts/verify-tree.mjs` の `summaryPathFor` で導出し、`gh pr create` の検出後にだけ動的 import する（写さない。静的 import にすると構文エラー 1 つで全コマンドが止まる）。reader の git 呼び出しは 2 本 × 4 秒に抑える。フック全体の上限（`.claude/settings.json` の 30 秒）を越えると素通りになる。
 
 ### コマンドの形で判定する規範 5 件（#768）
 
-ルート `CLAUDE.md` の常時ロード面に置いていた 5 件を `judgeCommandShape` の判定へ吸収した（#593 の階梯「規範を機構へ吸収する」）。**判定は `pre-bash.mjs` が SSOT** であり、下は読むための索引である。
+ルート `CLAUDE.md` の常時ロード面に置いていた 5 件を、`judgeCommandShape` の判定へ吸収した（#593 の階梯「規範を機構へ吸収する」）。**判定の正本は `pre-bash.mjs` であり**、下は読むための索引である。
 
 | 判定 | 発火する形 | platform |
 |---|---|---|
@@ -27,15 +46,21 @@
 | `usesNoVerify` | `git` セグメントの `--no-verify`（commit セグメントの短縮 `-n` / `-nm` も同義。`git push -n` は `--dry-run` なので無傷） | 非依存 |
 | `pullWithoutFfOnly` | `--ff-only` を持たない `git pull` | 非依存 |
 
-- **拒否文言が規範の受け皿である。** 5 件それぞれが「何が起きるか」と「代わりに何をするか」を持つ（`SHAPE_REMEDY`）。常時ロードから降ろす設計はこの文言がその場で教えることに賭けているので、**ここが痩せると規範は機構へ移らずに消える**。
-- **platform は options オブジェクトの `platform` で値として注入する**（#1299 で位置引数から改めた）。 `process.platform` は失敗しないので `readGitState` のような `{ ok: false }` を持つ reader 形にはしない。**渡されないときは Windows 専用判定を発火させない** — これは「判定不能」ではなく「規範の射程外」であり、block へ倒すと非 Windows で false block になる。この状態への到達経路は「呼び出し側の渡し忘れ」1 本だけで、ソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の双方で走る）が `main()` の配線を固定する。却下した代替（`undefined` を Windows へ倒す案）は `docs/adr/ADR-command-shape-norms-in-hook.md`。同じ ADR が却下した options オブジェクト化は、「5 本目を足すときに再検討する」の予告どおり #1299 で採った。
-- **爆発半径が (1)(2) と違う。** この 5 判定は**全 Bash/PowerShell コマンド**で走る（`gh pr create` 系は検出後のみ）。ゆえに**全域関数でなければならない** — throw すれば `main()` の catch が exit 2 を書いてセッションの全コマンドが止まり、hang すれば hook の timeout まで全コマンドが待つ。`usesHeredoc` は全候補を走査するが、終端行の索引を 1 パスで作ることで線形に保つ（候補ごとに全文走査する素朴形は候補 2 万件で 1812ms・実測）。
-- **受容する未対応リスク**（いずれも fail-closed の設計方針の下で意図的に残す。**「検出されないなら使ってよい」ではない** — 検出されない形も規範に反するなら人間専用の意図的迂回であり、上の `sh -c` 項と同格に扱う）:
-  - **区切りの走査はシェルの構文を理解しない**ので、区切り文字が構文の内側にあるとセグメントが早く切れて見落とす: 引用内（`git commit -m "a;b" --no-verify`）と**行継続をまたぐ形**（`git commit \` + 改行 + `--no-verify`。PowerShell のバッククォート継続も同型）。引用・継続を解釈する分割は shell パーサ相当になり、payload 全体 grep の誤爆を作り直す。`segmentEnd` は `hasSafeChain` と共有されているため、継続の扱いを変えると `gh pr create` ゲートの意味も動く。
-  - **コマンド文字列に現れない非 ASCII は見えない**（`python foo.py` でスクリプト側が出す形）。コマンドの形からは判定材料が無い。
-  - **`\` 判定は上表の 3 形しか見ない**ので、`.\scripts\x.ps1` のような相対形も接頭辞を持たない `docs\hooks.md` も検出されない（`.\` は PowerShell では動くため誤爆の代償が大きく、形を絞ったことの代償でもある）——**検出しないだけで、規範としてはコマンドに書くパスの区切りを `/` にする**。
-  - **`pull` はブランチを見ない**ので `git pull --rebase` も feature ブランチでの pull も止まる（過剰検出）。ブランチ判定は `readGitState` の責務を広げるため採らない。
-  - **`.githooks/_lib.sh` は拒否メッセージで `--no-verify` による迂回を案内する。** 明示的に「人間専用。エージェントは使用禁止」と書いてあるため矛盾ではない（この hook が拒むのはエージェントの実行であり、人間の判断を妨げない）。
+- **拒否文言が規範の受け皿である。** 5 件それぞれが「何が起きるか」と「代わりに何をするか」を持つ（`SHAPE_REMEDY`）。常時ロードから降ろす設計は、この文言がその場で教えることに賭けている。**ここが痩せると、規範は機構へ移らずに消える**。
+- **platform は options オブジェクトの `platform` で値として注入する**（#1299）。`process.platform` は失敗しないので、`readGitState` のような `{ ok: false }` を持つ reader 形にはしない。
+  - **渡されないときは Windows 専用判定を発火させない。** これは「判定不能」ではなく「規範の射程外」である。block へ倒すと、非 Windows で false block になる。
+  - `main()` の配線は、ソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の双方で走る）が固定する。却下した代替（`undefined` を Windows へ倒す案）は `docs/adr/ADR-command-shape-norms-in-hook.md`。
+- **爆発半径が `gh pr create` 系の判定（push 検査・plan.md ゲート・要約ゲート）と違う。** `gh pr create` 系は検出後にだけ走るが、この 5 判定は**全 Bash/PowerShell コマンド**で走る。ゆえに**全域関数でなければならない**。
+  - throw すれば `main()` の catch が exit 2 を書き、セッションの全コマンドが止まる。hang すれば、フックの timeout まで全コマンドが待つ。
+  - `usesHeredoc` は全候補を走査するが、終端行の索引を 1 パスで作ることで線形に保つ（候補ごとに全文走査する素朴形は、候補 2 万件で 1812ms・実測）。
+- **受容する未対応リスク**（いずれも fail-closed の設計方針の下で意図的に残す）。検出の有無にかかわらず、規範に反する形は人間専用の意図的迂回であり、上の `sh -c` 項と同格に扱う。
+  - **区切りの走査はシェルの構文を理解しない。** 区切り文字が構文の内側にあるとセグメントが早く切れ、見落とす。該当するのは引用内（`git commit -m "a;b" --no-verify`）と、行継続をまたぐ形（`git commit \` + 改行 + `--no-verify`。PowerShell のバッククォート継続も同型）である。
+    - 引用・継続を解釈する分割は shell パーサ相当になり、payload 全体 grep の誤爆を作り直す。
+    - `segmentEnd` は `hasSafeChain` と共有されている。継続の扱いを変えると、`gh pr create` ゲートの意味も動く。
+  - **コマンド文字列に現れない非 ASCII は見えない**（`python foo.py` でスクリプト側が出す形）。コマンドの形には判定材料が無い。
+  - **`\` 判定は上表の 3 形しか見ない。** `.\scripts\x.ps1` のような相対形も、接頭辞を持たない `docs\hooks.md` も検出されない（`.\` は PowerShell では動くため誤爆の代償が大きく、形を絞った）。規範としては、コマンドに書くパスの区切りを `/` にする。
+  - **`pull` はブランチを見ない。** `git pull --rebase` も feature ブランチでの pull も止まる（過剰検出）。ブランチ判定は `readGitState` の責務を広げるため採らない。
+  - **`.githooks/_lib.sh` は拒否メッセージで `--no-verify` による迂回を案内する。** そこには「人間専用。エージェントは使用禁止」と明記してある。このフックが拒むのはエージェントの実行であり、人間の判断を妨げないので、両者は矛盾しない。
 
 ## Claude Code の RA インスタンスと hook の分担
 
@@ -49,25 +74,28 @@ Claude Code が起動する rust-analyzer は **semantic navigation の道具**�
 | 手動の検証（`docs/build-commands.md` カテゴリ A） | `cargo fmt` / `cargo clippy -D warnings` / 編集した crate の `cargo test` |
 | CI | 最終保証 |
 
-設定は `.claude/lsp/`（リポジトリ所有の project-scope plugin）が運び、`.claude/settings.json` の `extraKnownMarketplaces` + `enabledPlugins` で配送する。**VS Code 側の rust-analyzer は巻き込まない**——`rust-analyzer.toml` は両クライアントが読むため、そこには書かない。
+設定は `.claude/lsp/`（リポジトリ所有の project-scope plugin）が運び、`.claude/settings.json` の `extraKnownMarketplaces` + `enabledPlugins` で配送する。**VS Code 側の rust-analyzer は巻き込まない**。`rust-analyzer.toml` は両クライアントが読むため、そこには書かない。
 
-**診断（diagnostics）は抑制していない。抑制する理由が無かったからである**（#1085 で実測）。エージェントへ届くのは**構文エラー**で、正常な編集では 0 件だった。ゆえに `.lsp.json` の `diagnostics` キーも RA 側の `diagnostics.enable` も置かない。**測った変異の範囲・却下した 2 層・受容する残余は `docs/adr/ADR-ra-diagnostics-suppression.md`「決定を支える実測」が正本。**
+**診断（diagnostics）は抑制しない**（#1085 実測）。エージェントへ届くのは**構文エラー**で、正常な編集では 0 件だった。ゆえに `.lsp.json` の `diagnostics` キーも、RA 側の `diagnostics.enable` も置かない。**測った変異の範囲・却下した 2 層・受容する残余の正本は `docs/adr/ADR-ra-diagnostics-suppression.md`「決定を支える実測」である。**
 
-分担にとって効くのは 1 点である: 未リンクの `.rs`（`mod` 宣言を書き忘れたファイル）は cargo の視界に無いので cargo は沈黙するが、**その構文エラーは LSP が届ける**。`mod` 忘れそのものはどちらも報せず、それを見るのは `governance:check` の `G-module-linkage` である（機序と残余は同検査の注釈が正本・#1085）。
+分担の要点は、未リンクの `.rs`（`mod` 宣言を書き忘れたファイル）の扱いにある。cargo の視界に無いので cargo は沈黙するが、**その構文エラーは LSP が届ける**。`mod` 忘れそのものはどちらも報せず、それを見るのは `governance:check` の `G-module-linkage` である（機序と残余は同検査の注釈が正本・#1085）。
 
-**壊れ方は 2 つに分かれ、片方だけが沈黙する。** ここが分担の要である。
+**壊れ方は 3 つあり、うち 2 つは沈黙する。**
 
 | 壊れ方 | 現れ方 |
 |---|---|
-| **設定が届かない・上書きされる**（抑制キーの消失・ratoml による上書き・宣言箇所の取り違え） | **沈黙する**——rust-analyzer は設定が無ければ既定値で普通に起動するので、navigation は動いたまま `checkOnSave` だけが復活する |
-| **rust-analyzer のバイナリが無い**（toolchain の入れ替え・pin の変更で component が落ちる） | **沈黙する**——cargo / clippy / test は緑のまま、`LSP` ツールだけが `crashed with exit code 1` を返す（#1239 実測。2026-08-24 に新しい toolchain が実体化したときは 11 時間気づかれなかった・#1177。診断は `checkOnSave: false` で切ってあるので plugin の使用カウンタの 0 も報せない）。守り手は `rust-toolchain.toml` の `components` の宣言で、`lsp-config.mjs` が見るのは**宣言が在ること**まで——実際に入っているかは射程の外（runner には入っていないので環境の実測は置けない） |
-| **plugin の load 自体が失敗する**（trust 未受諾・マニフェスト不正・パス解決失敗・名前の不一致） | 沈黙しない——公式 plugin を無効化してあるため `.rs` の LSP が上がらず、**navigation が消える**形で現れる（ただしエラー自体は debug log にしか出ない） |
+| **設定が届かない・上書きされる**（抑制キーの消失・ratoml による上書き・宣言箇所の取り違え） | **沈黙する**。rust-analyzer は設定が無くても既定値で普通に起動するので、navigation は動いたまま `checkOnSave` だけが復活する |
+| **rust-analyzer のバイナリが無い**（toolchain の入れ替え・pin の変更で component が落ちる） | **沈黙する**。cargo / clippy / test は緑のまま、`LSP` ツールだけが `crashed with exit code 1` を返す（#1239 実測） |
+| **plugin の load 自体が失敗する**（trust 未受諾・マニフェスト不正・パス解決失敗・名前の不一致） | 沈黙しない。公式 plugin を無効化してあるため `.rs` の LSP が上がらず、**navigation が消える**形で現れる（ただしエラー自体は debug log にしか出ない） |
 
-公式の `claude plugin validate --strict` は `.lsp.json` を視界に入れない（JSON として壊しても抑制キーを消しても exit 0・2026-08-14 実測）。ゆえに上段（沈黙する側）は `.claude/hooks/lsp-config.mjs` のカナリアだけが機械的に捕まえる（発火は上の一覧、故障注入の実測は `lsp-config.test.mjs`）。**このカナリアは `rust-analyzer.toml` を、生成物ディレクトリ（`target` / `node_modules` / `dist` 等）を除くツリー全体から読む**——local 水準の設定は crate 直下の ratoml でも効くため、発火（basename アンカー）と判定の母集団を揃えてある。
+- **バイナリ欠落の実例**: 2026-08-24 に新しい toolchain が実体化したときは、11 時間気づかれなかった（#1177）。診断は `checkOnSave: false` で切ってあるので、plugin の使用カウンタが 0 でも報せは無い。
+- **バイナリ欠落の守り手**は `rust-toolchain.toml` の `components` の宣言である。`lsp-config.mjs` が見るのは宣言が在ることまでで、実際に入っているかは射程の外にある（runner には入っていないので、環境の実測は置けない）。
+
+公式の `claude plugin validate --strict` は `.lsp.json` を視界に入れない（JSON として壊しても、抑制キーを消しても exit 0・2026-08-14 実測）。ゆえに設定が届かない側の沈黙は、`.claude/hooks/lsp-config.mjs` のカナリアだけが機械的に捕まえる（発火は上の一覧、故障注入の実測は `lsp-config.test.mjs`）。**このカナリアは `rust-analyzer.toml` を、生成物ディレクトリ（`target` / `node_modules` / `dist` 等）を除くツリー全体から読む**。local 水準の設定は crate 直下の ratoml でも効くため、発火（basename アンカー）と判定の母集団を揃えてある。
 
 **残余は 2 つあり、どちらもリポジトリの外に原因がある。**
 
-- **worktree は自分の設定ではなく、最初に登録したツリーの設定で動く**（2026-08-14 実測）。`known_marketplaces.json` はマシン全体で marketplace 名をキーに持ち、その installLocation が**最初に登録したツリーの絶対パスを指し続ける**。ゆえに worktree で `.claude/lsp/` を編集しても、そのセッションには効かない。**カナリアはそのツリーのファイルを読むので緑のまま**で、この乖離は検知できない。
+- **worktree は自分の設定ではなく、最初に登録したツリーの設定で動く**（2026-08-14 実測）。`known_marketplaces.json` はマシン全体で marketplace 名をキーに持ち、その installLocation が**最初に登録したツリーの絶対パスを指し続ける**。ゆえに worktree で `.claude/lsp/` を編集しても、そのセッションには効かない。**カナリアはそのツリーのファイルを読むので緑のまま**であり、この乖離は検知できない。
   - 実測の形: worktree 側の `.lsp.json` のサーバ名だけを変えて起動したところ、登録されたのは**メインツリー側の名前**だった。宣言パスは両方に存在しており、**パスの不在は条件ではない**。
-  - 一方、`.claude/lsp/` を持たない古い枝から作った worktree は**公式 plugin へ素直に落ちる**（project 設定がツリーごとに読まれるため）。LSP サーバはどのツリーでも常にちょうど 1 つで、二重に付くことはない。
-- `.claude/settings.local.json`（gitignore 済み。実在検査は ignore 対象を免除するので参照してよい・#1088）は project より**優先順位が高い**ため、そこへ `enabledPlugins` を書けば plugin を無効化できる。カナリアは `.claude/settings.json` しか読まない。**リポジトリからは守れない**（現在そのキーは書かれていない）。
+  - `.claude/lsp/` を持たない古い枝から作った worktree は、**公式 plugin へ素直に落ちる**（project 設定がツリーごとに読まれるため）。いずれの場合も LSP サーバはちょうど 1 つで、二重には付かない。
+- **`.claude/settings.local.json` は project より優先順位が高い。** そこへ `enabledPlugins` を書けば plugin を無効化できるが、カナリアは `.claude/settings.json` しか読まないので、**リポジトリからは守れない**（現在そのキーは書かれていない）。このファイルは gitignore 済みだが、実在検査は ignore 対象を免除するので参照してよい（#1088）。

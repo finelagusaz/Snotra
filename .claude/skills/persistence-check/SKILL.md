@@ -19,7 +19,7 @@ $ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推
 
 **永続化バグの典型パターン**:
 1. **形式変更で version 未バンプ** → 旧データを新スキーマで読んで破損 or デシリアライズ失敗
-2. **セマンティクス変更で version 未バンプ** → バイト列同一でも値の解釈が変わりデータ破損（例: 絶対座標→モニター相対。`snotra-core/src/window_data.rs` の `//!`）
+2. **セマンティクス変更で version 未バンプ** → バイト列同一でも値の解釈が変わりデータ破損（例: 絶対座標→モニター相対。出典は `snotra-core/src/window_data.rs` の `//!`）
 3. **後方互換テストが「新形式往復」だけ** → 旧形式が読めない false-green（新形式を書いて新形式で読むテストは、旧形式が壊れても通る）
 4. **デコード失敗時の即時上書き保存** → 学習データ（history 等）を空で潰すデータ喪失
 5. **`match` 兄弟分岐の保全方針の不揃い** → 1 分岐だけ直しても別分岐に破壊的フォールバックが残る（`Config::load` 型）
@@ -68,7 +68,7 @@ $ARGUMENTS から対象の永続化構造を特定し、ソースコードを読
 - **アンチパターン**: 新コードの出力を golden 化するだけ → forward-stability（今後の形式安定）しか保証せず「新出力＝旧形式」を独立に証明しない。形式が既に壊れていても新 golden がそれを凍結して素通りする（#461）
 - **アンチパターン（不動点）**: **原文の供給源が、その形式変更によって「導出結果」へすり替わる**。テスト本体は 1 行も変わらないので差分を読んでも気づかず、壊れていても緑で、しかも件数つきの成功メッセージが出る（反復 10: `target_path` をディスクから消したとき、`load_cached_entries` が「ディスクの原文」でなく「木から組み直した結果」を返すようになり、312,691 件の忠実性テストが「組み直し対組み直し」になった）。**永続化から消した値を期待値に使っているテストは全部これを疑う**——残る唯一の原文は、そのデータを最初に生んだ経路（走査・入力）である。コストが上がって `#[ignore]` になっても、不動点よりはよい
 - **正しい向き**: 「旧形式の凍結バイト列 → 新コードで load 成功」を検証する。凍結バイト列は旧ビルド or リファクタ前コードから採取するのが最も厳密
-- **serde 表現変更（enum variant / untagged / flatten / tag）**: 旧オンディスク形式が deserialize 失敗すると全設定リセット＝データ損失（#394）。旧形式の受理の仕方は `snotra-core/CLAUDE.md`「データ永続化の注意」
+- **serde 表現変更（enum variant / untagged / flatten / tag）**: 旧オンディスク形式が deserialize 失敗すると全設定リセット＝データ損失（#394）。旧形式の受理の仕方は `snotra-core/CLAUDE.md`「データ永続化の注意」。受理した旧形式を `apply_migrations()` で現行の形へ移しているかも見る（例: `snotra-core/src/config/migrate.rs` の `migrate_instant_legacy_commands`）
 - **field-level `#[serde(default = ...)]` を検証するなら、その field が属するセクションを fixture に存在させる**: セクションごと省いた TOML は**親側の** `#[serde(default)]`（例 `Config.visual`）で struct 丸ごと既定値に落ち、**field の属性は一度も実行されない**——属性を消してもテストが通る false-green になる。正しい形は「セクションは書く・新キーだけ書かない」。加えて既存キーを 1 つ sentinel として入れ、その値が反映されること（＝struct 既定に落ちていないこと）を同じテストで示す（#646 PR2 で PR1 由来の穴として検出）
 
 ## Step 4 — デコード失敗時のデータ保全
@@ -80,13 +80,13 @@ $ARGUMENTS から対象の永続化構造を特定し、ソースコードを読
     （1 分岐だけ直しても別分岐に破壊的フォールバックが残る・#343）
 ```
 
-区分と各枝の保全の正本は `config/io.rs` の `Config::load_from_dir_reporting` の doc。
+区分の正本は `snotra-core/src/config/io.rs` の `LoadOutcome`、各枝の保全の正本は同じファイルの `Config::load_from_dir_reporting` の doc。
 
 ## Step 5 — 派生・移行経路の整合
 
 - IndexCache 系: `snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」の全項目を満たすか
 - history 系: `snotra-core/CLAUDE.md`「history.rs のキー正規化に関するチェックリスト」の全項目が揃うか
-- Config をデシリアライズする新経路を追加した場合、`apply_migrations()` の適用要否を判断したか
+- Config をデシリアライズする新経路を追加したなら、`snotra-core/CLAUDE.md`「Config のデシリアライズ経路」に従ったか
 - TOML フィールドを別 struct へ移したなら、`snotra-core/CLAUDE.md`「データ永続化の注意」の移し方に従ったか
 
 ## Step 6 — 境界条件テストの確認

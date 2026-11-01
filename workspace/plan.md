@@ -73,8 +73,16 @@
 
 ### Phase 3 — 検証
 - [x] `npm run governance:check` green
-- [ ] 変異で受け入れ条件 7 を確かめる（委譲先）
+- [x] 変異で受け入れ条件 7 を確かめる（委譲先）
 - [x] 受け入れ条件 2 を grep で確かめる（「次の通常 save」「NotFound」「Legacy {..}」「skip_serializing」がスキルに無い）
+
+### Phase 4 — 1 巡目のレビュー対応（`workspace/review-1328-r1.md`・sha ade83abf）
+- [x] M1: 「受理した旧形式を `apply_migrations()` で移す」を Step 3 の検査として戻す（`migrate.rs:187` `migrate_instant_legacy_commands` で実在を確認。計画が根拠にした「CLAUDE.md :59 と食い違う」は誤りで、:59 が言うのは parse に失敗した場合だけ）
+- [x] M2・L2: Step 4 の参照を、区分は `LoadOutcome`、保全は `load_from_dir_reporting` の doc と分け、ルートからのパスで書く
+- [x] L1: CLAUDE.md に足した 1 行を全称でない形（「検証は `/persistence-check` で行う」）へ弱める
+- [x] L3: 典型パターン 2 の出典に述語を足す
+- [x] L4: Step 5 の Config の新経路の行は、CLAUDE.md「Config のデシリアライズ経路」の写しだった（敵対的調査 B3 で「スキル固有」として採ったのは誤り。B3 は CLAUDE.md の 6 行だけを見ていた）。正準形の参照にする
+- [x] 変異（受け入れ条件 7）: 誤ラベルで EXIT=1（G-heading-refs の「見出し参照が着地しない」）、フェンス内の対照は EXIT=0、巻き戻し後の hash は sha の版と一致
 
 ## 未確定（実装前に潰す）
 

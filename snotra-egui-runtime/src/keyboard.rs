@@ -189,7 +189,7 @@ impl KeyboardTranslator {
     }
 }
 
-/// VK から egui のキー（論理）を導く。現行（tao の `logical_key` → `key_from_tao`）と同じ集合。
+/// VK から egui のキー（論理）を導く。#1289 で subclass へ移す前の tao 経路（`logical_key` からの写像）と同じ集合。
 ///
 /// 数字の VK は Shift が無いときだけ写す——tao の logical は Shift+1 で `"!"` になり写らなかった。
 /// `VK_PROCESSKEY`（変換中）と `VK_PACKET`（`SendInput` の Unicode・絵文字パネル）は論理キーを
@@ -220,7 +220,7 @@ pub(crate) fn key_from_vk(vk: u16, shift: bool) -> Option<egui::Key> {
     })
 }
 
-/// 物理キー（スキャンコード）から egui のキーを導く。現行（`key_from_key_code`）と同じく A–Z だけ。
+/// 物理キー（スキャンコード）から egui のキーを導く。移す前の tao 経路と同じく A–Z だけ。
 /// スキャンコードは US 配列の set 1（拡張キーは対象外）。
 pub(crate) fn physical_key_from_scan(scan: PhysicalScan) -> Option<egui::Key> {
     use egui::Key;
@@ -319,7 +319,7 @@ mod tests {
         t.on_message(WM_CHAR, unit as usize, 0, PhysicalScan(0), false)
     }
 
-    // --- 写像（D6）---
+    // --- 写像（移す前の tao 経路と同じ集合）---
 
     #[test]
     fn navigation_and_editing_keys_are_mapped() {
@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(key_from_vk(0x69, false), Some(Key::Num9), "VK_NUMPAD9");
     }
 
-    /// tao の logical は Shift+1 で `"!"` になり写らない。現行と同じく Shift つきの数字は写さない。
+    /// tao の logical は Shift+1 で `"!"` になり写らない。移す前と同じく Shift つきの数字は写さない。
     #[test]
     fn shifted_digit_is_not_mapped() {
         assert_eq!(key_from_vk(VK_1, true), None);
@@ -422,7 +422,7 @@ mod tests {
         );
     }
 
-    /// D1: 変換中（`VK_PROCESSKEY`）は論理キーを作らず、物理が A–Z のときだけ Key を作る。
+    /// 変換中（`VK_PROCESSKEY`）は論理キーを作らず、物理が A–Z のときだけ Key を作る。
     #[test]
     fn process_key_falls_back_to_physical_letter_and_drops_enter() {
         let mut t = KeyboardTranslator::default();
@@ -457,7 +457,7 @@ mod tests {
         );
     }
 
-    /// D2: `WM_SYSCHAR`（Alt+文字）も文字にする（現行の tao と同じ）。
+    /// `WM_SYSCHAR`（Alt+文字）も文字にする（移す前の tao 経路と同じ）。
     #[test]
     fn syschar_commits_text() {
         let mut t = KeyboardTranslator::default();
@@ -648,7 +648,7 @@ mod tests {
         );
     }
 
-    /// D10: focus を失ったら、down を送ったキーの release を返す（tao の合成 release の代わり）。
+    /// focus を失ったら、down を送ったキーの release を返す（tao の合成 release の代わり）。
     #[test]
     fn losing_focus_releases_keys_that_were_sent_down() {
         let mut t = KeyboardTranslator::default();

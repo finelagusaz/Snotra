@@ -459,7 +459,7 @@ try {
       if ($ctrlEvents.Count -ne 1 -or $ctrlEvents[0].data.before_chars -ne 3 -or $ctrlEvents[0].data.after_chars -ne 2) {
         $observed = ($ctrlEvents | ForEach-Object { "$($_.data.before_chars)->$($_.data.after_chars)" }) -join ', '
         $failures += ("Ctrl+H changed the input as [$observed], expected exactly [3->2]" +
-          " — a Ctrl-stripped character was typed (KeyEvent.text instead of text_with_all_modifiers? #1268)")
+          " — a Ctrl-stripped character was typed (text taken from the VK or with Ctrl stripped instead of from WM_CHAR? #1268)")
       }
     }
   }

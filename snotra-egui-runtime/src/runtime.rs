@@ -399,7 +399,7 @@ impl EguiWindow {
     }
 
     fn on_window_event(&mut self, event: &tauri_runtime_wry::tao::event::WindowEvent<'_>) -> bool {
-        // **drain で積んだら repaint を要求する**（#1289 D5）。打鍵は subclass が送り、tao の
+        // **drain で積んだら repaint を要求する**（#1289）。打鍵は subclass が送り、tao の
         // `KeyboardInput` は `input.on_window_event` で false になる——積んだ件数を返さないと、
         // 打鍵の再描画が subclass の `InvalidateRect`（WM_PAINT）頼みになり遅れる。
         let drained = self.drain_native_ime();

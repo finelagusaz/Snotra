@@ -381,7 +381,7 @@ mod tests {
         input.take(4096, PhysicalSize::new(100, 100), 1.0).events
     }
 
-    /// #1289 D3: subclass のキーには修飾が無く、drain の時点で tao の `ModifiersChanged` の保持値を載せる。
+    /// #1289: subclass のキーには修飾が無く、drain の時点で tao の `ModifiersChanged` の保持値を載せる。
     #[test]
     fn native_key_carries_modifiers_held_from_tao() {
         let mut input = InputState::new(1.0);
@@ -402,7 +402,7 @@ mod tests {
         );
     }
 
-    /// Ctrl+C / Ctrl+X は Copy / Cut になり、Key としては積まない（現行の `on_keyboard_event` と同じ）。
+    /// Ctrl+C / Ctrl+X は Copy / Cut になり、Key としては積まない（#1289 で subclass へ移す前の tao 経路と同じ）。
     #[test]
     fn command_c_and_x_become_copy_and_cut() {
         let mut input = InputState::new(1.0);
@@ -418,7 +418,7 @@ mod tests {
     }
 
     /// AltGr のとき tao は Ctrl・Alt を外した修飾を送る（`get_agnostic_mods`）。その状態の C は
-    /// Copy にならない——subclass の `GetKeyState` で修飾を取らない理由（plan-review 要対処 1）。
+    /// Copy にならない——subclass の `GetKeyState` で修飾を取らない理由（`ADR-keyboard-input-owned-by-subclass`）。
     #[test]
     fn altgr_c_is_not_copy() {
         let mut input = InputState::new(1.0);

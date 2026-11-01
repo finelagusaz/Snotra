@@ -63,8 +63,8 @@
 
 ### Phase 3 — 文書
 
-- [ ] `snotra-egui-runtime/CLAUDE.md`（モジュール構成・不変条件 3 項）と ADR
-- [ ] `windows_ime.rs` / `input.rs` / `runtime.rs` の doc とコメントの残骸を、撤去した語彙（`admit_key`・`held_since_focus_gain`・`text_with_all_modifiers`・`synthetic`・`合成 press`）で `git grep` して直す
+- [x] `snotra-egui-runtime/CLAUDE.md`（モジュール構成・不変条件 3 項）と ADR
+- [x] `windows_ime.rs` / `input.rs` / `runtime.rs` の doc とコメントの残骸を、撤去した語彙（`admit_key`・`held_since_focus_gain`・`text_with_all_modifiers`・`synthetic`・`合成 press`）で `git grep` して直す
 
 ## 影運転の記録
 

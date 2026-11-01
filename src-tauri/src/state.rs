@@ -27,8 +27,8 @@ pub struct AppState {
     /// [`AppState::new`] が true で建てる。
     ///
     /// **書くのは [`AppState::new`] / [`AppState::try_begin_index_build`] /
-    /// [`AppState::finish_index_build`] だけである**——private ゆえ、このモジュールの外から
-    /// `store` すると E0616 で落ちる（外からの force-reset は走行中ビルドのガードを踏み倒す）。
+    /// [`AppState::finish_index_build`] だけである**（外からの force-reset は走行中ビルドのガードを
+    /// 踏み倒すので private にしてある）。
     /// 読む口は [`AppState::is_indexing`]。
     ///
     /// `index_build_started` とは別物である（あちらは二重起動を防ぐ CAS 専用）。**config 変更 →
@@ -45,8 +45,7 @@ pub struct AppState {
     /// false）。読み手のうち correctness に効くのは `layout::present_results` の連言①である。
     ///
     /// **ただしこれは型ではなく規範で保たれている。** このフィールドは `pub` で、新しい
-    /// `store()` を crate 内のどこにでも書ける。加えて `Manager` から main のハンドルを引いた
-    /// `.hide()` はコンパイルが通り**実際に効く**ため、このフラグを更新せずにウィンドウだけ消せる
+    /// `store()` を crate 内のどこにでも書ける。このフラグを更新せずに main を消す経路も残る
     /// （帰結と受容の理由は [`crate::egui_shell::hide_egui_main`] の doc が正本）。
     pub main_visible: AtomicBool,
     /// index build 完了ごとに単調増加する世代（#633・SU6 spec 決定 3）。egui view が
@@ -112,8 +111,7 @@ impl AppState {
     /// （あちらは `AppState` 不在の面倒を見てからここへ委譲する）。
     ///
     /// **config の読みをここ（と `egui_shell::read_config`）へ通す規則に条件は付かない**（#1123）——どのスレッドで走る読みかも、何のための読みかも問わない。
-    /// 害は頻度ではなく待ちである: 検索 worker は `engine.search` の間じゅう `Mutex<Engine>` を握るので、
-    /// 錠越しの読みはフレーム（show 経路なら表示そのもの）を走査の完了まで止める。
+    /// 害は頻度ではなく待ちである（機序は [`crate::egui_shell::read_config`] の doc）。
     ///
     /// **射程は読みだけである**——書き込みは `update_config` の 1 本で、engine lock の内側に残す
     /// （`snotra-core/CLAUDE.md`「engine.rs のロック最小化パターン」）。

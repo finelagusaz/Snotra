@@ -14,9 +14,7 @@ fn ensure_not_indexing(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
-// 返り値契約（`commands/mod.rs` の `//!`）の「失敗しうる操作系」:
-// `open_settings` と同じ ERR_INDEXING_IN_PROGRESS 定数で「インデックス構築中」を表現し、
-// 同一条件を同一契約で揃える（#434）。
+// 返り値契約の「失敗しうる操作系」（`commands/mod.rs` の `//!`・#434）。
 pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     ensure_not_indexing(&state)?;
     if indexing::start_index_build(&app) {

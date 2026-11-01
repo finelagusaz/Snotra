@@ -281,6 +281,8 @@ impl InputState {
                     unit,
                     delta,
                     phase: touch_phase(*phase),
+                    // egui-winit 0.37 も macOS 以外では `Unknown` を渡す（tao は駆動元を伝えない）。
+                    source: egui::MouseWheelSource::Unknown,
                     modifiers: self.modifiers,
                 });
             }

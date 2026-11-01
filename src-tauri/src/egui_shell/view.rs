@@ -44,13 +44,18 @@ use tauri::Manager;
 use crate::egui_shell::launcher_controller::{LauncherController, ToastAction};
 use crate::egui_shell::{RowTheme, ViewKind};
 
+/// 検索欄の `TextEdit` の margin。**既定に任せず明示する**——egui 0.36 までの既定は
+/// `Margin::symmetric(4, 2)` だったが、0.37 で既定がテーマの `spacing.button_padding`（既定
+/// `(8, 2)`）へ移り、黙って水平に 4 px ずつ広がった。欄の見た目と下の hint の見積もりは
+/// この値を前提にしている。
+const SEARCH_INPUT_MARGIN: egui::Margin = egui::Margin::symmetric(4, 2);
+
 /// hint の内幅を出すために `ui.available_width()` から引く量（#870）。
 ///
-/// egui 0.35 の `TextEdit` は既定 margin が `Margin::symmetric(4, 2)`（`builder.rs:135`）で、
-/// 空バッファのとき hint の最初の text atom に `atom_shrink(true)` が付き、AtomLayout が
-/// `TextWrapMode::Truncate` で elide する（`:592-599` / `:678-688`）。その閾値は
-/// `available_size - frame.total_margin().sum()`（`atom_layout.rs:318`）＝ **こちらが
-/// `ui.available_width()` から引くべき量は margin の水平合計 8.0 ちょうど**である。
+/// 空バッファのとき egui は hint の最初の text atom に `atom_shrink(true)` を付け、AtomLayout が
+/// `TextWrapMode::Truncate` で elide する。その閾値は `available_size - frame.total_margin().sum()`
+/// （egui 0.37 `atomics/container_atom.rs:160`）＝ **こちらが `ui.available_width()` から引くべき
+/// 量は [`SEARCH_INPUT_MARGIN`] の水平合計ちょうど**である。
 ///
 /// **`text_edit_width`（既定 280）の上限は効かない**——`add_sized` は
 /// `Layout::centered_and_justified` の子 ui を作り、AtomLayout は justified なら
@@ -64,7 +69,7 @@ use crate::egui_shell::{RowTheme, ViewKind};
 /// painter で測ったもの**になり、収まると測れた候補が egui に再度削られる経路は無い。
 /// **見積もりが足りなければ `…` が中間と末尾へ二重に付き、leaf が再び削れて #870 が直って
 /// いない状態へ静かに戻る**——カテゴリ D のキャプチャ目視が、その退行に対する検知点である。
-const TEXT_EDIT_HINT_H_MARGIN: f32 = 8.0;
+const TEXT_EDIT_HINT_H_MARGIN: f32 = (SEARCH_INPUT_MARGIN.left + SEARCH_INPUT_MARGIN.right) as f32;
 
 /// 入力欄の hint に何を出すか（#836 の優先度ラダー tool > folder > results）。
 ///
@@ -171,7 +176,7 @@ fn draw_toast_button(
         egui::pos2(*cursor_x, center_y + 11.0),
     );
     *cursor_x -= w + 8.0;
-    let id = ui.id().with(("toast_btn", label));
+    let id = ui.scope_id().with(("toast_btn", label));
     let response = ui.interact(rect, id, egui::Sense::click());
     let color = if enabled {
         theme.name_color
@@ -374,7 +379,8 @@ pub(crate) fn search_input_ui(
                     // 消すには 0.25px ずらすか欄高を font 連動で ±1 する必要があり、どちらも
                     // 幅いっぱいの枠線を半端な位置へ動かす。**細い線の端 1px より枠線 1px の方が
                     // 目立つ**ため採らない。修正前の偏りは 8px だった。
-                    .vertical_align(egui::Align::Center)
+                    .align(egui::Align2::LEFT_CENTER)
+                    .margin(SEARCH_INPUT_MARGIN)
                     .font(params.font.clone())
                     .text_color(params.text_color)
                     // 色を付けない——付けても egui が weak_text_color で上書きする。
@@ -551,7 +557,7 @@ impl EguiView for SearchWindowView {
         // 後着が上位)。start_dragging は runtime の frame コマンド経由(配管済み)。
         let drag_resp = ui.interact(
             ui.max_rect(),
-            egui::Id::new("main-window-drag"),
+            egui::Id::unique("main-window-drag"),
             egui::Sense::drag(),
         );
         if drag_resp.drag_started_by(egui::PointerButton::Primary) {
@@ -1469,7 +1475,7 @@ mod tests {
         }
 
         let params = SearchInputParams {
-            input_id: egui::Id::new("search_input"),
+            input_id: egui::Id::unique("search_input"),
             restored_search: false,
             window_focused: true,
             input_editable: true,
@@ -1563,7 +1569,7 @@ mod tests {
     #[test]
     fn restored_search_cursor_uses_character_count() {
         let ctx = egui::Context::default();
-        let id = egui::Id::new("restored_non_ascii_search_input");
+        let id = egui::Id::unique("restored_non_ascii_search_input");
         let mut state = TextEditState::default();
         state
             .cursor
@@ -1583,7 +1589,7 @@ mod tests {
     #[test]
     fn restored_search_inserts_next_input_at_query_end() {
         let ctx = egui::Context::default();
-        let id = egui::Id::new("restored_search_input_event");
+        let id = egui::Id::unique("restored_search_input_event");
         let mut state = TextEditState::default();
         state
             .cursor
@@ -1629,7 +1635,7 @@ mod tests {
 
         // 現在の並び: 構築より前に要求する。
         let before = egui::Context::default();
-        let before_id = egui::Id::new("focus_before_widget");
+        let before_id = egui::Id::unique("focus_before_widget");
         let mut before_text = String::new();
         run_pass(&before, typed(), |ui| {
             ui.ctx().memory_mut(|m| m.request_focus(before_id));
@@ -1642,7 +1648,7 @@ mod tests {
 
         // かつての並び: 構築より後に要求する。
         let after = egui::Context::default();
-        let after_id = egui::Id::new("focus_after_widget");
+        let after_id = egui::Id::unique("focus_after_widget");
         let mut after_text = String::new();
         run_pass(&after, typed(), |ui| {
             let response = ui.add(egui::TextEdit::singleline(&mut after_text).id(after_id));
@@ -1662,27 +1668,32 @@ mod tests {
     }
 
     fn caret_harness(id: egui::Id, focused: bool) -> egui_kittest::Harness<'static, CaretState> {
-        egui_kittest::Harness::new_ui_state(
-            move |ui, st: &mut CaretState| {
-                let params = SearchInputParams {
-                    input_id: id,
-                    restored_search: st.restored,
-                    window_focused: st.window_focused,
-                    input_editable: true,
-                    inset: 0.0,
-                    field_height: 20.0,
-                    font: egui::FontId::proportional(12.0),
-                    text_color: egui::Color32::WHITE,
-                };
-                let _ =
-                    search_input_ui(ui, test_visuals(), &mut st.buf, &params, |_| String::new());
-            },
-            CaretState {
-                buf: "alpha".to_owned(),
-                restored: false,
-                window_focused: focused,
-            },
-        )
+        // **アクセシビリティ検査は切る**（egui_kittest 0.37 で既定 on）。検索欄には名前が無いが、
+        // この runtime は AccessKit の adapter を持たないので、名前を付けても誰にも届かない。
+        egui_kittest::Harness::builder()
+            .with_accessibility_check(false)
+            .build_ui_state(
+                move |ui, st: &mut CaretState| {
+                    let params = SearchInputParams {
+                        input_id: id,
+                        restored_search: st.restored,
+                        window_focused: st.window_focused,
+                        input_editable: true,
+                        inset: 0.0,
+                        field_height: 20.0,
+                        font: egui::FontId::proportional(12.0),
+                        text_color: egui::Color32::WHITE,
+                    };
+                    let _ = search_input_ui(ui, test_visuals(), &mut st.buf, &params, |_| {
+                        String::new()
+                    });
+                },
+                CaretState {
+                    buf: "alpha".to_owned(),
+                    restored: false,
+                    window_focused: focused,
+                },
+            )
     }
 
     /// 復元フレームで、**同一フレームに載っていた**文字が末尾へ入る（#840/#872）。
@@ -1698,7 +1709,7 @@ mod tests {
     /// 1 フレーム」である（`egui_kittest` 0.35 の `Harness::step` の doc）。
     #[test]
     fn kittest_restored_frame_appends_same_frame_input_at_end() {
-        let id = egui::Id::new("search_input");
+        let id = egui::Id::unique("search_input");
         let mut harness = caret_harness(id, true);
         // 復元より前に 2 フレーム回して focus と `TextEdit` の state を確立する
         //（`move_text_cursor_to_end` は `TextEdit::load_state` が None の間は何もしない）。
@@ -1743,7 +1754,7 @@ mod tests {
     /// 横を素通りして捨てられる。
     #[test]
     fn kittest_first_frame_requests_focus_before_text_edit() {
-        let id = egui::Id::new("search_input");
+        let id = egui::Id::unique("search_input");
         let mut harness = caret_harness(id, true);
 
         // **判定フレームの開始時点でフォーカスを持っていない状態を作る。** `Harness` は構築の時点で
@@ -1769,7 +1780,7 @@ mod tests {
     /// 「何をしても通る」形に退化したことに気づけない。
     #[test]
     fn kittest_without_focus_request_the_same_input_is_dropped() {
-        let id = egui::Id::new("search_input");
+        let id = egui::Id::unique("search_input");
         let mut harness = caret_harness(id, false); // focus 要求の条件（`window_focused`）を落とす
         harness.step();
         harness.step();
@@ -1860,7 +1871,7 @@ mod tests {
         let expected = test_visuals();
         let mut buf = String::new();
         let params = SearchInputParams {
-            input_id: egui::Id::new("search_input"),
+            input_id: egui::Id::unique("search_input"),
             restored_search: false,
             window_focused: true,
             input_editable: true,
@@ -1938,11 +1949,11 @@ mod tests {
             run_pass(&ctx, input, |ui| {
                 let bg = ui.interact(
                     ui.max_rect(),
-                    egui::Id::new("main-window-drag"),
+                    egui::Id::unique("main-window-drag"),
                     egui::Sense::drag(),
                 );
                 let params = SearchInputParams {
-                    input_id: egui::Id::new("search_input"),
+                    input_id: egui::Id::unique("search_input"),
                     restored_search: false,
                     window_focused: true,
                     input_editable: true,
@@ -2050,7 +2061,7 @@ mod tests {
         let metrics = crate::egui_shell::layout::Metrics::from_config(font_size, 6, 28);
         let inset = metrics.bar_inset as f32;
         let params = SearchInputParams {
-            input_id: egui::Id::new("search_input"),
+            input_id: egui::Id::unique("search_input"),
             restored_search: false,
             window_focused: true,
             input_editable: true,

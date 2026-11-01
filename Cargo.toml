@@ -8,7 +8,9 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-egui = "=0.36.2"
+# `default_fonts` は 0.36 までの既定 feature で、0.37 で既定から外れた。src-tauri はフォントが
+# 見つからないとき egui 同梱フォントへ落ちる（`egui_shell/font_stack.rs`）ので、明示して保つ。
+egui = { version = "=0.37.0", features = ["default_fonts"] }
 tauri = { version = "=2.12.5", features = ["unstable"] }
 tauri-runtime = "=2.12.2"
 tauri-runtime-wry = "=2.12.3"

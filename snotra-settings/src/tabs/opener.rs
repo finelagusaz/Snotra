@@ -229,7 +229,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         tr.t(TrKey::ModalAddRule)
     };
 
-    let modal = egui::Modal::new(egui::Id::new("opener_modal"));
+    let modal = egui::Modal::new(egui::Id::unique("opener_modal"));
 
     let resp = modal.show(ctx, |ui| {
         style::modal_header(ui, title);

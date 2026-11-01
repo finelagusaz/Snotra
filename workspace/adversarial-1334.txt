@@ -1,0 +1,76 @@
+# adversarial-1334 — research.md (#1334) への敵対的検証
+実施: 2026-11-01。コード・文書は未変更。変異は scratchpad/mut2 の複製のみ。各変異は「from が一意に在る→書き込み→書込み後に原本と違うことを確認→vitest→元へ戻す→原本と cmp 一致を確認」の node スクリプト（scratchpad/mutate.mjs・driver.mjs・driver2.mjs）で当てた。全変異で restored=true。ライブの .claude/hooks は無変更（最後に cmp で 3 ファイル一致を確認）。
+
+## 要約（壊せた / 壊せなかった）
+| 争点 | 結果 |
+|---|---|
+| 1 hooks.md にしか無い事実は B4b/B4c/B4e だけ | 壊せた（他に最低 2 件） |
+| 2 「1」の条項は変異で落ちる | 部分的に壊せた（落ちない形が複数。A5・A6 骨格・C5 本体は落ちる） |
+| 3 ADR は消えた見出しを指しても governance:check が通る | 壊せず（補足あり） |
+| 4 生きた参照は 2 箇所だけ | 壊せた（少なくとも 3 ファイル 5 行が追加） |
+| 5 「第 4 引数を渡さない」は偽 | 壊せず（偽である。ただし「1 本だけ」も不正確） |
+| 6 測定環境は本物と同条件 | 壊せた（research の複製は C3/C5 を測れない） |
+
+## 争点1 [壊せた]
+(a) A3 の「コマンド全体を見る 3 判定は §6 の一般則からの意図的な逸脱であり、理由は『言及と実行を分ける構文的位置が無い』」は pre-bash.mjs のどこにも無い。`grep -n "逸脱\|構文的位置\|§6" .claude/hooks/pre-bash.mjs` は 0 件（ヒットは gitSegments の doc 214-215 行の「言及」だけで、それは git セグメントの話）。development-principles.md:153 は §6 を例外なしの一般則として書いており、ADR-command-shape-norms-in-hook.md:38 は「例外は一般則に書き戻さず具体の側(hooks.md)に書いた」と明言している。つまり逸脱の宣言の置き場は hooks.md だけ。さらに development-principles.md:89 は hooks.md の行を「射程の宣言と、その逸脱の明記の対」と名指しており、A3 を落とすとその表の記述と AGENTS.md:23 の書式宣言が偽になる。
+  偽にする手順: pre-bash.mjs に上の grep を当て、逸脱の宣言（一般則に対する例外と理由）が 1 行でも出れば偽。
+(b) ⚠ 逆向き: hooks.md の記述自体が不正確。A3 は「heredoc・`\` パス・非 ASCII の 3 判定はコマンド全体」と書くが、needsPyEncoding は PYTHON_AT_CMD（コマンド位置の python）を要する（pre-bash.mjs:~191）。非 ASCII の検出だけがコマンド全体で、判定全体はコマンド位置に依存。写す/移すときに誤りも一緒に運ぶ。
+(c) B2 の「`process.platform` は失敗しないので reader 形にしない」は judgeCommandShape の doc にあるが、「(1) ubuntu/windows 両方で npm test が走る」は doc にあるのみで CI 定義との照合は未実施。⚠ 未測。
+(d) C4 の「`.lsp.json` に `diagnostics` キーを置かない」は検出器が無い。lsp-config.mjs の `diagnostics` は RATOML_FORBIDDEN（ratoml 側）のみで、.lsp.json の initializationOptions や server の diagnostics キーを禁じる分岐は無い（checkLspConfig 全文を読んで確認）。research は C4 を「5（消す）、正本は ADR」とするが、これは「機構が守る」ではなく「ADR という凍結文書だけが持つ」になる。消すこと自体の可否は別として、「テストかコードのコメントに既にある」では説明できない。
+
+## 争点2 [部分的に壊せた] 変異注入（mut2・全追跡ファイルの git archive + git init + node_modules junction。基準 586 本全緑）
+落ちた（機構が守る）:
+- A2: description を改行付きで command に連結(判定側 / gh 検出側の 2 変異) → それぞれ 1 本赤。
+- A3: gitSegments が区切りで閉じない → 2 本赤。GH_PR_CREATE のコマンド位置を外す → 3 本赤。
+- A5: ルートを cwd 固定 → 1 本、.git 遡りの失敗時 → 2 本、`*` bullet 不計数 → 1 本、インデント不許容 → 1 本、読めない plan を許可 → 1 本、不存在をエラー扱い → 5 本、exists を無視 → 4 本、reader 必須検査の欠落 → 1 本、いずれも赤。
+- A6: 順序入替(2 形) → 2〜3 本、動的 import を外す → 3 本、`--no-renames` 除去 → 1 本、`-z` 除去 → 2 本赤。
+- B1: backslash / py / noverify の「人間専用」/ pull の `--ff-only` 文言の欠落 → 赤（「拒否文言は代わりの手段を含む」）。
+- B3: heredoc 終端索引を候補ごとに再構築 → 1 本赤(no-hang)、usesBackslashPath の throw → 2 本赤、FLAG の曖昧なダッシュ分割への退行 → 全体がハングして 280 秒で打ち切り(NO SUMMARY)。⚠ 赤は assert でなくタイムアウトで、検知の質が違う。
+- C3: ratoml の禁止キー 2 つ、crate 直下 ratoml の走査、settings 禁止、公式 plugin、lspServers(entry/manifest)、toolchain components → 赤。
+- C5: checkModuleLinkage を常に [] にする → 16 本赤、src/bin の除外を外す → 1 本赤。
+
+落ちなかった（規則を破っても緑）— 「1」と分類した条項の穴:
+- A3: git 判定の「コマンド位置」要件。GIT_AT_CMD の先頭アンカーを `(?:^|\s)` へ緩めると 221 本全緑。実コードでも `usesNoVerify("echo git commit --no-verify")` は false だが、その性質を固定するテストは引用つきの形（`grep -n "git pull"`）しか無い。引用符を許す緩め方だと 2 本赤になるので、無引用の `echo git ...` が穴。
+- A6: 要約の diff を 2 端点でなく 3 点形（`sha...target`）にしても全緑（コメントは「3 点形は HEAD が sha の祖先へ戻ると空」と述べるが、その形を測るテストが無い）。`workspace/` 接頭辞判定を `startsWith("workspace")`（`workspacefoo/x` を内側扱い）にしても全緑。VERIFY_GIT_TIMEOUT_MS を 4 秒→40 秒（フック全体 30 秒を超える＝素通りになる値）にしても全緑。
+- B1: heredoc の拒否文言から「Write ツールで一時ファイルへ」を消しても全緑。noverify から「迂回せずその理由を解消してください…PR を経由」を消しても、pull から「ブランチを問わず発火します」を消しても全緑。つまり「5 件それぞれが代わりの手段を持つ」を守るテストは 3 件には効かない(backslash / py / noverify の人間専用 / pull の --ff-only のみ)。
+- C3: WALK_EXCLUDE から `dist` / `node_modules` / `worktrees` を外しても全緑（hooks.md は「生成物ディレクトリ(target/node_modules/dist 等)を除く」と書く）。`.lsp.json` の workspace.symbol.search.limit(512) と marketplace path の一致、はいずれも検査の腕を落としても全緑（hooks.md が明示した条項ではない）。
+- B3: usesHeredoc の索引が「最初の出現」でも全緑（doc は『最後の出現』が要点と明言）。ただし hooks.md の条項ではない。
+- C5 の前半「未リンクの .rs は LSP が構文エラーを届ける」は、G-module-linkage のどこにも無い（ヘッダは『rust-analyzer は unlinked-file を publish しない』と逆側を述べる）。届くという実測は ADR-ra-diagnostics-suppression.md:26 にしか無い。research は C5 を「1」とするが、守られているのは後半(mod 忘れ)だけ。
+偽にする手順: mut2 を作り(git archive HEAD)、上記の from→to を mutate.mjs で当てて vitest を回す。例: pre-bash.mjs の `const GIT_AT_CMD = new RegExp(\`${AT_CMD_POS}...` の AT_CMD_POS を `(?:^|\s)` にして 221 本が緑なら穴が実在する。
+
+## 争点3 [壊せず]
+scripts/governance/lib.mjs: headingRefDocs は `docs/adr/` を走査元から除外（588-601 行・ADR-adr-frozen-history）。governanceDocs も同様。lib.test.mjs:202-218 が『ADR 内の腐りは赤にならない』を固定。ADR 群が既に消えた hooks.md 見出し（「PostToolUse（post-edit.mjs）の発火一覧」等）を指したまま緑という research の観測とも整合。
+補足（反例ではない）: (1) 除外されるのは ADR を「走査元」とする向きだけで、生きた層から見出しを指す参照は照合される。lsp-config.mjs:8,121 は headingRefCommentDocs(.mjs コメントの腕)で走査される。(2) 見出しを残さず hooks.md を撤去すると G-references が生きた参照のファイル実在を見る（AGENTS.md:23・development-principles.md:78,89,93・CLAUDE.md:19）。ADR 側は影響しない。
+偽にする手順: ADR の見出し参照を腐らせて governance:check を回し赤になれば偽（lib.test.mjs:209-218 の fixture は緑を固定している）。
+
+## 争点4 [壊せた]
+`grep -rIn "hooks\.md"`（除外: node_modules, target, .git, .claude/worktrees, docs/adr, docs/superpowers, workspace）の結果、生きた層の参照は 2 箇所ではない:
+- AGENTS.md:23 — 規範ルート。ファイル名のみ（見出しなし）。書式の宣言「射程の宣言と逸脱の明記を対で書く」付き。セーフティネット行に当たるので変更は合意が要る(ルート CLAUDE.md の最重要ルール 2)。
+- docs/development-principles.md:78, 89, 93 — 89 は表の行で hooks.md の書式（対）を定義し、93 は『AGENTS.md「ドキュメント参照」に hooks.md の行がある』と書く。
+- scripts/governance/checks/G-stale-identifiers.mjs:96（コメント）と G-stale-identifiers.test.mjs:303,305,322（fixture のキー。実ファイル不要）。
+- 既知: CLAUDE.md:19、lsp-config.mjs:8,121。
+注意: AGENTS.md:23 と development-principles.md の記述は「hooks.md が実装契約の文書として在る」前提。hooks.md の範囲を絞る/撤去するなら同じ変更で直す対象。また .claude/worktrees/agent-verify-chore-refine-hooks-doc/ 配下に旧版の複製があり、grep を除外し忘れると誤認する(参照ではない)。
+偽にする手順: 上の grep を再実行して AGENTS.md:23 が出なければ偽。
+
+## 争点5 [壊せず]
+pre-bash.mjs:288 の「呼び出し側が第 4 引数を渡さない」は偽（decide は #1299 から options オブジェクト、judgeCommandShape は (command, platform) の 2 引数）。research の指摘は正しい。
+補足: 「この状態へ至る経路は 1 本だけ」も怪しい。decide(payload) を options なし(`= {}` 既定)で呼ぶ形と、options に platform を入れない形の 2 つがあり、どちらも platform が undefined になる。直すなら『decide の options に platform を渡さない』と書くのが正確。
+偽にする手順: judgeCommandShape の仮引数を確認する(`export function judgeCommandShape(command, platform)`)。第 4 引数を取るなら偽だが、取らない。
+
+## 争点6 [壊せた] 測定環境
+- research の複製(scratchpad/mut)は C3/C5 を測れない。無変異のベースラインで lsp-config.test.mjs が 31 本落ち(.claude/lsp が複製に無く copyfile ENOENT)、G-module-linkage の canary 2 本も落ち、全体で 39 本赤。mut 上で変異を当てても『赤』はベースラインの赤と区別できない。research の表(M1〜M4)は pre-bash.test.mjs だけなので結論は変わらないが、C3/C5 の『1』は mut では測られていない。
+- mut で pre-bash.test.mjs の 221 本が基準緑なのは確認(pre-bash.test.mjs は git init の空リポジトリで足りる)。ただし A5 の最近接 .git の枝などは複製の .git 位置に依存するので、mut2(全追跡ファイル展開 + git init)で測り直した。
+- 対処: git archive HEAD → mut2 + git init + node_modules junction。.claude/hooks と scripts/governance を回して 586 本全緑を基準にした。vitest.config.ts の include(.claude/hooks, .githooks, scripts の *.test.mjs)は git archive 複製にも入っており同条件。
+- 計器が測る枝と変更が触る枝: 『拒否文言は代わりの手段を含む』は 5 件のうち 3 件にしか効かない(上述)。M2/M4 のような配線の変異は process 級テストが実リポジトリでなく一時リポジトリで走る(ライブ e2e を除く)ので、実リポジトリの plan.md の状態に左右されない。⚠ 一方、実リポジトリで走る gh pr create の検出は、このブランチに workspace/plan.md の未チェックが残ると自分自身の検証コマンドを止める(今回 `gh pr create` を含む文字列を 1 回誤爆させた。過剰検出の受容は意図どおり)。
+
+## 確信の持てない所見(⚠)
+1. A3(b) の hooks.md の不正確さ(非 ASCII がコマンド全体という記述)。
+2. B2 の CI 両 OS 記述は CI 定義を未照合。
+3. FLAG 退行の検知がタイムアウト頼み。
+4. C4 は ADR だけが持つ(検出器なし)。
+5. 争点1(a) の『逸脱の宣言』は ADR-command-shape-norms-in-hook.md の本文(却下案側)にも断片があるかもしれない。ただし ADR は凍結された歴史で、改修者が pre-bash.mjs を開く場面には届かない。
+
+## 次の一手の提案(報告のみ・未着手)
+- 振り分け表に A3 の『逸脱の明記』を 3(移す)として足し、pre-bash.mjs の判定ブロックのコメントへ移すまで hooks.md から消さない。
+- A6 と B1 は『1』ではなく『3 のみ』に分類を落とす(テストが守らない形が実在)。
+- AGENTS.md:23 と development-principles.md:78,89,93 を『触る範囲』に加える(セーフティネット・規範文書のため合意が要る)。

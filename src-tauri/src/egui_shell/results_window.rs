@@ -24,7 +24,9 @@
 //! 複数スレッドから呼べた頃は、ゲートの読みと raw 操作の間に別スレッドの hide が割り込み、
 //! 「フラグ = false・ウィンドウ = 可視」の食い違いが残りえたためである。**#880 サイクル段 2 で
 //! 可視性を変える 5 関数が証人型（`EventLoopProof`）によりイベントループスレッドへ閉じ、
-//! その並びが構築不能になったため、同段で撤去した。**（閉包の射程は `window_coordinator::hide_egui_main` の doc）
+//! その並びが構築不能になったため、同段で撤去した。**事後検査や「フラグを無視して撃つ hide」を足し戻さない
+//! ——要るのは「フラグ = false・ウィンドウ = 可視」を作れるときだけである（経緯は `ADR-results-gate-single-point`・
+//! 閉包の射程は `window_coordinator::hide_egui_main` の doc）。
 //!
 //! **1 つのウィンドウの show / hide / topmost は全部 tao か全部 raw にそろえる**（#646 PR2）——
 //! `apply_diff` はフラグ差分ゼロなら早期 return し、`VISIBLE` を持たないウィンドウには `SW_HIDE` を

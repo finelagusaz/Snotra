@@ -191,7 +191,8 @@ pub(crate) fn launch_item_core(path: &str) -> LaunchResult {
         use windows::core::HSTRING;
         unsafe {
             // フォルダ・画像・文書を開く `ShellExecuteW` はシェル拡張を通るので COM STA が要る
-            // （EXE は要らない）。呼び出しスレッドの COM 状態は当てにせずここで初期化する。
+            // （EXE は要らない）。呼び出しスレッドを COM 未初期化とみなしてここで STA に初期化する
+            // （既に MTA のスレッドでは STA にならない——その経路から呼ぶならスレッドを分ける）。
             // S_OK / S_FALSE の場合に CoUninitialize が必要。
             let com_ok = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
             let raw_code = ShellExecuteW(

@@ -488,8 +488,8 @@ pub(crate) fn show_egui_main(
 /// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。そのとき `AppState.main_visible` は
 /// 更新されず、results が既に可視なら最前面に取り残される——main が hidden の間は `RedrawRequested` が
 /// 届かず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 PR A′ で実機発見）。
-/// results が新たに出ることは無い（同じ理由）。#880 サイクル段 2 時点でこの書き方の呼び出し点は無く、
-/// 受容する残余である。
+/// results が新たに出ることは無い（同じ理由）。#880 サイクル段 2 時点で、main に対する `.hide()` は
+/// この関数の中の 1 か所だけであり、受容する残余である。
 ///
 /// **`el` はイベントループスレッド上であることの証人である**（理由は `show_egui_main` の doc）。
 /// こちらは `_` を付けない——`ResultsWindow::hide` へそのまま渡すためである。

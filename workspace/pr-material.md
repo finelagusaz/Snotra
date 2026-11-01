@@ -12,7 +12,7 @@
 ## 削除台帳（本書から消えた条項 → 移した先 / 消してよい理由）
 
 ### 冒頭
-- A1 `[lib]` 無し → 5: 失敗は即時で自己説明的。正しい形は `docs/build-commands.md` カテゴリ A
+- A1 `[lib]` 無し → 5: `--lib` は即時に `no library targets found` で失敗し自己説明的。カテゴリ A の必須行は `--lib` 無しの `cargo test -p snotra`
 - A2 読み方の説明 → 5: 書式の宣言で、絞った本書には不要
 
 ### モジュール構成
@@ -44,7 +44,7 @@
 - W3 自ウィンドウでは `request_repaint` → 5: 自明
 
 ### イベント駆動 wake / armed
-- E1・E2・D1・D3 → 4（「イベント駆動 wake の不変条件」節に統合）
+- E1・E2・D1・D3 → 4（「イベント駆動 wake の不変条件」節に統合）。E2 の「blur 猶予は `BlurGrace::reset` へ合流・残余は同 doc」への指しは消える（中身は `lifecycle.rs` の `BlurGrace` doc に在る）
 - D2 armed 期限は 4 つ → 5: 数え上げ
 
 ### テーマの読み
@@ -57,7 +57,7 @@
 - V8 却下案の ADR 名 → 5: `search_input_ui` doc が ADR を名指す
 
 ### config の読み
-- R1・R3 → 1（E0616 / E0451 / E0599）
+- R1・R3 → 1（E0616 / E0451 / E0599）。R3 の「条件は付かない（スレッドも用途も問わない）」と害の機序は、レビュー指摘で `read_config` doc へ足した
 - R2 純 CPU だけ → `AppState::read_config` doc（「射程は読みだけ・書き込みは `update_config` 1 本」を足した）
 - R4 規範は機構より広い → 5（裁定）。迂回（`config_handle().read()`）は `read_config` doc に残る。**`/history` 枝（`recent_history`）と `record_folder_expansion` が engine 錠越しに待つ事実は文書から消える**
 - R5 前史の ADR 3 本（`ADR-config-read-exception-discriminator` / `ADR-config-read-without-exception` / `ADR-appstate-config-visibility`）→ 5: ADR 自身が経緯の正本。生きた層からの指しは無くなる
@@ -96,13 +96,13 @@
 - X4 宣言的属性の全分岐 → `results_window.rs` が機序（`MARKER_DONT_FOCUS`）を持つ。**一般則「宣言的属性で挙動を代替する前に全分岐を確かめる」は消える**
 - X5 show/hide/topmost の層 → `results_window.rs` の `//!`（main=tao / results=raw・「main の show だけ raw」禁止を足した）
 - X6 → `results_window.rs`（フラグ差分の判定）
-- X7・X10 → `layout::present_results` doc・`results_window.rs` の `//!`
+- X7・X10 → `layout::present_results` doc・`results_window.rs` の `//!`（X10 の禁止「事後検査やフラグを無視して撃つ hide を足さない」と `ADR-results-gate-single-point` への指しをレビュー指摘で `//!` へ足した）
 - X8 → 1（`EventLoopProof`・E0277）。「新しい可視性操作にも証人を要求する」は `window_coordinator.rs` の `//!` へ
 - X9 5 関数の閉包は表現不能化ではない → `hide_egui_main` doc
 - X11 race を lock で囲まない → `ResultsWindow::raw_show` doc（指しを外した）
 - X12 presence 検査では捕まらない → `SnotraTraceInvariants.psm1` 先頭コメント
 - X17 2 回呼び出しの clamp → `expand_env` のコメント
-- X19 `ShellExecuteW` は COM STA → `launch_item_core` のコメント
+- X19 `ShellExecuteW` は COM STA → `launch_item_core` のコメント（「Tauri コマンドハンドラスレッド」の前提はハンドラ自体が消滅済みゆえ 5）
 - X20 `SendMessageTimeoutW(WM_NULL)` は他スレッド所有の宛先だけ → `window_coordinator.rs`・`platform/mod.rs` の撤去跡コメント
 - X21 `SnotraPlatformWindow` には有効 → `platform/mod.rs` の生成箇所
 

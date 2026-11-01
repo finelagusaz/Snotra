@@ -450,7 +450,7 @@ pub enum ResultsPresentation {
 ///
 /// **並行性は条件に入らない。** 証人型（`EventLoopProof`）を引数に要求する 5 関数はイベント
 /// ループスレッドへ閉じており、この判定と `ResultsWindow::show` のあいだに hide が割り込む
-/// 並びは**構築できない**。**閉包の射程の正本は `window_coordinator::hide_egui_main` の docである**——5 関数の外側に何が残るかもそこ。
+/// 並びは**構築できない**。**閉包の射程の正本は `window_coordinator::hide_egui_main` の doc である**——5 関数の外側に何が残るかもそこ。
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///

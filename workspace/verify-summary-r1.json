@@ -1,0 +1,99 @@
+{
+  "sha": "42b77e0122b9e5e35b72b5583a7b0e9efef1fa54",
+  "branch": "chore/slim-src-tauri-claude-md",
+  "worktree": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-slim-src-tauri-claude-md",
+  "categories_requested": [
+    "A"
+  ],
+  "categories_run": [
+    "A",
+    "E",
+    "F"
+  ],
+  "also": [
+    "test:powershell"
+  ],
+  "handoff": [],
+  "status": "red",
+  "results": [
+    {
+      "category": "A",
+      "command": "cargo fmt --all -- --check",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:18.132Z",
+      "ended_at": "2026-11-01T08:34:18.762Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo check --workspace",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:18.762Z",
+      "ended_at": "2026-11-01T08:34:20.132Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:20.132Z",
+      "ended_at": "2026-11-01T08:34:20.955Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra-core",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:20.955Z",
+      "ended_at": "2026-11-01T08:34:37.646Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra-egui-runtime",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:37.646Z",
+      "ended_at": "2026-11-01T08:34:38.519Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:38.519Z",
+      "ended_at": "2026-11-01T08:34:44.161Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo test -p snotra-settings",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:44.161Z",
+      "ended_at": "2026-11-01T08:34:44.730Z"
+    },
+    {
+      "category": "A",
+      "command": "cargo doc --workspace --no-deps --document-private-items",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:44.730Z",
+      "ended_at": "2026-11-01T08:34:45.488Z"
+    },
+    {
+      "category": "E",
+      "command": "npm test",
+      "exit": 0,
+      "started_at": "2026-11-01T08:34:45.488Z",
+      "ended_at": "2026-11-01T08:35:55.477Z"
+    },
+    {
+      "category": "F",
+      "command": "npm run governance:check",
+      "exit": 0,
+      "started_at": "2026-11-01T08:35:55.477Z",
+      "ended_at": "2026-11-01T08:35:56.378Z"
+    },
+    {
+      "category": "also",
+      "command": "npm run test:powershell",
+      "exit": 1,
+      "started_at": "2026-11-01T08:35:56.378Z",
+      "ended_at": "2026-11-01T08:36:08.317Z"
+    }
+  ],
+  "warnings": [],
+  "log": "C:/workspace/Snotra/.claude/worktrees/agent-verify-chore-slim-src-tauri-claude-md.summary.log"
+}

@@ -111,6 +111,10 @@ impl AppState {
     /// **`&AppHandle` しか持たない呼び出し元は [`crate::egui_shell::read_config`] を使う**
     /// （あちらは `AppState` 不在の面倒を見てからここへ委譲する）。
     ///
+    /// **この規則に条件は付かない**（#1123）——どのスレッドで走る読みかも、何のための読みかも問わない。
+    /// 害は頻度ではなく待ちである: 検索 worker は `engine.search` の間じゅう `Mutex<Engine>` を握るので、
+    /// 錠越しの読みはフレーム（show 経路なら表示そのもの）を走査の完了まで止める。
+    ///
     /// **射程は読みだけである**——書き込みは `update_config` の 1 本で、engine lock の内側に残す
     /// （`snotra-core/CLAUDE.md`「engine.rs のロック最小化パターン」）。
     pub fn read_config<T>(&self, read: impl FnOnce(&Config) -> T) -> T {

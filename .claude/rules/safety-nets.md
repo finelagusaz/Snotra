@@ -26,7 +26,7 @@ paths:
 - 変異対象は、他所から逐語で名指されていないものを選ぶ。名指されていると別の理由で赤くなり、当の観測ができない（#1094）
 - 本体リポジトリの内側の worktree では `node_modules` を張らない。外へ置いた複製では junction を張る。モジュール解決の失敗は検知と同じ exit 1 になるので、どのモジュールが解決できなかったかを必ず読む
 - 結果を読む前に、測定ハーネス自身が壊れる形（自前で組んだ母集団・finding を絞る鍵の取り違え・独立でない対照）を疑う（#1214）
-- 変異の実行に timeout を掛けるなら、`spawnSync` の timeout に任せない。`spawn` と自前のタイマーで、根が生きているうちに `taskkill /PID <pid> /T /F` で木ごと止める。終わったら、親が既に居ない vitest・ワーカーなどの孤児が 0 であることを `Get-CimInstance Win32_Process` で確かめる。timeout が止めるのは直下だけである。`shell: true` や `npx`（Windows では `npx.cmd`）が挟む `cmd.exe` の下は、駆動スクリプトの終了後も残り、無限ループする変異では 1 コアを使い続ける。根が先に死ぬので、timeout の後に戻り値の pid へ taskkill しても空振りする（#1352 実測）
+- Windows で変異の実行に timeout を掛けるなら、`spawnSync` の timeout に任せない。`spawn`（`npx` を呼ぶなら `shell: true` のまま）と自前のタイマーで、ルートプロセス（`child.pid`）が生きているうちに `taskkill /PID <child.pid> /T /F` でプロセスツリーごと止める。終わったら、`Get-CimInstance Win32_Process` で 変異スクリプトの開始より後に作られ（`CreationDate`）、`CommandLine` にテストランナーの名前（`vitest` 等）を含むプロセスが 0 件であることを確かめる。複製のパスでは絞らない——ワーカーの `CommandLine` は junction の先の本体の `node_modules` を指していた。`ParentProcessId` が現存しないことでも判定しない——PID は再利用される。`spawnSync` の timeout は直下のプロセスしか止めなかった。`shell: true` や `npx`（`npx.cmd`）が挟む `cmd.exe` の下は、変異スクリプトの終了後も残り、無限ループする変異では 1 コアを使い続けた。ルートプロセスが先に死ぬので、timeout の後に戻り値の pid へ taskkill しても空振りする（#1352・Node v24 で実測）
 
 ## 規範（ドキュメント・スキル・チェックリスト）を足すとき
 

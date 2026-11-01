@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 
 # results ウィンドウの trace から**不変条件**を判定する純関数群（#757）。
 #
-# **presence 検査とは別物である。** 「イベントが出たか」ではなく `src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」が求める**「起きてはならないことが起きていないか」**を見る。
+# **presence 検査とは別物である。** 「イベントが出たか」ではなく `src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」が求める**「起きてはならないことが起きていないか」**を見る。
 # #671 PR A′ は `egui_results:hide` が出たのにウィンドウが残った回帰で、presence を見る smoke は
 # 緑のまま通した。
 #

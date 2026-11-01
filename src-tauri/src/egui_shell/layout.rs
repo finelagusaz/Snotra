@@ -391,8 +391,8 @@ pub fn bar_rect_center(x: i32, y: i32, width_phys: u32, bar_outer_height_phys: i
 ///
 /// 消費者は 2 つある（**状態は共有しない。式だけを共有する**）: `ResultsWindow::set_size`
 /// （memo はウィンドウの所有型が持つ）と `view.rs` の main ウィンドウガード（memo は view が持つ——main の高さの
-/// 導出が show 経路（`show_egui_main`）と共有される事実の正本は `src-tauri/CLAUDE.md`「モジュール構成」の
-/// `window_coordinator.rs` の項。ここでの結論は**memo は共有しない**ことだけである）。`main_size` を
+/// 導出が show 経路（`show_egui_main`）と共有される事実の正本は `window_coordinator.rs` の `//!`。
+/// ここでの結論は**memo は共有しない**ことだけである）。`main_size` を
 /// results の導出へ入れないという `ADR-results-presentation-two-stage` 却下 1 の**結論**は今も真である
 /// （却下 1 の第 3 理由が挙げた「意図的な 2 導出」の部分は `ADR-show-path-derives-drawn-height` が反転させた）。
 pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
@@ -450,7 +450,7 @@ pub enum ResultsPresentation {
 ///
 /// **並行性は条件に入らない。** 証人型（`EventLoopProof`）を引数に要求する 5 関数はイベント
 /// ループスレッドへ閉じており、この判定と `ResultsWindow::show` のあいだに hide が割り込む
-/// 並びは**構築できない**。**閉包の射程の正本は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに閉じてある」の bullet 群である**——5 関数の外側に何が残るかもそこ。
+/// 並びは**構築できない**。**閉包の射程の正本は `window_coordinator::hide_egui_main` の docである**——5 関数の外側に何が残るかもそこ。
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///

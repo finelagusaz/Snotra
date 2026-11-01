@@ -24,8 +24,14 @@
 //! 複数スレッドから呼べた頃は、ゲートの読みと raw 操作の間に別スレッドの hide が割り込み、
 //! 「フラグ = false・ウィンドウ = 可視」の食い違いが残りえたためである。**#880 サイクル段 2 で
 //! 可視性を変える 5 関数が証人型（`EventLoopProof`）によりイベントループスレッドへ閉じ、
-//! その並びが構築不能になったため、同段で撤去した。**（閉包の射程の正本は
-//! `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに閉じてある」の bullet 群）
+//! その並びが構築不能になったため、同段で撤去した。**（閉包の射程は `window_coordinator::hide_egui_main` の doc）
+//!
+//! **1 つのウィンドウの show / hide / topmost は全部 tao か全部 raw にそろえる**（#646 PR2）——
+//! `apply_diff` はフラグ差分ゼロなら早期 return し、`VISIBLE` を持たないウィンドウには `SW_HIDE` を
+//! 副作用で撃つので、混在すると「`hide()` が何もしない」と「`set_always_on_top` でウィンドウが消える」が
+//! 同時に生まれる。main = tao（tauri の `show` / `hide` / `set_always_on_top`）、results = raw（本型）。
+//! **「main の show だけ raw にして統一する」は禁止**——main の tao `VISIBLE` が stale 化し、
+//! `commands/window.rs` の `set_always_on_top` が main を消す。
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -119,7 +125,7 @@ impl ResultsWindow {
     /// 証人を使わないが（`_` 始まり）、**シグネチャから外してはならない**——results の可視性を
     /// 変える経路を単一スレッドへ閉じるための拘束である。証人型を引数に要求する 5 関数は
     /// イベントループスレッドへ一意化されており、フラグとウィンドウの実状態が食い違う並びは構築できない
-    /// （射程の正本は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに閉じてある」の bullet 群）。
+    /// （射程は `window_coordinator::hide_egui_main` の doc）。
     pub(crate) fn show(
         &self,
         _el: &snotra_egui_runtime::EventLoopProof,
@@ -148,7 +154,7 @@ impl ResultsWindow {
     ///
     /// tao の `set_background_color` は `window_state` への代入と `InvalidateRect` だけで
     /// `apply_diff` を通らない（tao 0.35.3 実測・0.37.1 も同じ）。ゆえに「results の 3 操作は raw へ寄せる」
-    /// 規約（`src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」）の対象外であり、tao 経由でよい。
+    /// 規約（このモジュールの `//!`）の対象外であり、tao 経由でよい。
     fn apply_native_background(&self, color: egui::Color32) {
         {
             // lock は Win32 呼び出しの前に手放す（`set_size` と同じ理由——再入不可の Mutex を
@@ -334,7 +340,7 @@ impl ResultsWindow {
     /// こちらの `HWND_TOPMOST` が後勝ちして設定アプリの上に残る。`set_topmost` は書いてから撃つ
     /// ので、撃った後に `SeqCst` で読み直して false なら撃ち戻せば、どの並びでも最後に撃たれるのは
     /// 意図どおりの値になる。**錠で囲まない**——cross-thread な `SetWindowPos` を錠で囲むと
-    /// 競合がデッドロックへ化けうる（`src-tauri/CLAUDE.md`「この種の race を lock で囲んではならない」）。
+    /// 競合がデッドロックへ化けうる。
     #[cfg(windows)]
     fn raw_show(&self) {
         use windows::Win32::Foundation::HWND;

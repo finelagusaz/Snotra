@@ -190,6 +190,8 @@ pub(crate) fn launch_item_core(path: &str) -> LaunchResult {
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::core::HSTRING;
         unsafe {
+            // フォルダ・画像・文書を開く `ShellExecuteW` はシェル拡張を通るので COM STA が要る
+            // （EXE は要らない）。呼び出しスレッドの COM 状態は当てにせずここで初期化する。
             // S_OK / S_FALSE の場合に CoUninitialize が必要。
             let com_ok = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
             let raw_code = ShellExecuteW(
@@ -239,7 +241,9 @@ pub(crate) fn expand_env(input: &str) -> String {
             if written == 0 {
                 return input.to_string();
             }
-            // 末尾 NUL を除いて UTF-16 → String
+            // 末尾 NUL を除いて UTF-16 → String。**書込長はバッファ長で clamp してからスライスする**
+            // ——環境変数の値が 2 呼び出しの間に伸びると written > buf.len() になり、境界外 panic が
+            // release（`panic = "abort"`）ではプロセス abort に化ける（#394）。
             let len = (written as usize).saturating_sub(1).min(buf.len());
             String::from_utf16_lossy(&buf[..len])
         }

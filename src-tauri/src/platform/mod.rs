@@ -1,3 +1,6 @@
+//! Win32 メッセージループスレッド（`platform_thread_loop`）と、その上で動くトレイアイコン・
+//! ホットキー・ウィンドウプロシージャ。イベントループ側からは [`PlatformCommand`] で委ねる。
+
 pub mod hotkey;
 pub(crate) mod tray;
 mod wndproc;
@@ -181,6 +184,10 @@ fn platform_thread_loop(
                 return;
             }
         };
+        // このウィンドウはこの platform スレッドの所有である。ゆえにイベントループ側から宛てる
+        // `SendMessageTimeoutW(hwnd, WM_NULL, …)` の同期待ちは有効である（宛先が呼び出しスレッド
+        // 自身の所有なら `SendMessage` 系は wndproc を直接呼んで即座に戻る no-op になる——tao の
+        // main / results を宛先にしてはならないのはそのため）。
         let class_name = w!("SnotraPlatformWindow");
 
         let wc = WNDCLASSEXW {

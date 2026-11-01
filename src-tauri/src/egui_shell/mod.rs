@@ -18,7 +18,7 @@ pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 // overlay_kind は view.rs（status 行の優先ラダー）が消費する（#532 SU6 Task 7・#666 段 3 で
 // 消費者が 2 モジュールへ割れた）。status_row_present は毎フレーム側（view.rs）と
 // show 経路（window_coordinator.rs）の両方が消費する（共有の実体の正本は
-// `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項）。
+// `window_coordinator.rs` の `//!`）。
 pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind, status_row_present};
 // mod.rs の spawn_update_check が phase 書き込みで、UpdaterUiState が Default で消費する
 // （#532 SU5 Task 6）。toast 描画は view.rs が、UpdaterPhase の遷移（install 失敗）は
@@ -170,6 +170,10 @@ pub(crate) struct EguiShellState {
     /// 旧実装は各 view の `setup` が `egui::Context` の clone を登録する
     /// `Mutex<Option<egui::Context>>` スロットだった——**登録前のウィンドウを「未登録＝no-op」で
     /// 扱う段が消え、この型はウィンドウの存在と同時に有効になる**。
+    ///
+    /// **private である**（`results_waker` も同じ）——`egui_shell` の外からは `.wake()` を綴れず、
+    /// 外部からの wake は `wake_main` / `wake_results` を通る。ただし `EguiShellHandles` 側の waker は
+    /// `pub(crate)` で、handles を握る `main.rs` の setup では直に書ける。
     main_waker: snotra_egui_runtime::WindowWaker,
     /// results ウィンドウを外部から起こすハンドル（main と同型・#646 PR2 の `results_ctx` の後継）。
     results_waker: snotra_egui_runtime::WindowWaker,

@@ -1,6 +1,5 @@
 use std::process::{Child, Command};
 use std::sync::Mutex;
-use std::sync::atomic::Ordering;
 
 use serde_json::json;
 use tauri::{AppHandle, Manager, State};
@@ -165,8 +164,8 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
 
         // First-run: if indexing is pending and not started, kick off index build.
         if let Some(state) = handle_for_monitor.try_state::<AppState>()
-            && state.indexing.load(Ordering::SeqCst)
-            && !state.index_build_started.load(Ordering::SeqCst)
+            && state.is_indexing()
+            && !state.is_index_build_started()
         {
             indexing::start_index_build(&handle_for_monitor);
         }
@@ -177,7 +176,7 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
 
 pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     trace_command("cmd:open_settings:start", json!({}));
-    if state.indexing.load(Ordering::SeqCst) {
+    if state.is_indexing() {
         trace_command("cmd:open_settings:noop_indexing", json!({}));
         return Err(ERR_INDEXING_IN_PROGRESS.to_string());
     }

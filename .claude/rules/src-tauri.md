@@ -9,16 +9,14 @@ paths:
 
 ## 読む正本（`src-tauri/CLAUDE.md` の該当節）
 
-- index-build フラグは `try_begin_index_build` / `finish_index_build` 経由（`indexing` / `index_build_started` を直接 store しない）: 「実装パターン」
 - ランタイムでウィンドウ生成しない（メッセージポンプ進行を要求しデッドロック・生成は setup 限定）: 「ウィンドウ生成の制約」
-- `windows` クレート（v0.62）の API 型・feature フラグを使用前に確認: 「Win32 / Tauri 注意事項」
-- `ShellExecuteW` + シェル拡張は COM STA 必須（`std::thread::spawn` + `CoInitializeEx`・EXE は不要）: 「Win32 / Tauri 注意事項」
+- `ShellExecuteW` + シェル拡張は COM STA 必須（EXE は不要）: `commands/launch.rs` の `launch_item_core`
 - engine ロックは async/blocking 境界またぎで保持しない（抽出 → 即解放 → 処理）: `snotra-core/CLAUDE.md`「engine.rs のロック最小化パターン」
 
 ## この rule が正本（CLAUDE.md に無い src-tauri 固有）
 
 - **`snotra-settings.exe` 等の子プロセスを spawn したら、`main.rs` の exit ハンドラで `child.kill()` する**（生成/破棄のペア）
-- **Win32 を呼ぶ経路の新設は `PlatformBridge` 経由を既定とする**: `platform::{PlatformBridge, PlatformCommand}` で platform スレッドのメッセージループへ委ねる。**既存の直呼びは残る**——個別の理由は `src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」
+- **Win32 を呼ぶ経路の新設は `PlatformBridge` 経由を既定とする**: `platform::{PlatformBridge, PlatformCommand}` で platform スレッドのメッセージループへ委ねる。**既存の直呼びは残る**
 - **状態フラグを true にしたら false に戻す経路とセットで設計する**: 戻す責務の関数に `#[must_use]` を付け `let _ =` 無視を compile-fail 検出（実例 `launch_settings_process`）。一般則は `AGENTS.md`「条件別チェック（トリガー → 参照先）」の対称ペアの行
 - **Win32 依存モジュール（`ime.rs`・`platform/` の `hotkey.rs` 等）はユニットテスト前提にしない**
 

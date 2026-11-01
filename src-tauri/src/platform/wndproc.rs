@@ -4,6 +4,9 @@ use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, PostThreadMessageW
 
 use super::WM_TRAY_ICON;
 
+/// **メッセージの処理を削る・変える前に、そのメッセージが届く全経路を列挙する**——同じメッセージでも
+/// 発火源が複数ある（`WM_CONTEXTMENU` はマウス右クリックとキーボード操作の両経路で届く）。
+/// 問題の経路だけを消すつもりで、別の経路も一緒に消える。
 pub(super) unsafe extern "system" fn platform_default_wnd_proc(
     hwnd: HWND,
     msg: u32,

@@ -1,3 +1,8 @@
+//! core の [`ParsedHotkey`] を Win32 の modifier / VK へ変換し、`RegisterHotKey` で登録する。
+//!
+//! **永続文字列（`HotkeyConfig`）を自分で再解釈しない**——解釈は core の parser だけが持つ。
+//! 登録と smoke 注入用の `vks` は同じ変換結果（`PreparedHotkey`）から導く。
+
 use snotra_core::config::HotkeyConfig;
 use snotra_core::hotkey::{HotkeyKey, HotkeyParseError, ParsedHotkey};
 use std::fmt;

@@ -345,7 +345,7 @@ impl LauncherController {
     /// `Mutex<Engine>` を握っている間フレームが返らなくなる。**分けている境界は錠の内外ではなく
     /// フレームの内外である**: config の読みは [`crate::egui_shell::read_config`] でフレームの中に
     /// 置き、Win32 clipboard と `ShellExecuteW` は worker へ出す（射程は
-    /// `src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項が正本）。
+    /// [`crate::state::AppState::read_config`] の doc が正本）。
     fn execute_instant_selected(&mut self, index: usize, instant_query: &str, ctx: &egui::Context) {
         let Some(sel) = self.state.results().get(index) else {
             return;

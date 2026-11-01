@@ -969,7 +969,7 @@ impl EguiView for SearchWindowView {
         // 同じローカルとして `overlay_kind` / 本関数の両方へ通すため——読み直した入力では
         // ない・レビュー是正 2）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**
         // からである（`window_coordinator::show_egui_main`）。共有の実体の正本は
-        // `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項（#755 / #801）。
+        // `window_coordinator.rs` の `//!`（#755 / #801）。
         let has_status = crate::egui_shell::status_row_present(
             indexing_raw,
             is_results,
@@ -1202,7 +1202,7 @@ impl EguiView for SearchWindowView {
         // smoke の高さ断言を無力化する（過渡は 1 フレーム=約16ms、`Wait-SnotraWindow` は
         // 200ms ポーリング + 100ms 間隔では捕まらない）。ここは in-process で
         // 「起きてはならないことが起きていないか」を突き合わせる
-        // （`src-tauri/CLAUDE.md`「モジュール構成」の trace 規範）。
+        // （`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。
         //
         // 発火条件は 4 つの連言——1 つでも崩れていれば「（indexing/toast が変わった、または
         // launching/notice が新たに立った）通知が届いただけ」で正常なので何も出さない。
@@ -1236,7 +1236,7 @@ impl EguiView for SearchWindowView {
         // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
         // memo は共有しない**（ADR-results-presentation-two-stage 却下 1: `main_size` を results の
         // 導出へ入れない）。高さの導出が show 経路と共有される事実の正本は
-        // `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項（#755 / #801）。
+        // `window_coordinator.rs` の `//!`（#755 / #801）。
         // 共有するのは導出であって memo ではない。
         if crate::egui_shell::layout::size_delta_exceeds(
             (self.last_set_width, self.last_set_height),

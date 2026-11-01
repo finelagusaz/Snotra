@@ -4,13 +4,13 @@
 
 変異の実行に timeout を掛けるセッションが、timeout の後に孤児の木を残さないようにする。規範の正本は rule に置き、委譲の本文からそれを指す。
 
-- [ ] AC1: `.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」に、次の内容の 1 行がある
+- [x] AC1: `.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」に、次の内容の 1 行がある
   - 変異の実行に timeout を掛けるなら、根が生きているうちに木ごと止める
   - `spawnSync` の timeout には任せない
   - 止めた後に孤児が 0 であることを確かめる
   - 理由（`cmd.exe` が挟まると、その下が残る／timeout 後の pid へ taskkill しても空振りする）と `(#1352 実測)` を添える
-- [ ] AC2: `.claude/skills/implement/SKILL.md:111` の変異注入の行に、上の条項を指す一言がある。中身は写さない
-- [ ] AC3: 見出しは変えない。`npm run governance:check` が通る
+- [x] AC2: `.claude/skills/implement/SKILL.md:111` の変異注入の行に、上の条項を指す一言がある。中身は写さない
+- [x] AC3: 見出しは変えない。`npm run governance:check` が通る
 
 ## 変更ファイル
 
@@ -50,10 +50,10 @@ SKILL.md:111 の末尾:
 
 ### Phase 1
 
-- [ ] `.claude/rules/safety-nets.md` へ条文を足す
-- [ ] `.claude/skills/implement/SKILL.md:111` へ参照を足す
-- [ ] `npm run governance:check` を通す
-- [ ] scratchpad の再現の足場（`repro1352/` と、その中の `node_modules` junction）を撤去する。junction は `cmd /c rmdir` で外し、本体の `node_modules` を消さない
+- [x] `.claude/rules/safety-nets.md` へ条文を足す
+- [x] `.claude/skills/implement/SKILL.md:111` へ参照を足す
+- [x] `npm run governance:check` を通す（全検査 passed・17 件）
+- [x] scratchpad の再現の足場（`repro1352/` と、その中の `node_modules` junction）を撤去する。junction は `cmd /c rmdir` で外し、本体の `node_modules` を消さない
 
 ## 未確定（実装前に潰す）
 

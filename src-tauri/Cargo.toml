@@ -58,4 +58,4 @@ windows = { version = "0.62.2", features = [
 # 意味論だけを固定し、`update()` の並びが後ろへ戻っても通る受容残余を持っていた。
 # 版はルート `Cargo.toml` の `[workspace.dependencies]` の `egui` に合わせる（`snotra-settings/Cargo.toml` と同じ指定）。
 [dev-dependencies]
-egui_kittest = { version = "0.36", default-features = false }
+egui_kittest = { version = "0.37", default-features = false }

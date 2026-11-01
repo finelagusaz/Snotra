@@ -175,9 +175,9 @@ impl InputState {
         }
     }
 
-    /// キー 1 件を積む。**修飾はここで載せる**——tao の `ModifiersChanged` の保持値（`self.modifiers`）
-    /// であり、AltGr のとき Ctrl・Alt を外した値である（tao の `get_agnostic_mods`）。subclass の
-    /// `GetKeyState` で取ると AltGr+C/X/V が Copy/Cut/Paste になる。
+    /// キー 1 件を積む。**修飾はここで載せる**。載せるのは tao の `ModifiersChanged` の保持値
+    /// （`self.modifiers`）で、AltGr のときは Ctrl・Alt が外れている（tao の `get_agnostic_mods`）。
+    /// subclass の `GetKeyState` で取ると、AltGr+C/X/V が Copy/Cut/Paste になる。
     fn push_key(
         &mut self,
         key: egui::Key,

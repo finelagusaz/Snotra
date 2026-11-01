@@ -34,7 +34,7 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 - 0×0のSurfaceをconfigureまたは描画しない
 - repaint workerは所有型のDropで停止し、joinする。**外部へ渡す wake 経路に`RepaintScheduler`（の強参照・弱参照いずれも）や`egui::Context`の clone を持たせない**——Context の clone は repaint callback ごと複製し、callback が握る Arc がウィンドウの`Destroyed`を越えて停止を止める（#646 PR2〜#671 PR D で実在した破れ）。`WindowWaker`は mpsc の送信側だけを持ち、`SchedulerInner::drop`が`Stop`を明示送信してから join するため、外部が waker を永久保持しても停止は成立する
 - Tauri内部型をUI実装へ公開しない
-- **キーボード由来の入力（打鍵・文字・IME の確定と未確定）は `windows_ime.rs` の subclass だけが作り、tao の `KeyboardInput` / `ReceivedImeText` は egui へ渡さない**（#1289・`ADR-keyboard-input-owned-by-subclass`）。メッセージから egui の入力への変換は `keyboard.rs` の `KeyboardTranslator`（純粋）が持つ。subclass はキーのメッセージを消費せず `DefSubclassProc` へ流す（Alt+F4・システムメニュー・tao の修飾の追跡を保つ）。打鍵・文字・確定は同じ `mpsc` に載る全順序で、`drain_native_ime` が各ウィンドウイベントの前と `render` で回収し、積んだら repaint を要求する
+- **キーボード由来の入力（打鍵・文字・IME の確定と未確定）は `windows_ime.rs` の subclass だけが作り、tao の `KeyboardInput` / `ReceivedImeText` は egui へ渡さない**（#1289・`ADR-keyboard-input-owned-by-subclass`）。メッセージから egui の入力への変換は `keyboard.rs` の `KeyboardTranslator`（純粋）が持つ。subclass はキーのメッセージを消費せず `DefSubclassProc` へ流す（Alt+F4・システムメニュー・tao の修飾の追跡を保つ）。打鍵・文字・確定は同じ `mpsc` に載って全順序を保ち、`drain_native_ime` が各ウィンドウイベントの前と `render` で回収し、積んだら repaint を要求する
   - **修飾は subclass で読まない**——drain の時点で `InputState` が tao の `ModifiersChanged` の保持値を載せ、Ctrl+C/X/V の判定もそこで行う。tao は AltGr のとき Ctrl・Alt を外すので、`GetKeyState` で取ると AltGr+C が Copy になる
   - **subclass の `RefCell` は変換の 1 呼び出しの間だけ借り、`DefSubclassProc` の後は `CallbackState` に触れない**——`DefSubclassProc` の中で同じ proc が再入しうる（二重借用は `catch_unwind` が飲み込み、打鍵が黙って消える）うえ、tao がその中でウィンドウを壊すと `CallbackState` が解放される
   - tao の `ReceivedImeText` は Windows では 0 件が正常である。`rx_text` に現れたら、下の IME の 3 メッセージの抑止が破れている tripwire である

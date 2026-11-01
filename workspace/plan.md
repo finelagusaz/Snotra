@@ -77,3 +77,4 @@ SKILL.md:111 の末尾:
 
 - 巡 1: sha 065a4191 / 道具 green（E・F）/ 指摘 Medium 2・Low 5（⚠️ 2 を含む）/ 変異 1 本（SKILL.md の節名参照）を governance:check が検知、生き残り 0。Medium 2 件（孤児の判定手順・訳語「根」「木」）と Low（Windows の前提・`child.pid`・`shell: true` のまま）を反映。レビューが提案した「複製のパスで絞る」は、ワーカーの CommandLine に複製のパスが無いと実測したので採らず、`CreationDate` + `vitest` で絞る形にした
 - 巡 2: sha c49e01b0 / 道具 green（E・F）/ 指摘 Medium 1（2-2: 名前で絞ると並走する vitest を拾う。2-1 の自己一致も同じ根）・Low 4 / 変異は巡 1 と同じ参照なので省略。確認の手順を「ルートプロセスが生きているうちに子孫の (ProcessId, CreationDate) を控え、止めた後に照合する」へ替えた。probe で実測: kill だと 4 組が残り、taskkill /T /F だと 0 組。条項を短くした（2-6）。2-3 は「数秒おいて」で吸収
+- 巡 3: sha 4dbe0f98 / 道具 green（E・F）/ 前巡の所見は全部解消。新しい所見は Low 1・⚠️ Low 2。3-1（限定句「無限ループする変異では」の脱落）を戻した。3-2（控えた後に生まれた子孫は照合に入らない）と 3-3（ParentProcessId を辿るときの PID 再利用）は採らない: どちらも未測定で、控えから taskkill までの窓は短い。taskkill /T は生きている親の鎖を止める。手順を重くする費用に見合わない

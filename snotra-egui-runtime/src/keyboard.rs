@@ -61,7 +61,7 @@ pub(crate) struct KeyboardTranslator {
     held: HashSet<PhysicalScan>,
     /// egui へ down を送ったキー。focus を失ったら release を送る（tao の合成 release の代わり）。
     down: HashMap<PhysicalScan, (egui::Key, Option<egui::Key>)>,
-    /// 抑止した down に続く `WM_CHAR` を落とす（#1274）。次の down で解除する。
+    /// 抑止した down に続く `WM_CHAR` を落とす（#1274）。次の down・up・focus の出入りで解除する。
     drop_chars: bool,
     /// サロゲートペアの high（キーのメッセージを跨いで保つ）。
     pending_high: Option<u16>,
@@ -132,6 +132,9 @@ impl KeyboardTranslator {
             }
         } else {
             // release は常に渡す——落とすと egui の `keys_down` に押しっぱなしが残る。
+            // 旗も up で消す: `TranslateMessage` が付ける `WM_CHAR` は up より前に届くので抑止は
+            // 保たれ、離した後の `PostMessage(WM_CHAR)`（#1269 の形）を巻き添えにしない。
+            self.drop_chars = false;
             self.held.remove(&scan);
             self.down.remove(&scan);
         }
@@ -610,6 +613,21 @@ mod tests {
         assert_eq!(
             chr(&mut t, 'a' as u32).events,
             vec![NativeInput::Text("a".to_owned())]
+        );
+    }
+
+    /// 抑止したキーを離した後の、キー押下を伴わない `WM_CHAR`（`PostMessage`・#1269 の形）は入る。
+    /// `TranslateMessage` が付ける `WM_CHAR` は up より前に届くので、up で旗を消しても抑止は保たれる。
+    #[test]
+    fn char_flag_is_cleared_by_keyup() {
+        let mut t = KeyboardTranslator::default();
+        t.on_focus_gained([SCAN_Z]);
+        down(&mut t, VK_Z, SCAN_Z);
+        assert!(chr(&mut t, 'z' as u32).events.is_empty());
+        up(&mut t, VK_Z, SCAN_Z);
+        assert_eq!(
+            chr(&mut t, 'p' as u32).events,
+            vec![NativeInput::Text("p".to_owned())]
         );
     }
 

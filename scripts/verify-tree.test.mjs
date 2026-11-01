@@ -176,6 +176,7 @@ describe("verify-tree run", () => {
     const r = runScript(repo, ["run", "--sha", sha, "--categories", "C"]);
 
     expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("カテゴリ C のコマンドが 0 件");
     expect(existsSync(verifyTree(repo))).toBe(false);
   });
 
@@ -187,6 +188,7 @@ describe("verify-tree run", () => {
     const r = runScript(repo, ["run", "--sha", sha]);
 
     expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("本体の作業ツリーに未コミットの変更がある");
     expect(existsSync(verifyTree(repo))).toBe(false);
   });
 
@@ -198,6 +200,7 @@ describe("verify-tree run", () => {
     const r = runScript(repo, ["run", "--sha", old]);
 
     expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("sha が本体の HEAD でない");
   });
 
   it("2 巡目は同じ木を新しい sha へ合わせて再利用する", { timeout: T }, () => {
@@ -221,6 +224,7 @@ describe("verify-tree run", () => {
     const r = runScript(repo, ["run", "--sha", next]);
 
     expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("再利用する木に追跡ファイルの変更がある");
   });
 
   it("git の想定外の失敗（再利用する木の checkout が未追跡ファイルと衝突）は、赤（1）ではなく 2", { timeout: T }, () => {
@@ -243,14 +247,18 @@ describe("verify-tree run", () => {
     expect(s.categories_run).toEqual(["A", "E", "F"]);
     expect(s.handoff).toEqual(["D"]);
 
-    expect(runScript(repo, ["run", "--sha", sha, "--categories", "B"]).status).toBe(2);
+    const b = runScript(repo, ["run", "--sha", sha, "--categories", "B"]);
+    expect(b.status, b.output).toBe(2);
+    expect(b.output).toContain("B はコマンドを持たない");
   });
 
   it("--also は package.json の npm script だけを受け付ける", { timeout: T }, () => {
     const repo = initRepo();
     const sha = git(repo, ["rev-parse", "HEAD"]);
 
-    expect(runScript(repo, ["run", "--sha", sha, "--also", "missing"]).status).toBe(2);
+    const missing = runScript(repo, ["run", "--sha", sha, "--also", "missing"]);
+    expect(missing.status, missing.output).toBe(2);
+    expect(missing.output).toContain("--also の npm script が package.json に無い");
     const r = runScript(repo, ["run", "--sha", sha, "--also", "ok"]);
     expect(r.status, r.output).toBe(0);
     expect(summaryOf(repo).results.map((x) => x.command)).toContain("npm run ok");
@@ -323,7 +331,9 @@ describe("verify-tree align", () => {
     writeFileSync(path.join(wt, "package.json"), "{}");
     const next = commitFile(repo, "next.txt", "next\n");
 
-    expect(runScript(wt, ["align", "--sha", next]).status).toBe(2);
+    const r = runScript(wt, ["align", "--sha", next]);
+    expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("変更が残っている");
     expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(next);
   });
 
@@ -333,7 +343,9 @@ describe("verify-tree align", () => {
     writeFileSync(path.join(wt, "leftover.test.mjs"), "// mutant\n");
     const next = commitFile(repo, "next.txt", "next\n");
 
-    expect(runScript(wt, ["align", "--sha", next]).status).toBe(2);
+    const r = runScript(wt, ["align", "--sha", next]);
+    expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("leftover.test.mjs");
     expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(next);
   });
 
@@ -360,13 +372,15 @@ describe("verify-tree align", () => {
     // 理由まで見る: 直後の fail-closed（check-ignore が判定できない）も同じ exit 2 を出すので、
     // 終了コードだけでは ignore の判定を消す変異が生き残る（#1319 で実測）
     const r = runScript(wt, ["align", "--sha", next]);
-    expect(r.status).toBe(2);
+    expect(r.status, r.output).toBe(2);
     expect(r.output).toContain(".delegate/ が ignore されている");
   });
 
   it("本体の作業ツリーでは exit 2（linked worktree でない）", { timeout: T }, () => {
     const repo = initRepo();
-    expect(runScript(repo, ["align", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(2);
+    const r = runScript(repo, ["align", "--sha", git(repo, ["rev-parse", "HEAD"])]);
+    expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("linked worktree の中で打つこと");
   });
 });
 

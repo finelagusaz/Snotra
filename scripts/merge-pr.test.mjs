@@ -153,14 +153,16 @@ describe("run — マージ前に止める（gh pr merge を呼ばない・exit 
 
 describe("run — 走らなかった（exit 2・マージしていない）", () => {
   it.each([
-    ["使用法の誤り", ["7", "--subject", "x"], {}],
-    ["gh pr view の失敗", ARGS, { "pr view:pre": { status: 1, stdout: "", stderr: "boom" } }],
-    ["head の sha の形が違う", ARGS, { "pr view:pre": preview({ headRefOid: "--output=x" }) }],
-    ["fetch しても head が無い", ARGS, { "cat-file": { status: 1, stdout: "", stderr: "" }, fetch: { status: 1, stdout: "", stderr: "x" } }],
-  ])("%s", (_, argv, over) => {
+    ["使用法の誤り", ["7", "--subject", "x"], {}, "受け付けない引数: --subject"],
+    ["gh pr view の失敗", ARGS, { "pr view:pre": { status: 1, stdout: "", stderr: "boom" } }, "boom"],
+    ["head の sha の形が違う", ARGS, { "pr view:pre": preview({ headRefOid: "--output=x" }) }, "head の sha の形が違う"],
+    ["fetch しても head が無い", ARGS, { "cat-file": { status: 1, stdout: "", stderr: "" }, fetch: { status: 1, stdout: "", stderr: "x" } }, "git fetch -q origin refs/pull/7/head"],
+  ])("%s", (_, argv, over, reason) => {
     const f = fake(over);
     expect(run(argv, "/repo", f.deps)).toBe(2);
     expect(f.calls).not.toContain("pr merge");
+    // 理由まで見る: マージ前の try の catch-all は、どの例外も 2 にする（#1319）
+    expect(f.text()).toContain(reason);
   });
   it("linked worktree から打たれたら（root を導けなければ）止める", () => {
     const f = fake();
@@ -169,6 +171,7 @@ describe("run — 走らなかった（exit 2・マージしていない）", ()
     };
     expect(run(ARGS, "/repo", f.deps)).toBe(2);
     expect(f.calls).not.toContain("pr merge");
+    expect(f.text()).toContain("本体の作業ツリーから打つこと");
   });
 });
 
@@ -189,6 +192,7 @@ describe("run — マージの成否は PR の状態で確定する", () => {
   it("gh pr merge が成功を返したのに MERGED でなければ、反映の遅れでありうるので 3（1 と断定しない）", () => {
     const f = fake({ "pr view:post": ok({ state: "OPEN", mergedAt: null }) });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.text()).toContain("gh pr merge は成功を返したが");
   });
   it("gh pr merge の呼び出しが例外を投げても 2 ではなく 3（マージの後かもしれない）", () => {
     const f = fake({
@@ -197,6 +201,7 @@ describe("run — マージの成否は PR の状態で確定する", () => {
       },
     });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.text()).toContain("boom");
   });
   it("gh pr merge が失敗を返し、直後は OPEN でも、引き直して MERGED なら事後検証へ進む（反映の遅れ）", () => {
     const f = fake({
@@ -233,6 +238,7 @@ describe("run — マージの成否は PR の状態で確定する", () => {
   it("状態を確かめられなければ 3（マージしたかもしれない）", () => {
     const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "x" } });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.text()).toContain("マージの成否を確かめられない");
   });
 });
 
@@ -246,9 +252,12 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     const r = post({ "pr view:post": ok({ state: "MERGED", mergedAt: "08/10/2026 10:26:23" }) });
     expect(r.code).toBe(3);
     expect(r.calls).not.toContain("issue list");
+    expect(r.text).toContain("ISO 8601 でない");
   });
   it("宣言した issue が閉じていなければ 3", () => {
-    expect(post({ "issue view": ok({ state: "OPEN" }) }).code).toBe(3);
+    const r = post({ "issue view": ok({ state: "OPEN" }) });
+    expect(r.code).toBe(3);
+    expect(r.text).toContain("宣言した o/r#3");
   });
   it("宣言していない issue が閉じていれば 3（reopen はしない）", () => {
     const r = post({ "issue list": ok([{ number: 3 }, { number: 5 }]) });
@@ -261,6 +270,7 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
   it("検算: 当の PR が merged の検索に現れなければ、0 件を信用せず 3", () => {
     const f = fake({ ...noRefs, "pr list:merged": ok([]) });
     expect(run(NONE, "/repo", f.deps)).toBe(3);
+    expect(f.text()).toContain("検算が通らない");
   });
   it("宣言なし・検算あり・0 件なら 0（0 件を受け取ってよいのは検算が通ったときだけ）", () => {
     const f = fake(noRefs);
@@ -273,7 +283,9 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     expect(r.calls.filter((c) => c === "issue list")).toHaveLength(2);
   });
   it("索引の遅延: 再試行しても現れなければ 3", () => {
-    expect(post({ "issue list": ok([]) }).code).toBe(3);
+    const r = post({ "issue list": ok([]) });
+    expect(r.code).toBe(3);
+    expect(r.text).toContain("closed の検索に現れない");
   });
   it(`検索が上限（${SEARCH_LIMIT} 件）に達したら打ち切りと区別できないので 3`, () => {
     const many = Array.from({ length: SEARCH_LIMIT }, (_, i) => ({ number: i === 0 ? 3 : 1000 + i }));
@@ -353,6 +365,7 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     const f = fake({ "issue view": ok({ state: "OPEN" }), "issue list": ok(many) });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
     expect(f.sleeps).toEqual([]);
+    expect(f.text()).toContain("上限");
   });
   it("揃えば観測 1 回で 0（正常なマージに待ちの費用は掛からない）", () => {
     const f = fake();

@@ -117,7 +117,7 @@ impl ResultsWindow {
     /// `WS_EX_NOACTIVATE` が防ぐのはユーザークリックによる活性化だけなので、1 文字目の入力で
     /// results が現れた瞬間に入力欄からフォーカスが奪われ 2 文字目が打てなくなる。
     /// tao 内部で `SW_SHOWNOACTIVATE` に至る唯一の経路（`MARKER_DONT_FOCUS`）は生成時の `focused`
-    /// 属性から立ち、tao 0.37.1 は生成直後にそれを外すので、show の経路では使えない。
+    /// 属性から立ち、tao 0.37.2 は生成直後にそれを外すので、show の経路では使えない。
     ///
     /// `background` は下地（softbuffer が present するまでの一瞬に見えるネイティブブラシ）へ
     /// 適用する。**show 遷移のときだけ撃つ**（下の早期 return の後に置く理由）——可視のまま
@@ -245,7 +245,7 @@ impl ResultsWindow {
     ///
     /// **tao 経由のままにする。**
     ///
-    /// 理由は「差分適用を通らないから」では**ない**——tao 0.37.1 の `set_inner_size` /
+    /// 理由は「差分適用を通らないから」では**ない**——tao 0.37.2 の `set_inner_size` /
     /// `set_outer_position` はどちらも `set_window_flags(|f| f.set(MAXIMIZED, false))` を呼び
     /// `apply_diff` に**入る**。results では MAXIMIZED が元から false ゆえ**フラグ差分が空**に
     /// なり、`apply_diff` 冒頭の `if diff == empty { return }` で助かっている。

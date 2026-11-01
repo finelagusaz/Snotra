@@ -679,8 +679,11 @@ struct FrameGeom {
     /// 非クライアント分の高さ（`outer` − `inner`）。**「将来の保険」ではなく今すでに効いている**
     /// ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
     /// 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
-    /// **生成直後の値は信用できない**——tao 0.37 はキャプション付きのクライアント領域で生むので、
-    /// `egui_shell::create` が枠を計算し直させて初めて正しくなる（`refresh_borderless_frame`・#1266）。
+    /// **生成直後の値が正しいのは tao 0.37.2 以降である**——0.37.1 は生成時の `WM_NCCALCSIZE`
+    /// （`wparam == 0`）を `DefWindowProcW` へ回してキャプション分を引き、`egui_shell::create` が
+    /// `SWP_FRAMECHANGED` で枠を計算し直させていた（#1266。0.37.2 の修正で不要になり撤去）。
+    /// tao がこの扱いを失うと初回 show のバー矩形が 30 px 大きくなり、smoke の toast シナリオで
+    /// `egui_main:bar_rect_mismatch` が出る（0.37.1 で実測）。
     inset_h: i32,
     scale: layout::MainScale,
 }

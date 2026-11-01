@@ -7,7 +7,7 @@
 //!
 //! **相互排他は lock ではなく tao の runner が与える。** `call_event_handler` は
 //! `event_handler.take()` してから呼び（非再入）、`send_event` はハンドラ実行中のイベントを
-//! `event_buffer` へ回す（tao 0.37.1 `event_loop/runner.rs`・0.35.3 から変わっていない）。ゆえにイベントループ上の
+//! `event_buffer` へ回す（tao 0.37.2 `event_loop/runner.rs`・0.35.3 から変わっていない）。ゆえにイベントループ上の
 //! 2 つの処理は互いに割り込めない。**lock を足してはならない**——ウィンドウを所有しないスレッドからの
 //! `ShowWindow` は所有スレッドのポンプ待ちでブロックしうるため、イベントループ側も取る lock は
 //! race をデッドロックへ化けさせる。

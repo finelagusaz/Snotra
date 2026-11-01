@@ -1,0 +1,57 @@
+adversarial 調査 #1352（計測は 2026-11-01・Node v24.18.0・vitest 5.0.5・Windows 11・リポジトリのファイルは未編集・終了時に孫の孤児 0 を確認）
+
+足場: <scratchpad>/repro1352/ に drive3.mjs（CommandLine フィルタ無し・CreationDate と ParentProcessId で全 node/cmd を列挙）、gen2.mjs・spin.js・mid.js（vitest を使わない汎用の鎖）を追加。
+
+== 壊せた項目 ==
+
+[B1] 命題 3（taskkill /T /F で木ごと止まる）は条件付きでしか真でない。根が既に死んでいると使えない。
+  - drive.mjs shell（spawnSync timeout）の後、spawnSync の戻り pid（10764）へ `taskkill /PID 10764 /T /F` を打つと `ERROR: process "10764" not found`。孤児の 4 つ（npx 35952・cmd 13596・vitest 37796・worker 28556）は無傷で、孤児の根 35952 を指定したときだけ全部消えた。
+  - 含意: issue の案文「timeout で止めたあとに木ごと止める」は spawnSync では実行不能。spawnSync の timeout は直下の cmd を先に TerminateProcess するので、戻り pid はもう無い。実行可能なのは (a) spawn + 自前タイマーで、kill せずに最初から taskkill /T /F、(b) shell:false の直接起動、(c) 止めた後に ParentProcessId が死んだ pid を指す孤児を探して止める、のいずれか。research.md は「taskkill /PID <child> /T /F は木ごと」を表で示しただけで、spawnSync + timeout の後には使えないことに触れていない。
+  - 反証できる手順: 上記 drive.mjs shell の後に taskkill /PID <r.pid> /T /F が成功すれば偽。実測は not found。
+  - 実測で支持された側: drive3.mjs shell-treekill（spawn して根が生きているうちに taskkill）は 3 秒後・8 秒後とも (none)。
+
+[B2] 命題 2 の言い換え「node → node の直接の鎖なら安全」は粗すぎる。害を決めるのは cmd.exe が鎖のどこにあるかで、「直下のシェル」ではない。
+  - gen2.mjs（child.kill 後 3 秒で spin 生存を見る）: A node>spin 死 / C node>mid(node)>spin 死 / B cmd>spin 生存 / D cmd>mid>spin 生存 / **E node>mid>cmd>spin 生存**（mid が shell:true で孫を起こす）/ F cmd>mid>cmd>spin 生存。E は「驚き」を含む。node だけの親子でも、途中に cmd が 1 つ挟まれば、その下は残る。
+  - research.md の「残るのは鎖の途中に cmd.exe が居るとき」は結論として合っている。ただし根拠に使った機序（「node が自分の直接の子だけを道連れにする」）は、E を説明するには「cmd.exe が起こした子は道連れの対象外」を足す必要がある。
+  - 反証できる手順: E で spin が死ねば偽。実測は生存。
+
+[B3] 「節名を逐語で引く箇所: lib.test.mjs:45・:248、plans/2026-07-26-...:49」は網羅になっていない（全称の偽）。
+  - `grep -rln 稼働中のガードを弱めない`（node_modules/target/.git 除外）は 15 ファイルを返す。research が挙げた 2 ファイル以外に、.claude/hooks/lsp-config.mjs:35・.claude/hooks/lsp-config.test.mjs:9・docs/adr/ADR-stale-identifier-detector-scope.md:120・snotra-settings/src/tabs/visual.rs:396・docs/superpowers の他 4 本・RETROSPECTIVE.md ほか。
+  - 見出しを変えないので「影響なし」の結論は保たれる。ただし数え方が不完全で、AGENTS.md の「全称は反例を探す」に当たる。
+  - 反証できる手順: 上の grep が 3 件しか返さなければ偽。実測は 15 ファイル。
+
+[B4] 「同じ節の既存の行も、手順 1 文と #番号の形である」は 1 行で偽。
+  - 節の 4 本のうち、3 本目（「本体リポジトリの内側の worktree では node_modules を張らない…」）に #番号が無い。他の 3 本には #504・#1094・#1214 がある。
+  - 反証できる手順: awk で節の箇条書きを数えると 4 本（research の「4 行」は合う）。3 本目に `#\d+` が無い。
+
+[B5] 命題 4（配送。「この rule へ置けば、事故を起こしたセッションに届いていた」）は、research.md の記述より弱くしか言えない。⚠️ 確信の持てない所見。
+  - `paths` は `.claude/hooks/**` などのルート起点のグロブ。事故のスクリプトは「scratchpad の複製」に変異を当てており、複製を読み書きしても当たらない。当たるのは、リポジトリ内の原本を読んだときだけ。複製を `copyFileSync` で作って原本を Read していなければ届かない。
+  - issue の「規範は、スクリプトを書くその瞬間に配送される rule に置く」は、配送が Read で起きるのか Write でも起きるのか、サブエージェントに起きるのかが、リポジトリ内で判定できない（memory: reference_claude_rules_paths_matcher「配送は harness ネイティブでリポジトリ内では決定不能」）。research.md 自身も「変異を選ぶには対象を読む」と推論で結んでおり、実測の記述は無い。
+  - 反証できる手順: 原本を一切読まずに複製だけを作って変異スクリプトを書くセッションで safety-nets.md が文脈に入っているかを見る（入っていなければ「届く」は偽）。今回は未実施。
+  - 同じ穴が /implement 3b の委譲でもある。「委譲はコンテキストを継承しない」（SKILL.md の同節に明記）ので、委譲先で rule が自動配送される保証は無い。経路 B（SKILL.md:111 に一言）の価値は research.md の見積もりより高い可能性がある。
+
+== 壊せなかった項目（反証を試みて残った）==
+
+[S1] 命題 1: spawnSync(shell:true, timeout) の timeout は直下の cmd だけを止め、npx node → cmd → vitest → worker の 4 つが、駆動スクリプトの終了後も残る。drive.mjs shell を実行し、終了後に ParentProcessId で確認: 4 つ全部生存、worker の CPU 累計は増え続けた（drive3 shell: 11.7 → 15.1 → 20.0 秒、約 1 コア）。
+[S2] 計器の疑い（CommandLine -like '*vitest*' が worker を漏らす）は、否定できた。worker の CommandLine は `--experimental-import-meta-resolve --require C:/workspace/Snotra/node_modules/vitest/suppress-w…` で、vitest を含む。それでも念のため drive3.mjs は CommandLine フィルタ無しで、CreationDate と全 node/cmd を列挙。direct 形の kill 後 3 秒・8 秒とも (none) で、worker は本当に消えている。vitest は forks プール（worker は node の直接の子）。
+[S3] 命題 2 の中核: node → node（vitest 本体 → worker）で本体を kill すると worker も消える。spawn+kill（drive3 direct）に加え、research の表に無い spawnSync(shell:false, timeout) も実測した（drive.mjs direct: ETIMEDOUT・vitest/cmd 系の残存 0）。「Windows では子を止めても孫は止まらない」が全称としては偽、という結論は保たれた。汎用の鎖でも同じ（A, C）。IPC の有無に依らず、spin 中の worker も消える。
+[S4] 命題 5: shell:false で `npx` は ENOENT、`npx.cmd`（相対・絶対とも）と `node_modules/.bin/vitest.cmd` は EINVAL。真。ただし回避は `node npx-cli.js vitest …`（shell:false で動く）もある。この場合も npx が内部で `cmd /d /s /c vitest run` を挟むので孤児の機序は同じ。
+[S5] SKILL.md:111 が変異注入の行で「timeout とモジュール解決の失敗は検知に数えない」を持つこと、safety-nets.md の節が 4 本であること、AT_CMD_POS・GIT_AT_CMD が pre-bash.mjs に実在する（60 行・222 行）ことは、確認できた。
+
+== 命題 6（機序）==
+⚠️ 未裁定のまま。観測は仮説と整合するが、仮説の形を直す必要がある。
+  - 観測（A〜F と vitest）から言えるのは、「node の親が TerminateProcess で死ぬと、libuv が起こした直接の子とその子孫（同じく libuv が起こしたもの）は消える。cmd.exe が起こした子は、その連鎖から外れる」である（E が決定的）。research の文言「孫は job から外れる」は、孫が node 起動か cmd 起動かを区別していない。
+  - 一次資料（deps/uv/src/win/process.c）は私も読んでいない。「SILENT_BREAKAWAY_OK」が原因かは未検証。
+  - 反証できる手順: node → node → node の 3 段（全部 libuv 起動）で最上段の次を kill し、孫が消えれば「cmd が原因」の読みと整合。さらに cmd.exe を Start-Process 経由の非 libuv 起動に替えても同じなら、原因は cmd.exe そのものでなく「libuv 以外の起動」。後者は未実施。
+
+== 未測定（⚠️）==
+  - detached:true の direct 形の再実測は、今回はしていない（research の表を引く。S3 の機序とは整合）。
+  - 事故の本物の変異（正規表現の破滅的バックトラック）での再現はしていない（research と同じ）。
+  - 駆動側が node でない場合（PowerShell・Python 等）。libuv の仕組みに依るなら、direct 形でも木が残る可能性がある。研究が「node → node は安全」と書くのは、駆動側が node の場合に限る。
+  - 並行セッションの CPU 競合下での timeout の挙動。
+
+== 推奨される research の修正 ==
+  1. 規範の案文は「spawnSync の timeout 後に taskkill /T」ではなく、(a) 根が生きている間に taskkill /T /F を打てる形（spawn + 自前タイマー）、または (b) 孤児の根（ParentProcessId が不在 pid の node）を探して止める、にする。spawnSync の戻り pid への taskkill は not found で空振りする。
+  2. 「node → node なら安全」を「鎖に cmd.exe を挟まなければ」へ直し、E を根拠に添える。
+  3. 逐語引用の列挙は「15 ファイル」へ直すか、列挙をやめて grep を正本にする。
+  4. 配送の節は、「届く」を「原本を読めば当たる。複製だけだと当たらない。委譲先は不明」へ弱める。

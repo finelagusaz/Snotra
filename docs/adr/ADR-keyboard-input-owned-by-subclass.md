@@ -21,5 +21,6 @@
 
 - 変換中の英字キー（`VK_PROCESSKEY` のときの物理 A–Z）と Alt+英字の文字（`WM_SYSCHAR`）は、挙動を変えずに旧実装と同じに保った。挙動を変える判断はこの決定の範囲外である。切り替えの前に、旧経路と新経路を並走させて同じ egui イベント列になることを、注入の打鍵（キー 44 件・文字 8 件）と日本語 IME の手打ち（キー 181 件・文字 3 件）で確かめた
 - 直前のキー押下を持たない `WM_CHAR`（`PostMessage` で他のアプリが送る文字・#1269 の残余）が入るようになった。`SendInput` の Unicode のサロゲートペアも、キーのメッセージを跨いで連結するので入る。どちらも smoke が固定する
+- 計器 `SNOTRA_EGUI_INPUT` の `push_key` は subclass から出るようになり、旧版の `mapped=` は無い（写像できないキーは egui へも計器へも出ない）。`ADR-injected-arrow-key-physical-identity` が勧める「`push_key` の `mapped=` を見る」読み方は旧経路のものである。到着は今も `rx_key` が答える
 - tao に残る依存は、そのループが `TranslateMessage` を呼ぶことだけである。不変条件の正本は `snotra-egui-runtime/CLAUDE.md`
 - AZERTY のように数字が Shift 側にある配列では、無修飾の数字キーが `Num*` の `Event::Key` になり、旧実装（tao の logical）と違う。src-tauri も TextEdit も数字キーの `Event::Key` を読まないので受け入れた

@@ -426,13 +426,17 @@ mod tests {
         drain_events(&mut input);
 
         input.push_native_input(native_key(egui::Key::C, true));
-        assert!(matches!(
-            drain_events(&mut input).as_slice(),
-            [egui::Event::Key {
+        assert_eq!(
+            drain_events(&mut input),
+            vec![egui::Event::Key {
                 key: egui::Key::C,
-                ..
-            }]
-        ));
+                physical_key: Some(egui::Key::C),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            "tao が外した Ctrl・Alt を、キーに載せる修飾でも外したままにする"
+        );
     }
 
     #[test]

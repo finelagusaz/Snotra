@@ -242,7 +242,12 @@ unsafe extern "system" fn ime_subclass_proc(
             }
             WM_KILLFOCUS => state.keyboard.borrow_mut().on_focus_lost(),
             m if keyboard::is_keyboard_message(m) => {
-                let scan = physical_scan(wparam.0 as u16, lparam.0 as u32);
+                // `WM_CHAR` の wParam は文字であって VK ではないので、物理キーを導かない。
+                let scan = if matches!(m, keyboard::WM_CHAR | keyboard::WM_SYSCHAR) {
+                    PhysicalScan(0)
+                } else {
+                    physical_scan(wparam.0 as u16, lparam.0 as u32)
+                };
                 // SAFETY: GetKeyState reads this thread's keyboard state.
                 let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
                 let translation = state.keyboard.borrow_mut().on_message(
@@ -327,7 +332,9 @@ fn held_keys() -> Vec<PhysicalScan> {
 
 /// キーのメッセージの物理キー。lParam の 16–23 bit がスキャンコード、24 bit が拡張キー。
 /// **スキャンコードが 0 なら VK から導く**（`keybd_event(vk, 0, …)` の注入はこの形で届く・tao と同じ）。
-/// 取り込み（[`held_keys`]）と同じ関数で導くので、抑止の鍵が両側で揃う。
+/// その場合は取り込み（[`held_keys`]）と同じ関数で導くので鍵が揃う。lParam にスキャンコードがある
+/// 実打鍵では、拡張キー（テンキーの Enter 等）が取り込みの値と拡張ビットだけ食い違いうる——
+/// focus 獲得時に押していたテンキーの Enter は抑止されない（Escape・英字は食い違わない）。
 fn physical_scan(vk: u16, lparam: u32) -> PhysicalScan {
     let scan = ((lparam >> 16) & 0xFF) as u16;
     if scan == 0 {

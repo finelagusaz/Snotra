@@ -38,6 +38,8 @@ pub(crate) const WM_CHAR: u32 = 0x0102;
 pub(crate) const WM_SYSKEYDOWN: u32 = 0x0104;
 pub(crate) const WM_SYSKEYUP: u32 = 0x0105;
 pub(crate) const WM_SYSCHAR: u32 = 0x0106;
+/// `SendInput` の `KEYEVENTF_UNICODE` と絵文字パネルが送る VK。文字は続く `WM_CHAR` が運ぶ。
+const VK_PACKET: u16 = 0xE7;
 
 /// subclass が変換核へ渡すキーボードのメッセージか。
 pub(crate) fn is_keyboard_message(message: u32) -> bool {
@@ -136,9 +138,26 @@ impl KeyboardTranslator {
             // 保たれ、離した後の `PostMessage(WM_CHAR)`（#1269 の形）を巻き添えにしない。
             self.drop_chars = false;
             self.held.remove(&scan);
-            self.down.remove(&scan);
+            // **down を送ったキーは、記録した値で release を送る**——押している間に Shift が変わると
+            // 写像が変わり（`1` → Shift つきは写らない）、写像し直すと release が落ちる。
+            if let Some((key, physical_key)) = self.down.remove(&scan) {
+                return Translation {
+                    events: vec![NativeInput::Key {
+                        key,
+                        physical_key,
+                        pressed: false,
+                        repeat: false,
+                    }],
+                    suppressed: false,
+                };
+            }
         }
 
+        // `VK_PACKET`（`SendInput` の Unicode）は文字だけを運ぶ。lParam のスキャンコードには文字の
+        // 下位バイトが載りうるので、物理キーへ落とすと英字の Key を偽造する。
+        if vk == VK_PACKET {
+            return Translation::default();
+        }
         let physical_key = physical_key_from_scan(scan);
         let Some(key) = key_from_vk(vk, shift).or(physical_key) else {
             return Translation::default();
@@ -289,7 +308,6 @@ mod tests {
 
     const VK_ESCAPE: u16 = 0x1B;
     const VK_PROCESSKEY: u16 = 0xE5;
-    const VK_PACKET: u16 = 0xE7;
     const VK_A: u16 = 0x41;
     const VK_Z: u16 = 0x5A;
     const VK_1: u16 = 0x31;
@@ -614,6 +632,32 @@ mod tests {
             chr(&mut t, 'a' as u32).events,
             vec![NativeInput::Text("a".to_owned())]
         );
+    }
+
+    /// `VK_PACKET`（`SendInput` の Unicode・絵文字パネル）は Key を作らない。lParam のスキャンコードに
+    /// 文字の下位バイトが載ると、物理キーへ落ちて英字の Key（Ctrl つきなら Cut）を偽造しうる。
+    #[test]
+    fn packet_key_never_falls_back_to_physical_letter() {
+        let mut t = KeyboardTranslator::default();
+        // 中 = U+4E2D。下位バイト 0x2D は物理 X のスキャンコードと同じ。
+        assert!(
+            down(&mut t, VK_PACKET, PhysicalScan(0x2D))
+                .events
+                .is_empty()
+        );
+        assert!(up(&mut t, VK_PACKET, PhysicalScan(0x2D)).events.is_empty());
+    }
+
+    /// 押している間に Shift が変わっても、down を送ったキーの release は届く（写像が変わっても
+    /// 記録した値で送る）。
+    #[test]
+    fn release_uses_the_key_recorded_at_keydown() {
+        let mut t = KeyboardTranslator::default();
+        down(&mut t, VK_1, SCAN_1);
+        let events = t
+            .on_message(WM_KEYUP, VK_1 as usize, 0, SCAN_1, true)
+            .events;
+        assert_eq!(events, vec![key(egui::Key::Num1, None, false)]);
     }
 
     /// 抑止したキーを離した後の、キー押下を伴わない `WM_CHAR`（`PostMessage`・#1269 の形）は入る。

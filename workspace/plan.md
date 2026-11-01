@@ -71,6 +71,10 @@
 - 2026-11-02・`97a2c4f1`（debug）・`workspace/shadow-1289.ps1`（`keybd_event` の注入・検証用プロファイル）: 英字・Shift+英字・数字・Shift+数字・テンキー・OEM・Space・Ctrl+A/C/V/Z/H・↑↓←→・Home/End・Backspace/Delete・Tab・Alt+A・F1・Escape。**`tao_key` 44 件と `sub_key` 44 件、`tao_text` 8 件と `sub_text` 8 件が、順序まで一致**（Alt+A の `WM_SYSCHAR` は両経路とも文字になる＝D2 を実測で確認）
 - 2026-11-02・同じ版・ユーザーの手打ち（日本語配列・日本語 IME を手で入れた。確定・続け打ち・Escape での取り消し・変換中の Ctrl+V・IME オフで Ctrl+A → Delete → `xyz`）: **`tao_key` / `sub_key` 181 件、`tao_text` / `sub_text` 3 件（`xyz`）が順序まで一致**。変換中の `VK_PROCESSKEY` の英字も一致（D1）。変換と確定の間に subclass へ `WM_CHAR` は来ておらず（`sub_text` は `xyz` の 3 件だけ）、IME 由来の文字が二重に入る経路は観測されなかった。IME の確定は subclass の既存経路から 9 件、tao の tripwire（`push_text`）は 0 件
 
+## 検証の巡
+
+- 巡 1・`a54da096`: 道具 green（A・C・E・F）/ 委譲の指摘 Low 10（Critical・High・Medium 0）/ 変異 9 本中 8 本捕捉・生き残り 1（`|| drained > 0` を外す——遅延だけに効き、測る検出器が無い。受け入れて報告に残す）。Low のうち L0（Shift 変化で release が落ちる）・L1（`VK_PACKET` が物理キーへ落ちる）・L4（`WM_CHAR` で物理キーを導く）・L6（AltGr のテストが修飾を見ない）・L8（旧 ADR の `mapped=` の読み方）・L9（コメントの言い過ぎ）を直した。L2・L3・L5・L7 は受け入れ
+
 ## 不変条件と異常系
 
 - **キーのメッセージは消費しない**（`DefSubclassProc` へ流す）。Alt+F4・システムメニュー・tao 自身のキー処理を保つ

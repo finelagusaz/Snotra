@@ -73,8 +73,8 @@ hooks.md の条項を置き場所の順（テスト → コメント → 文書�
 - [x] 撤去の語彙を数え、在る前提の記述を直す（`hooks.md`・`実装契約` の残りは G-stale-identifiers.mjs:96 の過去形の 1 件と合成 fixture 名だけ）
 
 ### Phase 4: 検証
-- [ ] `npm test`・`npm run governance:check`・`verify:tree`（E,F）を通す
-- [ ] PR 本文用の削除台帳・字数と太字数の前後・分類ごとの件数を `workspace/` 外の一時ファイルへ用意する
+- [x] `npm test`・`npm run governance:check`・`verify:tree`（E,F）を通す（最終 64ee82ec green）
+- [x] PR 本文用の削除台帳・字数と太字数の前後・分類ごとの件数を `workspace/` 外の一時ファイルへ用意する
 
 ## 未確定（実装前に潰す）
 

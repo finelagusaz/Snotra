@@ -1,11 +1,37 @@
 /**
  * Claude Code の rust-analyzer インスタンスへ渡す設定（project-scope LSP plugin）の不変条件を判定する。
+ * 設定は `.claude/lsp/` が運び、`.claude/settings.json` の `extraKnownMarketplaces` + `enabledPlugins` で配送する。
+ * `.lsp.json` は JSON でコメントを持てないので、RA の扱いの正本はこの doc である。
+ *
+ * **RA は semantic navigation の道具であり、検証の権威ではない。** 確定判定は fmt / clippy / crate test
+ * （手動と CI）が持ち、そこへ LSP の状態（診断の到着順・quiescence）を混ぜない。診断は抑制していない——
+ * 届くのは構文エラーで、正常な編集では 0 件だった。`.lsp.json` に `diagnostics` キーを置かない理由と、
+ * 測った変異の範囲は `docs/adr/ADR-ra-diagnostics-suppression.md`。
  *
  * **なぜ自前の検知器が要るか。** `claude plugin validate --strict` は `.lsp.json` を視界に入れない——
  * JSON として壊しても抑制キーを消しても exit 0 を返す（2026-08-14 実測・#1083）。
- * そのうえ**設定が届かない・上書きされる壊れ方は沈黙する**——rust-analyzer は設定が無ければ既定値で
- * 普通に起動するので、navigation は動いたまま `checkOnSave` だけが復活する。壊れ方の分類と、
- * 沈黙しない枝（plugin の load 自体が失敗する形）は `docs/hooks.md`「Claude Code の RA インスタンスと hook の分担」が正本。
+ *
+ * **壊れ方は 3 つあり、うち 2 つは沈黙する。**
+ * - 設定が届かない・上書きされる（抑制キーの消失・ratoml による上書き・宣言箇所の取り違え）: 沈黙する。
+ *   rust-analyzer は設定が無くても既定値で起動するので、navigation は動いたまま `checkOnSave` だけが復活する。
+ *   この判定が捕まえるのはこの形である
+ * - rust-analyzer のバイナリが無い（toolchain の入れ替え・pin の変更で component が落ちる）: 沈黙する。
+ *   cargo / clippy / test は緑のまま、`LSP` ツールだけが `crashed with exit code 1` を返す（#1239）。
+ *   2026-08-24 には 11 時間気づかれなかった（#1177）。守り手は `rust-toolchain.toml` の `components` の宣言で、
+ *   この判定が見るのは宣言までである（下の toolchain の節）
+ * - plugin の load 自体が失敗する（trust 未受諾・マニフェスト不正・パス解決失敗・名前の不一致）: 沈黙しない。
+ *   公式 plugin を無効化してあるので、`.rs` の navigation が消える形で現れる（エラーは debug log にしか出ない）
+ *
+ * **残余は 2 つあり、どちらもリポジトリの外に原因がある。**
+ * - worktree は自分の設定ではなく、最初に登録したツリーの設定で動く（2026-08-14 実測）。
+ *   `known_marketplaces.json` はマシン全体で marketplace 名をキーに持ち、installLocation が最初に登録した
+ *   ツリーの絶対パスを指し続ける。worktree 側の `.lsp.json` のサーバ名だけを変えて起動すると、登録されたのは
+ *   メインツリー側の名前だった（宣言パスは両方に在り、パスの不在は条件ではない）。この判定はそのツリーの
+ *   ファイルを読むので緑のままである。`.claude/lsp/` を持たない古い枝の worktree は公式 plugin へ落ち、
+ *   どの場合も LSP サーバはちょうど 1 つになる
+ * - `.claude/settings.local.json` は project より優先され、そこへ `enabledPlugins` を書けば plugin を無効化できる。
+ *   この判定は `.claude/settings.json` しか読まないので、リポジトリからは守れない（現在そのキーは書かれていない）。
+ *   gitignore 済みだが、実在検査は ignore 対象を免除するので参照してよい（#1088）
  *
  * **判定を非 test の `.mjs` に置くのは 2 つの理由による。** (1) 稼働中の `.claude/settings.json` へ
  * 変異を当てずに複製へ当てられる
@@ -118,7 +144,7 @@ export function checkLspConfig(rootDir) {
   //
   // **見るのは宣言だけである。** 実際に toolchain へ入っているかは射程の外——CI の runner には
   // toml が効いて初めて入るので、環境の実測を検査に置くと toml の効果に依存する循環になる。
-  // 宣言が在るのに rustup が取得に失敗した形は沈黙する（受容する残余・`docs/hooks.md`「Claude Code の RA インスタンスと hook の分担」）。
+  // 宣言が在るのに rustup が取得に失敗した形は沈黙する（受容する残余・先頭 doc「壊れ方は 3 つあり」）。
   // ratoml 検査と同じく配送経路の連鎖より前に置く（連鎖の早期 return に道連れにされない）。
   // コメントの除去も同じ扱い——`rust-analyzer` を**論じている**コメント行で緑にならないため。
   const toolchainRel = "rust-toolchain.toml";

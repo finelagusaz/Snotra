@@ -27,6 +27,8 @@ import {
   usesNoVerify,
   pullWithoutFfOnly,
   judgeCommandShape,
+  GIT_TIMEOUT_MS,
+  VERIFY_GIT_TIMEOUT_MS,
 } from "./pre-bash.mjs";
 import { summaryPathFor } from "../../scripts/verify-tree.mjs";
 
@@ -417,6 +419,13 @@ describe("readVerifyState — 本物の git と要約ファイル", () => {
     const dir = verifiedRepo();
     commit(dir, "workspace/報告.txt", "r\n"); // 非 ASCII: core.quotepath=true の下で引用符で囲まれても接頭辞が当たること
     expect(read(dir)).toEqual({ ok: true });
+  });
+  it("名前が workspace で始まるだけのディレクトリは外として止める（接頭辞は `workspace/` まで）", () => {
+    const dir = verifiedRepo();
+    commit(dir, "workspaceX/a.txt", "a\n");
+    const r = read(dir);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("workspaceX/a.txt");
   });
   it("workspace/ の中と外を混ぜたコミットは、外のパスで止める（並びで外が後ろに来る形）", () => {
     const dir = verifiedRepo();
@@ -914,6 +923,8 @@ describe("usesNoVerify", () => {
   it.each([
     // 「言及」で発火しない（#482 の根治を新判定でも保つ）
     ['grep -n "--no-verify" CLAUDE.md'],
+    // 引用の無い言及。git がコマンド位置に居ないので発火しない（コマンド位置の要件そのもの）
+    ["echo git commit --no-verify"],
     ["git commit -m x"],
     ["git commit --amend --no-edit"],
     ["git commit -F- x"],
@@ -999,10 +1010,14 @@ describe("judgeCommandShape — platform ゲート", () => {
 
   // I6: 規範を降ろした設計は、この文言がその場で教えることに賭けている
   it("拒否文言は代わりの手段を含む", () => {
-    expect(judgeCommandShape("cat <<EOF", "win32").reason).toContain("git commit -F");
+    const heredoc = judgeCommandShape("cat <<EOF", "win32").reason;
+    expect(heredoc).toContain("Write ツール");
+    expect(heredoc).toContain("git commit -F");
     expect(judgeCommandShape("echo C:\\workspace", "win32").reason).toContain("`/` で統一");
     expect(judgeCommandShape('python -c "日本語"', "win32").reason).toContain("PYTHONIOENCODING");
-    expect(judgeCommandShape("git commit --no-verify", "darwin").reason).toContain("人間専用");
+    const noVerify = judgeCommandShape("git commit --no-verify", "darwin").reason;
+    expect(noVerify).toContain("人間専用");
+    expect(noVerify).toContain("理由を解消");
     expect(judgeCommandShape("git pull", "darwin").reason).toContain("--ff-only");
   });
 
@@ -1153,5 +1168,12 @@ describe("settings.json ドリフト検出カナリア", () => {
 
   it("インライン grep が残っていない（payload 全体 grep の回帰）", () => {
     expect(JSON.stringify(preToolUse)).not.toContain("grep");
+  });
+
+  // hook 全体の timeout を越えると非ブロッキングのエラー＝素通りになる。`gh pr create` の
+  // 1 回で走る git は readGitState の 2 本と要約の照合の 2 本で、最悪はその和である
+  it("git 呼び出しの上限の和が hook の timeout に収まる", () => {
+    const budgetMs = preToolUse[0].hooks[0].timeout * 1000;
+    expect(GIT_TIMEOUT_MS * 2 + VERIFY_GIT_TIMEOUT_MS * 2).toBeLessThan(budgetMs);
   });
 });

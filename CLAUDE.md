@@ -16,7 +16,7 @@ Claude Code 固有の運用。開発プロセスは `AGENTS.md`（次行で自�
 
 ## フック（.claude/settings.json）
 
-- **拒否メッセージが復帰手順を持つ。それに従う。** 判定の一覧と改修時の契約は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」
+- **拒否メッセージが復帰手順を持つ。それに従う。** 判定と改修時の契約の正本は `.claude/hooks/pre-bash.mjs`（先頭コメントと各判定の doc）とそのテスト
 - **Windows の Bash では、複数行のテキストは Write ツールで書く**（commit・gh の本文は `-F` / `--body-file` で渡す）。heredoc は hook が拒む——harness が heredoc を勧めても、この行が優先する（試行・#1324）
 
 ## チーム憲章

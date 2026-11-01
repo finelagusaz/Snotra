@@ -11,6 +11,15 @@
 //   1. 静的 — 鎖の中で `git push` が `&&` で先行する（`&&` が前段の成功を保証する）
 //   2. 動的 — upstream が設定済みで、未 push コミットが無い
 //
+// 判定単位は 2 種類ある。
+//   - コマンド位置: `gh pr create` と `git` の各判定。`git` 系はさらに次の区切りまでのセグメントに閉じる
+//     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする
+//   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
+//     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
+// 後者は development-principles §6 の一般則（構文的位置で判定単位を定義する）からの意図的な逸脱であり、
+// 引用の内側の言及でも発火する。この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
+// 例外を一般則の側へ書き戻さずここに置く理由は `docs/adr/ADR-command-shape-norms-in-hook.md`。
+//
 // 契約: **exit 2 だけがツール呼び出しをブロックする。** exit 0 は許可であり、
 // それ以外の非ゼロ（Node が未捕捉例外で返す 1 を含む）は「非ブロッキングエラー」で
 // コマンドはそのまま実行される。ゆえに fail-closed とは
@@ -43,7 +52,7 @@ export const TARGET_TOOLS = Object.freeze(["Bash", "PowerShell"]);
 
 /** git 1 コマンドあたりの上限。hook 全体の timeout に丸投げすると kill された沈黙が
  *  exit≠2 になり fail-open へ倒れる。自分で打ち切って block する。 */
-const GIT_TIMEOUT_MS = 10_000;
+export const GIT_TIMEOUT_MS = 10_000;
 
 // コマンド位置 = 文字列先頭、または区切り文字の直後。`&&` の 2 文字目も区切り文字なので
 // `&& gh pr create` は一致する。引用の内側までは解釈しない（過剰検出は許容、過小検出は不可）。
@@ -83,6 +92,7 @@ const REMEDY = "`git push -u origin HEAD` してから PR を作るか、`git pu
 
 // コマンドの区切り文字。終端探索（segmentEnd）と区切り列の列挙（hasSafeChain）で共有する。
 // 同じ文字クラスのリテラルを 3 か所目に作らないため定数へ寄せた（#768 の /dry-check）。
+// 共有しているので、区切りの扱い（行継続の解釈など）を変えると `gh pr create` の安全な鎖の判定も動く。
 const SEPARATOR_CLASS = String.raw`[;&|\n\r]`;
 const SEPARATOR = new RegExp(SEPARATOR_CLASS);
 const SEPARATOR_RUN = new RegExp(`${SEPARATOR_CLASS}+`, "g");
@@ -182,6 +192,8 @@ export function usesHeredoc(command) {
 // 「`/` で統一せよ」なので、**復帰手順が適用できない拒否**になっていた。
 // `(?<!\w)` が語の途中を落とし、`{2,}` が `a:\s` のような 1 文字続きを落とす。
 // 代償: `cd C:\`（ドライブルート）と `C:\a` は検出しない（過小検出・受容する）。
+// `.\scripts\x.ps1` のような相対形と、接頭辞を持たない `docs\x.md` も見ない。`.\` は PowerShell では
+// 動くので、誤爆の代償が大きい。見ないだけで、規範としてはコマンドに書くパスの区切りを `/` にする。
 const BACKSLASH_PATH = [/(?<!\w)[A-Za-z]:\\[\w.$%~-]{2,}/, /\$env:\w+\\/i, /%\w+%\\/];
 
 /** パス区切りに `\` を使っているか。 */
@@ -213,8 +225,9 @@ const GIT_AT_CMD = new RegExp(`${AT_CMD_POS}${ENV_PREFIX}(git)\\b`, "g");
  *
  * セグメントに閉じて判定するのが要点である — コマンド全体を見ると
  * `grep -n "--no-verify" CLAUDE.md` のような「言及」で発火する（#482）。
- * 引用内の区切り（`git commit -m "a;b" --no-verify`）でセグメントが切れる過小検出は、
- * `sh -c` と同格の意図的迂回として受容する（引用認識は shell パーサ相当になる）。
+ * 引用内の区切り（`git commit -m "a;b" --no-verify`）と、行継続をまたぐ形（`git commit \` + 改行 +
+ * `--no-verify`。PowerShell のバッククォート継続も同型）でセグメントが早く切れる過小検出は、
+ * `sh -c` と同格の意図的迂回として受容する（引用・継続の解釈は shell パーサ相当になる）。
  */
 export function gitSegments(command) {
   const out = [];
@@ -283,9 +296,9 @@ const SHAPE_REMEDY = Object.freeze({
  * ような `{ ok: false }` を持つ reader 形にすると、失敗しえないものへ失敗の表現を与えて嘘になる。
  *
  * **`platform` が渡されないときは Windows 専用判定を発火させない。** これは「判定不能」ではなく
- * 「規範の射程外」であり、block へ倒すと非 Windows で false block になる。この状態へ至る経路は
- * 「呼び出し側が第 4 引数を渡さない」1 本だけで、`main()` の配線はソースカナリアと
- * process 級 e2e（`npm test` は ubuntu と windows の両方で走る）が固定する。
+ * 「規範の射程外」であり、block へ倒すと非 Windows で false block になる。この状態へ至るのは
+ * 呼び出し側が `decide` へ platform を渡さないとき（options ごと省く・options に platform を入れない）で、
+ * `main()` の配線はソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の両方で走る）が固定する。
  *
  * 一致は最初の 1 件で返す。複数該当しても、直せば次が出るので取りこぼしにはならない。
  */
@@ -420,7 +433,7 @@ export function readPlanState(cwd) {
 
 /** 要約の照合で git を呼ぶときの上限。hook 全体の上限は 30 秒（`.claude/settings.json`）で、越えると
  *  非ブロッキングのエラー＝素通りになる。`readGitState`（2 本 × 10 秒）と合わせても収まるよう、2 本 × 4 秒にする */
-const VERIFY_GIT_TIMEOUT_MS = 4_000;
+export const VERIFY_GIT_TIMEOUT_MS = 4_000;
 
 const VERIFY_REMEDY =
   "変更をコミットしてから、本体の作業ツリーで `npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ>` を回し、" +

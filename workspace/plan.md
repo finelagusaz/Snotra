@@ -60,17 +60,17 @@ hooks.md の条項を置き場所の順（テスト → コメント → 文書�
 ## 作業項目
 
 ### Phase 1: テスト
-- [ ] `pre-bash.mjs` の 2 定数を export する
-- [ ] `pre-bash.test.mjs`: ① コマンド位置・② 接頭辞と予算を足し、③ 既存の拒否文言テストを強める
+- [x] `pre-bash.mjs` の 2 定数を export する
+- [x] `pre-bash.test.mjs`: ① コマンド位置・② 接頭辞と予算を足し、③ 既存の拒否文言テストを強める
 
 ### Phase 2: コードのコメントへ移す
-- [ ] `pre-bash.mjs`: A3 の逸脱・B4b・B4c・B4e を移し、B2 の偽を直す
-- [ ] `lsp-config.mjs`: C1・C4・C6・C8・C9 を先頭 doc へ移し、hooks.md への指し先を外す
+- [x] `pre-bash.mjs`: A3 の逸脱・B4b・B4c・B4e を移し、B2 の偽を直す
+- [x] `lsp-config.mjs`: C1・C4・C6・C8・C9 を先頭 doc へ移し、hooks.md への指し先を外す
 
 ### Phase 3: 撤去と参照の付け替え
-- [ ] `docs/hooks.md` を削除する
-- [ ] `CLAUDE.md`:19・`AGENTS.md`:23・`docs/development-principles.md`:78/89/93・`G-stale-identifiers.mjs`:96 を直す
-- [ ] 撤去の語彙を数え、在る前提の記述を直す
+- [x] `docs/hooks.md` を削除する
+- [x] `CLAUDE.md`:19・`AGENTS.md`:23・`docs/development-principles.md`:78/89/93・`G-stale-identifiers.mjs`:96 を直す
+- [x] 撤去の語彙を数え、在る前提の記述を直す（`hooks.md`・`実装契約` の残りは G-stale-identifiers.mjs:96 の過去形の 1 件と合成 fixture 名だけ）
 
 ### Phase 4: 検証
 - [ ] `npm test`・`npm run governance:check`・`verify:tree`（E,F）を通す

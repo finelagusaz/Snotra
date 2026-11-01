@@ -357,7 +357,11 @@ describe("verify-tree align", () => {
     git(repo, ["commit", "-m", "ignore delegate"]);
     const next = git(repo, ["rev-parse", "HEAD"]);
 
-    expect(runScript(wt, ["align", "--sha", next]).status).toBe(2);
+    // 理由まで見る: 直後の fail-closed（check-ignore が判定できない）も同じ exit 2 を出すので、
+    // 終了コードだけでは ignore の判定を消す変異が生き残る（#1319 で実測）
+    const r = runScript(wt, ["align", "--sha", next]);
+    expect(r.status).toBe(2);
+    expect(r.output).toContain(".delegate/ が ignore されている");
   });
 
   it("本体の作業ツリーでは exit 2（linked worktree でない）", { timeout: T }, () => {

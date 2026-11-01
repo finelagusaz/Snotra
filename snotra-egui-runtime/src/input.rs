@@ -80,7 +80,7 @@ pub(crate) fn input_trace(kind: &str, detail: &str) {
 /// このキーイベントを egui へ渡すか（#927）。`true` = 渡す。`held` は副作用として更新する。
 ///
 /// **tao は `WM_SETFOCUS` を受けたとき、その瞬間に押されている全キーの `Pressed` を合成する**
-/// （`tao-0.37.1/src/platform_impl/windows/keyboard.rs:103-107` の `get_async_kbd_state()` →
+/// （`tao-0.37.2/src/platform_impl/windows/keyboard.rs:103-107` の `get_async_kbd_state()` →
 /// `synthesize_kbd_state(ElementState::Pressed, …)`）。**合成 press は文字も持つ**
 /// （`create_synthetic` が `text_with_all_modifiers` を埋める・同 `:478`）ので、ここで落とした
 /// press は文字も入れない（#1266 で文字を `KeyEvent` から取るようになった帰結。focus 獲得時に
@@ -220,7 +220,7 @@ impl InputState {
             }
             WindowEvent::Focused(focused) => {
                 // **focus を失ったら抑止を全消去する**（#927）。tao は `WM_KILLFOCUS` でも
-                // 合成 release を先に送る（`tao-0.37.1/src/platform_impl/windows/event_loop.rs`
+                // 合成 release を先に送る（`tao-0.37.2/src/platform_impl/windows/event_loop.rs`
                 // の `lose_active_focus` は `keyboard_callback`〔`:943`〕より後の `match msg`
                 // 〔`:1736` / `:1753`〕で走る）ので、到着順に関わらずここで空になる。
                 // **`Focused(true)` では消さない**——合成 press は `Focused(true)` より**先**に届くため

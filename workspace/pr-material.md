@@ -108,6 +108,8 @@
 
 ## 直さなかった参照
 
+- `hide_request.rs` の `//!` は計画では「ウィンドウ生成の制約」への指しを残す予定だったが、旧い指しがずれていた（可視性の閉包はその節に無い）ので括弧ごと `hide_egui_main` の doc へ付け替えた
+
 - `docs/adr/`・`docs/superpowers/`・`docs/design/` が消えた見出しを指していても直さない（凍結された歴史・`ADR-adr-frozen-history`）
 
 ## 付け替えた参照

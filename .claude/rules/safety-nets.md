@@ -26,6 +26,7 @@ paths:
 - 変異対象は、他所から逐語で名指されていないものを選ぶ。名指されていると別の理由で赤くなり、当の観測ができない（#1094）
 - 本体リポジトリの内側の worktree では `node_modules` を張らない。外へ置いた複製では junction を張る。モジュール解決の失敗は検知と同じ exit 1 になるので、どのモジュールが解決できなかったかを必ず読む
 - 結果を読む前に、測定ハーネス自身が壊れる形（自前で組んだ母集団・finding を絞る鍵の取り違え・独立でない対照）を疑う（#1214）
+- Windows で変異の実行に timeout を掛けるなら、`spawnSync` の timeout に任せない。timeout が止めるのは、`shell: true` や `npx.cmd` が挟む直下の `cmd.exe` だけで、その下は孤児として残る。timeout の後はルートプロセスが既に死んでいるので、taskkill も空振りする。代わりに `spawn`（`npx` を呼ぶなら `shell: true` のまま）と自前のタイマーを使う。止める前に `Get-CimInstance Win32_Process` のスナップショットを 1 回取り、`child.pid` から `ParentProcessId` で辿った子孫の `(ProcessId, CreationDate)` を控える。`taskkill /PID <child.pid> /T /F` で止め、数秒おいて、控えた組が 1 つも残っていないことを確かめる。PID は再利用されるので、PID だけでなく組で照合する（#1352・Node v24 で実測。却下した確認方法は `ADR-mutation-timeout-process-tree`）
 
 ## 規範（ドキュメント・スキル・チェックリスト）を足すとき
 

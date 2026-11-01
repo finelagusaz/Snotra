@@ -16,9 +16,9 @@
 //     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする
 //   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
 //     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
-// 後者は `docs/development-principles.md`「構造的設計原則と強制の階梯」の一般則のうち、
-// 判定単位を構文的位置で定義する、という具体則からの意図的な逸脱であり、
-// 引用の内側の言及でも発火する。この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
+// 後者は `docs/development-principles.md`「構造的設計原則と強制の階梯」の具体則
+// （判定単位を構文的位置で定義する）からの意図的な逸脱で、引用の内側の言及でも発火する。
+// この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
 // 例外を一般則の側へ書き戻さずここに置く理由は `docs/adr/ADR-command-shape-norms-in-hook.md`。
 //
 // 契約: **exit 2 だけがツール呼び出しをブロックする。** exit 0 は許可であり、
@@ -194,7 +194,7 @@ export function usesHeredoc(command) {
 // `(?<!\w)` が語の途中を落とし、`{2,}` が `a:\s` のような 1 文字続きを落とす。
 // 代償: `cd C:\`（ドライブルート）と `C:\a` は検出しない（過小検出・受容する）。
 // `.\scripts\x.ps1` のような相対形と、接頭辞を持たない `docs\x.md` も見ない。`.\` は PowerShell では
-// 動くので、誤爆の代償が大きい。見ないだけで、規範としてはコマンドに書くパスの区切りを `/` にする。
+// 動くので、誤爆の代償が大きい。
 const BACKSLASH_PATH = [/(?<!\w)[A-Za-z]:\\[\w.$%~-]{2,}/, /\$env:\w+\\/i, /%\w+%\\/];
 
 /** パス区切りに `\` を使っているか。 */
@@ -297,9 +297,9 @@ const SHAPE_REMEDY = Object.freeze({
  * ような `{ ok: false }` を持つ reader 形にすると、失敗しえないものへ失敗の表現を与えて嘘になる。
  *
  * **`platform` が渡されないときは Windows 専用判定を発火させない。** これは「判定不能」ではなく
- * 「規範の射程外」であり、block へ倒すと非 Windows で false block になる。製品コードでこの状態へ至るのは
- * 呼び出し側が `decide` へ platform を渡さないとき（options ごと省く・options に platform を入れない）で、
- * `main()` の配線はソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の両方で走る）が固定する。
+ * 「規範の射程外」であり、block へ倒すと非 Windows で false block になる。製品コードでこの状態へ至るのは、
+ * 呼び出し側が `decide` へ platform を渡さないときである。`main()` のその配線は、ソースカナリアと
+ * process 級 e2e（`npm test` は ubuntu と windows の両方で走る）が固定する。
  *
  * 一致は最初の 1 件で返す。複数該当しても、直せば次が出るので取りこぼしにはならない。
  */

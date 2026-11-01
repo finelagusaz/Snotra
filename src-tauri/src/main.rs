@@ -204,7 +204,7 @@ fn main() {
         (result.material, false)
     };
 
-    // PATH エントリのスキャン + マージ。**木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記も木への追加も、空なら何もしない。
+    // PATH エントリのスキャン + マージ（`indexing::build_index_from_material` と同じ手順の別実装——規則を変えるなら両方）。**木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記も木への追加も、空なら何もしない。
     if config.search.include_path_env {
         let path_entries =
             indexer::scan_path_env(material.tree(), config.search.show_hidden_system);
@@ -339,7 +339,7 @@ fn main() {
             // Listen for hotkey-pressed events, then activate the hotkey on the
             // platform thread. Registering the listener before activating the
             // hotkey ensures no event is emitted before there is a receiver to
-            // handle it — this order must not change (src-tauri/CLAUDE.md).
+            // handle it — this order must not change (`docs/architecture.md`「起動シーケンスと初期化順序」).
             //
             // **`SetupRest` はこの呼び出しの中（送信の直前）で刻まれる。** platform
             // スレッドは送信の直後から並行に走り、登録を終えると終端を出す——そのとき
@@ -410,7 +410,7 @@ fn setup_first_run(app_handle: &AppHandle, is_first_run: bool) {
 /// Register the `hotkey-pressed` listener, then activate the hotkey on the
 /// platform thread. **Order must not change**: registering the listener
 /// before sending `RegisterInitialHotkey` ensures no event is emitted before
-/// there is a receiver to handle it (src-tauri/CLAUDE.md).
+/// there is a receiver to handle it (`docs/architecture.md`「起動シーケンスと初期化順序」).
 fn setup_hotkey_listener(app_handle: &AppHandle) {
     let handle_for_hotkey = app_handle.clone();
     app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {

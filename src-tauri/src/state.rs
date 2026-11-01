@@ -23,8 +23,21 @@ pub struct AppState {
     /// **このフィールドは private である**（#1129）——読む口は [`AppState::read_config`]、
     /// 建てる口は [`AppState::new`] で、どちらもこのモジュールの中にある。射程は前者の doc。
     config: Arc<RwLock<Config>>,
-    pub indexing: AtomicBool,
-    pub index_build_started: AtomicBool,
+    /// UI 表示用の「索引ビルド中」。first-run ではビルドスレッドが居なくても
+    /// [`AppState::new`] が true で建てる。
+    ///
+    /// **書くのは [`AppState::new`] / [`AppState::try_begin_index_build`] /
+    /// [`AppState::finish_index_build`] だけである**（外からの force-reset は走行中ビルドのガードを
+    /// 踏み倒すので private にしてある）。
+    /// 読む口は [`AppState::is_indexing`]。
+    ///
+    /// `index_build_started` とは別物である（あちらは二重起動を防ぐ CAS 専用）。**config 変更 →
+    /// 索引再構築のコヒーレンシ判断をこの 2 つから導かない**——判断は engine の `index_stale`
+    /// ledger に閉じている（#347/#348-A）。
+    indexing: AtomicBool,
+    /// 二重起動を防ぐ CAS 専用の旗（[`AppState::try_begin_index_build`]）。書き手と private の
+    /// 理由は `indexing` と同じ。読む口は [`AppState::is_index_build_started`]。
+    index_build_started: AtomicBool,
     /// Tracks main window visibility to avoid costly Win32 `is_visible()` IPC on hotkey toggle.
     ///
     /// **書き手はイベントループ上の 2 経路だけである**——`window_coordinator` の
@@ -32,9 +45,8 @@ pub struct AppState {
     /// false）。読み手のうち correctness に効くのは `layout::present_results` の連言①である。
     ///
     /// **ただしこれは型ではなく規範で保たれている。** このフィールドは `pub` で、新しい
-    /// `store()` を crate 内のどこにでも書ける。加えて `Manager` から main のハンドルを引いた
-    /// `.hide()` はコンパイルが通り**実際に効く**ため、このフラグを更新せずにウィンドウだけ消せる
-    /// （帰結と受容の理由は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに閉じてある」に続く bullet 群が正本）。
+    /// `store()` を crate 内のどこにでも書ける。このフラグを更新せずに main を消す経路も残る
+    /// （帰結と受容の理由は [`crate::egui_shell::hide_egui_main`] の doc が正本）。
     pub main_visible: AtomicBool,
     /// index build 完了ごとに単調増加する世代（#633・SU6 spec 決定 3）。egui view が
     /// last-seen と比較して再検索をトリガするアキュムレータ。panic/spawn 失敗経路の finish でも
@@ -98,9 +110,23 @@ impl AppState {
     /// **`&AppHandle` しか持たない呼び出し元は [`crate::egui_shell::read_config`] を使う**
     /// （あちらは `AppState` 不在の面倒を見てからここへ委譲する）。
     ///
-    /// 規範の全文と害は `src-tauri/CLAUDE.md`「モジュール構成」の当該条項が正本。
+    /// **config の読みをここ（と `egui_shell::read_config`）へ通す規則に条件は付かない**（#1123）——どのスレッドで走る読みかも、何のための読みかも問わない。
+    /// 害は頻度ではなく待ちである（機序は [`crate::egui_shell::read_config`] の doc）。
+    ///
+    /// **射程は読みだけである**——書き込みは `update_config` の 1 本で、engine lock の内側に残す
+    /// （`snotra-core/CLAUDE.md`「engine.rs のロック最小化パターン」）。
     pub fn read_config<T>(&self, read: impl FnOnce(&Config) -> T) -> T {
         read(&self.config.read().unwrap())
+    }
+
+    /// UI 表示用の「索引ビルド中」を読む（`indexing` フィールドの doc）。
+    pub fn is_indexing(&self) -> bool {
+        self.indexing.load(Ordering::SeqCst)
+    }
+
+    /// ビルドの開始権が取られているかを読む（`index_build_started` フィールドの doc）。
+    pub fn is_index_build_started(&self) -> bool {
+        self.index_build_started.load(Ordering::SeqCst)
     }
 
     /// インデックスビルドの開始権を CAS で取得する。

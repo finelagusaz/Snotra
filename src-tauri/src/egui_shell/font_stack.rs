@@ -5,6 +5,12 @@
 //! が返す参照は `transmute` で `'static` 化しており、その健全性はこの不変条件だけを根拠に
 //! 成り立つ。再 set・クリアの経路を足してはならない。
 //! フォント登録の枝は次のとおり（#532 SU4 の形に #689 が 1 枝を足した）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**枝を列挙するのは、この index 0 の不変条件が枝ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
+//!
+//! **index 0 を破ると Latin と CJK が混在する行のベースラインがずれる**（2 フォントで積むとずれること自体は
+//! `snotra-settings/CLAUDE.md` の #399）。softbuffer の `fill_mesh` はカバレッジ AA を持たず、2 フォント間の
+//! 分数 px の差を整数 px へ丸めて目に見える段差にする——glow / wgpu 期は sub-pixel AA が同じ差を隠していた。
+//! 規則は `font_definitions_*` テストが固定するが、見え方を測るのは目視だけである。**フォント登録に触る
+//! 変更では `docs/build-commands.md` カテゴリ D の目視スモークを省かない。**
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

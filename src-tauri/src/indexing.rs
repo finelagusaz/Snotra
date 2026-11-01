@@ -113,7 +113,8 @@ pub fn start_index_build(app: &AppHandle) -> bool {
 /// 欠陥が沈黙で起きる——PATH のコマンドが検索から消えるが、検索結果自体は出るので
 /// 気づく手段が無い（`normalize_entry_key_into` と同じ理屈）。**起動時のロード直後
 /// （`main.rs` の PATH エントリのスキャン + マージ）は同じ手順を別に持つ**——そこは
-/// `PrebuiltIndex` ではなく `Engine` を直接建てるため、ここを呼べない。
+/// `PrebuiltIndex` ではなく `Engine` を直接建てるため、ここを呼べない。**PATH マージの規則を
+/// 変えるときはその起動経路も同じ変更で直す。**
 pub(crate) fn build_index_from_material(
     mut material: indexer::IndexMaterial,
     inputs: &IndexInputs,

@@ -21,11 +21,25 @@
 //! たびに最前面の帯へ撃ち直すためで、撃つかどうかの判断は `ResultsWindow` の中に閉じている
 //! （`raw_show` の doc）。
 //!
-//! **main ウィンドウのサイズは 2 か所に分かれたままである**——show 経路の実高導出は `show_egui_main` の中、
-//! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` に
-//! ある。両者が同じ高さを導出する共有の実体の正本は `src-tauri/CLAUDE.md`「モジュール構成」の
-//! `window_coordinator.rs` の項（#755 / #801）。分かれている理由は読み点だけで、ここは
-//! 「フレームの外・reset-on-show 後の値」を、`view.rs` は「フレームの中・実際の値」を読む。
+//! **main ウィンドウのサイズは 2 か所で設定し、両者は同じ高さを導く**——show 経路の実高導出は
+//! `show_egui_main` の中、すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は
+//! `view.rs` にある。status 行の有無は `notify::status_row_present` を、積算は `layout::main_window_height` を
+//! 共有する。分かれている理由は読み点だけで、ここは「フレームの外・reset-on-show 後の値」を、`view.rs` は
+//! 「フレームの中・実際の値」を読む。show 側は reset-on-show 後の状態をリテラルで渡す——畳む高さと描く高さが
+//! 食い違っても memo リセットが同じフレームの動的高さ算出で直すので固着せず、ずれはその 1 フレームの
+//! スナップとして現れる（#755 / #801。反転の経緯は `ADR-show-path-derives-drawn-height`）。
+//!
+//! **main の位置に基準モニターを判断する 3 箇所は、材料をバー高で共通にする**（#738 / #878）——show
+//! （`position_on_target_monitor`）・可視中のクランプ（`clamp_main_into_work_area`。呼ぶのは `view.rs` の
+//! ポインタ非押下のフレーム・`ADR-main-window-clamp-on-pointer-release`）・hide 時の保存
+//! （`read_placement_relative`）。バー高である理由は `layout::bar_rect_height_phys` の doc、基準モニターの
+//! 分かれ方は `read_bar_anchor` の doc。
+//!
+//! **可視性を変える操作はイベントループスレッドに閉じてある**——`show_egui_main` / `hide_egui_main` /
+//! `drive_results_window` / `ResultsWindow::{show, hide}` は `&snotra_egui_runtime::EventLoopProof` を要求する。
+//! **可視性を変える新しい操作にも同じ証人を要求する**——型が捕まえるのは「別スレッドから呼ぶ」ことだけで、
+//! 証人の付け忘れや引数からの除去は捕まえない。閉じたのはこれらの関数であって `tauri::Window` の生の面
+//! ではない（何が外に残るかは `hide_egui_main` の doc）。
 //!
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
 //! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。
@@ -128,7 +142,7 @@ impl FrameIndexing {
 pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
     FrameIndexing(
         app.try_state::<crate::AppState>()
-            .map(|s| s.indexing.load(Ordering::Relaxed))
+            .map(|s| s.is_indexing())
             .unwrap_or(false),
     )
 }
@@ -189,7 +203,7 @@ pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color
 ///
 /// **その層は #1076 で `engine.lock()` を持たなくなった。** show はフレームの外だが、
 /// **ウィンドウが出るまでを止める**——検索 worker が `engine.search` で `Mutex<Engine>` を握っている
-/// 間に hotkey が来ると、そこで待つのは表示そのものである（`src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項）。
+/// 間に hotkey が来ると、そこで待つのは表示そのものである（`AppState::read_config` の doc）。
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
     let hex = super::read_config(
         app,
@@ -469,6 +483,14 @@ pub(crate) fn show_egui_main(
 /// ため、両ウィンドウを合わせた合流点ではない（#646 PR2 以降・全称主張の訂正は #671 サイクル PR A）。
 /// 外部 window.hide() のみで runtime.visible を false にしない（空白ウィンドウ回避・codex #4）。
 ///
+/// **main を隠す経路はこの関数を通す。** 可視性を変える関数の閉包は表現不能化ではない——`Manager` から
+/// main のハンドルを引いた `.hide()` / `.show()` は任意のスレッドからコンパイルが通り、results と違って
+/// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。そのとき `AppState.main_visible` は
+/// 更新されず、results が既に可視なら最前面に取り残される——main が hidden の間は `RedrawRequested` が
+/// 届かず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 PR A′ で実機発見）。
+/// results が新たに出ることは無い（同じ理由）。#880 サイクル段 2 時点で、main に対する `.hide()` は
+/// この関数の中の 1 か所だけであり、受容する残余である。
+///
 /// **`el` はイベントループスレッド上であることの証人である**（理由は `show_egui_main` の doc）。
 /// こちらは `_` を付けない——`ResultsWindow::hide` へそのまま渡すためである。
 ///
@@ -527,7 +549,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
         );
     }
     // ここから臨界区間の外。**順序に意味は無い**——
-    // trim は hide 前後どちらで走っても無害（`src-tauri/CLAUDE.md`「working set の能動回収」）、
+    // trim は hide 前後どちらで走っても無害（show 時に OS が再 fault するだけ）、
     // placement の書き込みは値を既に持っているのでウィンドウの状態に依存しない。
     //
     // **「臨界区間の外」は「イベントループの外」ではない——受容する残余である。** 下の 2 つは
@@ -542,7 +564,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
     // #532 SU6.5）。results 単独 hide（drive_results_window）では main が可視のままゆえ trim しないのが正しい。
     // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ）から直呼び可
-    // （src-tauri/CLAUDE.md「working set の能動回収」）。trim されたページは show 時に OS が透過
+    // （`working_set.rs` の `//!`）。trim されたページは show 時に OS が透過
     // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
     // （snotra-settings.exe・存命中のみ）も巻き込みうる——trim は best-effort ゆえ無害。
     crate::working_set::trim_idle_working_set(std::process::id());

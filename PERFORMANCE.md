@@ -84,7 +84,7 @@ opt-level = "s"
 
 ### 採用: hide 時の `EmptyWorkingSet`（issue #355 / PR #360）
 
-hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー全体へ能動適用し、アイドル常駐を **110MB → 数MB** へ回収する。実装は `src-tauri/src/working_set.rs`、パターン詳細は `src-tauri/CLAUDE.md`「working set の能動回収」節。
+hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー全体へ能動適用し、アイドル常駐を **110MB → 数MB** へ回収する。実装は `src-tauri/src/working_set.rs`、パターン詳細は同ファイルの `//!`。
 
 | 状態 | Private WS |
 |---|---|
@@ -105,7 +105,7 @@ frontend hide（`hideMainWindow()`）で `notifyMainHidden()`（trim）を `awai
 | frontend(Escape) hide 後 | ~50 MB（3 回 50-61） | **~27 MB**（3 回 27-30） |
 | hotkey hide 後（参照・無変更） | ~10 MB | ~10 MB |
 
-frontend hide の総ツリー WS が**約半減**（frontend↔hotkey 差の ~57% を解消）。残差（~17MB）は frontend 経路が `suspend_webview`（TrySuspend）を行わない設計差に起因（tokio IPC スレッドの `with_webview` 非同期制約のため hotkey 限定。当時の正本だった src-tauri の「TrySuspend / Resume パターン」節は WebView2 層ごと #532 SU7 で消滅した——現行の回収機構は `src-tauri/CLAUDE.md`「working set の能動回収」）。gap は「trim タイミング」成分（#361 で解消）+「suspend 有無」成分（設計上の意図的な差）の和。**（2026-07-17 訂正: 下の follow-up のとおり、当時の TrySuspend は両経路とも同期失敗しており、この残差の「suspend 有無」解釈は成り立たない。実体は trim 実行タイミングの揺らぎだった）**
+frontend hide の総ツリー WS が**約半減**（frontend↔hotkey 差の ~57% を解消）。残差（~17MB）は frontend 経路が `suspend_webview`（TrySuspend）を行わない設計差に起因（tokio IPC スレッドの `with_webview` 非同期制約のため hotkey 限定。当時の正本だった src-tauri の「TrySuspend / Resume パターン」節は WebView2 層ごと #532 SU7 で消滅した——現行の回収機構は `src-tauri/src/working_set.rs`）。gap は「trim タイミング」成分（#361 で解消）+「suspend 有無」成分（設計上の意図的な差）の和。**（2026-07-17 訂正: 下の follow-up のとおり、当時の TrySuspend は両経路とも同期失敗しており、この残差の「suspend 有無」解釈は成り立たない。実体は trim 実行タイミングの揺らぎだった）**
 
 ### follow-up: TrySuspend は一度も成立していなかった（2026-07-17 計測）
 

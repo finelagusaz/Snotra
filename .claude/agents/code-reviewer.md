@@ -65,7 +65,7 @@ model: inherit
 
 関数が行う主要操作（ウィンドウの show/hide・フォーカス操作・状態フラグの更新・イベント emit など）を検索し、関数を使わずに同じ処理を複製している箇所をフラグする。
 
-**イベントは `src-tauri/src/events.rs` の定数名で探す。** 文字列リテラルで emit / listen しないのが規範であり（`src-tauri/CLAUDE.md`「モジュール構成」）、リテラルで grep すると取りこぼす。
+**イベントは `src-tauri/src/events.rs` の定数名で探す。** 文字列リテラルで emit / listen しないのが規範であり（`src-tauri/src/events.rs` の `//!`）、リテラルで grep すると取りこぼす。
 
 ### 2d. リソースライフサイクルチェック
 
@@ -86,7 +86,7 @@ model: inherit
 
 確認対象（SPEC.md に記述がある領域に触れた場合）:
 - 状態遷移・モードのガード条件（§8.6 / §18.5 / §19.7）
-- 共有 core 関数の返り値契約（正本: `src-tauri/CLAUDE.md`「共有 core 関数の返り値契約」・§14.2 等）
+- 共有 core 関数の返り値契約（正本: `src-tauri/src/commands/mod.rs` の `//!`・§14.2 等）
 - スコア計算式・検索の優先順位（§4.3）
 - 設定キー・デフォルト値・設定反映タイミング（§7）
 - データフォーマット・マイグレーション（§13 / §17）
@@ -121,7 +121,7 @@ SPEC に記述された挙動を変えているのに diff に SPEC.md が含ま
 - **計算量**: ホットパスに O(n²) 以上の処理がないか。full sort → top-k、線形探索 → ハッシュ探索に置換可能か
 - **不要アロケーション**: ループ内の `Vec::new()`, `.clone()`, `.to_string()` が回避可能か。`with_capacity()` の欠落
 - **Rust 固有**: 不要な `.clone()` → 参照や `Cow<str>`、中間 `Vec` への `.collect()` → イテレータチェーン
-- **egui immediate-mode 固有**: 毎フレーム走る `update()` 内の確保・`lock()` の回数・1 フレーム 1 回の live-read（正本: `src-tauri/CLAUDE.md`「テーマ色・font・行高の読みは 1 フレーム 1 回」）
+- **egui immediate-mode 固有**: 毎フレーム走る `update()` 内の確保・`lock()` の回数・1 フレーム 1 回の live-read（正本: `src-tauri/src/egui_shell/visual.rs` の `//!`）
 
 ---
 

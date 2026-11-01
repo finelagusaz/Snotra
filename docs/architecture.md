@@ -244,7 +244,7 @@ sequenceDiagram
 
 #### 検索がフレームから出た後も、検索の `Mutex` はフレームに残っていた（#1032）
 
-worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点での保持時間は `Engine::config_handle` の doc）ため、UI が同じ錠越しに設定を読む箇所——`read_window_width` と `max_results`——がそこで待っていた。**待ちは行が差し替わったフレームに限らない**（worker が走っているかで決まるので、`old_rows == new_rows` のフレームでも起きる）。**設定の読みを錠の外へ出して解いた**——`Engine` の `Config` は `Arc<RwLock<Config>>` で、UI は `egui_shell::read_config` から読む。**#1032 の残余は #1076 が寄せ、#1123 が例外という装置ごと無くした**（射程と、規範を守る機構は `src-tauri/CLAUDE.md`「モジュール構成」の当該条項が正本——ここに言い換えを置かない）。**書き込みは `update_config` の 1 本のまま `Mutex<Engine>` の内側に残す**（`complete_index_drain` の原子性がそこに依る）。A/B の実測は `PERFORMANCE.md`「設定の読みを engine lock の外へ出す」
+worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点での保持時間は `Engine::config_handle` の doc）ため、UI が同じ錠越しに設定を読む箇所——`read_window_width` と `max_results`——がそこで待っていた。**待ちは行が差し替わったフレームに限らない**（worker が走っているかで決まるので、`old_rows == new_rows` のフレームでも起きる）。**設定の読みを錠の外へ出して解いた**——`Engine` の `Config` は `Arc<RwLock<Config>>` で、UI は `egui_shell::read_config` から読む。**#1032 の残余は #1076 が寄せ、#1123 が例外という装置ごと無くした**（射程と、規範を守る機構は `src-tauri/src/state.rs` の `AppState::read_config` の doc が正本——ここに言い換えを置かない）。**書き込みは `update_config` の 1 本のまま `Mutex<Engine>` の内側に残す**（`complete_index_drain` の原子性がそこに依る）。A/B の実測は `PERFORMANCE.md`「設定の読みを engine lock の外へ出す」
 
 ### スコアリングの内側（`engine.search` の 1 回）
 

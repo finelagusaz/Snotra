@@ -41,7 +41,7 @@ impl LauncherController {
     /// 呼び出し点（`run_search` / 打鍵の changed エッジ / `on_enter`）はどれも毎フレームではないが、
     /// **どれも egui フレームの中にあり、ユーザーが待っている**——#1032 の規範が挙げる害は
     /// 「フレームが走査の完了まで返らない」ことであって頻度ではない（射程の定義は
-    /// `src-tauri/CLAUDE.md`「モジュール構成」の #1032 条項が正本）。
+    /// [`crate::state::AppState::read_config`] の doc が正本）。
     pub(super) fn instant_prefix(&self) -> String {
         crate::egui_shell::read_config(
             &self.app_handle,

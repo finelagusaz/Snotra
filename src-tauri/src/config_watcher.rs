@@ -5,7 +5,7 @@
 //! ——`ReadFailed` では何も適用せず早期 return し（[`should_apply_config_change`]）、その前に
 //! バウンドリトライ（[`load_with_read_failed_retry`]・既定 [`CONFIG_READ_RETRY_MAX`] 回 ×
 //! [`CONFIG_READ_RETRY_BACKOFF`]）で一時的ロックの解除を待つ。多サブシステムに跨る不変条件
-//! （アイコンキャッシュ破棄の順序・index 再構築の要否判定）は `src-tauri/CLAUDE.md` を正とする。
+//! （アイコンキャッシュ破棄の順序・index 再構築の要否判定）は `apply_config_change` 本体のコメントが正本。
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -20,7 +20,7 @@ use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
 // `parse_hex_color` はここに無い（spec 決定 4 で撤去）。背景色の parse は描画色と同じ
-// `egui::Color32::from_hex` 1 本になり、`Color` への変換は `egui_shell::visual::native_brush_color`
+// `egui::Color32::from_hex` 1 本になり、`Color` への変換は `egui_shell::window_coordinator::native_brush_color`
 // が持つ。2 本立てだった頃は `#FFF` が描画色だけ通り、下地は既定色へ落ちていた（#680 の 1）。
 
 /// Start watching `config.toml` for external changes (e.g. from snotra-settings).

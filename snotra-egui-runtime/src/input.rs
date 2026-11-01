@@ -419,6 +419,8 @@ mod tests {
 
     /// AltGr のとき tao は Ctrl・Alt を外した修飾を送る（`get_agnostic_mods`）。その状態の C は
     /// Copy にならない——subclass の `GetKeyState` で修飾を取らない理由（`ADR-keyboard-input-owned-by-subclass`）。
+    /// AltGr の除去そのものは tao の中にあり、ここでは再現できない。固定するのは「tao が送った
+    /// 修飾をそのまま載せる」ほうである。
     #[test]
     fn altgr_c_is_not_copy() {
         let mut input = InputState::new(1.0);

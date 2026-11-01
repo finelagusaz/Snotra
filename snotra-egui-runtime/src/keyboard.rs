@@ -32,11 +32,11 @@ pub(crate) enum NativeInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PhysicalScan(pub(crate) u16);
 
-pub(crate) const WM_KEYDOWN: u32 = 0x0100;
-pub(crate) const WM_KEYUP: u32 = 0x0101;
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_KEYUP: u32 = 0x0101;
 pub(crate) const WM_CHAR: u32 = 0x0102;
-pub(crate) const WM_SYSKEYDOWN: u32 = 0x0104;
-pub(crate) const WM_SYSKEYUP: u32 = 0x0105;
+const WM_SYSKEYDOWN: u32 = 0x0104;
+const WM_SYSKEYUP: u32 = 0x0105;
 pub(crate) const WM_SYSCHAR: u32 = 0x0106;
 /// `SendInput` の `KEYEVENTF_UNICODE` と絵文字パネルが送る VK。文字は続く `WM_CHAR` が運ぶ。
 const VK_PACKET: u16 = 0xE7;
@@ -56,13 +56,39 @@ pub(crate) struct Translation {
     pub(crate) suppressed: bool,
 }
 
+impl Translation {
+    fn suppressed() -> Self {
+        Self {
+            events: Vec::new(),
+            suppressed: true,
+        }
+    }
+
+    fn one(event: NativeInput) -> Self {
+        Self {
+            events: vec![event],
+            suppressed: false,
+        }
+    }
+}
+
+/// down を送ったキーの release。物理キーはスキャンコードから導き直す（Shift に依らない）。
+fn release(scan: PhysicalScan, key: egui::Key) -> NativeInput {
+    NativeInput::Key {
+        key,
+        physical_key: physical_key_from_scan(scan),
+        pressed: false,
+        repeat: false,
+    }
+}
+
 /// キーボードのメッセージ列を [`NativeInput`] へ写す状態機械。ウィンドウごとに 1 つ。
 #[derive(Default)]
 pub(crate) struct KeyboardTranslator {
     /// focus を獲得した瞬間に押されていたキー（#927）。down を up まで落とす。
     held: HashSet<PhysicalScan>,
     /// egui へ down を送ったキー。focus を失ったら release を送る（tao の合成 release の代わり）。
-    down: HashMap<PhysicalScan, (egui::Key, Option<egui::Key>)>,
+    down: HashMap<PhysicalScan, egui::Key>,
     /// 抑止した down に続く `WM_CHAR` を落とす（#1274）。次の down・up・focus の出入りで解除する。
     drop_chars: bool,
     /// サロゲートペアの high（キーのメッセージを跨いで保つ）。
@@ -88,12 +114,7 @@ impl KeyboardTranslator {
         self.pending_high = None;
         self.down
             .drain()
-            .map(|(_, (key, physical_key))| NativeInput::Key {
-                key,
-                physical_key,
-                pressed: false,
-                repeat: false,
-            })
+            .map(|(scan, key)| release(scan, key))
             .collect()
     }
 
@@ -123,14 +144,19 @@ impl KeyboardTranslator {
         shift: bool,
         pressed: bool,
     ) -> Translation {
+        // `VK_PACKET`（`SendInput` の Unicode）は文字だけを運ぶ。lParam のスキャンコードには文字の
+        // 下位バイトが載りうるので、物理キーを持たない（`WM_CHAR` と同じ 0）として扱う——
+        // そのまま使うと、抑止の集合・down の記録・物理キーの写像のどれにも偽の英字が入る。
+        let scan = if vk == VK_PACKET {
+            PhysicalScan(0)
+        } else {
+            scan
+        };
         if pressed {
             // **抑止した down に続く `WM_CHAR` も落とす**（#1274）。旗は次の down が上書きする。
             self.drop_chars = self.held.contains(&scan);
             if self.drop_chars {
-                return Translation {
-                    events: Vec::new(),
-                    suppressed: true,
-                };
+                return Translation::suppressed();
             }
         } else {
             // release は常に渡す——落とすと egui の `keys_down` に押しっぱなしが残る。
@@ -140,48 +166,29 @@ impl KeyboardTranslator {
             self.held.remove(&scan);
             // **down を送ったキーは、記録した値で release を送る**——押している間に Shift が変わると
             // 写像が変わり（`1` → Shift つきは写らない）、写像し直すと release が落ちる。
-            if let Some((key, physical_key)) = self.down.remove(&scan) {
-                return Translation {
-                    events: vec![NativeInput::Key {
-                        key,
-                        physical_key,
-                        pressed: false,
-                        repeat: false,
-                    }],
-                    suppressed: false,
-                };
+            if let Some(key) = self.down.remove(&scan) {
+                return Translation::one(release(scan, key));
             }
         }
 
-        // `VK_PACKET`（`SendInput` の Unicode）は文字だけを運ぶ。lParam のスキャンコードには文字の
-        // 下位バイトが載りうるので、物理キーへ落とすと英字の Key を偽造する。
-        if vk == VK_PACKET {
-            return Translation::default();
-        }
         let physical_key = physical_key_from_scan(scan);
         let Some(key) = key_from_vk(vk, shift).or(physical_key) else {
             return Translation::default();
         };
         if pressed {
-            self.down.insert(scan, (key, physical_key));
+            self.down.insert(scan, key);
         }
-        Translation {
-            events: vec![NativeInput::Key {
-                key,
-                physical_key,
-                pressed,
-                repeat: pressed && lparam & (1 << 30) != 0,
-            }],
-            suppressed: false,
-        }
+        Translation::one(NativeInput::Key {
+            key,
+            physical_key,
+            pressed,
+            repeat: pressed && lparam & (1 << 30) != 0,
+        })
     }
 
     fn on_char(&mut self, unit: u32) -> Translation {
         if self.drop_chars {
-            return Translation {
-                events: Vec::new(),
-                suppressed: true,
-            };
+            return Translation::suppressed();
         }
         let text = match unit {
             0xD800..=0xDBFF => {
@@ -201,7 +208,6 @@ impl KeyboardTranslator {
         };
         Translation {
             events: text
-                .as_deref()
                 .and_then(printable_text)
                 .map(NativeInput::Text)
                 .into_iter()
@@ -216,7 +222,7 @@ impl KeyboardTranslator {
 /// 数字の VK は Shift が無いときだけ写す——tao の logical は Shift+1 で `"!"` になり写らなかった。
 /// `VK_PROCESSKEY`（変換中）と `VK_PACKET`（`SendInput` の Unicode・絵文字パネル）は論理キーを
 /// 持たない。
-pub(crate) fn key_from_vk(vk: u16, shift: bool) -> Option<egui::Key> {
+fn key_from_vk(vk: u16, shift: bool) -> Option<egui::Key> {
     use egui::Key;
     Some(match vk {
         0x08 => Key::Backspace,
@@ -244,7 +250,7 @@ pub(crate) fn key_from_vk(vk: u16, shift: bool) -> Option<egui::Key> {
 
 /// 物理キー（スキャンコード）から egui のキーを導く。移す前の tao 経路と同じく A–Z だけ。
 /// スキャンコードは US 配列の set 1（拡張キーは対象外）。
-pub(crate) fn physical_key_from_scan(scan: PhysicalScan) -> Option<egui::Key> {
+fn physical_key_from_scan(scan: PhysicalScan) -> Option<egui::Key> {
     use egui::Key;
     Some(match scan.0 {
         0x10 => Key::Q,
@@ -278,9 +284,9 @@ pub(crate) fn physical_key_from_scan(scan: PhysicalScan) -> Option<egui::Key> {
 }
 
 /// 文字列が egui へ入れてよい文字か（空と制御文字を弾く）。
-pub(crate) fn printable_text(text: &str) -> Option<String> {
+fn printable_text(text: String) -> Option<String> {
     (!text.is_empty() && text.chars().all(|c| !c.is_ascii_control() && c != '\u{7f}'))
-        .then(|| text.to_owned())
+        .then_some(text)
 }
 
 const DIGITS: [egui::Key; 10] = {
@@ -494,8 +500,11 @@ mod tests {
         for unit in [0x01, 0x0D, 0x08, 0x09, 0x1B, 0x7F] {
             assert!(chr(&mut t, unit).events.is_empty(), "unit={unit:#x}");
         }
-        assert_eq!(printable_text(""), None);
-        assert_eq!(printable_text("日本語"), Some("日本語".to_owned()));
+        assert_eq!(printable_text(String::new()), None);
+        assert_eq!(
+            printable_text("日本語".to_owned()),
+            Some("日本語".to_owned())
+        );
     }
 
     /// サロゲートペアは high を保留して low で連結する。`KEYEVENTF_UNICODE` では間にキーの
@@ -646,6 +655,29 @@ mod tests {
                 .is_empty()
         );
         assert!(up(&mut t, VK_PACKET, PhysicalScan(0x2D)).events.is_empty());
+    }
+
+    /// `VK_PACKET` の偽のスキャンコードは、物理キーの集合（抑止・down の記録）にも触れない。
+    /// 触れると、押しっぱなしの X と同じ下位バイトの文字（中）が抑止され、X の release を偽造する。
+    #[test]
+    fn packet_scan_does_not_touch_held_or_down_keys() {
+        const SCAN_X: PhysicalScan = PhysicalScan(0x2D);
+        let mut t = KeyboardTranslator::default();
+        t.on_focus_gained([SCAN_X]);
+        assert!(!down(&mut t, VK_PACKET, SCAN_X).suppressed);
+        assert_eq!(
+            chr(&mut t, '中' as u32).events,
+            vec![NativeInput::Text("中".to_owned())]
+        );
+
+        let mut t = KeyboardTranslator::default();
+        down(&mut t, 0x58, SCAN_X);
+        assert!(up(&mut t, VK_PACKET, SCAN_X).events.is_empty());
+        assert_eq!(
+            t.on_focus_lost(),
+            vec![key(egui::Key::X, Some(egui::Key::X), false)],
+            "X はまだ押されている"
+        );
     }
 
     /// 押している間に Shift が変わっても、down を送ったキーの release は届く（写像が変わっても

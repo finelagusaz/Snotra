@@ -47,25 +47,25 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 ## 処置を返す純粋核の強制（#934）
 
-**`&mut self` で状態を進めてから処置を返す関数は `#[must_use = "…"]` を持つ**——落とすと副作用（hide 要求・repaint 予約・検索の発火・ビュー復元）が黙って消え、状態は既に進んでいるので呼び直しでは戻せない。メッセージには失うものを名指す。
+**`&mut self` で状態を進めてから処置を返す関数は `#[must_use = "…"]` を持つ。** 返り値を落とすと副作用（hide 要求・repaint 予約・検索の発火・ビュー復元）が黙って消え、状態は既に進んでいるので呼び直しても戻らない。メッセージには、落としたときに失うものを名指す。
 
 - **配置**: 型を本 crate が所有するなら型段（`enum` 宣言。その型を返す将来の関数も覆う）、`bool` / `Option<T>` のような primitive・外来型を返すならメソッド段（`Option` は型に `#[must_use]` を持たない）
-- **参照（`&T`）・`impl Trait`・ジェネリック型に包んで返す関数を足すとき、および既存の関数の返り値型をそう変えるときは、型段に加えてメソッド段も付ける。** 型段はそういう返り値では発火しない（例外は `Box<T>` / tuple / 配列だけ）。返り値型を変えたときが見落としやすい——型段はシグネチャを編集した瞬間にガードだけが黙って消える
-- **対象外は 2 種**: (1) トークンを返すもの——落とせば消費側の呼び忘れとして同じ数行の中で目に見え、付けてもテストに `let _ =` を要求するだけになる。(2) 状態を進めずに導くもの（自由関数と `&self` メソッド）——同じ入力で呼び直せるので失うものが無い
+- **参照（`&T`）・`impl Trait`・ジェネリック型に包んで返す関数を足すとき、および既存の関数の返り値型をそう変えるときは、型段に加えてメソッド段も付ける。** 型段の属性は、そう包まれた返り値では発火しない（例外は `Box<T>` / tuple / 配列だけ）。見落としやすいのは返り値型を変えたときである——シグネチャを編集した瞬間に、型段のガードだけが黙って消える
+- **対象外は 2 種**: (1) トークンを返すもの——落としても、トークンを消費する呼び出しが無いことが同じ数行の中で目に見える。付けてもテストに `let _ =` を要求するだけになる。(2) 状態を進めずに導くもの（自由関数と `&self` メソッド）——同じ入力で呼び直せるので失うものが無い
 - **型段へ移すときは、古いメソッド段を消したことを目で確かめる。** `clippy::double_must_use` が捕まえるのはメッセージ無しの残存だけで、メッセージ付きの残存は沈黙する
-- **`let _ =` は今も通る**し、`if ….is_some() { }` のような「見たが捨てた」形も通る——捕まえるのは「一度も見なかった」だけである
+- **`#[must_use]` が捕まえるのは「一度も見なかった」だけである**——`let _ =` も、`if ….is_some() { }` のような「見たが捨てた」形も通る
 
 ## イベント駆動 wake の不変条件（#532 SU5） — フレームの paint より後や worker で UI 状態を変えたら `ctx.request_repaint()` を撃つ
 
-runtime はイベント駆動（`RedrawRequested` 待ち）で、通常フレームは勝手に回らない。**フレームの paint より後（遅延 dispatch・クリックハンドラ）や worker スレッドで UI 状態を変えたら、必ず `ctx.request_repaint()` で次フレームを起こす**——欠くと次の無関係な入力まで stale 表示が残る（toast dismiss で実測・PR #647）。別ウィンドウや外部スレッドからは `wake_main` / `wake_results` を通す。
+runtime はイベント駆動（`RedrawRequested` 待ち）であり、誰かが起こさない限り次のフレームは来ない。**フレームの paint より後（遅延 dispatch・クリックハンドラ）や worker スレッドで UI 状態を変えたら、必ず `ctx.request_repaint()` で次フレームを起こす**——欠くと次の無関係な入力まで stale 表示が残る（toast dismiss で実測・PR #647）。別ウィンドウや外部スレッドからは `wake_main` / `wake_results` を通す。
 
 - **hidden 中は `update()` が走らない**（機序は `wake_main` の doc）。時限処理の `request_repaint_after` は可視中しか効かないので、hide を跨ぐ in-flight 状態は reset-on-show の backstop（クリア）とセットで設計する
-- **期限を待つ状態（armed）は、条件が成立するか解除されるまで毎フレーム残余を再要求する**（#711）——`request_repaint_after(d)` はフレームの到来を約束しない（`snotra-egui-runtime/CLAUDE.md`「不変条件」）。1 回きりの予約に賭けると hide や再検索が次の無関係な入力まで宙吊りになる
+- **期限を待つ状態（armed）は、条件が成立するか解除されるまで毎フレーム残余を再要求する**（#711）——`request_repaint_after(d)` はフレームの到来を約束しない（`snotra-egui-runtime/CLAUDE.md`「不変条件」）。1 回きりの予約に頼ると、hide や再検索が次の無関係な入力まで止まったままになる
 - **再要求してよいのは「時間経過で解消する不成立」だけである**——フォーカス・設定値・他プロセスの生死のように時計と無関係な条件で再要求すると `request_repaint_after(ZERO)` の永久スピンになる。それらの変化は変えた側が wake する
 
 ## main ウィンドウへ egui コンテナを足すときは visuals を自分で渡す
 
-**main ウィンドウへ新しく egui コンテナ（`Area` / `Window` / `CentralPanel` / popup / tooltip）を足すなら、その Ui へ自分で visuals を渡す。** テーマの 3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）は global style に無く、`search_input_ui` の入口で `ui.visuals_mut()` へ適用している（#949・理由は同関数の doc）。`ctx.global_style()` から Ui を作るコンテナは既定色で描かれる。
+**main ウィンドウへ新しく egui コンテナ（`Area` / `Window` / `CentralPanel` / popup / tooltip）を足すなら、その Ui へ自分で visuals を渡す。** テーマの 3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）は global style に置いておらず、`search_input_ui` の入口で `ui.visuals_mut()` へ適用している（#949・理由は同関数の doc）。`ctx.global_style()` から Ui を作るコンテナは既定色で描かれる。
 
 ## `app.listen` のコールバックは emit 元のスレッドで同期実行される
 
@@ -73,10 +73,10 @@ tauri の `emit_filter` は listener を別スレッドへ dispatch せず直接
 
 ## trace の presence 検査は状態の検査ではない（#671 PR A′）
 
-「操作を要求した」ログは、その操作が効いたことを意味しない。`egui_results:hide` は出るのにウィンドウは残る、という回帰を `smoke:egui` が緑のまま通した。trace で不変条件を守るなら「何が起きたか」ではなく**「起きてはならないことが起きていないか」**（区間内に事象が現れないこと等）を書く
+「操作を要求した」ログは、その操作が効いたことを意味しない。`egui_results:hide` は出るのにウィンドウは残る、という回帰を `smoke:egui` が緑のまま通した。trace で不変条件を守るなら「何が起きたか」ではなく**「起きてはならないことが起きていないか」**（区間内に事象が現れないこと等）を書く。
 
 ## ウィンドウ生成の制約
 
-**ウィンドウの生成は setup フェーズで行い、ランタイムでは show/hide だけで制御する**（main・results とも `egui_shell::create`）。イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）ではメッセージポンプが 1 イテレーション内で停止しており、ポンプ進行を要する操作（ウィンドウ生成・COM STA 初期化・モーダルダイアログ等）はデッドロックする——「メインスレッドにいる」と「メッセージポンプが自由に回る」は別物である（旧 WebView2 期に実測）。
+**ウィンドウの生成は setup フェーズで行い、ランタイムでは show/hide だけで制御する**（main・results とも `egui_shell::create`）。イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）ではメッセージポンプが 1 イテレーション内で停止しており、ポンプ進行を要する操作（ウィンドウ生成・COM STA 初期化・モーダルダイアログ等）はデッドロックする。「メインスレッドにいる」ことと「メッセージポンプが自由に回る」ことは別物である（旧 WebView2 期に実測）。
 
-**setup フック自身もイベントループの中で走る**（tauri `src/app.rs` の `make_run_event_loop_callback` が `RuntimeRunEvent::Ready` の arm で setup を呼ぶ・#671 PR D で確認、2.12.1 でも同じ）。「setup はイベントループより前」ではない。ゆえに setup 内で「ポンプが回ること」を期待する操作（`run_on_main_thread` の完了待ち等）を足してはならない。setup の実行中は egui フレームが 1 枚も走らないことの帰結（managed state の載せ順）は `main.rs` の setup のコメントが持つ。
+**setup フック自身もイベントループの中で走る**（tauri `src/app.rs` の `make_run_event_loop_callback` が `RuntimeRunEvent::Ready` の arm で setup を呼ぶ・#671 PR D で確認、2.12.1 でも同じ）。「setup はイベントループより前」ではない。ゆえに setup 内で「ポンプが回ること」を期待する操作（`run_on_main_thread` の完了待ち等）を足してはならない。なお setup の実行中は egui フレームが 1 枚も走らない。その帰結（managed state を載せる順序）は `main.rs` の setup のコメントが持つ。

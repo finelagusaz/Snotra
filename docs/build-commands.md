@@ -4,6 +4,14 @@
 
 このドキュメントは Snotra のビルド／検証コマンドの単一の情報源（SSOT）です。`AGENTS.md` の開発ワークフローや `.claude/skills/*/SKILL.md` の検証ステップは、コマンド本体をここに集約して参照します。コマンドを追加・変更するときはこのファイルのみを更新してください。
 
+## PowerShell で npm run へ引数を渡すとき
+
+**`npm run <script> -- -Opt …` の `--` は、PowerShell では `'--'` と引用して打つ**（#1296）。`'--'` は Git Bash でも npm.cmd 経由でも同じに届くので、`powershell` フェンスの例はこの形で書く。`bash` フェンスの例は Git Bash で打つ形であり、PowerShell で打つときは読み替える。
+
+- **素の `--` が消えるのは、npm.ps1 が `$args` を渡す枝を通るときである。** PowerShell はその枝で `--` を引数の区切りとして取り除くので、`-Opt` は npm 自身のオプションに吸われ、スクリプトには値だけが届く——名前の付かない値は `param()` の 1 番目へ黙って束縛される（#1296 で `-Only 1` の `1` が `$ExePath` になった）。`$args` の枝を通るのは、npm.ps1 へパイプで入力を渡したときと、npm/cli #8278（2025-05-12）より前の npm.ps1 である。それ以降の npm.ps1 は、文として打てば字面を読み直して `--` を残す
+- **`-- --` と重ねる書き方は使わない。** 字面を読み直す npm.ps1 では、余った `--` がスクリプトへ届く
+- 実測（2026-11-02・PowerShell 7.6.9 / npm 11.20.0）: 引数を印字するだけの npm script へ `-- -Only 1` を渡すと、文として打てば `["-Only","1"]`、パイプ入力ありでは `["1"]`。`'--'` はどちらでも `["-Only","1"]`、Git Bash でも同じ。`-- -- -Only 1` は文として打つと `["--","-Only","1"]`
+
 ## 変更後の検証チェックリスト（必須・スキップ不可）
 
 変更したファイルの種類に応じて、対応するカテゴリの必須コマンドを実行する。複数カテゴリに該当する場合はすべて実行する。
@@ -64,8 +72,8 @@ npm run smoke:egui          # 必須: egui show/hide スモーク（hotkey 注�
 
 ```powershell
 npm run smoke:manual              # 項目の読み上げ・判定の記録・trace の並置（#749）
-npm run smoke:manual -- -Only 2,5 # 一部だけ再実施
-npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
+npm run smoke:manual '--' -Only 2,5 # 一部だけ再実施
+npm run smoke:manual '--' -PostToPr # 記録を PR コメントへ投稿する
 ```
 
 - **trace には性質の違う 2 つが載る。混ぜて読まない**（#757）。**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: `egui_results:hide` は出たのにウィンドウは残り、presence を見る smoke は緑のまま通した）。一方 **H1 / H4 / H5 の不変条件は「起きてはならないことが起きていないか」を見るので合否を名乗れる**——判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測。`smoke:egui` の orphan 検出と同じ導出を共有する）
@@ -80,8 +88,8 @@ npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 
 ```powershell
 npm run check:colors                      # 自動判定: 各ウィンドウが宣言した色の占有率を実測し exit code で返す
-npm run check:colors -- -Color '#FFF'     # 3 桁 hex の受理（#680 の 1・パーサ統合の回帰）
-npm run check:colors -- -Interactive      # 判定せず起動し、目視項目を読み上げる
+npm run check:colors '--' -Color '#FFF'   # 3 桁 hex の受理（#680 の 1・パーサ統合の回帰）
+npm run check:colors '--' -Interactive    # 判定せず起動し、目視項目を読み上げる
 ```
 
 - **CI では走らない。** GUI を要するため `ci.yml` にも `smoke.yml` にも入っておらず、明示的に起動したときだけ動く（**エージェントも起動できる**——画面がロックされているときを除く）。ゆえに `[visual]` の色に効く変更は、**CI が緑でも未検証である**
@@ -188,7 +196,7 @@ npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>  # /merge-pr �
 ```
 
 - **`race:boundaries` の `--base` は省略できない。** 差分と未追跡がともに空なら非ゼロで止まる——**未コミット分が落ちる素の `git diff` を許さないため**である（`..` / `...` の 2 点形が作業ツリーを見ない罠は「検証の作法」の一般則と同根・#922）。出力仕様（種別の定義・検出パターン・0 件の明示）は `scripts/race-boundaries.mjs` が SSOT で、**候補の読み方と 0 件の意味**は `/race-check` が持つ
-- **`prose:sweep` は失敗を 0 件として印字しない**（`git grep` の失敗は exit 1、引数の誤りは exit 2）。出力仕様（面の分類・語ごとの 0 件・★未掲載）は `scripts/prose-sweep.mjs` が SSOT で、**★未掲載の裁き方**は `/plan-review` が持つ。**PowerShell からは `npm run` を経由しない**——#1300 の実測では `npm.ps1` が最初の `--` を食い、`--plan` が npm に吸われて**黙って消えた**（残りは語として届いた。Git Bash では起きなかった）。PowerShell では `node scripts/prose-sweep.mjs ...` を直接打つ。見出し行が `--plan なし` を名乗るので、落ちたことは出力で分かる
+- **`prose:sweep` は失敗を 0 件として印字しない**（`git grep` の失敗は exit 1、引数の誤りは exit 2）。出力仕様（面の分類・語ごとの 0 件・★未掲載）は `scripts/prose-sweep.mjs` が SSOT で、**★未掲載の裁き方**は `/plan-review` が持つ。**PowerShell から打つときは「PowerShell で npm run へ引数を渡すとき」に従う**——#1300 の実測では `npm.ps1` が最初の `--` を食い、`--plan` が npm に吸われて**黙って消えた**（残りは語として届いた。Git Bash では起きなかった）。見出し行が `--plan なし` を名乗るので、落ちたことは出力で分かる
 - **`merge:pr` は書き込み（マージ）を伴う。** 人が `/merge-pr` で起動するもので、終了コードの意味と次の一手は `/merge-pr` が、使い方と構造は `scripts/merge-pr.mjs` が持つ
 
 ## Windows のみ実行可能（`windows` クレートや Win32 API・実行バイナリに依存）

@@ -46,9 +46,9 @@
 .EXAMPLE
   npm run check:colors
 .EXAMPLE
-  npm run check:colors -- -Color '#FFF'
+  npm run check:colors '--' -Color '#FFF'
 .EXAMPLE
-  npm run check:colors -- -Interactive
+  npm run check:colors '--' -Interactive
 #>
 [CmdletBinding()]
 param(

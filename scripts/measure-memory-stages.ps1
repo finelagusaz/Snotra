@@ -39,6 +39,8 @@
   npm run measure:memory:stages
   pwsh -NoProfile -File scripts/measure-memory-stages.ps1 -Label "font=解決不能" -Query notepad
 #>
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$Label = '',
     [string]$Query = 'code',

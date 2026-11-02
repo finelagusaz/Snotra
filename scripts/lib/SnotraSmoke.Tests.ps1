@@ -52,6 +52,16 @@ BeforeDiscovery {
     }
     $exePathHarnesses = @($harnessCodeLines.Keys | Where-Object { $harnessCodeLines[$_] -match '^\s*\[string\]\s*\$ExePath\s*=' } | Sort-Object)
     $exePathMentions = @($harnessCodeLines.Keys | Where-Object { $harnessCodeLines[$_] -match '\$ExePath\b' } | Sort-Object)
+
+    # PositionalBinding の検査の母集団（#1296）。**`package.json` の scripts から導く**——npm が `--` を
+    # 落とす経路を通るのは、npm script の入口だけである。意味と射程は当該 Describe のヘッダが正本。
+    $packageJson = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../package.json') -Raw | ConvertFrom-Json
+    $npmEntryScripts = @(
+        $packageJson.scripts.PSObject.Properties.Value |
+            ForEach-Object { [regex]::Matches($_, '-File\s+scripts/(\S+\.ps1)') } |
+            ForEach-Object { $_.Groups[1].Value } |
+            Sort-Object -Unique
+    )
 }
 
 Describe 'New-SnotraVerificationProfile' {
@@ -327,6 +337,85 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
         foreach ($name in $allowed.Keys) {
             $name | Should -BeIn $Mentions -Because "許可した '$name' が `$ExePath を語らなくなったなら、許可を消すこと（古い許可は次の漏れを隠す）"
         }
+    }
+}
+
+Describe 'npm script の入口は PositionalBinding = $false で位置引数を拒む（#1296）' {
+    # **守る退行**: PowerShell で `npm run x -- -Opt v` の `--` が npm.ps1 の経路で消えると、`-Opt` を
+    # npm が吸い、値 `v` だけが `param()` の先頭へ**黙って**位置束縛される（#1296 では
+    # `smoke:manual -- -Only 1` の `1` が `$ExePath` になった）。`[CmdletBinding(PositionalBinding = $false)]`
+    # があれば、PowerShell 自身が束縛の段で止める（`-File` で exit 1・本体は走らない）。
+    #
+    # **射程の外**: スイッチ単独（`-PostToPr` 等）を npm が吸う形は、値が残らないのでスクリプトからは
+    # 見えない——文書の規則（`--` を落とさない呼び方）が残る理由である。母集団は `package.json` の
+    # `-File scripts/*.ps1` だけで、workflow や他のスクリプトからだけ呼ばれる `.ps1` は載らない。
+    #
+    # **形（ソース）と効果（束縛）を分けて見る。** 形の It だけでは、書いた属性が実際に束縛を止めるかを
+    # 言えない。効果の It だけでは、位置束縛できる param を 1 つも持たない入口（`[switch]` だけの
+    # `prepare-sidecar.ps1`）で `PositionalBinding` だけが消えた形（`[CmdletBinding()]`）が緑になる——
+    # advanced script は余った引数を拒むので、今は止まるが、値を取る param を足した瞬間に位置で受ける（実測）。
+    # 効果の It はスクリプト本体を走らせない——`param()` を抜き出して空の本体へ移した複製を起動する
+    # （本体は snotra を起動しうる）。
+    BeforeAll {
+        function Get-SnotraEntryParamBlock {
+            param([string]$ScriptName)
+            $path = Join-Path $PSScriptRoot "../$ScriptName"
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because "$ScriptName が構文として読めること"
+            $ast.ParamBlock | Should -Not -BeNullOrEmpty -Because "$ScriptName がスクリプト水準の param() を持つこと"
+            return $ast.ParamBlock
+        }
+
+        # 抜き出した属性と param() だけを持ち、本体は目印を出すだけの複製を作る。
+        # `ParamBlockAst.Extent` は属性を含まない（実測）ので、属性を前に足す。
+        function New-SnotraParamOnlyCopy {
+            param([string]$ScriptName)
+            $paramBlock = Get-SnotraEntryParamBlock -ScriptName $ScriptName
+            $attributes = @($paramBlock.Attributes | ForEach-Object { $_.Extent.Text })
+            $copyPath = Join-Path $TestDrive "param-only-$ScriptName"
+            (@($attributes) + $paramBlock.Extent.Text + "'BODY-RAN'" + 'exit 0') -join "`n" |
+                Set-Content -LiteralPath $copyPath -Encoding utf8
+            return $copyPath
+        }
+    }
+
+    It '<_> の param() に [CmdletBinding(PositionalBinding = $false)] があり、Position= を明示した param が無い' -ForEach $npmEntryScripts {
+        $paramBlock = Get-SnotraEntryParamBlock -ScriptName $_
+
+        $bindings = @($paramBlock.Attributes | Where-Object { $_.TypeName.Name -eq 'CmdletBinding' })
+        $bindings.Count | Should -Be 1 -Because "param() に CmdletBinding が 1 つ付いていること"
+        $positional = @($bindings[0].NamedArguments | Where-Object ArgumentName -eq 'PositionalBinding')
+        $positional.Count | Should -Be 1 -Because "PositionalBinding を明示すること（既定は位置束縛を許す）"
+        $positional[0].Argument.Extent.Text | Should -Be '$false' -Because "位置束縛を切る値は `$false"
+
+        # `Position=` を明示した param は PositionalBinding = $false の下でも位置で束縛される。
+        $explicitPositions = @(
+            $paramBlock.Parameters | ForEach-Object { $_.Attributes } |
+                Where-Object { $_ -is [System.Management.Automation.Language.AttributeAst] -and $_.TypeName.Name -eq 'Parameter' } |
+                ForEach-Object { $_.NamedArguments } |
+                Where-Object ArgumentName -eq 'Position'
+        )
+        $explicitPositions | Should -BeNullOrEmpty -Because "Position= は属性の効果を param 単位で打ち消す"
+    }
+
+    It '<_> の param() は位置引数を束縛の段で拒み、本体へ進まない' -ForEach $npmEntryScripts {
+        $copyPath = New-SnotraParamOnlyCopy -ScriptName $_
+
+        # 理由まで見る（#1319）——本体の例外や別の束縛エラーでも「投げた」にはなる。ErrorId は言語に依らない
+        # （メッセージは UI カルチャで訳される・ja-JP で実測）。
+        $err = { & $copyPath '1' } | Should -Throw -PassThru
+        $err.FullyQualifiedErrorId | Should -BeLike 'PositionalParameterNotFound,*'
+    }
+
+    It 'npm の経路（pwsh -File）でも、位置引数は exit 1 で止まり本体の出力が出ない（#1296 の manual-smoke.ps1）' {
+        $copyPath = New-SnotraParamOnlyCopy -ScriptName 'manual-smoke.ps1'
+
+        $output = @(& pwsh -NoProfile -File $copyPath '1' 2>&1 | ForEach-Object { "$_" })
+        $exitCode = $LASTEXITCODE
+
+        $exitCode | Should -Not -Be 0 -Because "位置引数で黙って先へ進まないこと（出力: $($output -join ' | ')）"
+        $output | Should -Not -Contain 'BODY-RAN' -Because "束縛の段で止まり、本体へ進まないこと"
     }
 }
 

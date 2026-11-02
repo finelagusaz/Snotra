@@ -1,6 +1,8 @@
 # Build snotra-settings and copy to src-tauri/binaries/ for Tauri bundling.
 # Usage: pwsh -NoProfile -File scripts/prepare-sidecar.ps1 [-Release]
 
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$Release
 )

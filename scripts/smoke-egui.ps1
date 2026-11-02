@@ -1,3 +1,5 @@
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
   # 空なら debug 本体を導く（#1179・#1292）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
   [string]$ExePath = '',

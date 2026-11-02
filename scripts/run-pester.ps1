@@ -1,5 +1,6 @@
 #Requires -Version 7
-[CmdletBinding()]
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$ExePath
 )

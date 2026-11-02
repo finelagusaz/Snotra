@@ -29,6 +29,8 @@
   npm run measure:memory
   pwsh -NoProfile -File scripts/measure-memory.ps1 -Label egui-hidden
 #>
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$ProcessName = 'snotra',
     [string]$Label = '',

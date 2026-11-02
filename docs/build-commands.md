@@ -193,7 +193,7 @@ npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>  # /merge-pr �
 
 - **`race:boundaries` の `--base` は省略できない。** 差分と未追跡がともに空なら非ゼロで止まる——**未コミット分が落ちる素の `git diff` を許さないため**である（`..` / `...` の 2 点形が作業ツリーを見ない罠は「検証の作法」の一般則と同根・#922）。出力仕様（種別の定義・検出パターン・0 件の明示）は `scripts/race-boundaries.mjs` が SSOT で、**候補の読み方と 0 件の意味**は `/race-check` が持つ
 - **`prose:sweep` は失敗を 0 件として印字しない**（`git grep` の失敗は exit 1、引数の誤りは exit 2）。出力仕様（面の分類・語ごとの 0 件・★未掲載）は `scripts/prose-sweep.mjs` が SSOT で、**★未掲載の裁き方**は `/plan-review` が持つ。**PowerShell から打つときは「PowerShell で npm run へ引数を渡すとき」に従う**（#1300 では `--plan` が npm に吸われて黙って消えた）。見出し行が `--plan なし` を名乗るので、落ちたことは出力で分かる
-- **`merge:pr` は書き込み（マージ）を伴う。** 人が `/merge-pr` で起動するもので、終了コードの意味と次の一手は `/merge-pr` が、使い方と構造は `scripts/merge-pr.mjs` が持つ
+- **`merge:pr` は書き込み（マージ）を伴う。** ただし `--dry-run` を付けたときは、マージ前の検査だけを行い、マージせずに止まる（#1318）。人が `/merge-pr` で起動するもので、終了コードの意味と次の一手は `/merge-pr` が、使い方と構造は `scripts/merge-pr.mjs` が持つ
 
 ## Windows のみ実行可能（`windows` クレートや Win32 API・実行バイナリに依存）
 

@@ -1,9 +1,8 @@
 //! Tauri の managed state（`AppState`）定義。
 //!
-//! `Mutex<Engine>`（検索・履歴・設定を統合した snotra-core facade）と 3 つの `AtomicBool`
-//! （`indexing` / `index_build_started` / `main_visible`）、および index build 完了ごとに
+//! `Mutex<Engine>`（検索・履歴・設定を統合した snotra-core facade）と `AtomicBool`
+//! （`indexing` / `index_build_started`）、および index build 完了ごとに
 //! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）を保持する。
-//! `main_visible` は Win32 `is_visible()` の ~35ms レイテンシを回避するキャッシュ。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -38,20 +37,6 @@ pub struct AppState {
     /// 二重起動を防ぐ CAS 専用の旗（[`AppState::try_begin_index_build`]）。書き手と private の
     /// 理由は `indexing` と同じ。読む口は [`AppState::is_index_build_started`]。
     index_build_started: AtomicBool,
-    /// Tracks main window visibility to avoid costly Win32 `is_visible()` IPC on hotkey toggle.
-    ///
-    /// **書き手はイベントループ上の 2 経路だけである**——`window_coordinator` の
-    /// `show_egui_main`（show の**後**に true）と `hide_egui_main`（`results.hide()` の**前**に
-    /// false）。読み手のうち correctness に効くのは `layout::present_results` の連言①である。
-    ///
-    /// private である（#1338）。読む口は [`AppState::is_main_visible`]、書く口は
-    /// [`AppState::set_main_visible`]。
-    ///
-    /// **書き手が 2 経路だけであることは、型ではなく規範で保たれている。** 書く口は `pub(crate)`
-    /// である——`pub(in path)` が指せるのは祖先モジュールだけなので、`state.rs` から
-    /// `window_coordinator` へは絞れない（E0742）。このフラグを更新せずに main を消す経路も
-    /// 型では閉じられない（帰結と受容の理由は [`crate::egui_shell::hide_egui_main`] の doc が正本）。
-    main_visible: AtomicBool,
     /// index build 完了ごとに単調増加する世代（#633・SU6 spec 決定 3）。egui view が
     /// last-seen と比較して再検索をトリガするアキュムレータ。panic/spawn 失敗経路の finish でも
     /// bump されるが、無変化 index への再検索は同一結果になるだけで無害（意図的に単純化）。
@@ -77,7 +62,6 @@ impl AppState {
             engine: Mutex::new(engine),
             indexing: AtomicBool::new(initial_indexing),
             index_build_started: AtomicBool::new(false),
-            main_visible: AtomicBool::new(false),
             index_generation: AtomicU64::new(0),
         }
     }
@@ -131,16 +115,6 @@ impl AppState {
     /// ビルドの開始権が取られているかを読む（`index_build_started` フィールドの doc）。
     pub fn is_index_build_started(&self) -> bool {
         self.index_build_started.load(Ordering::SeqCst)
-    }
-
-    /// main ウィンドウが可視かを読む（`main_visible` フィールドの doc）。
-    pub fn is_main_visible(&self) -> bool {
-        self.main_visible.load(Ordering::SeqCst)
-    }
-
-    /// main ウィンドウの可視性を記録する（書き手と順序の制約は `main_visible` フィールドの doc）。
-    pub(crate) fn set_main_visible(&self, visible: bool) {
-        self.main_visible.store(visible, Ordering::SeqCst);
     }
 
     /// インデックスビルドの開始権を CAS で取得する。

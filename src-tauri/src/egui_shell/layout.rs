@@ -408,7 +408,7 @@ pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
 /// それを解くことが #752 の実質である。
 #[derive(Debug, Clone, Copy)]
 pub struct ResultsInputs {
-    /// 連言①: main が可視か（`AppState.main_visible`）。
+    /// 連言①: main が可視か（`EguiShellState.main_visible`）。
     pub main_visible: bool,
     /// 連言③: 通常結果を隠すか（`search_state::plain_results_hidden` の結果）。
     /// **クリック逆流の消費より前に読んだ値**を渡す（`present_results` の doc）。

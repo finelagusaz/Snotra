@@ -172,20 +172,29 @@ describe("run — --dry-run（検査をすべて行い、gh pr merge を呼ば�
     expect(dry.calls).toEqual(real.calls.slice(0, real.calls.indexOf("pr merge")));
   });
   it.each([
-    ["CLEAN でない", { "pr view:pre": preview({ mergeStateStatus: "BLOCKED" }) }],
-    ["宣言した issue を本文が閉じない", { "pr view:pre": preview({ closingIssuesReferences: [] }) }],
-    ["要約の照合に通らない", { verify: () => ({ ok: false, reason: "要約が無い" }) }],
-  ])("止める理由があれば dry-run でも 1: %s", (_, over) => {
+    ["CLEAN でない", { "pr view:pre": preview({ mergeStateStatus: "BLOCKED" }) }, "CLEAN でない"],
+    ["宣言した issue を本文が閉じない", { "pr view:pre": preview({ closingIssuesReferences: [] }) }, "宣言した issue を PR 本文が閉じない"],
+    ["要約の照合に通らない", { verify: () => ({ ok: false, reason: "要約が無い" }) }, "要約が無い"],
+  ])("止める理由があれば dry-run でも 1: %s", (_, over, expected) => {
     const f = fake(over);
     expect(run(DRY, "/repo", f.deps)).toBe(1);
     expect(f.calls).not.toContain("pr merge");
-    expect(f.text()).toContain("止めた理由");
+    expect(f.text()).toContain("止めた理由 1 件");
+    expect(f.text()).toContain(expected);
+    expect(f.text()).not.toContain("dry-run——");
   });
   it("npm が --dry-run を自分の設定として食った形（npm_config_dry_run=true）でも dry-run として扱う", () => {
     const f = fake();
     f.deps.env = { npm_config_dry_run: "true" };
     expect(run(ARGS, "/repo", f.deps)).toBe(0);
     expect(f.calls).not.toContain("pr merge");
+    expect(f.text()).toContain("dry-run——マージしていない");
+  });
+  it("npm_config_dry_run が true 以外なら本番（dry-run の拾い方を広げすぎない）", () => {
+    const f = fake();
+    f.deps.env = { npm_config_dry_run: "" };
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.calls).toContain("pr merge");
   });
 });
 

@@ -21,11 +21,13 @@
 //   GitHub 側は変えない）だけであり、照合に要るので dry-run でも行う。`--` を落とした
 //   `npm run merge:pr <PR> --dry-run` では npm が `--dry-run` を自分の設定として食う（`npm_config_dry_run` だけが届く）
 //   ので、それも dry-run として拾う——拾わないと本番になる
+// - exit 0 の後に、そのブランチの道具の木と要約を片づける（#1359。どのスキルを経たかに依らず閉じるため）。
+//   exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mainRoot, summaryPathFor } from "./verify-tree.mjs";
+import { discardBranchArtifacts, mainRoot, summaryPathFor } from "./verify-tree.mjs";
 import { verifiedSummaryState } from "../.claude/hooks/pre-bash.mjs";
 
 export const USAGE = `使い方: npm run merge:pr -- <PR> --closes <N[,N...]|owner/repo#N|none> --body-file <path>
@@ -121,6 +123,7 @@ const realDeps = {
   readFile: (p) => readFileSync(p, "utf8"),
   mainRoot,
   verify: (root, branch, target) => verifiedSummaryState({ root, branch, target, summaryPathFor }),
+  cleanup: discardBranchArtifacts,
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   out: (s) => console.log(s),
   err: (s) => console.error(s),
@@ -352,6 +355,16 @@ export function run(argv, cwd, deps = realDeps) {
     return 3;
   }
   deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）${tally}${ghNote}`);
+
+  // マージ済みのブランチの道具の木と要約は、もう誰も読まない（#1359）。片づけるのは exit 0 のときだけである——
+  // exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない（マージは済んでいる）
+  try {
+    const cleaned = deps.cleanup(root, pr.headRefName);
+    if (cleaned.ok) deps.out(`道具の木と要約の片づけ:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
+    else deps.err(`道具の木と要約を片づけられなかった（マージは済んでいる）:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
+  } catch (e) {
+    deps.err(`道具の木と要約を片づけられなかった（マージは済んでいる）: ${describe(e)}`);
+  }
   return 0;
 }
 

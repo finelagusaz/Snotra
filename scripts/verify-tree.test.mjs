@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseCategoryCommands, summaryPathFor } from "./verify-tree.mjs";
+import { discardBranchArtifacts, parseCategoryCommands, summaryPathFor } from "./verify-tree.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "verify-tree.mjs");
@@ -428,6 +428,54 @@ describe("verify-tree align", () => {
     const r = runScript(repo, ["align", "--sha", git(repo, ["rev-parse", "HEAD"])]);
     expect(r.status, r.output).toBe(2);
     expect(r.output).toContain("linked worktree の中で打つこと");
+  });
+});
+
+describe("discardBranchArtifacts — マージ済みのブランチの木と要約を消す（#1359）", () => {
+  it("本体が別のブランチへ移った後でも、引数のブランチの木・要約・ログを消す", { timeout: T }, () => {
+    const repo = initRepo();
+    expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
+    git(repo, ["checkout", "-q", "main"]); // マージの後、本体は feat/x に居ない
+
+    const r = discardBranchArtifacts(repo, "feat/x");
+
+    expect(r.ok, r.notes.join("\n")).toBe(true);
+    expect(existsSync(verifyTree(repo))).toBe(false);
+    expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(false);
+    expect(existsSync(`${verifyTree(repo)}.summary.log`)).toBe(false);
+    expect(git(repo, ["worktree", "list", "--porcelain"])).not.toContain("agent-verify-feat-x");
+    expect(git(repo, ["branch", "--list", "feat/x"])).toContain("feat/x"); // ブランチそのものには触れない
+  });
+
+  it("木が無く要約だけが残っていても、要約を消して ok", { timeout: T }, () => {
+    const repo = initRepo();
+    expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
+    expect(runScript(repo, ["remove"]).status).toBe(0); // /implement の Step 4 の後の形（要約だけが残る）
+    git(repo, ["checkout", "-q", "main"]);
+
+    const r = discardBranchArtifacts(repo, "feat/x");
+
+    expect(r.ok, r.notes.join("\n")).toBe(true);
+    expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(false);
+  });
+
+  it("木が dirty なら木も要約も消さず、理由を返す（投げない）", { timeout: T }, () => {
+    const repo = initRepo();
+    expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
+    writeFileSync(path.join(verifyTree(repo), "package.json"), "{}");
+    git(repo, ["checkout", "-q", "main"]);
+
+    const r = discardBranchArtifacts(repo, "feat/x");
+
+    expect(r.ok).toBe(false);
+    expect(r.notes.join("\n")).toContain("agent-verify-feat-x");
+    expect(existsSync(verifyTree(repo))).toBe(true);
+    expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(true);
+  });
+
+  it("木も要約も無ければ、何もせず ok", { timeout: T }, () => {
+    const repo = initRepo();
+    expect(discardBranchArtifacts(repo, "feat/x").ok).toBe(true);
   });
 });
 

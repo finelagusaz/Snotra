@@ -1357,7 +1357,7 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
     )
 }
 
-/// `AppState.main_visible` の live-read（[`crate::AppState::is_main_visible`]）。`drive_results_window` が show の事前ゲート
+/// [`crate::AppState::is_main_visible`] の live-read。`drive_results_window` が show の事前ゲート
 /// （`layout::present_results` の連言①）として 1 回読む。
 ///
 /// AppState 不在は false（results を出さない側へ倒す）。

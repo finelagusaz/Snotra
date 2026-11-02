@@ -399,7 +399,10 @@ impl EguiWindow {
     }
 
     fn on_window_event(&mut self, event: &tauri_runtime_wry::tao::event::WindowEvent<'_>) -> bool {
-        self.drain_native_ime();
+        // **drain で積んだら repaint を要求する**（#1289）。打鍵は subclass が送り、tao の
+        // `KeyboardInput` には `input.on_window_event` が false を返す——積んだ件数を返さないと、
+        // 打鍵の再描画が subclass の `InvalidateRect`（WM_PAINT）頼みになり遅れる。
+        let drained = self.drain_native_ime();
         if let tauri_runtime_wry::tao::event::WindowEvent::ScaleFactorChanged {
             scale_factor, ..
         } = event
@@ -413,7 +416,8 @@ impl EguiWindow {
             // （外部再表示イベント・不変条件⑥の最小追従）。
             self.visible = true;
         }
-        self.input.on_window_event(event)
+        let handled = self.input.on_window_event(event);
+        handled || drained > 0
     }
 
     fn render(&mut self) -> Result<(), RuntimeError> {
@@ -536,10 +540,14 @@ impl EguiWindow {
             .update(output.ime, self.input.native_pixels_per_point());
     }
 
-    fn drain_native_ime(&mut self) {
-        for event in self.ime.drain() {
-            self.input.push_ime_event(event);
+    /// subclass が送った入力（IME・打鍵・文字）を積み、積んだ件数を返す。
+    fn drain_native_ime(&mut self) -> usize {
+        let events = self.ime.drain();
+        let count = events.len();
+        for event in events {
+            self.input.push_native_input(event);
         }
+        count
     }
 
     fn apply_frame_commands(&mut self, frame: RuntimeFrame) -> Result<(), RuntimeError> {

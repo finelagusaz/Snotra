@@ -425,9 +425,10 @@ try {
   }
 
   # --- Ctrl+英字で文字が入らないこと（#1268）------------------------------
-  # `input.rs` の `on_keyboard_event` が文字を `KeyEvent::text_with_all_modifiers()` ではなく
-  # `KeyEvent.text` から取ると、Ctrl を外した字が入る（Ctrl+A で `a`）。`KeyEvent` は crate 外から
-  # 組み立てられず、単体テストではこの呼び出し点を縛れないので、ここで実機に打つ。
+  # 文字は subclass が `WM_CHAR` の中身から取る（#1289）。Ctrl+H の `WM_CHAR` は制御文字 0x08 なので
+  # 弾かれ、egui へは修飾つきの `Key(H)` だけが届く。文字を VK や Ctrl を外した字から作る形へ崩れると
+  # `h` が入る（Ctrl+A で `a`・#1268 の症状）。変換核の単体テストは制御文字の破棄を縛るが、
+  # 修飾が drain の時点で載ることまでを通しで見るのはここだけなので、実機に打つ。
   #
   # **Ctrl+H を使うのは、打鍵の効果がそのまま到達の証拠になるからである。** egui は Windows でも
   # Ctrl+H を 1 字削除に束縛しているので、正常なら `c:\` → `c:`（3→2）の 1 件になる。取り違えると
@@ -436,7 +437,7 @@ try {
   # Ctrl+A だと全選択を伴うので取り違えても文字数が減る（3→1）——どちらも「増えない」の断言を
   # すり抜ける。打鍵が落ちたときは観測なしで赤になる（緑にはならない）。
   #
-  # **捕まえないもの**: 文字の配送を `admit_key` より前へ動かす退行。focus 獲得時に押下中のキーが
+  # **捕まえないもの**: focus 獲得時に押していたキーの文字が入る退行。focus 獲得時に押下中のキーが
   # 要るので、H1 判定の後の押しっぱなしの Z のブロック（#1274）が捕まえる。
   if ($failures.Count -eq 0 -and $null -ne $pathTyped) {
     # 3 文字の観測そのものを起点にする——これより後の変化だけが Ctrl+H の帰結である。
@@ -458,7 +459,7 @@ try {
       if ($ctrlEvents.Count -ne 1 -or $ctrlEvents[0].data.before_chars -ne 3 -or $ctrlEvents[0].data.after_chars -ne 2) {
         $observed = ($ctrlEvents | ForEach-Object { "$($_.data.before_chars)->$($_.data.after_chars)" }) -join ', '
         $failures += ("Ctrl+H changed the input as [$observed], expected exactly [3->2]" +
-          " — a Ctrl-stripped character was typed (KeyEvent.text instead of text_with_all_modifiers? #1268)")
+          " — a Ctrl-stripped character was typed (text taken from the VK or with Ctrl stripped instead of from WM_CHAR? #1268)")
       }
     }
   }
@@ -536,16 +537,17 @@ try {
     }
   }
 
-  # --- focus 獲得時に押されていたキーの文字が入らないこと（#1274）--------------
-  # `input.rs` は文字を `admit_key` の早期 return より後に積む。tao は `WM_SETFOCUS` で押下中の
-  # キーの合成 press を作り、合成 press も文字を持つので、文字の配送を `admit_key` より前へ
-  # 動かすと focus 獲得時に押していたキーの文字が入る。`KeyEvent` は crate 外から組み立てられず、
-  # 単体テストではこの順序を縛れないので、ここで実機に打つ。
+  # --- focus 獲得時に押されていたキーの文字が入らないこと（#927 / #1274）--------------
+  # `windows_ime.rs` の subclass は `WM_SETFOCUS` の瞬間に押されているキーを取り込み
+  # （`held_keys`）、そのキーの down と、それに続く `WM_CHAR` を up まで落とす（`keyboard.rs` の
+  # `KeyboardTranslator`）。取り込みか `WM_CHAR` の破棄のどちらかが欠けると、focus 獲得時に
+  # 押していたキーの文字が入る。単体テストは変換核を縛るが、`GetAsyncKeyState` の取り込みと
+  # Win32 のメッセージ順はここでしか測れないので、実機に打つ。
   #
-  # Z を押したまま hotkey で隠して出し直すと、show の `WM_SETFOCUS` で Z の合成 press が届く。
-  # その後、押しっぱなしの Z へもう 1 回 down を送り、離してから X を 1 回打つ。正常なら合成 press も
-  # 2 回目の down も `admit_key` が落とし、入るのは X だけ（`[0->1]`）である。**合成 press が
-  # 起きなければ 2 回目の down が通って `[0->1, 1->2]` になり、赤に倒れる**——「入らない」を
+  # Z を押したまま hotkey で隠して出し直すと、show の `WM_SETFOCUS` で Z が取り込まれる。
+  # その後、押しっぱなしの Z へもう 1 回 down を送り、離してから X を 1 回打つ。正常なら 2 回目の
+  # down（と、`TranslateMessage` がそれに付ける `WM_CHAR`）が落ち、入るのは X だけ（`[0->1]`）である。
+  # **取り込みが起きなければ 2 回目の down が通って `[0->1, 1->2]` になり、赤に倒れる**——「入らない」を
   # 不在の断言にせず、前提が崩れたときに沈黙の緑にならない形にしてある。
   #
   # **H1 判定より後に置く**——既存の待ちは 1 件でも現れれば成立するので、それより前に show / hide を
@@ -585,7 +587,7 @@ try {
         -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($hideBase + 1)
       if ($null -eq $heldHide) { throw "held-key: egui_hide:done not observed after hotkey with Z held" }
 
-      # 4. Z を押したまま hotkey で出し直す（ここで Z の合成 press が届く）。
+      # 4. Z を押したまま hotkey で出し直す（ここで subclass が Z を取り込む）。
       $showBase = Get-SnotraTraceEventCount -Path $errPath -EventName 'egui_show:done'
       Send-SnotraKeyChord -VirtualKeys $vks
       $heldShow = Wait-SnotraTraceEvent -Path $errPath -EventName 'egui_show:done' `
@@ -616,8 +618,8 @@ try {
       if ($heldEvents.Count -ne 1 -or $heldEvents[0].data.before_chars -ne 0 -or $heldEvents[0].data.after_chars -ne 1) {
         $observed = ($heldEvents | ForEach-Object { "$($_.data.before_chars)->$($_.data.after_chars)" }) -join ', '
         $failures += ("held-key: the input changed as [$observed] after re-showing with Z held, expected exactly [0->1] (X only)" +
-          " — a key held across focus gain typed a character (text delivery moved before admit_key? #1274)" +
-          " or no synthetic press arrived (Z was not suppressed)")
+          " — a key held across focus gain typed a character (WM_CHAR after a suppressed down let through? #1274)" +
+          " or the WM_SETFOCUS snapshot missed Z (Z was not suppressed)")
       }
 
       # 9. 隠して終える。
@@ -636,6 +638,65 @@ try {
     } finally {
       # どの経路で抜けても Z を OS 上に押したまま残さない。
       if ($zHeld) { Send-SnotraKey -VirtualKey $VK_Z -Up }
+    }
+  }
+
+  # --- 打鍵を伴わない文字が subclass から 1 回ずつ入ること（#1289）---------------
+  # キーボード由来の入力は `windows_ime.rs` の subclass が Win32 メッセージから作る。ここで打つのは
+  # `keybd_event` の打鍵とは別の 2 経路で、どちらも tao の経路では入らなかった（または壊れていた）。
+  #   (a) `SendInput` の `KEYEVENTF_UNICODE`: 非 ASCII（あ）と BMP 外（😀）を 1 文字ずつ。😀 は
+  #       「down・CHAR(high)・up・down・CHAR(low)・up」で届くので、subclass がキーのメッセージを
+  #       跨いでサロゲートを連結しなければ入らない（`keyboard.rs` の `on_char`）
+  #   (b) `PostMessage(WM_CHAR)`: 直前のキー押下を持たない文字（#1269 の残余。tao は捨てていた）
+  # 正常なら区間の変化はちょうど `[0->1, 1->2, 2->3]` である。**二重に入れば件数か文字数が合わず、
+  # 入らなければ待ちが切れて赤になる。** IME の確定は CI の runner に IME が無いので打てない
+  # （手打ちで確かめる・#1289 の決定）。
+  if ($failures.Count -eq 0 -and $resultsChecked) {
+    try {
+      $showBase = Get-SnotraTraceEventCount -Path $errPath -EventName 'egui_show:done'
+      Send-SnotraKeyChord -VirtualKeys $vks
+      $textShow = Wait-SnotraTraceEvent -Path $errPath -EventName 'egui_show:done' `
+        -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($showBase + 1)
+      if ($null -eq $textShow) { throw "native-text: egui_show:done not observed after hotkey ($vksLabel)" }
+      $textShowSeq = [long]$textShow.seq
+      Start-Sleep -Milliseconds 300
+
+      foreach ($step in @(
+          @{ Label = "SendInput のあ"; Send = { Send-SnotraUnicodeText -Text ([string][char]0x3042) }; After = 1 },
+          @{ Label = "SendInput の 😀（サロゲートペア）"; Send = { Send-SnotraUnicodeText -Text ([char]::ConvertFromUtf32(0x1F600)) }; After = 2 },
+          @{ Label = "PostMessage(WM_CHAR) の p"; Send = {
+              $mainHwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 5000
+              Send-SnotraPostedChar -WindowHandle $mainHwnd -Char 'p'
+            }; After = 3 }
+        )) {
+        & $step.Send
+        $after = $step.After
+        $typed = Wait-SnotraTraceCondition -Path $errPath -TimeoutMs $ObserveTimeoutMs `
+          -Description "native-text: $($step.Label)" `
+          -Predicate { $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $textShowSeq -and $_.data.after_chars -eq $after }.GetNewClosure()
+        if ($null -eq $typed) { throw "native-text: $($step.Label) produced no egui_input:changed to $after chars" }
+      }
+      Start-Sleep -Milliseconds 300
+      $textEvents = @((Read-SnotraTraceSnapshot -Path $errPath).Events | Where-Object {
+        $_.event -eq 'egui_input:changed' -and [long]$_.seq -gt $textShowSeq
+      })
+      $observed = ($textEvents | ForEach-Object { "$($_.data.before_chars)->$($_.data.after_chars)" }) -join ', '
+      if ($observed -ne '0->1, 1->2, 2->3') {
+        $failures += "native-text: the input changed as [$observed], expected exactly [0->1, 1->2, 2->3] (a character entered twice or out of order? #1289)"
+      }
+
+      if ($failures.Count -eq 0) {
+        $hideBase = Get-SnotraTraceEventCount -Path $errPath -EventName 'egui_hide:done'
+        Send-SnotraKey -VirtualKey $VK_ESCAPE
+        Start-Sleep -Milliseconds 50
+        Send-SnotraKey -VirtualKey $VK_ESCAPE -Up
+        if ($null -eq (Wait-SnotraTraceEvent -Path $errPath -EventName 'egui_hide:done' `
+            -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($hideBase + 1))) {
+          $failures += "native-text: egui_hide:done not observed after the final Escape"
+        }
+      }
+    } catch {
+      $failures += $_.Exception.Message
     }
   }
 } catch {
@@ -890,4 +951,4 @@ if (-not $resultsChecked) {
   Write-Host "egui smoke failed: results 検査が走らないまま合格しかけました（到達不能なはずの経路）。" -ForegroundColor Red
   exit 1
 }
-Write-Host "egui smoke passed (show/hide + results show/hide observed, Ctrl+H typed no character, key held across focus gain typed no character, webview delta 0)." -ForegroundColor Green
+Write-Host "egui smoke passed (show/hide + results show/hide observed, Ctrl+H typed no character, key held across focus gain typed no character, SendInput Unicode and posted WM_CHAR each entered once, webview delta 0)." -ForegroundColor Green

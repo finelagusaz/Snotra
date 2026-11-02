@@ -39,6 +39,18 @@ public static extern bool WTSQuerySessionInformationW(IntPtr server, int session
 [DllImport("wtsapi32.dll")]
 public static extern void WTSFreeMemory(IntPtr memory);
 public struct RECT { public int Left, Top, Right, Bottom; }
+[DllImport("user32.dll", SetLastError = true)]
+public static extern uint SendInput(uint count, INPUT[] inputs, int size);
+[DllImport("user32.dll", SetLastError = true)]
+public static extern bool PostMessageW(IntPtr hWnd, uint msg, UIntPtr wParam, IntPtr lParam);
+[StructLayout(LayoutKind.Sequential)]
+public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public UIntPtr dwExtraInfo; }
+[StructLayout(LayoutKind.Sequential)]
+public struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public UIntPtr dwExtraInfo; }
+[StructLayout(LayoutKind.Explicit)]
+public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+[StructLayout(LayoutKind.Sequential)]
+public struct INPUT { public uint type; public INPUTUNION u; }
 '@
     }
 }
@@ -811,12 +823,69 @@ function Send-SnotraKey {
     # `keybd_event` は戻り値が void で、注入の成否を返す経路が無い——ゆえにここで残せるのは
     # 「呼んだ」ことだけである。それでも本体側の `SNOTRA_EGUI_INPUT rx_key` と突き合わせれば、
     # 「注入 〜 アプリへの配送」という**どちらの側もログを持たなかった唯一の区間**が測れる。
-    # 時計は epoch ms で、本体の `ts_ms` と同じ土俵に載る。**打鍵の実装はこの 1 か所**なので、
-    # 呼び出し側（smoke / Pester）に写しを置かずに全注入点を覆える。
+    # 時計は epoch ms で、本体の `ts_ms` と同じ土俵に載る。**`keybd_event` の打鍵の実装はこの
+    # 1 か所**なので、呼び出し側（smoke / Pester）に写しを置かずに打鍵の全注入点を覆える。
+    # 文字の注入（`Send-SnotraUnicodeText` / `Send-SnotraPostedChar`）は記録しない。
     if ($env:SNOTRA_EGUI_INPUT_TRACE) {
         $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         $state = if ($Up) { 'up' } else { 'down' }
         Write-Host ("SNOTRA_SMOKE_INJECT ts_ms={0} vk=0x{1:X2} state={2}" -f $ts, $VirtualKey, $state)
+    }
+}
+
+function Send-SnotraUnicodeText {
+    # `SendInput` の `KEYEVENTF_UNICODE` で文字を打つ（#1289）。前面ウィンドウには `VK_PACKET` の
+    # down/up と `WM_CHAR` が届く。**BMP 外の文字はサロゲートの 2 単位を別々の down/up で送る**
+    # ——受け手には「down・CHAR(high)・up・down・CHAR(low)・up」の順で届き、キーのメッセージを
+    # 跨いで連結しなければ入らない。打鍵（`keybd_event`）とは別の注入経路である。
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Text
+    )
+
+    Initialize-SnotraNativeInterop
+    $KEYEVENTF_UNICODE = 0x4
+    $KEYEVENTF_KEYUP = 0x2
+    $inputs = foreach ($unit in $Text.ToCharArray()) {
+        foreach ($flags in @($KEYEVENTF_UNICODE, ($KEYEVENTF_UNICODE -bor $KEYEVENTF_KEYUP))) {
+            # **入れ子の構造体は下から組んで代入する**——`$ev.u.ki.wScan = …` は PowerShell では
+            # 値型のコピーへ書くだけで、元の `INPUT` に届かない（0 のまま送られる）。
+            $ki = New-Object SnotraSmokeInterop.Native+KEYBDINPUT
+            $ki.wVk = 0
+            $ki.wScan = [uint16][char]$unit
+            $ki.dwFlags = $flags
+            $union = New-Object SnotraSmokeInterop.Native+INPUTUNION
+            $union.ki = $ki
+            $ev = New-Object SnotraSmokeInterop.Native+INPUT
+            $ev.type = 1   # INPUT_KEYBOARD
+            $ev.u = $union
+            $ev
+        }
+    }
+    $inputs = [SnotraSmokeInterop.Native+INPUT[]]@($inputs)
+    $size = [System.Runtime.InteropServices.Marshal]::SizeOf([type][SnotraSmokeInterop.Native+INPUT])
+    $sent = [SnotraSmokeInterop.Native]::SendInput([uint32]$inputs.Count, $inputs, $size)
+    if ($sent -ne $inputs.Count) {
+        throw ("SendInput injected {0}/{1} events (GetLastError={2})" -f $sent, $inputs.Count,
+            [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+}
+
+function Send-SnotraPostedChar {
+    # `PostMessageW(WM_CHAR)` で、直前のキー押下を持たない文字を 1 つ送る（#1269 の形）。
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [IntPtr]$WindowHandle,
+        [Parameter(Mandatory)]
+        [char]$Char
+    )
+
+    Initialize-SnotraNativeInterop
+    $WM_CHAR = 0x0102
+    if (-not [SnotraSmokeInterop.Native]::PostMessageW($WindowHandle, $WM_CHAR, [UIntPtr][uint32][char]$Char, [IntPtr]1)) {
+        throw ("PostMessageW(WM_CHAR) failed (GetLastError={0})" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
     }
 }
 
@@ -1011,6 +1080,8 @@ Export-ModuleMember -Function @(
     'Get-SnotraTraceEventCount'
     'Send-SnotraKey'
     'Send-SnotraKeyChord'
+    'Send-SnotraUnicodeText'
+    'Send-SnotraPostedChar'
     'Wait-SnotraWindow'
     'Get-SnotraForegroundWindow'
     'Set-SnotraForegroundWindow'

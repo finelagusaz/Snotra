@@ -92,7 +92,7 @@ mod platform {
             Ok(Self)
         }
 
-        pub(crate) fn drain(&self) -> Vec<egui::ImeEvent> {
+        pub(crate) fn drain(&self) -> Vec<crate::keyboard::NativeInput> {
             Vec::new()
         }
 
@@ -111,7 +111,7 @@ impl ImeBridge {
         })
     }
 
-    pub(crate) fn drain(&self) -> Vec<egui::ImeEvent> {
+    pub(crate) fn drain(&self) -> Vec<crate::keyboard::NativeInput> {
         self.platform.drain()
     }
 

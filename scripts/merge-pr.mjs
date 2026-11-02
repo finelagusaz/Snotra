@@ -4,9 +4,9 @@
 // shebang を置かない — CI の Windows checkout（autocrlf=true）で CRLF 化された shebang 行は
 // vitest の transform を SyntaxError で落とす（PR #592 で実測。起動は常に `node scripts/...` 経由）。
 //
-//   npm run merge:pr -- <PR> --closes <N[,N...]|owner/repo#N|none> --body-file <path>
+//   npm run merge:pr -- <PR> --closes <N[,N...]|owner/repo#N|none> --body-file <path> [--dry-run]
 //
-// 終了コード: 0 = マージ済みで事後検証もすべて緑 / 1 = マージ前に止めた（マージしていない）
+// 終了コード: 0 = マージ済みで事後検証もすべて緑（--dry-run では、マージ前の検査がすべて通った） / 1 = マージ前に止めた（マージしていない）
 //   / 2 = 走らなかった（使用法・環境・マージ前の gh/git の失敗。マージしていない）
 //   / 3 = マージを試みたあと、事後検証が赤か、確かめられなかった（人の判断が要る）。
 // **3 を 0〜2 と混ぜない**——「マージしたか」を終了コードだけで読めるようにするため。
@@ -17,6 +17,10 @@
 // - マージ後の検索は ISO 8601 の `mergedAt` だけを渡し、0 件を「該当なし」として受け取る経路を持たない
 // - 道具の要約の照合は hook と共有する（`.claude/hooks/pre-bash.mjs` の `verifiedSummaryState`）
 // - gh / git は `shell: false` で呼ぶ（`closed:>=` の `>` を shell に渡さない）
+// - --dry-run は `gh pr merge` の手前で止める。マージ前の書き込みは `git fetch`（head の commit を手元へ取る。
+//   GitHub 側は変えない）だけであり、照合に要るので dry-run でも行う。`--` を落とした
+//   `npm run merge:pr <PR> --dry-run` では npm が `--dry-run` を自分の設定として食う（`npm_config_dry_run` だけが届く）
+//   ので、それも dry-run として拾う——拾わないと本番になる
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -27,8 +31,9 @@ import { verifiedSummaryState } from "../.claude/hooks/pre-bash.mjs";
 export const USAGE = `使い方: npm run merge:pr -- <PR> --closes <N[,N...]|owner/repo#N|none> --body-file <path>
   --closes     このマージで閉じる issue の宣言。閉じないなら none（必須）
   --body-file  squash commit の本文（必須）。closing keyword を書かない
+  --dry-run    マージ前の検査だけ行い、通ればマージする内容を出して止める（gh pr merge を呼ばない）
   件名は PR タイトルから組まれる（変えるなら gh pr edit <PR> --title）。--subject / --auto / --delete-branch は受け付けない
-  PowerShell からは npm run を経由せず node scripts/merge-pr.mjs ... と打つ（npm.ps1 が最初の -- を食う）`;
+  PowerShell からは -- を引用して npm run merge:pr '--' <PR> ... と打つ（素の -- は npm.ps1 の経路によって消える）`;
 
 export class UsageError extends Error {}
 
@@ -38,10 +43,12 @@ export const SEARCH_LIMIT = 200;
 const REF = /^(?:[\w.-]+\/[\w.-]+)?#\d+$/;
 
 export function parseArgs(argv) {
-  const out = { pr: null, closes: null, bodyFile: null };
+  const out = { pr: null, closes: null, bodyFile: null, dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--closes" || a === "--body-file") {
+    if (a === "--dry-run") {
+      out.dryRun = true;
+    } else if (a === "--closes" || a === "--body-file") {
       if (i + 1 >= argv.length) throw new UsageError(`${a} に値が無い`);
       const v = argv[++i];
       if (a === "--body-file") out.bodyFile = v;
@@ -117,7 +124,11 @@ const realDeps = {
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   out: (s) => console.log(s),
   err: (s) => console.error(s),
+  env: process.env,
 };
+
+/** dry-run でマージする内容として見せる squash 本文の行数 */
+const BODY_PREVIEW_LINES = 5;
 
 /** gh / git を呼び、失敗なら `Fail` の型の例外にする（マージ前は EnvError、マージ後は PostError） */
 function call(deps, cwd, cmd, args, Fail) {
@@ -148,12 +159,14 @@ export function run(argv, cwd, deps = realDeps) {
     return 2;
   }
 
+  const dryRun = opts.dryRun || deps.env?.npm_config_dry_run === "true";
+
   // ---- マージ前: 読みをすべて終えてから書く ----
-  let pr, repo, root;
+  let pr, repo, root, body;
   const bodyPath = path.resolve(cwd, opts.bodyFile);
   try {
     root = deps.mainRoot(cwd);
-    const body = deps.readFile(bodyPath);
+    body = deps.readFile(bodyPath);
     repo = json(deps, root, ["repo", "view", "--json", "nameWithOwner"], EnvError).nameWithOwner;
     pr = json(
       deps,
@@ -216,6 +229,21 @@ export function run(argv, cwd, deps = realDeps) {
     // EnvError 以外（verify-tree の linked worktree の拒否・JSON の破損など）も 2 にする。この try はマージより前だけを囲む
     deps.err(`merge-pr: マージしていない（#${opts.pr}）。${describe(e)}`);
     return 2;
+  }
+
+  if (dryRun) {
+    const closes = opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし";
+    const lines = body.replace(/\r\n/g, "\n").trimEnd().split("\n");
+    const preview = lines.slice(0, BODY_PREVIEW_LINES).map((l) => `    | ${l}`).join("\n");
+    const rest = lines.length > BODY_PREVIEW_LINES ? `\n    （ほか ${lines.length - BODY_PREVIEW_LINES} 行）` : "";
+    deps.out(
+      `merge-pr: dry-run——マージしていない（#${opts.pr}）。マージ前の検査はすべて通った。本番で打てばマージする内容:\n` +
+        `- PR: #${opts.pr}（件名は PR タイトルから組まれる: ${pr.title}）\n` +
+        `- head: ${pr.headRefOid}（${pr.headRefName}。本番はこの sha にだけ当てる）\n` +
+        `- 閉じる issue: ${closes}（宣言と PR 本文の一覧が一致）\n` +
+        `- squash 本文の先頭（${opts.bodyFile}）:\n${preview}${rest}`,
+    );
+    return 0;
   }
 
   // ---- マージ: 確認した head にだけ当てる。ここから先で 2 は返さない ----

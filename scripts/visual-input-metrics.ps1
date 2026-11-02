@@ -17,7 +17,7 @@
 
 .EXAMPLE
   npm run check:input-metrics
-  npm run check:input-metrics -- -Fonts 'Yu Gothic UI','Segoe UI'
+  npm run check:input-metrics '--' -Fonts 'Yu Gothic UI','Segoe UI'
 #>
 [CmdletBinding()]
 param(

@@ -38,8 +38,8 @@ param(
 # 使い方（ユーザーが自分の端末で実行する。Claude は実行できない——対話入力を要するため）:
 #   cargo build -p snotra
 #   npm run smoke:manual
-#   npm run smoke:manual -- -Only 2,5,10          # 一部だけ再実施
-#   npm run smoke:manual -- -PostToPr             # 終了後に PR へ記録を投稿
+#   npm run smoke:manual '--' -Only 2,5,10        # 一部だけ再実施
+#   npm run smoke:manual '--' -PostToPr           # 終了後に PR へ記録を投稿
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"

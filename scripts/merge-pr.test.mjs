@@ -62,13 +62,15 @@ function fake(over = {}) {
     readFile: () => "本文\n",
     mainRoot: () => "/repo",
     verify: over.verify ?? (() => ({ ok: true })),
+    cleanup: over.cleanup ?? ((root, branch) => (cleanups.push({ root, branch, after: [...calls] }), { ok: true, notes: ["削除: 木"] })),
     sleep: (ms) => sleeps.push(ms),
     out: (s) => out.push(s),
     err: (s) => out.push(s),
   };
   const out = [];
   const sleeps = [];
-  return { deps, calls, out, sleeps, text: () => out.join("\n") };
+  const cleanups = [];
+  return { deps, calls, out, sleeps, cleanups, text: () => out.join("\n") };
 }
 const ok = (v) => ({ status: 0, stdout: JSON.stringify(v), stderr: "" });
 const preview = (patch) =>
@@ -102,6 +104,49 @@ describe("run — 正常経路", () => {
     expect(run(ARGS, "/repo", f.deps)).toBe(0);
     expect(f.calls).toContain("fetch"); // 無いと indexOf が -1 を返し、下の比較だけでは素通りする
     expect(f.calls.indexOf("fetch")).toBeLessThan(f.calls.indexOf("pr merge"));
+  });
+});
+
+describe("run — マージ済みのブランチの道具の木と要約を片づける（#1359）", () => {
+  it("exit 0 のときだけ、本体のルートと PR の head のブランチを渡して片づけ、結果を出す", () => {
+    const f = fake();
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.cleanups).toHaveLength(1);
+    expect(f.cleanups[0].root).toBe("/repo");
+    expect(f.cleanups[0].branch).toBe("chore/x");
+    expect(f.cleanups[0].after).toContain("issue list"); // 事後検証を終えてから
+    expect(f.text()).toContain("削除: 木");
+  });
+  it("片づけられなくても exit 0 のまま（マージは済んでいる）。理由を出す", () => {
+    const f = fake({ cleanup: () => ({ ok: false, notes: ["消せなかった: 木"] }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.text()).toContain("片づけられなかった");
+    expect(f.text()).toContain("消せなかった: 木");
+  });
+  it("片づけが投げても exit 0 のまま。理由を出す", () => {
+    const f = fake({
+      cleanup: () => {
+        throw new Error("想定外");
+      },
+    });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.text()).toContain("片づけられなかった");
+    expect(f.text()).toContain("想定外");
+  });
+  it("事後検証が赤（exit 3）なら片づけない——人が調べる材料を残す", () => {
+    const f = fake({ "issue view": ok({ state: "OPEN" }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.cleanups).toHaveLength(0);
+  });
+  it("マージ前に止めた（exit 1）なら片づけない", () => {
+    const f = fake({ "pr view:pre": preview({ state: "CLOSED" }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(1);
+    expect(f.cleanups).toHaveLength(0);
+  });
+  it("--dry-run では片づけない", () => {
+    const f = fake();
+    expect(run([...ARGS, "--dry-run"], "/repo", f.deps)).toBe(0);
+    expect(f.cleanups).toHaveLength(0);
   });
 });
 

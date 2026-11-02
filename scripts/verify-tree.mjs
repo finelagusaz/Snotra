@@ -311,6 +311,39 @@ function removeTree(root, tree) {
   return true;
 }
 
+/**
+ * マージ済みのブランチの、道具の木と要約とログを消す（#1359）。`merge:pr` が事後検証を通したあとに呼ぶ。
+ *
+ * `remove` との違いは 2 つ。対象は本体の現在のブランチではなく引数のブランチである（マージの後、本体は
+ * 別のブランチに居る）。要約も消す（要約を読む PR 前ゲートは、PR を作った時点で役目を終えている）。
+ * ブランチそのものには触れない。
+ *
+ * 木を消せなければ（dirty・ロック・cwd を握るプロセス）、要約も残して `ok: false` と理由を返す。
+ * 投げない——呼び出し側はマージを終えており、片づけの失敗でその結果を変えないため。
+ */
+export function discardBranchArtifacts(root, branch) {
+  const tree = treePathFor(root, branch);
+  const notes = [];
+  if (existsSync(tree)) {
+    try {
+      git(root, ["worktree", "remove", tree]);
+    } catch (e) {
+      return { ok: false, notes: [`道具の木を消せなかった（dirty なら git が拒む）: ${posix(tree)}\n${(e.stderr ?? e.message).trim()}`] };
+    }
+    if (existsSync(tree)) {
+      return { ok: false, notes: [`登録は消えたがディレクトリが残った（cwd がこの木の中にあるプロセスが握っている）: ${posix(tree)}`] };
+    }
+    notes.push(`削除: ${posix(tree)}`);
+  }
+  for (const file of [summaryPathFor(root, branch), `${tree}.summary.log`]) {
+    if (!existsSync(file)) continue;
+    rmSync(file, { force: true });
+    notes.push(`削除: ${posix(file)}`);
+  }
+  if (notes.length === 0) notes.push(`道具の木も要約も無い: ${posix(tree)}`);
+  return { ok: true, notes };
+}
+
 function cmdRemove(opts) {
   const { root, branch, tree } = mainContext();
   let ok = true;

@@ -151,6 +151,44 @@ describe("run — マージ前に止める（gh pr merge を呼ばない・exit 
   });
 });
 
+describe("run — --dry-run（検査をすべて行い、gh pr merge を呼ばない）", () => {
+  const DRY = [...ARGS, "--dry-run"];
+  it("検査がすべて通れば、マージする内容を出して 0。gh pr merge も事後の照会も呼ばない", () => {
+    const f = fake();
+    f.deps.readFile = () => "まとめの 1 行目\n2 行目\n";
+    expect(run(DRY, "/repo", f.deps)).toBe(0);
+    expect(f.calls).not.toContain("pr merge");
+    expect(f.calls).not.toContain("pr view:post");
+    expect(f.text()).toContain("マージしていない");
+    expect(f.text()).toContain(HEAD);
+    expect(f.text()).toContain("o/r#3");
+    expect(f.text()).toContain("まとめの 1 行目");
+  });
+  it("マージ前の検査は本番と同じ呼び出しを同じ順で行う（照合を省かない）", () => {
+    const real = fake();
+    run(ARGS, "/repo", real.deps);
+    const dry = fake();
+    run(DRY, "/repo", dry.deps);
+    expect(dry.calls).toEqual(real.calls.slice(0, real.calls.indexOf("pr merge")));
+  });
+  it.each([
+    ["CLEAN でない", { "pr view:pre": preview({ mergeStateStatus: "BLOCKED" }) }],
+    ["宣言した issue を本文が閉じない", { "pr view:pre": preview({ closingIssuesReferences: [] }) }],
+    ["要約の照合に通らない", { verify: () => ({ ok: false, reason: "要約が無い" }) }],
+  ])("止める理由があれば dry-run でも 1: %s", (_, over) => {
+    const f = fake(over);
+    expect(run(DRY, "/repo", f.deps)).toBe(1);
+    expect(f.calls).not.toContain("pr merge");
+    expect(f.text()).toContain("止めた理由");
+  });
+  it("npm が --dry-run を自分の設定として食った形（npm_config_dry_run=true）でも dry-run として扱う", () => {
+    const f = fake();
+    f.deps.env = { npm_config_dry_run: "true" };
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.calls).not.toContain("pr merge");
+  });
+});
+
 describe("run — 走らなかった（exit 2・マージしていない）", () => {
   it.each([
     ["使用法の誤り", ["7", "--subject", "x"], {}, "受け付けない引数: --subject"],
@@ -390,7 +428,12 @@ describe("parseArgs — 口は 1 通りだけ", () => {
       pr: "12",
       closes: ["#3", "o/x#4"],
       bodyFile: "b.md",
+      dryRun: false,
     });
+  });
+  it("--dry-run は位置を問わず読む", () => {
+    expect(parseArgs(["--dry-run", "12", "--closes", "none", "--body-file", "b.md"]).dryRun).toBe(true);
+    expect(parseArgs(["12", "--closes", "none", "--body-file", "b.md", "--dry-run"]).dryRun).toBe(true);
   });
   it("--closes none は空の宣言", () => {
     expect(parseArgs(["12", "--closes", "none", "--body-file", "b.md"]).closes).toEqual([]);

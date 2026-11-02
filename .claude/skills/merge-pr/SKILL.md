@@ -27,7 +27,9 @@ PR を squash マージする。
 
 打つ（Git Bash）: `npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>`
 
-PowerShell からは `node scripts/merge-pr.mjs <PR> --closes ... --body-file ...` と打つ（`npm.ps1` が最初の `--` を食う・`docs/build-commands.md`「Windows/macOS/Linux で実行可能」）。
+`--dry-run` を足すと、マージ前の検査をすべて行い、通ればマージする内容（PR・head の sha・閉じる issue・squash 本文の先頭）を出して exit 0 で止まる（`gh pr merge` を呼ばない）。止める理由があれば exit 1 は本番と同じ。**`--dry-run` は `--` の後ろに置く**——前に置くと npm が自分の設定として食う（道具は `npm_config_dry_run` でそれも dry-run として拾う）。
+
+PowerShell からは `node scripts/merge-pr.mjs <PR> --closes ... --body-file ...` と打つ。`npm.ps1` は打ち方によって最初の `--` を食い、続く `--dry-run` などを npm に吸わせる（npm 11.20.0 で、パイプ入力を受ける形 `... | npm run ...` で実測。直接打つ形・出力をパイプする形では届いた・`docs/build-commands.md`「Windows/macOS/Linux で実行可能」）。
 
 ## 3. 終了コードで次の一手が決まる
 

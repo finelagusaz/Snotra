@@ -399,7 +399,7 @@ pub(crate) fn show_egui_main(
     // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
     // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
     if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(true, Ordering::SeqCst);
+        state.set_main_visible(true);
     }
     let _ = window.set_focus();
     // **かつてここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちが在った。
@@ -529,7 +529,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // 対称のためである。どちらも「main が可視でない期間に visible=true と読ませない」向きに
     // 倒している。
     if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(false, Ordering::SeqCst);
+        state.set_main_visible(false);
     }
     // #646 PR2: 従属ウィンドウも同時に隠す（決定 6）。show 側は main の update() が snapshot の
     // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
@@ -1357,13 +1357,13 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
     )
 }
 
-/// `AppState.main_visible` の live-read。`drive_results_window` が show の事前ゲート
+/// `AppState.main_visible` の live-read（[`crate::AppState::is_main_visible`]）。`drive_results_window` が show の事前ゲート
 /// （`layout::present_results` の連言①）として 1 回読む。
 ///
 /// AppState 不在は false（results を出さない側へ倒す）。
 fn read_main_visible(app: &tauri::AppHandle) -> bool {
     app.try_state::<crate::AppState>()
-        .map(|s| s.main_visible.load(Ordering::SeqCst))
+        .map(|s| s.is_main_visible())
         .unwrap_or(false)
 }
 

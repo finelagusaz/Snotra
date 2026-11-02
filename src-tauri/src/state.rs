@@ -44,10 +44,17 @@ pub struct AppState {
     /// `show_egui_main`（show の**後**に true）と `hide_egui_main`（`results.hide()` の**前**に
     /// false）。読み手のうち correctness に効くのは `layout::present_results` の連言①である。
     ///
-    /// **ただしこれは型ではなく規範で保たれている。** このフィールドは `pub` で、新しい
-    /// `store()` を crate 内のどこにでも書ける。このフラグを更新せずに main を消す経路も残る
+    /// **このフィールドは private である**（#1338）——読む口は [`AppState::is_main_visible`]、
+    /// 書く口は [`AppState::set_main_visible`]。**閉じたのは `store` の綴りである**——このモジュールの
+    /// 外に `state.main_visible.store(..)` と書くと **E0616** で落ちる（回帰の形を注入して
+    /// 2026-11-02 に実測）。
+    ///
+    /// **書き手の 2 経路は今も型ではなく規範で保たれている。** 書く口は `pub(crate)` ゆえ crate 内の
+    /// どこからでも呼べる——`pub(in path)` が指せるのは祖先モジュールだけなので、`state.rs` から
+    /// `window_coordinator` へは絞れない（E0742）。このフラグを更新せずに main を消す経路
+    /// （`Manager` から引いた main のハンドルへの `.hide()`）も型では閉じられない
     /// （帰結と受容の理由は [`crate::egui_shell::hide_egui_main`] の doc が正本）。
-    pub main_visible: AtomicBool,
+    main_visible: AtomicBool,
     /// index build 完了ごとに単調増加する世代（#633・SU6 spec 決定 3）。egui view が
     /// last-seen と比較して再検索をトリガするアキュムレータ。panic/spawn 失敗経路の finish でも
     /// bump されるが、無変化 index への再検索は同一結果になるだけで無害（意図的に単純化）。
@@ -127,6 +134,17 @@ impl AppState {
     /// ビルドの開始権が取られているかを読む（`index_build_started` フィールドの doc）。
     pub fn is_index_build_started(&self) -> bool {
         self.index_build_started.load(Ordering::SeqCst)
+    }
+
+    /// main ウィンドウが可視かを読む（`main_visible` フィールドの doc）。
+    pub fn is_main_visible(&self) -> bool {
+        self.main_visible.load(Ordering::SeqCst)
+    }
+
+    /// main ウィンドウの可視性を記録する。呼ぶのは `show_egui_main`（show の**後**に true）と
+    /// `hide_egui_main`（`results.hide()` の**前**に false）だけにする（`main_visible` フィールドの doc）。
+    pub(crate) fn set_main_visible(&self, visible: bool) {
+        self.main_visible.store(visible, Ordering::SeqCst);
     }
 
     /// インデックスビルドの開始権を CAS で取得する。

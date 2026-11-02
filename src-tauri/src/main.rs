@@ -442,7 +442,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
             let app_state = app.try_state::<AppState>();
             let visible = app_state
                 .as_ref()
-                .map(|s| s.main_visible.load(Ordering::SeqCst))
+                .map(|s| s.is_main_visible())
                 .unwrap_or(false);
             // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
             // 短絡し、非表示＝show 経路（最も遅延に敏感）では読みそのものを省く。

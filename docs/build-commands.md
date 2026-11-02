@@ -286,10 +286,10 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
 | `npm run smoke:startup`（注） | `smoke.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
-| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `smoke.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
+| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰・注） | `smoke.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
 | `npm run smoke:startup`（**配布前の起動ゲート**） | `release.yml`（build-and-release job） | `create-release.yml` の手動 dispatch からの `workflow_call` |
 
-（注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリが trace を出し、seed 済み検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。**その帰結として、この job のバイナリだけは `[profile.release]` の `lto` / `codegen-units` を env で緩めて建てる**（`smoke.yml` の "Build release binary" ステップにコメントで根拠を置いた。`Cargo.toml` は変えないので `release.yml` が建てる配布物は fat LTO のまま）。`panic = "abort"` と `opt-level` は共有するため、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
+（注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup` / `npm run smoke:egui`（既定 ExePath = debug）ではなく `pwsh -NoProfile -File scripts/<name>.ps1 -ExePath target/release/snotra.exe` を直接実行する（npm を経由しない理由は `smoke.yml` の smoke-egui job のコメント）。検証する起動経路は同じ（release バイナリが trace を出し、seed 済み検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。**その帰結として、この job のバイナリだけは `[profile.release]` の `lto` / `codegen-units` を env で緩めて建てる**（`smoke.yml` の "Build release binary" ステップにコメントで根拠を置いた。`Cargo.toml` は変えないので `release.yml` が建てる配布物は fat LTO のまま）。`panic = "abort"` と `opt-level` は共有するため、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
 
 （注2）`release.yml` の同じスクリプト実行は**配布前のゲート**である。成果物の存在検証だけでは起動可否を保証しないため、build 済みの `target/release/snotra.exe`（NSIS インストーラーではない）へ同じ起動スモークを当て、アップロード前に起動失敗を検知する（**理由の正本は当該ステップのコメント**）。表の 2 行が同じコマンドを指すのは、走る局面が別だからである。
 

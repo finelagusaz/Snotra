@@ -50,7 +50,8 @@
 .EXAMPLE
   npm run check:colors '--' -Interactive
 #>
-[CmdletBinding()]
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$Color = '#4A2B5C',
     [switch]$Interactive,

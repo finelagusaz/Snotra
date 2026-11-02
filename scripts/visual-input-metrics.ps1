@@ -19,7 +19,8 @@
   npm run check:input-metrics
   npm run check:input-metrics '--' -Fonts 'Yu Gothic UI','Segoe UI'
 #>
-[CmdletBinding()]
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
     # 測るフォント。既定は日本語 4 種 + 英語 4 種で、**DPI 96（100%）で行高の偶奇が割れる代表**
     # として選んである（2026-08-11 実測: Segoe UI と Yu Gothic UI がずれ、Arial と

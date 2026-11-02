@@ -18,6 +18,8 @@ min / p50 / max を出す（issue #1000）。
 「`smoke-startup.ps1` が記録した 0.6〜8s の分散がどの区間に住むか」であり、
 **分散そのものが観測対象**である。ゆえに min / p50 / max を並べて出す。
 #>
+# 位置引数を拒む（#1296）。理由と検査は `lib/SnotraSmoke.Tests.ps1` の PositionalBinding の Describe
+[CmdletBinding(PositionalBinding = $false)]
 param(
   [int]$Iterations = 5,
   # 終端（`startup:ready` / `startup:failed`）が出るまでの予算。`smoke-startup.ps1` が

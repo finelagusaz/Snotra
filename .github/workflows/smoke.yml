@@ -55,8 +55,9 @@ concurrency:
 
 jobs:
   # egui 経路の自動回帰 smoke（#532 SU7・e2e/ 撤去後の後継の最低線）。
-  # npm は smoke:egui の script wrapper（pwsh 起動）にのみ使う——フロント資産は
-  # PR3 で撤去済みで、tauri codegen もフロント入力を要求しない（frontendDist なし）。
+  # Node/npm は使わない——フロント資産は PR3 で撤去済みで、tauri codegen もフロント入力を
+  # 要求しない（frontendDist なし）。smoke は npm を経由せず `pwsh -File` で直接呼ぶ。npm 経由だと
+  # npm.ps1 の経路によって `--` が消え、#1366 以後の入口は位置引数を拒んで止まる（#1296）。
   smoke-egui:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -64,12 +65,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -91,9 +86,6 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install dependencies
-        run: npm ci
-
       # **この job が建てるのは smoke 用のバイナリであり、配布バンドルではない**
       # （`docs/build-commands.md`「検証コマンド ↔ GitHub Actions workflow の対応」の注）。
       # `[profile.release]` の `lto = true` / `codegen-units = 1` は最終段の codegen と
@@ -113,7 +105,7 @@ jobs:
       # 持つようになったため、以前の「startup smoke より前に置く」制約（#686）は消えた。実 config の
       # 有無に依存する形そのものが無くなったので、`-SeedConfig` / `-RequireResults` も撤去してある。
       - name: Run egui smoke
-        run: npm run smoke:egui -- -ExePath target/release/snotra.exe
+        run: pwsh -NoProfile -File scripts/smoke-egui.ps1 -ExePath target/release/snotra.exe
 
       # 起動 trace が 1 件以上あり、seed 済み検証用プロファイルで非 first-run 起動することの検証。
       # 自分の検証用プロファイル（#804）へループ前に seed 済みの config.toml が在るため、ここでの

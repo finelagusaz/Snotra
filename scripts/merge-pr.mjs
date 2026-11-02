@@ -33,7 +33,7 @@ export const USAGE = `使い方: npm run merge:pr -- <PR> --closes <N[,N...]|own
   --body-file  squash commit の本文（必須）。closing keyword を書かない
   --dry-run    マージ前の検査だけ行い、通ればマージする内容を出して止める（gh pr merge を呼ばない）
   件名は PR タイトルから組まれる（変えるなら gh pr edit <PR> --title）。--subject / --auto / --delete-branch は受け付けない
-  PowerShell からは npm run を経由せず node scripts/merge-pr.mjs ... と打つ（npm.ps1 は打ち方によって最初の -- を食う）`;
+  PowerShell からは -- を引用して npm run merge:pr '--' <PR> ... と打つ（素の -- は npm.ps1 の経路によって消える）`;
 
 export class UsageError extends Error {}
 

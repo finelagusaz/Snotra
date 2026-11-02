@@ -54,8 +54,9 @@ use tauri::Manager;
 use super::layout;
 use super::{EguiShellState, ResultsWindow};
 
-/// main ウィンドウが可視かのキャッシュ（`EguiShellState.main_visible`）。Win32 `is_visible()` の
-/// ~35ms レイテンシを hotkey トグルの判定から外すために置いた。
+/// main ウィンドウが可視かのキャッシュ（`EguiShellState.main_visible`）。#156 で、別スレッドから
+/// `is_visible()` を読む往復を hotkey トグルの判定から外すために置いた（往復が消えた今の撤去の検討は
+/// #1365）。
 ///
 /// **書き手は [`show_egui_main`]（show の**後**に true）と [`hide_egui_main`]（`results.hide()` の
 /// **前**に false）である。**読み手のうち correctness に効くのは

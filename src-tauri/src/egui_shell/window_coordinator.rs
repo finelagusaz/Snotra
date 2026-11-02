@@ -44,7 +44,7 @@
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
 //! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use snotra_core::config::{AppearanceConfig, GeneralConfig};
@@ -53,6 +53,37 @@ use tauri::Manager;
 
 use super::layout;
 use super::{EguiShellState, ResultsWindow};
+
+/// main ウィンドウが可視かのキャッシュ（`EguiShellState.main_visible`）。#156 で、別スレッドから
+/// `is_visible()` を読む往復を hotkey トグルの判定から外すために置いた（往復が消えた今の撤去の検討は
+/// #1365）。
+///
+/// **書き手は [`show_egui_main`]（show の**後**に true）と [`hide_egui_main`]（`results.hide()` の
+/// **前**に false）である。**読み手のうち correctness に効くのは
+/// `layout::present_results` の連言①である（読む口は [`MainVisible::get`]）。
+///
+/// **型で閉じたのは「このモジュールの外から書くこと」までである**（#1338）——`set` はモジュール
+/// private、中身の `AtomicBool` もフィールドが private なので、外から `set` を呼ぶと E0624、
+/// `.0.store` と綴ると E0616 で落ちる。**このフラグを更新せずに main を消す経路は型では閉じられない**
+/// （帰結と受容の理由は [`hide_egui_main`] の doc が正本）。
+pub(crate) struct MainVisible(AtomicBool);
+
+impl MainVisible {
+    /// 不可視で建てる（`pub(super)` ゆえ建てられるのは `egui_shell` の中だけである）。
+    pub(super) fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    /// main ウィンドウが可視かを読む（型の doc）。
+    pub(crate) fn get(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// main ウィンドウの可視性を記録する（書き手と順序の制約は型の doc）。
+    fn set(&self, visible: bool) {
+        self.0.store(visible, Ordering::SeqCst);
+    }
+}
 
 /// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
 /// キャッシュしない。
@@ -398,8 +429,8 @@ pub(crate) fn show_egui_main(
     let _ = window.show();
     // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
     // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
-    if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(true, Ordering::SeqCst);
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        sh.main_visible.set(true);
     }
     let _ = window.set_focus();
     // **かつてここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちが在った。
@@ -485,7 +516,7 @@ pub(crate) fn show_egui_main(
 ///
 /// **main を隠す経路はこの関数を通す。** 可視性を変える関数の閉包は表現不能化ではない——`Manager` から
 /// main のハンドルを引いた `.hide()` / `.show()` は任意のスレッドからコンパイルが通り、results と違って
-/// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。そのとき `AppState.main_visible` は
+/// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。そのとき `EguiShellState.main_visible` は
 /// 更新されず、results が既に可視なら最前面に取り残される——main が hidden の間は `RedrawRequested` が
 /// 届かず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 PR A′ で実機発見）。
 /// results が新たに出ることは無い（同じ理由）。#880 サイクル段 2 時点で、main に対する `.hide()` は
@@ -528,8 +559,8 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // ——この順序を保つのは、show 側の「show() の後に true を立てる」（順序不変制約）との
     // 対称のためである。どちらも「main が可視でない期間に visible=true と読ませない」向きに
     // 倒している。
-    if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(false, Ordering::SeqCst);
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        sh.main_visible.set(false);
     }
     // #646 PR2: 従属ウィンドウも同時に隠す（決定 6）。show 側は main の update() が snapshot の
     // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
@@ -1357,13 +1388,13 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
     )
 }
 
-/// `AppState.main_visible` の live-read。`drive_results_window` が show の事前ゲート
+/// [`MainVisible::get`] の live-read。`drive_results_window` が show の事前ゲート
 /// （`layout::present_results` の連言①）として 1 回読む。
 ///
-/// AppState 不在は false（results を出さない側へ倒す）。
+/// `EguiShellState` 不在は false（results を出さない側へ倒す）。
 fn read_main_visible(app: &tauri::AppHandle) -> bool {
-    app.try_state::<crate::AppState>()
-        .map(|s| s.main_visible.load(Ordering::SeqCst))
+    app.try_state::<EguiShellState>()
+        .map(|sh| sh.main_visible.get())
         .unwrap_or(false)
 }
 
@@ -1428,7 +1459,7 @@ pub(crate) fn drive_results_window(
     // **証人型（`EventLoopProof`）を引数に要求する 5 関数はイベントループスレッドへ閉じている**
     // ため、この読みと `results.show()` のあいだへ hide が割り込む並びは構築できない
     // （読んだ後に store されるフレームを心配する必要が無い）。**ただし `main_visible` を
-    // 更新しない main の hide はこの閉包の外にある**——`state.rs` の同フィールドの doc を見よ。
+    // 更新しない main の hide はこの閉包の外にある**——`MainVisible` の doc を見よ。
     let main_visible = read_main_visible(app);
     let desired_height = match layout::present_results(layout::ResultsInputs {
         main_visible,

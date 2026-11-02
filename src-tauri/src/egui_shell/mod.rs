@@ -138,6 +138,8 @@ pub(crate) enum HotkeyFailureKind {
 
 /// egui 経路の show/hide を跨ぐ共有状態（managed state）。
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
+/// - main_visible: main ウィンドウが可視かのキャッシュ。書き手・順序・射程は
+///   `window_coordinator::MainVisible` の doc。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
 /// - reset_pending: show が立て、view が消費して state.reset()（resetForShow 相当・SU3 M1 Task 9）。
 /// - show_read_indexing / show_read_toast / show_applied_height_bits: 不変条件検出器
@@ -150,6 +152,7 @@ pub(crate) enum HotkeyFailureKind {
 ///   `window_coordinator::check_show_bar_rect`。
 pub(crate) struct EguiShellState {
     pub(crate) hotkey_generation: AtomicU64,
+    pub(crate) main_visible: window_coordinator::MainVisible,
     pub(crate) hide_pending: AtomicBool,
     pub(crate) reset_pending: AtomicBool,
     pub(crate) show_read_indexing: AtomicBool,
@@ -194,6 +197,7 @@ impl EguiShellState {
     pub(crate) fn new(handles: &EguiShellHandles) -> Self {
         Self {
             hotkey_generation: AtomicU64::new(0),
+            main_visible: window_coordinator::MainVisible::new(),
             hide_pending: AtomicBool::new(false),
             reset_pending: AtomicBool::new(false),
             show_read_indexing: AtomicBool::new(false),

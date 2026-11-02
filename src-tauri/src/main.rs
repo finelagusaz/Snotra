@@ -304,8 +304,9 @@ fn main() {
             //    走らない。**「setup はイベントループより前」ではない**——同じ 1 イベントの
             //    処理中である。
             // 2. **仮にフレームが走っても、この時点で pending なものは無い。**
-            //    reset_pending は `show_egui_main` が、pending_hotkey_failure は下の 2 つの
-            //    listener が、hotkey_generation は hide と hotkey listener が立てる——
+            //    reset_pending は `show_egui_main` が、main_visible は show と hide が、
+            //    pending_hotkey_failure は下の 2 つの listener が、hotkey_generation は hide と
+            //    hotkey listener が立てる——
             //    setter はすべてこの manage より後にしか動かない。
             app.manage(egui_shell::EguiShellState::new(&handles));
             // #671 PR A′: results ウィンドウの所有型を managed state へ。**listener 登録より前**に置く
@@ -435,14 +436,14 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
         snotra_egui_runtime::on_event_loop(&handle_for_hotkey, move |app, el| {
             // 共有 EguiShellState.hotkey_generation を使い（hide が bump して
             // 保留 show を無効化・codex #5/(B)#2）、純粋核 plan_hotkey で分岐する。
-            let current_gen = app
-                .try_state::<egui_shell::EguiShellState>()
+            let shell = app.try_state::<egui_shell::EguiShellState>();
+            let current_gen = shell
+                .as_ref()
                 .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
                 .unwrap_or(0);
-            let app_state = app.try_state::<AppState>();
-            let visible = app_state
+            let visible = shell
                 .as_ref()
-                .map(|s| s.main_visible.load(Ordering::SeqCst))
+                .map(|sh| sh.main_visible.get())
                 .unwrap_or(false);
             // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
             // 短絡し、非表示＝show 経路（最も遅延に敏感）では読みそのものを省く。

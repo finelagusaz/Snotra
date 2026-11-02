@@ -6,11 +6,7 @@
 
 ## PowerShell で npm run へ引数を渡すとき
 
-**`npm run <script> -- -Opt …` の `--` は、PowerShell では `'--'` と引用して打つ**（#1296）。`'--'` は Git Bash でも npm.cmd 経由でも同じに届くので、`powershell` フェンスの例はこの形で書く。`bash` フェンスの例は Git Bash で打つ形であり、PowerShell で打つときは読み替える。
-
-- **素の `--` が消えるのは、npm.ps1 が `$args` を渡す枝を通るときである。** PowerShell はその枝で `--` を引数の区切りとして取り除くので、`-Opt` は npm 自身のオプションに吸われ、スクリプトには値だけが届く——名前の付かない値は `param()` の 1 番目へ黙って束縛される（#1296 で `-Only 1` の `1` が `$ExePath` になった）。`$args` の枝を通るのは、npm.ps1 へパイプで入力を渡したときと、npm/cli #8278（2025-05-12）より前の npm.ps1 である。それ以降の npm.ps1 は、文として打てば字面を読み直して `--` を残す
-- **`-- --` と重ねる書き方は使わない。** 字面を読み直す npm.ps1 では、余った `--` がスクリプトへ届く
-- 実測（2026-11-02・PowerShell 7.6.9 / npm 11.20.0）: 引数を印字するだけの npm script へ `-- -Only 1` を渡すと、文として打てば `["-Only","1"]`、パイプ入力ありでは `["1"]`。`'--'` はどちらでも `["-Only","1"]`、Git Bash でも同じ。`-- -- -Only 1` は文として打つと `["--","-Only","1"]`
+**`npm run <script> -- -Opt …` の `--` は、PowerShell では `'--'` と引用して打つ**（#1296）。素の `--` は npm.ps1 の経路によって PowerShell に取り除かれ、`-Opt` が npm に吸われる。スクリプトには値だけが届き、名前の付かない値は `param()` の 1 番目へ黙って束縛される。`'--'` はどのシェルでも同じに届くので、`.ps1` の入口（`scripts/*.ps1` を呼ぶ npm script）の例はこの形で書く。`-- --` と重ねない（`--` を残す経路では、余った `--` がスクリプトへ届く）。
 
 ## 変更後の検証チェックリスト（必須・スキップ不可）
 
@@ -58,7 +54,7 @@ npm run smoke:startup       # 必須: 起動時スモーク（trace 出力・検
 npm run smoke:egui          # 必須: egui show/hide スモーク（hotkey 注入 + trace 検証・#532 SU7）
 ```
 
-- `test:powershell` は Pester 6.0.1 を `target/pester/` へ固定取得し、グローバル環境を変更しない。統合テストの本体は `cargo metadata` の `target_directory` から導くため `CARGO_TARGET_DIR` に追随する。未ビルドなら先に `cargo build -p snotra` を実行する（別の本体を検査するときだけ `npm run test:powershell -- -ExePath <path>`）
+- `test:powershell` は Pester 6.0.1 を `target/pester/` へ固定取得し、グローバル環境を変更しない。統合テストの本体は `cargo metadata` の `target_directory` から導くため `CARGO_TARGET_DIR` に追随する。未ビルドなら先に `cargo build -p snotra` を実行する（別の本体を検査するときだけ `npm run test:powershell '--' -ExePath <path>`）
 - **実バイナリを起動する検査の前に `cargo build -p snotra` を打つ。`cargo test` では更新されない**——`cargo test` がビルドするのはテストターゲットであって `target/debug/snotra.exe` ではない。危ないのは「未ビルド」より**古いまま在る**ほうで、検査は成功したまま**変更前の挙動を測って赤や緑を出す**（#835 で 2 時間前のバイナリを測り、直したはずの伸縮を FAIL として観測した）
 - WebView2 E2E（Playwright + tauri-driver）は #532 SU7 flip で撤去済み。後継は `smoke:egui`（自動回帰の最低線）+ 手動 GUI smoke（カテゴリ D）
 - **「通常 CI が緑」だけで smoke 済みと読まない**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・`snotra-egui-runtime`（描画ループ所有・#701 で追加）・依存 manifest/lockfile 等を含む変更は `Smoke` workflow（`smoke.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）
@@ -196,7 +192,7 @@ npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>  # /merge-pr �
 ```
 
 - **`race:boundaries` の `--base` は省略できない。** 差分と未追跡がともに空なら非ゼロで止まる——**未コミット分が落ちる素の `git diff` を許さないため**である（`..` / `...` の 2 点形が作業ツリーを見ない罠は「検証の作法」の一般則と同根・#922）。出力仕様（種別の定義・検出パターン・0 件の明示）は `scripts/race-boundaries.mjs` が SSOT で、**候補の読み方と 0 件の意味**は `/race-check` が持つ
-- **`prose:sweep` は失敗を 0 件として印字しない**（`git grep` の失敗は exit 1、引数の誤りは exit 2）。出力仕様（面の分類・語ごとの 0 件・★未掲載）は `scripts/prose-sweep.mjs` が SSOT で、**★未掲載の裁き方**は `/plan-review` が持つ。**PowerShell から打つときは「PowerShell で npm run へ引数を渡すとき」に従う**——#1300 の実測では `npm.ps1` が最初の `--` を食い、`--plan` が npm に吸われて**黙って消えた**（残りは語として届いた。Git Bash では起きなかった）。見出し行が `--plan なし` を名乗るので、落ちたことは出力で分かる
+- **`prose:sweep` は失敗を 0 件として印字しない**（`git grep` の失敗は exit 1、引数の誤りは exit 2）。出力仕様（面の分類・語ごとの 0 件・★未掲載）は `scripts/prose-sweep.mjs` が SSOT で、**★未掲載の裁き方**は `/plan-review` が持つ。**PowerShell から打つときは「PowerShell で npm run へ引数を渡すとき」に従う**（#1300 では `--plan` が npm に吸われて黙って消えた）。見出し行が `--plan なし` を名乗るので、落ちたことは出力で分かる
 - **`merge:pr` は書き込み（マージ）を伴う。** 人が `/merge-pr` で起動するもので、終了コードの意味と次の一手は `/merge-pr` が、使い方と構造は `scripts/merge-pr.mjs` が持つ
 
 ## Windows のみ実行可能（`windows` クレートや Win32 API・実行バイナリに依存）

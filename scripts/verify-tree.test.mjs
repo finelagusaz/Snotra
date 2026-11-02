@@ -156,6 +156,41 @@ describe("verify-tree run", () => {
     expect(s.worktree.includes("\\")).toBe(false);
   });
 
+  it("--sha は短い sha も ref も 40 桁へ解決し、HEAD との照合と要約にその値を使う（#1316）", { timeout: T }, () => {
+    const repo = initRepo();
+    const sha = git(repo, ["rev-parse", "HEAD"]);
+
+    for (const given of [git(repo, ["rev-parse", "--short=9", "HEAD"]), "HEAD"]) {
+      const r = runScript(repo, ["run", "--sha", given]);
+      expect(r.status, `${given}: ${r.output}`).toBe(0);
+      expect(JSON.parse(r.output).sha, given).toBe(sha);
+      expect(summaryOf(repo).sha, given).toBe(sha);
+    }
+  });
+
+  it("標準出力の JSON が、/implement 3c の突き合わせる内訳を要約と同じ値で返す（#1316）", { timeout: T }, () => {
+    const repo = initRepo({ e: 'node -e "process.exit(3)"' });
+    const lock = { lockfileVersion: 3, packages: { "": {}, "node_modules/vitest": { version: "5.0.3" } } };
+    const sha = commitFile(repo, "package-lock.json", JSON.stringify(lock));
+
+    const r = runScript(repo, ["run", "--sha", sha, "--categories", "A"]);
+
+    expect(r.status, r.output).toBe(1);
+    const out = JSON.parse(r.output);
+    const s = summaryOf(repo);
+    expect(out.status).toBe("red");
+    expect(out.categories_run).toEqual(["A", "E", "F"]);
+    expect(out.categories_run).toEqual(s.categories_run);
+    expect(out.results).toEqual(s.results.map(({ category, command, exit }) => ({ category, command, exit })));
+    expect(out.results.map((x) => [x.category, x.exit])).toEqual([
+      ["A", 0],
+      ["E", 3],
+      ["F", 0],
+    ]);
+    expect(out.warnings.length).toBeGreaterThan(0);
+    expect(out.warnings).toEqual(s.warnings);
+  });
+
   it("赤いコマンドがあれば exit 1 にし、残りのコマンドも回す", { timeout: T }, () => {
     const repo = initRepo({ e: 'node -e "process.exit(3)"' });
     const sha = git(repo, ["rev-parse", "HEAD"]);
@@ -323,6 +358,18 @@ describe("verify-tree align", () => {
     expect(r.status, r.output).toBe(0);
     expect(git(wt, ["rev-parse", "HEAD"])).toBe(next);
     expect(JSON.parse(r.output).sha).toBe(next);
+  });
+
+  it("--sha の短い sha を 40 桁へ解決して合わせる（#1316）", { timeout: T }, () => {
+    const repo = initRepo();
+    const wt = agentTree(repo);
+    const next = commitFile(repo, "next.txt", "next\n");
+
+    const r = runScript(wt, ["align", "--sha", next.slice(0, 9)]);
+
+    expect(r.status, r.output).toBe(0);
+    expect(JSON.parse(r.output).sha).toBe(next);
+    expect(git(wt, ["rev-parse", "HEAD"])).toBe(next);
   });
 
   it("追跡ファイルの変更（巻き戻されていない変異）が残っていれば exit 2", { timeout: T }, () => {

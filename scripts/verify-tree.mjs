@@ -8,6 +8,8 @@
 //   node <本体>/scripts/verify-tree.mjs align --sha <sha>      # 委譲先が自分の木の cwd で打つ
 //   npm run verify:tree -- remove [--delegate-tree <path>]
 //
+// `<sha>` は `git rev-parse` が 1 つのコミットへ解決する値（短い sha・`HEAD` 等）。40 桁へ解決してから使う
+//
 // 終了コード: 0 = すべて緑 / 1 = 赤（run）・消せなかった（remove） / 2 = 環境の失敗・使用法の誤り。
 // **2 を 1 と混ぜない**——「検査が赤かった」と「検査が走らなかった」は直し方が違う。
 //
@@ -250,7 +252,19 @@ function cmdRun(opts) {
     log: posix(log),
   };
   writeFileSync(out, JSON.stringify(summary, null, 2) + "\n");
-  console.log(JSON.stringify({ sha, status: summary.status, summary: posix(out), log: posix(log) }));
+  // 標準出力は要約の写しである。載せるのは `/implement`「3c. 報告を受けてから」が突き合わせる項目に限る——
+  // PR 前ゲートが読むのは要約ファイルだけで、ファイルが正本である
+  console.log(
+    JSON.stringify({
+      sha,
+      status: summary.status,
+      categories_run: summary.categories_run,
+      results: summary.results.map(({ category, command, exit }) => ({ category, command, exit })),
+      warnings: summary.warnings,
+      summary: posix(out),
+      log: posix(log),
+    }),
+  );
   return red ? 1 : 0;
 }
 

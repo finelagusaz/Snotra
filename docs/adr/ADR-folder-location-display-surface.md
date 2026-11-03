@@ -55,7 +55,7 @@
 
 - **hint の分岐は `view_kind()` の優先度ラダー（tool > folder > results）そのものであり、切り出すと `view_kind()` の 2 重導出になる。** `overlay_kind` が正当なのは、それが `view_kind` と**独立な** 3 入力（indexing / launching / notice）を畳む関数だからで、この形とは違う
 - `strings.rs` の依存が `Language` だけで済まなくなる（`ViewKind` を UI 文言テーブルへ持ち込む）
-- 受け入れ条件 (2) は構造で閉じており、テストの口を作る動機が弱い——instant / slash コマンドは軸 2（`QueryIntent`）で `ViewKind::Results` に落ち、既存 2 腕の値は 1 文字も変わらない
+- 受け入れ条件 (2) は構造で閉じており、テストの口を作る動機が弱い——instant / slash コマンドは軸 2（`QueryIntent`）で `ViewKind::Results` に落ち、既存の 2 分岐の値は 1 文字も変わらない
 
 ## 却下 5: `view_kind()` の 2 回読みを 1 回へ束ねる
 

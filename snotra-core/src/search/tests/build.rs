@@ -32,7 +32,7 @@ struct CollapseCounts {
 /// 反復 11 で cache-miss の分岐が `new_from_tree`（`Measured` を `assemble` が測って潰す）から
 /// `new_with_cached_masks`（保存が返す `Collapsed` をそのまま使う）へ移った。一致は
 /// **構成的には示せる**——`name` はツリーが逐語で持ち、`lower_file_name` の材料は原文と組み直しが
-/// バイト一致し（`path_store_raw_matches_target_path_over_real_index` が実データ全件で接地）、
+/// バイト一致し（`path_store_raw_matches_target_path_over_real_index` が実データ全件で裏付ける）、
 /// 判定は両経路とも `query::measure_derived_sharing` の 1 か所を通る。ここが足すのは
 /// **その 3 本のどれかが将来切れたときに気づく**という機構である。
 ///
@@ -136,7 +136,7 @@ fn assert_engines_agree(
         // **アルゴリズムの食い違い**であって入力の食い違いではない。**塊併合の結線は
         // ここでは守れない**——fixture が `KANA_CHUNK` に届かず塊が 1 つしか出ないので、
         // それは `kana_column_survives_chunked_parallel_merge` の役目である。
-        // 比べないと、`migemo_enabled == true` の腕で**追加検証される
+        // 比べないと、`migemo_enabled == true` の分岐で**追加検証される
         // assertion が 1 件も無い**（migemo 利用者だけがローマ字検索で候補を取り逃す退行は、
         // migemo 無効で回る計測環境からは見えない）。空のときは上で長さを検証済み。
         if !a.kana_lower_names.is_empty() {
@@ -159,7 +159,7 @@ fn assert_engines_agree(
 /// **範囲を切るのは呼び出し側である。** PATH マージ版は追記した範囲だけを数えたい——全件で数えると base のエントリだけでカウンタが埋まり、**追記側が 1 度も判定を下さなくても非空虚検査が緑になる**（`extend_cached_masks` を検算しているつもりで検算していない状態）。
 ///
 /// **3 種は排他である**ことを `else if` の連なりで表す。独立した 3 本の加算にして否定を
-/// 各腕へ配る形だと、4 種目を足すときに 1 本忘れれば二重計上になり、合計を誰も検算して
+/// 各ケースへ配る形だと、4 種目を足すときに 1 本忘れれば二重計上になり、合計を誰も検算して
 /// いないので気づかない。`shared_name` は別軸なので連なりに入れない。
 fn collapse_census(engine: &SearchEngine, range: std::ops::Range<usize>) -> CollapseCounts {
     let mut c = CollapseCounts {
@@ -187,7 +187,7 @@ fn collapse_census(engine: &SearchEngine, range: std::ops::Range<usize>) -> Coll
 fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
     let mut entries = vec![
         // file name 成分が**無い**（`Path::file_name()` が `None`）→ `Absent`。
-        // 実データでは稀ゆえ、合成でしか安定して通せない腕である。
+        // 実データでは稀ゆえ、合成でしか安定して通せない分岐である。
         AppEntry {
             name: "C:".to_string(),
             target_path: "C:\\".to_string(),
@@ -304,28 +304,28 @@ fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_so
 /// **PATH マージが整列済みフラグを下ろすのは、足すエントリが非空のときに限る。**
 ///
 /// `SearchEngine::sorted_by_path` は計測ハーネスのための観測口であり、`PathStore::cmp_paths` が
-/// index 比較（速い）とフルパス組み立て（遅い）のどちらを通るかを決める。**計器がこの値を
+/// index 比較（速い）とフルパス組み立て（遅い）のどちらを通るかを決める。**計測コードがこの値を
 /// 出力に添えられなければ、パスクエリのフレームコストは読めない**（tie-break の経路が
 /// 分からないため）。
 ///
 /// **変異を注入して落ちることを実測してある**（2026-08-13）。`extend_with_roots` の早期 return を
-/// `if false && entries.is_empty()` へ潰すと、**腕 3 だけが落ちる**（腕 1 はマージを通らないので
-/// 通過する）。**腕 1 と腕 3 を同じ計算にしてはならない理由がここにある**——同じにすると
-/// この変異で 2 腕が同時に落ち、「空マージがフラグを下ろす」退行と「マージ前からフラグが偽」の退行を
+/// `if false && entries.is_empty()` へ潰すと、**ケース 3 だけが落ちる**（ケース 1 はマージを通らないので
+/// 通過する）。**ケース 1 とケース 3 を同じ計算にしてはならない理由がここにある**——同じにすると
+/// この変異で 2 ケースが同時に落ち、「空マージがフラグを下ろす」退行と「マージ前からフラグが偽」の退行を
 /// 区別できなくなる（レビュー M-2）。
 /// **`Engine::sorted_by_path` の本体を `true` リテラルへ潰す変異でも実測してある**——
-/// 腕 4 の**偽の側だけ**が落ちる（真の側は検出されない）。恒真の退行を検出するのはこの 1 本である。
+/// ケース 4 の**偽の側だけ**が落ちる（真の側は検出されない）。恒真の退行を検出するのはこの 1 本である。
 ///
-/// **腕ごとに守る不変条件が違う。** 腕 1 は基準線（整列済みならフラグが立つ）、腕 2 は「非空の
-/// マージで下りる」、腕 3 は下の「空マージでは下りない」、**腕 4 は `Engine` 段の passthrough を
-/// 両方向で**（真だけでは恒真への退行を通す）。**どれも他の腕では代われない**——1 つを
+/// **ケースごとに守る不変条件が違う。** ケース 1 は基準線（整列済みならフラグが立つ）、ケース 2 は「非空の
+/// マージで下りる」、ケース 3 は下の「空マージでは下りない」、**ケース 4 は `Engine` 段の passthrough を
+/// 両方向で**（真だけでは恒真への退行を通す）。**どれも他のケースでは代われない**——1 つを
 /// 付け足しと見て消すと、その不変条件だけが無防備になる。
 ///
-/// **腕 3 が守るのは代理指標との分かれ目である。** `IndexTree::extend_with_roots` は冒頭で
+/// **ケース 3 が守るのは代理指標との分かれ目である。** `IndexTree::extend_with_roots` は冒頭で
 /// `if entries.is_empty() { return; }` と抜けるので、`include_path_env` が真でも
 /// `scan_path_env` が空 vec を返す構成（ユーザー PATH が空・全件が既存と重複）ではフラグが
 /// 立ったまま残る。**「`include_path_env` が真ならフラグは下りている」は成り立たない**——
-/// 代理指標で計器を書くと、そこで測った値の帰属が静かに誤る。
+/// 代理指標で計測コードを書くと、そこで測った値の帰属が静かに誤る。
 #[test]
 fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
     let mut base = vec![
@@ -343,8 +343,8 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
     crate::indexer::sort_entries_canonical(&mut base);
 
     // **`None` は「マージを 1 度も通さない」である。** `Some(vec![])` と同じにしてはならない
-    // ——同じにすると腕 1 と腕 3 が 1 行も違わなくなり、「マージ前からフラグが偽」という退行と
-    // 「空マージがフラグを下ろす」という退行を区別できなくなる（どちらでも 2 腕が同時に落ちる）。
+    // ——同じにするとケース 1 とケース 3 が 1 行も違わなくなり、「マージ前からフラグが偽」という退行と
+    // 「空マージがフラグを下ろす」という退行を区別できなくなる（どちらでも 2 ケースが同時に落ちる）。
     let build = |path_entries: Option<Vec<AppEntry>>| {
         let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
         let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
@@ -382,18 +382,18 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
     );
 
     // 3. **空のマージはフラグを下ろさない。** ここが代理指標との分かれ目である
-    //    ——腕 1 と違い、`extend_with_path_entries` を**実際に通したうえで**フラグが残る。
+    //    ——ケース 1 と違い、`extend_with_path_entries` を**実際に通したうえで**フラグが残る。
     assert!(
         SearchEngine::from_material(build(Some(Vec::new())), false).sorted_by_path(),
         "空の PATH マージがフラグを下ろした（`extend_with_roots` の早期 return が壊れている）"
     );
 
-    // 4. **`Engine` 段の passthrough を両方向で通す。** 計器が読むのはこの段であり、ここが
+    // 4. **`Engine` 段の passthrough を両方向で通す。** 計測コードが読むのはこの段であり、ここが
     //    壊れると出力の諸元が静かに嘘をつく——`cargo test` がこの 1 段を一度も評価しない
     //    状態にしない。
     //
     //    **真の側だけでは足りない。** 恒真への退行（`true` リテラル・別の `bool` フィールドへの
-    //    誤配線）は真の側では検出されないが、**実運用点で正しい値は偽**なので、そのとき計器は
+    //    誤配線）は真の側では検出されないが、**実運用点で正しい値は偽**なので、そのとき計測コードは
     //    「PATH マージ あり（+100 件）/ sorted_by_path = true」と刷って**支配項の帰属を逆にする**
     //    ——遅い経路（フルパス組み立て）を測ったのに速い経路を測ったと読める。危ないのは
     //    通らない側であり、そちらを覆わない検知器は一番効く向きを見ていない（レビュー R2-1）。
@@ -413,7 +413,7 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
     );
     assert!(
         !engine_unsorted.sorted_by_path(),
-        "`Engine` の passthrough が恒真になっている（計器が遅い経路を速い経路として刷る）"
+        "`Engine` の passthrough が恒真になっている（計測コードが遅い経路を速い経路として刷る）"
     );
 }
 
@@ -499,11 +499,11 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
 
 /// **派生データを持たない材料でもツリーは伸びる**（`IndexMaterial::extend_with_path_entries`）。
 ///
-/// **この腕は到達可能な製品経路である。** 到達する条件は**初回起動**（`main` が空のツリーから材料を作る）、`Config::config_dir` が引けず `indexer::rebuild_and_save` が派生データを返さないとき、そして `load_cache_in` の**マスクを持たない版の腕**である。**「派生文字列を持たない古い版のキャッシュヒット」と書いてはならない**（かつてそう書いていた）——そちらは `Some(CachedMasks { lower: None })` を返すので**この腕を通らない**。`CachedMasks` の doc の「古い版は `None`」は `lower` の話であり、材料そのものの有無ではない。条件の正本は `load_cache_in` の分岐である。**「起こりえない状態のテスト」として削らないこと。**
+/// **この分岐は到達可能な製品経路である。** 到達する条件は**初回起動**（`main` が空のツリーから材料を作る）、`Config::config_dir` が引けず `indexer::rebuild_and_save` が派生データを返さないとき、そして `load_cache_in` の**マスクを持たない版の分岐**である。**「派生文字列を持たない古い版のキャッシュヒット」と書いてはならない**（かつてそう書いていた）——そちらは `Some(CachedMasks { lower: None })` を返すので**この分岐を通らない**。`CachedMasks` の doc の「古い版は `None`」は `lower` の話であり、材料そのものの有無ではない。条件の正本は `load_cache_in` の分岐である。**「起こりえない状態のテスト」として削らないこと。**
 ///
 /// 守るのは 1 つ: ツリーへの追加が `masks` の有無に**引きずられない**こと。追加を `if let Some` の内側へ書いてしまうと、`None` の分岐では PATH エントリが索引から丸ごと落ちる——**panic も型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである（上の検知器は `Some` の分岐しか通らないので、この誤りには当たらない）。
 ///
-/// **効いているのは `tree.len()` の等値検査だけである。** 下の A/B 比較は、この腕では A 側と同じ計算になるので**原理的に失敗しない**——`extend_with_roots` を共有しているため、その関数を変えれば A と B が同じだけ動く。**「根として足すべきものを親解決して足す変更を見逃す」と書いてはならない**（かつてそう書いていた・ラウンド 2 の指摘への修正で持ち込み、ラウンド 3 が「消えた」と誤判定し、`/code-review` の再実行が現存を実測した）: `IndexTree::build` の doc が「**結果は変わらず、記憶域が増えるだけである**」と書くとおり、根か親解決かは `materialize` を通した像に差を生まない。
+/// **効いているのは `tree.len()` の等値検査だけである。** 下の A/B 比較は、この分岐では A 側と同じ計算になるので**原理的に失敗しない**——`extend_with_roots` を共有しているため、その関数を変えれば A と B が同じだけ動く。**「根として足すべきものを親解決して足す変更を見逃す」と書いてはならない**（かつてそう書いていた・ラウンド 2 の指摘への修正で持ち込み、ラウンド 3 が「消えた」と誤判定し、`/code-review` の再実行が現存を実測した）: `IndexTree::build` の doc が「**結果は変わらず、記憶域が増えるだけである**」と書くとおり、根か親解決かは `materialize` を通した像に差を生まない。
 ///
 /// **それでも A/B を置いてあるのは、`extend_with_path_entries` 自身が `entries` を並べ替える変更を検出するためである**（`len` は等しいまま `entry_view(i)` が食い違う）。絞る・重複を落とす変更は `len` に出るので、A/B が要るのは並べ替えだけである。**この 1 点は未計測である**（変異を注入していない）。
 #[test]
@@ -600,7 +600,7 @@ fn owned(names: &[&str]) -> Vec<String> {
 
 /// 余剰容量は「検索は正しいが常駐だけが増える」形の劣化ゆえ、挙動テストでは検出されない。
 ///
-/// 経路は `new_with_cached_masks` の [`CachedLower::Raw`] 腕を選ぶ——`Vec<String>` → `Vec<Box<str>>` の
+/// 経路は `new_with_cached_masks` の [`CachedLower::Raw`] 分岐を選ぶ——`Vec<String>` → `Vec<Box<str>>` の
 /// 変換が確保ブロックを再利用して余剰を持ち越すため、実運用で余剰が最も乗る経路である。
 ///
 /// **7 行のうち 6 行と `entries` の 1 行は機序が違う。** 派生文字列とマスクの 6 本は

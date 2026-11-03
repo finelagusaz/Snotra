@@ -4,12 +4,12 @@
 //! 部分文字列検索が毎打鍵で走る、索引規模がそのまま乗る唯一の経路である。
 //! それでいて `search/tests/performance.rs` の bench 群も
 //! `tests/search_frame_cost.rs` もパス区切りを含むクエリを 1 つも持っていない——
-//! **`normalized_keys` を保持するか導出するかの差を測る唯一の計器**がここである。
+//! **`normalized_keys` を保持するか導出するかの差を測る唯一の計測コード**がここである。
 //!
 //! **`measure_path_query_frame_cost_at_operating_point` は実起動の経路を再現する**（#1067）: PATH マージ
 //! （`IndexMaterial::extend_with_path_entries`）を通し、実 config の `normal_mode` をそのまま使う。
 //! `measure_path_query_frame_cost` の側は据え置く——過去の全表との比較可能性がそこに掛かっている。
-//! 2 つの計器は同一構成で一致することを実測してある（`PERFORMANCE.md`「実運用点のパスクエリのフレームコスト」）。
+//! 2 つの計測コードは同一構成で一致することを実測してある（`PERFORMANCE.md`「実運用点のパスクエリのフレームコスト」）。
 //! **フラグ（`Engine::sorted_by_path`）を出力に添えるのが要点である**——`cmp_paths` の経路がそれで変わり、
 //! `c:\` の p50 が数千 µs 動く。
 //!
@@ -178,7 +178,7 @@ fn sweep_derived(
 
 /// パス区切りを含むクエリの**製品レベル**フレームコスト（実 `index.bin` × `Engine::search`）。
 ///
-/// **既存の計器はどれもここを測れない。** `tests/search_frame_cost.rs` は合成索引であり
+/// **既存の計測コードはどれもここを測れない。** `tests/search_frame_cost.rs` は合成索引であり
 /// パス区切りクエリを 1 本も持たない（しかもパス長 66.4 B・浅い一様ツリーで、実運用の
 /// 119.3 B・深さ平均 6.05 段とは別物）。`measure_path_query_sweep_cost` は走査だけを
 /// 切り出した写しであって、`Engine::search`（config 実効 limit・履歴ブースト・top-k 組立込み）
@@ -259,12 +259,12 @@ fn measure_path_query_frame_cost() {
 /// PATH が空・全件重複の構成ではフラグが立ったまま残る（検知器は `search/tests/build.rs` の
 /// `path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries`）。
 ///
-/// # この計器が単独で検出する経路
+/// # この計測コードが単独で検出する経路
 ///
-/// 2 つあり、**既存のどの計器も見ていない**: (1) PATH マージ後の `sorted_by_path = false` での
+/// 2 つあり、**既存のどの計測コードも見ていない**: (1) PATH マージ後の `sorted_by_path = false` での
 /// tie-break、(2) `normal_mode = "substring"` での name スコアリング。
 ///
-/// # この計器が見ないもの
+/// # この計測コードが見ないもの
 ///
 /// 検索結果の正しさ（挙動テストの担当）と、実 UI スレッドが本当にこの額を払うか
 /// （`smoke:egui` の担当）。**合否も言わない**——出力に添えた諸元を人間が読んで初めて
@@ -284,9 +284,9 @@ fn measure_path_query_frame_cost() {
 ///
 /// # 足場ではない
 ///
-/// **撤去条件を持たない恒久の計器である。** 実運用点との乖離は #1057 が発見し、#1059 は
+/// **撤去条件を持たない恒久の計測コードである。** 実運用点との乖離は #1057 が発見し、#1059 は
 /// 過去の表との比較可能性を優先して既存ハーネスを据え置いた。#1067 は 3 サイクル目として
-/// 「送る」のをやめ、既存を据え置いたまま別計器を足す側を選んだ。
+/// 「送る」のをやめ、既存を据え置いたまま別計測コードを足す側を選んだ。
 /// **`RETROSPECTIVE.md` を参照先にしない**——あれはサイクルごとに上書きされるので、
 /// 恒久の doc から見出しを引くと次のサイクルで着地しなくなる。
 ///
@@ -359,13 +359,13 @@ fn measure_path_query_frame_cost_at_operating_point() {
                 "\n  --- PATH マージ {}{} （+{merged} 件・ツリー {n_before} → {n_after}） / \
                  normal_mode = {mode:?} / sorted_by_path = {} ---",
                 // **ループ変数ではなく実際に足した件数で刷る。** `include_path_env = false` の
-                // 機体では 2 腕が同一の測定になり、ループ変数だと片方が嘘のラベルを示す
+                // 機体では 2 条件が同一の測定になり、ループ変数だと片方が嘘のラベルを示す
                 // ——この doc が上で「代理指標にしてはならない」と書いた誤りの、出力側の鏡像である。
                 if merged > 0 { "あり" } else { "なし" },
-                // **2 腕が同一構成になる場合はそう書く。** `include_path_env = false` の機体
+                // **2 条件が同一構成になる場合はそう書く。** `include_path_env = false` の機体
                 // では「マージ なし」の表が 2 度出るので、読み手が理由を導出せずに済むようにする。
                 if merge_path_env && merged == 0 {
-                    "（`include_path_env` が偽ゆえ下の腕と同一構成）"
+                    "（`include_path_env` が偽ゆえ下の条件と同一構成）"
                 } else {
                     ""
                 },
@@ -408,7 +408,7 @@ fn measure_path_query_frame_cost_at_operating_point() {
 ///   `cmp_paths` の呼び出し回数に直結する
 ///
 /// **`show_hidden_system` は掃かない。** `compute_config_hash` の入力なので、振ると cache-miss で
-/// 全走査（22〜30 秒）が走り**実 `index.bin` を上書きする**。計器が測定対象の環境を壊す。
+/// 全走査（22〜30 秒）が走り**実 `index.bin` を上書きする**。計測コードが測定対象の環境を壊す。
 ///
 /// **`migemo_min_chars` / `fuzzy_history_cap_ratio` / `history_normalization` も掃かない。**
 /// 前 2 つは上のとおり `kana_query` が常に `None` ゆえ効かず、最後は `adjusted_history_boost` の
@@ -477,7 +477,7 @@ fn measure_path_query_cost_across_settings() {
                     println!(
                         "  {:<5} {:<7} {:<10} {limit:>5} | {:>8} {:>9} | {:>7} {:>8} | {}",
                         // **ループ変数ではなく実際に足した件数で刷る**（実 config が
-                        // `include_path_env = false` なら 2 腕は同一の測定である）。
+                        // `include_path_env = false` なら 2 条件は同一の測定である）。
                         if merged > 0 { "あり" } else { "なし" },
                         if migemo_enabled { "on" } else { "off" },
                         format!("{mode:?}"),

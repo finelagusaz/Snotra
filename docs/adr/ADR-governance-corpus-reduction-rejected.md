@@ -48,4 +48,4 @@
 
 ## 関連
 
-`docs/adr/ADR-governance-meta-demotion.md`（実施した方向 1 と、その根拠の訂正）・`docs/design/2026-08-20-governance-meta-demotion-derivations.md`（独立導出と敵対レビューの原文）・`docs/adr/ADR-retire-area-budget.md`（ゲートから計器への先例）・`docs/adr/ADR-doc-promise-over-area-ratchet.md`（面積の一次規範を「書く約束」に置いた判断）
+`docs/adr/ADR-governance-meta-demotion.md`（実施した方向 1 と、その根拠の訂正）・`docs/design/2026-08-20-governance-meta-demotion-derivations.md`（独立導出と敵対レビューの原文）・`docs/adr/ADR-retire-area-budget.md`（ゲートから計測コードへの先例）・`docs/adr/ADR-doc-promise-over-area-ratchet.md`（面積の一次規範を「書く約束」に置いた判断）

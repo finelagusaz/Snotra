@@ -70,7 +70,7 @@ issue の案 A 却下は `snotra-core/autostart.rs` **1 例**の実測だった�
 
 **赤の理由はいずれも検査の assert であり、実行時エラーではないことを出力で確かめた。**
 
-**測り直しを 2 度要した。** 1 回目は (a) `G-module-linkage` の finding がファイル名を `file` に入れ `message` に入れないのに `message` で絞ったため常に 0 件になり、(b) 対照に選んだ `renderer.rs` が `raster.rs` の索引行から逆に言及されており対照になっていなかった。**どちらも「偽陰性」に見えたが、計器の欠陥と変異の選び損ないだった**（`.claude/rules/safety-nets.md`「発火しないときも同じである」）。
+**測り直しを 2 度要した。** 1 回目は (a) `G-module-linkage` の finding がファイル名を `file` に入れ `message` に入れないのに `message` で絞ったため常に 0 件になり、(b) 対照に選んだ `renderer.rs` が `raster.rs` の索引行から逆に言及されており対照になっていなかった。**どちらも「偽陰性」に見えたが、計測コードの欠陥と変異の選び損ないだった**（`.claude/rules/safety-nets.md`「発火しないときも同じである」）。
 
 ## 受容する残余
 

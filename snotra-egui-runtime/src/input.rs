@@ -21,7 +21,7 @@ pub(crate) struct InputState {
     frame_count: u64,
     /// 直近で `take` 行を出した時刻。**心拍を間引くためだけに持つ**——runner では
     /// stderr 1 行が 17〜56ms かかると実測されており（run 30963445957）、全フレームに
-    /// 出すと計器が系を乱す側へ回る。
+    /// 出すと計測コードが系を乱す側へ回る。
     last_take_trace: Option<Instant>,
 }
 
@@ -29,13 +29,13 @@ pub(crate) struct InputState {
 /// ——落としてよいのは「何も起きていないことの証拠」だけである。
 const TAKE_TRACE_HEARTBEAT: Duration = Duration::from_millis(100);
 
-/// 打鍵の到達計器が有効か（`SNOTRA_EGUI_INPUT_TRACE`・#872/#936）。
+/// 打鍵の到達計測コードが有効か（`SNOTRA_EGUI_INPUT_TRACE`・#872/#936）。
 /// 判定を `input_trace` の内側だけに置くと、呼び出し側が `format!` の割り当てを
 /// 無条件に払う。呼ぶ前に問えるよう外へ出す。
 pub(crate) fn input_trace_enabled() -> bool {
     // **一度だけ読む**。この述語はウィンドウイベントごと（マウス移動を含む）とフレームごとに問われる
     // ため、env の読み出し（`crate::env::trace_hatch_enabled` の中の `var_os`）の割り当てを
-    // 毎回払うと、計器を**切っていても**出荷バイナリのホットパスに費用が残る。
+    // 毎回払うと、計測を**切っていても**出荷バイナリのホットパスに費用が残る。
     // キャッシュの形は `src-tauri/src/trace.rs` の `trace_enabled` と同じ。
     //
     // **キャッシュを持つのはこの 1 箇所だけである**（残り 6 箇所は呼び出しごとに読む）。
@@ -45,7 +45,7 @@ pub(crate) fn input_trace_enabled() -> bool {
     *ENABLED.get_or_init(|| crate::env::trace_hatch_enabled("SNOTRA_EGUI_INPUT_TRACE"))
 }
 
-/// 到達した入力を 1 件 1 行で残す（#872/#936 の型 B＝打鍵の喪失を、層ごとに割るための計器）。
+/// 到達した入力を 1 件 1 行で残す（#872/#936 の型 B＝打鍵の喪失を、層ごとに割るための計測コード）。
 ///
 /// **`[trace]` を示さない。** あちらの `seq` は `src-tauri/src/trace.rs` の単一 `AtomicU64` が
 /// 持つ全順序であり、この crate からは触れない。seq を欠いた `[trace]` 行は
@@ -56,7 +56,7 @@ pub(crate) fn input_trace_enabled() -> bool {
 ///
 /// **文字の内容は出さない**——出すのは件数だけである（`on_input_changed` が入力文字列を
 /// 残さず文字数だけを残すのと同じ方針）。物理キーコードは出す: 「どのキーが消えたか」が
-/// この計器の問いそのもので、それ無しでは 5 打鍵のうち何番目が落ちたか分からない。
+/// この計測コードの問いそのもので、それ無しでは 5 打鍵のうち何番目が落ちたか分からない。
 pub(crate) fn input_trace(kind: &str, detail: &str) {
     if !input_trace_enabled() {
         return;
@@ -96,7 +96,7 @@ impl InputState {
         // 同じ無出力へ潰れている。**この 1 行だけが両者を分ける。**
         //
         // **全フレームには出さない**——runner では stderr 1 行が 17〜56ms かかると実測した
-        // （run 30963445957・隣接する 2 行の間隔）。全フレームに出すと計器が系を乱す側へ回る。
+        // （run 30963445957・隣接する 2 行の間隔）。全フレームに出すと計測コードが系を乱す側へ回る。
         // 入力を積んだフレームは必ず出し、それ以外は 100ms ごとの心拍に間引く：
         // 「走っていない」は**行の不在**ではなく**心拍の途切れ**として見えるので、間引いても
         // 判定は壊れない。

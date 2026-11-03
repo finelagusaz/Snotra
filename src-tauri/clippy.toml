@@ -61,12 +61,12 @@
 #
 # ## 群 2: 計測ハーネス専用の観測口（#1067）
 #
-# `Engine::sorted_by_path` は索引が `target_path` のバイト順に並んでいるかを返す。**計器が
+# `Engine::sorted_by_path` は索引が `target_path` のバイト順に並んでいるかを返す。**計測コードが
 # 「速い経路と遅い経路のどちらを測ったか」を出力に添えるため**に在り、製品がこれを読んで
 # 分岐してはならない——分岐は `PathStore::cmp_paths` の内側に閉じている。`#[doc(hidden)]` は
 # 意図を示すだけで呼び出しを止めないので、製品 crate だけを機構で塞ぐ。
 #
-# **統合テスト（`snotra-core/tests/`）は別 crate ゆえ無影響である**——計器はそちらに在る。
+# **統合テスト（`snotra-core/tests/`）は別 crate ゆえ無影響である**——計測コードはそちらに在る。
 # **`sorted_prefix_len` は禁じていない**——`#[cfg(test)]` で閉じてあり、製品からは**呼べない**
 # （禁止を足すより公開面を減らすほうが強い）。`SearchEngine` 側の同名 2 メソッドも `pub(crate)` で、
 # **製品 crate から届く綴りは `Engine::sorted_by_path` の 1 本だけである。**

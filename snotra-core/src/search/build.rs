@@ -101,7 +101,7 @@ type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, NameArena);
 /// フルパスを要求する。規則が 2 つになると、片方の経路だけが静かにすれる。
 ///
 /// 通るのは [`SearchEngine::new_from_tree`] と、[`SearchEngine::new_with_cached_masks`] の
-/// 派生文字列を持たない腕（`cached_lower` が `None`）である。**1 本に寄せてあるのは、実体化するという判断を 2 部出荷しないためである**——コメントごと二重化していると、片方だけ直したときに文面の食い違いが「説明の違い」に見えてしまう。
+/// 派生文字列を持たない分岐（`cached_lower` が `None`）である。**1 本に寄せてあるのは、実体化するという判断を 2 部出荷しないためである**——コメントごと二重化していると、片方だけ直したときに文面の食い違いが「説明の違い」に見えてしまう。
 fn wave1_from_tree(tree: &IndexTree, migemo_enabled: bool) -> Wave1Strings {
     let materialized = tree.materialize();
     compute_wave1(&materialized, migemo_enabled)

@@ -4,7 +4,7 @@
 //! [`snapshot`] は `None` を返し、`trace.rs` の出力も従来どおりである（費用ゼロ）——`heap` 欄の
 //! **不在が「測っていない」であり、0 ではない**。
 //! 有効時は確保・解放ごとに 2 つの `Relaxed` 原子操作が乗るので、**フレーム時間の計測と
-//! 同じ実行で使わないこと**（計器が測定対象を乱す側のツールである）。
+//! 同じ実行で使わないこと**（計測コードが測定対象を乱す側のツールである）。
 //!
 //! **測るもの**: live バイト（`Layout::size()` の和）・live ブロック数・確保/解放の累計。
 //! **測らないもの**: Windows ヒープのブロックヘッダとサイズクラス丸め、OS・シェル DLL・
@@ -85,14 +85,14 @@ mod counting {
     pub(super) struct Counting;
 
     // 順序は `Relaxed` でよい——読み手（`snapshot`）は「ある瞬間の整合した組」ではなく
-    // 規模を見る。強い順序を要求すると確保のたびにバリアが乗り、計器の費用が跳ねる。
+    // 規模を見る。強い順序を要求すると確保のたびにバリアが乗り、計測コードの費用が跳ねる。
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             let ptr = unsafe { System.alloc(layout) };
             if !ptr.is_null() {
                 // **peak は自分が観測した live から更新する。** 他スレッドの確保と交錯すると
                 // 真の最大より小さく出うる（`Relaxed` の読みと `fetch_max` の間で更新されるため）
-                // ——peak は**下限**として読むこと。強い順序で厳密化する価値は無い（規模を見る計器）。
+                // ——peak は**下限**として読むこと。強い順序で厳密化する価値は無い（規模を見る計測コード）。
                 let live = LIVE.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
                 PEAK.fetch_max(live, Ordering::Relaxed);
                 BLOCKS.fetch_add(1, Ordering::Relaxed);
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(value["live_bytes"], 512);
     }
 
-    /// feature 無効の既定ビルドでは計器が動かない——`None` は「測っていない」であり、
+    /// feature 無効の既定ビルドでは計測コードが動かない——`None` は「測っていない」であり、
     /// 「0 だった」ではない。呼び出し側はこの区別に依存して `heap` 欄ごと出さない。
     #[cfg(not(feature = "heap-trace"))]
     #[test]

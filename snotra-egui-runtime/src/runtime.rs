@@ -276,7 +276,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                 }
             }
             Event::RedrawRequested(window_id) => {
-                // hidden 中の抑止点の切り分け計器（#697）。送信側は repaint.rs の worker。
+                // hidden 中の抑止点の切り分け計測コード（#697）。送信側は repaint.rs の worker。
                 // ウィンドウ特定の前に置く——特定の失敗で握りつぶされる経路も観測対象。
                 // runtime_id は送信側の window_id と同じ ID 空間ゆえ、ウィンドウの帰属を直接照合できる。
                 if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
@@ -450,7 +450,7 @@ impl EguiWindow {
         let output = self
             .context
             .run_ui(raw_input, |ui| self.view.update(ui, &mut frame));
-        // 可視アイドルの周期 repaint 源を名指しする計器（#628）。env 未設定なら Instant も
+        // 可視アイドルの周期 repaint 源を名指しする計測コード（#628）。env 未設定なら Instant も
         // causes の clone も取らない——計測器が測定対象を汚さないため（renderer.rs と同規範）。
         //
         // 読むときの 3 点:

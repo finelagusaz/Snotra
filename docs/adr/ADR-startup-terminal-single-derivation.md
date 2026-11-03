@@ -2,7 +2,7 @@
 
 ## 文脈
 
-#1026。起動計器の終端では、イベント名（`startup:ready` / `startup:failed`）を `finish` が、`data.ok` を `to_json` が、それぞれ別々に `outcome` から導いていた。食い違いは #1009 が足したハーネスの整合検査（`scripts/lib/SnotraStartupContract.psm1`）が外から監視していた。ただしその検査を実バイナリへ当てる `bench-startup.ps1` は `smoke.yml` で `continue-on-error` として走り、PR を止めない。
+#1026。起動の計測コードの終端では、イベント名（`startup:ready` / `startup:failed`）を `finish` が、`data.ok` を `to_json` が、それぞれ別々に `outcome` から導いていた。食い違いは #1009 が足したハーネスの整合検査（`scripts/lib/SnotraStartupContract.psm1`）が外から監視していた。ただしその検査を実バイナリへ当てる `bench-startup.ps1` は `smoke.yml` で `continue-on-error` として走り、PR を止めない。
 
 ## 決定
 

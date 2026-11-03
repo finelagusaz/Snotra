@@ -8,7 +8,7 @@
 //!
 //! **`has_path_sep` のクエリは Fuzzy ビットマスク pre-filter をスキップする**——パスマッチは
 //! 正規化キーへの Substring であり、名前のビットマスクでは候補を絞れない。ゆえに全エントリの
-//! 走査が毎打鍵で走る唯一の経路になる（費用の計器は `tests/path_query_cost.rs`）。
+//! 走査が毎打鍵で走る唯一の経路になる（費用の計測コードは `tests/path_query_cost.rs`）。
 
 use std::borrow::Cow;
 

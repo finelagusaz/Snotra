@@ -79,7 +79,7 @@ const TEXT_EDIT_HINT_H_MARGIN: f32 = (SEARCH_INPUT_MARGIN.left + SEARCH_INPUT_MA
 /// `folder_current_dir()` の**読み取り点は動かせない**（下の長文コメント）。ゆえに
 /// 「読み取りは外・書式化と省略は内」で切る。
 ///
-/// **ラダーを純粋核へ切り出したのではない**——腕・順序・条件は元の 3 分岐のままである
+/// **ラダーを純粋核へ切り出したのではない**——分岐の中身・順序・条件は元の 3 分岐のままである
 /// （切り出しは `ADR-folder-location-display-surface` 却下 4 で退けられている。
 /// `view_kind()` の 2 重導出になるため）。
 enum HintPlan<'a> {
@@ -118,7 +118,7 @@ pub(crate) struct SearchWindowView {
     // （main 用）を流用してはならない**という当時の不変条件（Important 1）は、memo が別の型に
     // 分かれたことで構造的に保たれる——同一フレーム内で main のブロックが先に
     // `last_set_width` を更新するため、共有すると results が幅の live-reload に追従しなくなる。
-    /// フレーム所要と間隔の計器（#1004 PR 1）。`SNOTRA_TRACE` 無効時も進めてよい（`Instant` 差だけ）。
+    /// フレーム所要と間隔の計測コード（#1004 PR 1）。`SNOTRA_TRACE` 無効時も進めてよい（`Instant` 差だけ）。
     frame_timer: crate::egui_shell::FrameTimer,
 }
 
@@ -704,7 +704,7 @@ impl EguiView for SearchWindowView {
         // **#870 以降、この不変条件のうち folder 現在地の分は借用が構造的に守る**——`HintPlan`
         // が `folder_current_dir()` の `&str` を closure まで持つため、間に
         // `&mut self.controller` を挟むとコンパイルが通らない（ライフタイムは enum の型に
-        // 載るので、実行時にどの腕を取るかに依らず領域が生きる）。**grep 検算がなお要るのは
+        // 載るので、実行時にどの分岐を取るかに依らず領域が生きる）。**grep 検算がなお要るのは
         // `view_kind()` / `is_launching()` / `folder_filter()` のように値をコピーして渡す
         // 読みのほうである**——そちらは借用が残らないので、間に `&mut` を書けてしまう。
         let in_tool = self.controller.state().view_kind() == ViewKind::Tool;
@@ -738,7 +738,7 @@ impl EguiView for SearchWindowView {
         } else if let Some(dir) = self.controller.state().folder_current_dir() {
             // **`in_folder` ではなく `Option` を直接分岐させる。** `in_folder`（= `view_kind()`
             // == `Folder`）で分岐すると「Folder なのに dir が無い」到達不能な else 側を
-            // `unwrap_or` 等で埋めることになる。`Option` で分岐すればその腕が**構造的に存在せず**、
+            // `unwrap_or` 等で埋めることになる。`Option` で分岐すればその分岐が**構造的に存在せず**、
             // 到達不能な行を「検出器」に見せかけずに済む。
             //
             // **同値は片側だけである**: `view_kind() == Folder ⟹ folder.is_some()` は成り立つが

@@ -19,7 +19,7 @@
 //! - **`drain_launch` の `notice.set` を撃つ 3 分岐は自前の `request_repaint` を持たない**
 //!   （通知の期限を張る唯一の主体は `poll_async` の `notice.remaining()` ブロックであり、両者が
 //!   **同じフレームに呼ばれる**ことが期限の成立条件である）。**`drain_launch` 全体が repaint を
-//!   持たないという意味ではない**——Empty 腕の未 timeout 側は
+//!   持たないという意味ではない**——Empty 分岐の未 timeout 側は
 //!   `request_repaint_after(LAUNCH_TIMEOUT - elapsed)` を張るが、これは起動タイムアウトの期限で
 //!   あって通知の期限ではない（別の armed 期限・#711）
 //! - **folder drain の前後関係**は両側とも他所にある: 前は `reset()` / `enter_folder` 等の

@@ -16,11 +16,11 @@
 
 母集団が空になれば 21 本は空虚に緑を返す。それは**21 本自身の故障**であってメタ層の話ではない。ゆえに `runAll` の 0 件検知・`lib.mjs` の入力ガード・`registry.mjs` の走査と形式検証・`manifest` の `checks`/`docs`/`rules`/`skills` 列はゲートに残す。
 
-格下げしたのは、壊れても 21 本の合否が動かないもの——`G-domain-anchors`、面積計器の入力ガード、evidence の供給断検知、`manifest` の `domains` 列、および `domains.test.mjs` の錨の総称反証テストである。
+格下げしたのは、壊れても 21 本の合否が動かないもの——`G-domain-anchors`、面積の計測コードの入力ガード、evidence の供給断検知、`manifest` の `domains` 列、および `domains.test.mjs` の錨の総称反証テストである。
 
 ## 却下 1: いま撤去する（コードごと消す）
 
-**消すと、廃止できる根拠が二度と取れない。** `ADR-retire-area-budget` は面積の判定を廃したとき計器を残し、そのおかげで「通算 4 観測点で欠陥検出ゼロ」という実績が積めた。消していればその 4 点は存在しない。**撤去は観測の後に来る**。
+**消すと、廃止できる根拠が二度と取れない。** `ADR-retire-area-budget` は面積の判定を廃したとき計測コードを残し、そのおかげで「通算 4 観測点で欠陥検出ゼロ」という実績が積めた。消していればその 4 点は存在しない。**撤去は観測の後に来る**。
 
 加えて、撤去は「効いていなかった」という主張を含むが、いまその主張を支える観測は 1 日分しか無い。**費用が測れていることは、価値がゼロであることの証拠ではない。**
 
@@ -52,13 +52,13 @@
 
 **格下げの対象のうち、錨の層（`domains.mjs` / `G-domain-anchors` / 各検査の `domains` 宣言 / `manifest` の `domains` 列 / `duplicateDomains` / 未移行ラチェット）は、下の観測期間を待たずに撤去した**（`ADR-governance-anchor-layer-discarded`）。理由は「格下げは強制力を外しただけで面は残る」であり、**利用者が名指しした痛み（母集団の特定という認知作業）は面が在る限り消えない**からである。
 
-**ゆえに下の「戻す条件・撤去する条件」が今も律するのは 2 件だけである**——面積計器の入力ガードと、evidence の供給断検知。
+**ゆえに下の「戻す条件・撤去する条件」が今も律するのは 2 件だけである**——面積の計測コードの入力ガードと、evidence の供給断検知。
 
 ## 追記（2026-08-20・#1155）— `META_CHECK_IDS` は同じ撤去で消えた
 
 上の撤去（#1152）は `META_CHECK_IDS` も落としている。**ゆえに冒頭の「格下げ後の姿は `META_CHECK_IDS` と `metaAuditEnabled` が持つ」と、下の「その項目だけを `META_CHECK_IDS` から外してゲートへ戻す」は、どちらも実在しない識別子を指している**（凍結規約により本文は書き換えず、ここで読み替えを与える）。
 
-- **格下げ後の姿を持つのは `scripts/governance-check.mjs` の `metaAuditEnabled` と、同ファイルが `metaFindings` へ振り分ける 2 件である。** 検査 id の集合として持つ形は残っていない——格下げ対象が検査ではなくなり（`G-domain-anchors` の撤去で 0 本になり）、残る 2 件がどちらも検査ではない計器だからである。
+- **格下げ後の姿を持つのは `scripts/governance-check.mjs` の `metaAuditEnabled` と、同ファイルが `metaFindings` へ振り分ける 2 件である。** 検査 id の集合として持つ形は残っていない——格下げ対象が検査ではなくなり（`G-domain-anchors` の撤去で 0 本になり）、残る 2 件がどちらも検査ではない計測コードだからである。
 - **「ゲートへ戻す」の実体**は、その項目を `metaFindings` ではなく `findings` へ積むことである。監査モードの合流（`if (metaAuditEnabled()) findings.push(...metaFindings)`）が既にその形を持つ。
 
 **この陳腐化は #1155 で見つかるまで黙って推移した。** `.claude/skills/health-check/SKILL.md` が判定規則の正本として本 ADR のこの節へ委譲しているため、**復帰手順が実行不能なまま運用の入口だけが生きていた**——凍結された歴史であっても、生きた層から手順として委譲されている節は、指し先の実在が切れれば実害になる。
@@ -84,14 +84,14 @@
 | 2026-08-27（#1201 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（906 件 green） | **0 件** |
 | 2026-09-02（#1211 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（906 件 green） | **0 件** |
 | 2026-09-02（#1214 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0・格下げ中のメタ層の印字なし）と `npm test`（908 件 green） | **0 件（(b) 露出なし）** |
-| 2026-09-02（#1225 サイクル末・`/retrospective` から） | 同上（exit 0・`npm test` 908 件 green） | **0 件。面積計器の入力ガードは (a)**（#1222 が `.claude/skills/health-check/SKILL.md` を変更し、`checkNormativeAreaInstrument` が読む面に届いた）／**evidence の供給断検知は (b)**（袋の組み立てにも `ctx.record` の供給側にも触れていない） |
-| 2026-09-24（#1246・#1247 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（895 件 green） | **0 件。面積計器の入力ガードは (a)**（#1246 が入れ子の `snotra-settings/CLAUDE.md` を変更し、`checkNormativeAreaInstrument` の `nestedClaudeMdFiles` が読む面に届いた）／**evidence の供給断検知は (b)**。**連続は切れている**——直前の行（#1225）とこの行のあいだに、観測行の無いサイクル末が 2 つある（#1232・#1236） |
+| 2026-09-02（#1225 サイクル末・`/retrospective` から） | 同上（exit 0・`npm test` 908 件 green） | **0 件。面積の計測コードの入力ガードは (a)**（#1222 が `.claude/skills/health-check/SKILL.md` を変更し、`checkNormativeAreaInstrument` が読む面に届いた）／**evidence の供給断検知は (b)**（袋の組み立てにも `ctx.record` の供給側にも触れていない） |
+| 2026-09-24（#1246・#1247 サイクル末・`/retrospective` から） | `SNOTRA_GOV_META_AUDIT=1` で `governance:check`（exit 0）と `npm test`（895 件 green） | **0 件。面積の計測コードの入力ガードは (a)**（#1246 が入れ子の `snotra-settings/CLAUDE.md` を変更し、`checkNormativeAreaInstrument` の `nestedClaudeMdFiles` が読む面に届いた）／**evidence の供給断検知は (b)**。**連続は切れている**——直前の行（#1225）とこの行のあいだに、観測行の無いサイクル末が 2 つある（#1232・#1236） |
 
 **追記（2026-09-02・#1214 サイクル末）— 撤去を見送り、判定規則の側を直した。**
 
 上の行で「連続 2 サイクル 0 件」が**行の上では**成立したが、撤去しなかった。理由は 3 点で、いずれも会話ではなくここに残す。
 
-1. **今サイクルの 0 件は情報を持たない。** 触れたのは `scripts/governance/checks/G-module-index.mjs` であり、面積計器の入力にも `ctx.record` の供給にも届いていない。**鳴りようがなかったのであって、鳴らなかったのではない。**
+1. **今サイクルの 0 件は情報を持たない。** 触れたのは `scripts/governance/checks/G-module-index.mjs` であり、面積の計測コードの入力にも `ctx.record` の供給にも届いていない。**鳴りようがなかったのであって、鳴らなかったのではない。**
 2. **2 行が同じ日に並んでいる。** #1211 サイクル末と #1214 サイクル末のあいだに他のサイクル末は無いので規則上は連続だが、数時間差である。先例（`ADR-retire-area-budget`）は通算 4 観測点を積んでいた。
 3. **evidence の供給断検知は、標的の故障が実際に 2 度起きた記録を持つ**（検査が `ctx.record` を呼ばなくなり `undefined` を印字して exit 0／`always` を落として findings 0 件のまま exit 0・2026-08-17 実測。いずれも `governance-check.mjs` のコメントが正本）。撤去後の 0 件は「壊れなかった」であって「壊れようがない」ではない。
 
@@ -116,8 +116,8 @@
 
 ## 関連
 
-`docs/design/2026-08-20-governance-meta-demotion-derivations.md`（この決定を出した独立導出と敵対レビューの原文。**2 サイクル後の撤去判定はここを読む**——どの項目が争点で、どちらの側がどんな根拠を出したかは要約に落とすと消える）・`docs/adr/ADR-retire-area-budget.md`（ゲートから計器への先例と、そこで積んだ観測）・`docs/adr/ADR-retire-norm-review.md`（規範は機構の代わりにならない実測）・`docs/adr/ADR-rules-paths-subtree-coverage.md`（#1143 の失効の経緯）・`.claude/rules/safety-nets.md`（機構の配置を変えたときの再測定の引き金）
+`docs/design/2026-08-20-governance-meta-demotion-derivations.md`（この決定を出した独立導出と敵対レビューの原文。**2 サイクル後の撤去判定はここを読む**——どの項目が争点で、どちらの側がどんな根拠を出したかは要約に落とすと消える）・`docs/adr/ADR-retire-area-budget.md`（ゲートから計測コードへの先例と、そこで積んだ観測）・`docs/adr/ADR-retire-norm-review.md`（規範は機構の代わりにならない実測）・`docs/adr/ADR-rules-paths-subtree-coverage.md`（#1143 の失効の経緯）・`.claude/rules/safety-nets.md`（機構の配置を変えたときの再測定の引き金）
 
 ## 追記（2026-09-29）— 残る 2 件を計器ごと撤去した
 
-上の「2 サイクル連続 0 件」は成立していない。それでも利用者の裁定で、面積計器（`instrument.mjs`）と evidence 行（`evidence.mjs`）を入力ガードごと撤去した。`SNOTRA_GOV_META_AUDIT` と `/health-check` の Check 11 も同時に消えている。**観測を打ち切った理由は、この 2 件を守るための観測手続きのほうが重くなっていたからである。** その手続きはこの ADR に約 50 行の議論を積んでおり、小さな計器 2 件の価値を上回っていた。撤去後の `governance:check` が印字するのは検査の本数だけであり、上の観測表と判定規則はもう何も律していない。
+上の「2 サイクル連続 0 件」は成立していない。それでも利用者の裁定で、面積の計測コード（`instrument.mjs`）と evidence 行（`evidence.mjs`）を入力ガードごと撤去した。`SNOTRA_GOV_META_AUDIT` と `/health-check` の Check 11 も同時に消えている。**観測を打ち切った理由は、この 2 件を守るための観測手続きのほうが重くなっていたからである。** その手続きはこの ADR に約 50 行の議論を積んでおり、小さな計測コード 2 件の価値を上回っていた。撤去後の `governance:check` が印字するのは検査の本数だけであり、上の観測表と判定規則はもう何も律していない。

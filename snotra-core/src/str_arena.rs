@@ -344,7 +344,7 @@ impl LowerNameColumn {
         (0..self.len()).map(|i| self.get(i))
     }
 
-    /// 実体を持つ要素の数（`index.bin` の内訳計器が「共有の効き」を出すために使う）。
+    /// 実体を持つ要素の数（`index.bin` の内訳の計測コードが「共有の効き」を出すために使う）。
     pub(crate) fn count_present(&self) -> usize {
         self.iter().flatten().count()
     }
@@ -541,7 +541,7 @@ impl LowerFileColumn {
         (0..self.len()).map(|i| self.get(i))
     }
 
-    /// 独自の文字列を持つ要素の数（`index.bin` の内訳計器が使う）。
+    /// 独自の文字列を持つ要素の数（`index.bin` の内訳の計測コードが使う）。
     pub(crate) fn count_text(&self) -> usize {
         self.iter()
             .filter(|s| matches!(s, LowerFileSlot::Text(_)))

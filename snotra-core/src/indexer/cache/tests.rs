@@ -233,7 +233,7 @@ fn index_cache_on_disk_format_is_stable() {
     assert_eq!(restored.lower_file_names.into_owned(), lower_file_names);
 }
 
-/// **旧形式の凍結バイト列が、ツリーの組み直しの唯一の接地である。**
+/// **旧形式の凍結バイト列が、ツリーの組み直しの唯一の裏付けである。**
 ///
 /// v7 は `target_path` を持たないので、v7 から実体化した値と組み直しを突き合わせても
 /// 「組み直しの結果どうし」を比べることにしかならない。ここでは **v6 の凍結バイト列**
@@ -257,7 +257,7 @@ fn index_tree_raw_matches_frozen_v6_specimen() {
         tree.path_into(&mut buf, i);
         assert_eq!(&buf, want, "原文の組み直しがずれている（index {i}）");
     }
-    assert!(!expected.is_empty(), "凍結 v6 が空では接地にならない");
+    assert!(!expected.is_empty(), "凍結 v6 が空では裏付けにならない");
 }
 
 /// 凍結 golden（`golden_fixture` の serialize 出力・INDX magic + version 8 ヘッダー込み）。
@@ -266,7 +266,7 @@ fn index_tree_raw_matches_frozen_v6_specimen() {
 /// 書かれていた旧バイト列」が存在せず、新コードの出力を凍結する以外に採りようがない
 /// （`snotra-core/CLAUDE.md`「データ永続化の注意」が禁じている向きは、**旧形式の後方互換を
 /// 新出力の golden で代用すること**である）。後方互換はここではなく `GOLDEN_V6` /
-/// `GOLDEN_V5` / `GOLDEN_V4` からの load テストが持ち、ツリーの組み直しの接地は
+/// `GOLDEN_V5` / `GOLDEN_V4` からの load テストが持ち、ツリーの組み直しの裏付けは
 /// `index_tree_raw_matches_frozen_v6_specimen` が持つ。
 ///
 /// **末尾の `lower_file_names` は `LowerFileName` のタグである**: `Absent` = 0、
@@ -291,7 +291,7 @@ const GOLDEN_V8: &[u8] = &[
 /// `GOLDEN_V8` との差は版のバイトだけである。** v7 を読まないことを守るのは版の判定であって、
 /// 列の中身ではない。
 ///
-/// 製品はこれを読まない（cache-miss）。読むのは内訳の計器だけである——検知器は
+/// 製品はこれを読まない（cache-miss）。読むのは内訳の計測コードだけである——検知器は
 /// `frozen_v7_is_a_cache_miss_and_is_not_rewritten` と
 /// `breakdown_still_reads_the_frozen_v7`。
 const GOLDEN_V7: &[u8] = &[
@@ -904,7 +904,7 @@ fn upgrade_carries_the_built_at_it_read() {
 /// は save の失敗を飲む——理由はその doc）。書き戻しの成否を固定するのは
 /// `load_cache_upgrades_a_legacy_format_in_place` /
 /// `load_cache_does_not_rewrite_when_the_format_is_current` の対であり、ここの適用範囲は
-/// 「計器がその分岐を通ったことを報告するか」だけである。
+/// 「計測コードがその分岐を通ったことを報告するか」だけである。
 #[test]
 fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
     // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
@@ -1006,7 +1006,7 @@ fn load_or_scan_with_stats_reports_upgrade_save_in_cache_save() {
     //
     // **ここを `LoadCacheResult` 側と同じ variant 判定へ替えることはできない**（#1054 /
     // #1063 で替えたのは向こうだけである）——`LoadOrScanStats::cache_save` は
-    // 外向き計器で覗く variant を持たず、しかもこの assert が「配線が `result.upgrade_save`
+    // 外向き計測コードで覗く variant を持たず、しかもこの assert が「配線が `result.upgrade_save`
     // を捨てて `ZERO` を焼き込む」退行を検出する唯一の検知器である。時間を見るのをやめると
     // 検知器が 1 つ減る。
     //
@@ -1224,14 +1224,14 @@ fn frozen_v7_is_a_cache_miss_and_is_not_rewritten() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **内訳の計器は、製品が読まなくなった v7 も読む。** 版を上げた直後の実運用点は v7 の
-/// まま置かれており、計器がそこで黙ると一番測りたい相手にだけ測れなくなる。
+/// **内訳の計測コードは、製品が読まなくなった v7 も読む。** 版を上げた直後の実運用点は v7 の
+/// まま置かれており、計測コードがそこで黙ると一番測りたい相手にだけ測れなくなる。
 #[test]
 fn breakdown_still_reads_the_frozen_v7() {
     let dir = temp_dir("frozen_v7_breakdown");
     fs::write(dir.join("index.bin"), GOLDEN_V7).expect("write v7 index.bin");
 
-    let breakdown = cache_byte_breakdown_in(&dir).expect("計器は v7 を読めること");
+    let breakdown = cache_byte_breakdown_in(&dir).expect("計測コードは v7 を読めること");
     assert_eq!(breakdown.version, 7);
 
     let _ = fs::remove_dir_all(&dir);

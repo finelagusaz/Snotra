@@ -12,7 +12,7 @@
 //! - **`folder_gen` の bump と `accept_folder_result` の述語**は
 //!   [`crate::egui_shell::search_state`] が持つ。ここに在るのは token の発行を受けて spawn する
 //!   側と、返ってきた token を照合させる側だけである
-//! - **展開後の行の絞り込み**は `search_flow.rs` の `run_search_with`（Folder 腕）。ここは
+//! - **展開後の行の絞り込み**は `search_flow.rs` の `run_search_with`（Folder 分岐）。ここは
 //!   cache / error を差し替えたあと `run_search` を撃つところまでを担う
 
 use snotra_core::engine::FolderListContext;

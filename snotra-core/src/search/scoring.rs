@@ -101,7 +101,7 @@ pub(super) fn utf32_haystack<'a>(haystack: &'a str, buf: &'a mut Vec<char>) -> U
 /// `needle` は呼び出し側が `Utf32String::from` で 1 度だけ作る（両辺を同じ規則で組むこと——片側だけ
 /// `Utf32Str::new` にすると一致が落ちる・#1276）。
 ///
-/// **検索の Fuzzy の腕とフォルダ絞り込みの Fuzzy の腕が共有する。** `fuzzy_match` を直接呼ぶ箇所を他に
+/// **検索の Fuzzy の分岐とフォルダ絞り込みの Fuzzy の分岐が共有する。** `fuzzy_match` を直接呼ぶ箇所を他に
 /// 足すと規則が 2 か所になる（検知器は無い）。スレッドローカル（`MATCHER`）の借用はこの関数の中に
 /// 閉じてあり、ここから照合以外を呼ばないので再入しない。
 pub(crate) fn fuzzy_match_score(haystack: &str, needle: Utf32Str<'_>) -> Option<u16> {
@@ -217,7 +217,7 @@ fn kana_substring_score(kana_lower_name: &str, kana_query: &Finder<'_>) -> Optio
 /// 部分文字列の照合器）は `plan` が検索 1 回に 1 度だけ作ったものを使う。Fuzzy の照合は
 /// [`fuzzy_match_score`] が行う。
 ///
-/// **スレッドローカル（`MATCHER`）の借用は Fuzzy の腕から呼ぶ [`fuzzy_match_score`] の中に閉じてある**
+/// **スレッドローカル（`MATCHER`）の借用は Fuzzy の分岐から呼ぶ [`fuzzy_match_score`] の中に閉じてある**
 /// ——呼び出し側がスレッドローカルを知らずに済むためであって、速さのためではない（Substring の
 /// 全件走査で差が測れなかった・実測は `PERFORMANCE.md`「採用: 検索の候補ごとの確保をやめる」）。
 fn match_score_single_cached(mode: SearchMode, lower_name: &str, plan: &QueryPlan) -> Option<i64> {
@@ -420,7 +420,7 @@ impl SearchEngine {
         // **区切りを含む needle は、区切りを含まない名前に部分列として存在しえない。**
         // ゆえに Fuzzy の name/file_name スコアリングは**証明として**飛ばせる（#1057）。
         // 額は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを行わない」が
-        // 正本である（**ここへ写さない**——計器を回すたびに古くなる）。
+        // 正本である（**ここへ写さない**——計測コードを回すたびに古くなる）。
         //
         // **3 つの条件はどれも落とせない**:
         // - `Fuzzy` — Prefix/Substring は `starts_with` / `find` であって部分列ではない。

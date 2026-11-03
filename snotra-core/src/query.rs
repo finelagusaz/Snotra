@@ -1,11 +1,10 @@
 //! クエリと履歴キーの正規化、および文字存在ビットマスク計算。
 //!
 //! 照合用の正規化の唯一の入口 `normalize_for_match`（クエリとエントリ名の両側が通る・
-//! SPEC §4.2。Unicode の合成（NFC）とラテン文字の折りたたみ `fold_latin` を含む。変える文字が無ければ
-//! `Cow` で借用）、履歴クエリキー正規化
-//! `normalize_history_query_key`、検索/インデクサ双方が使う `char_bitmask`
-//! （bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等であることは全コードポイントの
-//! 検知器と 2 字の列の検知器で固定してある。
+//! SPEC §4.2。Unicode の合成（NFC）とラテン文字の折りたたみ `fold_latin` を含む。変える文字が
+//! 無ければ `Cow` で借用）、履歴クエリキー正規化 `normalize_history_query_key`、検索/インデクサ
+//! 双方が使う `char_bitmask`（bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等である
+//! ことは全コードポイントの検知器と 2 字の列の検知器で固定してある。
 
 use std::borrow::Cow;
 
@@ -159,7 +158,7 @@ fn fold_char(c: char) -> impl Iterator<Item = char> {
 /// 1. canonical 分解したときの基底文字が ASCII の英字なら、その英字（`ǘ`→`u`・`ẗ`→`t`）
 /// 2. 上付き・下付き（U+2070〜U+209F）は、互換分解が ASCII の英字 1 字ならその英字（`ⁱ`→`i`）。
 ///    数字は畳まない
-/// 3. U+1D00 未満の残り（分解できない `ł`・`ø`・`ß` など）は nucleo-matcher の写像
+/// 3. [`NUCLEO_FOLD_END`] 未満の残り（分解できない `ł`・`ø`・`ß` など）は nucleo-matcher の写像
 /// 4. それ以外は畳まない
 ///
 /// **nucleo-matcher 0.3.1 の写像を使うのは 3 の範囲だけである。** その表は U+1D00 以降を誤った字へ
@@ -167,23 +166,30 @@ fn fold_char(c: char) -> impl Iterator<Item = char> {
 /// `fold_char_below_1d00_is_pinned` が固定している。照合器を替えずにこの写像を持つ理由は
 /// `docs/adr/ADR-latin-fold-own-mapping.md`。
 fn fold_latin(c: char) -> char {
+    if c.is_ascii() {
+        return c;
+    }
     if let Some(base) = decomposed_base(c) {
         return base;
     }
     match c {
         '\u{2070}'..='\u{209F}' => {
-            let s = c.to_string();
-            let d = NFKD.normalize(&s);
+            let mut buf = [0; 4];
+            let d = NFKD.normalize(c.encode_utf8(&mut buf));
             let mut it = d.chars();
             match (it.next(), it.next()) {
                 (Some(x), None) if x.is_ascii_alphabetic() => x,
                 _ => c,
             }
         }
-        '\0'..='\u{1CFF}' => nucleo_normalize(c),
+        _ if c < NUCLEO_FOLD_END => nucleo_normalize(c),
         _ => c,
     }
 }
+
+/// [`fold_latin`] が nucleo-matcher 0.3.1 の写像を使う範囲の上端（この字を含まない）。これ以降の
+/// 0.3.1 の表は壊れている（#1395）。
+const NUCLEO_FOLD_END: char = '\u{1D00}';
 
 /// canonical 分解の先頭を辿った基底文字が、`c` と違う ASCII の英字ならそれを返す。
 fn decomposed_base(c: char) -> Option<char> {
@@ -749,8 +755,8 @@ mod tests {
     }
 
     /// **ラテン文字の折りたたみは、分解したときの基底文字へ畳む**（`SPEC.md`「4.2 クエリ正規化」・#1395）。
-    /// nucleo-matcher 0.3.1 の表は U+1D00 以降を誤った字へ写し（`ẗ`→`n`・`ḋ`→`e`・`ⁱ`→`a`）、結合文字を
-    /// 2 つ持つ字（`ǘ`・`ȫ`）を畳まなかった。誤って写していた字のうち、分解で英字にならない字は畳まない。
+    /// 規則は [`fold_latin`](super::fold_latin) の doc。0.3.1 の表が誤って写していた字のうち、分解で
+    /// 英字にならない字は畳まない。
     #[test]
     fn latin_letters_fold_to_their_base_letter() {
         let cases = [
@@ -788,7 +794,7 @@ mod tests {
     fn fold_char_agrees_with_0_3_1_where_both_fold() {
         let mut compared = 0;
         let mut failures = Vec::new();
-        for c in (0..0x1D00_u32).filter_map(char::from_u32) {
+        for c in (0..u32::from(super::NUCLEO_FOLD_END)).filter_map(char::from_u32) {
             let Some(base) = super::decomposed_base(c) else {
                 continue;
             };
@@ -830,7 +836,7 @@ mod tests {
         // FNV-1a（64 bit）。字ごとに出力と区切りを畳む。
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         let mut non_ascii = Vec::new();
-        for c in (0..0x1D00_u32).filter_map(char::from_u32) {
+        for c in (0..u32::from(super::NUCLEO_FOLD_END)).filter_map(char::from_u32) {
             let out: String = super::fold_char(c).collect();
             let lower: String = c.to_lowercase().collect();
             if out != lower && !out.is_ascii() {

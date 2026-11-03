@@ -767,11 +767,11 @@ fn nfd_accented_entry_name_matches_like_its_nfc_form() {
 /// `ḋ` を `e` へ、`ẗ` を `n` へ写していたので、`ḋata` は `data` に当たらず、`ẗest` は `nest` に当たった。
 #[test]
 fn latin_extended_additional_names_fold_to_their_base_letter() {
+    let names = |results: Vec<SearchResult>| -> Vec<String> {
+        results.into_iter().map(|r| r.name).collect()
+    };
     for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
         let mut engine = SearchEngine::new(make_entries(&["ḋata", "ẗest"]));
-        let names = |results: Vec<SearchResult>| -> Vec<String> {
-            results.into_iter().map(|r| r.name).collect()
-        };
         let data = names(engine.search("data", 8, &empty_history(), mode));
         let nest = names(engine.search("nest", 8, &empty_history(), mode));
         assert_eq!((data, nest), (vec!["ḋata".to_string()], vec![]), "{mode:?}");

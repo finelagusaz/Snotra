@@ -129,12 +129,12 @@ pub struct LoadOrScanStats {
 
 /// `load_or_scan_with_stats` の戻り値。
 pub struct LoadOrScanResult {
-    /// ロード or スキャンされた索引の材料（木と派生データの組）。
+    /// ロード or スキャンされた索引の材料（ツリーと派生データの組）。
     ///
     /// **`Vec<AppEntry>` ではない**——v7 は `target_path` をディスクに持たないので、
     /// 実体へ戻すと削った 312,691 回の確保がその場で復活する。
     ///
-    /// **組のまま渡す。** ほどいた 2 値を持ち回せると、木を伸ばしてマスクを追記し忘れる形が書けるようになる（正本は [`IndexMaterial`] の doc）。
+    /// **組のまま渡す。** ほどいた 2 値を持ち回せると、ツリーを伸ばしてマスクを追記し忘れる形が書けるようになる（正本は [`IndexMaterial`] の doc）。
     pub material: IndexMaterial,
     /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
     pub cache_changed: bool,
@@ -170,9 +170,9 @@ struct IndexCache<'a> {
     /// （射程は [`NameArena`] の doc）。
     names: Cow<'a, NameArena>,
     is_folder: Cow<'a, [bool]>,
-    /// 木の親（`crate::index_tree::TreeNodes::parent_of`）。
+    /// ツリーの親（`crate::index_tree::TreeNodes::parent_of`）。
     parent: Cow<'a, [u32]>,
-    /// 木の `table` 添字（`crate::index_tree::TreeNodes::aux_of`）。
+    /// ツリーの `table` 添字（`crate::index_tree::TreeNodes::aux_of`）。
     aux: Cow<'a, [u32]>,
     /// 拡張子と、親を持たないエントリのフルパスの intern 表。
     table: Cow<'a, [String]>,
@@ -201,7 +201,7 @@ struct IndexCache<'a> {
 /// v6 フォールバック用スキーマ（`target_path` を全件そのまま持つ旧形式）。
 ///
 /// **v7 との差は `target_path` の表現だけである。** v6 は 312,691 件のフルパスを実体で持ち
-/// （実測 36.01 MiB・ディスクの 70%）、v7 は木の親と拡張子 id に置き換えて持たない。
+/// （実測 36.01 MiB・ディスクの 70%）、v7 はツリーの親と拡張子 id に置き換えて持たない。
 /// 読み込みはどちらも成功し、**違うのは確保の回数**——v6 を読むと `String` を 312,691 個
 /// 余分に作り、`PathStore` へ組み替えた `assemble` が即座に捨てる。
 #[derive(Deserialize)]
@@ -353,7 +353,7 @@ pub fn index_built_at_in(dir: &Path) -> Option<u64> {
 /// [`load_or_scan_with_stats`] のままでよい——手元で 1 つずつ意図して走らせるものであり、
 /// 実運用の起動経路を測ることが目的だからである。
 ///
-/// **返すのは木を実体へ戻したものであり、ディスクに在った文字列ではない**（v7 は
+/// **返すのはツリーを実体へ戻したものであり、ディスクに在った文字列ではない**（v7 は
 /// `target_path` を持たない）。ゆえに「組み直しが原文と一致するか」をこの返り値と
 /// 突き合わせても、**組み直しの結果どうしを比べることになる**。その照合の接地は
 /// `index_tree_raw_matches_frozen_v6_specimen`（旧形式の凍結バイト列が唯一の原文）が持つ。
@@ -361,7 +361,7 @@ pub fn index_built_at_in(dir: &Path) -> Option<u64> {
 pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Option<Vec<AppEntry>> {
     let hash = compute_config_hash(scan, show_hidden_system);
     // **実体化の規則は `IndexTree::materialize` の 1 つである。** ここに写しを置いていた
-    // ときは、木 →`Vec<AppEntry>` の規則が 2 部出荷されていた——片方に触れば corpus テストは
+    // ときは、ツリー →`Vec<AppEntry>` の規則が 2 部出荷されていた——片方に触れば corpus テストは
     // 製品が決して見ないデータを検証することになる（`index_tree.rs` の `//!` が「辿る規則は
     // 1 つ」と定めているのと同じ理屈で、戻す規則も 1 つでなければならない）。
     //
@@ -470,8 +470,8 @@ fn load_or_scan_with_stats_in(
         } = scan_and_sort_timed(scan, show_hidden_system);
 
         let cache_save_started = Instant::now();
-        // **保存が返す木と派生データをそのまま使う。** 走査結果を保存のために建て直させると、
-        // 同じ木を 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
+        // **保存が返すツリーと派生データをそのまま使う。** 走査結果を保存のために建て直させると、
+        // 同じツリーを 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
         // 保存側が計算して書いたものをここで受け取らないと、下流が全件を実体化してから
         // 建て直すことになる。
         let (tree, masks) = save_cache_sorted_in(dir, entries, current_hash, BuiltAt::Scanned);
@@ -582,9 +582,9 @@ impl BuiltAt {
     }
 }
 
-/// エントリを木へ組み替えて保存し、**その木と、書いたばかりの派生データを返す**。
+/// エントリをツリーへ組み替えて保存し、**そのツリーと、書いたばかりの派生データを返す**。
 ///
-/// **`&[AppEntry]` を借りる形にしてはならない。** v7 が書くのは木であり、木を建てる段は
+/// **`&[AppEntry]` を借りる形にしてはならない。** v7 が書くのはツリーであり、ツリーを建てる段は
 /// `target_path` の `String` を move で吸い上げる。借りる形にすると保存のたびに全件を
 /// clone することになり、削ったはずの 36.01 MiB が保存経路で復活する。返り値にしてあるのは、
 /// 呼び出し側がそのまま索引の材料に使えるようにするためである（`rebuild_and_save` と
@@ -606,10 +606,10 @@ fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial 
 /// ある（→「index.bin 書き込みの排他」）。導出だけを要する検知器は [`derive_columns`] を呼ぶ。
 ///
 /// **書いた 4 本をそのまま返す。** かつては書いた直後に捨てており、cache-miss の枝は
-/// `new_from_tree` が木を実体化して Wave 1/2 を建て直していた——**計算したものを捨ててから、
+/// `new_from_tree` がツリーを実体化して Wave 1/2 を建て直していた——**計算したものを捨ててから、
 /// 同じものを作り直していた**（実測は `PERFORMANCE.md`「採用: 保存が返した派生データを cache-miss がそのまま使う」）。
 ///
-/// **書き込みの失敗は返り値に影響しない。** 返すのは今メモリに在る木と、その木に対して導出
+/// **書き込みの失敗は返り値に影響しない。** 返すのは今メモリに在るツリーと、そのツリーに対して導出
 /// した派生データであり、両者の整合はディスクへ届いたかとは独立である。書けなければ次回が
 /// cache-miss になるだけで、この起動の索引は正しい。
 fn save_cache_sorted_in(
@@ -621,7 +621,7 @@ fn save_cache_sorted_in(
     let bf = cache_bin_file_in(dir);
     let derived = derive_columns(entries);
 
-    // Cow::Borrowed で木の列と派生 Vec の全件 clone を避ける。
+    // Cow::Borrowed でツリーの列と派生 Vec の全件 clone を避ける。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
     let derived_cols = derived.tree.columns();
     let cache = IndexCache {
@@ -649,7 +649,7 @@ fn save_cache_sorted_in(
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 ///
-/// **書いた派生データをそのまま返す。** かつては捨てており、呼び出し側は木しか受け取れず Wave 1/2 を建て直していた——**計算したものを捨ててから、同じものを作り直していた**（額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」）。
+/// **書いた派生データをそのまま返す。** かつては捨てており、呼び出し側はツリーしか受け取れず Wave 1/2 を建て直していた——**計算したものを捨ててから、同じものを作り直していた**（額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」）。
 ///
 /// **派生データを持つかは [`IndexMaterial`] の内側の話である**（保存先が引けない枝では計算しない）。**持たない場合を数え上げてはならない**——正本は `save_cache_sorted` の分岐である。
 ///
@@ -667,7 +667,7 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMat
 
 /// キャッシュ読み込み結果。
 struct LoadCacheResult {
-    /// 索引の材料。**現行版は木をディスクから直接読み、旧版は `target_path` から建て直す。**
+    /// 索引の材料。**現行版はツリーをディスクから直接読み、旧版は `target_path` から建て直す。**
     ///
     /// **通る構築子は `upgrade`（[`LegacyUpgrade`]）で分かれる。** `Write` はどの版でも
     /// `upgrade_legacy_cache_in` 経由で [`IndexMaterial::derived`]（自分で導出した組・
@@ -729,7 +729,7 @@ fn load_cache(config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResul
 
 /// 旧版を読んだ枝の共通処理: **走査結果を既に手に持っているので、その場で現行版へ書き戻す。**
 ///
-/// **返す材料は書き戻しの副産物である**（`save_cache_sorted_in` が返す木とマスクをそのまま
+/// **返す材料は書き戻しの副産物である**（`save_cache_sorted_in` が返すツリーとマスクをそのまま
 /// 使う）。旧版が持っていたマスクは捨てて derive し直すが、これは**昇格する起動でだけ払う
 /// 一回性の代価**であり、以後は現行版の枝に入る。
 ///
@@ -756,7 +756,7 @@ fn upgrade_legacy_cache_in(
     // **他の全呼び出し元と同じく、保存の直前に整列する。** `save_cache_sorted_in` は
     // 名前どおり整列済みの入力を前提とする——ここだけ怠ると、旧版ファイルが現在の
     // canon と違う順序で書かれていた場合に親の解決が当てにならなくなり（規約と帰結は
-    // `sort_entries_canonical` の doc）、平たい木と `sorted_by_path=false` が現行版へ
+    // `sort_entries_canonical` の doc）、平たいツリーと `sorted_by_path=false` が現行版へ
     // そのまま焼き込まれる。
     sort_entries_canonical(&mut entries);
     // **`index.bin` を書く経路はすべて書き込みロックを経由する契約である。**
@@ -824,7 +824,7 @@ fn finish_legacy_read(
             let tree = IndexTree::build(read.entries);
             let material = match read.masks {
                 Some(masks) => IndexMaterial::from_untrusted(tree, masks)?,
-                // マスクを持たない版（v2）ゆえ検証する列が無い（木の整合は `IndexTree::build` が持つ）。
+                // マスクを持たない版（v2）ゆえ検証する列が無い（ツリーの整合は `IndexTree::build` が持つ）。
                 None => IndexMaterial::from_tree(tree),
             };
             Some(LoadCacheResult {
@@ -855,7 +855,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
     let bytes = bf.load_bytes()?;
     let read_took = read_started.elapsed();
 
-    // 現行版: 木の列 + ビットマスク + **共有を潰した** lower names。
+    // 現行版: ツリーの列 + ビットマスク + **共有を潰した** lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
     if let Ok(cache) =
         try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
@@ -863,7 +863,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         if cache.config_hash != config_hash {
             return None;
         }
-        // **検証を通してから木にする。** 5 本の列は独立に読まれるので、壊れたファイルは
+        // **検証を通してからツリーにする。** 5 本の列は独立に読まれるので、壊れたファイルは
         // 長さの揃わない列や範囲外の添字を与えうる（帰結は `IndexTree::from_parts` の doc）。
         // 通らなければ `None`＝全走査へ落とす——**版が読めたことは中身が健全であることを
         // 意味しない。**
@@ -897,12 +897,12 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
     // **v7 は読まない（cache-miss ＝ 1 回だけの全走査）。** 線上表現は現行版と同じだが、
     // `lower_names` / `lower_file_names` とマスクは照合用の正規化を 1 つにする前の意味で
     // 書かれている（名前の空白を正規化していない・#1309）。v7 は `entries` を持たないので、
-    // 旧版枝のように手に持った走査結果から導き直して書き戻すことができない——木から作り
+    // 旧版枝のように手に持った走査結果から導き直して書き戻すことができない——ツリーから作り
     // 直すと「indexer.rs の索引更新の契機」が戒める複製が戻る。却下した扱いは
     // `docs/adr/ADR-index-v7-cache-miss.md`。
     //
     // v6 フォールバック: `target_path` を全件そのまま持つ形式。**読めるが確保が 312,691 回
-    // 余分にかかる**——フルパスの `String` を作り、木へ組み替えた段で即座に捨てる。
+    // 余分にかかる**——フルパスの `String` を作り、ツリーへ組み替えた段で即座に捨てる。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
         if cache.config_hash != config_hash {
             return None;

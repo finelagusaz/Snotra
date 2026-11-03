@@ -1,9 +1,9 @@
-//! [`IndexMaterial`] の不変条件のテスト——木と派生データの列長が揃うこと。
+//! [`IndexMaterial`] の不変条件のテスト——ツリーと派生データの列長が揃うこと。
 
 use super::*;
 use crate::str_arena::LowerFileSlot;
 
-/// 2 件の木を建てる（下の検証テスト群の材料）。
+/// 2 件のツリーを建てる（下の検証テスト群の材料）。
 fn two_entry_tree() -> IndexTree {
     IndexTree::build(vec![
         AppEntry {
@@ -21,9 +21,9 @@ fn two_entry_tree() -> IndexTree {
 
 /// **`from_untrusted` の拒否経路そのものを走らせる。**
 ///
-/// これが無いと、`index.bin` から来た組を検証する**唯一の**機構に検知器が 1 本も無い状態になる——条件の向きを書き換えても（`!=` を `<` へ、`lower_ok` の腕を 1 本落とす等）既存テストは全数緑のまま通り、壊れた `index.bin` は「木より短いマスク」として起動経路へ入る。`assemble` の長さ検証は `debug_assert` ゆえ release では消えるので、帰結は起動後の初回検索での添字外アクセス → `panic = "abort"` である（全走査による自動復旧も起きない）。
+/// これが無いと、`index.bin` から来た組を検証する**唯一の**機構に検知器が 1 本も無い状態になる——条件の向きを書き換えても（`!=` を `<` へ、`lower_ok` の腕を 1 本落とす等）既存テストは全数緑のまま通り、壊れた `index.bin` は「ツリーより短いマスク」として起動経路へ入る。`assemble` の長さ検証は `debug_assert` ゆえ release では消えるので、帰結は起動後の初回検索での添字外アクセス → `panic = "abort"` である（全走査による自動復旧も起きない）。
 ///
-/// **長い側も弾くことまで見る。** 等値（`!=`）で書いてあるので短い列と長い列の両方が落ちるが、`<` へ書き換えると長い側だけが素通りする——列が余分に長い `index.bin` は添字外にはならないが、木と対応しないマスクで検索することになり**スコアが静かにずれる**。
+/// **長い側も弾くことまで見る。** 等値（`!=`）で書いてあるので短い列と長い列の両方が落ちるが、`<` へ書き換えると長い側だけが素通りする——列が余分に長い `index.bin` は添字外にはならないが、ツリーと対応しないマスクで検索することになり**スコアが静かにずれる**。
 #[test]
 fn from_untrusted_rejects_masks_whose_len_disagrees_with_the_tree() {
     let full = |n: usize| CachedMasks {
@@ -41,7 +41,7 @@ fn from_untrusted_rejects_masks_whose_len_disagrees_with_the_tree() {
     for n in [1usize, 3] {
         assert!(
             IndexMaterial::from_untrusted(two_entry_tree(), full(n)).is_none(),
-            "木が 2 件なのにマスクが {n} 件の組を受理している"
+            "ツリーが 2 件なのにマスクが {n} 件の組を受理している"
         );
     }
 

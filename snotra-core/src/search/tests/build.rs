@@ -31,7 +31,7 @@ struct CollapseCounts {
 ///
 /// 反復 11 で cache-miss の枝が `new_from_tree`（`Measured` を `assemble` が測って潰す）から
 /// `new_with_cached_masks`（保存が返す `Collapsed` をそのまま使う）へ移った。一致は
-/// **構成的には示せる**——`name` は木が逐語で持ち、`lower_file_name` の材料は原文と組み直しが
+/// **構成的には示せる**——`name` はツリーが逐語で持ち、`lower_file_name` の材料は原文と組み直しが
 /// バイト一致し（`path_store_raw_matches_target_path_over_real_index` が実データ全件で接地）、
 /// 判定は両経路とも `query::measure_derived_sharing` の 1 か所を通る。ここが足すのは
 /// **その 3 本のどれかが将来切れたときに気づく**という機構である。
@@ -50,7 +50,7 @@ fn assert_save_and_assemble_agree(
 ) -> CollapseCounts {
     let n = entries.len();
 
-    // A: 旧 cache-miss 経路。木を実体化して Wave 1/2 を建て直し、`assemble` が測って潰す。
+    // A: 旧 cache-miss 経路。ツリーを実体化して Wave 1/2 を建て直し、`assemble` が測って潰す。
     let a = SearchEngine::new_from_tree(IndexTree::build(entries.clone()), migemo_enabled);
     // B: 新 cache-miss 経路。保存側が導出した `Collapsed` をそのまま索引の表現にする。
     let (tree, masks) = crate::indexer::derive_columns(entries).into_cached_masks();
@@ -238,7 +238,7 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
             is_folder: false,
         },
     ];
-    // **製品と同じ並びで木を建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す）。
+    // **製品と同じ並びでツリーを建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す）。
     crate::indexer::sort_entries_canonical(&mut entries);
 
     // **migemo の両設定を通す。** kana は `assemble` の外で確定するので潰し方は同じはずだが、
@@ -419,13 +419,13 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
 
 /// **保存が返した派生データの直後に PATH エントリをマージする経路**（`IndexMaterial::extend_with_path_entries`）。
 ///
-/// **この組み合わせは反復 11 で初めて生きた。** それ以前は保存側が派生データを返さず `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は返るので「マスクへ追記 → 木へ根として追加 → `from_material`」の順に変わる。**上の 2 本の検知器はどちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH マージを通らない）。
+/// **この組み合わせは反復 11 で初めて生きた。** それ以前は保存側が派生データを返さず `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後のツリーから Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は返るので「マスクへ追記 → ツリーへ根として追加 → `from_material`」の順に変わる。**上の 2 本の検知器はどちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH マージを通らない）。
 ///
-/// 守るのは 2 つ。(1) 追記側（`extend_cached_masks`）の潰し方が、拡張後の木から導出した結果と一致すること。(2) **追記した 2 列と木の長さが揃うこと**——`assemble` の長さ検証は `debug_assert` ゆえ release では消え、ずれは添字 panic か沈黙の食い違いになる。**追記を欠く変異で実際に赤くなることを確かめてある**（`migemo_enabled` の両設定で）。
+/// 守るのは 2 つ。(1) 追記側（`extend_cached_masks`）の潰し方が、拡張後のツリーから導出した結果と一致すること。(2) **追記した 2 列とツリーの長さが揃うこと**——`assemble` の長さ検証は `debug_assert` ゆえ release では消え、ずれは添字 panic か沈黙の食い違いになる。**追記を欠く変異で実際に赤くなることを確かめてある**（`migemo_enabled` の両設定で）。
 ///
-/// **起動経路と背景の再構築（`drain_index`）は同じ `IndexMaterial::extend_with_path_entries` を通る**ので、この 1 本が両方を覆う。**crate 外からそこを迂回するコードは書けない**——木とマスクは `IndexMaterial` の private フィールドで、`IndexTree::extend_with_roots` も `pub(crate)` である。**ただし crate 内では書ける**（`snotra-core` の中に PATH マージの呼び出し点は無いので、現状は残余ではなく余地である）。
+/// **起動経路と背景の再構築（`drain_index`）は同じ `IndexMaterial::extend_with_path_entries` を通る**ので、この 1 本が両方を覆う。**crate 外からそこを迂回するコードは書けない**——ツリーとマスクは `IndexMaterial` の private フィールドで、`IndexTree::extend_with_roots` も `pub(crate)` である。**ただし crate 内では書ける**（`snotra-core` の中に PATH マージの呼び出し点は無いので、現状は残余ではなく余地である）。
 ///
-/// **派生データを持たない枝はここを通らない。** [`path_merge_extends_the_tree_even_without_derived_data`] がそちらを持つ——木への追加が `if let Some` の内側へ入る誤りに、この検知器は原理的に当たらない（派生データを持つ枝しか通らないため。変異を注入して、あちらだけが赤くなることを実測した）。
+/// **派生データを持たない枝はここを通らない。** [`path_merge_extends_the_tree_even_without_derived_data`] がそちらを持つ——ツリーへの追加が `if let Some` の内側へ入る誤りに、この検知器は原理的に当たらない（派生データを持つ枝しか通らないため。変異を注入して、あちらだけが赤くなることを実測した）。
 #[test]
 fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     let mut base = vec![
@@ -472,14 +472,14 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
         let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
         let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
         material.extend_with_path_entries(path_entries.clone());
-        // **マスクを取り落としていないことを名指しで測る。** 落ちていると `from_material` が黙って木からの導出へ切り替わり、下の A/B 一致は**成立したまま**削減だけが消える（理由は `IndexMaterial::has_masks` の doc）。
+        // **マスクを取り落としていないことを名指しで測る。** 落ちていると `from_material` が黙ってツリーからの導出へ切り替わり、下の A/B 一致は**成立したまま**削減だけが消える（理由は `IndexMaterial::has_masks` の doc）。
         assert!(
             material.has_masks(),
-            "マージがマスクを取り落としている（`from_material` が木からの導出へ切り替わる）"
+            "マージがマスクを取り落としている（`from_material` がツリーからの導出へ切り替わる）"
         );
         let b = SearchEngine::from_material(material, migemo_enabled);
 
-        // A: 変更前の cache-miss。拡張後の木から Wave 1/2 を導出する。
+        // A: 変更前の cache-miss。拡張後のツリーから Wave 1/2 を導出する。
         let mut tree_a = IndexTree::build(base.clone());
         tree_a.extend_with_roots(path_entries.clone());
         let a = SearchEngine::new_from_tree(tree_a, migemo_enabled);
@@ -497,11 +497,11 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     }
 }
 
-/// **派生データを持たない材料でも木は伸びる**（`IndexMaterial::extend_with_path_entries`）。
+/// **派生データを持たない材料でもツリーは伸びる**（`IndexMaterial::extend_with_path_entries`）。
 ///
-/// **この腕は到達可能な製品経路である。** 到達する条件は**初回起動**（`main` が空の木から材料を作る）、`Config::config_dir` が引けず `indexer::rebuild_and_save` が派生データを返さないとき、そして `load_cache_in` の**マスクを持たない版の腕**である。**「派生文字列を持たない古い版のキャッシュヒット」と書いてはならない**（かつてそう書いていた）——そちらは `Some(CachedMasks { lower: None })` を返すので**この腕を通らない**。`CachedMasks` の doc の「古い版は `None`」は `lower` の話であり、材料そのものの有無ではない。条件の正本は `load_cache_in` の分岐である。**「起こりえない状態のテスト」として削らないこと。**
+/// **この腕は到達可能な製品経路である。** 到達する条件は**初回起動**（`main` が空のツリーから材料を作る）、`Config::config_dir` が引けず `indexer::rebuild_and_save` が派生データを返さないとき、そして `load_cache_in` の**マスクを持たない版の腕**である。**「派生文字列を持たない古い版のキャッシュヒット」と書いてはならない**（かつてそう書いていた）——そちらは `Some(CachedMasks { lower: None })` を返すので**この腕を通らない**。`CachedMasks` の doc の「古い版は `None`」は `lower` の話であり、材料そのものの有無ではない。条件の正本は `load_cache_in` の分岐である。**「起こりえない状態のテスト」として削らないこと。**
 ///
-/// 守るのは 1 つ: 木への追加が `masks` の有無に**引きずられない**こと。追加を `if let Some` の内側へ書いてしまうと、`None` の枝では PATH エントリが索引から丸ごと落ちる——**panic も型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである（上の検知器は `Some` の枝しか通らないので、この誤りには当たらない）。
+/// 守るのは 1 つ: ツリーへの追加が `masks` の有無に**引きずられない**こと。追加を `if let Some` の内側へ書いてしまうと、`None` の枝では PATH エントリが索引から丸ごと落ちる——**panic も型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである（上の検知器は `Some` の枝しか通らないので、この誤りには当たらない）。
 ///
 /// **効いているのは `tree.len()` の等値検査だけである。** 下の A/B 比較は、この腕では A 側と同じ計算になるので**原理的に失敗しない**——`extend_with_roots` を共有しているため、その関数を変えれば A と B が同じだけ動く。**「根として足すべきものを親解決して足す変更を見逃す」と書いてはならない**（かつてそう書いていた・ラウンド 2 の指摘への修正で持ち込み、ラウンド 3 が「消えた」と誤判定し、`/code-review` の再実行が現存を実測した）: `IndexTree::build` の doc が「**結果は変わらず、記憶域が増えるだけである**」と書くとおり、根か親解決かは `materialize` を通した像に差を生まない。
 ///
@@ -543,11 +543,11 @@ fn path_merge_extends_the_tree_even_without_derived_data() {
         assert_eq!(
             material.tree().len(),
             total,
-            "派生データが無いとき木が伸びていない（追加が `if let Some` の内側に入った合図）"
+            "派生データが無いときツリーが伸びていない（追加が `if let Some` の内側に入った合図）"
         );
         let b = SearchEngine::from_material(material, migemo_enabled);
 
-        // A: 木への追加を直に書いた版。
+        // A: ツリーへの追加を直に書いた版。
         let mut tree_a = IndexTree::build(base.clone());
         tree_a.extend_with_roots(path_entries.clone());
         let a = SearchEngine::new_from_tree(tree_a, migemo_enabled);
@@ -565,7 +565,7 @@ fn path_merge_extends_the_tree_even_without_derived_data() {
 /// ——それが候補表の ⚠「保存側の潰し方が `assemble` の測り直しと一致するか」の核である。
 ///
 /// 合成 fixture では作れないものを足す——深い階層・非 ASCII・空白・大文字の拡張子、
-/// 根と非根が混ざった木。`#[ignore]` は実環境依存ゆえで、CI の保証は上の合成が持つ。
+/// 根と非根が混ざったツリー。`#[ignore]` は実環境依存ゆえで、CI の保証は上の合成が持つ。
 #[test]
 #[ignore = "実ファイルシステムの全走査・手元で明示的に走らせる"]
 fn save_side_collapse_agrees_with_assemble_over_real_index() {
@@ -721,7 +721,7 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
     let n = entries.len();
 
     // **添字の対応が命綱である。** `Collapsed` の列は添字で `entries` に対応づけられるので、
-    // 木を建てる段（`IndexTree::build`）と索引側へ移す段（`PathStore::adopt`）はどちらも
+    // ツリーを建てる段（`IndexTree::build`）と索引側へ移す段（`PathStore::adopt`）はどちらも
     // 入力順を保つ（前者は enumerate 順に push、後者は zip）。
     let engine = SearchEngine::new_with_cached_masks(
         IndexTree::build(entries),
@@ -995,7 +995,7 @@ fn kana_column_survives_chunked_parallel_merge() {
         .collect();
 
     // 製品の cache-hit 経路（`kana_for_cached` が塊併合で組む側）を通す。
-    // **製品と同じ並びで木を建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す契約で、
+    // **製品と同じ並びでツリーを建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す契約で、
     // このファイルの他の `derive_columns` 呼び出しも揃えている）。
     let mut entries = entries;
     crate::indexer::sort_entries_canonical(&mut entries);

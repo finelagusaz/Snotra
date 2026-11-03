@@ -123,7 +123,7 @@ fn measure_match_cost_over_real_index() {
     );
     for merge_path_env in [false, true] {
         // **材料は構成ごとに読み直す**——`extend_with_path_entries` は `IndexMaterial` を消費する
-        // 形で木を伸ばすので、使い回すと 2 周目が汚れる。
+        // 形でツリーを伸ばすので、使い回すと 2 周目が汚れる。
         let loaded =
             indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
         assert!(

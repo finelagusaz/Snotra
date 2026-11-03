@@ -204,7 +204,7 @@ fn main() {
         (result.material, false)
     };
 
-    // PATH エントリのスキャン + マージ（`indexing::build_index_from_material` と同じ手順の別実装——規則を変えるなら両方）。**木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記も木への追加も、空なら何もしない。
+    // PATH エントリのスキャン + マージ（`indexing::build_index_from_material` と同じ手順の別実装——規則を変えるなら両方）。**ツリーとマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記もツリーへの追加も、空なら何もしない。
     if config.search.include_path_env {
         let path_entries =
             indexer::scan_path_env(material.tree(), config.search.show_hidden_system);

@@ -95,9 +95,9 @@ type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, NameArena);
 /// 相互依存がないため rayon::join で並列構築する。
 /// `migemo_enabled` が false の場合、kana_lower_names は空のアリーナ（migemo 無効ユーザーの
 /// 死蔵メモリを削るため、issue #337）。空のときの検索ループ側ガードは search_with_options 参照。
-/// 木から Wave 1 を導出する（実体へ戻してから [`compute_wave1`] を通す）。
+/// ツリーから Wave 1 を導出する（実体へ戻してから [`compute_wave1`] を通す）。
 ///
-/// **木専用の導出を書き起こさない**——`lower_file_name` は `target_path` を取るので材料は
+/// **ツリー専用の導出を書き起こさない**——`lower_file_name` は `target_path` を取るので材料は
 /// フルパスを要求する。規則が 2 つになると、片方の経路だけが静かにすれる。
 ///
 /// 通るのは [`SearchEngine::new_from_tree`] と、[`SearchEngine::new_with_cached_masks`] の
@@ -219,11 +219,11 @@ impl SearchEngine {
             derived.len() == tree.len(),
             "SearchEngine: 派生文字列の長さが entries と一致しない"
         );
-        // `target_path` の `String` はここで木の接頭辞共有へ組み替えられ、`Vec<AppEntry>` ごと
+        // `target_path` の `String` はここでツリーの接頭辞共有へ組み替えられ、`Vec<AppEntry>` ごと
         // 解放される（`path_store` の `//!`）。長さの検証は組み替え後の `PathStore` に対して行う
         // ——組み替えは全件を 1 対 1 で写すが、そう**信じる**のではなく測るのがこの節の役目である。
         let n_before = tree.len();
-        // **木は建て直さない。** `index.bin` から読んだ木は親も拡張子も解決済みで、
+        // **ツリーは建て直さない。** `index.bin` から読んだツリーは親も拡張子も解決済みで、
         // ここは索引側の並べ方へ移すだけである（`PathStore::adopt`）。
         let mut paths = PathStore::adopt(tree);
         paths.shrink_to_fit();
@@ -241,7 +241,7 @@ impl SearchEngine {
         // 包んでも Vec 本体は動かない。
         //
         // **展開を `PathStore::build` より後に置くのは、フラグをその場で立てるためである。**
-        // `mark_file_name_is_lower_name` は `CompactEntry` の空きパディングへ書くので、木が
+        // `mark_file_name_is_lower_name` は `CompactEntry` の空きパディングへ書くので、ツリーが
         // 建つ前には呼べない。位置を控える `Vec<usize>` を挟む形もあるが、**制約に足場で
         // 応えるより、制約が満たされる場所まで展開を遅らせるほうが構造が 1 段浅くなる**
         // （`PathStore::build` は派生文字列を一切見ないので、遅らせる障害は無い）。
@@ -254,7 +254,7 @@ impl SearchEngine {
         // 壊れる。どちらも沈黙するので、コンパイラに列挙させる。
         let (mut lower_names, mut lower_file_names) = match derived {
             // **フラグはここで立てる**（`mark_file_name_is_lower_name` は `CompactEntry` の空き
-            // パディングへ書くので、木が建った後でしか呼べない）。ディスクは 3 状態を
+            // パディングへ書くので、ツリーが建った後でしか呼べない）。ディスクは 3 状態を
             // `LowerFileName` で運び、メモリは「フラグ + `Absent`」で表す——**その 2 状態を
             // 混ぜてはならない**（`crate::indexer::LowerFileName` の doc）。
             DerivedStrings::Collapsed {
@@ -398,7 +398,7 @@ impl SearchEngine {
         )
     }
 
-    /// [`IndexMaterial`] から構築する。**crate 外から索引を建てる入口はこれだけである**——`new_from_tree` / `new_with_cached_masks` は `pub(crate)` へ下げてある（`new` / `new_with_migemo` は `Vec<AppEntry>` から建てる別系統で、テストと計測ハーネスが使う）。**「唯一の入口」と無条件に書いてはならない**（かつてそう書いていた）: 下げる前は木とマスクをほどいた組を crate 外から渡せ、**長さの検証は `assemble` の `debug_assert` だけ＝release では何も守っていなかった**。
+    /// [`IndexMaterial`] から構築する。**crate 外から索引を建てる入口はこれだけである**——`new_from_tree` / `new_with_cached_masks` は `pub(crate)` へ下げてある（`new` / `new_with_migemo` は `Vec<AppEntry>` から建てる別系統で、テストと計測ハーネスが使う）。**「唯一の入口」と無条件に書いてはならない**（かつてそう書いていた）: 下げる前はツリーとマスクをほどいた組を crate 外から渡せ、**長さの検証は `assemble` の `debug_assert` だけ＝release では何も守っていなかった**。
     ///
     /// **派生データの有無で分岐するのはここだけである。** かつては同じ `match` が `PrebuiltIndex` / `Engine` / `SearchEngine` の 3 層・5 か所の呼び出し点へ写っていた（そのうち 1 か所だけを直す案を却下した経緯は [`IndexMaterial`] の doc）。
     pub fn from_material(material: IndexMaterial, migemo_enabled: bool) -> Self {
@@ -409,12 +409,12 @@ impl SearchEngine {
         }
     }
 
-    /// 派生文字列を持たない木から構築する。**入口は [`Self::from_material`] であり、ここはその「派生データ無し」側の実装である。**
+    /// 派生文字列を持たないツリーから構築する。**入口は [`Self::from_material`] であり、ここはその「派生データ無し」側の実装である。**
     ///
     /// **「cache-miss はもうここを通らない」と無条件に書いてはならない**（かつてそう書いており、`RETROSPECTIVE.md` が前サイクルの取りこぼしとして記録している）。保存側が派生データを返さなかった cache-miss は今もここへ来る——条件の正本は `indexer::save_cache_sorted` の分岐である。
     ///
     /// **Wave 1 の材料はフルパスを要求する**（`lower_file_name` は `target_path` を取る）ため、
-    /// 導出のあいだだけ実体へ戻す。**木専用の導出を書き起こさない**——規則が 2 つになると
+    /// 導出のあいだだけ実体へ戻す。**ツリー専用の導出を書き起こさない**——規則が 2 つになると
     /// 片方の経路だけが静かにすれる。**この根拠は「ここが遅くてよい」に依存しない**
     /// ——実体化の対価は `IndexTree::materialize` の doc が持つ。
     pub(crate) fn new_from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
@@ -594,7 +594,7 @@ mod tests {
             target_path: "C:\\a".to_string(),
             is_folder: false,
         }]);
-        // 木は 1 件、派生文字列は 0 件。
+        // ツリーは 1 件、派生文字列は 0 件。
         let _ = SearchEngine::assemble(
             tree,
             DerivedStrings::Measured {

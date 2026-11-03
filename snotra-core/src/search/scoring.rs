@@ -57,7 +57,7 @@ const _: () = {
     assert!(score_tier::PATH_POS_CAP > 0);
 };
 
-/// Fuzzy の照合に使う、スレッドごとに 1 組の道具（[`fuzzy_match_score`] を呼ぶスレッドに置かれる）。
+/// Fuzzy の照合に使う、スレッドごとに 1 組のツール（[`fuzzy_match_score`] を呼ぶスレッドに置かれる）。
 struct FuzzyScratch {
     matcher: Matcher,
     /// 非 ASCII の haystack を UTF-32 へ展開する先（[`utf32_haystack`]）。容量を使い回すので、
@@ -117,7 +117,7 @@ pub(crate) fn fuzzy_match_score(haystack: &str, needle: Utf32Str<'_>) -> Option<
 /// **索引の `normalized_keys` を廃した後、正規化キーを得る経路はここ 1 本である**
 /// （検索の `score_one_entry` と空クエリの `recent_history` が共有する）。
 /// 組み立ての実体は [`super::path_store::with_cursor`]——索引は `target_path` すら持たず、
-/// フォルダ木の接頭辞共有から正規化バッファへ直接書き出す。規則の正本は
+/// フォルダツリーの接頭辞共有から正規化バッファへ直接書き出す。規則の正本は
 /// [`crate::indexer::normalize_entry_key_into`] で、記録側（`indexer` / `history`）と同じ
 /// 規則を通ることが実インデックス全件のバイト一致テストで固定されている。
 ///

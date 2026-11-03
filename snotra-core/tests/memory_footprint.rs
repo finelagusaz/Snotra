@@ -287,7 +287,7 @@ fn measure_real_index_footprint() {
         result.material.has_masks()
     );
     // **どの版を測ったかを出さないと、この数字は読めない。** 旧版の `index.bin` は
-    // フォールバック枝で読まれ、木は `target_path` を実体化してから建て直される
+    // フォールバック枝で読まれ、ツリーは `target_path` を実体化してから建て直される
     // ——現行版の削減はそこには現れないのに、出力の見た目は成功時とまったく同じである
     // （昇格の機序は `snotra-core/CLAUDE.md`「indexer.rs の索引更新の契機」）。
     //
@@ -522,7 +522,7 @@ fn report_scan_all_cost(config: &Config) {
 /// 反復 2〜5 で「持たない」ことを学んだ後の姿である。こちらはディスクが今も持ち続けている
 /// 姿で、両者の差が「読んで確保して `assemble` が即座に捨てているもの」になる。
 /// **オンディスク形式を変える判断は、常駐の内訳からは原理的にできない**——`target_path` は
-/// 常駐 0.01 MiB（フォルダ木の接頭辞共有）に対し、ディスクは全文を持つ。
+/// 常駐 0.01 MiB（フォルダツリーの接頭辞共有）に対し、ディスクは全文を持つ。
 fn report_cache_bytes(n: usize) {
     let Some(b) = indexer::cache_byte_breakdown_in(&Config::config_dir().expect("config dir"))
     else {

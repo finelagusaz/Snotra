@@ -119,7 +119,7 @@ pub(crate) fn build_index_from_material(
     mut material: indexer::IndexMaterial,
     inputs: &IndexInputs,
 ) -> PrebuiltIndex {
-    // **木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない
+    // **ツリーとマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない
     // （正本は `IndexMaterial` の doc）。
     if inputs.include_path_env {
         let path_entries = indexer::scan_path_env(material.tree(), inputs.show_hidden_system);

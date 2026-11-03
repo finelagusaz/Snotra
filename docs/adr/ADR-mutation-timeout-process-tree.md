@@ -9,7 +9,7 @@
 - **timeout の後に、戻り値の pid へ `taskkill /T /F` を打つ（issue の当初案）**: 却下。`spawnSync` が返る時点で、ルートプロセスの `cmd.exe` は既に死んでいる。`ERROR: The process "<pid>" not found.` で空振りし、4 つの孤児が残った。ルートプロセスが消えると、子孫も辿れない（2026-11-01 実測）。
 - **`shell: false` で `process.execPath` と `vitest.mjs` を直接起動することを主にする**: 却下。この形では、vitest 本体を止めるとワーカーも消え、孤児は 0 だった。しかし `node>node>cmd>spin` の鎖では spin が残った。安全かどうかは、鎖に `cmd.exe` が挟まらないという起動先の実装に依存する。変異スクリプトの側からは保証できない。
 - **孤児の確認を、変異を当てた複製のパスで絞る**: 却下。ワーカーの `CommandLine` は junction の先の本体（`C:/workspace/Snotra/node_modules/vitest/dist/workers/forks.js`）を指しており、複製のパスを含まなかった。CPU を食う当のワーカーを取りこぼす。
-- **孤児の確認を「開始後に作られ、`CommandLine` に `vitest` を含む」で絞る**: 却下。並走する正当な vitest（道具のカテゴリ E、並行セッション）を孤児と見誤る。Node から PowerShell を呼んで確かめると、クエリの文字列が `CommandLine` に載り、確かめる側の自分自身が一致した。
+- **孤児の確認を「開始後に作られ、`CommandLine` に `vitest` を含む」で絞る**: 却下。並走する正当な vitest（ツールのカテゴリ E、並行セッション）を孤児と見誤る。Node から PowerShell を呼んで確かめると、クエリの文字列が `CommandLine` に載り、確かめる側の自分自身が一致した。
 - **`ParentProcessId` が現存しないことで孤児を判定する**: 却下。Windows は親を付け替えず、PID は再利用される。
 - **控えた後に生まれた子孫や、辿るときの PID の再利用まで照合で塞ぐ**（控えを 2 回取る・子の `CreationDate` ≥ 親）: 採らなかった。どちらも未測定である。控えてから止めるまでの間は短く、`taskkill /T` は生きている親の鎖を止める。手順を重くする費用に見合わない。
 

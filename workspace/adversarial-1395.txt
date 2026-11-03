@@ -1,0 +1,38 @@
+adversarial-1395 (probe: %TEMP%/p1395, nucleo-matcher 0.3.1 / icu_normalizer 2.4.0)
+
+[壊せた]
+A. 争点1の「105 字が畳まれない」と SPEC 違反（Dvořák がクエリ dvorak に当たらない）の記述は、製品の経路では偽。
+   - 105 字の内訳は大文字 94・小文字 11。0.3.1 の n031 は Latin Extended-A の小文字を畳む（ř->r, č->c, ā->a）。大文字を畳まない（Ř->Ř）。
+   - 製品の fold_char は「小文字化 -> 写像 -> 小文字化」。大文字は先に小文字になるので、Č も Ř も今すでに畳まれる。
+   - probe: prod("Dvořák")=dvorak、prod("Čapek")=capek、prod("Łódź")=lodz（0.3.1 のまま）。
+   - 製品の経路（小文字化が先）で 0.3.1 と自前案が食い違う字: U+0000..1CFF で 22 字（小文字 11 + その大文字 11）。ǖǘǚǜ ǟǡ ǭ ǻ ȫȭ ȱ（結合文字を 2 つ持つ字）だけ。
+   - 偽にする手順: probe で 0..1D00 を prod(c, n031) と prod(c, cand) で比べる。差は 22 字のみ。
+   - 帰結: 「Latin Extended-A/B まで射程を広げた」根拠は 22 字（11 小文字）。研究メモの 105 は n031 を大文字へ直に当てた測定のアーティファクト。
+2. 1E00..1EFF の実害は大きい: 0.3.1 と自前案が食い違う字は製品の経路で 246 字。issue の範囲（U+1D00 以降）では正しい。
+3. 争点3の「normalize=false にしても大文字小文字の扱い以外は変わらない」は部分的に偽。変わるもの:
+   a. 照合器の Char::normalize（prefilter・greedy・exact が使う）は normalize=false でも to_lower_case を無条件に当てる。
+      一方 char_class_and_normalize（最適化段）は normalize=false だと「char_class が Upper の字だけ」を畳む。
+      char_class_non_ascii は is_lowercase を先に見るので、µ(U+00B5)・ς・ϐ・ϑ・ϕ・ϖ・ϰ・ϱ・ϵ・U+0345・ᲀ-ᲈ・ẛ・ι(1FBE)・Cherokee 小文字 ꭰ などは Lower 扱いで畳まれない。
+      normalize=true なら全非 ASCII 字を畳む。→ 前段と最適化段が食い違い、実測で "µm" に needle "μ"(Greek mu): true=Some(36) / false=Some(0)（一致するがスコア 0）。
+   b. "ᴀbc" と needle "ab": true=Some(62) / false=None。0.3.1 は ᴀ->a を（偶然）通すが、自前案は U+1D00..1DFF を恒等にするので一致しなくなる。製品の挙動の変化（回帰ではなく仕様）。
+   c. 偽にする手順: Matcher を Config::DEFAULT と normalize=false の 2 つで作り、全文字・サンプルで fuzzy_match の戻り値を比べる（probe 2）。
+4. 争点3の前半（normalize=true のままだと haystack に壊れた表が再び当たり needle に当たらない）は本当。
+   - 実測: "ᴀbc" 対 "ᴀ" は normalize=true で None、false で Some(36)。
+   - ただし 1 字対 1 字（haystack と needle が同じ長さ）は exact_match_impl が両側に normalize を当てるので一致する。単独の字の自己一致では検出できない（全コードポイントで 0 件の失敗）。検知器を作るなら 2 字以上の haystack に needle を接頭辞で当てること。
+   - 照合器が haystack を変える非 ASCII 字（Snotra の出力のうち）: normalize=true で 143 字、casefold だけでも 100 字超。
+
+[壊せなかった]
+5. 争点1後半: U+00A0..024F で 0.3.1 が畳む字は分解規則と食い違い 0（agree=139、conflict=0）。意味的に変な字は無いが、規則に当たらない 65 字には ß->s・ſ->s・ı->i・ƒ->f・ǝ->e（ǝ は schwa の反転 e）・Ɔ->O・Ɛ->E・Ɯ->M・Ɲ->N・Ʌ->V などの「音韻的な近似」が含まれる。誤りとは言えないが、ß を ss にするかは未決（研究メモも保留）。
+6. 争点2: U+1D00 未満で 0.3.1 が今畳んでいる字のうち自前案で変わるものは 0（生の n031 基準でも、製品の経路基準でも 0）。
+7. 争点4: 0.3.1 の表を使う経路は query.rs の fold_char（と query.rs の 278・538 のテスト参照実装）と、scoring.rs:73 の Matcher::new(DEFAULT) だけ。Pattern・Atom・chars::normalize の他の呼び出し・Matcher の他の生成は無い。nucleo-matcher を依存に持つのは snotra-core/Cargo.toml のみ（src-tauri・egui-runtime・settings に無い）。Utf32String::from と chars::graphemes は表を使わない。ranking.rs:156 の「nucleo はアクセント正規化でマッチする」はコメントの記述で、normalize=false にすると古くなる。
+8. 争点5: 全コードポイントで、小文字化 -> 自前写像 -> 小文字化 を 2 回当てた結果は 1 回目と一致（失敗 0）。ただしこれは 1 字単位。複数字の列での NFC 再合成との相互作用は既存の検知器の仕事で、今回は未測定。
+9. 測定環境: 大文字小文字（上記 1）。NFC 済み入力の前提も妥当: rule1 が発火するのは U+00xx・01xx・02xx・1Exx・21xx のみで、21xx の 1 字は U+212B（NFC が U+00C5 へ直すので到達しない）。rule1 の後続が U+0300..036F の外にある字は 0 件（「後ろが結合文字」の判定は ccc を使わず、そのブロックで足りる）。
+10. 実 config（%APPDATA%/Snotra/config.toml）: normal_mode=substring、folder_mode=fuzzy。通常検索は Substring（照合器の normalize は無関係）、フォルダ絞り込みが Fuzzy を使い（folder.rs:194 -> fuzzy_match_score）、照合器の normalize が効く。したがってユーザー環境ではフォルダ絞り込みだけが照合器の表の影響を受ける。
+11. 研究メモの数値: 322 字（1D00..209F で 0.3.1 と上流が食い違う）は再現（うち 0.3.1 が恒等でない字は 110）。1E00..1EFF の食い違いは 246。L390 のコメント呑み込み（'\u{1EF9}'）は normalize.rs:390 で再現。generate_table は normalize.rs:478 で DATA1[j].1 を読む。ẗ->n、ẖ->l も再現。
+
+[⚠️ 確信の持てない所見]
+W1. U+1D00..1DFF の 36 字（ᴀ->A など）と U+1D62..1D65 は 0.3.1 の写像がすべて誤り（compat 分解と一致するものは 0）。自前案の「恒等」で失うものは無い。
+W2. 研究メモの規則 2 は U+2070..209F だけ。U+1D2C..1D6A などの修飾文字（ᴬ ᵃ ᵇ ᶜ ᶠ ᶻ など、NFKD が ASCII 1 字になる字が U+1D00..1DFF に 37 字）、ª º（U+00AA/00BA）、全角英字（Ａ-Ｚ）、丸囲み英字は恒等のまま。「ラテン文字全体」の射程に入れるか未決。0.3.1 は全角英字を畳まない（>=U+20A0 の非恒等は ↄ->E の 1 字だけ）ので、現状維持でもある。
+W3. 0.3.1 は ↄ(U+2184)->E（誤り）。自前案は規則 4 で恒等になる（改善）。
+W4. normalize=false にすると、µ（マイクロ記号）のような字の needle と haystack が同じ字のとき、前段の normalize()（to_lower_case を無条件に当てる）と最適化段が食い違い、スコア 0 での一致が起きうる。µTorrent のような実在の名前で、needle を U+03BC（ギリシャ文字）で打つ場合。現行（true）だと Some(36)。順位が静かに動く。Snotra の通常入力では起きにくい。
+W5. 上記 a/b/4 の挙動差は、research.md の「normalize = false は大文字小文字の畳みの条件も変える」の一文より大きい。研究メモを直すなら「Lower 扱いの字に case fold の対象が残る字（µ・ς 等）で前段と最適化段が食い違う」を書くこと。

@@ -17,7 +17,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 - `search.rs` と子 `search/build.rs`・`search/query_plan.rs`・`search/scoring.rs`・`search/path_store.rs`・`search/footprint.rs`。テストは `search/tests/` に機能別（`mod.rs`・`common.rs`・`basic.rs`・`ranking.rs`・`incremental.rs`・`migemo.rs`・`path.rs`・`build.rs`・`performance.rs`）
   - **並列の列は添字で対応づけて持つ**: `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks`。すべてが `Vec` ではない（`lower_names` / `lower_file_names` は `str_arena`、表示名と `kana_lower_names` は `index_tree` の `NameArena`）。列を足すときは下の「実装前チェック（必須）」
 - `indexer.rs` と子 `indexer/scan.rs`・`indexer/keys.rs`・`indexer/columns.rs`・`indexer/cache.rs`・`indexer/cache/breakdown.rs`・`indexer/path_env.rs`。共有治具は `indexer/test_support.rs` の 1 つだけ（ガードを写すと相互排除が消える）
-- crate ルートの統合テスト（手元専用の計測コードか CI で走る検知器かは各 `//!`・計測値は `PERFORMANCE.md`）: `tests/search_frame_cost.rs`・`tests/memory_footprint.rs`・`tests/path_query_cost.rs`・`tests/match_cost.rs`・`tests/dir_stat_cost.rs`・`tests/search_allocations.rs`
+- crate ルートの統合テスト（手元専用の計測コードか CI で走る検知器かは各 `//!`・計測値は `PERFORMANCE.md`）: `tests/search_frame_cost.rs`・`tests/memory_footprint.rs`・`tests/path_query_cost.rs`・`tests/match_cost.rs`・`tests/search_allocations.rs`
 
 ## 開発ルール
 

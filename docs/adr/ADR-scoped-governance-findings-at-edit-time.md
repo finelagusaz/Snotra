@@ -73,7 +73,7 @@
 - **旧 `isSourceFileWrite` を置き換えた。** かつては「`.rs` を Write した」という低頻度シグナルだけで
   **無条件に**索引更新を促していた（判定を hook で再実装すると drift する、という理由で判定を持たなかった）。
   判定を subprocess へ置いたことでその反論は解け、Write に絞る理由も同時に消えた。
-- **帰属の判定は文字列結合であり、見逃し側で壊れる。** `finding` は `{file, line, message}` で `file` は
+- **帰属の判定は文字列結合であり、偽陰性側で壊れる。** `finding` は `{file, line, message}` で `file` は
   **文書側**（`<crate>/CLAUDE.md`）を指すため、編集ファイルとの結合は message にしか無い。
   `G-module-index` のメッセージ書式が変われば静かに 0 件になる。**検知器は
   `edit-findings.test.mjs` が実物の `checkModuleIndex` を呼んでいることそのものである**——

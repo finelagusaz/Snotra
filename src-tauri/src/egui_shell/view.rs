@@ -892,7 +892,7 @@ impl EguiView for SearchWindowView {
         // 最初のフレームから真であり、**この行は移設の回帰検出器になる**（偽に戻れば、
         // 起動直後の打鍵が再び捨てられている）。
         //
-        // **`input_editable` を併記する**——両者は同じ見逃しを作るため、片方だけを見ると
+        // **`input_editable` を併記する**——両者は同じ無反応を作るため、片方だけを見ると
         // 当たっていなくても説明が通ってしまう（実測でこちらは初回から真と判った）。
         if self.focus_state_traces_left > 0 {
             self.focus_state_traces_left -= 1;

@@ -47,7 +47,7 @@ let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/egui_shell/launcher_controll
 
 ### 親モジュール `egui_shell/launcher_controller.rs` を母集団へ含める
 
-**却下**（issue の「子 `*.rs`」に従う）。含めた場合との差は当時のツリーで無かった。**規範は消えるのではなく弱まる**——「1 ファイルへ集める」から「`launcher_controller/` の中に置く」へ。入口を親へ戻す形は 0 枚で**赤になる**（見逃しではない）。
+**却下**（issue の「子 `*.rs`」に従う）。含めた場合との差は当時のツリーで無かった。**規範は消えるのではなく弱まる**——「1 ファイルへ集める」から「`launcher_controller/` の中に置く」へ。入口を親へ戻す形は 0 枚で**赤になる**（偽陰性ではない）。
 
 ### `read_dir` を再帰させる
 

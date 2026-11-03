@@ -635,7 +635,7 @@ fn pre_main_elapsed() -> Option<Duration> {
     let created = Duration::from_nanos(created_unix_100ns.checked_mul(100)?);
 
     // **負なら `None` を返す**（時計の巻き戻り等）。0 に丸めると「測れなかった」が
-    // 「0 ms で通った」に化ける。
+    // 「0 ms で通った」になる。
     now.checked_sub(created)
 }
 

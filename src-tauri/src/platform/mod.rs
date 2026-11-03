@@ -59,7 +59,7 @@ pub struct PlatformBridgePending {
 /// platform bridge の失敗分類。
 ///
 /// **`Option` ではなくこれを返すのは、起動の終端が理由を要るからである**——どの失敗でも
-/// `None` に潰すと、`startup:failed` が出せずハーネスの「タイムアウト」に化ける
+/// `None` に潰すと、`startup:failed` が出せずハーネスの「タイムアウト」になる
 /// （`crate::startup` の `//!`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeError {
@@ -131,7 +131,7 @@ impl PlatformBridge {
     ///
     /// 他の送信（[`Self::send_command`]）は fire-and-forget でよい——起動の終端に関わらない
     /// ためである。こちらだけが結果を返すのは、**bridge が生きていない起動を
-    /// `startup:failed` として出せないと、ハーネスの「タイムアウト」に化ける**からである。
+    /// `startup:failed` として出せないと、ハーネスの「タイムアウト」になる**からである。
     ///
     /// **起動時に 1 回だけ呼ぶ**（理由は [`PlatformCommand::RegisterInitialHotkey`]）。
     ///

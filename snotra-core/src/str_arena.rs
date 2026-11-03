@@ -290,7 +290,7 @@ impl<'de> Visitor<'de> for StrSink<'_> {
 /// **理由も額も [`crate::index_tree::NameArena`] と同じである**（serde の `Vec` 訪問子が
 /// 1 MiB 相当で頭打ちにするのに倣う）。自前の訪問子はその保護を自分で持たない限り迂回し、
 /// 迂回すると「読めなかった → cache-miss → 再走査」へ穏やかに落ちていた壊れ方が、
-/// 確保失敗 ＝ release では `panic="abort"` に化ける。
+/// 確保失敗 ＝ release では `panic="abort"` になる。
 const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
 
 /// 列の長さプレフィックスから、事前確保してよい要素数を出す。
@@ -760,8 +760,8 @@ mod tests {
 
         let back: LowerNameColumn =
             postcard::from_bytes(&postcard::to_allocvec(&c).unwrap()).expect("往復できる");
-        assert_eq!(back.get(0), None, "往復で `None` が空文字へ化けた");
-        assert_eq!(back.get(1), Some(""), "往復で空文字が `None` へ化けた");
+        assert_eq!(back.get(0), None, "往復で `None` が空文字になった");
+        assert_eq!(back.get(1), Some(""), "往復で空文字が `None` になった");
     }
 
     /// **3 状態すべてに加えて、`Text` の中身の形も混ぜる。** variant のタグだけを網羅した

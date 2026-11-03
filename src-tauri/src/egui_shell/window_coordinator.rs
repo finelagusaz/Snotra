@@ -455,7 +455,7 @@ pub(crate) fn show_egui_main(
     // **導出し直せない。** 待つ対象は**自分のキュー**であり、自スレッドのキューが進むのを
     // 待つにはポンプを回すしかないが、イベントループのコールバック内でポンプを進めることは
     // 禁じられている（`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。`on_event_loop` でも
-    // 遅延できない——イベントループスレッドから呼ぶとインライン実行へ倒れる。
+    // 遅延できない——イベントループスレッドから呼ぶとインライン実行にフォールバックする。
     // **この構造では表現不能である**というのが結論であり、下 2 つの順序依存は現在
     // 「`set_focus()` を呼んだ後」でしかない（**未実測**——実機での確認は次段のカテゴリ C/D）。
     //
@@ -514,7 +514,7 @@ pub(crate) fn show_egui_main(
 /// ため、両ウィンドウを合わせた合流点ではない（#646 PR2 以降・全称主張の訂正は #671 サイクル PR A）。
 /// 外部 window.hide() のみで runtime.visible を false にしない（空白ウィンドウ回避・codex #4）。
 ///
-/// **main を隠す経路はこの関数を通す。** 可視性を変える関数の閉包は表現不能化ではない——`Manager` から
+/// **main を隠す経路はこの関数を通す。** 可視性を変える関数の閉じ込めは表現不能化ではない——`Manager` から
 /// main のハンドルを引いた `.hide()` / `.show()` は任意のスレッドからコンパイルが通り、results と違って
 /// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。そのとき `EguiShellState.main_visible` は
 /// 更新されず、results が既に可視なら最前面に取り残される——main が hidden の間は `RedrawRequested` が
@@ -765,7 +765,7 @@ fn read_frame_geom(window: &tauri::Window) -> Option<FrameGeom> {
 /// 概念と、隙間へ効く理由は [`layout::InvisibleBorders`] の doc が正本である。こちらは
 /// 「ウィンドウ 1 つの上下」、あちらは「main の下辺と results の上辺」という別の組を運ぶ。
 ///
-/// **既定値は「枠なし」であり、読めなかったときの倒れ先そのものである**（[`read_window_borders`]
+/// **既定値は「枠なし」であり、読めなかったときのフォールバック先そのものである**（[`read_window_borders`]
 /// の doc）。ゆえに `Default` を導出し、ゼロ値を書き下す場所を作らない。
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct WindowBorders {
@@ -779,7 +779,7 @@ pub(super) struct WindowBorders {
 /// `outer_position` を既に読んでいるが、その値を渡す形にはしない——**厚みはウィンドウの位置に対して
 /// 不変である**（ウィンドウが動けば外形も可視矩形も同じだけ動く）ため、2 つの読みの間にウィンドウが動いても
 /// 差は狂わない。逆に外形だけを呼び出し側の時刻から、可視矩形をここの時刻から取ると、
-/// ドラッグ中に**両者が別の位置を指して差が化ける**。ゆえに「同じ値の一貫性が要る読み」
+/// ドラッグ中に**両者が別の位置を指して差が狂う**。ゆえに「同じ値の一貫性が要る読み」
 /// （`egui_shell::read_config` の doc）には当たらない。
 ///
 /// **読めなければ 0 を返す**——補正なし＝この関数を入れる前と同じ配置である。
@@ -1454,12 +1454,12 @@ pub(crate) fn drive_results_window(
     let count = i.result_count;
     // main が hidden の間は results を出さない（#671 PR A′ レビュー Important 1）。
     // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
-    // **この読みより前に store が済んでいたフレーム**はここで hide 側へ倒れる。判定式と
+    // **この読みより前に store が済んでいたフレーム**はここで hide 側の判定になる。判定式と
     // 根拠は layout::present_results（純粋核・ユニットテスト対象）。
     // **証人型（`EventLoopProof`）を引数に要求する 5 関数はイベントループスレッドへ閉じている**
     // ため、この読みと `results.show()` のあいだへ hide が割り込む並びは構築できない
     // （読んだ後に store されるフレームを心配する必要が無い）。**ただし `main_visible` を
-    // 更新しない main の hide はこの閉包の外にある**——`MainVisible` の doc を見よ。
+    // 更新しない main の hide はこの閉じ込めの外にある**——`MainVisible` の doc を見よ。
     let main_visible = read_main_visible(app);
     let desired_height = match layout::present_results(layout::ResultsInputs {
         main_visible,

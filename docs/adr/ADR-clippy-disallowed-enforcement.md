@@ -42,4 +42,4 @@
 4. **`reason` 文言の変更と `#[allow]` による迂回は射程外である**（lint に内在する性質）。
 5. **`disallowed_methods` 以外の clippy lint のレベルは、どの検査も見ていない。** 1 で置いた deny は `G-clippy-disallowed` が見張るが、他の clippy lint を `[workspace.lints.clippy]` へ足しても降格を捕まえる機構は無い。
 6. **deny が実効するのは member 側の opt-in が在る間だけである。** `src-tauri` の `[lints] workspace = true` は `G-workspace-lints` が全 member について見ており、両検査は**組で 1 つの命題を守る**。片方だけを消す変更は、もう片方の緑に隠れる。
-7. **`disallowed_methods` をハイフンで書いた形は非実効と判定する（赤に倒れる）。** 向きが赤なので受容するが、次の人の最も安い直し方が「検査を緩める」にならないよう、直し方をソースのコメントへ書いた。
+7. **`disallowed_methods` をハイフンで書いた形は非実効と判定する（赤になる）。** 向きが赤なので受容するが、次の人の最も安い直し方が「検査を緩める」にならないよう、直し方をソースのコメントへ書いた。

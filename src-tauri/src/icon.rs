@@ -336,7 +336,7 @@ fn hicon_to_bgra(hicon: HICON) -> Result<IconData, IconFailure> {
         }
         let old = SelectObject(hdc_screen, icon_info.hbmColor.into());
         // **戻り値（コピーできた走査行数）を捨てない**（#692）。0 は失敗であり、
-        // 捨てると pixels が初期値ゼロのまま「全画素ゼロ」に化けて理由が消える。
+        // 捨てると pixels が初期値ゼロのまま「全画素ゼロ」になって理由が消える。
         let scanlines = GetDIBits(
             hdc_screen,
             icon_info.hbmColor,
@@ -436,7 +436,7 @@ mod tests {
     /// シェルのアイコンキャッシュは**プロセスごとにコールドな状態から始まり**、初回要求で
     /// `SHGetFileInfoW` が成功を返しながら HICON を返さないことがある（`NoIconHandle`）。
     /// 修正（`extract_icon` の即時リトライ）が効いていることは、**キャッシュがコールドなプロセスで
-    /// 1 周目に `NoIconHandle` が出ないこと**で確かめる——温まった後では区別が付かない。
+    /// 1 周目に `NoIconHandle` が出ないこと**で確かめる——ウォームアップ後では区別が付かない。
     ///
     /// ```text
     /// $env:SNOTRA_ICON_DIAG_PATHS = "C:\path\a;C:\path\b"   # 省略時は既定の 5 件
@@ -467,7 +467,7 @@ mod tests {
             .collect();
         println!("対象 {} 件", paths.len());
 
-        // **最初に測る**——先に別の pass を走らせるとシェルのキャッシュが温まり、
+        // **最初に測る**——先に別の pass を走らせるとシェルのキャッシュがウォームアップされ、
         // 「キャッシュがコールドな状態での初回要求」の観測ができなくなる（計測順序そのものが観測対象を変える）。
         for round in 1..=2 {
             let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
@@ -842,9 +842,9 @@ mod tests {
             paths.len()
         );
 
-        // 温めついでに PNG を回収する（**warm-up と hit 経路の材料を兼ねる**——分けると
+        // ウォームアップのついでに PNG を回収する（**warm-up と hit 経路の材料を兼ねる**——分けると
         // 最も重い shell+gdi を全件ぶん 1 周余計に払う）。cold 初回は `icon_extract_cost_probe`
-        // の担当ゆえ、ここで温まっていることが後続の計測の前提である。
+        // の担当ゆえ、ここでウォームアップ済みであることが後続の計測の前提である。
         let pngs: Vec<Vec<u8>> = paths
             .par_iter()
             .filter_map(|p| extract_png(p).ok())

@@ -54,7 +54,7 @@ use snotra_core::indexer::{self, AppEntry};
 use snotra_core::search::SearchEngine;
 
 thread_local! {
-    /// 導出側の再利用バッファ。**容量を再利用するため暖まった後の確保はゼロ**——
+    /// 導出側の再利用バッファ。**容量を再利用するためウォームアップ後の確保はゼロ**——
     /// ここを毎回 `String::new()` にすると、測っているものが正規化ではなく確保になる。
     static KEY_BUF: RefCell<String> = const { RefCell::new(String::new()) };
 }
@@ -213,7 +213,7 @@ fn measure_path_query_frame_cost() {
         "\\program files\\",
         "\\zzz-no-such-path\\",
     ] {
-        // 2 回の暖機のあと 20 回。min/p50/max を出す——**平均は出さない**。1 フレームを
+        // 2 回のウォームアップのあと 20 回。min/p50/max を出す——**平均は出さない**。1 フレームを
         // 落とすかどうかを決めるのは中央値と最悪値であって平均ではない。
         for _ in 0..2 {
             let _ = engine.search(query);
@@ -383,7 +383,7 @@ fn measure_path_query_frame_cost_at_operating_point() {
             }
         }
     }
-    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。暖機 {WARMUP} 回のあと {SAMPLES} 標本）");
+    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。ウォームアップ {WARMUP} 回のあと {SAMPLES} 標本）");
 }
 
 /// **どの設定の組み合わせが `c:\` のコストを動かすか**を 1 枚の表で見る（#1067）。
@@ -489,7 +489,7 @@ fn measure_path_query_cost_across_settings() {
             }
         }
     }
-    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。暖機 {WARMUP} 回のあと {SAMPLES} 標本）");
+    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。ウォームアップ {WARMUP} 回のあと {SAMPLES} 標本）");
 }
 
 /// 計測するクエリ。**既存ハーネスと同じ 6 本を同じ順で並べる**（比較可能性）。
@@ -502,7 +502,7 @@ const PATH_QUERY_ROWS: [&str; 6] = [
     "\\zzz-no-such-path\\",
 ];
 
-/// 暖機の回数。
+/// ウォームアップの回数。
 const WARMUP: usize = 2;
 /// 標本数。**既存ハーネスの 20 では max の帰属に足りない**——#1067 の実測で max が
 /// 18,642〜22,420 µs と 3 回の実行間で 20% 揺れた。max は受け入れ条件に入っている
@@ -519,7 +519,7 @@ struct FrameSamples {
     max: u64,
 }
 
-/// `engine.search(query)` を暖機のあと [`SAMPLES`] 回叩き、返した件数と分位点を返す。
+/// `engine.search(query)` をウォームアップのあと [`SAMPLES`] 回叩き、返した件数と分位点を返す。
 fn sample_frame_cost(engine: &mut Engine, query: &str) -> (usize, FrameSamples) {
     for _ in 0..WARMUP {
         let _ = engine.search(query);

@@ -182,7 +182,7 @@ impl LauncherController {
     /// この区別である**——区別しないと、新設したガードが一度も効いていなくても件数からは分からない。
     ///
     /// **この 2 行の順序を固定する検知器は無い。** 入れ替えると view のケースでも `accept` が既に
-    /// pending を take しているため `was_current` が常に偽になり、`reason` が恒久的に `"seq"` へ化ける
+    /// pending を take しているため `was_current` が常に偽になり、`reason` が恒久的に `"seq"` になる
     /// ——**この reason を足した理由そのものが静かに失われる**。`SearchState` 側の
     /// `pending_seq_separates_the_two_drop_reasons` は純粋核の内側を測るので、ここの入れ替えでは落ちない。
     pub(in crate::egui_shell) fn drain_search(&mut self) {

@@ -40,7 +40,7 @@ use snotra_core::indexer::{self, AppEntry};
 
 /// incremental の再利用を外すクエリ。どの計測クエリの接頭辞にもならない。
 const RESET_QUERY: &str = "zzzz";
-/// 暖機の回数。
+/// ウォームアップの回数。
 const WARMUP: usize = 2;
 /// 標本数（p50 を読む）。
 const SAMPLES: usize = 30;
@@ -151,7 +151,7 @@ fn measure_match_cost_over_real_index() {
         );
     }
     println!(
-        "\n  （µs。各標本の前に {RESET_QUERY:?} で再利用を外す。暖機 {WARMUP} 回・{SAMPLES} 標本）"
+        "\n  （µs。各標本の前に {RESET_QUERY:?} で再利用を外す。ウォームアップ {WARMUP} 回・{SAMPLES} 標本）"
     );
 }
 
@@ -216,6 +216,6 @@ fn measure_match_cost_over_synthetic_folders() {
         );
     }
     println!(
-        "\n  （µs。各標本の前に {RESET_QUERY:?} で再利用を外す。暖機 {WARMUP} 回・{SAMPLES} 標本）"
+        "\n  （µs。各標本の前に {RESET_QUERY:?} で再利用を外す。ウォームアップ {WARMUP} 回・{SAMPLES} 標本）"
     );
 }

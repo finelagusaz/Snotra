@@ -44,7 +44,7 @@ camelCase 限定でも `closingIssuesReferences`（GitHub API のフィールド
 
 ### 却下 5: ソースのコメントも語彙に入れる
 
-`resetForShow` はソースに 11 件現れるが、**全件がコメント**である（「〜相当」「parity」という由来注記）。コメントを語彙に入れると由来注記が現行語彙に化け、腐りが原理的に検出できなくなる。G-config-reachability が同じ理由で `stripRustComments` を置いており、それを再利用した。
+`resetForShow` はソースに 11 件現れるが、**全件がコメント**である（「〜相当」「parity」という由来注記）。コメントを語彙に入れると由来注記が現行語彙にすり替わり、腐りが原理的に検出できなくなる。G-config-reachability が同じ理由で `stripRustComments` を置いており、それを再利用した。
 
 ## 帰結
 
@@ -184,7 +184,7 @@ ADR は**否定の知識＝もう存在しない案**を書く場所である。
 
 - **述語は camelCase と SCREAMING_SNAKE を見る。** snake_case・PascalCase・ドット区切り・式で書かれた腐りは今も対象外である。**この拡大で直した 5 個のうち 4 個の差し替え先がまさにそこへ落ちた**（`ViewKind` / `QueryIntent` / `is_instant_prefix()`）——文書は正しくなったが、**同じ場所が再び腐っても鳴らない**
 - **`snotra-core/CLAUDE.md` の `Config::icon_cache_cap()` の行は検査で守られない**（モジュール `CLAUDE.md` は母集団外）。再発しても鳴らない
-- **`.yml` は GitHub 提供の語彙を寄付する**（`GITHUB_ENV` / `GITHUB_OUTPUT` / `GITHUB_TOKEN` / `TAG_NAME` / `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。さらに `'` で分断された**日付書式の断片**（`ddTHH` / `ssZ` / `yyyyMMddHHmm`）も語彙に化ける——同名の識別子が散文に書かれれば誤って免罪する（今日 0 件）
+- **`.yml` は GitHub 提供の語彙を寄付する**（`GITHUB_ENV` / `GITHUB_OUTPUT` / `GITHUB_TOKEN` / `TAG_NAME` / `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。さらに `'` で分断された**日付書式の断片**（`ddTHH` / `ssZ` / `yyyyMMddHHmm`）も語彙にすり替わる——同名の識別子が散文に書かれれば誤って免罪する（今日 0 件）
 - **`docs/design/` を含めた判断は、そこが「もう成り立たないことを書く場所」にならない限りで正しい。** 日付スラグを歴史記録の印と読み替えると、次の人が外しにいく
 - Rust のテストコードが語彙を寄付しうる穴・「単語 1 つの識別子」・frontmatter / 素の表テキスト / 日本語散文は、上の残余のまま
 

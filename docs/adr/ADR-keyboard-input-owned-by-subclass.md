@@ -14,7 +14,7 @@
 - **現行の分担のまま、tao の振る舞いを検査で固定する**: 却下。壊れたことには気づけるが、壊れること自体は防げない。tao を上げるたびに #1265 と同じ規模の修理が来る構造が残る。
 - **キーイベントに載せる修飾を subclass の `GetKeyState` で取る**: 却下。tao の `get_agnostic_mods` は AltGr（`has_alt_graph && VK_RMENU`）のとき Ctrl と Alt を外す。`GetKeyState` で取ると AltGr+C/X/V が Copy/Cut/Paste になる。日本語配列には AltGr が無く、手打ちでは見つからない（計画レビューで見つかった）。修飾は tao の `ModifiersChanged` の保持値を drain の時点で載せる。クリップボードの読みも同じ場所に残るので、subclass の `RefCell` の借用の中で Win32 を呼ばずに済む。
 - **focus 獲得時の抑止（#927）の鍵を VK にする**: 却下。変換中の打鍵は `WM_KEYDOWN` の VK が `VK_PROCESSKEY` になるので、focus 獲得時に取り込んだ VK と照合できない。旧実装も物理キー（tao の `KeyCode`）を鍵にしていた。鍵はスキャンコードにした。
-- **抑止を「lParam bit 30（直前も押下）の down を、この focus で down を見ていないキーなら落とす」で行う**: 却下。`WM_SETFOCUS` の瞬間に押下中のキーを取り込む形のほうが、旧実装が受けていた tao の合成 press と同じ集合になる。`scripts/smoke-egui.ps1` の #1274 の節は「取り込みが起きなければ 2 回目の down が通って赤に倒れる」という判別を持っており、bit 30 の判定へ替えると、その節が何を判別しているかが変わる。
+- **抑止を「lParam bit 30（直前も押下）の down を、この focus で down を見ていないキーなら落とす」で行う**: 却下。`WM_SETFOCUS` の瞬間に押下中のキーを取り込む形のほうが、旧実装が受けていた tao の合成 press と同じ集合になる。`scripts/smoke-egui.ps1` の #1274 の節は「取り込みが起きなければ 2 回目の down が通って赤になる」という判別を持っており、bit 30 の判定へ替えると、その節が何を判別しているかが変わる。
 - **CI の runner に `Install-Language ja-JP` を入れて、IME の確定を smoke で打つ**: 却下（ユーザーの判断）。runner で動くかは未検証で、CI 時間が増え、IME の状態に依存する不安定さを抱える。CI では `SendInput` の `KEYEVENTF_UNICODE`（非 ASCII とサロゲートペア）までを打ち、IME の確定が 1 回だけ入ることは手打ちで確かめた。
 
 ## 帰結

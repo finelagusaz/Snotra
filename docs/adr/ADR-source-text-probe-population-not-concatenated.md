@@ -51,7 +51,7 @@ let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/egui_shell/launcher_controll
 
 ### `read_dir` を再帰させる
 
-**却下。** 検査自身（`activation/tests.rs`）が母集団へ入り、**倒れ方が非対称になって気づけない**——`method_body` 側は字下げ 8 のアンカー文字列で assert が落ちて赤（安全側）だが、`owners_of` 側は当該ファイルの `fn` がすべて字下げ 0 でヘッダとして認識されないため、リテラルで綴った禁止語が帰属先を持たず**黙って捨てられて緑になる**。**非再帰は意図であって偶然ではない。**
+**却下。** 検査自身（`activation/tests.rs`）が母集団へ入り、**誤り方が非対称になって気づけない**——`method_body` 側は字下げ 8 のアンカー文字列で assert が落ちて赤（安全側）だが、`owners_of` 側は当該ファイルの `fn` がすべて字下げ 0 でヘッダとして認識されないため、リテラルで綴った禁止語が帰属先を持たず**黙って捨てられて緑になる**。**非再帰は意図であって偶然ではない。**
 
 ### `ADR-source-text-probe-helper-locality` の反転条件に当たるか
 

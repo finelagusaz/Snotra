@@ -132,7 +132,7 @@ impl InputState {
         // **イベント駆動ゆえ「次フレームは vsync 後に来る」前提を持たない**（#628）。
         // egui は `request_repaint_after(d)` を `d - predicted_dt` へ切り詰める
         // （`context.rs:148-151`）。既定値 1/60 秒のままだと、`d < 16.7ms` の要求が
-        // ZERO へ飽和して「即時再描画」に化け、次パスがさらに小さい `d` を要求して
+        // ZERO へ飽和して「即時再描画」になり、次パスがさらに小さい `d` を要求して
         // 再び飽和する——キャレット点滅の遷移ごとに約 26ms スピンする（#628 実測:
         // 遷移 1 回につき平均 7.8 フレーム・可視アイドルが 2fps ではなく 11.5fps）。
         // 0 を渡して要求どおりの時刻に起こす（本 runtime は先取りせず、起きてから
@@ -287,7 +287,7 @@ impl InputState {
             // **キーボード由来は tao から受け取らない**（#1289）。打鍵・文字・IME 確定はすべて
             // `windows_ime.rs` の subclass が Win32 メッセージから作り、`push_native_input` で積む。
             // tao の `KeyboardInput` は従来どおり発火するが、egui へ渡すと二重に入る。到着は
-            // `runtime.rs` の `rx_key` / `rx_text` が引き当ての前に残す。`ReceivedImeText` は
+            // `runtime.rs` の `rx_key` / `rx_text` がウィンドウ特定の前に残す。`ReceivedImeText` は
             // Windows では 0 件が正常（subclass が `WM_IME_ENDCOMPOSITION` を tao へ通さない）で、
             // `rx_text` に現れたらその抑止が破れている tripwire である。
             WindowEvent::KeyboardInput { .. } | WindowEvent::ReceivedImeText(_) => return false,

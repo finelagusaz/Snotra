@@ -459,12 +459,12 @@ pub(super) fn with_cursor<R>(store: &PathStore, i: usize, f: impl FnOnce(&str) -
 
 thread_local! {
     /// 全件走査のカーソル。rayon の worker ごとに 1 本である。
-    /// 走査は連続した index を順に舐めるので、worker ごとに鎖が暖まる。
+    /// 走査は連続した index を順に舐めるので、worker ごとに鎖がウォームアップされる。
     static CURSOR: std::cell::RefCell<PathCursor> =
         const { std::cell::RefCell::new(PathCursor::new()) };
 
     /// tie-break の組み立て先。**2 本要る**——`cmp_paths` が両辺を同時に持つためである。
-    /// 容量を再利用するので暖まったあとの確保は起きない。
+    /// 容量を再利用するのでウォームアップ後の確保は起きない。
     static CMP_BUFS: std::cell::RefCell<(String, String)> =
         const { std::cell::RefCell::new((String::new(), String::new())) };
 }

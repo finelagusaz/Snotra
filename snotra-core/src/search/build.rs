@@ -250,7 +250,7 @@ impl SearchEngine {
         // ——ここで測り直しても結果は変わらず、費用だけが掛かる（[`DerivedStrings`] の doc）。
         //
         // **`match` の中で分ける。** 外で `matches!` を取ると、variant を足したときに既定値へ
-        // 黙って落ちる——「測らない」へ倒れれば削減だけが減り、「測る」へ倒れれば結果が
+        // 黙って落ちる——「測らない」側に誤れば削減だけが減り、「測る」側に誤れば結果が
         // 壊れる。どちらも沈黙するので、コンパイラに列挙させる。
         let (mut lower_names, mut lower_file_names) = match derived {
             // **フラグはここで立てる**（`mark_file_name_is_lower_name` は `CompactEntry` の空き
@@ -346,7 +346,7 @@ impl SearchEngine {
             // **保守側で組んでから測る。** `true` は「飛ばさない」＝現行どおりの経路であり、
             // 測り損ねても結果は変わらず速さだけが落ちる（`SearchEngine::any_name_has_path_sep`
             // の doc）。`false` で初期化すると、測る前に読む経路が生まれたとき**結果が壊れる側**
-            // へ倒れる。
+            // になる。
             any_name_has_path_sep: true,
             // incremental cache は Default（空 query / 空候補 / mode 未設定）で初期化し、
             // 構築直後の初回検索は必ず full scan になる（#601）。
@@ -363,8 +363,8 @@ impl SearchEngine {
         // （1 本目）。file name 側は `Text` なら 3 本目、共有フラグが立てば解決後の `lower_name` と
         // 同一なので 1 本目か 2 本目に在る。
         //
-        // **区切りを含まない名前しか無いのに `true` へ倒れることはあっても、逆は無い。**
-        // 倒れる向きが「飛ばさない＝現行どおり」なので、境界をまたいだ偽の一致
+        // **区切りを含まない名前しか無いのに `true` になることはあっても、逆は無い。**
+        // 誤る向きが「飛ばさない＝現行どおり」なので、境界をまたいだ偽の一致
         // （アリーナは要素の区切りを持たない）が結果を壊すことはない。
         engine.any_name_has_path_sep = contains_path_sep(engine.entries.names_blob())
             || contains_path_sep(engine.lower_names.blob())

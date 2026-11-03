@@ -16,7 +16,7 @@
 
 母集団が空になれば 21 本は空虚に緑を返す。それは**21 本自身の故障**であってメタ層の話ではない。ゆえに `runAll` の 0 件検知・`lib.mjs` の入力ガード・`registry.mjs` の走査と形式検証・`manifest` の `checks`/`docs`/`rules`/`skills` 列はゲートに残す。
 
-格下げしたのは、倒れても 21 本の合否が動かないもの——`G-domain-anchors`、面積計器の入力ガード、evidence の供給断検知、`manifest` の `domains` 列、および `domains.test.mjs` の錨の総称反証テストである。
+格下げしたのは、壊れても 21 本の合否が動かないもの——`G-domain-anchors`、面積計器の入力ガード、evidence の供給断検知、`manifest` の `domains` 列、および `domains.test.mjs` の錨の総称反証テストである。
 
 ## 却下 1: いま撤去する（コードごと消す）
 

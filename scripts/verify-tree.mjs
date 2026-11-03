@@ -275,7 +275,7 @@ function cmdAlign(opts) {
   }
   const sha = resolveSha(tree, opts.sha);
   // 追跡ファイルの変更と、`.delegate/` の外の未追跡ファイル（変異で足したまま残ったファイル——
-  // vitest の include に当たれば次の巡のテストに混ざる）の両方を、巻き戻されていない変異として止める
+  // vitest の include に当たれば次のラウンドのテストに混ざる）の両方を、巻き戻されていない変異として止める
   const leftovers = changesOutsideDelegate(tree);
   if (leftovers.length > 0) throw new EnvError(`変更が残っている（巻き戻されていない変異か）:\n${leftovers.join("\n")}`);
   if (git(tree, ["ls-tree", "--name-only", sha, DELEGATE_DIR]) !== "") {

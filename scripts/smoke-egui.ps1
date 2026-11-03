@@ -33,7 +33,7 @@ param(
   # hotkey 観測までの壁時計には、下の `Add-Type`（実行時 C# コンパイル・コールドスタート直後の runner で
   # 7〜25s 変動）を含む**起動前**の時間が乗る。起動起点の計測（$launchedAt）だけが
   # アプリの遅延を表す。
-  # 以降の観測（show/hide/results）はアプリが温まった後ゆえ `ObserveTimeoutMs` のまま。
+  # 以降の観測（show/hide/results）はアプリのウォームアップ後ゆえ `ObserveTimeoutMs` のまま。
   # 広げた分の盲目化は、成功時のレイテンシ表示（下）が補う。
   [int]$StartupObserveTimeoutMs = 25000
 )
@@ -261,7 +261,7 @@ try {
   } else {
     $hotkeySource = "from trace"
     # **この 1 件だけ別予算を使う**（$StartupObserveTimeoutMs）。cold start を含むのはここだけで、
-    # 以降の観測（show/hide/results）はアプリが温まった後だから ObserveTimeoutMs のままでよい。
+    # 以降の観測（show/hide/results）はアプリのウォームアップ後だから ObserveTimeoutMs のままでよい。
     # 一律に広げると、本来速いはずの検査の失敗検出まで鈍る。
     $hkEvent = Wait-SnotraTraceEvent -Path $errPath -EventName "hotkey:registered" -TimeoutMs $StartupObserveTimeoutMs
     if ($null -eq $hkEvent) {
@@ -549,7 +549,7 @@ try {
   # Z を押したまま hotkey で隠して出し直すと、show の `WM_SETFOCUS` で Z が取り込まれる。
   # その後、押しっぱなしの Z へもう 1 回 down を送り、離してから X を 1 回打つ。正常なら 2 回目の
   # down（と、`TranslateMessage` がそれに付ける `WM_CHAR`）が落ち、入るのは X だけ（`[0->1]`）である。
-  # **取り込みが起きなければ 2 回目の down が通って `[0->1, 1->2]` になり、赤に倒れる**——「入らない」を
+  # **取り込みが起きなければ 2 回目の down が通って `[0->1, 1->2]` になり、赤になる**——「入らない」を
   # 不在の断言にせず、前提が崩れたときに沈黙の緑にならない形にしてある。
   #
   # **H1 判定より後に置く**——既存の待ちは 1 件でも現れれば成立するので、それより前に show / hide を

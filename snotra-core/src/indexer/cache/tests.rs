@@ -1282,7 +1282,7 @@ fn load_cache_skip_does_not_upgrade_a_legacy_format() {
 }
 
 /// 設定アプリが最終構築日時を出すための口。**17 MiB を読まない**ことが要点で、
-/// 読めない・無いときは黙って `None` を返す（表示は「未構築」へ倒れる）。
+/// 読めない・無いときは黙って `None` を返す（表示は「未構築」になる）。
 #[test]
 fn index_built_at_reads_the_timestamp_without_loading_the_index() {
     let dir = temp_dir("built_at_read");

@@ -244,7 +244,7 @@ pub(crate) fn expand_env(input: &str) -> String {
             }
             // 末尾 NUL を除いて UTF-16 → String。**書込長はバッファ長で clamp してからスライスする**
             // ——環境変数の値が 2 呼び出しの間に伸びると written > buf.len() になり、境界外 panic が
-            // release（`panic = "abort"`）ではプロセス abort に化ける（#394）。
+            // release（`panic = "abort"`）ではプロセス abort になる（#394）。
             let len = (written as usize).saturating_sub(1).min(buf.len());
             String::from_utf16_lossy(&buf[..len])
         }

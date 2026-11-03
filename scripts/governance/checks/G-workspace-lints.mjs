@@ -28,7 +28,7 @@ export function run(snapshot, ctx) {
 //   そのうち `disallowed_methods` の deny だけは **G-clippy-disallowed** が見張るが（#950。src-tauri の
 //   禁止集合が実効する条件の 1 つとして）、**それ以外の clippy lint は依然としてどの検査も見ていない**。
 //   **「lints 全般が守られている」と読める書き方をしてはならない**。
-// - 次の 2 つの dotted 表記は cargo 上は有効だが、この述語は非実効と判定する＝**赤に倒れる**（実測）。
+// - 次の 2 つの dotted 表記は cargo 上は有効だが、この述語は非実効と判定する＝**赤になる**（実測）。
 //   向きが赤（沈黙しない）なので受容するが、**次の人の最も安い直し方が「検査を緩める」にならない**よう、
 //   直し方を書いておく: (a) member 側の `["lints"]`（クォートした見出し）→ `[lints]` と書く、
 //   (b) ルート側の `[workspace.lints]` 配下の `rustdoc.broken_intra_doc_links = "deny"`

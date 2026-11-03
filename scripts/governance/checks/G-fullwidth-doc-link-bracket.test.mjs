@@ -5,7 +5,7 @@ import { checkFullwidthDocLinkBrackets, scanFullwidthDocLinkBrackets } from "./G
 // 守りたい対象 = #1172 で実測した形。production の `///` に `[`X`］`（開き半角・閉じ全角）が 3 本
 // あった状態で `cargo doc`（`broken_intra_doc_links = deny`）・clippy・test・`governance:check`・
 // PostToolUse がすべて緑だった。rustdoc はリンクと認識せずリテラル出力し、**リンクですらないものには
-// 何も言わない**。見つけたのは `/code-review` の 2 巡目である。
+// 何も言わない**。見つけたのは `/code-review` の 2 回目である。
 //
 // fixture は文字列リテラルなので、この検査の母集団（`.rs` の doc 行）には入らない。
 describe("G-fullwidth-doc-link-bracket checkFullwidthDocLinkBrackets（intra-doc link の角括弧の半角/全角混在・#1172）", () => {

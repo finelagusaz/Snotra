@@ -319,7 +319,7 @@ describe("run — マージの成否は PR の状態で確定する", () => {
     ["マージ前（2）", "repo view", 2],
     ["マージ区間（3）", "pr merge", 3],
     ["事後（3）", "issue view", 3],
-  ])("null を throw されても catch の中で落ちない（node の exit 1 に化けない）: %s", (_, key, code) => {
+  ])("null を throw されても catch の中で落ちない（node の exit 1 にならない）: %s", (_, key, code) => {
     const f = fake({
       [key]: () => {
         throw null;

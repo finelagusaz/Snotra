@@ -251,7 +251,7 @@ Describe 'Test-SnotraTraceInvariants — 区間への帰属' {
     }
 }
 
-Describe 'Test-SnotraTraceInvariants — 判定不能は PASS へ化けない' {
+Describe 'Test-SnotraTraceInvariants — 判定不能は PASS にならない' {
     It '事象が 1 件も無ければ全 SKIP（空を合格と読ませない）' {
         $r = Test-SnotraTraceInvariants -Events @() -Sections $script:OneSection
 
@@ -367,7 +367,7 @@ Describe 'Test-SnotraTraceInvariants — 壊れた入力で例外を投げない
 Describe 'Test-SnotraTraceInvariants — スキーマドリフトで確定済みの違反を捨てない（C2）' {
     It 'rows が非数値の行が後ろに混じっても、先に確定した FAIL が残る' {
         # 裸のキャストだと `[int]'many'` が例外になり、fail-safe が Violations ごと捨てて
-        # exit 0 になっていた。**赤が緑へ化ける**形なのでキャストは必ず変換ヘルパーを通す。
+        # exit 0 になっていた。**赤が緑にすり替わる**形なのでキャストは必ず変換ヘルパーを通す。
         $events = @(
             New-TraceEvent 1 'egui_show:done'
             New-TraceEvent 2 'egui_results:show' @{ rows = 0 }
@@ -514,7 +514,7 @@ Describe 'Read-SnotraTraceSnapshot（捨てた行の数え方）' {
         # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction SilentlyContinue` の
         # ままだと Available=true・Events 0 件・Dropped 0 という
         # **正常な空ログと区別できない値**を返し、稼働中のアプリを観測する経路で
-        # 「読めなかった」が「まだ出ていない」に化ける。
+        # 「読めなかった」が「まだ出ていない」と区別できなくなる。
         $dir = Join-Path $TestDrive 'unreadable-snapshot'
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
 

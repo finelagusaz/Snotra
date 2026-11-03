@@ -34,7 +34,7 @@
 //! 製品バイナリに一切入らない（`tests/search_frame_cost.rs` と同じ隔離）。
 //!
 //! **`scan_all` 区間（`report_scan_all_cost`）は実走査そのものゆえ、Phase A の実行時間が
-//! 大きく伸びる。** 所要はファイルシステムキャッシュの温度で数倍にぶれるので、初見で走らせる
+//! 大きく伸びる。** 所要はファイルシステムキャッシュの状態で数倍にぶれるので、初見で走らせる
 //! と無出力のまま長く待つことになる（秒数はここに書かない——書けば測り直すたびに腐る）。
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -130,14 +130,14 @@ fn mib(bytes: usize) -> f64 {
 }
 
 /// 符号つきの差分（MiB）。**`saturating_sub` で丸めない**——区間が正味で解放する
-/// （`shrink_to_fit` 等）ことは実際に起きる。飽和させると減少が `0.00 MiB` に化け、
+/// （`shrink_to_fit` 等）ことは実際に起きる。飽和させると減少が `0.00 MiB` になり、
 /// 「何も起きなかった」と読める嘘になる（実測で踏んだ）。
 fn delta_mib(after: usize, before: usize) -> f64 {
     (after as f64 - before as f64) / 1024.0 / 1024.0
 }
 
 /// 符号つきの差分（ミリ秒）。**`Duration` の `-` も `saturating_sub` も使わない**——前者は
-/// 負で panic し、後者は [`delta_mib`] と同じ理由で嘘になる（帰属の誤りが `0ms` に化け、
+/// 負で panic し、後者は [`delta_mib`] と同じ理由で嘘になる（帰属の誤りが `0ms` になり、
 /// 「名前の無い処理は居ない」と読める）。**丸めはここ 1 か所だけである**——各フェーズを個別に
 /// ミリ秒へ落としてから引くと、残余が丸め屑を吸う（#1178。原理は `src-tauri` の
 /// `startup.rs` の `//!`「丸めは表示境界でだけ行う」）。
@@ -339,7 +339,7 @@ fn measure_real_index_footprint() {
     // `Duration` で和を取ってから引くので、残余は「まだ名前の付いていない処理」だけを表す。
     //
     // **残余は符号つきで出す**（`delta_mib` と同じ理由）。飽和させると帰属の誤りが
-    // `0ms` に化けて「名前の無い処理は居ない」と読める嘘になり、しかも**符号が飽和側にしか
+    // `0ms` になって「名前の無い処理は居ない」と読める嘘になり、しかも**符号が飽和側にしか
     // 出ないので気づけない**。負が出たら、それは丸めではなく二重計上である。
     let cache_save_is_internal = s.cache_hit;
     let attributed = s.hash
@@ -477,7 +477,7 @@ fn measure_real_index_footprint() {
 /// （設計書 `docs/superpowers/specs/2026-08-09-scan-all-seen-conditional-design.md` §4）。
 ///
 /// **この区間は実走査そのものゆえ、Phase A の実行時間が大きく伸びる。** 所要はファイルシステムの
-/// キャッシュの温度で数倍にぶれるので、ここに秒数を書かない（書けば測り直すたびに腐る）。
+/// キャッシュの状態で数倍にぶれるので、ここに秒数を書かない（書けば測り直すたびに腐る）。
 fn report_scan_all_cost(config: &Config) {
     reset_peak();
     let t0 = snap();

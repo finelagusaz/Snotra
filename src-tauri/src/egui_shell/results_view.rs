@@ -782,7 +782,7 @@ mod tests {
     /// 描いた行の総高（`ScrollAreaOutput.content_size.y`）を返す。**`row_height` を変えて
     /// 呼べる**ことが対照実験の足場になる。
     ///
-    /// 測定値を `Harness` の state に持たせるのは借用のためである——ローカル変数を閉包へ
+    /// 測定値を `Harness` の state に持たせるのは借用のためである——ローカル変数をクロージャへ
     /// 貸すと、`harness` の drop まで借用が続いて読み出せない。
     fn measure_content_height(rows: &[SearchResult], row_height: f32) -> f32 {
         let icons: HashMap<String, egui::TextureHandle> = HashMap::new();
@@ -830,7 +830,7 @@ mod tests {
                         ui, &rows, 0, false, false, &icons, true, &theme, row_height,
                     );
                 });
-            // galley キャッシュとフォントアトラスを温める（cold 初回を混ぜない）。
+            // galley キャッシュとフォントアトラスをウォームアップする（cold 初回を混ぜない）。
             for _ in 0..5 {
                 harness.step();
             }
@@ -899,7 +899,7 @@ mod tests {
         assert!(!shared.publish(&same_content, 2, 5, false));
     }
 
-    /// 表示ゲートが倒れたフレームは、世代を進めずに空の行を発行する（`view.rs` の
+    /// 表示ゲートが閉じたフレームは、世代を進めずに空の行を発行する（`view.rs` の
     /// `plain_hidden`）。行の比較を世代で置き換えると、ここが落ちる。
     #[test]
     fn publish_hides_rows_without_generation_change() {

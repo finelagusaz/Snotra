@@ -193,7 +193,7 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
     }
 
     let mut rejected = vec![false; candidates.len()];
-    // 確保を暖まらせて使い回す（`normalize_entry_key_into` の doc と同じ形）。
+    // 確保をウォームアップして使い回す（`normalize_entry_key_into` の doc と同じ形）。
     //
     // **生パスと正規化キーは別の変数に持つ。** 1 本を `mem::take` で貸し借りする形も書けるが、
     // `take` は容量 0 の `String` を置き去りにするので `normalize_entry_key_into` が篩を通る

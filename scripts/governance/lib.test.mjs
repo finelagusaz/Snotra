@@ -29,7 +29,7 @@ describe("gitIgnoredPaths（存在に依らずパス名で判定する・#1088�
     ]);
     expect(got.has("test-results/never-created.json")).toBe(true);
     expect(got.has(".claude/settings.local.json")).toBe(true);
-    expect(got.has("docs/nonexistent-typo.md"), "非 ignore の typo が緑に化けている").toBe(false);
+    expect(got.has("docs/nonexistent-typo.md"), "非 ignore の typo が緑になっている").toBe(false);
   });
   it("該当なし（git の exit 1）は失敗ではなく空集合", () => {
     expect(gitIgnoredPaths(["docs/nonexistent-typo.md"])).toEqual(new Set());

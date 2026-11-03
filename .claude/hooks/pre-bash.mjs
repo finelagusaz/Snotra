@@ -52,7 +52,7 @@ import path from "node:path";
 export const TARGET_TOOLS = Object.freeze(["Bash", "PowerShell"]);
 
 /** git 1 コマンドあたりの上限。hook 全体の timeout に丸投げすると kill された沈黙が
- *  exit≠2 になり fail-open へ倒れる。自分で打ち切って block する。 */
+ *  exit≠2 になり fail-open になる。自分で打ち切って block する。 */
 export const GIT_TIMEOUT_MS = 10_000;
 
 // コマンド位置 = 文字列先頭、または区切り文字の直後。`&&` の 2 文字目も区切り文字なので

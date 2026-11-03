@@ -126,7 +126,7 @@ fn parse_placeholder(inner: &str) -> Option<Placeholder> {
 /// に加え、パースは成功するが整形時に `fmt::Error` を返す**パース専用指定子**
 /// （`%#z` = `Fixed::TimezoneOffsetPermissive` 等）の両方を含む。
 /// `to_string()` は `fmt::Error` を `.expect()` で unwrap して panic し、release の
-/// `panic = "abort"` ではプロセス abort に化ける（#394）。代わりに `write!` で
+/// `panic = "abort"` ではプロセス abort になる（#394）。代わりに `write!` で
 /// Display の Err を panic させず値として伝播させ、Err なら空文字列を返す。
 /// （`Item::Error` の事前走査はパース専用指定子を取りこぼすため不採用——code-reviewer 検出）
 fn format_date(now: &DateTime<Local>, fmt: &str) -> String {

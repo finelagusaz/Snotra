@@ -26,7 +26,7 @@
 //! 可視性を変える 5 関数が証人型（`EventLoopProof`）によりイベントループスレッドへ閉じ、
 //! その並びが構築不能になったため、同段で撤去した。**事後検査や「フラグを無視して撃つ hide」を足し戻さない
 //! ——要るのは「フラグ = false・ウィンドウ = 可視」を作れるときだけである（経緯は `ADR-results-gate-single-point`・
-//! 閉包の射程は `window_coordinator::hide_egui_main` の doc）。
+//! 閉じ込めの適用範囲は `window_coordinator::hide_egui_main` の doc）。
 //!
 //! **1 つのウィンドウの show / hide / topmost は全部 tao か全部 raw にそろえる**（#646 PR2）——
 //! `apply_diff` はフラグ差分ゼロなら早期 return し、`VISIBLE` を持たないウィンドウには `SW_HIDE` を
@@ -232,7 +232,7 @@ impl ResultsWindow {
     /// サイズを設定する。**高さは物理 px で指定する**（案 3・#835 の受容残余の巻き戻し）。
     ///
     /// **なぜ物理か**: `LogicalSize` を渡すと tao が `round` で物理へ落とし、半分の確率で
-    /// 下へ倒れて最終行が削れる（実測 10,250 通り中 3,702 件）。切り上げは
+    /// 下へ丸められて最終行が削れる（実測 10,250 通り中 3,702 件）。切り上げは
     /// `layout::results_height_phys` が担い、ここはその結果を適用するだけである
     /// （`ceil` をウィンドウの型へ持ち込むとユニットテストが届かなくなる）。
     ///
@@ -342,7 +342,7 @@ impl ResultsWindow {
     /// こちらの `HWND_TOPMOST` が後勝ちして設定アプリの上に残る。`set_topmost` は書いてから撃つ
     /// ので、撃った後に `SeqCst` で読み直して false なら撃ち戻せば、どの並びでも最後に撃たれるのは
     /// 意図どおりの値になる。**錠で囲まない**——cross-thread な `SetWindowPos` を錠で囲むと
-    /// 競合がデッドロックへ化けうる。
+    /// 競合がデッドロックに変わりうる。
     #[cfg(windows)]
     fn raw_show(&self) {
         use windows::Win32::Foundation::HWND;

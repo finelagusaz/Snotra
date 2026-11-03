@@ -56,7 +56,7 @@ function stripRustComments(src) {
 // この母集団を狭める 2 つは、どちらも同じ 1 つの原則から出ている——
 // **語彙を寄付してよいのは「現に動いている実装」だけである**:
 // - **コメントを外す**。含めると `resetForShow` のような由来注記（「〜相当」「parity」）が
-//   語彙に化け、腐りが原理的に検出できない（実測 11 件）
+//   語彙にすり替わり、腐りが原理的に検出できない（実測 11 件）
 // - **テストコードを外す**。含めると検出器自身のフィクスチャが偽陰性を作る——
 //   `createObjectURL`（本検査が守りたい対象として `governance-check.test.mjs` に名指しで書いた語）が、
 //   同ファイルに書かれているという理由だけで実リポジトリでは永久に検出されなかった（実測）
@@ -80,7 +80,7 @@ function stripRustComments(src) {
 //   `_` を 1 つ以上要求するのも同じ構造である（`CI` `TODO` `README` は対象外）
 // - **`.yml` は GitHub 提供の語彙を寄付する**（`GITHUB_ENV` / `GITHUB_OUTPUT` / `GITHUB_TOKEN` /
 //   `TAG_NAME` / `TAURI_SIGNING_PRIVATE_KEY`）ほか、`'` で分断された日付書式の断片
-//   （`ddTHH` `ssZ` `yyyyMMddHHmm`）も語彙に化ける。同名の識別子が散文に書かれれば誤って免罪する（今日 0 件）
+//   （`ddTHH` `ssZ` `yyyyMMddHHmm`）も語彙にすり替わる。同名の識別子が散文に書かれれば誤って免罪する（今日 0 件）
 // - **Rust のテストコードは今も語彙を寄付しうる。** `VOCAB_TEST_FILE` が当たるのはファイル名の
 //   `.test.<ext>` という形だけで、Rust 側の 3 つの形——`#[cfg(test)] mod` の中身・
 //   `<crate>/tests/*.rs` の統合テスト・`src/**/tests/*.rs` へ分けたテストファイル——はどれも外れる。
@@ -148,7 +148,7 @@ export function currentVocabulary(snapshot) {
     if (src == null) continue;
     // コメント除去の振り分け。**`VOCAB_SOURCE_EXT` へ `#` コメントの言語を足したら、この正規表現へも
     // 同時に足すこと**——足し忘れるとその言語のコメントが生のまま語彙へ入り、由来注記に書かれた
-    // 識別子が「現行語彙」に化ける。その識別子が文書で腐っていても免罪されて検出されない
+    // 識別子が「現行語彙」にすり替わる。その識別子が文書で腐っていても免罪されて検出されない
     // （2026-08-09 実測: `.psm1` のコメント語が実際に赤を緑へ変えた・#1008。上の「受容する残余」が
     // 記録する失敗形の再演）。この対応を強制する機構は無い。
     parts.push(/\.(ps1|toml|yml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));

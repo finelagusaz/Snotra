@@ -48,7 +48,7 @@ use snotra_core::config::Config;
 use snotra_core::indexer;
 
 /// 1 つの表現の測定結果。**エラー件数を必ず持つ**——アクセス拒否や消えたディレクトリが
-/// 多いと「速い」が「何もしていない」に化ける。
+/// 多いと「速い」が「何もしていない」と区別できなくなる。
 struct Measured {
     label: &'static str,
     elapsed: Duration,
@@ -210,8 +210,8 @@ fn report(m: &Measured, n: usize, baseline_ns: f64) {
 
 /// 実 `index.bin` が持つディレクトリ全件に対して 4 つの表現を測る。
 ///
-/// **順序を入れ替えて 2 巡する。** ファイルシステムキャッシュは 1 巡目で暖まるので、
-/// 1 巡目の順序がそのまま結果の順序差に化ける。各表現の**最小値**を採る。
+/// **順序を入れ替えて 2 回測る。** ファイルシステムキャッシュは 1 回目でウォームアップされるので、
+/// 1 回目の順序がそのまま結果の順序差として現れる。各表現の**最小値**を採る。
 #[test]
 #[ignore = "手元 release 実行専用（実 index.bin と実ファイルシステムを読む）"]
 fn measure_dir_stat_cost_over_real_index() {
@@ -241,10 +241,10 @@ fn measure_dir_stat_cost_over_real_index() {
     }
     drop(entries);
 
-    // **暖機を 1 巡入れる。** 入れないと 1 番目に測った表現だけがコールドの罰を受ける。
+    // **ウォームアップを 1 回入れる。** 入れないと 1 番目に測った表現だけがコールドの罰を受ける。
     let warm = measure_read_dir(&dirs);
     println!(
-        "  暖機（read_dir 1 巡）: {:.0} ms・ok {} / err {}",
+        "  ウォームアップ（read_dir 1 回）: {:.0} ms・ok {} / err {}",
         warm.elapsed.as_secs_f64() * 1000.0,
         warm.ok,
         warm.err
@@ -274,7 +274,7 @@ fn measure_dir_stat_cost_over_real_index() {
         .collect();
 
     let baseline_ns = best[0].ns_per_dir(n);
-    println!("=== 各表現の最小値（2 巡・順序を逆にして測った）===");
+    println!("=== 各表現の最小値（2 回・順序を逆にして測った）===");
     for m in &best {
         report(m, n, baseline_ns);
     }
@@ -300,5 +300,5 @@ fn measure_dir_stat_cost_over_real_index() {
     );
     println!();
     println!("  ※ err が多い表現は「速い」ではなく「何もしていない」——上の err 列で確かめること");
-    println!("  ※ この数字を恒久文書へ書かない（ファイルシステムキャッシュの温度で数倍ぶれる）");
+    println!("  ※ この数字を恒久文書へ書かない（ファイルシステムキャッシュの状態で数倍ぶれる）");
 }

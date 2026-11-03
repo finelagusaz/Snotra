@@ -27,7 +27,7 @@ describe("G-build-commands checkBuildCommands", () => {
     const f = checkBuildCommands(s);
     expect(f.some((x) => x.message.includes("snotra-gone"))).toBe(true);
   });
-  it("members に glob 要素が混じると、正当な crate 参照も赤へ倒れる（workspaceMembers 載せ替えで変わる唯一の向き・fail-closed）", () => {
+  it("members に glob 要素が混じると、正当な crate 参照も赤になる（workspaceMembers 載せ替えで変わる唯一の向き・fail-closed）", () => {
     // #713 の不変条件「G-build-commands の findings は載せ替え前後で変わらない」が
     // 前提条件（glob 要素が無い）つきであることを、機械で留める。
     const s = snap({

@@ -191,9 +191,9 @@ impl RepaintScheduler {
                             };
                             // hidden 中の抑止点の切り分け計器（#697）。受信側は runtime.rs の
                             // RedrawRequested arm。ここが出て受信側が出なければ、落としたのは
-                            // proxy 以降である（wry の user-message 処理はウィンドウの引き当てに成功
+                            // proxy 以降である（wry の user-message 処理はウィンドウの特定に成功
                             // すれば request_redraw() へ渡すだけで、hidden でも非破棄なら
-                            // 引き当ては成功する——ゆえに実体は tao/OS 層）。
+                            // 特定は成功する——ゆえに実体は tao/OS 層）。
                             if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
                                 eprintln!("SNOTRA_EGUI_WAKE_SEND window_id={window_id:?}");
                             }

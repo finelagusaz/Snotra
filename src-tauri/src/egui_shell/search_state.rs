@@ -95,7 +95,7 @@ pub struct FolderFrame {
     /// ゆえに「打鍵 → interval 内に結果が届いて行は最新 → まだ armed のまま `→`」で突入すると、
     /// 復帰後の Enter に不要な同期 `engine.search` が 1 回乗る。**受容する。** 余分な費用はその 1 回
     /// だけであり、**過剰近似の向きは安全側である**——[`should_flush_on_enter`] は `unsettled` が
-    /// 真のときに flush を**足す**だけなので、**古い行のまま起動する side へは倒れない**（偽陽性が
+    /// 真のときに flush を**足す**だけなので、**古い行のまま起動する side にはならない**（偽陽性が
     /// 何をするかは flush の枝で分かれる: 通常は行を作り直し、空クエリ・`indexing()` 中は
     /// `set_results(Vec::new())` で起動そのものが止まる——後者は flush の既定の扱いである）。
     /// **ウィンドウの長さをここに書かない**（interval の正本は `LauncherController` が `Debouncer::new` へ

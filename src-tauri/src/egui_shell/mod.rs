@@ -500,7 +500,7 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
     app.listen(crate::events::EGUI_HIDE_REQUESTED, move |_| {
         // emit 元は view の `update()` の中（イベントループスレッド）ゆえ、
-        // `on_event_loop` はインライン実行へ倒れる——**今日と同じフレーム内順序が保たれる**
+        // `on_event_loop` はインライン実行にフォールバックする——**今日と同じフレーム内順序が保たれる**
         // （`proof.rs` の `on_event_loop` の doc）。
         snotra_egui_runtime::on_event_loop(&handle, hide_egui_main);
     });
@@ -560,7 +560,7 @@ pub(crate) fn register_initial_hotkey_failure_listener(app: &tauri::AppHandle) {
         }
         // **`wake_main` も同じクロージャの中へ入れる**（`register_hide_listener` との差）。
         // このイベントの emit 元は platform スレッド（`platform/mod.rs` の
-        // `RegisterInitialHotkey`）であり、`on_event_loop` はインラインに倒れず **post** に
+        // `RegisterInitialHotkey`）であり、`on_event_loop` はインライン実行にフォールバックせず **post** に
         // なる。wake をクロージャの外に残すと wake が show を追い越し、上の doc が要求する
         // 「格納 → show → wake」が崩れる——show より前に届いたフレームが pending を消費し、
         // その後の reset-on-show（`show_egui_main` が立てた `reset_pending` の消費）の

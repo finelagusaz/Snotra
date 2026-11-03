@@ -965,7 +965,7 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
 ///
 /// **A/B ではなく、名前から独立に再導出した値との絶対比較にしてある。** A/B
 /// （`assert_engines_agree`）は 2 つの実装を突き合わせる形なので、**将来どちらかへ寄せた
-/// 日には「同じ実装どうしの一致」に化ける**。絶対比較はその日も成立する。
+/// 日には「同じ実装どうしの一致」にすり替わる**。絶対比較はその日も成立する。
 ///
 /// **実測**（2026-08-12）: `from_chunks` の底上げを落とす変異では、この検知器と
 /// `from_chunks_concatenates_without_shifting_offsets` の 2 本だけが落ち、**A/B 突き合わせは

@@ -73,7 +73,7 @@ $script:WtsSessionStateUnlock = 1
 `LARGE_INTEGER` を含むので 8 バイト境界へ揃う。ゆえに SessionId は 8、SessionState は 12、
 SessionFlags は 16 に来る。**この仮定が外れれば SessionId が呼び出し元のセッションと合わなくなる**
 ので、合わなければ「読めた」と言わずに落とす（誤ったオフセットから読んだ 0 が
-「ロック中」に化けるのを防ぐ・fail-closed）。
+「ロック中」と読まれるのを防ぐ・fail-closed）。
 #>
 function ConvertFrom-SnotraWtsInfoEx {
     [CmdletBinding()]
@@ -639,7 +639,7 @@ function Read-SnotraTraceSnapshot {
     # **読み取りの失敗を空と同じ値へ潰さない**（#872）。`-ErrorAction SilentlyContinue` は
     # 落ちた読みに対しても空を返すため、Available=true / Events 0 件 / Dropped 0 という
     # **正常な空ログと見分けられない値**になり、稼働中のアプリを観測する経路で
-    # 「読めなかった」が「まだ出ていない」に化ける。読めなければ Available を倒す
+    # 「読めなかった」が「まだ出ていない」と区別できなくなる。読めなければ Available を倒す
     # （`manual-smoke.ps1` の `Get-TraceVerdict` はこれを見て判定そのものを見送る）。
     # **不在（ReadError=$null）と失敗（ReadError あり）は別の状態である。**
     try {
@@ -686,7 +686,7 @@ trace に述語を満たす事象が現れるまで待つ（待ちループの�
 機序（期限跨ぎ・未着・読み取り失敗）が事後に区別できない。
 
 **諦める条件を scriptblock で受け取らない。** この関数は module スコープで評価するため、
-呼び出し側の変数を読むには閉包が要る。ところが `.GetNewClosure()` は Pester の `It` の中では
+呼び出し側の変数を読むにはクロージャが要る。ところが `.GetNewClosure()` は Pester の `It` の中では
 **親スコープの変数を捕まえない**（実測: 予算 4000ms に対し中断せず 4031ms 待った）。捕まえ
 損ねても**発火しないだけ**なので通った実行では観測されず、「本体が死んでも予算いっぱい待つ」
 という退化が黙って入る。プロセスを型付きで受け取れば、この間違いは書けなくなる。

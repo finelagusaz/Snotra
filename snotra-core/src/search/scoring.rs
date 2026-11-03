@@ -61,7 +61,7 @@ const _: () = {
 struct FuzzyScratch {
     matcher: Matcher,
     /// 非 ASCII の haystack を UTF-32 へ展開する先（[`utf32_haystack`]）。容量を使い回すので、
-    /// 暖まった後は候補ごとの確保が起きない。
+    /// ウォームアップ後は候補ごとの確保が起きない。
     haystack: Vec<char>,
 }
 

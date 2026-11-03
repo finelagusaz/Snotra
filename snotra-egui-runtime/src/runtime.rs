@@ -207,7 +207,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                 window_id, event, ..
             } => {
                 use tauri_runtime_wry::tao::event::WindowEvent as TaoWindowEvent;
-                // **引き当ての前に残す**（#872/#936 の型 B）。この下の 2 つの引き当て
+                // **ウィンドウ特定の前に残す**（#872/#936 の型 B）。この下の 2 つの特定
                 // （`window_id_map` と `self.active`）はどちらも失敗すると `return false` で
                 // **黙って捨てる**ため、ここより後ろに置くと「そもそも配送されなかった」と
                 // 「配送されたが捨てた」が同じ沈黙へ潰れる。判定は先に問う——`format!` の
@@ -277,7 +277,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
             }
             Event::RedrawRequested(window_id) => {
                 // hidden 中の抑止点の切り分け計器（#697）。送信側は repaint.rs の worker。
-                // 引き当て前に置く——引き当て失敗で握りつぶされる経路も観測対象。
+                // ウィンドウ特定の前に置く——特定の失敗で握りつぶされる経路も観測対象。
                 // runtime_id は送信側の window_id と同じ ID 空間ゆえ、ウィンドウの帰属を直接照合できる。
                 if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
                     eprintln!(

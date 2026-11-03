@@ -465,7 +465,7 @@ Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
 
     It '読み取りに失敗した周回を「まだ出ていない」と同じ沈黙へ潰さない' {
         # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction SilentlyContinue` は
-        # 空を返すので、**読めなかったと未発生が同じ $null に化ける**。
+        # 空を返すので、**読めなかったと未発生が同じ $null になる**。
         $dir = Join-Path $TestDrive 'unreadable'
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -613,7 +613,7 @@ Describe 'ConvertFrom-SnotraWtsInfoEx（#866 ロック検出の解釈）' {
     }
 
     It 'SessionId が呼び出し元と食い違えば「読めた」と言わない（オフセット仮定の検算）' {
-        # オフセットが 1 つずれると、無関係な 0 が「ロック中」に化ける。SessionId の一致が
+        # オフセットが 1 つずれると、無関係な 0 が「ロック中」と読まれる。SessionId の一致が
         # その沈黙経路に対する唯一の検知点である
         { ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -SessionId 3) -ExpectedSessionId 7 } |
             Should -Throw '*SessionId が呼び出し元と一致しません*'
@@ -806,7 +806,7 @@ auto_hide_on_focus_lost = false
         #
         # **絞る材料が無ければ落とす（fail-closed）。** 空の `$expected` で絞ると一致が常に
         # 空になり、**検出器は主語ゼロで自明に緑を返す**——「効いていない」と「漏れが無い」が
-        # 同じ緑に化ける。これは本 PR が `ADR-egui-trace-hatch-empty-only` で塞いだ空文字 env と
+        # 同じ緑になる。これは本 PR が `ADR-egui-trace-hatch-empty-only` で塞いだ空文字 env と
         # 同じ形の欠陥であり、検出器の側に開けてはならない。
         $expected = $env:SNOTRA_PESTER_EXE
         if ([string]::IsNullOrWhiteSpace($expected)) {
@@ -822,7 +822,7 @@ auto_hide_on_focus_lost = false
             # **後続の検査を巻き添えにしないよう掃除してから落とす。** ここも待つ——
             # `Stop-Process -Force` は終了を待たない（snotra.exe では実測 3/30 で It の後まで
             # 生き残った・上の実機配管 1 つ目の It の `finally` のコメント）。
-            # 待たなければ「掃除できた」と「殺せなかった」が同じ throw に化ける
+            # 待たなければ「掃除できた」と「殺せなかった」が同じ throw になる
             # （`Stop-SnotraProcessAndWait` の 5 秒待ちと `Write-Warning` だけが後者を分ける。
             # `-Quiet` はその警告を黙らせない——It「-Quiet でも終了待ちの警告は黙らない」が
             # 固定する）。合否はどちらも赤である。この分岐は必ず throw で終わるので、

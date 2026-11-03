@@ -92,7 +92,7 @@ impl EguiRenderer {
         //
         // **参照で舐めずに `drain` で消費する。** egui 0.36 の `TexturesDelta` は `Drop` で
         // 「未適用の delta が残っていないか」を `debug_assert!` する。参照で読むだけだと中身が
-        // 残ったまま drop され、**debug ビルドが panic する**（release は素通りするので、
+        // 残ったまま drop され、**debug ビルドが panic する**（release は検出されないので、
         // 気づかないまま出荷しうる側の差）。free も同じ理由でここで取り出しておく——
         // **適用は present の後だが、所有権を先に移さないと、下の `?` で早期 return した経路が
         // 未適用のまま drop する**。

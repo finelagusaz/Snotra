@@ -110,7 +110,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
 /// **索引を建てる手順（PATH マージ + `PrebuiltIndex::from_material`）を共有する
 /// 呼び出し点は、この crate ではこの drain ループの 1 つに閉じている**（背景再スキャンの
 /// 適用は #1001 で撤去済み）。手順を書き写すと、片方だけ PATH マージを忘れる
-/// 欠陥が沈黙で起きる——PATH のコマンドが検索から消えるが、検索結果自体は出るので
+/// 欠陥が黙って起きる——PATH のコマンドが検索から消えるが、検索結果自体は出るので
 /// 気づく手段が無い（`normalize_entry_key_into` と同じ理屈）。**起動時のロード直後
 /// （`main.rs` の PATH エントリのスキャン + マージ）は同じ手順を別に持つ**——そこは
 /// `PrebuiltIndex` ではなく `Engine` を直接建てるため、ここを呼べない。**PATH マージの規則を

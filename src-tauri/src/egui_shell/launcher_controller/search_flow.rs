@@ -40,7 +40,7 @@ impl LauncherController {
     /// **この読みは #1076 で `engine.lock()` から [`crate::egui_shell::read_config`] へ移した。**
     /// 呼び出し点（`run_search` / 打鍵の changed エッジ / `on_enter`）はどれも毎フレームではないが、
     /// **どれも egui フレームの中にあり、ユーザーが待っている**——#1032 の規範が挙げる害は
-    /// 「フレームが走査の完了まで返らない」ことであって頻度ではない（射程の定義は
+    /// 「フレームが走査の完了まで返らない」ことであって頻度ではない（適用範囲の定義は
     /// [`crate::state::AppState::read_config`] の doc が正本）。
     pub(super) fn instant_prefix(&self) -> String {
         crate::egui_shell::read_config(
@@ -99,7 +99,7 @@ impl LauncherController {
                         {
                             // **worker が死んでいる。** 無界チャネルゆえ `Err` はこれ以外を意味せず
                             // （混雑・一時的失敗が存在しない）、死因（早期 return・panic・将来足す
-                            // 経路）を問わず必ずここを通る——死因ごとの塞ぎ方より射程が広い。
+                            // 経路）を問わず必ずここを通る——死因ごとの塞ぎ方より適用範囲が広い。
                             // **再送では回復しない**（受け手はもう居ない）ため、前の行を保つと
                             // 保持が恒久化し、debounce が armed でない Enter が旧クエリの項目を
                             // 起動する（`on_enter` の flush が「どちらの分岐でもクリアする」理由と

@@ -102,7 +102,7 @@ impl TabId {
     /// タブ別ダーティ点（`•`）の判定を [`SECTION_TABLE`] から導出する。
     ///
     /// 新セクション追加時に手で更新するのは [`SECTION_TABLE`] の 1 箇所だけでよい。**その更新漏れを
-    /// 検出する機構は無い**——射程は [`SECTION_TABLE`] の doc が正本。
+    /// 検出する機構は無い**——適用範囲は [`SECTION_TABLE`] の doc が正本。
     fn has_changes(self, draft: &Config, saved: &Config) -> bool {
         SECTION_TABLE
             .iter()
@@ -723,7 +723,7 @@ mod tests {
 
     fn field_mutations() -> Vec<FieldMutation> {
         // 新フィールド追加でここを E0027 にするための destructure（`..` を使わないこと）。
-        // 網羅を強制はしない——射程は上の doc。
+        // 網羅を強制はしない——適用範囲は上の doc。
         let Config {
             hotkey: _,
             general: _,

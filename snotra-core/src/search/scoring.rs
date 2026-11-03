@@ -491,7 +491,7 @@ impl SearchEngine {
         let score = primary_score.or(kana_score);
 
         // **正規化キーが要る候補だけを先に切り分ける。** 索引は `normalized_keys` を持たず
-        // `target_path` から導出するため、ここを素通りさせると bitmask を通っただけの
+        // `target_path` から導出するため、ここを見逃させると bitmask を通っただけの
         // 不一致候補にまで導出コストが乗る（旧実装が `normalized_key` を読まずに
         // `score?` で抜けていた経路と同じ形を保つ）。キーが要るのは 2 通りだけ:
         // パスマッチ（name/file/kana 全滅かつパスクエリあり）と、マッチ成立後の履歴照合。

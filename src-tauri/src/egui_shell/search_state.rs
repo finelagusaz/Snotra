@@ -179,7 +179,7 @@ pub struct SearchState {
     /// `snapshot_generation` をここへ移した）。
     ///
     /// **ここを進めるのは [`SearchState::put_rows`] だけであり、そこが in-flight の失効も同時に行う**
-    /// （#1039）。収束の射程と、`enter_tool` の `std::mem::take` がなぜその外にあってよいかは
+    /// （#1039）。収束の適用範囲と、`enter_tool` の `std::mem::take` がなぜその外にあってよいかは
     /// [`SearchState::put_rows`] の doc が正本である（ここには写しを置かない）。
     ///
     /// 進めるのは**行の差し替え**だけであって選択の移動ではない。`move_selection` /
@@ -973,7 +973,7 @@ mod tests {
     // ---- 行の差し替えと in-flight の失効（#1039）----
     //
     // **どのテストも「`None` を返すこと」と「行が変わっていないこと」を対で assert する。**
-    // 前者だけでは、seq が不一致でも `rows` を代入してしまう実装ミスが素通りする
+    // 前者だけでは、seq が不一致でも `rows` を代入してしまう実装ミスが検出されない
     // （`/plan-review` Step 2b の U-5）。
 
     /// 遅着した worker 結果の材料。`accept_worker_rows` へ渡す行は必ずこれを使い、
@@ -1103,7 +1103,7 @@ mod tests {
     }
 
     /// Results ビューで seq が一致する結果は**採る**。上の 6 件（採らない側）と対で意味を持つ
-    /// ——ガードを広げすぎて全部落とす実装が素通りしないようにする。
+    /// ——ガードを広げすぎて全部落とす実装が検出されるようにする。
     #[test]
     fn matching_worker_rows_are_accepted_in_results_view() {
         let base = Instant::now();
@@ -1496,7 +1496,7 @@ mod tests {
     //
     // **この 5 本が固定するのは状態核の合成である**——`parent_dir` → `navigate_folder` の連鎖と、
     // 行の差し替えが選択に与える影響。**キー割り当て（`view.rs` の読み）と driver の分岐
-    // （`launcher_controller` の `on_nav_keys`）は射程外**であり、`←` の分岐を丸ごと殺しても
+    // （`launcher_controller` の `on_nav_keys`）は対象外**であり、`←` の分岐を丸ごと殺しても
     // この 5 本は緑のままである（実測）。分岐が正しく Folder 側へ落ちることの証拠は実機トレース
     // 計測であってこのテストではない——「緑だから ← の分岐も守られている」と読まないこと。
     //
@@ -1596,8 +1596,8 @@ mod tests {
     // **上の #743 ブロック（左右カーソルキーによる階層移動）の外に置く**——主題が違ううえ、
     // あちらの冒頭は本数を名指ししており、内側へ足すとその記述が stale になる。
     //
-    // **射程は状態核だけである**——打鍵から `set_folder_filter` への配線（`view.rs` の
-    // `changed()` エッジと `launcher_controller` の `on_input_changed`）は射程外で、
+    // **適用範囲は状態核だけである**——打鍵から `set_folder_filter` への配線（`view.rs` の
+    // `changed()` エッジと `launcher_controller` の `on_input_changed`）は対象外で、
     // その呼び出しを消してもこのテストは緑のままである（#743 ブロックの冒頭と同じ性質の限界）。
 
     /// フォルダ内の絞り込みの打鍵は選択を 1 行目へ戻す。正本は `SPEC.md`「4.9 入力と選択」で、

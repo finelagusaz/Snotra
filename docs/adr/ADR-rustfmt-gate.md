@@ -47,7 +47,7 @@
 - **PostToolUse hook を「検査」ではなく「自動整形」（`cargo fmt` 書き込み）にする**: 却下。赤が構造的に消えるので魅力的だが、**既存のフックはすべて「検出して報告する」側**であり、書き込むフックは先例がない。Edit 直後にファイルが黙って変わると、エージェントが直前に読んだ内容とディスクがずれる（`docs/development-principles.md`「構造的設計原則と強制の階梯」の 6——検出は構造化信号で行い、テキストは証拠に留める——という設計から外れる）。
 - **差分限定の fmt 検査（変更されたファイルだけ `--check` する）**: 却下。整形コミットを打つ前なら意味があったが、打った後は全体が整形済みなので利得が無い。加えて**`cargo fmt` が持つ「どこが対象か」の判定を、自作の差分スコープで写す**形になる——ツールが SSOT を持つ判定を手書きで再現する方向であり、`docs/development-principles.md`「KISS」に反する。
 - **hook でも `cargo fmt -- <編集ファイル>` と対象を絞る**: 却下。`--all` でも 0.69s でありビルドを要さない（実測）ため絞る利得が無い。さらに `G-hook-commands` が hook の cargo コマンドと `docs/build-commands.md` カテゴリ A のトークン列一致を要求するため、**hook だけ別形にすると照合が壊れる**。
-- **`cargo clippy` も `components:` へ明示する**: **#858 では却下（射程）→ #859 で採用した。** 同じ理由で clippy も runner イメージへの暗黙依存だが（action は `--profile minimal`）、5 か月間顕在化しておらず #858 は fmt の issue だったため、そのサイクルでは射程外とした。
+- **`cargo clippy` も `components:` へ明示する**: **#858 では却下（適用範囲）→ #859 で採用した。** 同じ理由で clippy も runner イメージへの暗黙依存だが（action は `--profile minimal`）、5 か月間顕在化しておらず #858 は fmt の issue だったため、そのサイクルでは対象外とした。
   - **なぜ後から採ったか**: この依存は **runner イメージが Rust のプリインストールをやめた日に初めて壊れ、それまで一切の兆候が出ない**。「顕在化していない」は「危険が小さい」ではなく「観測点が無い」であり、時間が経つほど却下の根拠（5 か月間動いている）は強く見えて実態は変わらない——**待つことに利得が無い**種類の残余だった。1 語で消えるので issue を運ぶ費用のほうが高い。
 
 - **整形と機構を 1 つの PR で出す**: 却下。**このリポジトリは squash 専用**（`allow_merge_commit: false` / `allow_rebase_merge: false` を実測）なので、1 PR にまとめるとブランチ全体が 1 コミットへ畳まれる。その squash コミットは CI・hook・docs を同梱するため**意味を変える変更を含み**、`.git-blame-ignore-revs` に載せられない（載せてよいのは機械的整形だけ）。一方、feature ブランチ上の整形コミットの SHA は **main の blame グラフに現れない**ので、それを記録しても no-op になる——しかも**存在しない rev を無視しても git は静かに成功する**ため、古くなっても誰も気づかない（沈黙する写しが 1 つ増える）。
@@ -57,4 +57,4 @@
 ## 受容する残余
 
 - **`.git-blame-ignore-revs` はローカル `git blame` では自動適用されない**（実測: `blame.ignoreRevsFile` は既定で未設定）。GitHub の blame ビューは設定不要で自動適用する。ローカル側の 1 行設定は `docs/build-commands.md` に置くが、**設定するかは各人の裁量**であり機構では強制しない。
-- **`docs/hooks.md` の PostToolUse 発火一覧は `selectChecks` の写しであり、当時は内容を照合する機構が無かった**（`G-hook-commands` が見るのは `docs/build-commands.md` だけ）。fmt の追加に伴って手で同期し、次回も同じ手当てが要る残余として記録していた。**#863 で解消済み**——`governance:check` の G-hook-fires が代表パスを `selectChecks` に食わせて照合する。**機構の外へ残した足の名指しは `ADR-hook-fires-table-check`** が持つ。
+- **`docs/hooks.md` の PostToolUse 発火一覧は `selectChecks` の写しであり、当時は内容を照合する機構が無かった**（`G-hook-commands` が見るのは `docs/build-commands.md` だけ）。fmt の追加に伴って手で同期し、次回も同じ手当てが要る残余として記録していた。**#863 で解消済み**——`governance:check` の G-hook-fires が代表パスを `selectChecks` に食わせて照合する。**機構の外へ残した経路の名指しは `ADR-hook-fires-table-check`** が持つ。

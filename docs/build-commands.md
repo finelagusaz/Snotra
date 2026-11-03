@@ -49,10 +49,10 @@ cargo doc --workspace --no-deps --document-private-items                        
   - ここに書くのは、誰も通さない経路を作らないための配置の記録であって、手で打つ手順ではない（計器の意味と撤去条件は `src-tauri/src/heap_trace.rs` の `//!`）
 - **doc コメント（`///` / `//!`）を触ったら、`cargo doc --workspace --no-deps --document-private-items` をローカルで手で実行する**（#562）
   - `cargo doc` が自動で走るのは、CI（rust-check）だけである
-  - deny 化は 2 段で行う。各 crate の `[lints] workspace = true`（`Cargo.toml`）から root の `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）へつなぎ、既定の warn による素通りを塞ぐ
+  - deny 化は 2 段で行う。各 crate の `[lints] workspace = true`（`Cargo.toml`）から root の `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）へつなぎ、既定の warn による見逃しを塞ぐ
   - この 2 段の崩れ（member 側の opt-in 漏れと、root 側の deny の降格・欠落）は、どちらも cargo が exit 0 のまま沈黙する。そのため `npm run governance:check`（G-workspace-lints）が検知する（#713）
 - **`src-tauri/clippy.toml` の `disallowed-methods` へ禁止を足したら、`scripts/governance/checks/G-clippy-disallowed.mjs` の `REQUIRED_DISALLOWED_METHODS` へも足す**（#900。禁止集合の正本は `src-tauri/clippy.toml` の冒頭）
-  - カナリアへ登録していないパスの書き損じは、射程の外である
+  - カナリアへ登録していないパスの書き損じは、適用範囲の外である
   - この lint が赤くなるのは、`-D warnings` のおかげではない（#950）。既定は warn だが、root の `[workspace.lints.clippy]` の `disallowed_methods = "deny"` で昇格させてあるので、コマンドラインのフラグから独立している（`clippy.toml` を持たない crate は、禁止集合が空なので無害である）
   - 次の崩れは、どれも clippy が exit 0 のまま沈黙するので、`npm run governance:check`（G-clippy-disallowed）が検知する
     - 禁止集合の空洞化（ファイルの削除・空配列化・エントリ 1 行の消失・カナリアが名指すパスの書き損じ・コメントアウト）
@@ -166,7 +166,7 @@ pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮ったウィ�
 - **人間の反応時間より短い時限を、手作業のシナリオに要求しない。**
   - 単純反応時間は約 200ms である。それより短い時限（#745 の blur 猶予は 100ms）の内側に手作業を差し込むシナリオは、原理的に実行できない。#745 では、計画レビュー 5 体を通してなお 3 本がこの形で書かれ、実機で初めて不能と分かった
   - 注入での代替も当てにしない。`SetForegroundWindow` は、バックグラウンドからの呼び出しを OS が制限する。PowerShell からの呼び出し自体にも 165ms かかる（実測）
-  - 時限より短いウィンドウが要るなら、その不変条件は純粋核のテストへ降ろす（実機は回帰確認だけを担う、と射程を明記して分担する）
+  - 時限より短いウィンドウが要るなら、その不変条件は純粋核のテストへ降ろす（実機は回帰確認だけを担う、と適用範囲を明記して分担する）
 - **ウィジェットの位置を知らないまま操作するなら、当たり判定は「副作用が起きたか」で行う。** Tab の回数を 1 つずつ増やして Space を打ち、観測できる副作用（レジストリ値・ファイル・trace）が変化した回数を当たりとする。外れたときは何も起きないので、誤検知が構造的に起きない（#1210 で設定アプリのチェックボックスへ到達した）。座標のクリックと違い、レイアウトが動いても壊れない
 - **「プロセスが動いている」は、起動経路の証拠にならない。** どの契機で立ち上がったかを主張するなら、その契機の時刻との差を測る（#1210 のサインイン起動は、対話ログオン `Win32_LogonSession` の `StartTime` と `Process.StartTime` の差 53.9 秒で裏づけた）。存在だけを見ると、別の経路で立ち上がった同名のプロセスと区別できない
 - **OS のモーダルループ中（`frame.drag_window()` のドラッグ等）の値を、単発の観測で判定しない。** 合成したマウス移動への追従が不安定で、同じ手順・同じバイナリでも、ウィンドウの top が 956 と 1050 の間で揺れた（最終位置は毎回安定していた）。差を示せるのは、実装の有無を切り替える対照実験だけである
@@ -255,7 +255,7 @@ cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パ
 cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocapture --test-threads=1  # 索引の常駐メモリ実測（詳細: PERFORMANCE.md）
 cargo test --release -p snotra-core --test path_query_cost -- --ignored --nocapture --test-threads=1   # パスクエリ全走査のコスト実測（詳細: PERFORMANCE.md）
 cargo test --release -p snotra-core --test path_query_cost at_operating_point -- --ignored --nocapture --test-threads=1  # path_query_cost のうち実運用点（PATH マージ + 実 config の normal_mode）を 2×2 で測る（#1067）
-cargo test --release -p snotra-core --test path_query_cost across_settings -- --ignored --nocapture --test-threads=1     # 設定の組み合わせ 36 構成で c:\ のコストを掃く（改修の射程を決める・#1067）
+cargo test --release -p snotra-core --test path_query_cost across_settings -- --ignored --nocapture --test-threads=1     # 設定の組み合わせ 36 構成で c:\ のコストを掃く（改修の適用範囲を決める・#1067）
 cargo test --release -p snotra-core --test dir_stat_cost -- --ignored --nocapture --test-threads=1     # ディレクトリの列挙と属性読み取りの費用差（判断は ADR-mtime-differential-scan-ceiling・撤去条件は当該ハーネスの //!）
 cargo test --release -p snotra-core --test match_cost -- --ignored --nocapture --test-threads=1  # 名前の照合の壁時計と結果のダイジェスト（全件走査になる打鍵・実 index.bin と合成・詳細: PERFORMANCE.md）
 cargo test --release -p snotra-core --test search_allocations -- --ignored --nocapture  # 検索 1 回あたりの一時確保（回数・バイト数。計数器込みゆえ µs は壁時計ではない・詳細: PERFORMANCE.md）
@@ -311,7 +311,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
   - 旧 flag が opt-in だったのは、「ローカルでは索引を制御できないのが普通」という理由の緩和だった。検証用プロファイルを常に seed する以上、その前提は偽になったので、flag ごと撤去し、常に要求する形にした
   - これは検出器の削除ではなく、格上げである。従来ローカルでは既定で skip（緩和）だったものが、ローカルでも赤になる
   - 判定はアプリの起動前に確定するので、このガードはプロセスを起こさずに落ちる。`pwsh -File scripts/smoke-egui.ps1 -ResultsQuery '' -ExePath <任意の既存ファイル>` でフォールトインジェクションでき、実機には触らない（空文字の明示が、その注入口である）
-  - skip へ至る沈黙の経路は、構造的に無くなった。ほかの経路（実行ファイルの不在・`hotkey:registered` の未観測・`egui_show:done` の未観測・`egui_results:show` の未観測・クエリが A-Z の単字でない）は、いずれも exit≠0 で赤になる
+  - skip へ至る見逃しの経路は、構造的に無くなった。ほかの経路（実行ファイルの不在・`hotkey:registered` の未観測・`egui_show:done` の未観測・`egui_results:show` の未観測・クエリが A-Z の単字でない）は、いずれも exit≠0 で赤になる
   - `smoke.yml` のステップの順序も自由になった。両 smoke が自分の検証用プロファイルを持つので、startup smoke の 5 回の起動が egui smoke の seed を壊すことはない（#803 で `SNOTRA_CONFIG_DIR` が入り、#804 が smoke 2 本を env 化した）
 - **索引の規模に依存する性能は、smoke では測れない**（#1004）
   - `smoke-egui.ps1` は scan 対象を上書きする引数を持たず、seed する索引の規模は固定である（正本は同スクリプトの seed）。そのため、索引の件数をゲートに持つ検知器を置くと、CI でもローカルでも永久に SKIP になる。#930 が戒めた「発火しえない検出器」そのものである

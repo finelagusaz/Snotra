@@ -36,7 +36,7 @@
 `clippy.toml` の当該群は自分の撤去手順を書いていた。**その手順には 4 つの欠陥があった**。手順は本サイクルで消えるので、記録の置き場はここしかない。
 
 1. **`pub(crate)` へ落とすよう指定していた**（案 4）。同じファイルの別の群が `#[cfg(test)]` という正解を書いていたのに、撤去条件へ引き継がれていなかった。
-2. **test fixture が列挙から漏れていた。** `G-clippy-disallowed.test.mjs` の緑 fixture が同じパスをリテラルで持つ。沈黙はしない（vitest が赤くなる）が、手順の完全性は失われていた。
+2. **test fixture が列挙から漏れていた。** `G-clippy-disallowed.test.mjs` の緑 fixture が同じパスをリテラルで持つ。見逃しはしない（vitest が赤くなる）が、手順の完全性は失われていた。
 3. **散文の掃除が一切列挙されていなかった。** 実際には 9 か所（条項本体・`CLAUDE.md` の icon 破棄の機序・`config_watcher.rs` の同じ機序の写し・`commands/instant.rs` の doc・`launcher_controller.rs` の 2 か所・`docs/architecture.md`・`docs/build-commands.md`・`G-clippy-disallowed.mjs` のヘッダ）を直す必要があった。**どの機構も見ていない**——`#[expect]` の reason 内に書かれた見出し参照はバックティックが無く、`G-heading-refs` の正規表現に掛からない。
 4. **合図が駆動力を持たない。** 「最後の `#[expect]` が消えたら」は、消すのが撤去する当の変更なので自分では発火しない（`scaffold-removal-condition-self-reference` と同型）。**これは受容が妥当である**——撤去条件は「そのとき何をすべきか」を伝えるためのものであって、撤去を起こすためのものではない。
 

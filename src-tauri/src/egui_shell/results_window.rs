@@ -127,7 +127,7 @@ impl ResultsWindow {
     /// 証人を使わないが（`_` 始まり）、**シグネチャから外してはならない**——results の可視性を
     /// 変える経路を単一スレッドへ閉じるための拘束である。証人型を引数に要求する 5 関数は
     /// イベントループスレッドへ一意化されており、フラグとウィンドウの実状態が食い違う並びは構築できない
-    /// （射程は `window_coordinator::hide_egui_main` の doc）。
+    /// （適用範囲は `window_coordinator::hide_egui_main` の doc）。
     pub(crate) fn show(
         &self,
         _el: &snotra_egui_runtime::EventLoopProof,

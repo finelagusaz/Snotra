@@ -7,7 +7,7 @@
 #1123 は config の読みを `AppState::read_config` へ集約し、`Engine::config` を `#[cfg(test)]` で閉じて、
 engine 錠越しの読みをコンパイラが禁じる形にした。**残った経路が 1 つあった**——`AppState.config` が
 `pub` のままだったので、`state.config.read().unwrap()` と直に書けばコンパイルが通り、`read_config` が
-課す契約（read guard の中で錠も I/O も取らない）を素通りできた。同サイクルの `/simplify` はここへ
+課す契約（read guard の中で錠も I/O も取らない）を検出されずに通れた。同サイクルの `/simplify` はここへ
 ガバナンス検査（`\.config\.(read|write)\(` を `src-tauri/` で走査し `state.rs` 以外を落とす）を置く案を
 挙げ、#1129 が「置くか」を問うた。
 
@@ -36,7 +36,7 @@ engine 錠越しの読みをコンパイラが禁じる形にした。**残っ�
   ときの作法」の「構造が規則を吸収したら対応するチェックリストを削除する——ドキュメントが軽くなる
   ことを設計改善の検収条件とする」）。加えて費用が 3 つあった。(1) **誤検出リスクが実在する**——
   `Engine` 自身が `snotra-core` で `self.config.read()` を正当に書いており（read 8 行 + write 1 行）、
-  `state.rs` の `#[cfg(test)]` も読む。除外の書き損じは沈黙で射程外へ落ちる（撤去した `G-clippy-disallowed`
+  `state.rs` の `#[cfg(test)]` も読む。除外の書き損じは黙って対象外へ落ちる（撤去した `G-clippy-disallowed`
   群 3 のコメントが「名指したパスが解決することは見ない」と警告していた形）。(2) **呼び出し点 0 件の
   残余に検知器を置くことになる**（`measure-whether-detector-can-fire` の型。#930 は測った結果クローズ
   した）。(3) **セーフティネットの新設**ゆえチームの合意が要る（ルート `CLAUDE.md` 最重要ルール 2）。
@@ -45,10 +45,10 @@ engine 錠越しの読みをコンパイラが禁じる形にした。**残っ�
   この不成立は欠点ではなく**移行漏れ検出器の実体**である（取りこぼした地点は E0451 で落ちる）。
 - **案 3: `AppState` の全フィールドを private にして accessor を並べる**: 却下。`engine` /
   `indexing` / `main_visible` / `index_generation` は crate 内から直に読み書きされており、
-  **射程を広げるだけで守るものが無い**。とくに `main_visible` は「`pub` ゆえ crate 内のどこにでも
+  **適用範囲を広げるだけで守るものが無い**。とくに `main_visible` は「`pub` ゆえ crate 内のどこにでも
   `store()` を書ける」ことを**受容する残余として自分の doc に明記している**——閉じるなら
   `.hide()` の生の面（`Manager` から引ける）も同時に塞ぐ必要があり、可視性だけでは片付かない。
-  #1129 の射程は `config` である。
+  #1129 の適用範囲は `config` である。
 - **案 4: `Engine::config_handle` の可視性を狭める**: 却下——**crate をまたぐため不可能**。
   `src-tauri` からの正当な呼び出し（`AppState::new` の 1 行）が残る。#1123 が `Engine::config` に
   対して `#[cfg(test)]` を使えたのは、そちらの読み手が snotra-core 内部だけになったからである。

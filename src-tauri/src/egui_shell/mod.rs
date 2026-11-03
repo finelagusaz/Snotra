@@ -138,7 +138,7 @@ pub(crate) enum HotkeyFailureKind {
 
 /// egui 経路の show/hide を跨ぐ共有状態（managed state）。
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
-/// - main_visible: main ウィンドウが可視かのキャッシュ。書き手・順序・射程は
+/// - main_visible: main ウィンドウが可視かのキャッシュ。書き手・順序・適用範囲は
 ///   `window_coordinator::MainVisible` の doc。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
 /// - reset_pending: show が立て、view が消費して state.reset()（resetForShow 相当・SU3 M1 Task 9）。

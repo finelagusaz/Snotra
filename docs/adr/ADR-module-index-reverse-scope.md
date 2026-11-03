@@ -70,7 +70,7 @@ issue の案 A 却下は `snotra-core/autostart.rs` **1 例**の実測だった�
 
 **赤の理由はいずれも検査の assert であり、実行時エラーではないことを出力で確かめた。**
 
-**測り直しを 2 度要した。** 1 回目は (a) `G-module-linkage` の finding がファイル名を `file` に入れ `message` に入れないのに `message` で絞ったため常に 0 件になり、(b) 対照に選んだ `renderer.rs` が `raster.rs` の索引行から逆に言及されており対照になっていなかった。**どちらも「沈黙」に見えたが、計器の欠陥と変異の選び損ないだった**（`.claude/rules/safety-nets.md`「発火しないときも同じである」）。
+**測り直しを 2 度要した。** 1 回目は (a) `G-module-linkage` の finding がファイル名を `file` に入れ `message` に入れないのに `message` で絞ったため常に 0 件になり、(b) 対照に選んだ `renderer.rs` が `raster.rs` の索引行から逆に言及されており対照になっていなかった。**どちらも「見逃し」に見えたが、計器の欠陥と変異の選び損ないだった**（`.claude/rules/safety-nets.md`「発火しないときも同じである」）。
 
 ## 受容する残余
 
@@ -82,4 +82,4 @@ issue の案 A 却下は `snotra-core/autostart.rs` **1 例**の実測だった�
 
 ## 関連
 
-`docs/adr/ADR-stale-identifier-detector-scope.md`（検知器の射程を決めたときの却下案を残す先例。採った述語の理由はコード側、却下案は ADR という分担）・`docs/adr/ADR-governance-meta-demotion.md`（段を増やす判断の正本。「足す前に『壊れたとき緑が緑のまま推移するか』を問う」）・`docs/adr/ADR-ra-diagnostics-suppression.md`（`G-module-index` に `mod` 到達性を持たせる案を却下した記録）・`.claude/rules/safety-nets.md`（フォールトインジェクションの作法）
+`docs/adr/ADR-stale-identifier-detector-scope.md`（検知器の適用範囲を決めたときの却下案を残す先例。採った述語の理由はコード側、却下案は ADR という分担）・`docs/adr/ADR-governance-meta-demotion.md`（段を増やす判断の正本。「足す前に『壊れたとき緑が緑のまま推移するか』を問う」）・`docs/adr/ADR-ra-diagnostics-suppression.md`（`G-module-index` に `mod` 到達性を持たせる案を却下した記録）・`.claude/rules/safety-nets.md`（フォールトインジェクションの作法）

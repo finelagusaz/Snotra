@@ -63,7 +63,7 @@ impl IndexMaterial {
         Self { tree, masks: None }
     }
 
-    /// 導出したその足の組。**長さを検証しない**——[`derive_columns`] が 1 周で 4 本を埋めるので構成上一致する。
+    /// 導出した直後の組。**長さを検証しない**——[`derive_columns`] が 1 周で 4 本を埋めるので構成上一致する。
     pub(crate) fn derived(tree: IndexTree, masks: CachedMasks) -> Self {
         Self {
             tree,

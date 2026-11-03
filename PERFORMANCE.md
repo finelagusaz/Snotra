@@ -564,7 +564,7 @@ lock 待ちは「worker が検索中か」で決まり、そのフレームで�
 控除後の実費が 2 ms を超えたのは 69 フレーム中 25 本で、最大 44,886 µs。**規模としては
 #1032 の「20 ms 前後」は本物であり、帰属だけが違う。**
 
-射程外の観測を 1 つ: **hide 直後の 1 フレームだけ head 区間が 37,511〜38,669 µs になる**
+対象外の観測を 1 つ: **hide 直後の 1 フレームだけ head 区間が 37,511〜38,669 µs になる**
 （3 標本とも）。`hide_egui_main` の `trim_idle_working_set`（`EmptyWorkingSet`）が捨てた
 ページを踏み直す再フォールトであり、lock でも行の差し替えでもない。**画面に出ないフレーム
 である**ため体感には乗らないが、`update_us` の分布を読む人が lock 待ちと混同しうる。
@@ -589,7 +589,7 @@ lock 待ちは「worker が検索中か」で決まり、そのフレームで�
 **打鍵で予算を超えるフレームが無くなった。** B 側に残る最大は results ウィンドウの show 遷移
 （`SW_SHOWNOACTIVATE` + 下地の塗り）で、これは行が 0 → N になる遷移だけに乗る Win32 の実費
 である。`head` を集計から外しているのは、そこに **hide 直後の working set 再フォールト**
-（A 側 37,511〜38,669・B 側 36,401〜52,404）が乗るためで、こちらは #1032 の射程外である
+（A 側 37,511〜38,669・B 側 36,401〜52,404）が乗るためで、こちらは #1032 の対象外である
 （画面に出ないフレームであり、lock でも行の差し替えでもない）。
 
 #### 残余
@@ -820,7 +820,7 @@ issue は「ロード段の確保 411,621 のうち 312,377（76%）がここに
 
 **この一致を守るのは `index_tree.rs` の `arena_wire_format_is_identical_to_vec_of_string`
 であって golden bytes ではない。** `serialize` に `trim_end` を挟む変異を注入したところ、
-`index_cache_on_disk_format_is_stable` は**素通りし**、新設テストだけが落ちた（実測）。
+`index_cache_on_disk_format_is_stable` は**検出されず**、新設テストだけが落ちた（実測）。
 golden の fixture が名前の形（末尾空白・空文字・非 ASCII）を混ぜて持たないためである
 ——**「golden が守っている」と書いてはならない。**
 
@@ -997,7 +997,7 @@ A 側（実運用点・312,108 件・v7・**3 回とも Phase A が完全一致*
 ではない。** 2 列とも変異注入で実測した——`serialize` に `trim_end` を挟むと、**どちらの列でも
 新設テストだけが落ち、golden を含む他の 569 本は緑のまま通った**。
 
-**ただし「golden では足りない」の射程は文字列の中身の形に限る。** `LowerFileNameRef` の
+**ただし「golden では足りない」の適用範囲は文字列の中身の形に限る。** `LowerFileNameRef` の
 variant を入れ替える変異は golden を含む 5 本が落ちた——3 状態の網羅は golden 側も持っている。
 なお `index_cache_on_disk_format_is_stable` が**無変更で通り続けること**は版を上げないことの
 必要条件であり、実際に通っている（**更新してはならない**——更新した時点で証拠が消える）。
@@ -1007,7 +1007,7 @@ variant を入れ替える変異は golden を含む 5 本が落ちた——3 �
 **パスクエリだけでは足りない。** 変えた列の主たる読み手は fuzzy スコアリングの `entry_view`
 であり、パスクエリの全走査は表示名側（`raw_path_into` / `PathCursor::append`）が支配して
 `lower_*` をほとんど読まない。上の反復が退行を切り分けた変異 E（`entry_view` の読み口だけを
-戻しても回復しなかった）の射程は**パスクエリに限る**ので、fuzzy 側を別に測った。
+戻しても回復しなかった）の適用範囲は**パスクエリに限る**ので、fuzzy 側を別に測った。
 
 対のレイテンシ実測（同日・同セッション・各 3 標本のレンジ）:
 
@@ -1281,7 +1281,7 @@ name の Fuzzy スコアリング（`Utf32String` の確保 + nucleo マッチ�
 on-disk のフラグ = true / `PathStore::build` の測り直し = true / **その構成の実起動 = false**。
 `scan_path_env` が 100 件返し、`IndexTree::extend_with_roots` が無条件でフラグを下ろすためである。
 
-**射程は `include_path_env = true` の構成に限る。既定は `false`**（`config.rs`）——既定構成の
+**適用範囲は `include_path_env = true` の構成に限る。既定は `false`**（`config.rs`）——既定構成の
 実起動はハーネスと同じ `true` 側に居る。上の計測に使った開発機の実 config は `true` である。
 
 **`measure_path_query_frame_cost` は PATH 併合を 1 行も行わない**ので、ハーネスの中は常に `true`
@@ -1362,7 +1362,7 @@ PR #1066 のマージ）が発火したため #1067 のサイクルで消した*
 実 `index.bin` v7 312,108 件 **+ PATH マージ 100 件** / 実 `history.bin` の global **17 件（非空）** /
 `SNOTRA_CONFIG_DIR` **未設定**（実 `%APPDATA%` を直読）/ ウォームアップ 2 + **100 標本** / 同一セッション 3 回。
 
-**射程は開発機の実 config（`normal_mode = "substring"` / `include_path_env = true`）に限る。
+**適用範囲は開発機の実 config（`normal_mode = "substring"` / `include_path_env = true`）に限る。
 2 軸とも既定ではない**——既定は `fuzzy`（`config.rs` の `default_search_mode`）と `false`
 （同 `SearchConfig::default`・`SPEC.md`「13.1 設定データ」）である。**既定構成の実起動が居るのは
 下表の最終行「旧計測点」であり、そこではフラグが真のまま——`cmp_paths` は呼ばれるが
@@ -1846,7 +1846,7 @@ A/B 一致では検出されない（両側がツリーから導出するので*
 `cached_masks` が `None` ゆえ `extend_cached_masks` は呼ばれず、`new_from_tree` が拡張後のツリー
 から導出していた。今は「マスクへ追記 → ツリーへ根として追加 → 派生データ込みで建てる」の順に変わる
 ——`assemble` の長さ検証は `debug_assert` ゆえ release では消えるので、追記の呼び忘れは
-添字 panic か沈黙の食い違いになる。検知器は
+添字 panic か気づかれない食い違いになる。検知器は
 `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree`（呼び忘れを再現する
 変異で実際に落ちることを確認済み）。
 
@@ -2065,7 +2065,7 @@ enum のタグが落ちる。計器は 2 案（3 状態 enum / `Option` + フラ
 
 **当初この分離を「結果を壊しうる唯一の点」と書いたが、それは過剰だった。** 潰し済みの列を
 測定ループへ流しても**結果は変わらない**——`measure_derived_sharing` が `lower_name: &str`
-（`Option` ではない）を取るため、潰れた要素は `let Some(..) else { continue }` で素通りする。
+（`Option` ではない）を取るため、潰れた要素は `let Some(..) else { continue }` で検出されない。
 「`None` どうしの一致で file name 成分の無いエントリにフラグが立つ」という危険は、**判定を
 一元化する前の `Option<&str>` どうしの比較に固有**のものであり、その一元化自体がこの反復の
 中で先に済んでいた。`/simplify` の後に検知器を書き、測り直す実装へ戻す実験をして初めて

@@ -214,7 +214,7 @@ mod tests {
     ///
     /// **このテストは `consume_reset_pending` の `reset()` 呼び出しが消えたことを検出しない**
     /// （実測: 呼び出しを削除しても blur 系 12 本すべて通る）。**消失を検出するのはテストではなく
-    /// `dead_code` である**——射程と脆さは `BlurGrace::reset` の doc が正本。
+    /// `dead_code` である**——適用範囲と脆さは `BlurGrace::reset` の doc が正本。
     /// **`reset` の実装が部分的になった場合**（例: `Blurred` のときだけ戻す）は、
     /// テスト A ではなく `blur_grace_resets_prior_focus_across_hide` が落ちる（実測）。
     #[test]

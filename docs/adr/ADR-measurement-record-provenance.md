@@ -35,4 +35,4 @@
 
 - **`PERFORMANCE.md` を `governanceDocs` へ足さない。** issue が名指した穴（同ファイル自身の散文を見る機構が無い）は**開いたまま残る**。分割しない決定によって「現行値の表」が生まれないので、穴の面積は増えない。**`PERFORMANCE.md` へ向かう参照のほうは `G-heading-refs` が検算する**（だから #1128 で正本として選べた）。
 - **規約節そのものを検算する機構は無い。** 恒久規範の面積計器の対象外でもある（`ALWAYS_LOADED_FILES` / `RULE_FILE_RE` のどちらにも入らない）。**誰も検算しない面に規範を置くことを受容している**——唯一の綱は、規約節から `docs/comment-guidelines.md`「歴史メモの様式」への正準形の参照である。
-- **`40〜95 ms` の再計測は本 ADR の射程ではない。** `docs/adr/ADR-measurement-canon-in-code-doc.md` が「将来この値が疑わしくなったときにやるべき作業」として別に残している。
+- **`40〜95 ms` の再計測は本 ADR の適用範囲ではない。** `docs/adr/ADR-measurement-canon-in-code-doc.md` が「将来この値が疑わしくなったときにやるべき作業」として別に残している。

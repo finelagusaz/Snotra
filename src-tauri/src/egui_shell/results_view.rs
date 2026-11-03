@@ -692,7 +692,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             self.icon_attempts.retain(|p, _| visible.contains(p));
             // **pending も可視集合で刈る**（#692）。worker が 1 通も送らずに終わる経路
             // （managed state 不在で早期 return）があり、刈らないと path が永久に in-flight
-            // 扱いのまま `needs_extraction` を素通りできず、その行のアイコンは戻らない。
+            // 扱いのまま `needs_extraction` を検出されずに通れず、その行のアイコンは戻らない。
             self.icon_pending.retain(|p| visible.contains(p));
         }
         // snapshot.input_idle は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
@@ -752,7 +752,7 @@ mod tests {
     // **ここが `layout.rs` の式と実際の描画を結ぶ唯一の点である。** あちらのユニットテストは
     // 「式が式であること」しか測れず（行間の余白は egui 側にあって見えない）、描画側には
     // これまで検査が無かった。#646 PR2 から続いた「設定した件数がウィンドウに収まらない」欠陥は、
-    // どちらの検査からも見えない場所に居たためレビューと CI を素通りしている。
+    // どちらの検査からも見えない場所に居たためレビューと CI で検出されずにいる。
 
     fn theme_for_test(row_font: f32) -> RowTheme {
         RowTheme {
@@ -856,7 +856,7 @@ mod tests {
     /// 回帰テスト: 行を `Vec` で持っていた頃は、受け取りのたびに行数ぶんの `String` を
     /// 複製していた。型を戻すと 2 つの snapshot が別々のバッファを指し、これが落ちる。
     /// **検索結果も描画も変わらない退行なので、挙動テストでは検出されない。** 見るのは型だけで、
-    /// 受け取り側で行を写し直す形（`to_vec` 等）はこの検査の射程外である。
+    /// 受け取り側で行を写し直す形（`to_vec` 等）はこの検査の対象外である。
     #[test]
     fn snapshot_clone_shares_rows_instead_of_copying_them() {
         let snapshot = super::RowsSnapshot {
@@ -942,7 +942,7 @@ mod tests {
     ///
     /// **`row_height` を設定 UI の全域（`font_size` 8..=48）で回す。** ここを 1 つの値で
     /// 固定していたことが、この検査の盲点だった——34.92 は丸めが**下**へ向かう側の値で、
-    /// 上へ向かう 13/41 の font_size（12・26〜37）を素通りさせていた。3 種の故障注入で
+    /// 上へ向かう 13/41 の font_size（12・26〜37）を見逃させていた。3 種の故障注入で
     /// 発火を確かめておきながら、実装に生きていた 4 つ目の破れに対しては盲目だったのである。
     ///
     /// **等式で測れるのは `results_window_height` が丸めてから掛けるようになったからである**

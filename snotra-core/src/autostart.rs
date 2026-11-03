@@ -118,7 +118,7 @@ fn open_run_key(
 /// 生存期間が推論されない（unbounded lifetime）ため、**将来 `value` の位置を動かす整理が
 /// 黙って UB へ落ちる**。ここで借用として畳んでおけば借用検査がそれを止める。
 ///
-/// **借用検査が守るのは寿命だけである——長さの正しさは射程の外にある。** `REG_SZ` の `cbData` は
+/// **借用検査が守るのは寿命だけである——長さの正しさは適用範囲の外にある。** `REG_SZ` の `cbData` は
 /// null 終端込みの**バイト数**でなければならず、要素数を渡すと値が途中で切れる。そちらを守るのは
 /// `as_bytes_counts_utf16_bytes_including_the_null_terminator` である（変異注入で実測）。
 #[cfg(windows)]

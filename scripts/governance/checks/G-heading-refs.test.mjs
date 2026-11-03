@@ -21,21 +21,29 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
     expect(f[0].message).toContain("見出し参照が着地しない");
   });
 
-  it("太字リード・番号付き項目もアンカーになる（この repo の参照実態）", () => {
+  it("太字リード・番号付き項目はアンカーにならない（ADR-heading-refs-headings-only）", () => {
     const anchors = collectAnchors(
       "## 節\n- **イベント駆動 wake の不変条件（#532 SU5）**: 本文\n0. 「バグ」か「仕様変更」かを判定する\n",
     );
-    expect(anchors).toContain("節");
-    expect(anchors).toContain("イベント駆動 wake の不変条件（#532 SU5）");
-    expect(anchors).toContain("「バグ」か「仕様変更」かを判定する");
+    expect(anchors).toEqual(["節"]);
+  });
+
+  it("太字リードを指す参照は、本文の言い回しが残っていても赤", () => {
+    const s = snap({
+      "docs/x.md": "`m/CLAUDE.md`「イベント駆動 wake の不変条件」\n",
+      "m/CLAUDE.md": "## 節\n- **イベント駆動 wake の不変条件（#532 SU5）**: 本文\n",
+    });
+    const f = checkHeadingRefs(s, ["docs/x.md"]);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("見出し参照が着地しない");
   });
 
   it("後置注記があっても前方一致で着地し、「」の有無は正規化で吸収する", () => {
     const s = snap({
       "docs/x.md":
         "`m/CLAUDE.md`「イベント駆動 wake の不変条件」と `AGENTS.md`「バグか仕様変更かを判定する」\n",
-      "m/CLAUDE.md": "- **イベント駆動 wake の不変条件（#532 SU5）**: 本文\n",
-      "AGENTS.md": "0. 「バグ」か「仕様変更」かを判定する\n",
+      "m/CLAUDE.md": "## イベント駆動 wake の不変条件（#532 SU5）\n",
+      "AGENTS.md": "### 「バグ」か「仕様変更」かを判定する\n",
     });
     expect(checkHeadingRefs(s, ["docs/x.md"])).toEqual([]);
   });

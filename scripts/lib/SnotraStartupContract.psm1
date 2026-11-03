@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 # `smoke.yml` の `continue-on-error: true` なステップからしか走らず、**壊れても誰も気づかない**
 # 位置に居た。
 #
-# **検査を序数で指してはならない**（`.claude/rules/governance-docs.md`「序数で他を指してはならない」——検査 ID は
+# **検査を序数で指してはならない**（`.claude/rules/governance-docs.md`「ガバナンス文書の参照と命名のルール」の「序数で他を指してはならない」——検査 ID は
 # 「引用される識別子」に当たる）。名前で指すこと。途中に足すと序数はずれ、ずれても誰も
 # 気づかない。
 

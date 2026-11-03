@@ -315,8 +315,10 @@ Vec 本体の合計は **64.00 MiB**（確保）。`char_masks` は 524,288 = 2^
 
 ### パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか
 
-計測コードは `snotra-core/tests/path_query_cost.rs`。パスクエリは Fuzzy ビットマスク pre-filter を
-スキップする＝全走査であり、索引規模がそのまま毎打鍵に乗る唯一の経路である。
+計測コードは `snotra-core/tests/path_query_cost.rs` の `measure_path_query_sweep_cost` で、2026-08-07（#962）から
+2026-11-03 まで在った。3 列のどれも製品の形ではなくなったため撤去した（#1391）。下の表はこの期間の記録であり、
+測り直すときは `git show 7083a3c1:snotra-core/tests/path_query_cost.rs` から戻す。
+パスクエリは Fuzzy ビットマスク pre-filter をスキップする＝全走査であり、索引規模がそのまま毎打鍵に乗る唯一の経路である。
 
 実 `index.bin`（312,377 件）・release・16 コア・**rayon 並列（製品と同じ形）**・各 3 回の最小値:
 

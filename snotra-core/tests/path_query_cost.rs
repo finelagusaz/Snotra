@@ -2,9 +2,8 @@
 //!
 //! パスクエリは Fuzzy ビットマスク pre-filter を**スキップする**（`snotra-core/src/search/query_plan.rs` の `//!`）。ゆえに全エントリの `normalized_key` に対する
 //! 部分文字列検索が毎打鍵で走る、索引規模がそのまま乗る唯一の経路である。
-//! それでいて `search/tests/performance.rs` の bench 群も
-//! `tests/search_frame_cost.rs` もパス区切りを含むクエリを 1 つも持っていない——
-//! **`normalized_keys` を保持するか導出するかの差を測る唯一の計測コード**がここである。
+//! `search/tests/performance.rs` の `bench_fuzzy_path_query_scaling` もパス区切りのクエリを持つが、
+//! 合成索引の `SearchEngine` 層である。**実 `index.bin` × 製品の層で測るのはここだけ**である。
 //!
 //! **`measure_path_query_frame_cost_at_operating_point` は実起動の経路を再現する**（#1067）: PATH マージ
 //! （`IndexMaterial::extend_with_path_entries`）を通し、実 config の `normal_mode` をそのまま使う。
@@ -26,15 +25,11 @@
 //!
 //! # 層を混ぜない
 //!
-//! - **製品レベル**: [`measure_path_query_frame_cost`] /
-//!   [`measure_path_query_frame_cost_at_operating_point`] / [`measure_recent_history_cost`] は
-//!   実 `index.bin` を実起動と同じ経路で読み、`Engine::search` / `SearchEngine::recent_history`
-//!   をそのまま叩く。**判定に使うのはこちらである。**
-//!   （**数を見出しに書かない**——製品レベルの関数を 1 本足すたびに古くなる）
-//! - **走査だけを切り出した写し**: [`measure_path_query_sweep_cost`] は `normalized_key` を
-//!   保持するか導出するかを比べた反復 2 の記録であり、スコアリング・履歴照合・top-k 組立が
-//!   乗っていない。**見積もりが甘くなる**（実測で写し +3 ms に対し製品は +8〜16 ms）。
-//!   撤去条件は当該関数の doc に書いてある。
+//! 計測は**製品レベル**だけである。実 `index.bin` を実起動と同じ経路で読み、`Engine::search` /
+//! `SearchEngine::recent_history` をそのまま叩く。走査だけを切り出した写し
+//! （`normalized_key` を保持するか導出するかを比べた反復 2 の記録）は、3 列のどれも製品の形では
+//! なくなったので撤去した（#1391）。数字の正本は次の節である:
+//! `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」
 //!
 //! 反復 3 の実装前シミュレーション（`TreeIndex` 一式）は、製品に `search/path_store.rs` が
 //! 入って重複したため撤去した。再構築のバイト一致を実データ全件で確かめる役目は
@@ -42,10 +37,7 @@
 //! `path_store_cursor_matches_normalize_entry_key_over_real_index` が**製品の `PathStore` に
 //! 対して**引き継いでいる。
 
-use std::cell::RefCell;
 use std::time::Instant;
-
-use rayon::prelude::*;
 
 use snotra_core::config::{Config, SearchModeConfig};
 use snotra_core::engine::Engine;
@@ -53,17 +45,11 @@ use snotra_core::history::HistoryStore;
 use snotra_core::indexer::{self, AppEntry};
 use snotra_core::search::SearchEngine;
 
-thread_local! {
-    /// 導出側の再利用バッファ。**容量を再利用するためウォームアップ後の確保はゼロ**——
-    /// ここを毎回 `String::new()` にすると、測っているものが正規化ではなく確保になる。
-    static KEY_BUF: RefCell<String> = const { RefCell::new(String::new()) };
-}
-
 /// `indexer::normalize_entry_key` と**同じ規則**を、1 文字ずつ書き出す形で再現する。
 ///
-/// ASCII 高速路が入る**前**の形であり、製品にこの形はもう無い（比較の基準として残している）。
-/// 規則がずれたら測っているものが別物になるので、`normalize_entry_key` を変更したら
-/// ここも同時に直す——現物との一致は `derives_same_bytes_as_normalize_entry_key` が固定する。
+/// ASCII 高速路が入る**前**の形であり、製品にこの形はもう無い。**高速路が規則を変えていないことを
+/// 確かめる基準として残している**（`derives_same_bytes_as_normalize_entry_key`）。
+/// `normalize_entry_key` の規則を変えたら、ここも同時に直す。
 fn normalize_into(buf: &mut String, path: &str) {
     buf.clear();
     let trimmed = path.trim();
@@ -83,11 +69,12 @@ fn normalize_into_ascii_fast(buf: &mut String, path: &str) {
     indexer::normalize_entry_key_into(buf, path);
 }
 
-/// 上の写しが現物と 1 バイトも違わないことを、実インデックスの全パスで固定する。
-/// **ここがずれると以降の測定値は別物の計測になる。**
+/// 上の写し（ASCII 高速路の無い形）と、出荷する実装（高速路あり）が 1 バイトも違わないことを、
+/// 実インデックスの全パスで固定する。**高速路の正しさを実データで見るのはこのテストだけである**
+/// （`indexer/keys.rs` にユニットテストは無い）。計測ではないので `#[ignore]` を持たない。
 #[test]
 fn derives_same_bytes_as_normalize_entry_key() {
-    let Some((entries, _)) = load_real_index() else {
+    let Some(entries) = load_real_index() else {
         println!("実インデックスが無いためスキップします。");
         return;
     };
@@ -119,70 +106,26 @@ fn derives_same_bytes_as_normalize_entry_key() {
     );
 }
 
-/// 実 `index.bin` に**載っているときだけ**読み、比較用に「保持していたら」の側も作る。
-///
-/// **`normalized_keys` は索引にもオンディスクにも既に無い**（v5 で落とした）。保持側は
-/// v4 が持っていたものと同じ内容を、ここで 1 度だけ作って再現する——比較の意味は
-/// 「事前計算を持つ」対「毎回導出する」であって、どこから来た文字列かではない。
+/// 実 `index.bin` に**載っているときだけ**読む。
 ///
 /// 走査しない入口（`indexer::load_cached_entries`）を通すのは必須である。
 /// [`derives_same_bytes_as_normalize_entry_key`] は `#[ignore]` を持たず既定のスイートで走るため、
 /// `load_or_scan_with_stats` だと cold cache の `cargo test` が全走査と `index.bin` の書き込みを
 /// 起こす（理由の全文は当該入口の doc）。
-fn load_real_index() -> Option<(Vec<AppEntry>, Vec<String>)> {
+fn load_real_index() -> Option<Vec<AppEntry>> {
     let config = Config::load();
     let scan = &config.paths.scan;
     if scan.is_empty() {
         return None;
     }
-    let entries = indexer::load_cached_entries(scan, config.search.show_hidden_system)?;
-    let keys: Vec<String> = entries
-        .iter()
-        .map(|e| indexer::normalize_entry_key(&e.target_path))
-        .collect();
-    Some((entries, keys))
-}
-
-/// 全件走査 1 回の壁時計を返す（`find` の結果は数え上げて捨てない）。
-///
-/// **`par_iter` で測るのが要点である。** 製品の候補走査は rayon 並列（`search.rs` の
-/// `into_par_iter`）ゆえ、単スレッドで測ると 1 打鍵あたりの絶対値をコア数ぶん過大に見る。
-/// 倍率は単スレッドでも同じだが、採否を決めるのは絶対値のほうである。
-fn sweep_prebuilt(keys: &[String], needle: &str) -> (f64, usize) {
-    let start = Instant::now();
-    let hits = keys.par_iter().filter(|k| k.contains(needle)).count();
-    (start.elapsed().as_secs_f64() * 1000.0, hits)
-}
-
-/// 導出側の全件走査。`normalize` に写しの実装を差し替えて 2 変種を同条件で測る。
-fn sweep_derived(
-    entries: &[AppEntry],
-    needle: &str,
-    normalize: fn(&mut String, &str),
-) -> (f64, usize) {
-    let start = Instant::now();
-    // バッファは rayon の worker ごとに 1 本。worker 数ぶんしか確保されないので、常駐への寄与は
-    // 無視できる。
-    let hits = entries
-        .par_iter()
-        .filter(|e| {
-            KEY_BUF.with(|cell| {
-                let mut buf = cell.borrow_mut();
-                normalize(&mut buf, &e.target_path);
-                buf.contains(needle)
-            })
-        })
-        .count();
-    (start.elapsed().as_secs_f64() * 1000.0, hits)
+    indexer::load_cached_entries(scan, config.search.show_hidden_system)
 }
 
 /// パス区切りを含むクエリの**製品レベル**フレームコスト（実 `index.bin` × `Engine::search`）。
 ///
 /// **既存の計測コードはどれもここを測れない。** `tests/search_frame_cost.rs` は合成索引であり
 /// パス区切りクエリを 1 本も持たない（しかもパス長 66.4 B・浅い一様ツリーで、実運用の
-/// 119.3 B・深さ平均 6.05 段とは別物）。`measure_path_query_sweep_cost` は走査だけを
-/// 切り出した写しであって、`Engine::search`（config 実効 limit・履歴ブースト・top-k 組立込み）
-/// ではない。
+/// 119.3 B・深さ平均 6.05 段とは別物）。
 ///
 /// **`has_path_sep` は incremental cache を無条件で無効化する**（`IncrementalCache::can_reuse`）。
 /// ゆえにパスを打っている間は毎打鍵が全件走査になり、ここが UI スレッドで払う額そのものになる。
@@ -587,54 +530,4 @@ fn measure_recent_history_cost() {
     println!(
         "  = ウィンドウを開くたび・クエリを消すたびに払う額（{n} 件ぶんの照合表を毎回組む現行の形）"
     );
-}
-
-/// `normalized_key` を保持するか導出するかを比べた**反復 2 の記録**（走査だけを切り出した写し）。
-///
-/// **判定にそのまま使わないこと。** ここにはスコアリングも履歴照合も top-k 組立も乗っておらず、
-/// 同じ再構築の上にそれらが乗る製品では増分が数倍になる（実測: 写し +3 ms に対し製品 +8〜16 ms）。
-/// 製品レベルの相当物は [`measure_path_query_frame_cost`] である。
-///
-/// **撤去条件**: 3 列（保持 / 導出:素 / 導出:ASCII）はどれも現在の製品の形ではない
-/// ——`normalized_keys` は v5 で無くなり、走査は `search/path_store.rs` の `PathCursor` からの
-/// 組み立てに移った。`PERFORMANCE.md`「パスクエリ全走査のコスト」が反復 2 の判定記録として
-/// 参照されるあいだだけ残す。その節を履歴へ落とすとき、本関数と `sweep_prebuilt` /
-/// `sweep_derived` / `normalize_into` / `load_real_index` の `keys` 側を一緒に消す。
-#[test]
-#[ignore = "計測専用。release + --nocapture で手動実行する"]
-fn measure_path_query_sweep_cost() {
-    let Some((entries, keys)) = load_real_index() else {
-        println!("実 config に scan パスが無いため計測をスキップします。");
-        return;
-    };
-    let n = entries.len();
-    println!("\n=== パスクエリ全走査のコスト（実 index.bin・{n} 件）===");
-    println!("  needle              保持 (ms)  導出:素 (ms)  導出:ASCII (ms)   hits");
-
-    // 一致数が 0 のもの・多いものを混ぜる。`find` は一致で打ち切るため、
-    // **一致が多いほど走査は速く終わる**——一致数を併記しないと倍率を読み違える。
-    for needle in [
-        "\\workspace\\",
-        "\\users\\",
-        "\\node_modules\\",
-        "\\zzz-no-such-path\\",
-    ] {
-        // 各 3 回の最小値を採る（外れ値は他プロセスの割り込みで上振れする側にしか出ない）。
-        let mut best_pre = f64::MAX;
-        let mut best_plain = f64::MAX;
-        let mut best_fast = f64::MAX;
-        let mut hits = 0usize;
-        for _ in 0..3 {
-            let (ms, h) = sweep_prebuilt(&keys, needle);
-            best_pre = best_pre.min(ms);
-            hits = h;
-            let (ms, h2) = sweep_derived(&entries, needle, normalize_into);
-            best_plain = best_plain.min(ms);
-            assert_eq!(h, h2, "保持と導出:素 で一致数が違う（写しがずれている）");
-            let (ms, h3) = sweep_derived(&entries, needle, normalize_into_ascii_fast);
-            best_fast = best_fast.min(ms);
-            assert_eq!(h, h3, "保持と導出:ASCII で一致数が違う（写しがずれている）");
-        }
-        println!("  {needle:<20}{best_pre:>9.1}{best_plain:>13.1}{best_fast:>16.1}{hits:>7}");
-    }
 }

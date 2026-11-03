@@ -383,7 +383,9 @@ fn measure_path_query_frame_cost_at_operating_point() {
             }
         }
     }
-    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。ウォームアップ {WARMUP} 回のあと {SAMPLES} 標本）");
+    println!(
+        "\n  （µs。60fps の 1 フレームは 16,700 µs。ウォームアップ {WARMUP} 回のあと {SAMPLES} 標本）"
+    );
 }
 
 /// **どの設定の組み合わせが `c:\` のコストを動かすか**を 1 枚の表で見る（#1067）。
@@ -489,7 +491,9 @@ fn measure_path_query_cost_across_settings() {
             }
         }
     }
-    println!("\n  （µs。60fps の 1 フレームは 16,700 µs。ウォームアップ {WARMUP} 回のあと {SAMPLES} 標本）");
+    println!(
+        "\n  （µs。60fps の 1 フレームは 16,700 µs。ウォームアップ {WARMUP} 回のあと {SAMPLES} 標本）"
+    );
 }
 
 /// 計測するクエリ。**既存ハーネスと同じ 6 本を同じ順で並べる**（比較可能性）。

@@ -14,6 +14,7 @@
 - プロダクト知識（アーキテクチャ・横断パターン）: `docs/architecture.md`（書式: 構造を記述する）
 - 開発原則・デバッグ指針（汎用）: `docs/development-principles.md`（書式: 局面 → 立てる問い）
 - コメント規約: `docs/comment-guidelines.md`（書式: 様式を規定する）
+- 用語集（このリポジトリで使い続ける語の意味）: `docs/glossary.md`（書式: 語・原語・意味の表）
 - ビルド・テストコマンド: `docs/build-commands.md`（書式: 索引と行動形）
 - モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`）（書式: 行動形と、適用範囲の明示）
 - 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（書式は定めない）

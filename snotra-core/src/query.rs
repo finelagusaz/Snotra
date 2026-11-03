@@ -4,7 +4,7 @@
 //! SPEC §4.2。Unicode の合成（NFC）を含む。変える文字が無ければ `Cow` で借用）、履歴クエリキー正規化
 //! `normalize_history_query_key`、検索/インデクサ双方が使う `char_bitmask`
 //! （bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等であることは全コードポイントの
-//! 検知器と結合の対の検知器で固定してある。
+//! 検知器と 2 字の列の検知器で固定してある。
 
 use std::borrow::Cow;
 
@@ -168,7 +168,7 @@ fn folds_to_itself(c: char) -> bool {
 /// Unicode の合成（NFC）。分解済み（NFD）の `か` + U+3099 を `が` に揃える。
 const NFC: ComposingNormalizerBorrowed<'static> = ComposingNormalizerBorrowed::new_nfc();
 
-/// 「合成 → [`fold_once`]」を繰り返す上限。実測した最大は、結合の対の母集団で 3 回、結合文字を
+/// 「合成 → [`fold_once`]」を繰り返す上限。実測した最大は、基底字と結合文字の 2 字の列で 3 回、結合文字を
 /// 2 つ続けた三つ組（一度きりの測定）で 4 回である（#1285）。
 const MAX_COMPOSE_ROUNDS: usize = 8;
 
@@ -183,11 +183,11 @@ const MAX_COMPOSE_ROUNDS: usize = 8;
 /// 変える文字が無ければ trim 済みの入力を借用で返す（ASCII の小文字と単一の空白だけのクエリは
 /// 確保しない）。
 ///
-/// 上限 [`MAX_COMPOSE_ROUNDS`] に達したときは、その時点の値を返す。**その値は冪等でない**ので、
+/// 上限 [`MAX_COMPOSE_ROUNDS`] に達したときは、その時点の値を返す。**その値は冪等とは限らない**ので、
 /// 履歴のクエリキーが記録時と読み込み時（`migrate_normalize_keys`）で割れうる。到達しないことは
-/// 結合の対の検知器が固定している。
+/// 2 字の列の検知器が固定している。
 ///
-/// 借用と所有の一致・冪等性は、全コードポイントと結合の対の検知器で固定してある
+/// 借用と所有の一致・冪等性は、全コードポイントと 2 字の列の検知器で固定してある
 /// （`normalize_for_match_agrees_with_the_owned_reference_on_every_codepoint`・
 /// `normalize_for_match_is_idempotent_on_every_codepoint`・
 /// `normalize_for_match_is_idempotent_on_composing_pairs`）。
@@ -217,7 +217,7 @@ pub fn normalize_for_match(s: &str) -> Cow<'_, str> {
     Cow::Owned(cur)
 }
 
-/// 合成を含まない 1 回分の正規化。[`normalize_for_match`] だけが呼ぶ。
+/// 合成を含まない 1 回分の正規化（[`normalize_for_match`] の反復の 1 段）。
 ///
 /// 前後の空白を除き、空白類（`char::is_whitespace`）を `' '` へ揃えて連続を 1 つに圧縮し、
 /// 各文字に [`fold_char`] を当てる。変える文字が無ければ trim 済みの入力を借用で返す。
@@ -510,7 +510,9 @@ mod tests {
     /// の借用路と所有路のどちらがずれても、この出力との不一致として現れる（#1310）。
     ///
     /// **合成は素の不動点で書く**——「合成 → 1 回分」を、結果が変わらなくなるまで繰り返す（#1285）。
-    /// 製品の停止規則（出力が NFC なら止める）と同じ形にすると、停止規則の誤りをこの比較が拾えない。
+    /// 製品の停止規則（出力が NFC なら止める）と同じ形にすると、1 回で止める誤りをこの比較が拾えない。
+    /// 上限の誤りはここでは拾えない（全コードポイントの文脈に 3 回の反復を要する入力が無い）——それは
+    /// 2 字の列の検知器が拾う。
     fn reference_normalize(s: &str) -> String {
         let nfc = icu_normalizer::ComposingNormalizerBorrowed::new_nfc();
         let mut cur = s.to_string();
@@ -628,11 +630,15 @@ mod tests {
         assert_eq!(normalize_for_match("Ł\u{301}x"), "lx");
     }
 
-    /// 結合の対の検知器の母集団。2 字目の候補は、合成に関わりうる字（canonical 結合クラスが 0 でない
-    /// 字と、canonical 分解の 2 字目）である。1 字目は、[`fold_char`](super::fold_char) で変わる字に限る
-    /// ——どちらの字も畳みで変わらない対は、合成しても 1 回目の結果がそのまま不動点になる
-    /// （畳みで変わる 2 字目 U+0363–U+036F の 13 字は、全基底字と組ませた一度きりの測定で
-    /// 非冪等 0 件だった・#1285）。
+    /// 2 字の列の検知器の母集団（1 字目は基底字、2 字目は結合文字）。2 字目の候補は、合成に関わりうる字
+    /// （canonical 結合クラスが 0 でない字と、canonical 分解の 2 字目）である。1 字目の候補は、
+    /// [`fold_char`](super::fold_char) で変わる字と、canonical 分解の 1 字目（何かと合成できる字）である。
+    /// 残りの 1 字目——畳みで変わらず、何とも合成しない字——は合成で基底字が変わらないので、
+    /// 2 回目に変わりうるのは 2 字目の側だけになる。畳みで変わる 2 字目 U+0363–U+036F の 13 字は、
+    /// 全基底字と組ませた一度きりの測定で非冪等 0 件だった（#1285）。
+    ///
+    /// **畳みで変わらない基底字も外せない。** `a` + U+0344 は、U+0344 が 2 つの結合文字へ分解され、
+    /// 1 回目の結果が `a` + U+0301（`á` と合成できる）になる。
     fn composing_pair_inputs() -> impl Iterator<Item = String> {
         use icu_normalizer::properties::{
             CanonicalCombiningClassMapBorrowed, CanonicalDecompositionBorrowed, Decomposed,
@@ -641,26 +647,32 @@ mod tests {
         let ccc = CanonicalCombiningClassMapBorrowed::new();
         let dec = CanonicalDecompositionBorrowed::new();
         let mut seconds: Vec<char> = all().filter(|&c| ccc.get32_u8(c as u32) != 0).collect();
-        seconds.extend(all().filter_map(|c| match dec.decompose(c) {
-            Decomposed::Expansion(_, b) => Some(b),
-            _ => None,
-        }));
+        let pairs: Vec<(char, char)> = all()
+            .filter_map(|c| match dec.decompose(c) {
+                Decomposed::Expansion(a, b) => Some((a, b)),
+                _ => None,
+            })
+            .collect();
+        seconds.extend(pairs.iter().map(|&(_, b)| b));
         seconds.sort_unstable();
         seconds.dedup();
-        let firsts: Vec<char> = all()
+        let mut firsts: Vec<char> = all()
             .filter(|&c| {
                 let mut it = super::fold_char(c);
                 !(it.next() == Some(c) && it.next().is_none())
             })
             .collect();
+        firsts.extend(pairs.iter().map(|&(a, _)| a));
+        firsts.sort_unstable();
+        firsts.dedup();
         firsts
             .into_iter()
             .flat_map(move |a| seconds.clone().into_iter().map(move |b| format!("{a}{b}")))
     }
 
-    /// **結合の対でも冪等である**（#1285）。合成と畳みを 1 回ずつ当てる形は、全コードポイントの
-    /// 単一字では冪等でも、対では約 7,700 件で 2 回目の結果が変わる——単一字の検知器では原理的に
-    /// 見えない形なので、対を母集団にして別に固定する。全コードポイントの canonical 分解（NFD）列も通す。
+    /// **基底字と結合文字の 2 字の列でも冪等である**（#1285）。合成と畳みを 1 回ずつ当てる形は、全コードポイントの
+    /// 単一字では冪等でも、2 字の列では約 7,700 件で 2 回目の結果が変わる——単一字の検知器では原理的に
+    /// 見えない形なので、2 字の列を母集団にして別に固定する。全コードポイントの canonical 分解（NFD）列も通す。
     #[test]
     fn normalize_for_match_is_idempotent_on_composing_pairs() {
         let nfd = icu_normalizer::DecomposingNormalizerBorrowed::new_nfd();

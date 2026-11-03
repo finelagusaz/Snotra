@@ -36,6 +36,10 @@
 //! **`scan_all` 区間（`report_scan_all_cost`）は実走査そのものゆえ、Phase A の実行時間が
 //! 大きく伸びる。** 所要はファイルシステムキャッシュの状態で数倍にぶれるので、初見で走らせる
 //! と無出力のまま長く待つことになる（秒数はここに書かない——書けば測り直すたびに古くなる）。
+//!
+//! **撤去条件**: `SearchEngine` の常駐を内訳（`footprint_rows`）と突き合わせる必要が無くなる変更
+//! （内訳の仕組みを製品から消す変更）と同じ PR で消す。それまでは `PERFORMANCE.md`「索引の常駐の内訳」の
+//! 数字の出どころとして恒久に残す。
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};

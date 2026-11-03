@@ -128,7 +128,11 @@ fn load_real_index() -> Option<Vec<AppEntry>> {
 /// 119.3 B・深さ平均 6.05 段とは別物）。
 ///
 /// **`has_path_sep` は incremental cache を無条件で無効化する**（`IncrementalCache::can_reuse`）。
-/// ゆえにパスを打っている間は毎打鍵が全件走査になり、ここが UI スレッドで払う額そのものになる。
+/// ゆえにパスを打っている間は毎打鍵が全件走査になり、ここが検索 worker で 1 打鍵ごとに払う額そのものになる
+/// （検索は #1004 から UI スレッドではなく worker で走る）。
+///
+/// **撤去条件**: 過去の表との比較が要らなくなったとき（この計測コードの値を引く `PERFORMANCE.md` の節を
+/// 履歴へ落とす変更と同じ PR で）消す。実運用点に追従する側は `measure_path_query_frame_cost_at_operating_point` である。
 /// クエリは「パスを 1 文字ずつ打っていく」形に並べる——区切りを打った瞬間から全件走査へ
 /// 切り替わるので、その前後を同じ表で見られるようにする。
 #[test]
@@ -361,6 +365,9 @@ fn measure_path_query_frame_cost_at_operating_point() {
 ///
 /// `c:\`（支配項が出る唯一の行）と `\zzz-no-such-path\`（0 件・**どの軸でも動かないことが正しい**
 /// 対照）。36 構成 × 6 クエリでは表が読めない。
+///
+/// **撤去条件**: 掃いている軸（`normal_mode` / `result_limit` / `include_path_env`）のどれかを製品から
+/// 消す変更と同じ PR で、消すか軸を直す。#1067 の判断には使い終えたが、改修の効く範囲を決め直すときに使う。
 #[test]
 #[ignore = "計測専用。release + --nocapture で手動実行する"]
 fn measure_path_query_cost_across_settings() {
@@ -496,9 +503,11 @@ fn sample_frame_cost(engine: &mut Engine, query: &str) -> (usize, FrameSamples) 
 
 /// `recent_history` の実コスト。**ウィンドウを開いた瞬間・クエリ消去時には走らない**（頻度と呼び出し元の正本は `SearchEngine::recent_history` の doc）。**この計測が測るのは「呼ばれたときの 1 回」である。**
 ///
-/// `recent_launches` が返すのは高々 `recent_limit` 件（既定 8）だが、現行の実装は照合表を
-/// **全エントリぶん**組み立てる。`normalized_keys` を廃止するなら、この経路も
-/// 走査時導出へ移ることになるため、先に現状を測る。
+/// `recent_launches` が返すのは高々 `recent_limit` 件（既定 8）だが、照合のために**全エントリ**の
+/// 正規化キーを導出して引く（照合表は履歴の側の高々 `recent_limit` 件で組む）。`recent_history` を
+/// 実 `index.bin` で測るのはここだけである。
+///
+/// **撤去条件**: `SearchEngine::recent_history` を製品から消す変更と同じ PR で消す。
 #[test]
 #[ignore = "計測専用。release + --nocapture で手動実行する"]
 fn measure_recent_history_cost() {
@@ -528,6 +537,6 @@ fn measure_recent_history_cost() {
     }
     println!("  recent_limit = {limit}, 返した件数 = {hits}, 最小 {best:.1} ms");
     println!(
-        "  = ウィンドウを開くたび・クエリを消すたびに払う額（{n} 件ぶんの照合表を毎回組む現行の形）"
+        "  = 呼ばれたときの 1 回の額（{n} 件の正規化キーを導出して照合する）"
     );
 }

@@ -314,6 +314,8 @@ fn path_store_cursor_matches_full_rebuild() {
 ///
 /// **`#[ignore]` はそのコスト**（実測 75 秒の全走査）。実インデックスの有無ではなく
 /// config の scan パスの有無で成否が決まるので、CI では走らせない。
+///
+/// **撤去条件**: 原文の組み直し（`raw_path_into`）を製品から消す変更と同じ PR で消す。それまでは恒久の検知器である。
 #[test]
 #[ignore = "実データ照合。全走査 75 秒ゆえ手元で明示実行する"]
 fn path_store_raw_matches_target_path_over_real_index() {
@@ -496,6 +498,8 @@ fn path_env_merge_does_not_raise_any_name_has_path_sep() {
 /// 同じ経路を通る（`force_unsorted_for_test` を当てた B 側だけが遅い経路になるので比較は
 /// 成立するが、**この最適化が新しく生きた組み合わせ**——範囲の内と外をまたぐ比較——は
 /// 1 回も走らない）。
+///
+/// **撤去条件**: 整列範囲の高速路（`sorted_by_path`）を製品から消す変更と同じ PR で消す。それまでは恒久の検知器である。
 #[test]
 #[ignore = "実インデックス依存。手元で release 実行する"]
 fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
@@ -566,6 +570,8 @@ fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
 /// なく実運用点の 31 万件で突き合わせるのが要点で、**件数の一致では足りない**——パスマッチは
 /// 同点が出やすく、tie-break の経路が変われば順序だけが動く。ゆえに `(name, path)` の列を
 /// 順序ごと比べる。
+///
+/// **撤去条件**: パスクエリで name のスコアリングを飛ばす最適化を製品から消す変更と同じ PR で消す。それまでは恒久の検知器である。
 #[test]
 #[ignore = "実インデックス依存。手元で release 実行する"]
 fn skipping_name_scoring_changes_nothing_over_real_index() {

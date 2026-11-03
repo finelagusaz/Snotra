@@ -1,6 +1,9 @@
-//! パフォーマンス計測（`#[ignore]`: kana/lower_name メモリ実体・検索/構築ベンチ）。
+//! パフォーマンス計測（`#[ignore]`）: `SearchEngine` 層の検索と構築を、合成の索引の規模別に測るベンチ。
 //!
 //! `cargo test -p snotra-core <name> -- --ignored --nocapture` で実行する。
+//!
+//! 撤去条件は各ベンチの doc にある。共通の形は「測る経路を製品から消す変更と同じ PR で消す」で、
+//! 消すときは `PERFORMANCE.md` から引かれている数字がそちらに残っていることを確かめる。
 
 use super::common::empty_history;
 use crate::indexer::AppEntry;
@@ -146,6 +149,10 @@ fn bench_search(label: &str, n: usize, queries: &[&str], mode: SearchMode) {
     );
 }
 
+/// Fuzzy 検索（bitmask の前段フィルタを通る経路）の規模別の所要。`PERFORMANCE.md` の検索の A/B で、
+/// 最もよく引かれる基準である。
+///
+/// **撤去条件**: `SearchEngine::search` の Fuzzy の経路を製品から消す変更と同じ PR で消す。
 #[test]
 #[ignore]
 fn bench_fuzzy_search_scaling() {
@@ -157,6 +164,8 @@ fn bench_fuzzy_search_scaling() {
 /// `normal_mode = "substring"` の全件走査。**Fuzzy の bitmask pre-filter を通らない**ので
 /// 全エントリが照合まで進み、1 件あたりの固定費がそのまま規模に乗る——上の Fuzzy の計測コードでは
 /// この経路を 1 度も通らない。
+///
+/// **撤去条件**: Substring の検索経路を製品から消す変更と同じ PR で消す。
 #[test]
 #[ignore]
 fn bench_substring_search_scaling() {
@@ -165,6 +174,10 @@ fn bench_substring_search_scaling() {
     }
 }
 
+/// パス区切りを含むクエリ（`has_path_sep` で前段フィルタを飛ばす経路）の、合成の索引での規模別の所要。
+/// 実 `index.bin` × 製品の層で測るのは `tests/path_query_cost.rs` である。
+///
+/// **撤去条件**: パスクエリの経路を製品から消す変更と同じ PR で消す。
 #[test]
 #[ignore]
 fn bench_fuzzy_path_query_scaling() {
@@ -184,7 +197,7 @@ fn bench_new(label: &str, n: usize) {
 
     // 構築自体にかかる時間のみを計測する。
     // entries.clone() のコストは Vec<AppEntry> の単純コピーであり、
-    // new() 内の lower_fold・ビットマスク計算・normalized_keys に比べ微小。
+    // new() 内の lower_fold・ビットマスク計算に比べ微小。
     let iters = 5usize;
     let mut total_ns = 0u128;
     for _ in 0..iters {
@@ -198,6 +211,12 @@ fn bench_new(label: &str, n: usize) {
     println!("[{label}] entries={n}, avg={avg_ms}ms ({iters} iters)");
 }
 
+/// 合成の `Vec<AppEntry>` からの構築（`SearchEngine::new`）の規模別の所要。製品が建てる入口は 1 つで
+/// （名前は下の `bench_new_migemo` の doc が書くとおり 2 度変わったので、ここには書かない）、
+/// `index.bin` を経由する構築は `tests/memory_footprint.rs` が測る。
+/// こちらは構築の計算だけを切り出した基準である。
+///
+/// **撤去条件**: 合成の `Vec<AppEntry>` から建てる入口（`SearchEngine::new`）を消す変更と同じ PR で消す。
 #[test]
 #[ignore]
 fn bench_new_scaling() {
@@ -223,6 +242,11 @@ fn bench_new_migemo(label: &str, n: usize, migemo_enabled: bool) {
     println!("[{label}] entries={n}, migemo={migemo_enabled}, avg={avg_us}µs ({iters} iters)");
 }
 
+/// migemo の on/off による構築時間の差。#337 の判断には使い終えたが、kana 列の構築に触れる変更の
+/// A/B に使う。
+///
+/// **撤去条件**: migemo の有無で構築を分ける仕組み（kana 列を migemo が有効なときだけ建てる）を
+/// 製品から消す変更と同じ PR で消す。
 #[test]
 #[ignore]
 fn bench_new_migemo_on_off() {

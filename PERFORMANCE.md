@@ -426,8 +426,9 @@ Vec 本体の合計は **64.00 MiB**（確保）。`char_masks` は 524,288 = 2^
   **改善の疑いも退行の疑いと同じだけ標本を要する**
 - 構築の +51 ms（502 → 553 ms）は実インデックスで測った構築コストと整合する
 
-**`bench_*_scaling` は合成索引であり、全件走査 2 経路を 1 つも含まない**（パス区切りを
-含むクエリが無く、`recent_history` も呼ばない）。そのうち `recent_history` だけは製品経路を
+**`bench_*_scaling` は合成索引であり、全件走査 2 経路の実運用点を測らない**（パス区切りを
+含むクエリは `bench_fuzzy_path_query_scaling` だけが合成で持つ。`recent_history` は呼ばない。
+2026-11-03 訂正: 初稿は「パス区切りを含むクエリが無い」と書いていたが、偽だった・#1391）。そのうち `recent_history` だけは製品経路を
 実 `index.bin` で測れる（`tests/path_query_cost.rs` の `measure_recent_history_cost` は
 実 engine を呼ぶ）:
 

@@ -445,6 +445,9 @@ mod tests {
     ///
     /// 実測（2026-07-26・396 パス）: 修正前は 1 周目に 16〜18 件の `NoIconHandle`、
     /// 修正後は 0 件（残る `ShellQueryFailed` はパス不在で、恒久的失敗として正しい）。
+    ///
+    /// **撤去条件**: `extract_icon` の即時リトライを製品から消す変更と同じ PR で消す。リトライの退行を
+    /// 見られるのはこれだけである。消すときは上の実測値を `PERFORMANCE.md` へ移す（値の正本は今この doc）。
     #[test]
     #[ignore]
     fn diagnose_icon_cold_start() {
@@ -721,6 +724,9 @@ mod tests {
     /// `cargo test -p snotra --release icon_extract_cost_probe -- --ignored --nocapture` で実行。
     /// 判定: 8 件バッチ warm 合計が 1 フレーム予算 16.7ms に十分収まるなら update() 内同期が
     /// 候補（worker 不要）。dead-UNC 論（下記 note）はこの数字と別に評価する。
+    ///
+    /// **撤去条件**: `SHGetFileInfoW` による抽出を製品から消す変更と同じ PR で消す。それまでは
+    /// 抽出の全区間を 1 つの数字で見る基準として残す（区間別は `icon_pipeline_cost_probe`）。
     #[test]
     #[ignore = "計測プローブ（実機・release 実行専用）"]
     fn icon_extract_cost_probe() {
@@ -805,13 +811,15 @@ mod tests {
     /// - `batch(N) parallel`: 実際の `load_icon_pngs` と同じ rayon 並列で N 件を一気に抽出した
     ///   実時間。N は既定で `effective_result_limit`（200）に合わせる
     ///
-    /// 対象パスは既定で**本番と同じ母集団**（`Config::default_scan_paths()` = common Start Menu
-    /// ＋ Desktop の `.lnk`）から先頭 200 件を採る。**自前でディレクトリを歩いてはならない**
+    /// 対象パスは既定で**既定の scan パスの母集団**（`Config::default_scan_paths()` = common Start Menu
+    /// ＋ Desktop の `.lnk`）から先頭 200 件を採る。利用者が scan パスを変えていれば、実運用の母集団とは
+    /// 違う（開発機の運用点は `C:\` 全体である）。**自前でディレクトリを歩いてはならない**
     /// ——`default_scan_paths` は User Start Menu を意図的に除外しており（同関数の doc）、
-    /// 手書きの走査はインデックスに入らないパスを測ってしまう。同じ組み合わせで本番相当の
-    /// 母集団を作る先例は `snotra_core::search::tests::performance` の
-    /// `measure_lower_name_footprint_report`。`SNOTRA_ICON_DIAG_PATHS` で明示指定もできる
-    /// （`icon_extract_cost_probe` と同じ規約）。
+    /// 手書きの走査はインデックスに入らないパスを測ってしまう。`SNOTRA_ICON_DIAG_PATHS` で
+    /// 明示指定もできる（`icon_extract_cost_probe` と同じ規約）。
+    ///
+    /// **撤去条件**: 区間（抽出・encode・decode・バッチ）のどれかを製品から消す変更と同じ PR で、消すか区間を直す。
+    /// `egui_shell/layout.rs` が prefetch の範囲の根拠としてこの実測値を引いている。
     #[test]
     #[ignore = "計測プローブ（実機・release 実行専用）"]
     fn icon_pipeline_cost_probe() {

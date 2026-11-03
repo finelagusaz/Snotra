@@ -502,7 +502,7 @@ Describe 'Read-SnotraTraceSnapshot（捨てた行の数え方）' {
         $snapshot.Dropped | Should -Be 1
     }
 
-    It 'ファイルが無ければ Available=false で、捨てた行 0 を名乗らない扱いにする' {
+    It 'ファイルが無ければ Available=false で、捨てた行 0 を示さない扱いにする' {
         $snapshot = Read-SnotraTraceSnapshot -Path (Join-Path $TestDrive 'missing.log')
         $snapshot.Available | Should -BeFalse
         $snapshot.Events.Count | Should -Be 0
@@ -540,7 +540,7 @@ Describe 'Get-SnotraTraceFailureCount（赤とみなす状態の定義）' {
     }
 
     It 'trace を読めなかったら赤にする（観測不能を成功として終えない）' {
-        # #872: `Read-SnotraTraceSnapshot` が読み取り失敗を Available=false へ倒すので、
+        # #872: `Read-SnotraTraceSnapshot` が読み取り失敗を Available=false にするので、
         # 判定は走らず Verdict は $null になる。**ここで 0 を返すと、権限・共有違反で
         # 読みが落ちた実行が exit 0 で終わる**——この PR が塞いでいる false green そのもの。
         Get-SnotraTraceFailureCount -Verdict $null -ReadError 'Unable to get content' | Should -Be 1

@@ -13,7 +13,7 @@
  * **壊れ方は 3 つあり、うち 2 つは沈黙する。**
  * - 設定が届かない・上書きされる（抑制キーの消失・ratoml による上書き・宣言箇所の取り違え）: 沈黙する。
  *   rust-analyzer は設定が無くても既定値で起動するので、navigation は動いたまま `checkOnSave` だけが復活する。
- *   この判定が捕まえるのはこの形である
+ *   この判定が検出するのはこの形である
  * - rust-analyzer のバイナリが無い（toolchain の入れ替え・pin の変更で component が落ちる）: 沈黙する。
  *   cargo / clippy / test は緑のまま、`LSP` ツールだけが `crashed with exit code 1` を返す（#1239・#1177）。
  *   診断は `checkOnSave: false` で切ってあるので、plugin の使用カウンタが 0 でも報せは無い。守り手は `rust-toolchain.toml` の `components` の宣言で、
@@ -25,7 +25,7 @@
  * - worktree は自分の設定ではなく、最初に登録したツリーの設定で動く（2026-08-14 実測）。
  *   `known_marketplaces.json` はマシン全体で marketplace 名をキーに持ち、installLocation が最初に登録した
  *   ツリーの絶対パスを指し続ける（宣言パスが両方に在っても起きる）。この判定はそのツリーのファイルを読むので
- *   緑のままである。`.claude/lsp/` を持たない古い枝の worktree は公式 plugin へ落ち、
+ *   緑のままである。`.claude/lsp/` を持たない古いブランチの worktree は公式 plugin へ落ち、
  *   どの場合も LSP サーバはちょうど 1 つになる
  * - `.claude/settings.local.json` は project より優先され、そこへ `enabledPlugins` を書けば plugin を無効化できる。
  *   この判定は `.claude/settings.json` しか読まないので、リポジトリからは守れない
@@ -76,7 +76,7 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf-8"));
  * 除外は**名前一致・全階層**であってパス固定ではない（`crates/dist/` のような名前の crate が
  * できれば取りこぼす）。`target` を全階層で外すのは cargo の入れ子 target のため。
  * `readdirSync` が権限エラーや壊れた junction で throw する経路は**受容する**——vitest が
- * エラーで落ちるので沈黙せず、fail-closed の向きである（続行させると読めない枝を黙って飛ばす）。
+ * エラーで落ちるので沈黙せず、fail-closed の向きである（続行させると読めない分岐を黙って飛ばす）。
  */
 export function findRatomlFiles(rootDir) {
   const found = [];
@@ -126,7 +126,7 @@ export function checkLspConfig(rootDir) {
     // 落とさないと、当該キーを**論じている**コメントで赤くなる——この差分自身がその形である。
     const body = fs.readFileSync(file, "utf-8").replace(/#.*$/gm, " ");
     for (const key of RATOML_FORBIDDEN) {
-      // `["']?` は TOML の引用キーを捕まえるため。基本文字列（`"checkOnSave"`）も
+      // `["']?` は TOML の引用キーを検出するため。基本文字列（`"checkOnSave"`）も
       // リテラル文字列（`'checkOnSave'`）もキーに使える正当な構文である。
       if (new RegExp(`(^|\\.|\\[)\\s*["']?${key}\\b`, "m").test(body)) {
         violations.push(

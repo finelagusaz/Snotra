@@ -29,7 +29,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 - `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する。top-k 更新を変えたら入力順を変えても結果が不変なテストを足す/直す
 - `SearchEngine` にフィールドを足す前に、既存の列で代替できないか・導出できないかを検討する。導出の可否は「その読みが早期 return の前か後か」で決まる（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）
-- 並列の列を足すときは同時に触る: `EntryView`・`entry_view()`・`assemble()` の `debug_assert!` と `shrink_to_fit()`。Wave 1 の文字列正規化は `compute_wave1`、Wave 2 のマスクは `compute_wave2` に足す。**`new_with_cached_masks` は `compute_wave2` をどの枝でも通らず（マスクはキャッシュから来る）、`compute_wave1` も派生文字列を持たない枝でしか通らない**——キャッシュに載る列は下の「IndexCache バージョン変更チェックリスト」も当て、載らない列は `Collapsed` / `Raw` 枝で別に建てる（`kana_for_cached` の形）。要素ごとの確保を持つ列（`Vec<String>` 等）にせず、`str_arena` / `NameArena` の表現で持つ
+- 並列の列を足すときは同時に触る: `EntryView`・`entry_view()`・`assemble()` の `debug_assert!` と `shrink_to_fit()`。Wave 1 の文字列正規化は `compute_wave1`、Wave 2 のマスクは `compute_wave2` に足す。**`new_with_cached_masks` は `compute_wave2` をどの分岐でも通らず（マスクはキャッシュから来る）、`compute_wave1` も派生文字列を持たない分岐でしか通らない**——キャッシュに載る列は下の「IndexCache バージョン変更チェックリスト」も当て、載らない列は `Collapsed` / `Raw` 分岐で別に建てる（`kana_for_cached` の形）。要素ごとの確保を持つ列（`Vec<String>` 等）にせず、`str_arena` / `NameArena` の表現で持つ
 - kana 2 列（`kana_lower_names` / `kana_char_masks`）は、製品の経路では migemo 有効時だけ建つ。アクセスは `is_empty()` ガードを通し、構築の分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の `CachedLower` 両 variant へ**同時に**入れる（片方だけだと migemo ON でも空になる）。migemo の切り替えは `IndexInputs` の差分による再構築で反映される
 - 派生文字列の潰しは、ビットマスクを確定した**後**に行う（理由と検知器は `indexer/columns.rs` の `derive_entry_lowers` / `derive_entry_collapsed` の doc）
 - `query.rs` の正規化を変えたら、タブ・全角スペース・NBSP を `' '` に揃えるテストと、全コードポイントの検知器（`normalize_for_match_*_on_every_codepoint`）を通す
@@ -56,7 +56,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 - シリアライザを替えるとき・**データの意味を変えるとき**は、どちらも版をバンプし旧形式のフォールバックを足す（バイト列が同じでも解釈が変われば破損と同じ）
 - `deserialize_failed → save()`（デコード失敗で空データを即保存）をしない。フォールバック読み込みを先に試し、次の通常 save で新形式へ昇格させる
-- **読み込み失敗は種類で扱いを分ける**（区分と各枝の保全は `config/io.rs` の `LoadOutcome` / `load_from_dir_reporting` の doc）。1 分岐を直すときは同じ `match` の兄弟分岐の保全方針も揃える
+- **読み込み失敗は種類で扱いを分ける**（区分と各分岐の保全は `config/io.rs` の `LoadOutcome` / `load_from_dir_reporting` の doc）。1 分岐を直すときは同じ `match` の兄弟分岐の保全方針も揃える
 - TOML フィールドを別 struct へ移すときは削除せず `#[serde(default, skip_serializing)] pub field: Option<T>` で残し、`apply_migrations()` で `take()` して移す。`Config::default()` の明示初期化に `field: None` を足す。部分的なテストでも他の移行の副作用を踏まえてアサーションを組む
 - serde 表現（variant・`untagged` / `flatten` / `tag`）を変えるときは、旧形式が deserialize できるテストを新形式の往復とは別に足す。旧形式が parse に失敗すると `.bak` 退避で全設定が消え、`apply_migrations()` では救えない。旧形式は `Legacy { .. }` variant 等で受理する
 - オンディスク struct を触るときは（「バイト形式不変」を主張する場合も）、後方互換を**旧形式の凍結バイト列**からの load で証明する。新コードの出力を golden にしても forward-stability しか示さない。形式を変える計画は、着手前に最小 spike で往復バイト一致を確かめてから建てる
@@ -78,11 +78,11 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 1. `IndexCache<'a>` に `Cow<'a, [T]>` で追加（save は `Cow::Borrowed`）
 2. `INDEX_CACHE_VERSION` をバンプ
 3. 旧スキーマを `IndexCacheVN` として残す
-4. `load_cache_in` のフォールバック鎖へ枝を足し、各枝で `LoadCacheResult.version` に読めた版を入れる
+4. `load_cache_in` のフォールバックチェーンへ分岐を足し、各分岐で `LoadCacheResult.version` に読めた版を入れる
 5. `save_cache_sorted` に新フィールドの計算を足す
 6. `CachedMasks` に `Option<T>` で追加（旧キャッシュでは `None`）
 7. `SearchEngine::new_with_cached_masks()` で受け取り、`None` なら自前で計算する
-8. **直前の版を受け取る側を数え直す**（版を上げた瞬間、直前の版が全ユーザーの手元の版になる）: (a) `cache_byte_breakdown_in` の鎖（`INDEX_WIRE_SINCE` の doc）、(b) `load_cache_in_reports_the_version_it_actually_read` の枝、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは枝選択を通らない）。枝の数を散文に書かない
+8. **直前の版を受け取る側を数え直す**（版を上げた瞬間、直前の版が全ユーザーの手元の版になる）: (a) `cache_byte_breakdown_in` のチェーン（`INDEX_WIRE_SINCE` の doc）、(b) `load_cache_in_reports_the_version_it_actually_read` の分岐、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは分岐選択を通らない）。分岐の数を散文に書かない
 9. golden bytes（`index_cache_on_disk_format_is_stable`）を更新する
 
 データの意味だけを変えて版を上げるときも、8 と 9 は要る。
@@ -100,12 +100,12 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 ## index.bin 書き込みの排他（INDEX_WRITE_LOCK）
 
 - **`index.bin` を書く新しい経路は必ず `with_index_write_lock` を経由させる**（固定 tmp 名の置換ゆえ単一書き手が前提）。`save_cache_sorted` 自身はロックを取らない
-- 形式昇格の枝は読みがロックの外にあり、そのウィンドウは起動順序だけで閉じている（`INDEX_WRITE_LOCK` の doc）。ロード後に走りうる書き手を足すときは見直す
+- 形式昇格の分岐は読みがロックの外にあり、そのウィンドウは起動順序だけで閉じている（`INDEX_WRITE_LOCK` の doc）。ロード後に走りうる書き手を足すときは見直す
 
 ## indexer.rs の索引更新の契機
 
-- 更新の契機と `index.bin` を書く契機は別である（`indexer/cache.rs` の `//!`）。旧版の書き戻しは `load_cache_in` の旧版枝（`upgrade_legacy_cache_in`）に置く
-- **ツリーを直に読む版（`entries` を持たない版）の枝で、ツリーから作り直して昇格させない**——ロード直後に全エントリの複製が戻る（却下した案は `docs/adr/ADR-index-v7-cache-miss.md`）
+- 更新の契機と `index.bin` を書く契機は別である（`indexer/cache.rs` の `//!`）。旧版の書き戻しは `load_cache_in` の旧版の分岐（`upgrade_legacy_cache_in`）に置く
+- **ツリーを直に読む版（`entries` を持たない版）の分岐で、ツリーから作り直して昇格させない**——ロード直後に全エントリの複製が戻る（却下した案は `docs/adr/ADR-index-v7-cache-miss.md`）
 
 ## `scan_all` の重複排除
 

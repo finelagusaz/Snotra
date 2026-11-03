@@ -70,7 +70,7 @@ const ghPrCreate = (rest = "") => `${GH} ${PR_CREATE}${rest}`;
 function git(cwd, args) {
   return spawnSync("git", args, { cwd, encoding: "utf8" }).stdout.trim();
 }
-/** feat/x ブランチの repo と、HEAD を名乗る green の要約を作る（#1299 の要約ゲートを通る repo） */
+/** feat/x ブランチの repo と、HEAD を示す green の要約を作る（#1299 の要約ゲートを通る repo） */
 function verifiedRepo() {
   const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-verify-"));
   git(dir, ["init", "-q", "-b", "main"]);
@@ -181,7 +181,7 @@ describe("GIT_PUSH", () => {
     expect(GIT_PUSH.test("git push -u origin HEAD")).toBe(true);
   });
 
-  // `git -C <tree> push` は別ツリーへ push する。安全な鎖と見なしてはならない
+  // `git -C <tree> push` は別ツリーへ push する。安全なチェーンと見なしてはならない
   it("`git -C <tree> push` は検出しない（fail-closed）", () => {
     expect(GIT_PUSH.test("git -C /x push")).toBe(false);
   });
@@ -198,7 +198,7 @@ describe("hasSafeChain — `gh pr create` の前に `git push` が `&&` で走�
   });
 
   // 原案が fail-open だった箇所: `;` は push 失敗時も gh を走らせる
-  it("`&&` と `;` が混ざる鎖は安全でない（fail-open の回帰）", () => {
+  it("`&&` と `;` が混ざるチェーンは安全でない（fail-open の回帰）", () => {
     expect(hasSafeChain(`git push -u origin HEAD && npm test; ${ghPrCreate()}`)).toBe(false);
     expect(hasSafeChain(`git push origin x && echo hi; ${ghPrCreate()}`)).toBe(false);
   });
@@ -219,12 +219,12 @@ describe("hasSafeChain — `gh pr create` の前に `git push` が `&&` で走�
     expect(hasSafeChain(`${ghPrCreate()} && git push`)).toBe(false);
   });
 
-  it("`git -C <tree> push` の鎖は安全でない", () => {
+  it("`git -C <tree> push` のチェーンは安全でない", () => {
     expect(hasSafeChain(`git -C /x push && ${ghPrCreate()}`)).toBe(false);
   });
 
   // `&&` が gh pr create より後ろにしか無い場合、誤って安全と判定してはならない
-  it("引数中の `&&` を鎖と誤認しない", () => {
+  it("引数中の `&&` をチェーンと誤認しない", () => {
     expect(hasSafeChain(`${ghPrCreate(' --body "a && b"')}`)).toBe(false);
   });
 
@@ -232,8 +232,8 @@ describe("hasSafeChain — `gh pr create` の前に `git push` が `&&` で走�
     expect(hasSafeChain("git push -u origin HEAD")).toBe(false);
   });
 
-  // 動詞の名前ではなく意味を見る。--dry-run は何も送信しないので鎖は安全でない
-  it.each([["--dry-run"], ["-n"]])("`git push %s` の鎖は安全でない", (flag) => {
+  // 動詞の名前ではなく意味を見る。--dry-run は何も送信しないのでチェーンは安全でない
+  it.each([["--dry-run"], ["-n"]])("`git push %s` のチェーンは安全でない", (flag) => {
     expect(hasSafeChain(`git push ${flag} && ${ghPrCreate()}`)).toBe(false);
     expect(hasSafeChain(`git push ${flag} origin HEAD && ${ghPrCreate()}`)).toBe(false);
   });
@@ -286,7 +286,7 @@ describe("decide — 分岐表", () => {
     expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: UNKNOWN, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
-  // D3: upstream 未設定でも、鎖が push を先に走らせるなら allow
+  // D3: upstream 未設定でも、チェーンが push を先に走らせるなら allow
   it("`git push … && gh pr create` は upstream 未設定でも allow", () => {
     const spy = vi.fn(NO_UPSTREAM);
     expect(decide(bash(`git push -u origin HEAD && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN }).action).toBe("allow");
@@ -298,11 +298,11 @@ describe("decide — 分岐表", () => {
     expect(decide(pwsh(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN }).action).toBe("block");
   });
 
-  it("PowerShell tool でも安全な鎖は allow", () => {
+  it("PowerShell tool でも安全なチェーンは allow", () => {
     expect(decide(pwsh(`git push -u origin HEAD && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN }).action).toBe("allow");
   });
 
-  it("cwd を変える鎖は block（どのリポジトリか判定不能）", () => {
+  it("cwd を変えるチェーンは block（どのリポジトリか判定不能）", () => {
     expect(decide(bash(`cd ../other && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("block");
     expect(decide(pwsh(`Set-Location ../other && ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("block");
   });
@@ -329,7 +329,7 @@ describe("countUnchecked — 未チェック行の数え上げ", () => {
 });
 
 describe("decide — plan.md ゲート", () => {
-  it("未チェック項目が残っていれば block（push の鎖が安全でも）", () => {
+  it("未チェック項目が残っていれば block（push のチェーンが安全でも）", () => {
     const cmd = `git push -u origin HEAD && ${ghPrCreate()}`;
     const r = decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_OPEN(3) });
     expect(r.action).toBe("block");
@@ -357,7 +357,7 @@ describe("decide — plan.md ゲート", () => {
 describe("decide — ツールの要約ゲート（#1299）", () => {
   const safe = `git push -u origin HEAD && ${ghPrCreate()}`;
 
-  it("照合が通らなければ block（push の鎖が安全でも）", () => {
+  it("照合が通らなければ block（push のチェーンが安全でも）", () => {
     const r = decide(bash(safe), { readVerifyState: NOT_VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN });
     expect(r.action).toBe("block");
     expect(r.reason).toContain("workspace/ の外");
@@ -368,7 +368,7 @@ describe("decide — ツールの要約ゲート（#1299）", () => {
       "block",
     );
   });
-  it("reader が渡されなければ block（main() の配線忘れを allow へ倒さない）", () => {
+  it("reader が渡されなければ block（main() の配線忘れを allow にしない）", () => {
     const r = decide(bash(safe), { readGitState: CLEAN, readPlanState: NO_PLAN });
     expect(r.action).toBe("block");
     expect(r.reason).toContain("readVerifyState");
@@ -412,7 +412,7 @@ describe("judgeSummary — 要約の中身の判定", () => {
 describe("readVerifyState — 本物の git と要約ファイル", () => {
   const read = (dir) => readVerifyState(dir, summaryPathFor);
 
-  it("要約が HEAD を名乗れば ok", () => {
+  it("要約が HEAD を示せば ok", () => {
     expect(read(verifiedRepo())).toEqual({ ok: true });
   });
   it("workspace/ の中だけのコミットが載っても ok（`/implement` Step 4 の撤去の形）", () => {
@@ -578,7 +578,7 @@ describe("readPlanState — 実ファイル読み取り", () => {
 });
 
 describe("readGitState", () => {
-  it("git リポジトリでないディレクトリは upstream=null（block へ倒す）", () => {
+  it("git リポジトリでないディレクトリは upstream=null（block にする）", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-"));
     const state = readGitState(dir);
     expect(state.ok).toBe(true);
@@ -629,7 +629,7 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("tool_name=PowerShell");
   });
 
-  it("安全な鎖は upstream を読まずに exit 0（要約が HEAD を名乗る repo で。upstream は未設定）", () => {
+  it("安全なチェーンは upstream を読まずに exit 0（要約が HEAD を示す repo で。upstream は未設定）", () => {
     const dir = verifiedRepo();
     const res = runHook(
       {
@@ -643,7 +643,7 @@ describe("プロセス起動 — exit code の契約", () => {
   });
 
   // #1299: main() が本物の reader を配線していることを、実行で固定する（注入テストでは測れない）
-  it("要約の sha のあとに workspace/ の外の変更があれば、安全な鎖でも exit 2", () => {
+  it("要約の sha のあとに workspace/ の外の変更があれば、安全なチェーンでも exit 2", () => {
     const dir = verifiedRepo();
     commit(dir, "src/y.rs", "fn b() {}\n");
     const res = runHook(
@@ -654,7 +654,7 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("src/y.rs");
   });
 
-  it("要約が無い repo では、安全な鎖でも exit 2 で復帰手順を出す", () => {
+  it("要約が無い repo では、安全なチェーンでも exit 2 で復帰手順を出す", () => {
     const dir = verifiedRepo();
     rmSync(summaryPathFor(dir, "feat/x"));
     const res = runHook(
@@ -665,7 +665,7 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("verify:tree");
   });
 
-  it("未チェックの plan.md がある repo での gh pr create は exit 2（安全な鎖でも）", () => {
+  it("未チェックの plan.md がある repo での gh pr create は exit 2（安全なチェーンでも）", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-e2e-plan-"));
     mkdirSync(path.join(dir, "workspace"));
     writeFileSync(path.join(dir, "workspace", "plan.md"), "- [ ] 残タスク\n", "utf8");
@@ -677,7 +677,7 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("plan.md");
   });
 
-  it("全項目チェック済みの plan.md なら安全な鎖は exit 0（要約が HEAD を名乗る repo で）", () => {
+  it("全項目チェック済みの plan.md なら安全なチェーンは exit 0（要約が HEAD を示す repo で）", () => {
     const dir = verifiedRepo();
     mkdirSync(path.join(dir, "workspace"));
     writeFileSync(path.join(dir, "workspace", "plan.md"), "- [x] 済\n", "utf8");
@@ -752,7 +752,7 @@ describe("fail-closed の骨格カナリア", () => {
     expect(code).not.toMatch(/process\.exit\(/);
   });
 
-  // #768 I5: platform 省略時は Windows 専用判定が発火しない。その倒し方が安全なのは
+  // #768 I5: platform 省略時は Windows 専用判定が発火しない。その寄せ方が安全なのは
   // main() が必ず process.platform を渡すからである。この 1 行が抜けると Windows で
   // 3 判定が沈黙で外れる——振る舞いテストからは「非 Windows での正常動作」と見分けがつかない。
   it("main() は decide へ process.platform を渡す", () => {
@@ -985,7 +985,7 @@ describe("judgeCommandShape — platform ゲート", () => {
     expect(judgeCommandShape(cmd, "linux")).toBeNull();
   });
 
-  // I5: platform 省略は「判定不能」ではなく「射程外」。block へ倒すと非 Windows で false block になる。
+  // I5: platform 省略は「判定不能」ではなく「射程外」。block にすると非 Windows で false block になる。
   // この状態へ至る経路は「呼び出し側の渡し忘れ」1 本だけで、下のソースカナリアと e2e が配線を固定する。
   it.each(WIN_ONLY)("%s は platform 省略時 allow（I5）", (_label, cmd) => {
     expect(judgeCommandShape(cmd)).toBeNull();
@@ -1128,7 +1128,7 @@ describe("5 述語は全域関数である（I2・no-throw）", () => {
   // code-reviewer H1 の回帰。`FLAG` の `-{1,2}\S+` は `--x` の分割が 2 通りあり、
   // 全体が失敗するとき 2^n 通りを探索した（`git --f0=v0 … --f23=v23 x` の 225 字で 747ms・実測）。
   // **これは throw でも hang でもなく「遅い」という形の fail-open** である——hook が timeout すると
-  // exit≠2 = 非ブロッキングになり、コマンドはそのまま実行される。時間でしか捕まらないので時間で縛る。
+  // exit≠2 = 非ブロッキングになり、コマンドはそのまま実行される。時間でしか検出されないので時間で縛る。
   it("`git` の直後にフラグが並ぶ入力が指数爆発しない", () => {
     const flags = Array.from({ length: 2000 }, (_, i) => `--f${i}=v${i}`).join(" ");
     const cmd = `git ${flags} x`;

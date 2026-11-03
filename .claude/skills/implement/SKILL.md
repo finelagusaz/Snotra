@@ -81,7 +81,7 @@ allowed-tools:
 
 **カテゴリ A〜F の検証もレビューも、主エージェントの作業ツリーでは行わない。** コミットを 1 つ作り、その sha に対して、**権威ある A〜F はツール（`npm run verify:tree`）がツールの worktree で、レビューと変異注入は worktree のサブエージェントが自分の worktree で**行う。
 
-**対象を不変オブジェクトにすることが、この形の要点である。** 委譲した検査が対象を読む時刻は制御できない（ルート `CLAUDE.md`「サブエージェント委譲と worktree」）ので、**動かないものを渡す**。**検証とレビューを別の worktree で走らせても 2 つの報告が別の版へ向かないのは、ツールの要約と委譲先の `align` の出力が、どちらも sha を機械可読で名乗るからである。** 動く対象を渡していた頃の経緯は `docs/adr/ADR-implement-verification-delegated-to-worktree.md`、委譲先をツールの worktree へ入れない理由と却下した形は `docs/adr/ADR-implement-verification-tool-tree.md` が持つ。
+**対象を不変オブジェクトにすることが、この形の要点である。** 委譲した検査が対象を読む時刻は制御できない（ルート `CLAUDE.md`「サブエージェント委譲と worktree」）ので、**動かないものを渡す**。**検証とレビューを別の worktree で走らせても 2 つの報告が別の版へ向かないのは、ツールの要約と委譲先の `align` の出力が、どちらも sha を機械可読で示すからである。** 動く対象を渡していた頃の経緯は `docs/adr/ADR-implement-verification-delegated-to-worktree.md`、委譲先をツールの worktree へ入れない理由と却下した形は `docs/adr/ADR-implement-verification-tool-tree.md` が持つ。
 
 **主エージェントがビルドを回さなくなるわけではない**——編集中の速い確認（変更した crate の fmt / clippy / test）は主ツリーで手で回す。ツールが回すのは**権威ある一式**である（`cargo doc` と `npm run governance:check` を含む）。
 
@@ -119,7 +119,7 @@ allowed-tools:
 
 ### 3c. 報告を受けてから
 
-**ツールの要約と委譲の報告が両方届くまで、作業ツリーに触らず HEAD を進めない。** どちらもアンカーの sha を名乗るので、届く前に HEAD を進めると「報告の sha == HEAD」が崩れ、その指摘がまだ生きているかの照合が毎回入る（`docs/adr/ADR-implement-verification-delegated-to-worktree.md`）。
+**ツールの要約と委譲の報告が両方届くまで、作業ツリーに触らず HEAD を進めない。** どちらもアンカーの sha を示すので、届く前に HEAD を進めると「報告の sha == HEAD」が崩れ、その指摘がまだ生きているかの照合が毎回入る（`docs/adr/ADR-implement-verification-delegated-to-worktree.md`）。
 
 - **ツールの判定の内訳を読む**（標準出力の JSON が、要約ファイルの `status`・`categories_run`・各コマンドの `exit`・`warnings` をそのまま載せる。ファイルのパスは同じ JSON の `summary`）。`status` と各コマンドの `exit` だけでなく、**`categories_run` とコマンドの一覧を、変更が触れたコードパスと突き合わせる**——緑は、走ったコマンドが変更を見ていることまでは示さない。`warnings` があれば根拠欄に書く
 - **並走したラウンドでツールが赤なら、委譲の報告が届いたあとに同じ `run` を単独で 1 回だけ回し直してから確定する**（委譲先との CPU 競合で timeout の赤が出うる）
@@ -161,7 +161,7 @@ allowed-tools:
 
 ### 検証（カテゴリ A〜F 全件）
 
-| カテゴリ | 実行 / 該当なし / 実行不能 | 根拠（実行ならツールの要約の exit code と、要約が名乗る sha） |
+| カテゴリ | 実行 / 該当なし / 実行不能 | 根拠（実行ならツールの要約の exit code と、要約が示す sha） |
 |---|---|---|
 
 ### レビュー（3a の check スキル全件 + 3b の委譲）

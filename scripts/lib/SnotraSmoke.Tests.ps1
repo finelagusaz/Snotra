@@ -202,7 +202,7 @@ Describe 'Resolve-SnotraCargoExecutable' {
     }
 
     It '相対値の CARGO_TARGET_DIR でも RepositoryRoot を起点に解決する（cwd に依存しない・#1179）' {
-        # 上の It は**絶対値**を渡すので cwd の影響を受けない。ここが守るのは相対値の枝である
+        # 上の It は**絶対値**を渡すので cwd の影響を受けない。ここが守るのは相対値の分岐である
         # ——cargo は相対の CARGO_TARGET_DIR を manifest ではなく**自プロセスの cwd** から解決するため、
         # cwd を固定しないと「worktree を指したつもりでメイン作業コピーの target」を返す（#1179 実測）。
         $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -260,7 +260,7 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # 復活する。ハーネス自身を起動して確かめるには本体のビルドと実起動が要るので、ここは
     # **ソースの形で縛る**。
     #
-    # **守るのは「既定の枝が導出を通ること」であって、`$ExePath` の最終値ではない。** 入口
+    # **守るのは「既定の分岐が導出を通ること」であって、`$ExePath` の最終値ではない。** 入口
     # （`param()` の既定が空リテラル）・導出（`$PSScriptRoot` 起点）・使用点（それを渡す）の 3 点を
     # それぞれ 1 つずつ見る。3 点とも独立に必要であることは、片方だけ壊す変異が素通りすることで測った。
     #
@@ -330,7 +330,7 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
         @{ Harnesses = $exePathHarnesses; Mentions = $exePathMentions }
     ) {
         $allowed = @{
-            'run-pester.ps1' = '既定を持たない明示 override 専用（既定の枝が無いので導出する対象が無い）'
+            'run-pester.ps1' = '既定を持たない明示 override 専用（既定の分岐が無いので導出する対象が無い）'
         }
         $unexplained = @($Mentions | Where-Object { $_ -notin $Harnesses -and -not $allowed.ContainsKey($_) })
         $unexplained | Should -BeNullOrEmpty -Because "既定つきの宣言として母集団に入らないのに `$ExePath を語るスクリプトは、宣言の書き方が導出から漏れたか、直書きの別経路を持つ（許可するなら理由を書く）"
@@ -479,7 +479,7 @@ Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
     It '本体が終了していれば予算を待たずに諦める（AbortIfExited）' {
         # **通った実行では発火しないので、ここでしか観測されない。** 諦める条件を scriptblock で
         # 受け取っていた版は、Pester の `It` の中で `.GetNewClosure()` が親スコープの変数を
-        # 捕まえられず、**発火しないまま予算いっぱい待つ**退化が黙って入っていた（実測: 予算
+        # 検出できず、**発火しないまま予算いっぱい待つ**退化が黙って入っていた（実測: 予算
         # 4000ms に対し 4031ms）。プロセスを型付きで受け取る形はその間違いを書けなくする。
         $path = New-SnotraTestTraceFile -Path (Join-Path $TestDrive 'never.log') `
             -Json @('{"seq":1,"event":"other","data":{}}')
@@ -624,7 +624,7 @@ Describe 'ConvertFrom-SnotraWtsInfoEx（#866 ロック検出の解釈）' {
             Should -Throw '*Level が 1 ではありません*'
     }
 
-    It 'LOCK/UNLOCK 以外の SessionFlags を非ロックへ倒さない（未知値は判定不能）' {
+    It 'LOCK/UNLOCK 以外の SessionFlags を非ロックにしない（未知値は判定不能）' {
         { ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -SessionFlags -1) -ExpectedSessionId 7 } |
             Should -Throw '*ロック状態を判定できません*'
     }
@@ -635,7 +635,7 @@ Describe 'ConvertFrom-SnotraWtsInfoEx（#866 ロック検出の解釈）' {
     }
 }
 
-Describe 'Assert-SnotraSessionUnlocked（#866 倒す向きの非対称）' {
+Describe 'Assert-SnotraSessionUnlocked（#866 寄せる向きの非対称）' {
     It 'ロックと判定できたら止める' {
         Mock -ModuleName SnotraSmoke Get-SnotraSessionLockState { [pscustomobject]@{ Locked = $true } }
         { Assert-SnotraSessionUnlocked -Operation 'ウィンドウのキャプチャ' } | Should -Throw '*画面がロックされている*'

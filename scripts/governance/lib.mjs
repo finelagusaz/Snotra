@@ -277,7 +277,7 @@ export function linesOfComments(text, file, family = commentFamilyOf(file)) {
   //
   // 沈黙の実害は測ってある（`G-folded-code-spans` の `.rs` の腕で `"js"` → `"hash"`）:
   // 走査行 12364 → 1500・**照合スパン 7991 → 0**、それでも `governance:check` は
-  // **exit 0 のまま**で evidence の数字が減るだけだった。**この変異を捕まえたのは上記のテストであって、
+  // **exit 0 のまま**で evidence の数字が減るだけだった。**この変異を検出したのは上記のテストであって、
   // このガードではない。**
   if (!FAMILIES.has(family)) {
     throw new Error(`linesOfComments: 未知のコメント記法族（受け取った値: ${family} / 対象: ${file}）`);
@@ -338,14 +338,14 @@ export function refScanLines(text, file, findings) {
  * 「宣言（`ending`）と実際の文書構造の食い違い」だけであり、それ以上ではない。
  *
  * `ending` は節の位置の宣言で、**双方向に検算する**——`"heading"` は終端が無ければ赤、
- * `"eof"` は終端が在れば赤。片側だけにすると、宣言そのものが誰も検算しない写しとして腐り、
+ * `"eof"` は終端が在れば赤。片側だけにすると、宣言そのものが誰も検算しない写しとして古くなり、
  * 次に読む人はそれを信じる。
  *
  * 赤にするのは 4 条件（いずれも `body: null` を返す）:
  *   ① アンカーが 0 件——見出しの改題・消滅で母集団が空になる
  *   ② アンカーが 2 件以上——先に現れた方を掴み、本物の節が照合されないまま緑になる
  *   ③ `ending: "heading"` なのに終端が無い——節が EOF まで伸びる
- *   ④ `ending: "eof"` なのに終端が在る——宣言が腐った
+ *   ④ `ending: "eof"` なのに終端が在る——宣言が古くなった
  *
  * 行分割は `\r?\n` である。文書全文へ `^…$` を当てる形（旧 2 形）は CRLF チェックアウトで
  * `$` が `\r` の手前に当たらず節を見失う——CI は ubuntu ＝ LF、このリポジトリの `.gitattributes` が
@@ -373,7 +373,7 @@ export function refScanLines(text, file, findings) {
  *   文書の欠陥ではない——`registry.mjs` が id 不一致を throw で拒むのと同じ扱い）
  * @param {{file: string, ending: "heading"|"eof", by: string}} opts file は finding の帰属先（＝対象文書）、
  *   by は `ending` を宣言している検査の id。**by は必須である**——finding の `file` が指すのは文書であって
- *   宣言の在り処ではないので、名乗らないと文書を直した人が「直す先はこの検査の `ending`」へ辿り着けない
+ *   宣言の在り処ではないので、示さないと文書を直した人が「直す先はこの検査の `ending`」へ辿り着けない
  * @returns {{ body: string|null, findings: object[] }} body が null なら findings が非空
  */
 export function sectionOf(text, headingRe, { file, ending, by }) {
@@ -421,7 +421,7 @@ export function sectionOf(text, headingRe, { file, ending, by }) {
   if (ending === "eof" && end >= 0) {
     return {
       body: null,
-      findings: [finding(file, start + end + 2, `\`ending: "eof"\` の宣言に対し、同レベル以上の見出しが後方に在る（宣言が腐った。節はこの行で終端している）: ${rest[end]}${at}`)],
+      findings: [finding(file, start + end + 2, `\`ending: "eof"\` の宣言に対し、同レベル以上の見出しが後方に在る（宣言が古くなった。節はこの行で終端している）: ${rest[end]}${at}`)],
     };
   }
   return { body: rest.slice(0, end < 0 ? rest.length : end).join("\n"), findings: [] };
@@ -440,7 +440,7 @@ export function sectionOf(text, headingRe, { file, ending, by }) {
  *  **exit 1 は「該当なし」であって失敗ではない**（失敗は 128）。git が無い・repo でない場合、
  *  および**候補のいずれか 1 件でもリポジトリ外パス（絶対パス・`..` でツリー外へ出る相対パス）で
  *  status が 128 になった場合**は空集合を返す——後者は batch 単位の判定ゆえ、1 件の汚染が
- *  同じ回の他の候補の免除も道連れに落とす（向きは赤側＝安全。何も免除しない側へ倒す）。
+ *  同じ回の他の候補の免除も道連れに落とす（向きは赤側＝安全。何も免除しない側を選ぶ）。
  *  **決定的性**: 同一チェックアウト・同一機体では再現する（ネットワーク・時刻・環境変数に依らない）。
  *  機体をまたぐ決定性は無い（上記のとおり `.git/info/exclude` 等が機体ごとに違う）。 */
 export function gitIgnoredPaths(paths, root = process.cwd()) {
@@ -520,7 +520,7 @@ export function resolveRefTarget(snapshot, doc, target) {
 
 /** ルート `Cargo.toml` の `[workspace] members`（ディレクトリ相対パス）を導出する唯一の口。
  *  返り値 `{ members, error }` の `error` は**母集団の欠落**（fail-closed）——読めない・`[workspace]` 節が無い・
- *  `members` 行が無い・0 件・glob 要素。glob（`crates/*`）は展開器を持たないので「読めなかった」側へ倒す。
+ *  `members` 行が無い・0 件・glob 要素。glob（`crates/*`）は展開器を持たないので「読めなかった」側を選ぶ。
  *  `[workspace]` セクションへスコープするのは、`default-members = [...]` を足したときに
  *  全文正規表現が**先に現れた方**を拾うため。 */
 export function workspaceMembers(snapshot) {
@@ -553,7 +553,7 @@ export function workspaceMembers(snapshot) {
  *  なお crate 名の正規表現は `MODULE_INDEX_CRATES` と同じ一覧を独立に持つ 2 本目であり、
  *  真の母集団はどちらもルート `Cargo.toml` の `[workspace] members` である。**crate を増やしたときの
  *  この正規表現の更新漏れは `governance-check.test.mjs` の母集団カナリア（#701）が `npm test` で
- *  捕まえる**（詳細は `MODULE_INDEX_CRATES` の doc）——**カナリアが見ないのはルート文書の配列の側**
+ *  検出する**（詳細は `MODULE_INDEX_CRATES` の doc）——**カナリアが見ないのはルート文書の配列の側**
  *  であり、そこへの足し忘れは今も沈黙する。 */
 export function governanceDocs(snapshot) {
   return snapshot.files.filter(
@@ -585,7 +585,7 @@ export function crateSourceFiles(snapshot) {
 
 /**
  * G-heading-refs / G-near-heading-refs の走査元のうち **md の腕**。見出し参照はガバナンス文書の外
- * （`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、実際にそこで腐っていた
+ * （`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、実際にそこで古くなっていた
  * （`PERFORMANCE.md` が src-tauri の WebView2 期の節を指したまま残っていた。**消えた節の名前は
  * 正準形で書かない**ので散文にしてある——書けばこの検査が自分のコメントを赤にする）ため母集団を広く取る。
  * 除外は履歴資料（`docs/superpowers/`）・作業バッファ（`workspace/`・`/implement` が削除する）・
@@ -613,7 +613,7 @@ export function headingRefDocs(snapshot) {
  *
  * **Rust のテストコードを外さない。** `adrCitationDocs` が `*.test.mjs` を外すのは「フィクスチャが
  * 赤経路を測るため意図的に実在しない名前を持つ」からであって、テストだからではない。Rust の
- * テストコメントに書かれた規範への参照は本物であり、腐れば同じ害になる——#925 が見つけた腐り 1 件は
+ * テストコメントに書かれた規範への参照は本物であり、古くなれば同じ害になる——#925 が見つけた陳腐化 1 件は
  * 現に `#[cfg(test)]` の内側にあった（`snotra-settings/src/tabs/visual.rs`）。ゆえに、
  * この走査元へ **`#[cfg(test)]` 以降を落とす変換を入れてはならない**——テストコードを外さないのは
  * 意図であり、`lib.test.mjs` の種 3（`#[cfg(test)]` の内側のコメントも見る）が**この変換を**固定する
@@ -622,7 +622,7 @@ export function headingRefDocs(snapshot) {
  * `#[cfg(test)]` の内側の生きた正準形が黙って照合から外れる。
  *
  * **`.mjs` / `.ps1` はここではなく `headingRefCommentDocs` が持つ**（#1138）。#925 はこれらを
- * 却下したが、その裁定の実測は `.mjs` だけを見ており、`.ps1` / `.psm1` には本物の腐りが残っていた。
+ * 却下したが、その裁定の実測は `.mjs` だけを見ており、`.ps1` / `.psm1` には本物の陳腐化が残っていた。
  * 却下の理由（フィクスチャと検出器自身のコメントが赤になる）は、走査をコメント行へ限る
  * 意味のマッピングで解ける——詳細は `headingRefCommentDocs` と `linesOfComments`。
  *
@@ -674,7 +674,7 @@ export const allHeadingRefDocs = (snapshot) => [
  *  **静的リテラルであること自体が fail-closed である**——読めなければ `scanStaleIdentifiers` が
  *  「母集団の欠落」を出すので、グロブ由来の母集団（`staleIdentifierGuideDocs`）と違って
  *  `runAll` 側の 0 件検知を別に置く必要がない。
- *  **保証は狭い**——「意図の SSOT」級の文書を新設してここへ足さなければ、その文書の腐り識別子は
+ *  **保証は狭い**——「意図の SSOT」級の文書を新設してここへ足さなければ、その文書の古くなった識別子は
  *  一度も照合されない（2026-08-09 実測: ルート直下に新設した文書へ実在しない識別子を 3 形置いても
  *  照合件数が動かなかった・#1008）。 */
 // `export` を持たない——#1094 で facade からの import が消え、外部の消費者が 0 になった。

@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 # #671 PR A′ は `egui_results:hide` が出たのにウィンドウが残った回帰で、presence を見る smoke は
 # 緑のまま通した。
 #
-# | # | 判定 | 何を捕まえるか |
+# | # | 判定 | 何を検出するか |
 # |---|---|---|
 # | H1 | hidden 区間に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
 # | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「件数 0 ⇒ hide」の契約違反（`layout::present_results` の連言②） |
@@ -388,7 +388,7 @@ function Invoke-SnotraTraceJudgement {
                 #
                 # **射程は狭い。健全な実装では H7 は構造的に発火しえない**——`SearchDispatch::accept`
                 # は成功時に pending を take するので、`egui_search:settled` が出る時点で
-                # `pending_seq` は必ず 0 になる。ゆえに H7 が捕まえるのは「accept の照合を外す」
+                # `pending_seq` は必ず 0 になる。ゆえに H7 が検出するのは「accept の照合を外す」
                 # 形の回帰だけであり、常時 PASS が正常な姿である（故障注入で発火を実測済み・#1004 PR 2）。
                 #
                 # **その発火のさせ方を書いておく**——#1004 では 2 度失敗した。coalescing を外す変異は
@@ -464,7 +464,7 @@ function Invoke-SnotraTraceJudgement {
             if ($failed.ContainsKey($key)) {
                 $row[$invariant] = 'FAIL'
             } elseif ($passCount.ContainsKey($key) -and $passCount[$key] -gt 0) {
-                # **D7: 捨てた行があるなら PASS を名乗らない。** 決定的な違反が捨てられた
+                # **D7: 捨てた行があるなら PASS を示さない。** 決定的な違反が捨てられた
                 # 行に載っていた可能性が残る。FAIL は落とさない（違反は確定している）。
                 if ($effectiveDropped -gt 0) {
                     $row[$invariant] = 'SKIP'
@@ -485,7 +485,7 @@ function Invoke-SnotraTraceJudgement {
     }
 
     # **`Overall` だけを読むと SKIP の山が PASS に覆われる**（code-review High-1）——1 区間でも
-    # PASS なら PASS を名乗るため。`Counts` を併せて返し、呼び出し側が「何件を実際に判定したか」
+    # PASS なら PASS を示すため。`Counts` を併せて返し、呼び出し側が「何件を実際に判定したか」
     # を出せるようにする（`Overall` は exit code 用の要約であって網羅の主張ではない）。
     # **`Overall` は `Counts` の要約である**——先に数え、そこから導く。`Overall` だけを読むと
     # 1 区間の PASS が SKIP の山を覆うので、両方を返して呼び出し側に件数を出させる
@@ -612,7 +612,7 @@ trace 側の「赤」の件数を返す。0 なら trace は合否を下げな�
 
 **trace の不在（`-NoLaunch` で起動した・まだ 1 行も出ていない）は赤ではない。**
 `ReadError` が無いまま `Verdict` が `$null` の場合がそれで、0 を返す——ここを赤に
-倒すと、trace を出さない正当な使い方が常に失敗する。
+すると、trace を出さない正当な使い方が常に失敗する。
 #>
 function Get-SnotraTraceFailureCount {
     [CmdletBinding()]

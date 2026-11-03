@@ -115,7 +115,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/rust-analyzer-lsp@claude-plugins-official/);
   });
 
-  // 足 4 は枝が 2 本ある。片方（公式を戻す）だけ測ると、判定が真偽を取り違えていても——
+  // 足 4 は分岐が 2 本ある。片方（公式を戻す）だけ測ると、判定が真偽を取り違えていても——
   // つまり「自分の plugin が false・公式が true」を要求していても——検査は緑になりうる。
   it("足 4b — 自分の plugin が false になると赤", () => {
     const v = violationsAfter((dir) => {
@@ -201,7 +201,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/name が extraKnownMarketplaces のキーと一致しない/);
   });
 
-  // 足 7 も枝が 2 本ある（marketplace 名と plugin 名）。plugin 名のずれは entry からも
+  // 足 7 も分岐が 2 本ある（marketplace 名と plugin 名）。plugin 名のずれは entry からも
   // `enabledPlugins` のキー前半からも外れるので、同じく沈黙して load されない。
   it("足 7b — plugin.json の name が entry とずれると赤", () => {
     const v = violationsAfter((dir) => {
@@ -297,7 +297,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/rust-analyzer\.toml に checkOnSave/);
   });
 
-  // TOML はリテラル文字列もキーに使える。`"?` だけでは枝の片方しか閉じない。
+  // TOML はリテラル文字列もキーに使える。`"?` だけでは分岐の片方しか閉じない。
   it("足 8b2 — ratoml が単一引用のキーで書いても赤", () => {
     const v = violationsAfter((dir) => {
       fs.appendFileSync(path.join(dir, "rust-analyzer.toml"), "\n'checkOnSave' = false\n");

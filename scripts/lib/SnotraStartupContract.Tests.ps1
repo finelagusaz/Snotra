@@ -69,7 +69,7 @@ Describe '起動計器の契約検査（#1009）' {
             Test-Payload -Data $data -EventName 'startup:failed' | Should -HaveCount 0
         }
 
-        It 'first-run 枝（index_load と unattributed が null）は破れ 0 件' {
+        It 'first-run 分岐（index_load と unattributed が null）は破れ 0 件' {
             $data = New-StartupPayload @{
                 first_run                  = $true
                 index_load_ns              = $null
@@ -107,7 +107,7 @@ Describe '起動計器の契約検査（#1009）' {
         }
 
         It 'null であるべき区間に値があったら落ちる（逆向き）' {
-            # **スキップした区間に 0 を書く誤りを捕まえる向き。** これが無いと `null` と `0` を
+            # **スキップした区間に 0 を書く誤りを検出する向き。** これが無いと `null` と `0` を
             # 区別する設計の要が守られない。
             $data = New-StartupPayload @{ first_run = $true }
             (Test-Payload -Data $data) -join ' ' | Should -Match 'null であるべき区間に値がある: index_load'
@@ -175,7 +175,7 @@ Describe '起動計器の契約検査（#1009）' {
             (Test-Payload -Data $data) -join ' ' | Should -Match 'index_load_unattributed_ms が負'
         }
 
-        It 'null は正常（first-run 枝では LoadOrScanStats 自体が無い）' {
+        It 'null は正常（first-run 分岐では LoadOrScanStats 自体が無い）' {
             $data = New-StartupPayload @{
                 first_run                  = $true
                 index_load_ns              = $null

@@ -32,7 +32,7 @@ param(
 #    という #671 PR A′ の回帰を presence を見る smoke は緑のまま通した。**合否ではない**。
 #    目視が「駄目だった」ときに次の一手を選ぶための材料である
 # 2. **不変条件（合否）** — H1 / H4 / H5。「起きてはならないことが起きていないか」を見るので
-#    合否を名乗れる。判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測済み）
+#    合否を示せる。判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測済み）
 #
 # **項目の合否は目視と trace の両方が決める。** trace が緑でも目視が赤なら赤であり、逆も同じ。
 # **SKIP は「判定できなかった」であって合格ではない**——理由が記録に必ず併記される。
@@ -210,7 +210,7 @@ Write-Host ""
 $traceFile = $null
 $proc = $null
 if (-not $NoLaunch) {
-  # 導出は起動する枝の中だけで行う——`-NoLaunch` が cargo の有無で落ちないように。
+  # 導出は起動する分岐の中だけで行う——`-NoLaunch` が cargo の有無で落ちないように。
   if (-not $ExePath) { $ExePath = Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot -Profile debug }
   if (-not (Test-Path -LiteralPath $ExePath)) {
     throw "$ExePath がありません。先に `cargo build -p snotra` を実行してください（-NoLaunch で自分で起動することもできます）"
@@ -293,7 +293,7 @@ function Show-Trace([string[]]$patterns, [array]$sectionList) {
     Write-Host "  ※ 上の presence は診断であって合否ではない（#671 PR A′: hide の trace は出たのにウィンドウは残った）" -ForegroundColor DarkGray
   }
 
-  # 不変条件は presence と違い**合否を名乗れる**（#757）。ここまでの全区間で判定する。
+  # 不変条件は presence と違い**合否を示せる**（#757）。ここまでの全区間で判定する。
   $verdict = Get-TraceVerdict $snapshot $sectionList
   if ($null -eq $verdict) { return }
   Write-Host "  不変条件（ここまでの全区間）: $(Format-SnotraTraceCountSummary -Result $verdict -Compact)" -ForegroundColor DarkGray
@@ -393,7 +393,7 @@ $lines += if ($null -eq $recordedExe) { "| バイナリ | 未起動（-NoLaunch�
 if ($dirty) { $lines += "| 注意 | **working tree に未コミットの変更あり** |" }
 $lines += "| 目視 | PASS $pass / FAIL $fail / SKIP $skip / 未実施 $($notRun.Count) |"
 if ($null -ne $traceVerdict) {
-  # **`Overall` だけを書かない**（code-review High-1）——1 区間でも PASS なら PASS を名乗るため、
+  # **`Overall` だけを書かない**（code-review High-1）——1 区間でも PASS なら PASS を示すため、
   # 12 区間が SKIP でも「H4=PASS」に見える。実際に何件判定したかを併記する。
   $lines += "| trace 不変条件 | $(Format-SnotraTraceCountSummary -Result $traceVerdict) |"
   if ($traceVerdict.JudgeFailed) { $lines += "| 注意 | **判定器が例外で停止した**（SKIP は「調べられなかった」である） |" }
@@ -445,7 +445,7 @@ if ($null -ne $traceVerdict) {
 
 $lines += ""
 $lines += "**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: ``egui_results:hide`` は出たのにウィンドウは残った）。"
-$lines += "合否を名乗れるのは H1 / H4 / H5 の不変条件（``scripts/lib/SnotraTraceInvariants.psm1``）と目視だけである。"
+$lines += "合否を示せるのは H1 / H4 / H5 の不変条件（``scripts/lib/SnotraTraceInvariants.psm1``）と目視だけである。"
 
 Set-Content -Path $OutFile -Value ($lines -join "`n") -Encoding UTF8
 
@@ -475,7 +475,7 @@ if ($proc -and -not $proc.HasExited) {
 
 if ($PostToPr) {
   # 番号が無ければ、記録した `$branch`（スクリプトのコピーのブランチ）の PR へ投稿する。cwd のブランチではない。
-  # **ブランチが取れないときは gh の既定（cwd のブランチ）へ倒さない**——記録と別の PR へ黙って載る。
+  # **ブランチが取れないときは gh の既定（cwd のブランチ）にしない**——記録と別の PR へ黙って載る。
   $target = if ($Pr -gt 0) { "$Pr" } elseif ($branch -and $branch -ne 'HEAD') { $branch } else { $null }
   if (-not $target) {
     throw "投稿先の PR を決められません（ブランチ: '$branch'）。記録は $OutFile にあります。目視をやり直さずに投稿するなら gh pr comment <番号> --body-file `"$OutFile`" を打ってください（次回からは -Pr <番号> を渡せます）。"

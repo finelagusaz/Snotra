@@ -90,7 +90,7 @@ describe("G-workspace-lints checkWorkspaceLints（rustdoc deny の実効性・#7
   it("赤: members が 0 件", () => {
     expect(root(ROOT_OK.replace('members = ["a", "b"]', "members = []")).some((x) => x.message.includes("母集団の欠落"))).toBe(true);
   });
-  it("赤: members に glob 要素（展開器を持たないので母集団の欠落として倒す）", () => {
+  it("赤: members に glob 要素（展開器を持たないので母集団の欠落として扱う）", () => {
     expect(root(ROOT_OK.replace('"a", "b"', '"crates/*"')).some((x) => x.message.includes("母集団の欠落"))).toBe(true);
   });
   it("default-members が members より前に在っても members を拾う（[workspace] スコープの回帰ガード）", () => {

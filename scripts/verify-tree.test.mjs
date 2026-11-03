@@ -141,7 +141,7 @@ describe("summaryPathFor — 要約の既定の置き場（hook と共有する�
 });
 
 describe("verify-tree run", () => {
-  it("要求が無くても E と F を回し、要約が sha と worktree の HEAD を名乗る", { timeout: T }, () => {
+  it("要求が無くても E と F を回し、要約が sha と worktree の HEAD を示す", { timeout: T }, () => {
     const repo = initRepo();
     const sha = git(repo, ["rev-parse", "HEAD"]);
 
@@ -348,7 +348,7 @@ describe("verify-tree align", () => {
     return wt;
   }
 
-  it("委譲先の worktree を sha へ合わせ、sha と worktree を名乗る", { timeout: T }, () => {
+  it("委譲先の worktree を sha へ合わせ、sha と worktree を示す", { timeout: T }, () => {
     const repo = initRepo();
     const wt = agentTree(repo);
     const next = commitFile(repo, "next.txt", "next\n");

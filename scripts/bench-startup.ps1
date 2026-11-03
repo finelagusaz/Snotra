@@ -32,7 +32,7 @@ param(
   # **検証用プロファイルを使う**（CI 等、実 config が無い環境向け）。既定は実 config で、
   # 開発機の実運用点をそのまま測る。CI では実 config が無く first-run へ落ちるため、
   # smoke 群と同じ形（`New-SnotraVerificationProfile` + `SNOTRA_CONFIG_DIR`）で
-  # 非 first-run を再現する。**枝は出力の `first_run` / `cache_hit` に現れる**ので、
+  # 非 first-run を再現する。**分岐は出力の `first_run` / `cache_hit` に現れる**ので、
   # どちらで測ったかは読み手が毎回確かめられる。
   [switch]$UseVerificationProfile,
   # 空ならこのスクリプトが住むリポジトリの `target/` 配下へ置く（#1179）。cwd 起点のままだと
@@ -60,7 +60,7 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
 $ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は上の doc）
 
 # **区間の一覧は Rust 側の `Phase` が正本である。** ここは表示順を決めるだけで、
-# 過不足はキー検査（`Test-SnotraStartupPayload`）がペイロード側と突き合わせて捕まえる。
+# 過不足はキー検査（`Test-SnotraStartupPayload`）がペイロード側と突き合わせて検出する。
 $PhaseKeys = @(
   'pre_main', 'config_load', 'index_load', 'path_merge', 'history_load',
   'engine_build', 'tauri_init', 'windows_create', 'setup_rest', 'hotkey_register'
@@ -70,7 +70,7 @@ function Get-SnotraWorkingSetMB {
   param([int]$ProcessId)
   # **子孫の走査は持たない**（現構成のプロセスツリーは 1 件・#532 SU7 で WebView2 は消滅）。
   # **返すのは `WorkingSet64`（プロセス全体）であって private working set ではない。**
-  # 旧名 `Get-SnotraPrivateWorkingSetMB` は在りもしない private を名乗っていた（#1009 で改名）。
+  # 旧名 `Get-SnotraPrivateWorkingSetMB` は在りもしない private を示していた（#1009 で改名）。
   $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
   if (-not $p) { return $null }
   return [math]::Round($p.WorkingSet64 / 1MB, 1)
@@ -121,7 +121,7 @@ try {
     foreach ($p in @($errPath, $outPath)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
 
     # **外から独立に測る壁時計。** 内側の申告と突き合わせる相手であり、計器が自分の
-    # 出力だけで辻褄を合わせる形（同語反復化）を外から捕まえる唯一の材料である。
+    # 出力だけで辻褄を合わせる形（同語反復化）を外から検出する唯一の材料である。
     $wall = [System.Diagnostics.Stopwatch]::StartNew()
     if ($null -ne $profileFull) {
       # **env の設定と復元は共有モジュールが持つ**（成功・例外の両経路で戻す）。

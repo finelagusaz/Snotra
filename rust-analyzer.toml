@@ -6,7 +6,7 @@
 # `WorkspaceLocalConfigInput { workspace, local }` で、local の解決器も source root を遡りながら
 # `RatomlFile::Workspace(config) => config.local.<key>` を読むためである。ゆえに `diagnostics.*`
 # のような local 水準のキーもここで設定できる。一方 `files.exclude` / `hover.*` /
-# `cachePriming.enable` / `lru.capacity` は global 水準なので、ここへ書いても**沈黙で無視される**。
+# `cachePriming.enable` / `lru.capacity` は global 水準なので、ここへ書いても**黙って無視される**。
 # （出典: rustc 1.97.1 に同梱の rust-analyzer の `crates/rust-analyzer/src/config.rs`。
 #   `config_data!` の各ブロックが水準の正本で、解決順は下の注記のとおり）
 #
@@ -25,7 +25,7 @@
 
 # シンボル検索を型だけに絞らず、上限で黙って切らない。
 # 既定の `only_types` は「型で 1 件も当たらなかったときだけ全シンボルへ落ちる」挙動なので、
-# 広いクエリでは関数が一切見えない。既定の limit=128 も、網羅性が要件の作業では沈黙の打ち切りになる。
+# 広いクエリでは関数が一切見えない。既定の limit=128 も、網羅性が要件の作業では気づかれない打ち切りになる。
 [workspace.symbol.search]
 kind = "all_symbols"
 limit = 512

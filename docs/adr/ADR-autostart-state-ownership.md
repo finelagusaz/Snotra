@@ -105,7 +105,7 @@
 ## 帰結
 
 - `snotra-settings` は `config.toml` 以外へ書く永続状態を 1 つ持つことになった。
-  `snotra-settings/CLAUDE.md`「アーキテクチャ」に射程の注記を置いた
+  `snotra-settings/CLAUDE.md`「アーキテクチャ」に適用範囲の注記を置いた
 - `snotra-core` は「Win32 非依存の純ロジック層」ではなくなった——**正確には変更前から
   そうではなかった**（`indexer/path_env.rs` が既にレジストリを読んでいた）。今回 2 つ目の
   Win32 モジュールが増えたのを機に、同 `CLAUDE.md` の記述を実態へ合わせた。

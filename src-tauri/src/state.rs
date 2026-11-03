@@ -20,7 +20,7 @@ pub struct AppState {
     /// 1 本だけで、そちらは `&mut Engine` を要求する（`Engine` の `config` フィールドの doc）。
     ///
     /// **このフィールドは private である**（#1129）——読む口は [`AppState::read_config`]、
-    /// 建てる口は [`AppState::new`] で、どちらもこのモジュールの中にある。射程は前者の doc。
+    /// 建てる口は [`AppState::new`] で、どちらもこのモジュールの中にある。適用範囲は前者の doc。
     config: Arc<RwLock<Config>>,
     /// UI 表示用の「索引ビルド中」。first-run ではビルドスレッドが居なくても
     /// [`AppState::new`] が true で建てる。
@@ -101,7 +101,7 @@ impl AppState {
     /// **config の読みをここ（と `egui_shell::read_config`）へ通す規則に条件は付かない**（#1123）——どのスレッドで走る読みかも、何のための読みかも問わない。
     /// 害は頻度ではなく待ちである（機序は [`crate::egui_shell::read_config`] の doc）。
     ///
-    /// **射程は読みだけである**——書き込みは `update_config` の 1 本で、engine lock の内側に残す
+    /// **適用範囲は読みだけである**——書き込みは `update_config` の 1 本で、engine lock の内側に残す
     /// （`snotra-core/CLAUDE.md`「engine.rs のロック最小化パターン」）。
     pub fn read_config<T>(&self, read: impl FnOnce(&Config) -> T) -> T {
         read(&self.config.read().unwrap())

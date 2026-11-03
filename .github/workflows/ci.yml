@@ -150,7 +150,7 @@ jobs:
 
       # #562: docgen 検出器。doc コメント内の intra-doc link（散文内シンボル参照）の切れを
       # 機械検査する。deny 化は各 crate の `[lints] workspace = true`（Cargo.toml）経由で、
-      # 既定 warn の素通りを塞ぐ。--document-private-items は private モジュールの //! link も
+      # 既定 warn の見逃しを塞ぐ。--document-private-items は private モジュールの //! link も
       # 検査対象にするため必須。src-tauri は windows 専用依存ゆえ ubuntu では build 不能＝
       # この windows ジョブで走らせる。
       - name: cargo doc (intra-doc link check)

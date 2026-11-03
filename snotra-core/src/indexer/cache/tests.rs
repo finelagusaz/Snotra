@@ -93,7 +93,7 @@ type GoldenFixture = (
 /// それを生む入力は常に「現行版が凍結している 1 つ」だからである（旧版の定数は当時の
 /// 入力ではなく**自分が何を含むか**を doc に持つ）。
 ///
-/// 3 つの網羅をここで背負う。どれが欠けても、その表現のバイトが凍結されずに素通りする:
+/// 3 つの網羅をここで背負う。どれが欠けても、その表現のバイトが凍結されずに検出されない:
 ///
 /// - **`LowerFileName` の 3 状態すべて**（タグの値が変わっても golden が気づかない）
 /// - **ツリーの根と非根の両方**（1..2 件目が親子）。根の `aux` はフルパスの id、非根の `aux` は
@@ -151,7 +151,7 @@ fn index_cache_on_disk_format_is_stable() {
     // on-disk バイト形式の絶対安定を守る golden テスト。
     // IndexCache のフィールド順・型を変えると（= 既存 index.bin を無言破損）バイト列が変化し
     // このテストが落ちる。save/load が単一 struct を共有する統合後、フィールド reorder は
-    // roundtrip テストを素通りするため、この golden が唯一の検出器（version 非バンプでも検出）。
+    // roundtrip テストでは検出されないため、この golden が唯一の検出器（version 非バンプでも検出）。
     // 意図的な形式変更（INDEX_CACHE_VERSION バンプ）時は golden を更新すること。
     let (entries, char_masks, file_name_char_masks, lower_names, lower_file_names) =
         golden_fixture();
@@ -828,7 +828,7 @@ fn legacy_upgrade_sorts_before_saving_so_the_tree_stays_shared() {
 /// ユーザー——に限られ、しかも表示はその層に「たった今構築した」と告げる。
 ///
 /// **両方向を固定する。** 持ち越し側だけを見ると、`built_at` を定数へ潰す変異
-/// （走査した書き手も打ち直さなくなる）が素通りする。
+/// （走査した書き手も打ち直さなくなる）が検出されない。
 #[test]
 fn upgrade_carries_the_built_at_it_read() {
     // `Write` は `INDEX_WRITE_LOCK` を取る（`upgrade_legacy_cache_in` の doc）。
@@ -903,7 +903,7 @@ fn upgrade_carries_the_built_at_it_read() {
 /// **`Some` は「実際に書けた」ではなく「昇格の分岐を通った」である**（`upgrade_legacy_cache_in`
 /// は save の失敗を飲む——理由はその doc）。書き戻しの成否を固定するのは
 /// `load_cache_upgrades_a_legacy_format_in_place` /
-/// `load_cache_does_not_rewrite_when_the_format_is_current` の対であり、ここの射程は
+/// `load_cache_does_not_rewrite_when_the_format_is_current` の対であり、ここの適用範囲は
 /// 「計器がその分岐を通ったことを報告するか」だけである。
 #[test]
 fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {

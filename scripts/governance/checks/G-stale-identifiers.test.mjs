@@ -40,7 +40,7 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(run("母集団は `gh issue list --search x` から取る\n")).toEqual([]);
   });
 
-  it("コマンドと同じ行に単独で書かれた識別子は見る（行粒度フィルタの沈黙経路を閉じた・#993）", () => {
+  it("コマンドと同じ行に単独で書かれた識別子は見る（行粒度フィルタの黙って失敗する経路を閉じた・#993）", () => {
     const f = run("`npm run governance:check` は `createObjectURL` を見る\n");
     expect(f).toHaveLength(1);
     expect(f[0].message).toContain("createObjectURL");
@@ -76,7 +76,7 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
   });
 
   // 赤フィクスチャは #975 が名指しした**実在の欠陥**——`snotra-core/src/index_tree.rs` の doc が
-  // 存在しないテスト名を「実データの全件で固定する」と引いたまま素通りしていた（反復 10）。
+  // 存在しないテスト名を「実データの全件で固定する」と引いたまま検出されずにいた（反復 10）。
   // 緑の対は同じ形で実在する側の名前で、LOWER_SRC が合成語彙として供給する
   //（実リポジトリの語彙に依存させない——#891 が「フィクスチャが偽陰性を作る」で踏んだ経路）。
   const LOWER_SRC = { "snotra-core/src/a.rs": "fn index_tree_file_key_matches_normalize_file_name_key() {}\n" };
@@ -232,8 +232,8 @@ describe("G-stale-identifiers の母集団ごとの 0 件検知（兄弟が非�
 
 // #984 の実在の欠陥を凍結したフィクスチャ。`f1827b0:docs/comment-guidelines.md` の当該行の骨格で、
 // **同じ行に `npm` のコマンドと修飾形の名前が同居する**——2 つの穴が同時に効いていた形である（#993）。
-// 片足ずつ戻した測定は `ADR-stale-identifier-detector-scope` の #993 の追記節が持つ（テストからは
-// 実装を変異させられないため、ここで固定するのは「両足そろえば赤い」ことだけである）。
+// 修正を片方ずつ戻した測定は `ADR-stale-identifier-detector-scope` の #993 の追記節が持つ（テストからは
+// 実装を変異させられないため、ここで固定するのは「両方の修正がそろえば赤い」ことだけである）。
 describe("G-stale-identifiers の凍結フィクスチャ（#984 の実在の欠陥）", () => {
   const DOC = "docs/comment-guidelines.md";
   const SRC = { "snotra-core/src/a.rs": "fn from_material() {}\n" };
@@ -284,7 +284,7 @@ describe("G-stale-identifiers の配線（buildChecks が SPEC.md を検査対�
 });
 
 // 母集団を広げた側も同じ穴を持つ——配線を戻しても実リポジトリの finding は動かないため、
-// dogfood テストも証跡の印字も気づけない。**射程拡大の主張を守るのはこの describe だけである。**
+// dogfood テストも証跡の印字も気づけない。**適用範囲の拡大の主張を守るのはこの describe だけである。**
 describe("G-stale-identifiers の配線（buildChecks が開発ガイドと固定パス文書を検査対象として渡す）", () => {
   const wired = (contents) => buildChecks(snap(contents), {}).find((c) => c.id === "G-stale-identifiers").run();
   // STALE_EXTRA_DOCS の 4 本と docs/** を最小で埋める（欠けると「母集団の欠落」が混じる）

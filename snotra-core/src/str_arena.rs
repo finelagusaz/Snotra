@@ -16,12 +16,12 @@
 //! 違わない。ゆえに `INDEX_CACHE_VERSION` のバンプも旧版フォールバックも要らない。
 //! **この不変を固定するのは下の `*_wire_format_is_identical_to_*` の 2 本であって
 //! golden bytes ではない。** `indexer` の `index_cache_on_disk_format_is_stable` は fixture が
-//! 持つ形しか通らないので、その形に現れないずれは素通りする——**2 列とも変異注入で実測した**
+//! 持つ形しか通らないので、その形に現れないずれは検出されない——**2 列とも変異注入で実測した**
 //! （2026-08-12。`serialize` に `trim_end` を挟むと、どちらの列でも新設テストだけが落ち、
 //! golden を含む他の 569 本は緑のまま通った）。
 //!
 //! **タグの並べ替えは別である**——`LowerFileNameRef` の variant を入れ替える変異は golden を
-//! 含む 5 本が落ちた。「golden では足りない」の射程は**文字列の中身の形**であって、
+//! 含む 5 本が落ちた。「golden では足りない」の適用範囲は**文字列の中身の形**であって、
 //! 3 状態の網羅ではない。
 
 use std::fmt;
@@ -697,7 +697,7 @@ mod tests {
     use crate::indexer::LowerFileName;
 
     /// 名前の形を混ぜた fixture。**痩せさせてはならない**——空文字・非 ASCII・末尾空白・
-    /// 区切りのどれが欠けても、そこに現れるずれだけが素通りする（golden bytes が
+    /// 区切りのどれが欠けても、そこに現れるずれだけが検出されない（golden bytes が
     /// 役に立たないのと同じ理由）。
     const NAMES: [Option<&str>; 8] = [
         Some("projects"),
@@ -766,7 +766,7 @@ mod tests {
 
     /// **3 状態すべてに加えて、`Text` の中身の形も混ぜる。** variant のタグだけを網羅した
     /// fixture では、タグの並べ替えは検出できても**文字列の中身をいじる変異**（`trim_end`
-    /// 等）が素通りする——`Absent` / `SameAsLowerName` / `Text("x")` だけの fixture でそれを
+    /// 等）が検出されない——`Absent` / `SameAsLowerName` / `Text("x")` だけの fixture でそれを
     /// 実測した（2026-08-12）。末尾空白と空文字を持たせるのはそのためであり、
     /// **痩せさせてはならない。**
     const FILES: [LowerFileSlot<'static>; 8] = [

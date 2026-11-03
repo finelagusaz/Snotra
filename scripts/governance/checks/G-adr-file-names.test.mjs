@@ -32,7 +32,7 @@ describe("G-adr-file-names（ADR のファイル名と見出しの形・#816）"
     expect(f[0].message).toContain("形でない");
   });
 
-  it("カナリア: 空母集団は明示 fail（走査が空でも「逸脱なし」に見える沈黙経路を塞ぐ）", () => {
+  it("カナリア: 空母集団は明示 fail（走査が空でも「逸脱なし」に見える黙って失敗する経路を塞ぐ）", () => {
     const f = checkAdrFileNames(snap({ "CLAUDE.md": "" }));
     expect(f).toHaveLength(1);
     expect(f[0].message).toContain("母集団の欠落");

@@ -382,7 +382,7 @@ impl PathCursor {
     /// 返す（差し替えは最適化であって意味の変更ではない）。
     ///
     /// **記録側（`normalize_entry_key`）と 1 バイトも違わないことがここの契約である**——ずれると
-    /// 履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが消える）。合成 fixture
+    /// 履歴照合が黙って外れる（クラッシュせず検索結果も返り、ブーストだけが消える）。合成 fixture
     /// での検証は `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild`（順・逆順・
     /// 乱順）、実 `index.bin` の全件での照合は同ファイルの
     /// `path_store_cursor_matches_normalize_entry_key_over_real_index`（**実インデックスが無ければ

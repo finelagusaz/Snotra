@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 # | H1 | hidden 区間に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
 # | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「件数 0 ⇒ hide」の契約違反（`layout::present_results` の連言②） |
 # | H5 | hide を挟まない連続 `egui_results:show` は異常 | 二重発火抑止（`ResultsWindow.visible` の `swap`）の破れ |
-# | H7 | `egui_search:settled` が `dispatch_seq < pending_seq` で現れたら異常 | seq 照合そのものが外れた（#1004。**射程は下記のとおり狭い**） |
+# | H7 | `egui_search:settled` が `dispatch_seq < pending_seq` で現れたら異常 | seq 照合そのものが外れた（#1004。**適用範囲は下記のとおり狭い**） |
 #
 # **判定不能を PASS にしない**のがこのモジュールの要石である。「該当イベントが無い」
 # 「`rows` が読めない」「main の可視状態が未観測」「区間が閉じていない」「parse できなかった
@@ -225,7 +225,7 @@ function New-SnotraTraceFailSafeResult {
         # `SnotraTraceInvariants.Tests.ps1` のソース走査テスト（除外リテラル）の 2 か所に在る**
         # ——別の文字へ変えるとテスト側だけが古い値を除外し続け、新しい印を不変条件名として
         # 拾って偽の FAIL になる。片方だけが直る写しであり、#1008 が数えて回った型そのものである
-        # （安全側に倒れるので沈黙より軽い、という理由で写しのまま残している）。
+        # （安全側に倒れるので偽陰性より軽い、という理由で写しのまま残している）。
         Unjudgeable      = @( @{ Invariant = '*'; Seq = 0; SectionId = 0; Reason = $Reason } )
         Observed         = @{ ResultsShow = 0; HideWindow = 0 }
         DroppedLineCount = $DroppedLineCount
@@ -328,7 +328,7 @@ function Invoke-SnotraTraceJudgement {
                         }
                     } else {
                         # 到達しない（hidden 遷移が必ず区間を開く）が、**無記録の else を残さない**
-                        # ——沈黙経路を作らないと掲げるモジュールの中の抜け穴になる（code-review L1）。
+                        # ——黙って失敗する経路を作らないと掲げるモジュールの中の抜け穴になる（code-review L1）。
                         $unjudgeable += @{
                             Invariant = 'H1'
                             Seq       = $event.Seq
@@ -386,7 +386,7 @@ function Invoke-SnotraTraceJudgement {
                 # 採り込み時点の pending より古い seq が採られたら、seq 照合が外れている。
                 # `pending_seq = 0` は「pending 無し」＝この結果が最新だったことを意味する。
                 #
-                # **射程は狭い。健全な実装では H7 は構造的に発火しえない**——`SearchDispatch::accept`
+                # **適用範囲は狭い。健全な実装では H7 は構造的に発火しえない**——`SearchDispatch::accept`
                 # は成功時に pending を take するので、`egui_search:settled` が出る時点で
                 # `pending_seq` は必ず 0 になる。ゆえに H7 が検出するのは「accept の照合を外す」
                 # 形の回帰だけであり、常時 PASS が正常な姿である（故障注入で発火を実測済み・#1004 PR 2）。

@@ -54,7 +54,7 @@ const PLUGIN = "snotra-rust-lsp";
  *  絶対パスを書くと他マシン・worktree で壊れる。`claude plugin marketplace add` は
  *  入力を `path.resolve` して絶対パスで書き込むので使わない。 */
 const MARKETPLACE_PATH = "./.claude/lsp";
-/** 二重に `.rs` を掴ませない相手。二重時の挙動は先勝ち + warn ＝ 沈黙に近い失敗である。 */
+/** 二重に `.rs` を掴ませない相手。二重時の挙動は先勝ち + warn ＝ 気づかれにくい失敗である。 */
 const OFFICIAL_PLUGIN = "rust-analyzer-lsp@claude-plugins-official";
 
 /** `rust-analyzer.toml` へ書かれると plugin の設定を黙って上書きするキー。workspace / local 水準は
@@ -139,7 +139,7 @@ export function checkLspConfig(rootDir) {
 
   // --- rust-analyzer のバイナリは rust-toolchain.toml の `components` が保証する（#1239） ---
   //
-  // **見るのは宣言だけである。** 実際に toolchain へ入っているかは射程の外——CI の runner には
+  // **見るのは宣言だけである。** 実際に toolchain へ入っているかは適用範囲の外——CI の runner には
   // toml が効いて初めて入るので、環境の実測を検査に置くと toml の効果に依存する循環になる。
   // 宣言が在るのに rustup が取得に失敗した形は沈黙する（受容する残余・先頭 doc「壊れ方は 3 つあり」）。
   // ratoml 検査と同じく配送経路の連鎖より前に置く（連鎖の早期 return に道連れにされない）。
@@ -164,7 +164,7 @@ export function checkLspConfig(rootDir) {
   if (!components || !/["']rust-analyzer(-preview)?["']/.test(components[1])) {
     violations.push(
       `${toolchainRel} の components に rust-analyzer が無い — toolchain が入れ替わるたびに` +
-        " Claude Code の LSP が沈黙で落ちる（cargo / clippy / test は緑のまま）",
+        " Claude Code の LSP が黙って落ちる（cargo / clippy / test は緑のまま）",
     );
   }
 
@@ -194,12 +194,12 @@ export function checkLspConfig(rootDir) {
   if (enabled[OFFICIAL_PLUGIN] !== false) {
     violations.push(
       `enabledPlugins["${OFFICIAL_PLUGIN}"] が false でない: ${JSON.stringify(enabled[OFFICIAL_PLUGIN])}` +
-        " — .rs を宣言する LSP サーバが 2 つになる（先勝ち + warn ＝ 沈黙に近い失敗）",
+        " — .rs を宣言する LSP サーバが 2 つになる（先勝ち + warn ＝ 気づかれにくい失敗）",
     );
   }
 
   // 宣言された path の先に marketplace が実在するか。ここを見ないと、`.lsp.json` は正しいのに
-  // 配送だけが死んでいる形を素通りする。
+  // 配送だけが死んでいる形では検出されない。
   const marketplaceRoot = path.resolve(rootDir, declared?.path ?? MARKETPLACE_PATH);
   let marketplace;
   try {
@@ -277,7 +277,7 @@ export function checkLspConfig(rootDir) {
   if (search?.kind !== "all_symbols" || search?.limit !== 512) {
     violations.push(
       `initializationOptions.workspace.symbol.search が {kind:"all_symbols", limit:512} でない: ${JSON.stringify(search)}` +
-        " — 既定の only_types / limit=128 は、網羅性が要件の作業で沈黙の打ち切りになる",
+        " — 既定の only_types / limit=128 は、網羅性が要件の作業で気づかれない打ち切りになる",
     );
   }
 

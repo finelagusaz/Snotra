@@ -390,7 +390,7 @@ fn index_tree_file_key_matches_normalize_file_name_key_over_real_index() {
 /// 全件で確かめる。**組み立てるのは製品が実際に通る [`PathCursor`] のほうである**——全件走査は
 /// カーソル経由であり、素直な組み立て（`PathStore::normalized_into`）はその参照実装にすぎない。
 ///
-/// ここが 1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが
+/// ここが 1 バイトずれると履歴照合が黙って外れる（クラッシュせず検索結果も返り、ブーストだけが
 /// 消える）。走査順は製品と同じ昇順＝チェーンが当たり続ける経路で、外れる経路は
 /// [`path_store_cursor_matches_full_rebuild`] が逆順・乱順で受け持つ。
 #[test]

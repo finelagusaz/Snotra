@@ -353,7 +353,7 @@ fn scan_from_vk(vk: u16) -> Option<PhysicalScan> {
     ))
 }
 
-/// 抑止した打鍵を残す（`SNOTRA_EGUI_INPUT`・#872/#936 の型 B）。落とした側も残さなければ沈黙になる。
+/// 抑止した打鍵を残す（`SNOTRA_EGUI_INPUT`・#872/#936 の型 B）。落とした側も残さなければ何も出ない。
 fn trace_suppressed(message: u32, scan: PhysicalScan, translation: &Translation) {
     if translation.suppressed && crate::input::input_trace_enabled() {
         crate::input::input_trace(

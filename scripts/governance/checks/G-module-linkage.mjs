@@ -12,11 +12,11 @@ export function run(snapshot, ctx) {
 // ---------------------------------------------------------------------------
 // G-module-linkage — `<crate>/src/**/*.rs` が crate ルートから `mod` 宣言で到達できるか（#1085）。
 //
-// **G-module-index が塞がない足を塞ぐ。** 両者は同じ「`.rs` を足したときの取りこぼし」を守るが、
+// **G-module-index が塞がない経路を塞ぐ。** 両者は同じ「`.rs` を足したときの取りこぼし」を守るが、
 // 見ているものが違う——G-module-index は実ファイル ↔ `CLAUDE.md` の索引、本検査は `mod` の到達性。
-// 足ごとに壊して測った結果（2026-08-14・#1085）:
+// 条件ごとに壊して測った結果（2026-08-14・#1085）:
 //   索引にも `mod` にも書かない → G-module-index が赤
-//   **索引には書き、`mod` 宣言だけ忘れる → どの検査も緑だった**（本検査が塞ぐのはこの足）
+//   **索引には書き、`mod` 宣言だけ忘れる → どの検査も緑だった**（本検査が塞ぐのはこの経路）
 //
 // **`mod` 忘れは cargo も LSP も報せない。** 未リンクの `.rs` は `cargo fmt/clippy/test` の視界に無く、rust-analyzer は当該ファイルを読むが `unlinked-file` を publish
 // しない（#1085 で stdio クライアントから生の publishDiagnostics を読んで実測）。最悪の帰結は
@@ -27,7 +27,7 @@ export function run(snapshot, ctx) {
 // 縛るのは `CLAUDE.md` を持つ member だけであり、`CLAUDE.md` の無い crate を黙って飛ばす。
 // リンク性は `CLAUDE.md` の有無と無関係である。
 //
-// 射程外（`mod` 宣言を要さないまま正当なもの）: cargo が target として自動発見するもの——crate 直下の
+// 対象外（`mod` 宣言を要さないまま正当なもの）: cargo が target として自動発見するもの——crate 直下の
 // `tests/*.rs`・`benches/`・`examples/`・`build.rs` は母集団を `<crate>/src/` に閉じることで外れ、
 // **`src/bin/` は `src/` の内側なので明示的に除外する**（除外しないと `mod` 宣言の書き忘れという
 // 誤った直し方を指示する赤が出る。現在 0 件）。
@@ -47,7 +47,7 @@ export function run(snapshot, ctx) {
 //   「ビルド構成でコンパイルされる」ではない。**決して有効化されない cfg / feature の下だけで
 //   宣言されたファイルは緑になる**——上で名指しした最悪の帰結（テストが黙って走らない）を、
 //   この検査は取りこぼす。cfg を評価しないのは誤検出を避けるための選択である。
-// - **`macro_rules!` の本体で列 0 に来た `mod` を拾う**（沈黙の向き）。インライン `mod x { ... }` と
+// - **`macro_rules!` の本体で列 0 に来た `mod` を拾う**（偽陰性の向き）。インライン `mod x { ... }` と
 //   同類型だが、そちらは列で外れるのに対しこちらは外れない。rustfmt はマクロ本体を整形しないことが
 //   あるので、列 0 に来る余地は消えない。**噛むのはマクロ本体が列 0 へ `mod` を置いたときだけ**
 //   であり、マクロ本体を持つこと自体では噛まない。
@@ -60,7 +60,7 @@ export function run(snapshot, ctx) {
 // - **属性の綴りが `#[path = "..."]`（二重引用符・同一行）から外れると赤になる**——
 //   `#[path = r"..."]`（raw string）・`#[path = "dir"]`（ディレクトリ指定）・
 //   `#[cfg_attr(..., path = "...")]`・`#[cfg(windows)] mod win;` のような同一行の属性つき宣言。
-//   現在 0 件で、いずれも沈黙ではなく過検出の向きである。
+//   現在 0 件で、いずれも偽陰性ではなく偽陽性の向きである。
 // - `[lib] path = ...` で `src/` の外へソースを置く crate は母集団から外れる（現在 0 件）。
 
 /** ある `.rs` が宣言する子モジュールの探索基準ディレクトリ。
@@ -117,7 +117,7 @@ function blankRustNonCode(text) {
       continue;
     }
     // **ウィンドウで切らない。** 固定長のウィンドウ（かつて 24 文字）だと、ハッシュがその長さを超える raw string を
-    // 見落として中身をコードとして読み、そこに綴られた `mod` を拾って孤児を緑にする（沈黙の向き。
+    // 見落として中身をコードとして読み、そこに綴られた `mod` を拾って孤児を緑にする（偽陰性の向き。
     // 2026-08-14 のレビューが 23 個で閾値を実測）。Rust はハッシュを 255 個まで許す。
     RAW_STRING_PREFIX.lastIndex = i;
     const raw = RAW_STRING_PREFIX.exec(text);
@@ -195,11 +195,11 @@ export function checkModuleLinkage(snapshot) {
   const sources = crateSourceFiles(snapshot);
   for (const crate of members) {
     const prefix = `${crate}/src/`;
-    // `src/bin/` は cargo が target として自動発見するので `mod` 宣言を要さない（射程外）。
-    // **除外は `crateSourceFiles` の側ではなくここに置く**——射程の判断はこの検査のもので、
+    // `src/bin/` は cargo が target として自動発見するので `mod` 宣言を要さない（対象外）。
+    // **除外は `crateSourceFiles` の側ではなくここに置く**——適用範囲の判断はこの検査のもので、
     // 母集団を共有する他の消費者（今は無い）まで巻き込まない。
     const population = sources.filter((f) => f.startsWith(prefix) && !f.startsWith(`${prefix}bin/`));
-    // 空母集団を合格に見せない（沈黙経路の閉塞・本ファイル冒頭の契約）
+    // 空母集団を合格に見せない（黙って失敗する経路の閉塞・本ファイル冒頭の契約）
     if (population.length === 0) {
       findings.push(finding(`${crate}/Cargo.toml`, 1, `${prefix} 配下に .rs が無い（G-module-linkage 母集団の欠落）`));
       continue;

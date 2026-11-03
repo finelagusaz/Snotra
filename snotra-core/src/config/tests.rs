@@ -94,7 +94,7 @@ key = "q"
 background_color = '#123456'
 "#;
     let config: Config = toml::from_str(toml).expect("parse");
-    // `custom_theme` は `Option` なので、`None` のまま素通りしないことを先に確かめる。
+    // `custom_theme` は `Option` なので、`None` のまま検出されることを先に確かめる。
     let theme = config
         .visual
         .custom_theme

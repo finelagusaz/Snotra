@@ -29,7 +29,7 @@
 
 **一度この案を計画に書き、独立導出レビューの指摘で覆した。** 同型の既存ガード `folder_load_pending`（「列挙未着の間は前ビューの行を起動しない」）が `activate` に在るので、隣に並べれば 2 つが常に一緒に読まれる。
 
-**却下の理由は射程である。** `activate` は `activate_or_execute` の plain 分岐でしかなく、**行 index を受け取る層の合流点ではない**。クリック逆流（`view.rs` の `take_clicked_for`）と `shift_activate` の `tools <= 1` 委譲は `activate_or_execute` を通るので、そこへ置けば 1 か所で覆える。`plain_results_hidden` は tool ビュー・instant 行では**構造的に偽**（`Results ∧ !instant_rows` を条件に持つ）なので、上の層へ移しても他経路を阻害しない。
+**却下の理由は適用範囲である。** `activate` は `activate_or_execute` の plain 分岐でしかなく、**行 index を受け取る層の合流点ではない**。クリック逆流（`view.rs` の `take_clicked_for`）と `shift_activate` の `tools <= 1` 委譲は `activate_or_execute` を通るので、そこへ置けば 1 か所で覆える。`plain_results_hidden` は tool ビュー・instant 行では**構造的に偽**（`Results ∧ !instant_rows` を条件に持つ）なので、上の層へ移しても他経路を阻害しない。
 
 ### 3. 「ゲート ∧ 行が空でない」の合成を純粋関数へ切り出す
 

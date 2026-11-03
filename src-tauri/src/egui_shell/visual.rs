@@ -228,7 +228,7 @@ mod tests {
     /// `#FF000080` → `#80_00_00_80`。alpha 自体は保持される）。
     ///
     /// **入力は必ず config 経路（hex 文字列）から与える。** `from_rgba_premultiplied` で
-    /// fixture を作ると premultiply 段を素通りし、この命題を検証できない
+    /// fixture を作ると premultiply 段で検出されず、この命題を検証できない
     /// （`AGENTS.md`「検証の作法」・#482 / #471）。
     #[test]
     fn background_color_premultiplies_alpha_rather_than_ignoring_it() {

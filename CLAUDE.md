@@ -11,7 +11,7 @@ Claude Code 固有の運用。開発プロセスは `AGENTS.md`（次行で自�
 
 ## Git/GitHub 運用
 
-- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` は best-effort（`cherry-pick` / `revert` / `update-ref` 等は素通りする）。取りこぼしは push 時に ruleset が検出する
+- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` は best-effort（`cherry-pick` / `revert` / `update-ref` 等は検出されない）。取りこぼしは push 時に ruleset が検出する
 - **ブランチへ main を取り込むときは rebase ではなく merge する** — push 済みのブランチの rebase は force-push を要し、auto mode の分類器が拒む（#1357）。squash マージなので merge コミットは main に残らない
 - **squash マージは `/merge-pr` からツール（`npm run merge:pr`）で行う** — `gh pr merge` を手で打たない（`--auto` も）。ツールを経ないマージ（Web UI・手打ち）は人間専用。理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`
 

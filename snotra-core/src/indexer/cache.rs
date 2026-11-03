@@ -167,7 +167,7 @@ struct IndexCache<'a> {
     /// `INDEX_CACHE_VERSION` のバンプを伴わず、旧版フォールバックも増えない。
     /// **検知器は `index_tree` 側の `arena_wire_format_is_identical_to_vec_of_string` である**
     /// ——下の golden は名前の形を混ぜて持たないので、この一致だけを守る役には立たない
-    /// （射程は [`NameArena`] の doc）。
+    /// （適用範囲は [`NameArena`] の doc）。
     names: Cow<'a, NameArena>,
     is_folder: Cow<'a, [bool]>,
     /// ツリーの親（`crate::index_tree::TreeNodes::parent_of`）。

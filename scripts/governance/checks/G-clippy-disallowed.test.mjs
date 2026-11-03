@@ -64,7 +64,7 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   });
 
   // --- 赤クラス 1: 内容側（issue #950 が実測した 6 経路 + コメントアウト）---
-  it("赤: clippy.toml ごと削除（clippy は沈黙・exit 0）", () => {
+  it("赤: clippy.toml ごと削除（clippy は何も報告しない・exit 0）", () => {
     const contents = { ...base };
     delete contents["src-tauri/clippy.toml"];
     expect(checkClippyDisallowed(snap(contents)).map((x) => x.file)).toEqual(["src-tauri/clippy.toml"]);
@@ -104,7 +104,7 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
     red({ "src-tauri/Cargo.toml": '[dependencies]\nsnotra-egui-runtime = { path = "../snotra-egui-runtime" }\n' }).toEqual(["src-tauri/Cargo.toml"]);
   });
 
-  // --- 赤クラス 2: レベル側（沈黙経路 0。**実リポジトリは Phase 1 以降これを満たすので、
+  // --- 赤クラス 2: レベル側（黙って失敗する経路 0。**実リポジトリは Phase 1 以降これを満たすので、
   //     clippyMethodsDenied が常に true を返す実装を検出するのはこのフィクスチャだけである**）---
   it("赤: ルートから [workspace.lints.clippy] 節ごと消える（2 行削除＝最も起きやすい形）", () => {
     red({ "Cargo.toml": '[workspace]\nmembers = ["src-tauri"]\n\n[workspace.lints.rustdoc]\nbroken_intra_doc_links = "deny"\n' }).toEqual(["Cargo.toml"]);

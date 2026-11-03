@@ -31,7 +31,7 @@ use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 /// **分ける理由は「測り直しが無駄だから」であって、「測り直すと壊れるから」ではない。**
 /// 潰し済みの列を測定ループへ流しても結果は変わらない——`measure_derived_sharing` が
 /// `lower_name: &str`（`Option` ではない）を取るため、潰れた要素はループの `let Some(..) else`
-/// で素通りするからである。**「`None` どうしの一致で file name 成分の無いエントリにフラグが立つ」
+/// で検出されないからである。**「`None` どうしの一致で file name 成分の無いエントリにフラグが立つ」
 /// という危険は、判定を一元化する前の `Option<&str>` どうしの比較に固有のものだった**
 /// （2026-08-08 に、測り直す実装へ戻す実験で確かめた——検知器は落ちなかった）。
 ///
@@ -59,7 +59,7 @@ enum DerivedStrings {
 
 impl DerivedStrings {
     /// エントリ数。**2 本の長さは一致していなければならない**ので、片方だけを返す形にはしない
-    /// ——食い違いをここで潰すと、`assemble` の長さ検証がその食い違いを素通りする。
+    /// ——食い違いをここで潰すと、`assemble` の長さ検証がその食い違いでは検出されない。
     fn len(&self) -> usize {
         let (names, files) = match self {
             Self::Measured {
@@ -178,7 +178,7 @@ fn compute_wave2(
 ///
 /// **テストから参照できる位置に置いてある。** 塊併合の結線を守る
 /// `kana_column_survives_chunked_parallel_merge` は「これを跨ぐ件数」で fixture を組む必要が
-/// あり、値を写すとこの定数を増やしたときに**テストが黙って射程を失う**（塊が 1 つに戻り、
+/// あり、値を写すとこの定数を増やしたときに**テストが黙って適用範囲を失う**（塊が 1 つに戻り、
 /// 順序保存も底上げも検証されなくなる）。
 pub(super) const KANA_CHUNK: usize = 4096;
 
@@ -609,7 +609,7 @@ mod tests {
 
     /// 2 本の派生文字列の長さが**互いに**違うときも、添字ではなく診断が出る
     /// （こちらは [`DerivedStrings::len`] が撃つ——`assemble` の入口で `len()` を呼ぶことが
-    /// その検査を通す唯一の経路であり、片方の長さを直接読む形へ変えると素通りする）。
+    /// その検査を通す唯一の経路であり、片方の長さを直接読む形へ変えると検出されない）。
     #[test]
     #[should_panic(expected = "lower_names と lower_file_names の長さが違う")]
     fn mismatched_pair_length_reports_the_diagnostic_not_an_index_panic() {

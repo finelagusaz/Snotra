@@ -332,7 +332,7 @@ pub(crate) fn search_input_ui(
             // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
             // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
             // 構築の**後**に要求すると、そのフレームに載っていた文字はフォーカスの無い widget の
-            // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
+            // 横で検出されずに捨てられる。**プロセス起動後の最初のフレームがまさにその形
             // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
             // `Memory` に残るので初回だけ）。ウィンドウは可視・前面・focus 済みで「打てるはず」に
             // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
@@ -511,7 +511,7 @@ struct PostWidgetInput {
 /// `Arc<Style>` に間に合わない）を、この地点は原理的に持たない。同ファイルが sanctioned な
 /// 解消手段として指定する `#[allow]` + 理由コメントで開ける。
 ///
-/// **射程は main ウィンドウの全 widget である**——toast ボタンの当たりも見た目の矩形に一致する
+/// **適用範囲は main ウィンドウの全 widget である**——toast ボタンの当たりも見た目の矩形に一致する
 /// （近傍 5px の助けを失う。矩形自体は変えていない）。results ウィンドウは別 `Context` ゆえ無関係。
 ///
 /// **検査が縛るのは適用の帰結だけである**——`bar_margin_belongs_to_the_window_drag_not_the_input_field`
@@ -529,7 +529,7 @@ impl EguiView for SearchWindowView {
         // `AppHandle` は controller が単独所有する（不変条件 13）。ここで 1 回 clone して
         // ローカルへ置く——`update()` 冒頭と同じ理由（`tauri::State<'_, T>` の借用元問題）。
         let app = self.controller.app().clone();
-        // 当たり判定を描画矩形に一致させる（理由と射程は関数 doc）。**`update()` へ移してはならない**
+        // 当たり判定を描画矩形に一致させる（理由と適用範囲は関数 doc）。**`update()` へ移してはならない**
         // ——書き込み先は global style であり、root `Ui` が pass 冒頭で掴む snapshot に間に合わない。
         apply_exact_hit_test_style(context);
         let font_family = super::font_stack::font_family_from_config(&app);
@@ -603,7 +603,7 @@ impl EguiView for SearchWindowView {
             // `consume_reset_pending` が `BlurGrace::reset()` を呼んでおり、それが段 16–17
             // （`on_focus_changed`）より**前**であることが blur 猶予の backstop を成立させて
             // いる。#749 の制約が将来失効しても、**#745 の制約は残る**——片方だけを根拠に
-            // この呼び出しを動かすと、沈黙で #745 が再発する。
+            // この呼び出しを動かすと、黙って #745 が再発する。
             if let Some(results) = app.try_state::<crate::egui_shell::ResultsWindow>() {
                 results.reset_size_guard();
             }
@@ -892,7 +892,7 @@ impl EguiView for SearchWindowView {
         // 最初のフレームから真であり、**この行は移設の回帰検出器になる**（偽に戻れば、
         // 起動直後の打鍵が再び捨てられている）。
         //
-        // **`input_editable` を併記する**——両者は同じ沈黙を作るため、片方だけを見ると
+        // **`input_editable` を併記する**——両者は同じ無反応を作るため、片方だけを見ると
         // 当たっていなくても説明が通ってしまう（実測でこちらは初回から真と判った）。
         if self.focus_state_traces_left > 0 {
             self.focus_state_traces_left -= 1;
@@ -926,7 +926,7 @@ impl EguiView for SearchWindowView {
         // `has_status = overlay_text.is_some()` で一致が構造的に保証されていた。
         //
         // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
-        // 射程が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
+        // 適用範囲が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
         // 古くなる。正本は `indexing_raw` の参照そのもの（`launcher_controller/activation/tests.rs` の
         // `activation_uses_frame_values_not_live_reads` が、起動側で読み直しが
         // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
@@ -1358,7 +1358,7 @@ mod tests {
     }
 
     /// 連言④の値（`visible_rows`）をこのファイルが読むのは**フレームで 1 回だけ**である
-    /// ことを固定する（#1106）。上の `indexing` の検査と**別に置く**——射程が違うものを
+    /// ことを固定する（#1106）。上の `indexing` の検査と**別に置く**——適用範囲が違うものを
     /// 1 つの名前へ束ねると、名前と実体がずれる。
     ///
     /// **こちらは唯一性が構造でも支えられている**——`window_coordinator::drive_results_window`
@@ -1397,7 +1397,7 @@ mod tests {
     /// どちらもこの関数へ直に渡す。ゆえに「綴りが現れない」ことを保つ責任は同じ画面の
     /// 中に閉じている。
     ///
-    /// **`assert_eq!(reads, 1)` の 2 側で失敗方向が違う**（#1112 のレビューで射程を訂正した）:
+    /// **`assert_eq!(reads, 1)` の 2 側で失敗方向が違う**（#1112 のレビューで適用範囲を訂正した）:
     ///
     /// - **≦ 1 側**（読みが増える）は安全側である。doc コメント等に綴りが現れれば過剰計数で
     ///   **赤**になる（沈黙しない）
@@ -1656,7 +1656,7 @@ mod tests {
         });
         assert_eq!(
             after_text, "",
-            "構築後に要求すると、そのフレームの文字はフォーカスの無い widget を素通りして捨てられる"
+            "構築後に要求すると、そのフレームの文字はフォーカスの無い widget で検出されずに捨てられる"
         );
     }
 
@@ -1751,7 +1751,7 @@ mod tests {
     ///
     /// こちらは事前の `step()` を置かない。widget がまだフォーカスを持たないフレームに文字が載る形は
     /// **起動直後の初回 show そのもの**であり、要求が構築の後ろにあれば文字はフォーカスの無い widget の
-    /// 横を素通りして捨てられる。
+    /// 横で検出されずに捨てられる。
     #[test]
     fn kittest_first_frame_requests_focus_before_text_edit() {
         let id = egui::Id::unique("search_input");
@@ -1837,7 +1837,7 @@ mod tests {
             // 読む側も TextEdit と同じ getter を使う——`text_edit_bg_color()` は
             // `text_edit_bg_color.unwrap_or(extreme_bg_color)`、`weak_text_color()` は
             // `Option` を解決する（`style.rs:1135-1148`）。生フィールドを見ると、TextEdit が
-            // 実際に読む経路を素通りする。
+            // 実際に読む経路では検出されない。
             egui::Frame::new().show(ui, |child| {
                 *seen.borrow_mut() = Some((
                     child.visuals().text_edit_bg_color(),
@@ -1884,7 +1884,7 @@ mod tests {
         let seen = std::cell::RefCell::new(None);
         run_pass(&ctx, egui::RawInput::default(), |ui| {
             // 読む側は `TextEdit` と同じ解決 getter を使う（生フィールドを見ると実経路を
-            // 素通りする——理由は上のテストの doc）。
+            // 検出されない——理由は上のテストの doc）。
             let _ = search_input_ui(ui, test_visuals(), &mut buf, &params, |child| {
                 *seen.borrow_mut() = Some((
                     child.visuals().text_edit_bg_color(),

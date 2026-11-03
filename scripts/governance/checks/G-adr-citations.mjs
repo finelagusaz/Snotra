@@ -37,7 +37,7 @@ export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
     ...docs,
     // 凍結された歴史も**実在の辺だけ**は守る——ADR → ADR の短縮引用は、指す側が凍結でも
     // 指される側の削除で壊れる。`docs`（governanceDocs）は docs/adr/ を含まないため明示的に足す。
-    // この 1 行が落ちると ADR→ADR の実在検査が沈黙で消える（母集団カナリアがテストで膜を張る）
+    // この 1 行が落ちると ADR→ADR の実在検査が黙って消える（母集団カナリアがテストで膜を張る）
     ...adrDocs,
     ...skillTreeDocs(snapshot),
     ...nonDocSources(snapshot),
@@ -56,7 +56,7 @@ export function skillTreeDocs(snapshot) {
 
 /** `docs/` の外のソース。
  *  **見るのはこの正規表現が挙げる拡張子だけである**——`.ts` / `.tsx` / `.ps1` / `.psm1` に書いた
- *  ADR の短縮引用は実在照合を素通りする（2026-08-09 実測・#1008）。 */
+ *  ADR の短縮引用は実在照合では検出されない（2026-08-09 実測・#1008）。 */
 export function nonDocSources(snapshot) {
   return snapshot.files.filter((f) => /\.(rs|mjs)$/.test(f) && !f.startsWith("docs/") && !f.endsWith(".test.mjs"));
 }

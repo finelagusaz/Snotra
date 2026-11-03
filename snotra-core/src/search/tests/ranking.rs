@@ -427,7 +427,7 @@ fn search_result_order_is_stable_across_target_path_representations() {
                 "C:\\orphan\\deep\\tool.exe",
             ],
         ),
-        // パスクエリ: bitmask pre-filter を素通りし、正規化キーの部分一致で拾う経路。
+        // パスクエリ: bitmask pre-filter で検出されず、正規化キーの部分一致で拾う経路。
         (
             "\\a\\",
             SearchMode::Fuzzy,

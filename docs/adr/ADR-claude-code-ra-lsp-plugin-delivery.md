@@ -31,13 +31,13 @@ issue は「repo 所有の plugin root に `.lsp.json` を置き、`initializati
 - **`claude plugin validate --strict` をマニフェスト以外の検査にも使う**: 却下。**この検証器は `.lsp.json` を視界に入れない**——JSON として壊しても抑制キーを消しても `✔ Validation passed` / exit 0 を返す（スクラッチ plugin へ 3 パターンの変異を注入して実測。呼び出し側とレビュア側の 2 者が独立に再現）。マニフェスト 2 枚の妥当性はこの検証器に委ね、`.lsp.json` の意味的整合は自前カナリアが持つ、と層を分けた。
 - **検査 id を新設する（`lsp-validate` 等）**: 却下。`BUDGETS` + `buildCommand` の `case` + `repro` + `docs/hooks.md` の新行 + `REPRESENTATIVE_EDITS` の 5 点セットが同時に要るのに、得られるのはマニフェスト検証だけで、それは `claude plugin validate` が既に持つ。`hook-selftest` へ相乗りする形が最小。
 - **検査層を 2 枚にする（`governance-check.mjs` へ `G-lsp-config` を足す）**: 却下。独立導出レビューの推奨だったが、(i) ファイル削除は CI の `npm test` が回すカナリアが検出する（カナリアは実ファイルを読むので、消えれば落ちる）、(ii) `G-stale-identifiers` への語彙供給は判定を非 test の `.mjs` へ置くことで果たされる、(iii) 残る差は `skip-ci` ラベル付き PR だけである。設定 JSON だけを触る変更に `skip-ci` を付ける動機は薄く、層を 1 枚増やす費用に見合わない。
-- **`selectChecks` の ratoml 分岐を basename でアンカーし、判定は repo 直下の 1 枚だけを読む**: 却下（**レビューの修正案をそのまま採らなかった**）。それだと `snotra-core/rust-analyzer.toml` を編集したとき **hook は走るのに判定は別のファイルを見て緑**になる。割り当てられたファイルの緑は「合格」を意味するので、**沈黙より悪い**。発火と判定の母集団を揃えるため `findRatomlFiles` でツリー全体を走査する側を選んだ。
+- **`selectChecks` の ratoml 分岐を basename でアンカーし、判定は repo 直下の 1 枚だけを読む**: 却下（**レビューの修正案をそのまま採らなかった**）。それだと `snotra-core/rust-analyzer.toml` を編集したとき **hook は走るのに判定は別のファイルを見て緑**になる。割り当てられたファイルの緑は「合格」を意味するので、**見逃しより悪い**。発火と判定の母集団を揃えるため `findRatomlFiles` でツリー全体を走査する側を選んだ。
 - **ratoml 走査で `readdirSync` の throw を握って続行する**: 却下。読めないディレクトリを黙って飛ばすのは fail-open であり、throw は vitest がエラーで落ちる＝沈黙しない。**受容する残余として doc に書く**側を採った。
 - **`diagnostics` の抑制を同じサイクルで入れる**: 却下（先送り・ユーザー判断）。抑制の機構は 2 層ある——Claude Code 側の `diagnostics: false`（publishDiagnostics の**注入だけ**を止め、navigation は保つ）と、RA 側の `initializationOptions.diagnostics.enable=false`（**計算しない**）。issue は後者しか想定していなかった。一方 2026-08-14 の自前実測では `<new-diagnostics>` の量は編集由来 3〜9 件に対し底値 96 件で、**設定で消せるのは実セッションに出ていない底値のほう**であり、しかも `unlinked-file`（`.rs` を作って `mod` 忘れ）は cargo から見えないので失うと代替検知が無い。**先に実効設定を実測してから決める。**
 
 ## 受容する残余
 
-**足ごとに名指しする。**
+**条件ごとに名指しする。**
 
 1. **worktree は自分の設定ではなく、最初に登録したツリーの設定で動く**（2026-08-14 に実測。**当初書いた機序は誤っていた**——下の「実測で訂正した機序」参照）。`known_marketplaces.json` はマシン全体で marketplace 名をキーに持ち、その `installLocation` が最初に登録したツリーの絶対パスを指し続ける。ゆえに worktree で `.claude/lsp/` を編集してもそのセッションには効かず、カナリアはそのツリーのファイルを読むので緑のままである。検知するにはユーザーマシンの状態（CI に無い）を読む必要があり、かつファイル作成から次のセッション再起動までの**正当な過渡状態で赤くなる**。今は置かない。
 2. **`.claude/settings.local.json` は project より優先順位が高い**（user < project < local < flag < policy）。そこへ `enabledPlugins` を書けば plugin を無効化できるが、gitignore 済みでリポジトリからは守れない。
@@ -61,6 +61,6 @@ issue は「repo 所有の plugin root に `.lsp.json` を置き、`initializati
 
 ## 検知器自身のカバー範囲を検算して見つかった足
 
-**「不変条件を壊す」向きの変異だけでは足りなかった。** 各検査を `if (false)` で無力化して「どの変異も落ちなくなる検査」を探す向き（＝検査を殺す変異）を外部レビューが回したところ、素通りが 14 中 3 件見つかった。とくに `extraKnownMarketplaces` の検査は、`path` を壊す変異が**下流の別メッセージ**（`marketplace.json を読めない`）で赤くしていたため、**誰にも縛られていなかった**——変異を足す側からは原理的に見えない死角である。
+**「不変条件を壊す」向きの変異だけでは足りなかった。** 各検査を `if (false)` で無力化して「どの変異も落ちなくなる検査」を探す向き（＝検査を殺す変異）を外部レビューが回したところ、見逃しが 14 中 3 件見つかった。とくに `extraKnownMarketplaces` の検査は、`path` を壊す変異が**下流の別メッセージ**（`marketplace.json を読めない`）で赤くしていたため、**誰にも縛られていなかった**——変異を足す側からは原理的に見えない死角である。
 
-素通りは 3 → 1 → 0 へ収束した。途中で 1 件、**修正そのものが新しい欠陥を作った**: ratoml 検査を配送経路より前へ移したことで、`settings.json` の読み取り失敗が返す `return [新しい配列]` が初めて `violations` を捨てる意味になった（**当該行は 1 文字も変えていない**）。差分レビューでは変わった行が無いので原理的に見つけにくい。
+見逃しは 3 → 1 → 0 へ収束した。途中で 1 件、**修正そのものが新しい欠陥を作った**: ratoml 検査を配送経路より前へ移したことで、`settings.json` の読み取り失敗が返す `return [新しい配列]` が初めて `violations` を捨てる意味になった（**当該行は 1 文字も変えていない**）。差分レビューでは変わった行が無いので原理的に見つけにくい。

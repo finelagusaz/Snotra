@@ -326,7 +326,7 @@ mod tests {
     /// 「将来の追加を守る」機構ではなく、現に書いた alias が同じ 1 つの modifier へ解決されること
     /// （順序・重複・空セグメントに揺れないこと）を固定するだけ。
     ///
-    /// **本モジュールの alias / key 系テストはどれも同じ形である**——射程の正本はここに置く。
+    /// **本モジュールの alias / key 系テストはどれも同じ形である**——適用範囲の正本はここに置く。
     #[test]
     fn modifier_aliases_order_duplicates_and_empty_segments_form_one_set() {
         let parsed = parse(" Shift + control + Ctrl ++ Alt ", "Q").unwrap();
@@ -359,7 +359,7 @@ mod tests {
         );
     }
 
-    /// **保証は狭い**（射程の正本は `modifier_aliases_order_duplicates_and_empty_segments_form_one_set`
+    /// **保証は狭い**（適用範囲の正本は `modifier_aliases_order_duplicates_and_empty_segments_form_one_set`
     /// の doc）: key alias も `parse()` の非網羅 match が持ち、ここに並ぶのは標本である
     /// （2026-08-09 実測: Enter へ 3 つ目の alias を足しても緑・#1008）。
     #[test]
@@ -375,7 +375,7 @@ mod tests {
         }
     }
 
-    /// **保証は狭い**（射程の正本は `modifier_aliases_order_duplicates_and_empty_segments_form_one_set`
+    /// **保証は狭い**（適用範囲の正本は `modifier_aliases_order_duplicates_and_empty_segments_form_one_set`
     /// の doc）: `HotkeyKey` の variant のうち下に並ぶ `cases` だけを見る抜き取りであり、大小文字を
     /// 問わないことをその範囲で固定する。母集団は `parse()` の非網羅な文字列 match なので、
     /// **既存 variant への alias 追加はここでは止まらない**（2026-08-09 実測・#1008）。

@@ -110,7 +110,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 (c) 既存の錨の弱化と、レシピ無しの新しい錨の追加が npm test で赤くならなくなる。
 (d) 条件つきで言える。錨が弱っても 21 本の合否は直接変わらず、失うのは「母集団の縮み」という
     稀事象（直近 20 コミットで構造母集団の変動 0-1 回・manifest 導入時の実測）の検出感度である
-    ——根拠 B の射程内。新設する錨への「一度は実測」は .claude/rules/safety-nets.md の規範として
+    ——根拠 B の対象内。新設する錨への「一度は実測」は .claude/rules/safety-nets.md の規範として
     残り、scripts/** を触れば自動配送される。
     ⚠️ 明示する衝突: 本タスクの制約は「テストファイルの撤去は対応する本体を撤去する場合に限る」
     だが、この項の本体（domains.mjs）は残る。一方で Phase 3 の機構の実体はこのテスト節そのもの
@@ -121,7 +121,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 (a) scripts/governance/instrument.mjs `checkNormativeAreaInstrument`（L88-103）と
     governance-check.mjs の呼び出し（L153 付近の findings.push）。
     ※ 計測本体（normativeArea L124-133・skillDescriptionArea L61-82・ALWAYS_LOADED_FILES L34）は
-      残す——面積の観測は第 0 層（規範文書）に向いた計器であり、原則の射程外。
+      残す——面積の観測は第 0 層（規範文書）に向いた計器であり、原則の対象外。
 (b) 合否を持たない計器（ADR-retire-area-budget で判定を廃した面積報告）の入力の健全性。
     計器を守る機構 = 第 3 層。
 (c) - rules/skills が 0 件の finding —— ただしこれは G-domain-anchors の「メンバーが 0 件」
@@ -165,7 +165,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 ════════════════════════════════════════════════════════════
 
 この節は空ではない。いずれも「機構を守る機構」の字面に当たるため素朴な適用では消えるが、
-第 2 層（許された 1 段）であり、壊れ方が沈黙 → 21 本が空虚に緑、の経路を持つ。
+第 2 層（許された 1 段）であり、壊れても気づけない → 21 本が空虚に緑、の経路を持つ。
 
 3-1. governance-manifest.mjs 本体（checks/docs/rules/skills の 4 列。manifest L32-43・
      diffManifest L58-67・undeclared L69-75・ci.yml「governance manifest delta」step）
@@ -188,16 +188,16 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
      消滅を隠す）も各行のコメントが実測つきで持つ。
 
 3-4. registry.mjs の走査登録と形式検証（id/run/ファイル名一致の throw・L32-34）
-     根拠: #1088 が問うた「検査が沈黙で 1 本落ちる」構造の解消そのもの。消せば、export を欠いた
+     根拠: #1088 が問うた「検査が黙って 1 本落ちる」構造の解消そのもの。消せば、export を欠いた
      検査ファイルが黙って登録から漏れる。
 
 3-5. lib.mjs の入力ガード（linesOutsideFences の釣り合わないフェンス finding L124-157・
      sectionOf の 4 条件 L301-350）
      根拠: 検査の入力路に埋めた第 2 層。2026-08-17 の実測が「findings 0 件のまま body が縮む/
-     伸びる」沈黙経路を名指しで持ち、消せばそのまま戻る。
+     伸びる」黙って失敗する経路を名指しで持ち、消せばそのまま戻る。
 
 ════════════════════════════════════════════════════════════
-4. 原則の射程外（撤去候補にしない）— 母集団の完結のための全ファイル裁定
+4. 原則の対象外（撤去候補にしない）— 母集団の完結のための全ファイル裁定
 ════════════════════════════════════════════════════════════
 
 - lib.mjs（693 行）: 21 本の検査自身の入力基盤（第 1 層）。§3-5 のガード含め残す。
@@ -205,7 +205,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 - domains.mjs（305 行）: §3-2。残す。
 - evidence.mjs（113 行）: view 機構のみ項目 1。テンプレートは第 2 層の計器として残す。
 - instrument.mjs（133 行）: duplicateDomains が項目 2・checkNormativeAreaInstrument が項目 6。
-  面積計測本体は第 0 層に向いた計器で射程外。
+  面積計測本体は第 0 層に向いた計器で対象外。
 - dependents.mjs（198 行）・edit-findings.mjs（132 行）: どちらも**文書（第 0 層）を見る**編集時
   reminder である（#1140/#1139・ADR-dependents-reminder-at-edit-time /
   ADR-scoped-governance-findings-at-edit-time）。機構を守る機構ではなく、第 1 層の所見を時間軸で
@@ -217,7 +217,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 配線 ~25・registry L35-52 ~18・manifest 2・checkNormativeAreaInstrument ~16）、
 テスト側で evidence.test.mjs の大半・domains.test.mjs の反証節 ~200 行・registry.test.mjs の
 domains 節 ~80 行・governance-check.test.mjs の凍結節。**支える層 1,947 行の大半（lib.mjs・facade・
-registry の走査・dependents/edit-findings）は第 1 層か射程外であり、この原則が削るのは
+registry の走査・dependents/edit-findings）は第 1 層か対象外であり、この原則が削るのは
 「第 2 層を守る層」= 1 割弱にとどまる**——直近 3 コミット 2,065 行のうち原則に触れるのは
 ラチェット・総称反証・manifest domains 列であって、ドメインと錨の本体ではない。
 ```
@@ -293,7 +293,7 @@ registry の走査・dependents/edit-findings）は第 1 層か射程外であ�
 (a) 上記ファイル行。
 (b) `G-heading-refs.mjs` の `run()` から `ctx.record` だけを外すと、object-level 検査の evidence が欠けても `governance:check` は exit 0。
 (c) 正確な経過時間は記録なし。使い捨て worktree のフォールト注入で測定された。
-(d) VERDICT: 後から気づいて足りた。これは本番へ入れない注入実験であり、実害のマージは記録されていない。しかし記録は「この沈黙経路は却下案が新設するものではなく、既に在る」と明記する。すなわち one-shot の object check 注入だけでは、evidence assembly という META 層の配線切断を検出できない。
+(d) VERDICT: 後から気づいて足りた。これは本番へ入れない注入実験であり、実害のマージは記録されていない。しかし記録は「この黙って失敗する経路は却下案が新設するものではなく、既に在る」と明記する。すなわち one-shot の object check 注入だけでは、evidence assembly という META 層の配線切断を検出できない。
 
 ### 5. #1143 の修復検査自身も、作成中に同型で沈黙した
 
@@ -311,7 +311,7 @@ registry の走査・dependents/edit-findings）は第 1 層か射程外であ�
 
 e9bdf9325afb969fd2b5c7485f06796d951aaf23 (2026-08-19, Phase 1) は #1143 の修復過程について次を記録する。
 
-> それを直す検出器が 3 回にわたり同型の欠陥を出した（母集団の下界を縛らない → 走査側の狭窄に反応しない → 前方一致で中間層の消滅が沈黙）。
+> それを直す検出器が 3 回にわたり同型の欠陥を出した（母集団の下界を縛らない → 走査側の狭窄に反応しない → 前方一致で中間層の消滅が偽陰性）。
 
 これは「遅く見つけても自己限定する」とは両立しない。欠陥は一つの object check に留まらず、検出器の検出器へ 3 回連鎖した。もっとも、記録は各回の経過時間や誤マージを明記しない。
 

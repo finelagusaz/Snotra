@@ -39,7 +39,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 ### `normalize_entry_key` の冪等性契約
 
 - `indexer::normalize_entry_key` は**冪等**である（規則の定義は `indexer/keys.rs` の `//!` と `normalize_entry_key_into`、検知器は `migrate_normalize_keys_is_idempotent`）。依存するモジュールは `git grep normalize_entry_key` で数える
-- **記録側と照合側は同じ関数を通す。別実装を足さない。** 1 バイトずれても結果は沈黙でずれる（ブーストやスコアだけが消える）。パスキーは `normalize_entry_key_into`（末尾セグメント版 `normalize_file_name_key_into` も含む）、照合用の名前とクエリは `query::normalize_for_match`、派生文字列の共有判定は `query::measure_derived_sharing` を通す。照合側の `search/path_store.rs` だけは、性能のためにパスキーの規則を再実装している（一致は `search/tests/path.rs` の `path_store_cursor_matches_*` の 2 本が守る）。パスキーの規則を変えたら、`search/path_store.rs` と `tests/path_query_cost.rs` の写しも直す。クエリ側の `path_query`（`search/query_plan.rs`）は照合用の名前とも別の正規化である
+- **記録側と照合側は同じ関数を通す。別実装を足さない。** 1 バイトずれても結果は黙ってずれる（ブーストやスコアだけが消える）。パスキーは `normalize_entry_key_into`（末尾セグメント版 `normalize_file_name_key_into` も含む）、照合用の名前とクエリは `query::normalize_for_match`、派生文字列の共有判定は `query::measure_derived_sharing` を通す。照合側の `search/path_store.rs` だけは、性能のためにパスキーの規則を再実装している（一致は `search/tests/path.rs` の `path_store_cursor_matches_*` の 2 本が守る）。パスキーの規則を変えたら、`search/path_store.rs` と `tests/path_query_cost.rs` の写しも直す。クエリ側の `path_query`（`search/query_plan.rs`）は照合用の名前とも別の正規化である
 - 規則を変えるときは、依存するモジュールすべてと冪等性を確かめる
 
 ### `char_bitmask` は `query.rs` に一元化済み
@@ -87,7 +87,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 データの意味だけを変えて版を上げるときも、8 と 9 は要る。
 
-**版を上げずに型を替えるなら、線上表現を 1 バイトも変えない。** `names`（`NameArena`）と派生文字列 2 列（`str_arena`）がこの形で、守るのは golden ではなく `*_wire_format_is_identical_to_*` の検知器である（射程は `index_tree.rs` / `str_arena.rs` の doc）。崩すと全ユーザーが版はそのままに読めなくなる（症状は cache-miss の全走査）。
+**版を上げずに型を替えるなら、線上表現を 1 バイトも変えない。** `names`（`NameArena`）と派生文字列 2 列（`str_arena`）がこの形で、守るのは golden ではなく `*_wire_format_is_identical_to_*` の検知器である（適用範囲は `index_tree.rs` / `str_arena.rs` の doc）。崩すと全ユーザーが版はそのままに読めなくなる（症状は cache-miss の全走査）。
 
 ## engine.rs のロック最小化パターン
 
@@ -109,7 +109,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 ## `scan_all` の重複排除
 
-根ごとの役割（`root_roles`）で照合と記録を分けている（機序は `indexer/scan.rs` の `root_roles` の doc）。CI が守らない退行の射程は `Dedup::accept` の doc。
+根ごとの役割（`root_roles`）で照合と記録を分けている（機序は `indexer/scan.rs` の `root_roles` の doc）。CI が守らない退行の適用範囲は `Dedup::accept` の doc。
 
 ## エントリ名の導出ルール
 

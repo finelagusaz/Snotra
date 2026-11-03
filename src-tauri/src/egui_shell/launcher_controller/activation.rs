@@ -9,7 +9,7 @@
 //!
 //! **ただし追加は今も沈黙する。** **別の子モジュールに 4 本目の入口を新設する形は、どの検査も
 //! 赤にしない**——`entry_points` は明示の配列で、母集団の側から導かれていないためである。
-//! **これは受容する死角であり、塞いだとは書けない**（#1201 が消したのは「移動で射程が黙って
+//! **これは受容する死角であり、塞いだとは書けない**（#1201 が消したのは「移動で適用範囲が黙って
 //! 狭まる」側だけである）。
 //!
 //! slash コマンドの即実行（`execute_slash`）もここに置く。§15.3 の「完全一致した時点で実行する」は
@@ -23,7 +23,7 @@
 //!   書き起こしてはならない（表示と起動が片方だけ変わる将来が生まれる・#1077 / #1106）
 //! - **`indexing` / `visible_rows` の読み**はここに無い。`view.rs` が 1 フレーム 1 回読んだ値を
 //!   [`FrameIndexing`] / [`FrameVisibleRows`] として受け取る（読み直しを禁じる根拠と、その
-//!   検査の射程は `activation/tests.rs` の当該 doc が正本）
+//!   検査の適用範囲は `activation/tests.rs` の当該 doc が正本）
 
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
@@ -344,7 +344,7 @@ impl LauncherController {
     /// を取っていた）——ここは egui フレームの中であり、検索 worker が `engine.search` で
     /// `Mutex<Engine>` を握っている間フレームが返らなくなる。**分けている境界は錠の内外ではなく
     /// フレームの内外である**: config の読みは [`crate::egui_shell::read_config`] でフレームの中に
-    /// 置き、Win32 clipboard と `ShellExecuteW` は worker へ出す（射程は
+    /// 置き、Win32 clipboard と `ShellExecuteW` は worker へ出す（適用範囲は
     /// [`crate::state::AppState::read_config`] の doc が正本）。
     fn execute_instant_selected(&mut self, index: usize, instant_query: &str, ctx: &egui::Context) {
         let Some(sel) = self.state.results().get(index) else {
@@ -419,7 +419,7 @@ impl LauncherController {
         // **止めるのは操作だけである。** 行データと選択は消さず、→ / ← のフォルダ突入も
         // 止めない。**#1077（③）の「突入すれば行は可視へ戻る」という理由はここでは成り立たない**
         // ——ウィンドウ高は 0 のままである。それでも止めないのは、突入が**行の起動ではなく現在地の移動**
-        // であり可逆だからで、③と射程を揃えることを優先した。
+        // であり可逆だからで、③と適用範囲を揃えることを優先した。
         //
         // **詰みは作らない。** `/o`（設定を開く）は完全一致した時点で Enter を経ずに走るため
         // （`SPEC.md`「15.1 概要」）このゲートを通らない。設定画面の `1..=50` clamp で戻せる。

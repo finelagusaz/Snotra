@@ -8,7 +8,7 @@
 // **ルート `[workspace.lints.rustdoc]` へ書いてはならない。** あの節は G-workspace-lints が
 // 「全エントリが deny/forbid」の ∀ で見張っており、allow を 1 行足すと deny の行を残したまま
 // 検査が赤くなる（#713 の設計。実測: governance:check / node-check / rust-check の 3 job が落ちた）。
-// 抑止の射程を「この crate のこの lint だけ」に閉じるのが、あの ∀ と両立する唯一の置き場である。
+// 抑止の適用範囲を「この crate のこの lint だけ」に閉じるのが、あの ∀ と両立する唯一の置き場である。
 #![allow(rustdoc::private_intra_doc_links)]
 
 pub mod autostart;

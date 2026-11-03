@@ -13,14 +13,14 @@ export function run(snapshot, ctx) {
 //
 // **守る命題**（前提つき: `Cargo.toml` を正規表現で近似パースする範囲で）: この検査が緑 ⇒
 // `cargo doc` の intra-doc link 検出が全 workspace member で deny として効く。
-// #706 では `snotra-egui-runtime` が opt-in を欠いたまま #627 から #700 の検証中まで CI を素通りした。
+// #706 では `snotra-egui-runtime` が opt-in を欠いたまま #627 から #700 の検証中まで CI では検出されなかった。
 //
 // 塞ぐのは cargo が **exit 0 で沈黙した** 次の 6 経路だけである（cargo 1.94.0 で実測）:
 //   member 側 — [lints] が無い / [lints.rustdoc] だけ持つ（workspace テーブルを継承しない） /
 //               [package] 配下の `lints.workspace = true`（`unused manifest key: package.lints` と
 //               警告は出るが exit 0 のまま通る）
 //   ルート側 — deny → warn への降格 / rustdoc サブテーブルが無い or 空 / 必須 lint の行だけ消える
-// 射程外（cargo が manifest エラーにする＝沈黙しない）: ルートに `[workspace.lints]` が無い形・
+// 対象外（cargo が manifest エラーにする＝沈黙しない）: ルートに `[workspace.lints]` が無い形・
 // member の `workspace = false`・`[lints]` への他 lint 併記。**沈黙しない経路に見張りは置かない**。
 //
 // 受容する残余:

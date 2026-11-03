@@ -154,7 +154,7 @@ try {
     [void](Stop-SnotraProcessAndWait -Process $proc)
 
     if ($null -eq $terminal) {
-      # **沈黙を合格と読ませない**（#471 / #690 の型）。
+      # **無出力を合格と読ませない**（#471 / #690 の型）。
       $failures += "run=$run 終端が出なかった（予算 ${TerminalTimeoutMs}ms）"
       Write-Host "終端なし" -ForegroundColor Red
       continue

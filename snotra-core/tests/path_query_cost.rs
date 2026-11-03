@@ -391,7 +391,7 @@ fn measure_path_query_frame_cost_at_operating_point() {
 /// **どの設定の組み合わせが `c:\` のコストを動かすか**を 1 枚の表で見る（#1067）。
 ///
 /// [`measure_path_query_frame_cost_at_operating_point`] が「開発機の実 config が実際にどこに
-/// 居るか」を測るのに対し、こちらは**設定空間のどこに崖があるか**を測る。改修の射程
+/// 居るか」を測るのに対し、こちらは**設定空間のどこに崖があるか**を測る。改修の適用範囲
 /// （誰に効くのか）を決めるのに要る——支配項の `cmp_paths` は `include_path_env` が真の
 /// ときにしか発火しないので、**既定構成のユーザーには 1 µs も効かない**（`PERFORMANCE.md`）。
 ///

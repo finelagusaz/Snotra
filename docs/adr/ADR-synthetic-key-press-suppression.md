@@ -11,7 +11,7 @@ tao は `WM_SETFOCUS` を受けたとき、その瞬間に押されている全�
 ## 決定
 
 - 判定は `input.rs` の純粋関数 `admit_key`（`is_synthetic` / `pressed` / `physical` と抑止集合から bool）
-- 抑止の射程は**全キー**。解除は **release** または **`Focused(false)`**
+- 抑止の適用範囲は**全キー**。解除は **release** または **`Focused(false)`**
 - **非合成の press も抑止中は落とす**——注入では測れない物理オートリピートの経路も同時に塞ぐ
 
 ## 検討した代替案と却下理由
@@ -26,7 +26,7 @@ tao は `WM_SETFOCUS` を受けたとき、その瞬間に押されている全�
 
 `src-tauri/src/egui_shell/view.rs` の Escape 消費点に `!gained_focus` を足す案。#927 の受け入れ条件の文言（「フォーカス獲得直後の Escape を落とす」）に最も近く、runtime を触らない。
 
-**却下した理由は 2 つ。**（1）**射程が Escape に閉じる**——同じ穴は ↑↓・文字キーにも開いている（`Z` を押しっぱなしで設定を閉じると検索欄へ合成 press が届くことを実測した）。（2）**view 層は合成と本物を弁別できない**——`is_synthetic` は tao の `WindowEvent` にしかなく、egui の `InputState` まで来ると消える。ゆえに「そのフレームの Escape を一律に落とす」ヒューリスティックになり、本物の Escape も巻き添えにする条件を自分で作ることになる。
+**却下した理由は 2 つ。**（1）**適用範囲が Escape に閉じる**——同じ穴は ↑↓・文字キーにも開いている（`Z` を押しっぱなしで設定を閉じると検索欄へ合成 press が届くことを実測した）。（2）**view 層は合成と本物を弁別できない**——`is_synthetic` は tao の `WindowEvent` にしかなく、egui の `InputState` まで来ると消える。ゆえに「そのフレームの Escape を一律に落とす」ヒューリスティックになり、本物の Escape も巻き添えにする条件を自分で作ることになる。
 
 ### 3. 設定ウィンドウの「Escape で閉じる」を廃止する
 

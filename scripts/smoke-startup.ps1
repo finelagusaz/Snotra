@@ -89,7 +89,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # 開発機ほど早く失敗する**（CI と手元で挙動が分かれる）。
   #
   # 判定の形は `Wait-SnotraTraceCondition` が単独で持つ（#872）——期限跨ぎの取りこぼしと
-  # 読み取り失敗の沈黙もそこで塞がっている。ここに写しを置かない。
+  # 読み取り失敗の見逃しもそこで塞がっている。ここに写しを置かない。
   $swFirst = [System.Diagnostics.Stopwatch]::StartNew()
   $firstEvent = Wait-SnotraTraceCondition -Path $errPath -Predicate { $true } `
     -TimeoutMs $FirstTraceTimeoutMs -PollMs 100 -AbortIfExited $proc -Description '最初の trace'
@@ -145,7 +145,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
   }
 
   # event_count は成功時にも出す（**検査が実際に何かを見た**ことを読み手に示すため。
-  # 沈黙を合格と読ませないための肯定的報告）。
+  # 無出力を合格と読ませないための肯定的報告）。
   # first_trace_ms は成功時にも出す。**起動レイテンシの分散はまだ原因未解明**であり、
   # 予算内に収まっていても数字が残れば、悪化の傾向を人が読める（予算に触れて初めて
   # 気づく状態にしない）。null は「予算内に 1 行も出なかった」。

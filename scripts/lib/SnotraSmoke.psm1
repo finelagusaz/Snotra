@@ -410,7 +410,7 @@ function Start-SnotraProcess {
 - 解決後は絶対形へ正規化して出力へ載せる——どのコピーを測ったかが読み手に見える形が、
   `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。
 
-この作法は `scripts/lib/SnotraSmoke.Tests.ps1` のソース述語が守っている（射程と死角はあちらの宣言が正本）。
+この作法は `scripts/lib/SnotraSmoke.Tests.ps1` のソース述語が守っている（適用範囲と死角はあちらの宣言が正本）。
 #>
 function Resolve-SnotraCargoExecutable {
     [CmdletBinding()]

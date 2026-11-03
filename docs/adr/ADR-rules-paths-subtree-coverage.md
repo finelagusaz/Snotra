@@ -45,7 +45,7 @@
 - **`globToRegex` と `rulePathPatterns` は `lib.mjs` へ移った** — 2 検査が共有するため（同ファイル冒頭の掲載条件）。
   写しにすると glob の意味論が検査ごとに独立に古くなる。
 - **検査が言えるのは documented な glob 意味論での被覆までである** — harness が実際に配送するかは見ない。
-  射程と死角の一覧は `scripts/governance/checks/G-rules-script-coverage.mjs` の `//!` が正本。
+  適用範囲と死角の一覧は `scripts/governance/checks/G-rules-script-coverage.mjs` の `//!` が正本。
 - **メインセッションの配送を対象にした保証である** — サブエージェントへの配送は 2 体で挙動が割れており
   （予算消費でも Read/Bash の取り違えでも説明が付かない）、機序は未解明のまま残る。`paths` を広げても
   委譲先へ届くとは限らない。

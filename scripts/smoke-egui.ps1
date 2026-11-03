@@ -85,7 +85,7 @@ $profileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile'
 # **skip へ至る経路のうち沈黙するのはこの 1 本だけである**——他は必ず exit≠0 で鳴る:
 # 実行ファイル不在 / `hotkey:registered` 未観測 / `egui_show:done` 未観測 / `egui_results:show`
 # 未観測 / `ResultsQuery` が A-Z 単字でない（`Get-LetterVk` が throw）。ゆえにこの 1 箇所で
-# 沈黙経路を塞げる。**アプリ起動前に判定が確定している**ので、この guard はプロセスを
+# 黙って失敗する経路を塞げる。**アプリ起動前に判定が確定している**ので、この guard はプロセスを
 # 起こさずに落ちる（フォールトインジェクションが実機を触らずに済む）。
 #
 # **旧 -RequireResults の opt-in を撤去したのは、その前提が偽になったからである**——「ローカルでは
@@ -307,7 +307,7 @@ try {
   #
   # **`Start-Sleep $StartupWaitMs` の直後では早すぎる**（実測）: `-RedirectStandardError` は
   # プロセス起動時に**空のファイルを作る**ので `Test-Path` は真になり、本体がまだ 1 行も
-  # 書いていない段階では `Select-String` が 0 件を返して**沈黙のまま合格する**。CI では
+  # 書いていない段階では `Select-String` が 0 件を返して**黙ったまま合格する**。CI では
   # 「起動後 12,000ms 経っても trace 0 行」を 3 回実測しており、固定待機 4,000ms はその保証に
   # ならない。上の hotkey 観測（予算 $StartupObserveTimeoutMs）と `egui_show:done` 観測を
   # 通過した時点なら本体は必ず出力しているので、**ここが最も早い健全な観測点である**。
@@ -490,7 +490,7 @@ try {
     }
 
     # #671 PR A′: hide 後に results だけが最前面に取り残されないこと（H1・orphan 検出）。
-    # **presence 検査ではこの事故を素通りする**——orphan でも egui_results:hide は出るため。
+    # **presence 検査ではこの事故では検出されない**——orphan でも egui_results:hide は出るため。
     # orphan は必ず「hide 以降の余分な egui_results:show」として現れる（main が hidden でも
     # repaint 要求は飛ぶ: config-applied / indexing-* / updater 完了の wake_main）。
     #
@@ -524,7 +524,7 @@ try {
       }
       # **肯定的な証拠**: ここへ来る時点で `Wait-SnotraTraceEvent` が show / results:show / hide を
       # 観測済みなので、判定器が 1 件も `egui_results:show` を見ていないなら判定器側の欠陥である
-      # （trace を読めていない・イベント名がドリフトした）。**沈黙を合格と読ませない**。
+      # （trace を読めていない・イベント名がドリフトした）。**無出力を合格と読ませない**。
       # 数えるのは判定器（`Observed`）である——ここで生イベントから数え直すと、イベント名の
       # 写しがこちらへ増え、名前がドリフトしたとき当の assertion が黙る。
       if ($invariants.Observed.ResultsShow -eq 0) {
@@ -550,7 +550,7 @@ try {
   # その後、押しっぱなしの Z へもう 1 回 down を送り、離してから X を 1 回打つ。正常なら 2 回目の
   # down（と、`TranslateMessage` がそれに付ける `WM_CHAR`）が落ち、入るのは X だけ（`[0->1]`）である。
   # **取り込みが起きなければ 2 回目の down が通って `[0->1, 1->2]` になり、赤になる**——「入らない」を
-  # 不在の断言にせず、前提が崩れたときに沈黙の緑にならない形にしてある。
+  # 不在の断言にせず、前提が崩れたときに黙って緑にならない形にしてある。
   #
   # **H1 判定より後に置く**——既存の待ちは 1 件でも現れれば成立するので、それより前に show / hide を
   # 足すと既存の断言が新しい事象で満たされる。ここで新しく書く待ちはすべて増分で待つ。
@@ -795,7 +795,7 @@ function Test-SnotraNoTraceEventInWindow {
 $toastLaunchedAt = Get-Date
 # **高さ断言の不合格は throw ではなく `$failures` を通る**（下の round ループ）ため、
 # この scriptの`catch`（$toastErrPath を渡す）を経由せず、集計失敗ブロック（末尾）まで
-# 静かに素通りする。集計失敗ブロックが証拠を出すログをシナリオ 2 のものへ切り替えられるよう、
+# 静かに検出されない。集計失敗ブロックが証拠を出すログをシナリオ 2 のものへ切り替えられるよう、
 # ここで発生源を憶えておく（code-review 指摘）。
 $scenario2Failed = $false
 $toastProc = Start-SnotraProcess -ConfigDir $toastProfile.FullPath -FilePath $ExePath -Trace `
@@ -949,7 +949,7 @@ Write-Host ""
 if (-not $resultsChecked) {
   # **到達不能な経路である**（#804）——`$ResultsQuery` は起動前の guard で非空が保証され、
   # 失敗 0 件でここまで来たなら results 検査は走っている。それでも到達したら「検査が走らない
-  # まま緑」であり、それは #686 が塞いだ当の沈黙経路なので、黄色い NOTE ではなく赤で落とす。
+  # まま緑」であり、それは #686 が塞いだ当の黙って失敗する経路なので、黄色い NOTE ではなく赤で落とす。
   Write-Host "egui smoke failed: results 検査が走らないまま合格しかけました（到達不能なはずの経路）。" -ForegroundColor Red
   exit 1
 }

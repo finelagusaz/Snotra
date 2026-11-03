@@ -1,0 +1,219 @@
+adversarial-1285.txt  (敵対的調査: workspace/research.md の反証)
+日付 2026-11-03 / ブランチ fix/unicode-normalization-1285 / リポジトリのコードは未変更（git status は workspace/ のみ）
+実験用の一時 crate は scratchpad の probe/（リポジトリ外）に置いた。snotra-core/tests/ にも Cargo.toml にも触れていない。
+
+================================================================
+総括（壊せた = 反証成功 / 壊せなかった = 主張は持ちこたえた）
+================================================================
+壊せた:
+  F3  「NFC → 折りたたみ → NFC」は冪等にならない（実測 6,853 対）。research の未解決の疑問の「閉じるか」の答えは「閉じない」。
+  F3b 「折りたたみ ∘ NFC」だけでも非冪等（7,477 対）。単一コードポイントの検知器は全構成で 0 件のまま通る＝検知器は無力。
+  F3c 非冪等だと history の migrate_normalize_keys（load 時に再適用）と新規記録・照会のキーが割れる（doc の「冪等なので安全」が前提崩れ）。
+  F4  「新規 crate は増えない」は features 次第で偽（デフォルト feature だと utf16_iter・write16 が新規）。かつ snotra-settings のビルド木には
+      icu_* 一式が新規に入る（0 → 約 10 crate）。lockfile と製品バイナリに限れば増えない。
+  F6  research の「版を上げずに履歴は収束」は、F3 の非冪等が残る限り「収束」が保証されない（F3c）。
+  F9  実測表の測定環境: 製品の起動（cache hit）では名前の lower 列は compute_wave1 ではなくキャッシュから来る。かな列は毎起動 new_with_cached_masks の
+      kana_for_cached（build.rs:498）で再計算される。research の実測表はこの経路を測っていない（後述）。
+  F10 research は lower 列が cache hit ではキャッシュから来る（compute_wave1 を通らない）ことを書いていない（記述の欠落）。
+壊せなかった:
+  F1  名前照合の入口は normalize_for_match だけ（src-tauri / egui-runtime / settings も探した）
+  F2  INDEX_CACHE_VERSION 8→9 と v8 cache-miss は既存規範と整合。history.bin の版は不要（ただし F3c の条件付き）
+  F5  incremental 条件 2 は NFC 化後も健全（反例は見つからなかった）
+  他の事実主張（#1309 が同型・関数名の古さ・バージョン値・テスト名）は一致。
+
+================================================================
+F1  名前の照合はすべて normalize_for_match を通る — 壊せなかった
+================================================================
+根拠:
+- git grep で normalize_for_match の呼び出し（テスト除く）: folder.rs:34,97,160,190 / history.rs:484 / indexer/columns.rs:185 / query.rs:25,140 /
+  search/build.rs:117,139,498 / search/query_plan.rs:78。
+- 名前を照合用に小文字化・正規化する別経路を探した: to_lowercase / to_ascii_lowercase / eq_ignore_ascii_case / nucleo を src-tauri・snotra-egui-runtime・
+  snotra-settings・snotra-core 全体で grep。名前でない用途だけが残る:
+    snotra-core: config/migrate.rs・config/paths.rs・opener.rs・scan.rs:256（拡張子・パス・設定キー）、indexer/keys.rs:53 と search/path_store.rs:495
+    （パスキー。射程外）、query_plan.rs:130（path_query。射程外）、instant.rs:165,403,406（インスタントコマンド名であって entry 名ではない）。
+    src-tauri: strings.rs:211 はテスト内の to_lowercase、trace.rs:30 は env 値。snotra-settings・egui-runtime に名前照合は無い。
+- Utf32String::from の呼び出しは folder.rs:35,164 と query_plan.rs:110 のみで、どれも normalize_for_match の出力を渡している。
+- 注意（壊せなかったが射程の注記）: lower_file_name（query.rs:140）は target_path のファイル名を normalize_for_match に通す＝名前側の照合と同じ入口。
+  ただしパスキー側（normalize_entry_key_into / path_store）は別規則で NFC 化されない（ユーザー決定の射程どおり）。そのため
+  「名前では当たるがパス照合（クエリに \ を含む場合）では NFC/NFD 差で外れる」という非対称が残る。research は別 issue とした（妥当）。
+この所見を偽にする手順: query/名前の照合に使われる文字列を作る箇所で、normalize_for_match 以外（to_lowercase・nucleo_normalize 直呼び）を使うコードを
+  git grep -nE "nucleo_normalize|chars::normalize" で探す。見つかれば偽。実行結果: query.rs 内部のみ。
+
+================================================================
+F2  版上げ 8→9 と履歴 — 壊せなかった（F3c の条件付き）
+================================================================
+根拠:
+- cache.rs:47 INDEX_CACHE_VERSION=8、cache.rs:56 INDEX_WIRE_SINCE=7（意味だけの版上げでは触らない、の doc あり）。
+- load_cache_in（cache.rs:~861）は現行版のみ Collapsed lower で読む。v7 は None（cache-miss）。ADR-index-v7-cache-miss「帰結」が
+  「次に派生の列の意味を変えるときも、その時点の現行版は同じ問いに当たる」と書く＝v8 も cache-miss が既定。整合。
+- CLAUDE.md「データの意味だけを変えて版を上げるときも、8 と 9 は要る」と一致。
+- 実ファイルの版: C:/Users/Eoh/AppData/Roaming/Snotra/index.bin 先頭 32 バイト = "INDX" 08 00 00 00 …（v8、408,310 バイト、2026-11-03 17:30）。
+  読み取りのみ。つまり開発機も v8 で、9 に上げると初回起動で全走査（ADR は 22〜30 秒と記す）。
+- 履歴: history.rs:128 の load で migrate_normalize_keys が query キーに normalize_history_query_key を無条件に当てる（history.rs:~405）。
+  → 冪等性が成り立つ限り版は不要。
+- 反証の試み（ADR の代替案 A: tree.materialize() → 昇格）: ADR 自身が「費用の比較では A が勝つ」と書く。9 でも同じ問いが再燃するが、
+  「ユーザーに諮った結果、規範を変えずに単純な形」の決定が有効なうちは cache-miss が整合する。争点にしない。
+- ⚠️ 注意: 実 index.bin には NFD 名が実在する（下の F9 参照）。v9 にしないと、その名前は旧い lower のまま残り、
+  cache hit と miss で結果が割れる（規範の「バイト列が同じでも解釈が変われば破損と同じ」）。版上げは必須側。
+この所見を偽にする手順: lower 列とマスクが NFC を含まない旧規則のまま v8 の読み込みで正しく使えることを示す（NFD 名を含む v8 を cache hit させ、
+  NFC クエリで当たることを確認する）。当たらなければ版上げは必要。実際、v8 の列は NFC 前の lower なので当たらない。
+
+================================================================
+F3  冪等性: 「NFC → 折りたたみ → NFC」は閉じない — 壊せた（反例が実在）
+================================================================
+方法: scratchpad の probe crate（icu_normalizer =2.4.0 default-features=false + compiled_data、nucleo-matcher =0.3.1。lock と同版）に
+  query.rs の fold_char と同じ写像（to_lowercase → nucleo normalize → to_lowercase）を写して実行。リリースビルド。
+  基底字 = fold で変わる全コードポイント 1,823 個、結合文字 = 主要な結合文字範囲 1,952 個（0300-036F, 0483-0489, 0591-05C7, 0610-061A, 064B-065F,
+  0900-0DFF, 1100-11FF, 1AB0-1AFF, 1DC0-1DFF, 20D0-20FF, 3099-309A, FE20-FE2F）。2 文字列「基底+結合」の全対。
+結果（冪等でない対の件数。単一コードポイント全 1,114,112 個は全構成で 0 件）:
+  A  fold ∘ NFC                         : 7,477 対が非冪等
+  B  NFC ∘ fold ∘ NFC（research の案）   : 6,853 対が非冪等
+  C  上の B を固定点まで繰り返す          : 0 対（対・拡張した三つ組とも）
+  D  fold ∘ NFC ∘ fold ∘ NFC             : 対 251 件、三つ組 156,237 件が非冪等
+  E  NFC ∘ fold ∘ NFC ∘ fold ∘ NFC       : 対 251 件、三つ組 151,734 件が非冪等
+  三つ組（x, m1, m2 を 0300-036F と 3099/309A）での B = 1,399,590 件、C = 0 件。
+具体的な反例（コードポイント）:
+  A: [U+0142 ł, U+0301] → fold∘NFC → [l, U+0301] → もう一度 → [l]（ł が l に畳まれた後、続く結合文字と合成して ĺ となり、再度 l に畳まれる）
+  B: [U+0054 T, U+0308] → [U+1E97] → 再適用で [n]
+  B: [U+0041 A, U+0344] → [U+00E1 á] → 再適用で [a]
+  B: [U+0048 H, U+0331] → [U+1E96] → 再適用で [l]
+  関連の発見: nucleo の normalize は U+1E97(ẗ) を 'n' に、U+1E96(ẖ) を 'l' に写す（表の誤りと見える。nucleo-matcher 0.3.1）。
+  NFC を足すと t+U+0308 が ẗ に合成された後 'n' に畳まれるので、「ẗ を含む名前の照合結果が NFC 化で変わる」副作用も生じる（既に precomposed の ẗ は
+  今も 'n' に畳まれる。NFD 入力はそうならなかった）。実害は小さいが「NFC 化で値が変わる文字の母集団」に入る。
+  C（固定点まで繰り返す）は実測 0 件だが、収束しないクラスが無いことの証明ではない。探した範囲は上記（対・三つ組・上記範囲）。三つ組以上と
+  Hangul 合成列（L+V+T）・複数基底は未走査（Hangul は 1100-11FF を結合文字側に入れた対のみ）。
+  ⚠️ C が全入力で収束するかは未証明。実装するなら検知器を「結合文字つきの文字列（基底×結合文字の対と三つ組）」へ拡張すること。
+含意: research の「NFC → 折りたたみ → NFC で閉じるか」の答えは「閉じない」。既存の検知器（単一コードポイントのみ）は 0 件で通るので、
+  この退行を機械的には捕まえない。
+この所見を偽にする手順: probe（scratchpad/probe）の b() が非冪等になる入力を 0 件にする構成を示す。または snotra-core に実装した後で
+  normalize_for_match("\u{142}\u{301}") と normalize_for_match(normalize_for_match("\u{142}\u{301}")) が等しいことを実行で示す。
+  現行実装（NFC なし）では ł+U+0301 は l+U+0301 のまま（結合文字を残す）で、2 回目も同じ＝冪等。つまりこの非冪等は「NFC を足すこと」が新たに作る。
+
+----------------------------------------------------------------
+F3c  非冪等だと履歴キーが割れる — 壊せた
+----------------------------------------------------------------
+- history.rs:384 の doc は「normalize_for_match は冪等なので、正規化済みデータへの再適用も安全」を前提にしている。
+- 実際の流れ: 記録時 query_key = normalize_for_match(q)（history.rs:484、1 回）→ 保存 → 次の load で migrate_normalize_keys が
+  normalize_history_query_key を再適用（2 回目）→ キーが変わる。照会（query_count_normalized）は 1 回適用したキーで引くので、
+  migrate 後のキーとは一致しない。非冪等な入力（ł+U+0301 など）でだけ、その履歴の加点が静かに消える。
+- 実害は病的なクエリ（ラテン語の変則結合）に限る。ただし migrate_normalize_keys_is_idempotent の検知器（history.rs:838）は
+  冪等性の実測ではなく既存データでの確認に留まる。
+この所見を偽にする手順: F3 の構成を冪等にする（C のような固定点反復、または折りたたみ側に結合文字の除去を入れる等）か、
+  非冪等になる入力が履歴クエリに入らないことを示す。
+
+================================================================
+F4  icu_normalizer の依存 — 一部壊せた
+================================================================
+根拠:
+- Cargo.lock に icu_normalizer 2.4.0 あり。依存先は icu_collections / icu_normalizer_data / icu_properties / icu_provider / smallvec / zerovec。
+  逆引き: idna_adapter → idna → url → reqwest・schemars 等。src-tauri の製品木には既に在る。
+- 壊せた点 1（features）: デフォルト feature の icu_normalizer 2.4.0 は utf16_iter・write16 を要求する。cargo の offline 解決で
+  `no matching package named utf16_iter found` が出た（lockfile にも無い）。Cargo.lock の grep では utf16_iter・utf8_iter・write16 のうち 1 件しか無い。
+  → snotra-core には default-features = false, features = ["compiled_data"] を指定しないと新規 crate が入る。この指定で probe は解決・ビルド成功。
+- 壊せた点 2（settings の木）: `cargo tree -p snotra-settings -e normal` に icu* / zerovec / smallvec は 0 件（木の総数 164 行）。
+  snotra-settings は snotra-core に依存する（snotra-settings/Cargo.toml:14）ので、足すと settings のビルドに icu_normalizer・icu_collections・icu_provider・
+  icu_locale_core・zerovec・tinystr・yoke・zerofrom・zerotrie・potential_utf・（derive 系）が新たに入る。probe のビルドで確認できた追加のコンパイル対象:
+  zerofrom・yoke・zerovec・tinystr・zerotrie・icu_locale_core・potential_utf・icu_provider・icu_collections・icu_normalizer と derive crate 群。
+  ただし lockfile の新規エントリは増えず、src-tauri の製品バイナリに限れば元から在る crate を共有する。
+  → 「snotra-core へ足しても新規 crate は増えない」は、lockfile・製品バイナリについては真（features を絞れば）、settings 単体の木については偽。
+- snotra-core 単体のビルド時間・テスト時間は増える。
+この所見を偽にする手順: cargo tree -p snotra-settings -e normal | grep -c icu を実装後に実行し、0 のままなら偽。default feature のまま
+  Cargo.lock の差分が空であることを示しても偽になる（私の実験では解決に失敗した）。
+
+================================================================
+F5  incremental 条件 2 — 壊せなかった
+================================================================
+根拠:
+- search.rs:255 は plan.norm_query.starts_with(self.prev_query) で判定（正規化済み同士のバイト prefix）。
+- 反例を探した: (a) 合成が起きる打鍵（か → が）は norm が prefix にならず full scan。(b) e → e+U+0301 は NFC+fold で n2 == n1（同一）。
+  starts_with は真だが同一クエリなので候補集合は同じ。(c) ł→ł+U+0301 は C 構成の固定点で l に収束、n2 == n1 の側。
+  (d) Hangul L+V+T は prefix にならない（合成で先頭が変わる）。
+- 論理: Substring・Prefix は n2 ⊇ n1 の prefix なら名前が n2 を含む⇒n1 を含む。Fuzzy は needle の prefix 拡張で単調（nucleo の needle は文字列の prefix）。
+  名前列は同じ世代で固定。ゆえに NFC 化は prefix 判定の健全性を変えない。
+- ただし弱い点（壊せなかったが ⚠️）: 構成が非冪等（F3）だと prev_query（1 回適用）と新クエリ（1 回適用）の関係は、前回が a(q1)、今回が a(q2) で比較される。
+  q2 = q1 + 結合文字 のとき a(q2) が a(q1) の prefix にならない（full scan へ倒れる）か同一になるかのどちらかで、健全側。
+  prefix と判定されて前回の候補に無い名前が一致する例は見つからなかった。探した範囲: 基底（fold で変わる 1,823）×結合（1,952）の対で、
+  prefix 判定になる対を数え上げて照合するところまでは実行していない。⚠️ 論理による結論であって、全数の実測ではない。
+- ⚠️ 副次: ASCII ゲート。kana_query は「クエリが ASCII のみ」で建つ。現行では e+U+0301 は非 ASCII のため kana_query=None。NFC+fold 後は "e"（ASCII）なので
+  Some になりうる。条件 4 は(a)今回 None は無条件 OK、(b)今回 Some なら前回も Some を要求。None→Some の遷移は full scan（健全）。
+この所見を偽にする手順: 前回 q1 の候補集合に無い名前が、q2（norm が q1 の prefix 拡張）で一致する (q1, q2, 名前) を見つける。名前が q1 を含まず q2 を含む
+  ことは Substring では起こりえない。
+
+================================================================
+F6  履歴 query キーは版を上げずに収束 — 壊せた（条件付き）
+================================================================
+F3c を参照。冪等な構成（固定点まで）にしない限り、migrate の再適用で記録時のキーとずれる。冪等なら主張は成り立つ。
+SPEC §4.2 の「履歴のクエリキーも同じ正規化を適用」は NFC 化後もそのまま真。
+
+================================================================
+F7  性能・費用に関する主張 — 判定保留（⚠️）
+================================================================
+research は「ASCII は常に NFC。非 ASCII だけ NFC の判定を通せば ASCII 名の費用は変わらない」と書く。
+- 正しい点: ASCII 文字列は NFC。借用の高速路（folds_to_itself）の前に ASCII 判定で抜けられる。
+- 壊す点: 現行の borrowable 判定は 1 文字ずつ folds_to_itself を呼ぶ。非 ASCII 名に NFC 判定（is_normalized）を足すと、さらに 1 パス。
+  実コードの実運用点は PERFORMANCE.md で ASCII 98% 超。測定はしていない（私も測っていない）。
+- 固定点反復（F3 の対策 C）を入れる場合、非 ASCII 名は最低 2 パス。ASCII が支配的なので許容と見えるが、kana_for_cached は毎起動全件に
+  normalize_for_match を当てる（build.rs:498、to_kana 込みで秒オーダー）ので、非 ASCII 名が多い環境（日本語の名前が多い開発機の実 config）では
+  毎起動のコストが増える。⚠️ 未測定。
+この所見を偽にする手順: 実 config（migemo_enabled = true）の index で cache hit 起動の kana_for_cached 区間を NFC 追加の前後で測る。
+
+================================================================
+F8  corpus テスト・v6 Skip の記述 — 壊せなかった
+================================================================
+research の「開発機の実 index.bin が v8 のままだと v9 では読めず、corpus テストはスキップ側へ倒れる」は、実 index.bin が v8 であることで裏付く
+（先頭 INDX 08 00 00 00）。v9 にすると cache-miss になり、そのテストはスキップする（研究の記述どおり）。
+
+================================================================
+F9  測定環境・前提の食い違い — 壊せた
+================================================================
+(1) 実 config（C:/Users/Eoh/AppData/Roaming/Snotra/config.toml、2026-08-11 更新）:
+    [search] normal_mode = "substring" / folder_mode = "fuzzy" / migemo_enabled = true / migemo_min_chars = 2 / result_limit = 200 / include_path_env = true
+    history_normalization = "fuzzy_relative_cap"。
+    走査対象: C:\Toolbox, C:\KISS, Start Menu（.lnk）, C:\workspace, C:\（include_folders=false）。
+    → research の調査は migemo の既定（無効）を暗黙に置くと kana 列が建たない前提になるが、実 config は migemo 有効＝kana 列が建つ。
+      kana_lower_names は毎起動 kana_for_cached で normalize_for_match → to_kana を全件に当てる。名前側の NFC は kana 列にも効く。
+      research の実測表は to_kana(normalize_for_match(..)) を `がいど` で測っており、この分岐は測れている。ただし「cache hit のときの lower_names は
+      キャッシュから来る」ことは表に出ていない。
+(2) 製品の起動: lower_names・lower_file_names・char_masks は cache hit ではキャッシュから読む（load_cache_in の CachedLower::Collapsed）。
+    compute_wave1 を通るのは cache-miss・new_from_tree・cached_lower が None の分岐だけ（build.rs の doc に明記）。
+    → research の「Wave 1 で NFC」は cache-miss 時の話であり、v8 cache が残ると lower 列は旧い意味のまま。版上げが必須になる根拠（F2）。
+(3) 実 index.bin に NFD 名が実在する（読み取りのみ）:
+    index.bin(408,310 バイト) を UTF-8 バイト列で走査: U+3099 (E3 82 99) 10 件、U+309A (E3 82 9A) 4 件、U+0301 0 件、U+0308 0 件。
+    周辺は「Ｅ鯖ゲブ談話室」「へぱ…」「Lingr」等の名前（ケ+U+3099 / フ+U+3099 / へ+U+309A / ハ+U+309A など）。名前ツリー部(~3.4k 付近)と
+    lower 列(~348k 付近)に各 1 組＝ lower 列にも NFD のまま残っている。
+    → #1285 は理論上ではなく、この開発機の実データで再現する。かつ、現行の lower 列は NFD のまま保存されているので v9 への版上げで cache-miss にしないと残る。
+    ただし C:/Toolbox・C:/KISS・C:/workspace を深さ 6 で Normalize(FormC) 比較したところ NFD の名前は 0 件。NFD 名は Start Menu（.lnk）か C:\ 直下系由来と推測（未特定）。
+(4) 計測が触る分岐と変更が触る分岐: 変更が触るのは normalize_for_match 本体＝全経路。計測（一時 probe）は query.rs の関数単体なので分岐は一致する。
+    ただし Fuzzy の needle 側はフォルダ絞り込み（folder.rs:35,164、Utf32String::from(filter_norm)）と検索（query_plan.rs:110）で別の呼び出しがある。
+    folder_mode = "fuzzy" は実 config の既定なので、フォルダ絞り込みの Fuzzy が研究の「Fuzzy: haystack NFD かいど / needle が → None」の主戦場。
+    folder.rs:97 の並べ替えキーは name を正規化した lower（キャッシュ無し、列挙のたびに計算）なので、NFC の費用は folder 列挙のたびに乗る。
+この所見を偽にする手順: (3) は index.bin の該当位置を NFC に直した名前で再走査して 0 件になること、(1) は config.toml の値が research の前提と一致することを示す。
+
+================================================================
+F10  research の関連シンボル・事実の網羅確認（母集団: research.md の全箇条）
+================================================================
+一致（壊せなかった）:
+- 「issue 本文の to_lower_folded / normalize_query は #1309 で統合・削除」: 現行コードに無い（grep 0 件）。8f55e8e2 は #1309 の PR #1326 のコミット。
+- 「normalize_for_match は小文字化と nucleo の折りたたみだけ」: query.rs:176 の通り（空白類の圧縮・trim 込み）。research の「照合用の正規化は小文字化と nucleo の折りたたみだけ」は、空白の正規化（#1309）を省略している（細かい欠落）。
+- 関連ファイル・シンボル（query.rs の fold_char・folds_to_itself・lower_file_name、build.rs の 2 箇所、columns.rs:185、folder.rs の 3 点、query_plan.rs）: 実在。
+  build.rs の呼び出し: research は「lower_names・かな名 2 箇所」と書く。実コードは 117(lower_names)・139(kana)・498(kana, kana_for_cached) で一致（壊せなかった）。
+- history.rs の migrate_normalize_keys が無条件: 一致（128 行で load が通す）。
+- INDEX_CACHE_VERSION=8・INDEX_WIRE_SINCE=7: 一致。
+- ADR-index-v7-cache-miss の「帰結」引用: 一致。
+- CLAUDE.md「IndexCache バージョン変更チェックリスト」の 8/9: 一致。
+- SPEC §4.2 に NFC/NFD の記述なし: 一致（4.2 の箇条書きにアクセント折りたたみのみ）。
+- 技術的制約「ASCII は常に NFC」: 真。
+- 技術的制約「name_char_mask が NFD Latin で u64::MAX」: query.rs:80-85 の name_char_mask が非 ASCII で u64::MAX を返す＝一致。NFC 化でも
+  折りたたまれた結果が ASCII になるのは Latin のみで、かなは非 ASCII のまま MAX。マスクの意味が変わるとの記述は妥当。
+- 「v6 の Skip 分岐は旧い意味の lower 列をそのまま渡す」: 未検証（corpus テスト専用との記述を信用）。
+壊せた:
+- 「冪等性: 構成と検知器の両方で手当てが要る」は正しいが、「NFC → 折りたたみ → NFC で閉じるか」という候補自体が閉じない（F3）。
+- 「依存: 新しい crate が入るか」: features 次第（F4）。
+- 「未解決の疑問: 性能」: 未測定のまま（F7）。
+
+================================================================
+後始末
+================================================================
+- snotra-core/tests/ に一時テストは置いていない。Cargo.toml・Cargo.lock も触れていない。
+- 実験用 crate: C:/Users/Eoh/AppData/Local/Temp/claude/68217c6d6914cc71/c072eff3-df43-473b-b7b2-1171aa8dd882/scratchpad/probe（リポジトリ外・残置）
+- git status --short の結果: `?? workspace/` のみ。

@@ -585,8 +585,8 @@ mod tests {
 
     /// 純 ASCII の名前は、非 ASCII の needle に一致しない。`nucleo-matcher` 0.3.1 の `fuzzy_match` が
     /// `(Ascii, Unicode)` の組に無条件で `None` を返すためであり、検索側も同じである。**版を上げてこれが
-    /// 赤になったら、まず上流の側が変わったかを見る。** needle の結合文字は合成しないもの（U+20DD）を使う
-    /// ——`e` + U+0301 は合成（#1285）で `é` になって `e` へ畳まれ、ASCII の needle になってしまう。
+    /// 赤になったら、まず上流の側が変わったかを見る。** needle の結合文字に U+20DD を使う理由は
+    /// `fuzzy_filter_drops_combining_marks_in_needle_like_search` と同じである。
     #[test]
     fn fuzzy_filter_ascii_name_never_matches_non_ascii_needle() {
         use crate::search::SearchMode;

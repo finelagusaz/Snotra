@@ -196,25 +196,26 @@ pub fn normalize_for_match(s: &str) -> Cow<'_, str> {
     if trimmed.is_ascii() {
         return fold_once(trimmed);
     }
-    let first = match NFC.normalize(trimmed) {
-        Cow::Borrowed(b) => fold_once(b),
-        Cow::Owned(o) => Cow::Owned(fold_once(&o).into_owned()),
-    };
-    if NFC.is_normalized(&first) {
-        return first;
-    }
-    let mut cur = first.into_owned();
+    let mut cur = compose_then_fold(trimmed);
     for _ in 1..MAX_COMPOSE_ROUNDS {
-        cur = fold_once(&NFC.normalize(&cur)).into_owned();
         if NFC.is_normalized(&cur) {
             break;
         }
+        cur = Cow::Owned(compose_then_fold(&cur).into_owned());
     }
     debug_assert!(
         NFC.is_normalized(&cur),
         "合成と畳みが {MAX_COMPOSE_ROUNDS} 回で収まらない: {s:?}"
     );
-    Cow::Owned(cur)
+    cur
+}
+
+/// 「合成 → [`fold_once`]」の 1 段。どちらも変えなければ借用のまま返す。
+fn compose_then_fold(s: &str) -> Cow<'_, str> {
+    match NFC.normalize(s) {
+        Cow::Borrowed(b) => fold_once(b),
+        Cow::Owned(o) => Cow::Owned(fold_once(&o).into_owned()),
+    }
 }
 
 /// 合成を含まない 1 回分の正規化（[`normalize_for_match`] の反復の 1 段）。
@@ -631,7 +632,7 @@ mod tests {
     }
 
     /// 2 字の列の検知器の母集団。2 字目の候補は、canonical 結合クラスが 0 でない字と、canonical 分解の
-    /// 2 字目である。1 字目の候補は、[`fold_char`](super::fold_char) で変わる字と、canonical 分解の
+    /// 2 字目である。1 字目の候補は、畳みで変わる字（[`folds_to_itself`](super::folds_to_itself) が偽）と、canonical 分解の
     /// 1 字目である。
     ///
     /// 残りの 1 字目——畳みで変わらず、canonical 分解の 1 字目でもない字——は合成で字が変わらないので、
@@ -661,12 +662,7 @@ mod tests {
         seconds.extend(pairs.iter().map(|&(_, b)| b));
         seconds.sort_unstable();
         seconds.dedup();
-        let mut firsts: Vec<char> = all()
-            .filter(|&c| {
-                let mut it = super::fold_char(c);
-                !(it.next() == Some(c) && it.next().is_none())
-            })
-            .collect();
+        let mut firsts: Vec<char> = all().filter(|&c| !super::folds_to_itself(c)).collect();
         firsts.extend(pairs.iter().map(|&(a, _)| a));
         firsts.sort_unstable();
         firsts.dedup();
@@ -684,14 +680,19 @@ mod tests {
         let decomposed = (0..=0x10FFFF_u32)
             .filter_map(char::from_u32)
             .map(|c| nfd.normalize(&c.to_string()).into_owned());
-        let mut failures = Vec::new();
-        for s in composing_pair_inputs().chain(decomposed) {
-            let once = normalize_for_match(&s).into_owned();
-            let twice = normalize_for_match(&once);
-            if twice != once.as_str() || !matches!(twice, Cow::Borrowed(_)) {
-                failures.push(format!("{:?} -> {:?} -> {:?}", s, once, twice));
-            }
-        }
+        // 母集団が数百万件あるので並列に回す（debug で逐次だと 30 秒近くかかる）。
+        use rayon::iter::{ParallelBridge, ParallelIterator};
+        let mut failures: Vec<String> = composing_pair_inputs()
+            .chain(decomposed)
+            .par_bridge()
+            .filter_map(|s| {
+                let once = normalize_for_match(&s).into_owned();
+                let twice = normalize_for_match(&once);
+                (twice != once.as_str() || !matches!(twice, Cow::Borrowed(_)))
+                    .then(|| format!("{:?} -> {:?} -> {:?}", s, once, twice))
+            })
+            .collect();
+        failures.sort_unstable();
         assert!(failures.is_empty(), "冪等でない {}", report(&failures));
     }
 }

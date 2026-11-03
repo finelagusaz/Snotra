@@ -177,7 +177,7 @@ fn index_cache_on_disk_format_is_stable() {
         try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
 
     assert_eq!(
-        bytes, GOLDEN_V8,
+        bytes, GOLDEN_V9,
         "on-disk 形式が変化した。IndexCache のフィールド順/型変更は既存 index.bin を破損する。\
          意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
     );
@@ -193,8 +193,8 @@ fn index_cache_on_disk_format_is_stable() {
     );
 
     let restored: IndexCache<'static> =
-        try_deserialize_with_header(GOLDEN_V8, INDEX_MAGIC, INDEX_CACHE_VERSION)
-            .expect("凍結 v8 バイトがロードできること");
+        try_deserialize_with_header(GOLDEN_V9, INDEX_MAGIC, INDEX_CACHE_VERSION)
+            .expect("凍結 v9 バイトがロードできること");
     assert!(matches!(restored.names, Cow::Owned(_)));
     assert_eq!(restored.names.len(), 4);
     assert_eq!(restored.names.get(0), "Projects");
@@ -214,7 +214,7 @@ fn index_cache_on_disk_format_is_stable() {
         restored.table.into_owned(),
         restored.sorted_by_path,
     )
-    .expect("凍結 v8 の列がツリーの不変条件を満たすこと");
+    .expect("凍結 v9 の列がツリーの不変条件を満たすこと");
     assert!(
         restored.sorted_by_path,
         "fixture はバイト昇順ゆえ真である（偽だけを凍結するとフラグが動いても気づかない）"
@@ -224,7 +224,7 @@ fn index_cache_on_disk_format_is_stable() {
         restored_tree.path_into(&mut buf, i);
         assert_eq!(
             buf, entry.target_path,
-            "凍結 v8 から組み直したフルパスが原文とずれている（index {i}）"
+            "凍結 v9 から組み直したフルパスが原文とずれている（index {i}）"
         );
     }
 
@@ -260,7 +260,7 @@ fn index_tree_raw_matches_frozen_v6_specimen() {
     assert!(!expected.is_empty(), "凍結 v6 が空では裏付けにならない");
 }
 
-/// 凍結 golden（`golden_fixture` の serialize 出力・INDX magic + version 8 ヘッダー込み）。
+/// 凍結 golden（`golden_fixture` の serialize 出力・INDX magic + version 9 ヘッダー込み）。
 ///
 /// **この定数が持つのは forward-stability だけである。** 現行版ゆえ「その版として実際に
 /// 書かれていた旧バイト列」が存在せず、新コードの出力を凍結する以外に採りようがない
@@ -273,6 +273,27 @@ fn index_tree_raw_matches_frozen_v6_specimen() {
 /// `SameAsLowerName` = 1、`Text` = 2 + 文字列。`lower_names` 側は `Option` の
 /// `None` = 0 / `Some` = 1 + 文字列。タグの割り当てを変えると（＝ variant の宣言順を
 /// 入れ替えると）既存の `index.bin` を無言で誤読するので、ここが落ちる。
+const GOLDEN_V9: &[u8] = &[
+    73, 78, 68, 88, 9, 0, 0, 0, 128, 226, 207, 170, 6, 4, 8, 80, 114, 111, 106, 101, 99, 116, 115,
+    3, 97, 112, 112, 7, 70, 105, 114, 101, 102, 111, 120, 4, 100, 111, 99, 115, 4, 1, 0, 0, 1, 4,
+    255, 255, 255, 255, 15, 0, 255, 255, 255, 255, 15, 255, 255, 255, 255, 15, 4, 2, 1, 3, 4, 5, 0,
+    4, 46, 101, 120, 101, 11, 67, 58, 92, 80, 114, 111, 106, 101, 99, 116, 115, 19, 67, 58, 92, 97,
+    112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 7, 67, 58, 92, 100,
+    111, 99, 115, 1, 185, 96, 4, 171, 1, 205, 1, 239, 1, 33, 4, 18, 52, 86, 120, 4, 1, 8, 112, 114,
+    111, 106, 101, 99, 116, 115, 0, 1, 7, 102, 105, 114, 101, 102, 111, 120, 0, 4, 0, 2, 7, 97,
+    112, 112, 46, 101, 120, 101, 2, 11, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 1,
+];
+
+/// **v9 化の前に実際に書かれていた v8 バイト列**（線上表現は v9 と同じで、派生の列だけが
+/// Unicode の合成（NFC）を含まない照合用の正規化の意味を持つ・#1285）。`config_hash` は 12345。
+///
+/// **この fixture の名前は ASCII だけなので、派生の列は新旧どちらの正規化でも同じであり、
+/// `GOLDEN_V9` との差は版のバイトだけである。** v8 を読まないことを守るのは版の判定であって、
+/// 列の中身ではない。
+///
+/// 製品はこれを読まない（cache-miss）。読むのは内訳の計測コードだけである——検知器は
+/// `frozen_v8_is_a_cache_miss_and_is_not_rewritten` と
+/// `breakdown_still_reads_the_frozen_v8`。
 const GOLDEN_V8: &[u8] = &[
     73, 78, 68, 88, 8, 0, 0, 0, 128, 226, 207, 170, 6, 4, 8, 80, 114, 111, 106, 101, 99, 116, 115,
     3, 97, 112, 112, 7, 70, 105, 114, 101, 102, 111, 120, 4, 100, 111, 99, 115, 4, 1, 0, 0, 1, 4,
@@ -308,7 +329,7 @@ const GOLDEN_V7: &[u8] = &[
 /// **v7 化の前に実際に書かれていた v6 バイト列**（`target_path` を実体で全件持つ形式）。
 /// `config_hash` は 12345、entries は Firefox / Projects / docs の 3 件。
 ///
-/// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては `GOLDEN_V8` の
+/// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては `GOLDEN_V9` の
 /// doc が正本。版をまたいで同じであり、変えれば既存の `index.bin` を無言で誤読する）。
 const GOLDEN_V6: &[u8] = &[
     73, 78, 68, 88, 6, 0, 0, 0, 128, 226, 207, 170, 6, 3, 7, 70, 105, 114, 101, 102, 111, 120, 19,
@@ -1056,7 +1077,7 @@ fn load_or_scan_with_stats_reports_upgrade_save_in_cache_save() {
          （load_or_scan_with_stats_in の配線 result.upgrade_save を落とす退行の検知器）"
     );
 
-    // 現行版（v7）: cache-hit だが昇格しないので cache_save は 0 のまま。
+    // 現行版: cache-hit だが昇格しないので cache_save は 0 のまま。
     let current_dir = temp_dir("stats_upgrade_save_current");
     let derived = derive_columns(entries);
     let derived_cols = derived.tree.columns();
@@ -1233,6 +1254,43 @@ fn breakdown_still_reads_the_frozen_v7() {
 
     let breakdown = cache_byte_breakdown_in(&dir).expect("計測コードは v7 を読めること");
     assert_eq!(breakdown.version, 7);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **v8 は cache-miss であり、ロードは書き戻さない**（#1285）。v8 の派生の列は Unicode の合成を
+/// しない正規化の意味で書かれている。扱いは v7 と同じである（理由は `load_cache_in` の注記）。
+///
+/// **`Write` を渡す。** 旧版の分岐へ誤って落ちれば昇格の書き戻しが起き、バイト列が変わる。
+#[test]
+fn frozen_v8_is_a_cache_miss_and_is_not_rewritten() {
+    let _guard = INDEX_LOCK_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let dir = temp_dir("frozen_v8_cache_miss");
+    fs::write(dir.join("index.bin"), GOLDEN_V8).expect("write v8 index.bin");
+
+    assert!(
+        load_cache_in(&dir, 12345, LegacyUpgrade::Write).is_none(),
+        "v8 を読めた扱いにしてはならない（旧い意味の派生の列を使う）"
+    );
+    assert_eq!(
+        fs::read(dir.join("index.bin")).expect("read back"),
+        GOLDEN_V8,
+        "cache-miss のロードで index.bin を書き換えてはならない"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **内訳の計測コードは、製品が読まなくなった v8 も読む**（理由は `breakdown_still_reads_the_frozen_v7`）。
+#[test]
+fn breakdown_still_reads_the_frozen_v8() {
+    let dir = temp_dir("frozen_v8_breakdown");
+    fs::write(dir.join("index.bin"), GOLDEN_V8).expect("write v8 index.bin");
+
+    let breakdown = cache_byte_breakdown_in(&dir).expect("計測コードは v8 を読めること");
+    assert_eq!(breakdown.version, 8);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -1443,8 +1501,17 @@ fn load_cache_in_reports_the_version_it_actually_read() {
     );
     let _ = fs::remove_dir_all(&dir);
 
-    // v7: 線上表現は現行版と同じだが、読まない（cache-miss）。**実運用点が今まさに
+    // v8: 線上表現は現行版と同じだが、読まない（cache-miss）。**実運用点が今まさに
     // 置かれている版**であり、現行版の分岐で読めてしまうと旧い意味の派生の列を使い続ける。
+    let dir = temp_dir("version_reported_v8");
+    fs::write(dir.join("index.bin"), GOLDEN_V8).expect("write v8");
+    assert!(
+        load_cache_in(&dir, 12345, LegacyUpgrade::Skip).is_none(),
+        "v8 は cache-miss でなければならない"
+    );
+    let _ = fs::remove_dir_all(&dir);
+
+    // v7: 線上表現は現行版と同じだが、読まない（cache-miss）。
     let dir = temp_dir("version_reported_v7");
     fs::write(dir.join("index.bin"), GOLDEN_V7).expect("write v7");
     assert!(

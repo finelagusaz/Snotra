@@ -23,6 +23,25 @@ fn kana_search_disabled_by_default() {
     );
 }
 
+/// **NFD で保存されたカタカナ名にも、ローマ字のクエリが当たる**（#1285）。名前のかなは照合の
+/// 入口を通してから作るので、合成しなかった頃は `か` + U+3099 のまま残り、クエリのかな `が` と
+/// 外れた。
+#[test]
+fn kana_search_matches_nfd_katakana_entry() {
+    let mut engine = SearchEngine::new(make_entries(&["カ\u{3099}イド"]));
+    let results = engine.search_with_options(
+        "gaido",
+        8,
+        &empty_history(),
+        SearchMode::Substring,
+        migemo_config(),
+    );
+    assert_eq!(
+        results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["カ\u{3099}イド"]
+    );
+}
+
 #[test]
 fn kana_search_matches_katakana_entry() {
     // "dokyu" で "ドキュメント" がヒットする

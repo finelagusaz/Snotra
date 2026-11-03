@@ -15,7 +15,11 @@
 
   前提:
   - release ビルド済み（既定は cargo の target から release 本体を導く。`CARGO_TARGET_DIR` に追随する）
-  - `[hotkey]` が既定の `Ctrl+K` 系であること（段階 B の注入キーは下でハードコード）
+  - `[hotkey]` の値は問わない。段階 B で注入するキーは、起動時の `hotkey:registered` trace から
+    **アプリが実際に登録した VK 列**を読む（`smoke-egui.ps1` と同じ。理由はあちらの注入箇所のコメント）。
+    そのため本体を `SNOTRA_TRACE=1` で起動する。trace が無かった頃の段階列（PERFORMANCE.md）とは、
+    この 1 点で計測の条件が違う
+  - trace の stderr は `$env:TEMP` へ書く（実 config の trace は利用者の実パスを載せるので、リポジトリへ置かない）
   - `[general] auto_hide_on_focus_lost = false` は**推奨であって必須ではない**。上記の
     同一プロセス実行でフォーカスを保つため、`true` のままでも段階列は取れる（実測で
     B/C/D とも成立）。ただし外的要因でフォーカスが逸れるとウィンドウが hide して PrivWS が
@@ -35,6 +39,10 @@
   計測対象の実行ファイル。空ならこのスクリプトが住むリポジトリの release 本体を導く。
   明示した相対パスは cwd 相対のまま解釈する。
 
+.PARAMETER HotkeyVks
+  段階 B で注入する VK 列の明示 override（例 "18,81" = Alt+Q）。**通常は指定しない**——
+  未指定なら `hotkey:registered` trace から導く。
+
 .EXAMPLE
   npm run measure:memory:stages
   pwsh -NoProfile -File scripts/measure-memory-stages.ps1 -Label "font=解決不能" -Query notepad
@@ -45,7 +53,8 @@ param(
     [string]$Label = '',
     [string]$Query = 'code',
     # 空なら release 本体を導く（#1179・#1293）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
-    [string]$ExePath = ''
+    [string]$ExePath = '',
+    [string]$HotkeyVks = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,8 +120,13 @@ Start-Sleep -Seconds 2
 # **finally で必ず落とす**。段階の途中で throw すると（実際に踏んだ）計測対象が起動したまま
 # 残り、次の `cargo build` が exe を掴まれて「アクセスが拒否されました」で落ちる。
 # 起動したものを片付ける責務は、成功経路だけに置いてはならない。
+$errPath = Join-Path $env:TEMP ("snotra-measure-stages-{0}.stderr.log" -f [guid]::NewGuid().ToString('N'))
 try {
-    Start-Process -FilePath $ExePath
+    # 実 config を読ませるので `Start-SnotraProcess`（検証用プロファイル専用）は使わない。
+    Invoke-SnotraEnvironment -Variables @{ SNOTRA_TRACE = '1' } -ScriptBlock {
+        Start-Process -FilePath $ExePath -RedirectStandardError $errPath | Out-Null
+    }
+    Write-Host "trace: $errPath"
     # 索引ロードと起動段の初期化が落ち着くまで待つ。**この 14 秒は背景再スキャン（#1001 で
     # 撤去済み）が走っていた頃の見積もりであり、今は余裕が過大である。** 縮めると段階 A が
     # 測る対象そのものが変わる（まだ動いている初期化を含む値になる）ので、**縮めるなら
@@ -120,7 +134,25 @@ try {
     Start-Sleep -Seconds 14
     Invoke-Stage 'A. アイドル（一度も表示せず）'
 
-    Send-Keys '^k' 4             # ホットキーで表示（config の [hotkey] に合わせて要調整）
+    # 注入する VK 列は段階 A の後で読む（14 秒の待機の前後で段階 A の条件を変えない）。
+    # 待ちの形・失敗時の止め方は smoke-egui.ps1 と同じだが、共有関数へは寄せていない:
+    # あちらは起動レイテンシの予算と報告を同じ箇所に持ち、こちらは要らない。
+    if ($PSBoundParameters.ContainsKey('HotkeyVks')) {
+        $vks = @($HotkeyVks -split ',' | ForEach-Object { [byte]([int]$_.Trim()) })
+        Write-Host "Hotkey VKs (explicit): $($vks -join ',')"
+    } else {
+        $hkEvent = Wait-SnotraTraceEvent -Path $errPath -EventName 'hotkey:registered' -TimeoutMs 10000
+        if ($null -eq $hkEvent) { throw "[B] hotkey:registered を trace で観測できない（$errPath）。注入するキーを決められない。" }
+        $hk = $hkEvent.data
+        if (-not $hk.ok) { throw "[B] アプリがホットキーの登録に失敗している（modifier=$($hk.modifier) key=$($hk.key)）。" }
+        $vks = @($hk.vks | ForEach-Object { [byte][int]$_ })
+        Write-Host "Hotkey VKs (from trace): $($vks -join ',') (modifier=$($hk.modifier) key=$($hk.key))"
+    }
+    if ($vks.Count -lt 1) { throw "[B] 注入する VK 列が空" }
+    # keybd_event で押下順に押し、逆順で離す。Alt を含むと Alt の解放で表示が確定する
+    # （ShowAfterAltRelease）ので、SendKeys の '%' ではなくこちらを使う。
+    Send-SnotraKeyChord -VirtualKeys $vks
+    Start-Sleep -Seconds 4
     Assert-SnotraForeground 'B'  # ここで前景を取れていないと以後の打鍵が全部無駄になる
     Invoke-Stage 'B. 表示（空クエリ）'
 
@@ -134,5 +166,6 @@ try {
 finally {
     Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
 }
+Write-Host "trace は $errPath に残した（実パスを含む。不要なら消す）" -ForegroundColor DarkGray
 Write-Host "########## 終了: $Label ##########" -ForegroundColor Cyan
 Write-Host '注: PrivWS は trim 後の値になりうる。確保需要は PrivComm を見ること。' -ForegroundColor DarkGray

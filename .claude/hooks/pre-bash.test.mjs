@@ -1013,6 +1013,8 @@ describe("judgeCommandShape — platform ゲート", () => {
     const heredoc = judgeCommandShape("cat <<EOF", "win32").reason;
     expect(heredoc).toContain("Write ツール");
     expect(heredoc).toContain("git commit -F");
+    // 読むのは Bash ツールの側なので、here-string を勧めると `@'...'@` が本文へ混入する（#1369）
+    expect(heredoc).not.toContain("here-string");
     expect(judgeCommandShape("echo C:\\workspace", "win32").reason).toContain("`/` で統一");
     expect(judgeCommandShape('python -c "日本語"', "win32").reason).toContain("PYTHONIOENCODING");
     const noVerify = judgeCommandShape("git commit --no-verify", "darwin").reason;

@@ -92,40 +92,41 @@ NFC で打ったクエリが、NFD で保存された名前に一致するよう
 
 ### Phase 1 — Red
 
-- [ ] 受け入れ 1・4・8 の回帰テスト（`search/tests/basic.rs`）
-- [ ] 受け入れ 3 の回帰テスト（`search/tests/migemo.rs`）
-- [ ] 受け入れ 2 の回帰テスト（`folder.rs` の `mod tests`）
-- [ ] 受け入れ 7 の回帰テスト（`history.rs`）
-- [ ] `normalize_for_match_is_idempotent_on_composing_pairs`（`ł`+U+0301 の固定例を含む）
-- [ ] 上記が現行コードで落ちることを確認（受け入れ 8 は現行で落ちる＝`Some` が返る）
+- [x] 受け入れ 1・4・8 の回帰テスト（`search/tests/basic.rs`）
+- [x] 受け入れ 3 の回帰テスト（`search/tests/migemo.rs`）
+- [x] 受け入れ 2 の回帰テスト（`folder.rs` の `mod tests`）
+- [x] 受け入れ 7 の回帰テスト（`history.rs`）
+- [x] `normalize_for_match_is_idempotent_on_composing_pairs`（`ł`+U+0301 の固定例を含む）
+- [x] 上記が現行コードで落ちることを確認（受け入れ 8 は現行で落ちる＝`Some` が返る）
 
 ### Phase 2 — 正規化
 
-- [ ] `snotra-core/Cargo.toml` に `icu_normalizer` を追加
-- [ ] `fold_once` へ既存の本体を移し、`normalize_for_match` を固定点にする（`NFC` 定数・`MAX_COMPOSE_ROUNDS`）
-- [ ] `reference_normalize` を**素の不動点**（`fold_once(NFC(x)) == x` になるまで反復）で書く。停止規則と同じ構造にしない——同じにすると、停止規則の誤りを借用/所有の検知器が拾えない
-- [ ] `query.rs` の `//!` と `normalize_for_match` の doc に NFC と不動点を書く
+- [x] `snotra-core/Cargo.toml` に `icu_normalizer` を追加
+- [x] `fold_once` へ既存の本体を移し、`normalize_for_match` を固定点にする（`NFC` 定数・`MAX_COMPOSE_ROUNDS`）
+- [x] `reference_normalize` を**素の不動点**（`fold_once(NFC(x)) == x` になるまで反復）で書く。停止規則と同じ構造にしない——同じにすると、停止規則の誤りを借用/所有の検知器が拾えない
+- [x] `query.rs` の `//!` と `normalize_for_match` の doc に NFC と不動点を書く
 
 ### Phase 3 — 索引の版
 
-- [ ] `INDEX_CACHE_VERSION` を 9、`load_cache_in` の注記、`INDEX_WIRE_SINCE` の doc
-- [ ] `GOLDEN_V9`・凍結 `GOLDEN_V8`・`index_cache_on_disk_format_is_stable`
-- [ ] `frozen_v8_is_a_cache_miss_and_is_not_rewritten`・`breakdown_still_reads_the_frozen_v8`・`load_cache_in_reports_the_version_it_actually_read`
-- [ ] `breakdown.rs` の読む範囲に版のリテラルが無いことを確認（レビューで `breakdown.rs:267` は `INDEX_WIRE_SINCE..=INDEX_CACHE_VERSION` と確認済み。実装時に再確認）
-- [ ] テストの doc の追従: `GOLDEN_V8` の doc（「現行版ゆえ forward-stability」）を `GOLDEN_V9` へ移し、`GOLDEN_V8` の doc を `GOLDEN_V7` と同型にする。`tests.rs` の「凍結 v8」等の言及（レビューの指摘 L180・196・217・227）と、#1309 から古い「現行版（v7）」（L1059 付近）を直す
-- [ ] `cache.rs` の v7 cache-miss の注記（L897–902 付近）を、v7（#1309）と v8（#1285）の両方を説明する機序の書き方へ直す
+- [x] `INDEX_CACHE_VERSION` を 9、`load_cache_in` の注記、`INDEX_WIRE_SINCE` の doc
+- [x] `GOLDEN_V9`・凍結 `GOLDEN_V8`・`index_cache_on_disk_format_is_stable`
+- [x] `frozen_v8_is_a_cache_miss_and_is_not_rewritten`・`breakdown_still_reads_the_frozen_v8`・`load_cache_in_reports_the_version_it_actually_read`
+- [x] `breakdown.rs` の読む範囲に版のリテラルが無いことを確認（レビューで `breakdown.rs:267` は `INDEX_WIRE_SINCE..=INDEX_CACHE_VERSION` と確認済み。実装時に再確認）
+- [x] テストの doc の追従: `GOLDEN_V8` の doc（「現行版ゆえ forward-stability」）を `GOLDEN_V9` へ移し、`GOLDEN_V8` の doc を `GOLDEN_V7` と同型にする。`tests.rs` の「凍結 v8」等の言及（レビューの指摘 L180・196・217・227）と、#1309 から古い「現行版（v7）」（L1059 付近）を直す
+- [x] `cache.rs` の v7 cache-miss の注記（L897–902 付近）を、v7（#1309）と v8（#1285）の両方を説明する機序の書き方へ直す
 
 ### Phase 4 — 文書
 
-- [ ] `SPEC.md` §4.2
-- [ ] `snotra-core/CLAUDE.md` の検知器の行
-- [ ] パスマッチの NFC/NFD 不一致の別 issue を起こす
+- [x] `SPEC.md` §4.2
+- [x] `snotra-core/CLAUDE.md` の検知器の行
+- [x] パスマッチの NFC/NFD 不一致の別 issue を起こす（#1394）
+- [x] （計画外）#1276 の 2 テスト（`fuzzy_filter_drops_combining_marks_in_needle_like_search`・`fuzzy_filter_ascii_name_never_matches_non_ascii_needle`）は、入力に合成できる結合文字（U+0308・U+0301）を使っていて、NFC で ASCII に畳まれ前提が消えた。合成しない U+20DD へ差し替え、doc に理由を足した（守る命題＝照合器の書記素と `(Ascii, Unicode)` の扱いは不変）。委譲の変異注入で、`Utf32String::from` → `Utf32Str::new` の退行を今も検出することを確かめる
 
 ### Phase 5 — 検証
 
 - [ ] 検証チェックリストの該当カテゴリをすべて実行
-- [ ] 実データ: 開発機の実 `index.bin`（v8・U+3099 を含む名前 10 件・照合用の名前が変わる 7 件）の名前で、NFC のクエリが当たることを確かめる（`match_cost` の実データ経路か一時テスト。実 `index.bin` は書き換えない・コピーして使う）
-- [ ] 一度きりの測定（全基底字 × 13 字・三つ組）の結果を PR 本文の材料として残す
+- [x] 実データ: 開発機の実 `index.bin`（v8・U+3099 を含む名前 10 件・照合用の名前が変わる 7 件）の名前で、NFC のクエリが当たることを確かめる（`match_cost` の実データ経路か一時テスト。実 `index.bin` は書き換えない・コピーして使う） → 一時テスト（撤去済み）で実走査（74 秒・一時 dir ではなく `scan_all` を直に呼び `index.bin` に触れない）: NFC でない名前 7 件すべてに、NFC のクエリが Substring で当たった
+- [x] 一度きりの測定（全基底字 × 13 字・三つ組）の結果を PR 本文の材料として残す → 三つ組（折りたたみで変わる基底 1,823 × 合成の 2 字目 142 × 142 ＝ 36,758,972 件・scratchpad の probe・停止規則）で非冪等 0、反復の最大 4 回。全基底字 × 13 字は計画段階で非冪等 0
 
 ## 未確定（実装前に潰す）
 

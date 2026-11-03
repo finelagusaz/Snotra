@@ -32,7 +32,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 - 並列の列を足すときは同時に触る: `EntryView`・`entry_view()`・`assemble()` の `debug_assert!` と `shrink_to_fit()`。Wave 1 の文字列正規化は `compute_wave1`、Wave 2 のマスクは `compute_wave2` に足す。**`new_with_cached_masks` は `compute_wave2` をどの分岐でも通らず（マスクはキャッシュから来る）、`compute_wave1` も派生文字列を持たない分岐でしか通らない**——キャッシュに載る列は下の「IndexCache バージョン変更チェックリスト」も当て、載らない列は `Collapsed` / `Raw` 分岐で別に建てる（`kana_for_cached` の形）。要素ごとの確保を持つ列（`Vec<String>` 等）にせず、`str_arena` / `NameArena` の表現で持つ
 - kana 2 列（`kana_lower_names` / `kana_char_masks`）は、製品の経路では migemo 有効時だけ建つ。アクセスは `is_empty()` ガードを通し、構築の分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の `CachedLower` 両 variant へ**同時に**入れる（片方だけだと migemo ON でも空になる）。migemo の切り替えは `IndexInputs` の差分による再構築で反映される
 - 派生文字列の潰しは、ビットマスクを確定した**後**に行う（理由と検知器は `indexer/columns.rs` の `derive_entry_lowers` / `derive_entry_collapsed` の doc）
-- `query.rs` の正規化を変えたら、タブ・全角スペース・NBSP を `' '` に揃えるテストと、全コードポイントの検知器（`normalize_for_match_*_on_every_codepoint`）を通す
+- `query.rs` の正規化を変えたら、タブ・全角スペース・NBSP を `' '` に揃えるテストと、全コードポイントの検知器（`normalize_for_match_*_on_every_codepoint`）と結合の対の検知器（`normalize_for_match_is_idempotent_on_composing_pairs`）を通す
 
 ## クロスモジュール不変条件
 

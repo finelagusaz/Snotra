@@ -1,13 +1,14 @@
 //! クエリと履歴キーの正規化、および文字存在ビットマスク計算。
 //!
 //! 照合用の正規化の唯一の入口 `normalize_for_match`（クエリとエントリ名の両側が通る・
-//! SPEC §4.2。変える文字が無ければ `Cow` で借用）、履歴クエリキー正規化
+//! SPEC §4.2。Unicode の合成（NFC）を含む。変える文字が無ければ `Cow` で借用）、履歴クエリキー正規化
 //! `normalize_history_query_key`、検索/インデクサ双方が使う `char_bitmask`
 //! （bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等であることは全コードポイントの
-//! 検知器で固定してある。
+//! 検知器と結合の対の検知器で固定してある。
 
 use std::borrow::Cow;
 
+use icu_normalizer::ComposingNormalizerBorrowed;
 use nucleo_matcher::chars::normalize as nucleo_normalize;
 
 /// ASCII ローマ字をひらがなに変換する（カタカナもひらがなに正規化）。
@@ -164,16 +165,63 @@ fn folds_to_itself(c: char) -> bool {
     it.next() == Some(c) && it.next().is_none()
 }
 
+/// Unicode の合成（NFC）。分解済み（NFD）の `か` + U+3099 を `が` に揃える。
+const NFC: ComposingNormalizerBorrowed<'static> = ComposingNormalizerBorrowed::new_nfc();
+
+/// 「合成 → [`fold_once`]」を繰り返す上限。実測した最大は、結合の対の母集団で 3 回、結合文字を
+/// 2 つ続けた三つ組（一度きりの測定）で 4 回である（#1285）。
+const MAX_COMPOSE_ROUNDS: usize = 8;
+
 /// 照合用の正規化の唯一の入口（SPEC §4.2）。クエリとエントリ名の両側がこれを通る。
 ///
-/// 前後の空白を除き、空白類（`char::is_whitespace`）を `' '` へ揃えて連続を 1 つに圧縮し、
-/// 各文字に [`fold_char`] を当てる。変える文字が無ければ trim 済みの入力を借用で返す
-/// （ASCII の小文字と単一の空白だけのクエリは確保しない）。
+/// 合成（NFC）してから [`fold_once`] を当て、結果が NFC でなければもう一度繰り返す。返す値は
+/// 「合成 → `fold_once`」の不動点（もう一度通しても変わらない値）である——`fold_once` の出力が
+/// NFC なら、次の 1 回は `fold_once` だけになり、`fold_once` は冪等だからである。**1 回で止めては
+/// ならない。** 畳みで基底字が変わると、続く結合文字と新たに合成できるようになる（`ł` + U+0301 →
+/// `l` + U+0301 → `ĺ` → `l`）。ASCII は合成で変わらないので、合成を飛ばす。
 ///
-/// 借用と所有の一致・冪等性は、全コードポイントの検知器で固定してある
+/// 変える文字が無ければ trim 済みの入力を借用で返す（ASCII の小文字と単一の空白だけのクエリは
+/// 確保しない）。
+///
+/// 上限 [`MAX_COMPOSE_ROUNDS`] に達したときは、その時点の値を返す。**その値は冪等でない**ので、
+/// 履歴のクエリキーが記録時と読み込み時（`migrate_normalize_keys`）で割れうる。到達しないことは
+/// 結合の対の検知器が固定している。
+///
+/// 借用と所有の一致・冪等性は、全コードポイントと結合の対の検知器で固定してある
 /// （`normalize_for_match_agrees_with_the_owned_reference_on_every_codepoint`・
-/// `normalize_for_match_is_idempotent_on_every_codepoint`）。
+/// `normalize_for_match_is_idempotent_on_every_codepoint`・
+/// `normalize_for_match_is_idempotent_on_composing_pairs`）。
 pub fn normalize_for_match(s: &str) -> Cow<'_, str> {
+    let trimmed = s.trim();
+    if trimmed.is_ascii() {
+        return fold_once(trimmed);
+    }
+    let first = match NFC.normalize(trimmed) {
+        Cow::Borrowed(b) => fold_once(b),
+        Cow::Owned(o) => Cow::Owned(fold_once(&o).into_owned()),
+    };
+    if NFC.is_normalized(&first) {
+        return first;
+    }
+    let mut cur = first.into_owned();
+    for _ in 1..MAX_COMPOSE_ROUNDS {
+        cur = fold_once(&NFC.normalize(&cur)).into_owned();
+        if NFC.is_normalized(&cur) {
+            break;
+        }
+    }
+    debug_assert!(
+        NFC.is_normalized(&cur),
+        "合成と畳みが {MAX_COMPOSE_ROUNDS} 回で収まらない: {s:?}"
+    );
+    Cow::Owned(cur)
+}
+
+/// 合成を含まない 1 回分の正規化。[`normalize_for_match`] だけが呼ぶ。
+///
+/// 前後の空白を除き、空白類（`char::is_whitespace`）を `' '` へ揃えて連続を 1 つに圧縮し、
+/// 各文字に [`fold_char`] を当てる。変える文字が無ければ trim 済みの入力を借用で返す。
+fn fold_once(s: &str) -> Cow<'_, str> {
     let trimmed = s.trim();
 
     let mut prev_space = false;
@@ -222,8 +270,8 @@ pub fn normalize_for_match(s: &str) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DerivedSharing, measure_derived_sharing, normalize_for_match, normalize_history_query_key,
-        to_kana,
+        DerivedSharing, char_bitmask, measure_derived_sharing, name_char_mask, normalize_for_match,
+        normalize_history_query_key, to_kana,
     };
     use nucleo_matcher::chars::normalize as nucleo_normalize;
     use std::borrow::Cow;
@@ -460,7 +508,22 @@ mod tests {
 
     /// 常に所有で組み立てる素朴な参照実装。借用の判定を持たないので、`normalize_for_match`
     /// の借用路と所有路のどちらがずれても、この出力との不一致として現れる（#1310）。
+    ///
+    /// **合成は素の不動点で書く**——「合成 → 1 回分」を、結果が変わらなくなるまで繰り返す（#1285）。
+    /// 製品の停止規則（出力が NFC なら止める）と同じ形にすると、停止規則の誤りをこの比較が拾えない。
     fn reference_normalize(s: &str) -> String {
+        let nfc = icu_normalizer::ComposingNormalizerBorrowed::new_nfc();
+        let mut cur = s.to_string();
+        loop {
+            let next = reference_fold_once(&nfc.normalize(&cur));
+            if next == cur {
+                return next;
+            }
+            cur = next;
+        }
+    }
+
+    fn reference_fold_once(s: &str) -> String {
         let mapped: String = s
             .chars()
             .flat_map(|c| -> Vec<char> {
@@ -530,6 +593,86 @@ mod tests {
             let key2 = normalize_history_query_key(&key);
             if key2 != key.as_str() || !matches!(key2, Cow::Borrowed(_)) {
                 failures.push(format!("history {:?} -> {:?} -> {:?}", s, key, key2));
+            }
+        }
+        assert!(failures.is_empty(), "冪等でない {}", report(&failures));
+    }
+
+    /// **NFD で書かれた名前は、NFC と同じ照合用の名前になる**（`SPEC.md`「4.2 クエリ正規化」・#1285）。
+    /// アクセントは合成してから畳まれるので、ASCII に落ちてビットマスクも実マスクになる。
+    #[test]
+    fn nfd_and_nfc_normalize_to_the_same_key() {
+        for (nfd, nfc) in [
+            ("か\u{3099}いど", "がいど"),
+            ("カ\u{3099}イド", "ガイド"),
+            ("Cafe\u{301}", "Café"),
+            ("\u{212b}", "Å"),
+        ] {
+            assert_eq!(
+                normalize_for_match(nfd),
+                normalize_for_match(nfc),
+                "{nfd:?}"
+            );
+        }
+        let cafe = normalize_for_match("Cafe\u{301}");
+        assert_eq!(cafe, "cafe");
+        assert_eq!(name_char_mask(&cafe), char_bitmask("cafe"));
+    }
+
+    /// **折りたたみで基底字が変わり、続く結合文字と合成できるようになる列も、1 回で畳み切る**（#1285）。
+    /// `ł` は U+0301 と合成しないが、`l` へ畳まれると `ĺ` に合成でき、そこから `l` へ畳まれる。
+    /// 1 回だけ合成して畳む形は `l` + U+0301 を返し、2 回目の適用で結果が変わる。
+    #[test]
+    fn folding_that_enables_a_new_composition_is_closed_in_one_call() {
+        assert_eq!(normalize_for_match("ł\u{301}"), "l");
+        assert_eq!(normalize_for_match("Ł\u{301}x"), "lx");
+    }
+
+    /// 結合の対の検知器の母集団。2 字目の候補は、合成に関わりうる字（canonical 結合クラスが 0 でない
+    /// 字と、canonical 分解の 2 字目）である。1 字目は、[`fold_char`](super::fold_char) で変わる字に限る
+    /// ——どちらの字も畳みで変わらない対は、合成しても 1 回目の結果がそのまま不動点になる
+    /// （畳みで変わる 2 字目 U+0363–U+036F の 13 字は、全基底字と組ませた一度きりの測定で
+    /// 非冪等 0 件だった・#1285）。
+    fn composing_pair_inputs() -> impl Iterator<Item = String> {
+        use icu_normalizer::properties::{
+            CanonicalCombiningClassMapBorrowed, CanonicalDecompositionBorrowed, Decomposed,
+        };
+        let all = || (0..=0x10FFFF_u32).filter_map(char::from_u32);
+        let ccc = CanonicalCombiningClassMapBorrowed::new();
+        let dec = CanonicalDecompositionBorrowed::new();
+        let mut seconds: Vec<char> = all().filter(|&c| ccc.get32_u8(c as u32) != 0).collect();
+        seconds.extend(all().filter_map(|c| match dec.decompose(c) {
+            Decomposed::Expansion(_, b) => Some(b),
+            _ => None,
+        }));
+        seconds.sort_unstable();
+        seconds.dedup();
+        let firsts: Vec<char> = all()
+            .filter(|&c| {
+                let mut it = super::fold_char(c);
+                !(it.next() == Some(c) && it.next().is_none())
+            })
+            .collect();
+        firsts
+            .into_iter()
+            .flat_map(move |a| seconds.clone().into_iter().map(move |b| format!("{a}{b}")))
+    }
+
+    /// **結合の対でも冪等である**（#1285）。合成と畳みを 1 回ずつ当てる形は、全コードポイントの
+    /// 単一字では冪等でも、対では約 7,700 件で 2 回目の結果が変わる——単一字の検知器では原理的に
+    /// 見えない形なので、対を母集団にして別に固定する。全コードポイントの canonical 分解（NFD）列も通す。
+    #[test]
+    fn normalize_for_match_is_idempotent_on_composing_pairs() {
+        let nfd = icu_normalizer::DecomposingNormalizerBorrowed::new_nfd();
+        let decomposed = (0..=0x10FFFF_u32)
+            .filter_map(char::from_u32)
+            .map(|c| nfd.normalize(&c.to_string()).into_owned());
+        let mut failures = Vec::new();
+        for s in composing_pair_inputs().chain(decomposed) {
+            let once = normalize_for_match(&s).into_owned();
+            let twice = normalize_for_match(&once);
+            if twice != once.as_str() || !matches!(twice, Cow::Borrowed(_)) {
+                failures.push(format!("{:?} -> {:?} -> {:?}", s, once, twice));
             }
         }
         assert!(failures.is_empty(), "冪等でない {}", report(&failures));

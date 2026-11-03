@@ -4730,6 +4730,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dirs",
+ "icu_normalizer",
  "memchr",
  "nucleo-matcher",
  "percent-encoding",

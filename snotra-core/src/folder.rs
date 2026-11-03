@@ -552,16 +552,19 @@ mod tests {
 
     /// 絞り込みの Fuzzy は、needle に残った結合文字を検索と同じく書記素の先頭へ落として照合する（#1276）。
     ///
-    /// 回帰テスト: `Utf32Str::new` へ戻すと needle が `Ascii` の生バイト（`x` + U+0308 の `0xCC 0x88`）の
+    /// 回帰テスト: `Utf32Str::new` へ戻すと needle が `Ascii` の生バイト（`x` + U+20DD の `0xE2 0x83 0x9D`）の
     /// まま照合され、どちらの行も不一致になる。`日本語` の行は needle の組み方だけに、`Cafe` の行は haystack と
     /// needle の両方の組み方に依る（haystack が `Ascii` の生バイトのままだと `(Ascii, Unicode)` の組になり
     /// 外れる）。拡張子は `.md` にしてある——`.txt` の `x` が 1 行目の needle に一致してしまうため。
+    ///
+    /// **結合文字は合成しないもの（U+20DD）を使う。** 合成できる結合文字は、照合の入口の合成（NFC・#1285）で
+    /// 前の字と 1 字になって畳まれ、needle も haystack も ASCII になる——書記素の扱いを測れなくなる。
     #[test]
     fn fuzzy_filter_drops_combining_marks_in_needle_like_search() {
         use crate::search::SearchMode;
-        let cached = vec![sr("日本語 x.md"), sr("Cafe\u{301}.md")];
+        let cached = vec![sr("日本語 x.md"), sr("Cafe\u{20dd}.md")];
         // 2 行の結果を集めてから 1 度だけ比べる——行ごとに assert すると、最初に落ちた行より後ろが報告から消える。
-        let got: Vec<(&str, Vec<String>)> = ["x\u{308}", "e\u{308}"]
+        let got: Vec<(&str, Vec<String>)> = ["x\u{20dd}", "e\u{20dd}"]
             .into_iter()
             .map(|filter| {
                 let names = filter_sorted(&cached, filter, SearchMode::Fuzzy, 8)
@@ -574,19 +577,20 @@ mod tests {
         assert_eq!(
             got,
             [
-                ("x\u{308}", vec!["日本語 x.md".to_string()]),
-                ("e\u{308}", vec!["Cafe\u{301}.md".to_string()]),
+                ("x\u{20dd}", vec!["日本語 x.md".to_string()]),
+                ("e\u{20dd}", vec!["Cafe\u{20dd}.md".to_string()]),
             ]
         );
     }
 
     /// 純 ASCII の名前は、非 ASCII の needle に一致しない。`nucleo-matcher` 0.3.1 の `fuzzy_match` が
     /// `(Ascii, Unicode)` の組に無条件で `None` を返すためであり、検索側も同じである。**版を上げてこれが
-    /// 赤になったら、まず上流の側が変わったかを見る。**
+    /// 赤になったら、まず上流の側が変わったかを見る。** needle の結合文字は合成しないもの（U+20DD）を使う
+    /// ——`e` + U+0301 は合成（#1285）で `é` になって `e` へ畳まれ、ASCII の needle になってしまう。
     #[test]
     fn fuzzy_filter_ascii_name_never_matches_non_ascii_needle() {
         use crate::search::SearchMode;
-        let out = filter_sorted(&[sr("resume")], "e\u{301}", SearchMode::Fuzzy, 8);
+        let out = filter_sorted(&[sr("resume")], "e\u{20dd}", SearchMode::Fuzzy, 8);
         assert!(out.is_empty());
     }
 
@@ -604,6 +608,21 @@ mod tests {
             8,
         );
         assert_eq!(out.len(), 1);
+    }
+
+    /// **NFD で保存された名前に、NFC の絞り込みが当たる**（`SPEC.md`「4.2 クエリ正規化」・#1285）。
+    /// macOS 由来のファイル名は NFD でありうる。合成しなかった頃は、#1276 の修正の前後どちらでも外れた。
+    #[test]
+    fn filter_matches_nfd_name_with_nfc_filter() {
+        use crate::search::SearchMode;
+        let cached = [sr("か\u{3099}いど.txt"), sr("かいど.txt")];
+        for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+            let out: Vec<String> = filter_sorted(&cached, "が", mode, 8)
+                .into_iter()
+                .map(|r| r.name)
+                .collect();
+            assert_eq!(out, ["か\u{3099}いど.txt"], "{mode:?}");
+        }
     }
 
     /// 絞り込みと名前の両辺に `SPEC.md`「4.2 クエリ正規化」の空白の正規化を通す（#1284）。

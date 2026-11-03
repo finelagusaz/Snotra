@@ -880,6 +880,22 @@ mod tests {
         }
     }
 
+    /// **NFD で記録したクエリキーは、NFC のキーと 1 つに合わさる**（#1285）。正規化が合成を
+    /// しなかった頃のキーも、読み込み時の移行が新しい規則で正規化し直す。
+    #[test]
+    fn migrate_normalize_keys_merges_nfd_and_nfc_query_keys() {
+        let mut data = HistoryData::default();
+        for (key, count) in [("か\u{3099}", 2), ("が", 3)] {
+            data.query
+                .entry(key.to_string())
+                .or_default()
+                .insert("c:\\fake\\app.lnk".to_string(), count);
+        }
+        let migrated = migrate_normalize_keys(data);
+        assert_eq!(migrated.query.len(), 1);
+        assert_eq!(migrated.query["が"]["c:\\fake\\app.lnk"], 5);
+    }
+
     #[test]
     fn migrate_normalize_keys_normalizes_query_inner_map() {
         let mut data = HistoryData::default();

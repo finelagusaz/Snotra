@@ -726,3 +726,39 @@ fn utf32_haystack_matches_utf32_string_from_over_real_index() {
     }
     println!("{checked} 件の haystack で一致しました（うち非 ASCII {non_ascii} 件）。");
 }
+
+/// **NFD で保存された名前に、NFC のクエリが当たる**（`SPEC.md`「4.2 クエリ正規化」・#1285）。
+/// 正規化が Unicode の合成をしなかった頃は、`か` + U+3099 と `が` は別の文字列のままで、
+/// 照合器も U+3099 を落として `か` として扱うので、3 つのモードのどれでも外れた。
+#[test]
+fn nfd_entry_name_matches_nfc_query() {
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+        let mut engine = SearchEngine::new(make_entries(&["か\u{3099}いど", "Chrome"]));
+        let results = engine.search("が", 8, &empty_history(), mode);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["か\u{3099}いど"], "{mode:?}");
+    }
+}
+
+/// **NFD の名前は、濁点の無いクエリにはもう当たらない**（#1285）。合成すれば `が` は `か` とは
+/// 別の文字であり、NFC で保存された `がいど` と同じ扱いになる。合成しなかった頃は、照合器が
+/// U+3099 を落とすので Fuzzy で `か` に当たっていた。
+#[test]
+fn nfd_entry_name_is_treated_like_its_nfc_form() {
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+        let mut engine = SearchEngine::new(make_entries(&["か\u{3099}いど", "がいど"]));
+        let results = engine.search("かい", 8, &empty_history(), mode);
+        assert!(results.is_empty(), "{mode:?}: {results:?}");
+    }
+}
+
+/// **NFD で書かれたアクセントも、NFC と同じく畳まれる**（#1285）。`e` + U+0301 は合成して `é`
+/// になり、そこから `e` へ畳まれる。
+#[test]
+fn nfd_accented_entry_name_matches_like_its_nfc_form() {
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+        let mut engine = SearchEngine::new(make_entries(&["Cafe\u{301} Menu"]));
+        let results = engine.search("cafe menu", 8, &empty_history(), mode);
+        assert_eq!(results.len(), 1, "{mode:?}");
+    }
+}

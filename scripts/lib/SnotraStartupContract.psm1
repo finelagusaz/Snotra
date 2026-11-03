@@ -3,7 +3,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# 起動計器（`startup:ready` / `startup:failed`）のペイロードが**契約を満たすか**を判定する
+# 起動の計測コード（`startup:ready` / `startup:failed`）のペイロードが**契約を満たすか**を判定する
 # 純関数（#1000 で `bench-startup.ps1` に置き、#1009 でここへ出した）。
 #
 # **判定規則を持たない。** 区間の意味・`null` の規則・恒等式はすべて `src-tauri/src/startup.rs`
@@ -45,7 +45,7 @@ $ErrorActionPreference = 'Stop'
   起きる側）だけで、変異「`post_main` を部分和から作る」（同語反復化）は検出されない（実測）。
 - **外部の壁時計との突き合わせ** — 上の弱さを埋める。ハーネスは `Start-Process` から終端の
   trace が届くまでを**独立に**測っており、`pre_main + post_main` がそれを超えることはない。
-  **超えたら、計器が内側で辻褄を合わせている**（同語反復化した実装は区間の実測を捨てるので、
+  **超えたら、計測コードが内側で辻褄を合わせている**（同語反復化した実装は区間の実測を捨てるので、
   外から見た経過と食い違う）。下限は置かない——trace の到着はポーリング間隔ぶん遅れる。
 
   **この検査が見ないもの: 内側の申告が実際より小さくなる方向。** 下限が無いので、終端を
@@ -141,13 +141,13 @@ function Test-SnotraStartupPayload {
     }
 
     # --- 外部の壁時計との突き合わせ ---
-    # **内側の申告が外から見た経過を超えることはない。** 超えたら計器が内側で辻褄を合わせて
+    # **内側の申告が外から見た経過を超えることはない。** 超えたら計測コードが内側で辻褄を合わせて
     # いる（同語反復化した実装は区間の実測を捨てるので、外から見た経過と食い違う）。
     # 下限は置かない——trace の到着はポーリング間隔ぶん遅れるため、内側 < 外側が正常である。
     $claimedMs = [double]$Data.post_main_ms + $(if ($null -eq $Data.pre_main_ms) { 0 } else { [double]$Data.pre_main_ms })
     if ($claimedMs -gt $ObservedWallClockMs) {
         $failures += ("内側の申告が外から見た経過を超えた: pre_main + post_main = ${claimedMs}ms > " +
-            "観測 ${ObservedWallClockMs}ms（計器が内側で辻褄を合わせている疑い）")
+            "観測 ${ObservedWallClockMs}ms（計測コードが内側で辻褄を合わせている疑い）")
     }
 
     # --- event と ok / reason の整合 ---

@@ -10,7 +10,7 @@ v7 は、版を上げた時点で全ユーザーの `index.bin` が置かれて�
 
 ## 決定
 
-v7 は読まない。`load_cache_in` は v7 で `None` を返し、呼び出し側の cache-miss 分岐が全走査して v8 で書く（更新後の初回起動で 1 回だけ、22〜30 秒）。内訳の計器（`cache_byte_breakdown_in`）だけは v7 を読み続ける。
+v7 は読まない。`load_cache_in` は v7 で `None` を返し、呼び出し側の cache-miss 分岐が全走査して v8 で書く（更新後の初回起動で 1 回だけ、22〜30 秒）。内訳の計測コード（`cache_byte_breakdown_in`）だけは v7 を読み続ける。
 
 ## 検討した代替案と却下理由
 

@@ -52,7 +52,7 @@ BeforeAll {
     }
 }
 
-Describe '起動計器の契約検査（#1009）' {
+Describe '起動の計測コードの契約検査（#1009）' {
     Context '合格する形' {
         It '整合したペイロードは破れ 0 件' {
             Test-Payload -Data (New-StartupPayload) | Should -HaveCount 0

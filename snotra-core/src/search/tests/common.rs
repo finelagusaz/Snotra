@@ -78,7 +78,7 @@ pub(super) fn real_scanned_entries() -> Option<Vec<AppEntry>> {
     }
     let mut entries =
         crate::indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
-    assert!(!entries.is_empty(), "走査が 0 件では接地にならない");
+    assert!(!entries.is_empty(), "走査が 0 件では裏付けにならない");
     crate::indexer::sort_entries_canonical(&mut entries);
     Some(entries)
 }

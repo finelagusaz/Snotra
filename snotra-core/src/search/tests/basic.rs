@@ -470,7 +470,7 @@ fn substring_kana_and_path_positions_agree_with_std_find_on_non_ascii() {
 }
 
 /// `prepare_query_plan` は Substring のときだけ名前の照合器を作る——`match_score_single_cached` の
-/// Substring の腕はこれを `expect` で取り出すので、片側だけ変わると panic になり、Substring
+/// Substring の分岐はこれを `expect` で取り出すので、片側だけ変わると panic になり、Substring
 /// 以外で作ると使われない確保が打鍵ごとに乗る。kana / パスの照合器は needle の有無に一致する。
 #[test]
 fn query_plan_builds_finders_exactly_for_the_needles_in_use() {

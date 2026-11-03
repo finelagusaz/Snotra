@@ -7,7 +7,7 @@
 //!
 //! # なぜ `search` でも `indexer` でもなくここか
 //!
-//! この表現は**両者が共有する**。`indexer` は `index.bin` へ書き、読み、PATH スキャンの篩に
+//! この表現は**両者が共有する**。`indexer` は `index.bin` へ書き、読み、PATH スキャンのプレフィルタに
 //! 使う。`search` は [`crate::search`] の索引本体としてこれを抱える。どちらか一方へ置くと
 //! 依存が逆流するので、両者が依存する側へ出してある。
 //!
@@ -141,7 +141,7 @@ impl NameArena {
     ///
     /// **アリーナへの push は逐次だが、逐次化してはならない。** kana 列を毎起動で組む
     /// `SearchEngine::new_with_cached_masks` は `to_kana` を全件へ当てるので、逐次で回すと
-    /// 秒オーダーが起動に乗る（額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」が正本。**ここへ写さない**——計器を回すたびに古くなる）。
+    /// 秒オーダーが起動に乗る（額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」が正本。**ここへ写さない**——計測コードを回すたびに古くなる）。
     /// 塊の中だけ並列に組み、ここで繋ぐ。
     ///
     /// **並べ替えない——順序を保つのは渡す側の責務である。** `collect` が順序を保つ
@@ -381,7 +381,7 @@ pub(crate) fn push_separator(buf: &mut String) {
 /// 取ると組み直し同士の比較になり、どれだけ壊れていても落ちない）。開発機で明示的に走らせる
 /// corpus であって保証ではない。
 ///
-/// **CI で走る接地は `indexer` の `index_tree_raw_matches_frozen_v6_specimen` だけである**
+/// **CI で走る裏付けは `indexer` の `index_tree_raw_matches_frozen_v6_specimen` だけである**
 /// ——v6 の凍結バイト列（ツリーを 1 度も通っていない原文）と組み直しを突き合わせる。合成の
 /// 標本 1 つぶんであり、実データ規模のカバレッジは上の `#[ignore]` 2 本が持つ。
 #[inline]
@@ -785,20 +785,20 @@ impl IndexTree {
         // 入る（2026-08-13 実測）。却下の論証は `docs/adr/ADR-sorted-prefix-over-reflagging.md`。
     }
 
-    /// `i` の**末尾成分**を、`indexer` の篩と同じ規則で正規化して `buf` へ書く。
+    /// `i` の**末尾成分**を、`indexer` のプレフィルタと同じ規則で正規化して `buf` へ書く。
     ///
     /// `seg` は作業用に使い回すバッファで、中身は捨てられる。
     ///
     /// **フルパスを組み立てない。** ツリーでは末尾成分が `name` + 拡張子でそのまま取れるので、
-    /// 根まで辿る必要が無い（篩は 312,691 回走るので、ここが区間を支配する）。
+    /// 根まで辿る必要が無い（プレフィルタは 312,691 回走るので、ここが区間を支配する）。
     ///
-    /// **根だけは別の腕を通る。** 根は `table` にフルパスを持つため、そこから末尾成分を
+    /// **根だけは別の分岐を通る。** 根は `table` にフルパスを持つため、そこから末尾成分を
     /// 切り出す既存の経路（`indexer` 側）へ落とす。実データで根は約 200 件（0.06%）
-    /// ——**ほとんど通らない腕ゆえ、壊れても静かである**。
+    /// ——**ほとんど通らない分岐ゆえ、壊れても静かである**。
     ///
-    /// 両腕が `normalize_file_name_key_into(target_path)` と一致することは
+    /// 両方の分岐が `normalize_file_name_key_into(target_path)` と一致することは
     /// `file_key_matches_normalize_file_name_key_on_both_arms`（合成 fixture・根と非根を
-    /// 両方通し、各腕が実際に通ったことも数える）と、`search/tests/path.rs` の
+    /// 両方通し、各分岐が実際に通ったことも数える）と、`search/tests/path.rs` の
     /// `index_tree_file_key_matches_normalize_file_name_key_over_real_index`（実データ全件・
     /// 開発機限定）が固定する。**合成のほうが機構としての保証を持つ**——corpus は実インデックス
     /// が無ければ自動スキップし、根は実データで 0.06% しか居ない。
@@ -1192,15 +1192,15 @@ mod tests {
         );
     }
 
-    /// **PATH の篩のキーは、両腕とも `normalize_file_name_key_into` と一致しなければならない。**
+    /// **PATH のプレフィルタのキーは、両方の分岐とも `normalize_file_name_key_into` と一致しなければならない。**
     ///
-    /// 篩は `reject_existing` が既存エントリを素通しさせないための唯一の機構であり、
+    /// プレフィルタは `reject_existing` が既存エントリを素通しさせないための唯一の機構であり、
     /// ずれると `by_file_key.get()` が外れて**索引に既にある PATH 実行ファイルが二重に
     /// 入る**（件数が増えるだけで panic も失敗も起きない）。
     ///
-    /// **両腕が実際に通ったことを数える。** 非根の腕は実データの 99.94% を占めるのに、
+    /// **両方の分岐が実際に通ったことを数える。** 非根の分岐は実データの 99.94% を占めるのに、
     /// `scan_path_dirs_*` の fixture はどれも 1 要素のツリーを渡すので**その 1 件は必ず根になる**
-    /// ——つまり非根の腕はどのテストからも実行されていなかった。腕ごとの件数を assert しないと、
+    /// ——つまり非根の分岐はどのテストからも実行されていなかった。分岐ごとの件数を assert しないと、
     /// ツリーの建ち方が変わって全件が根に落ちてもこのテストは緑のままになる。
     #[test]
     fn file_key_matches_normalize_file_name_key_on_both_arms() {
@@ -1248,15 +1248,18 @@ mod tests {
                 children += 1;
             }
             tree.file_key_into(&mut buf, &mut seg, i);
-            assert_eq!(buf, want[i], "篩のキーが正規化とずれている（{path}）");
+            assert_eq!(
+                buf, want[i],
+                "プレフィルタのキーが正規化とずれている（{path}）"
+            );
         }
         assert_eq!(
             roots, 2,
-            "根の腕が想定どおり通っていない（fixture の前提崩れ）"
+            "根の分岐が想定どおり通っていない（fixture の前提崩れ）"
         );
         assert_eq!(
             children, 4,
-            "非根の腕が想定どおり通っていない（fixture の前提崩れ）"
+            "非根の分岐が想定どおり通っていない（fixture の前提崩れ）"
         );
     }
 }

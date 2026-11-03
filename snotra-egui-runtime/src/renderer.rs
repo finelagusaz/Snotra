@@ -175,7 +175,7 @@ impl EguiRenderer {
             //
             // **撤去してよいのは、この 3 つの関係が別の手段で観測できるようになったときである。**
             // 現状これらは外から測れない——プロセスの commit にまとめて現れるだけで、ウィンドウごとにも
-            // 実体ごとにも分けられない。計器の一覧と読み方は `PERFORMANCE.md`「計測と受け入れ基準」。
+            // 実体ごとにも分けられない。計測コードの一覧と読み方は `PERFORMANCE.md`「計測と受け入れ基準」。
             let residency = raster::texture_residency(&self.textures);
             let atlas = context.fonts(|f| f.font_image_size());
             let kib = |bytes: usize| bytes / 1024;

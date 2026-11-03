@@ -1,5 +1,5 @@
 //! 名前の照合（Substring の `find`・`.` を含むクエリの file name 照合）の壁時計と、結果の同一性を
-//! 実 `index.bin` と合成の索引で測る計器（#1281）。
+//! 実 `index.bin` と合成の索引で測る計測コード（#1281）。
 //!
 //! タイミング測定は環境依存ゆえ CI では回さない。手元で release 実行する（コマンドの SSOT は
 //! `docs/build-commands.md`）。計測値は `PERFORMANCE.md`。
@@ -21,12 +21,12 @@
 //!
 //! # 測らないもの
 //!
-//! - **kana の照合**。実運用点の config で migemo が無効なら一度も走らない（この計器は実 config の
+//! - **kana の照合**。実運用点の config で migemo が無効なら一度も走らない（この計測コードは実 config の
 //!   `migemo_enabled` をそのまま使う）
 //! - フォルダ展開の中の絞り込み（`folder.rs`）。検索の照合とは別の経路である
 //!
 //! **実 `index.bin` を書き換えうる**——`load_or_scan_with_stats` が cache-miss すると、全走査が
-//! 走って `index.bin` を上書きする。この計器はそれを assert で検知して止めるが、**止まった時点で
+//! 走って `index.bin` を上書きする。この計測コードはそれを assert で検知して止めるが、**止まった時点で
 //! 上書きは済んでいる**（防ぐのではなく、走査後の索引を測った表を出さないだけである）。
 
 use std::hash::{Hash, Hasher};

@@ -42,7 +42,7 @@ pub enum PlatformCommand {
     /// `RegisterHotKey` を撃って**失敗し**（先に `UnregisterHotKey` を呼ばない）、
     /// [`crate::events::INITIAL_HOTKEY_FAILED`] が飛んで**偽の登録失敗通知が出る**
     /// ——ホットキー自体は 1 度目の登録で生きているのに、である。
-    /// **起動計器は壊れない**（`crate::startup` の `FINISHED` が終端を一度きりに保つ）。
+    /// **起動の計測コードは壊れない**（`crate::startup` の `FINISHED` が終端を一度きりに保つ）。
     /// 以降のホットキー変更は [`PlatformCommand::SetHotkey`] を使う。
     RegisterInitialHotkey,
     /// config が壊れて既定値にフォールバックした旨をトレイバルーンで通知する。

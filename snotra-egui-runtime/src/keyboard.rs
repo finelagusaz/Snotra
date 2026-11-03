@@ -49,7 +49,7 @@ pub(crate) fn is_keyboard_message(message: u32) -> bool {
     )
 }
 
-/// 1 通の変換結果。`suppressed` は「focus 獲得時に押されていたキーとして落とした」（計器用）。
+/// 1 通の変換結果。`suppressed` は「focus 獲得時に押されていたキーとして落とした」（計測コード用）。
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Translation {
     pub(crate) events: Vec<NativeInput>,

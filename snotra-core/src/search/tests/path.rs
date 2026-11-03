@@ -340,13 +340,13 @@ fn path_store_raw_matches_target_path_over_real_index() {
     );
 }
 
-/// PATH の篩のキーが `normalize_file_name_key_into` と一致することを、実データの全件で確かめる。
+/// PATH のプレフィルタのキーが `normalize_file_name_key_into` と一致することを、実データの全件で確かめる。
 ///
 /// **機構としての保証は合成 fixture のほう**（`index_tree.rs` の
 /// `file_key_matches_normalize_file_name_key_on_both_arms`）が持つ。ここが足すのは規模と、
 /// 合成では作れない実際のパスの形（深い階層・非 ASCII・空白・大文字の拡張子）である。
 ///
-/// **入力が `index.bin` 由来でも循環しない。** 篩はツリーの `name` + 拡張子から、比較相手は
+/// **入力が `index.bin` 由来でも循環しない。** プレフィルタはツリーの `name` + 拡張子から、比較相手は
 /// フルパスの末尾成分から導くので、突き合わせているのは 2 つの正規化関数が末尾で一致するか
 /// であって、組み直しの正しさではない。
 #[test]
@@ -375,13 +375,16 @@ fn index_tree_file_key_matches_normalize_file_name_key_over_real_index() {
             children += 1;
         }
         tree.file_key_into(&mut buf, &mut seg, i);
-        assert_eq!(&buf, want, "篩のキーが正規化とずれている（index {i}）");
+        assert_eq!(
+            &buf, want,
+            "プレフィルタのキーが正規化とずれている（index {i}）"
+        );
     }
-    // **両腕が通ったことを数える。** 根は実データで 0.1% 未満しか居ないので、数えないと
-    // 「根の腕は 1 度も走らなかった」を一致と読み違える。
-    assert!(roots > 0 && children > 0, "片方の腕しか通っていない");
+    // **両方の分岐が通ったことを数える。** 根は実データで 0.1% 未満しか居ないので、数えないと
+    // 「根の分岐は 1 度も走らなかった」を一致と読み違える。
+    assert!(roots > 0 && children > 0, "片方の分岐しか通っていない");
     println!(
-        "{} 件で篩のキーが一致しました（根 {roots} 件 / 非根 {children} 件）。",
+        "{} 件でプレフィルタのキーが一致しました（根 {roots} 件 / 非根 {children} 件）。",
         expected.len()
     );
 }

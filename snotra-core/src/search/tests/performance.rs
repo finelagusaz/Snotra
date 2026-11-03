@@ -97,7 +97,7 @@ fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
 }
 
 // `measure_kana_footprint` / `measure_kana_memory_footprint`（issue #337 の ROI ゲート）は
-// 撤去した（#1056）。**製品が捨てた表現を測る計器になっていたためである**——あれは
+// 撤去した（#1056）。**製品が捨てた表現を測る計測コードになっていたためである**——あれは
 // `entries` から自前で `Vec<Box<str>>` を組んで「kana_lower_names のメモリ実体」と示して
 // いたが、`kana_lower_names` は `NameArena` になり、あの物体は索引のどこにも存在しない。
 // `search/footprint.rs` の `//!` が明文で禁じている型（「構築前の `Vec<AppEntry>` を
@@ -109,7 +109,7 @@ fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
 // 役目は果たし終えている——`lower_names` の `name` との共有は実装済みで、率も削減量も
 // `tests/memory_footprint.rs` の内訳が**構築後の索引そのもの**から測る。
 //
-// **残しておくほうが危険だった。** あの計器は `Config::default_scan_paths()`（Start Menu +
+// **残しておくほうが危険だった。** あの計測コードは `Config::default_scan_paths()`（Start Menu +
 // Desktop + PATH）を「本番相当」と称しており、実運用点が `[[paths.scan]] path = 'C:\'` へ
 // 移った今は製品でないものを測る。事実 #336 はその形で一致率 43.2% と読んで見送られ、
 // 現運用点の実測は 86.6% だった。判定の経緯は `PERFORMANCE.md` を正本とする。
@@ -155,7 +155,7 @@ fn bench_fuzzy_search_scaling() {
 }
 
 /// `normal_mode = "substring"` の全件走査。**Fuzzy の bitmask pre-filter を通らない**ので
-/// 全エントリが照合まで進み、1 件あたりの固定費がそのまま規模に乗る——上の Fuzzy の計器では
+/// 全エントリが照合まで進み、1 件あたりの固定費がそのまま規模に乗る——上の Fuzzy の計測コードでは
 /// この経路を 1 度も通らない。
 #[test]
 #[ignore]

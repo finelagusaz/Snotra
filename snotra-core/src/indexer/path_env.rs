@@ -1,7 +1,7 @@
 //! `PATH` 環境変数のディレクトリから実行可能ファイルを拾い、**既存の索引に無いものだけ**を返す。
 //!
-//! 既存判定は 2 段である——末尾セグメントの篩（`super::keys::normalize_file_name_key_into`）で
-//! 候補を絞り、フルパスの正規化キーで確定する。篩は判定ではなく、照合する両辺が同じ手順を通ること
+//! 既存判定は 2 段である——末尾セグメントのプレフィルタ（`super::keys::normalize_file_name_key_into`）で
+//! 候補を絞り、フルパスの正規化キーで確定する。プレフィルタは判定ではなく、照合する両辺が同じ手順を通ること
 //! だけが「偽陰性を出さない」の根拠である（論証の全文は [`reject_existing`] の doc）。
 
 use std::path::Path;
@@ -98,7 +98,7 @@ struct PathCandidate {
     entry: AppEntry,
     /// `normalize_entry_key(entry.target_path)`（判定に使う）。
     key: String,
-    /// [`normalize_file_name_key_into`] の結果（篩に使う）。
+    /// [`normalize_file_name_key_into`] の結果（プレフィルタに使う）。
     file_key: String,
 }
 
@@ -171,16 +171,16 @@ fn enumerate_path_candidates(path_list: &str, show_hidden_system: bool) -> Vec<P
 ///
 /// **問いを反転させてある**（反復 9）。かつては既存エントリ全件の正規化キーを `HashSet`
 /// へ積んでから候補を引いていた——**全件を積んで少数を照合する**比率であり、区間のほとんど
-/// がその積み上げだった。候補側に小さな索引を作り、既存エントリは**ファイル名だけ**を篩に
-/// 掛けて素通しする形にすると、全件ぶんの `String` 確保が消える。篩を抜けた少数だけが
+/// がその積み上げだった。候補側に小さな索引を作り、既存エントリは**ファイル名だけ**をふるいに
+/// 掛けて素通しする形にすると、全件ぶんの `String` 確保が消える。プレフィルタを抜けた少数だけが
 /// フルパスの正規化キーまで進む。
 ///
 /// 実測値は `PERFORMANCE.md`「採用: PATH スキャンの問いを反転（確保 314,395 → 2,066・反復 9）」を
 /// 正本とする（ここには写さない——数値は次の反復で動き、写しは片方だけ更新されて残る）。
-/// 篩が偽陰性を出さない根拠は [`normalize_file_name_key_into`] の doc。
+/// プレフィルタが偽陰性を出さない根拠は [`normalize_file_name_key_into`] の doc。
 fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<AppEntry> {
     // **候補が無ければ既存エントリを 1 件も見ない。** この関数のコストは丸ごと下の走査に
-    // あるので、外すと PATH に実行ファイルを持たないユーザーで全件ぶんの篩が戻る。
+    // あるので、外すと PATH に実行ファイルを持たないユーザーで全件ぶんのプレフィルタが戻る。
     if candidates.is_empty() {
         return Vec::new();
     }
@@ -196,7 +196,7 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
     // 確保をウォームアップして使い回す（`normalize_entry_key_into` の doc と同じ形）。
     //
     // **生パスと正規化キーは別の変数に持つ。** 1 本を `mem::take` で貸し借りする形も書けるが、
-    // `take` は容量 0 の `String` を置き去りにするので `normalize_entry_key_into` が篩を通る
+    // `take` は容量 0 の `String` を置き去りにするので `normalize_entry_key_into` がプレフィルタを通る
     // たびに確保し直し、**この行が意図している使い回しがまさに消える**。読む側も、1 つの名前が
     // 生パスと正規化キーのどちらを持つ瞬間なのかを 3 文追わされる。
     let mut file_buf = String::new();
@@ -204,13 +204,13 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
     let mut raw_buf = String::new();
     let mut norm_buf = String::new();
     for i in 0..existing.len() {
-        // **篩はフルパスを組み立てない。** ツリーでは末尾成分が `name` + 拡張子で直接取れるので、
+        // **プレフィルタはフルパスを組み立てない。** ツリーでは末尾成分が `name` + 拡張子で直接取れるので、
         // ここが 312,691 回走っても根まで辿る必要が無い（`IndexTree::file_key_into`）。
         existing.file_key_into(&mut file_buf, &mut seg_buf, i);
         let Some(idxs) = by_file_key.get(file_buf.as_str()) else {
             continue;
         };
-        // **篩を通った分だけフルパスを組み立てる。** 通るのは PATH 上の実行ファイルと
+        // **プレフィルタを通った分だけフルパスを組み立てる。** 通るのは PATH 上の実行ファイルと
         // 同名のエントリだけなので、組み立ては全件ではなくその数に比例する。
         existing.path_into(&mut raw_buf, i);
         normalize_entry_key_into(&mut norm_buf, &raw_buf);
@@ -241,7 +241,7 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
 /// セミコロン区切りのパスリストからディレクトリを平坦スキャンし、
 /// 既存エントリにない実行ファイルを返す。
 ///
-/// `read_user_path` から分離することでテスト可能性を確保。列挙と篩の分担は
+/// `read_user_path` から分離することでテスト可能性を確保。列挙とプレフィルタの分担は
 /// [`enumerate_path_candidates`] と [`reject_existing`] の doc を見ること。
 pub(super) fn scan_path_dirs(
     path_list: &str,

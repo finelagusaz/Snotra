@@ -26,7 +26,7 @@
 - 第 0 層: 文書（object level。規範・索引・参照）
 - 第 1 層: 21 本の検査（第 0 層を守る機構）と、その入力基盤（lib.mjs・facade・registry の走査そのもの）
 - 第 2 層: 第 1 層を守る機構 = 「機構を守る機構」。原則が許す唯一の 1 段
-  （registry の形式検証・runAll の 0 件検知・ドメインと錨 + G-domain-anchors・manifest・evidence 行という計器）
+  （registry の形式検証・runAll の 0 件検知・ドメインと錨 + G-domain-anchors・manifest・evidence 行という計測コード）
 - 第 3 層以上: 第 2 層を守る機構。原則の下で撤去候補になるのはここだけである
 
 前提の実測（本導出の要）: 各検査の `export const domains` 宣言が流れ込む先は
@@ -47,9 +47,9 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
     - `assembleEvidence` 冒頭の参照照合 throw（L100-102）
     - 併せて evidence.test.mjs（125 行）の当該部分（本体撤去に伴う）
     ※ テンプレート本体（L103-112）と runAll 側の袋の組み立ては残す——evidence 行そのものは
-      第 2 層の計器（人間が読むラチェット）である。
-(b) 守っているのは evidence 行という**計器そのもの**（#1098: 供給断で undefined を印字して
-    exit 0 になる経路）。計器は第 2 層、その入力ガードは第 3 層。VIEWS の参照照合に至っては
+      第 2 層の計測コード（人間が読むラチェット）である。
+(b) 守っているのは evidence 行という**計測コードそのもの**（#1098: 供給断で undefined を印字して
+    exit 0 になる経路）。計測コードは第 2 層、その入力ガードは第 3 層。VIEWS の参照照合に至っては
     「view を外す・偽の Proxy を渡す」から view を守る第 4 層である（2026-08-17 の 2 度の実測が doc に残る）。
 (c) 供給断（検査が ctx.record を呼ばなくなる・facade の導出が消える）の検出が exit 1 → exit 0 に戻る。
     スカラーキーなら成功行に `undefined` が印字されるが、このリポジトリの原則では出力は検出
@@ -58,7 +58,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 (d) 言える。evidence は findings が空のときだけ読まれる情報面であり、数字が嘘でも 21 本の合否
     （exit code）は変わらない。根拠 B の適用そのもの。
 
---- 項目 2: duplicateDomains（重複ドメインの報告計器） ---------------------
+--- 項目 2: duplicateDomains（重複ドメインの報告計測コード） ---------------------
 
 (a) scripts/governance/instrument.mjs `duplicateDomains`（L114-121）と
     governance-check.mjs の配線（import L69・呼び出し L161・返り値 L194/L201・印字 L210-212）
@@ -116,14 +116,14 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
     だが、この項の本体（domains.mjs）は残る。一方で Phase 3 の機構の実体はこのテスト節そのもの
     である。字面と実体が割れるため、採否は呼び出し側の裁定に委ねる。
 
---- 項目 6: 面積計器の入力ガード ⚠️ ----------------------------------------
+--- 項目 6: 面積の計測コードの入力ガード ⚠️ ----------------------------------------
 
 (a) scripts/governance/instrument.mjs `checkNormativeAreaInstrument`（L88-103）と
     governance-check.mjs の呼び出し（L153 付近の findings.push）。
     ※ 計測本体（normativeArea L124-133・skillDescriptionArea L61-82・ALWAYS_LOADED_FILES L34）は
-      残す——面積の観測は第 0 層（規範文書）に向いた計器であり、原則の対象外。
-(b) 合否を持たない計器（ADR-retire-area-budget で判定を廃した面積報告）の入力の健全性。
-    計器を守る機構 = 第 3 層。
+      残す——面積の観測は第 0 層（規範文書）に向いた計測コードであり、原則の対象外。
+(b) 合否を持たない計測コード（ADR-retire-area-budget で判定を廃した面積報告）の入力の健全性。
+    計測コードを守る機構 = 第 3 層。
 (c) - rules/skills が 0 件の finding —— ただしこれは G-domain-anchors の「メンバーが 0 件」
       （ruleDocs / skillDocs ドメイン）と重複しており、失われない
     - ALWAYS_LOADED_FILES が読めない finding —— governanceDocs の第 1 錨（AGENTS.md と CLAUDE.md の
@@ -184,7 +184,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 
 3-3. runAll の 0 件検知（governance-check.mjs L137-148 の 6 本）
      根拠: 述語の打ち間違い 1 つで母集団が空になり、消費する全検査が空虚に緑になる。緑は緑の
-     まま推移するため、事後に現れる兆候が無い。腕ごとに 1 本ずつ在る理由（束ねた長さが他の腕の
+     まま推移するため、事後に現れる兆候が無い。系統ごとに 1 本ずつ在る理由（束ねた長さが他の系統の
      消滅を隠す）も各行のコメントが実測つきで持つ。
 
 3-4. registry.mjs の走査登録と形式検証（id/run/ファイル名一致の throw・L32-34）
@@ -203,9 +203,9 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 - lib.mjs（693 行）: 21 本の検査自身の入力基盤（第 1 層）。§3-5 のガード含め残す。
 - registry.mjs（58 行）: L35-52 のみ項目 3。走査と形式検証は §3-4。
 - domains.mjs（305 行）: §3-2。残す。
-- evidence.mjs（113 行）: view 機構のみ項目 1。テンプレートは第 2 層の計器として残す。
+- evidence.mjs（113 行）: view 機構のみ項目 1。テンプレートは第 2 層の計測コードとして残す。
 - instrument.mjs（133 行）: duplicateDomains が項目 2・checkNormativeAreaInstrument が項目 6。
-  面積計測本体は第 0 層に向いた計器で対象外。
+  面積計測本体は第 0 層に向いた計測コードで対象外。
 - dependents.mjs（198 行）・edit-findings.mjs（132 行）: どちらも**文書（第 0 層）を見る**編集時
   reminder である（#1140/#1139・ADR-dependents-reminder-at-edit-time /
   ADR-scoped-governance-findings-at-edit-time）。機構を守る機構ではなく、第 1 層の所見を時間軸で

@@ -101,7 +101,7 @@ pub(crate) use window_coordinator::FrameIndexing;
 pub(crate) use window_coordinator::FrameVisibleRows;
 // launcher_controller が検索 debounce（leading + trailing）で消費する。
 pub(crate) use layout::Debouncer;
-// view.rs が `update()` のフレーム所要と間隔の計器として消費する（#1004 PR 1）。
+// view.rs が `update()` のフレーム所要と間隔の計測コードとして消費する（#1004 PR 1）。
 pub(crate) use layout::FrameTimer;
 // `SearchDispatch` / `is_unsettled` はここから re-export しない（#1039）——前者は `SearchState` の
 // private フィールド、後者はそのメソッドになり、**controller から名前で届かないことが受け入れ条件

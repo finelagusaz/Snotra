@@ -49,10 +49,10 @@ pub const INDEX_CACHE_VERSION: u32 = 8;
 /// 現行の線上表現（[`IndexCache`]）で書かれた最初の版。
 ///
 /// これより後の版上げは派生の列の意味だけを変えた（v8・#1309）。**製品はこの範囲の旧版を
-/// 読まない**が、内訳の計器（`cache_byte_breakdown_in`）は同じ構造体で読む——数えるのは
+/// 読まない**が、内訳の計測コード（`cache_byte_breakdown_in`）は同じ構造体で読む——数えるのは
 /// バイトであって意味ではないからである。**線上表現を変えて版を上げるときだけ、これを
-/// 上げる**（意味だけの版上げでは触らない。版のリテラルを計器に焼き込むと、次の意味だけの
-/// 版上げで直前の版——実運用点に今まさに置かれている版——を計器が黙って落とす）。
+/// 上げる**（意味だけの版上げでは触らない。版のリテラルを計測コードに焼き込むと、次の意味だけの
+/// 版上げで直前の版——実運用点に今まさに置かれている版——を計測コードが黙って落とす）。
 const INDEX_WIRE_SINCE: u32 = 7;
 
 /// `load_or_scan_with_stats` の各フェーズ所要時間。
@@ -103,7 +103,7 @@ pub struct LoadOrScanStats {
     pub cache_save: Duration,
     /// `load_or_scan_with_stats` 全体の所要時間。**丸めずに `Duration` で運ぶ。**
     ///
-    /// 起動計器（`src-tauri` の `startup.rs`）はこの値と外側の区間の差を
+    /// 起動の計測コード（`src-tauri` の `startup.rs`）はこの値と外側の区間の差を
     /// `index_load_unattributed_ms` として出す。その引き算は両辺を同じ関数（`to_ms`）へ
     /// 通すので、**ここが丸めた値を入れると、外側と丸め方が食い違って差が負へ振れうる**（#1027）。
     ///
@@ -355,7 +355,7 @@ pub fn index_built_at_in(dir: &Path) -> Option<u64> {
 ///
 /// **返すのはツリーを実体へ戻したものであり、ディスクに在った文字列ではない**（v7 は
 /// `target_path` を持たない）。ゆえに「組み直しが原文と一致するか」をこの返り値と
-/// 突き合わせても、**組み直しの結果どうしを比べることになる**。その照合の接地は
+/// 突き合わせても、**組み直しの結果どうしを比べることになる**。その照合の裏付けは
 /// `index_tree_raw_matches_frozen_v6_specimen`（旧形式の凍結バイト列が唯一の原文）が持つ。
 #[doc(hidden)]
 pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Option<Vec<AppEntry>> {
@@ -386,7 +386,7 @@ struct Scanned {
 /// 全走査して [`sort_entries_canonical`] を通し、2 段を測って返す。
 ///
 /// **保存する分岐と保存しない分岐（`Config::config_dir` が引けないとき）が同じここを通る。**
-/// 書き起こすと計器が 2 部出荷になり、片方だけが段を足したときに `scan` / `sort` の
+/// 書き起こすと計測コードが 2 部出荷になり、片方だけが段を足したときに `scan` / `sort` の
 /// 意味が分岐ごとにずれる——**どちらの分岐を測ったのかは `LoadOrScanStats` の値からは
 /// 区別できない**ので、ずれても数字はもっともらしいまま残る。
 ///
@@ -443,7 +443,7 @@ fn load_or_scan_with_stats_in(
             scan: Duration::ZERO,
             sort: Duration::ZERO,
             // 昇格が走らなかった分岐は `None` ゆえ `ZERO`（`LoadCacheResult::upgrade_save` の doc）。
-            // **この値は計器であって、昇格の有無の判定には使えない**——判定を負っているのは
+            // **この値は計測用であって、昇格の有無の判定には使えない**——判定を負っているのは
             // 向こうの variant であり、こちらは時間を運ぶだけである（#1054 / #1063）。
             // `cache_load` の内数——フェーズの和には足さない
             // （`LoadOrScanStats::cache_save` の doc）。
@@ -504,7 +504,7 @@ fn load_or_scan_with_stats_in(
 /// キャッシュを読む、無ければ全走査して保存する。返すのは [`LoadOrScanResult`]——索引の材料（[`IndexMaterial`]）とフェーズ計測である。
 ///
 /// 保存先（`Config::config_dir()`）を解決してから [`load_or_scan_with_stats_in`] へ委譲する薄い
-/// 包みである。解決できない環境では保存できないが索引は建てられる——`save_cache_sorted` の
+/// ラッパーである。解決できない環境では保存できないが索引は建てられる——`save_cache_sorted` の
 /// `None` 分岐と同じ方針で、走査はして `index.bin` へは書かない。
 ///
 /// **cache-hit でも書きうる。** 常に `LegacyUpgrade::Write` で読むので、置かれているのが
@@ -801,7 +801,7 @@ struct LegacyRead {
 /// 旧版の分岐の出口を一本化する。**`match upgrade` を書くのはここ 1 か所だけである。**
 ///
 /// 旧版の分岐を 1 本足すときは、その版のバイト列を [`LegacyRead`] へ組み立ててここへ渡すだけでよい
-/// ——`Write`/`Skip` の 2 腕を分岐ごとに書き起こす義務は生まれない（判定の写しを作らない）。
+/// ——`Write`/`Skip` の 2 分岐を分岐ごとに書き起こす義務は生まれない（判定の写しを作らない）。
 fn finish_legacy_read(
     dir: &Path,
     config_hash: u64,
@@ -1018,7 +1018,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         );
     }
 
-    // v2 フォールバック (マスクなし)。`masks: None` を渡すと `finish_legacy_read` の `Skip` 腕が
+    // v2 フォールバック (マスクなし)。`masks: None` を渡すと `finish_legacy_read` の `Skip` 分岐が
     // `from_tree` へ落とす（検証する列が無いため）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV2>(&bytes, INDEX_MAGIC, 2) {
         if cache.config_hash != config_hash {

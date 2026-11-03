@@ -191,7 +191,7 @@ fn main() {
             );
         }
         // 内側の内訳との差が `index_load_unattributed_ms` になる——`load_or_scan_with_stats`
-        // の中にある未命名の処理を、外側の計器が検出するための項目である。
+        // の中にある未命名の処理を、外側の計測コードが検出するための項目である。
         startup::set_index_load_stats_total(result.stats.total);
         // **分岐は `LoadOrScanStats` から取る。** `initial_indexing` は first-run でしか
         // 立たないので、そこから導くと非 first-run の cache-miss が cache_hit=true になる。

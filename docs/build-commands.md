@@ -46,7 +46,7 @@ cargo doc --workspace --no-deps --document-private-items                        
   - 一方、`cargo test -p <crate>` は「編集した crate → そのテスト」の対応なので、`-p` のまま残す（`--workspace` にすると、編集していない crate のテストまで走る）
 - **既定ビルドから外れる feature は、CI でだけ通す**: `cargo check -p snotra --features heap-trace`（ヒープ計装）
   - カテゴリ A の必須ではない。`.rs` を触るたびに走らせる必要は無く、CI（rust-check）が PR ごとに通す
-  - ここに書くのは、誰も通さない経路を作らないための配置の記録であって、手で打つ手順ではない（計器の意味と撤去条件は `src-tauri/src/heap_trace.rs` の `//!`）
+  - ここに書くのは、誰も通さない経路を作らないための配置の記録であって、手で打つ手順ではない（計測コードの意味と撤去条件は `src-tauri/src/heap_trace.rs` の `//!`）
 - **doc コメント（`///` / `//!`）を触ったら、`cargo doc --workspace --no-deps --document-private-items` をローカルで手で実行する**（#562）
   - `cargo doc` が自動で走るのは、CI（rust-check）だけである
   - deny 化は 2 段で行う。各 crate の `[lints] workspace = true`（`Cargo.toml`）から root の `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）へつなぎ、既定の warn による見逃しを塞ぐ

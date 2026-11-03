@@ -36,7 +36,7 @@ Step 2 は「該当するリスク観点だけを渡す」形で観点を固定�
 
 ## 却下 4: 内部矛盾レンズを機械化する（issue の考えどころ 2）
 
-`AGENTS.md` の「数ではなく正本を指す」の下では、計画が数を運ばない。突き合わせる宣言側の数が無いので、機械化の対象が消える。計器分割の設計書（`docs/superpowers/specs/2026-07-29-plan-review-instrument-split-design.md`）が #761 を「plan.md の機械可読性」と読み替えて spike の後段に置いていたが、その問いは本 ADR の対象ではない——spike が仮説を支持した時点で別 issue を起こす。
+`AGENTS.md` の「数ではなく正本を指す」の下では、計画が数を運ばない。突き合わせる宣言側の数が無いので、機械化の対象が消える。計測コード分割の設計書（`docs/superpowers/specs/2026-07-29-plan-review-instrument-split-design.md`）が #761 を「plan.md の機械可読性」と読み替えて spike の後段に置いていたが、その問いは本 ADR の対象ではない——spike が仮説を支持した時点で別 issue を起こす。
 
 ## 受容する残余
 

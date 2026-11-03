@@ -1,4 +1,4 @@
-//! `PATH` 走査のテスト——既存エントリの篩い落とし、列挙順、拡張子、ディレクトリ間の重複排除。
+//! `PATH` 走査のテスト——既存エントリのふるい落とし、列挙順、拡張子、ディレクトリ間の重複排除。
 
 use super::*;
 use crate::indexer::test_support::temp_dir;
@@ -108,7 +108,7 @@ fn scan_path_dirs_rejects_only_the_matching_candidate_among_several() {
 
 #[test]
 fn scan_path_dirs_rejects_the_right_one_among_same_named_candidates() {
-    // **篩の同じバケットに候補が 2 つ入る経路。** `by_file_key` の値が `Vec<usize>`
+    // **プレフィルタの同じバケットに候補が 2 つ入る経路。** `by_file_key` の値が `Vec<usize>`
     // である理由そのものであり、同名 exe が別ディレクトリに並ぶのは実運用で珍しく
     // ない（多重インストール）。内側ループを `idxs.first()` へ縮めても他のテストは
     // 全部通る——そのとき落ちるのは先頭の候補だけなので、**既存にある方が残って
@@ -142,7 +142,7 @@ fn scan_path_dirs_rejects_the_right_one_among_same_named_candidates() {
 fn scan_path_dirs_skips_existing_paths_written_in_other_notations() {
     // **事前フィルタが偽陰性を出さないことの検査。** 既存エントリ側の表記が違っても
     // （大文字・`/` 区切り・前後の空白）、正規化キーが一致するならファイル名キーも
-    // 必ず一致して篩を通り、フルパス比較で落ちる。ここが破れると重複エントリが
+    // 必ず一致してプレフィルタを通り、フルパス比較で落ちる。ここが破れると重複エントリが
     // 索引へ入る——これも結果が「それらしく」出るので挙動テストでは検出されない。
     let dir = temp_dir("path_notation");
     fs::write(dir.join("tool.exe"), "").unwrap();

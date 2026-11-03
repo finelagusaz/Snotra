@@ -500,10 +500,10 @@ impl SearchState {
     /// 今も成り立つかは、(A)/(B) を再検討するときに測り直すこと（挙動そのものを測る席が
     /// できたわけではない点は不変である）。
     /// **#1079 の issue 本文が (A) の費用として書く「Escape のたびに同期 `engine.search` をフレームへ
-    /// 乗せる」は現在のコードに当たらない**——`run_search_with` の Plain 腕は #1004 の worker 化以降
+    /// 乗せる」は現在のコードに当たらない**——`run_search_with` の Plain 分岐は #1004 の worker 化以降
     /// **同期 `engine.search` を含まない**（`search_tx.send` か、空クエリ・`indexing()`・送信失敗での
     /// `set_results` のいずれかである）。同期 `engine.search` が残るのは `on_enter` の flush だけである。
-    /// 実際の費用は Plain 腕が `indexing()` 中に復帰行を空にすることであって、doc が名指して
+    /// 実際の費用は Plain 分岐が `indexing()` 中に復帰行を空にすることであって、doc が名指して
     /// いたものではない。**`run_search` 入口の `instant_prefix` が `engine.lock()` を取ることも
     /// 費用に数えていたが、#1076 でその読みが `read_config` へ移り消えた。**
     pub fn on_escape(&mut self) -> EscapeOutcome {
@@ -572,7 +572,7 @@ impl SearchState {
     ///
     /// **view ガードが production で発火するのは Folder ビューだけである。** Tool 側は
     /// [`SearchState::enter_tool`] が [`SearchState::put_rows`] を通って in-flight を失効させ、
-    /// Tool ビュー中は新しい要求も出ない（`run_search_with` の `ViewKind::Tool` 腕が no-op）ため、
+    /// Tool ビュー中は新しい要求も出ない（`run_search_with` の `ViewKind::Tool` 分岐が no-op）ため、
     /// `accept` が成功したうえで `view_kind() == Tool` になる並びが存在しない。**Tool 分岐は
     /// 防御として残してあるだけである**——`enter_tool` が `put_rows` を通らなくなれば生きる。
     #[must_use = "落とすと計時 trace（egui_search:settled）の since_key_us / since_dispatch_us を導く材料が消え、打鍵起点・dispatch 起点の経過が観測できなくなる（#1004）"]
@@ -1274,7 +1274,7 @@ mod tests {
     }
 
     /// #1079 の境界 #6: 復帰後に打鍵して worker へ出した場合、**フラグは残る**——
-    /// `run_search_with` の Plain 腕は送信できたら行を保つ（`set_results` を呼ばない）ので
+    /// `run_search_with` の Plain 分岐は送信できたら行を保つ（`set_results` を呼ばない）ので
     /// [`SearchState::put_rows`] を通らず、そして行はまだ古いのだからそれが正しい。落ちるのは
     /// 結果が届いて行が実際に差し替わる瞬間である。
     #[test]
@@ -1325,7 +1325,7 @@ mod tests {
 
     /// 計時 trace（`egui_search:settled` の `since_key_us` / `since_dispatch_us`）の材料が
     /// 移設で変わっていないこと。`search_dispatch.rs` の `accepts_only_the_latest_seq` と
-    /// 同じ値を返す（**移設は計器を壊してはならない**）。
+    /// 同じ値を返す（**移設は計測コードを壊してはならない**）。
     #[test]
     fn settled_timing_survives_the_move() {
         let base = Instant::now();

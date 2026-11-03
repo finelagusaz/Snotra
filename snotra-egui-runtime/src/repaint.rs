@@ -189,7 +189,7 @@ impl RepaintScheduler {
                             let Some(_) = pending.take() else {
                                 continue;
                             };
-                            // hidden 中の抑止点の切り分け計器（#697）。受信側は runtime.rs の
+                            // hidden 中の抑止点の切り分け計測コード（#697）。受信側は runtime.rs の
                             // RedrawRequested arm。ここが出て受信側が出なければ、落としたのは
                             // proxy 以降である（wry の user-message 処理はウィンドウの特定に成功
                             // すれば request_redraw() へ渡すだけで、hidden でも非破棄なら

@@ -182,7 +182,7 @@ pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
 /// **reset-on-show はこれを触らない**——ゆえに hide を跨いで残り、通常は show 後の最初の
 /// フレームでも同じ値になる（`launcher_controller` の reset 消費のコメントが明記している）。
 /// **ただし別スレッドからの更新は排除できない**——`spawn_update_check` の完了・
-/// `spawn_install` の失敗腕（`mod.rs` / `launcher_controller`）は非同期に `phase` を
+/// `spawn_install` の失敗分岐（`mod.rs` / `launcher_controller`）は非同期に `phase` を
 /// 書き換えて `wake_main` するため、この読みと最初のフレームの間に値が変わりうる。
 /// そのときも 1 フレームだけ高さがずれるにとどまり、`view.rs` の reset-on-show による
 /// memo リセットが同じフレームの動的高さ算出で直す（固着しない）。

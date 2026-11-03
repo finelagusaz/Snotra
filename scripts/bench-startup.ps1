@@ -9,7 +9,7 @@ min / p50 / max を出す（issue #1000）。
 測っていた。加えて WebView2 期の子孫プロセス走査を抱えていた（現構成のプロセスツリーは
 1 件・#532 SU7）。
 
-計器の本体は `src-tauri/src/startup.rs`（`startup:ready` / `startup:failed`）。
+計測コードの本体は `src-tauri/src/startup.rs`（`startup:ready` / `startup:failed`）。
 **このスクリプトは判定規則を持たず、契約の検査だけを行う**——区間の意味・`null` の
 規則・恒等式はすべて Rust 側の doc が正本である。
 
@@ -97,7 +97,7 @@ if ($UseVerificationProfile) {
   New-SnotraVerificationProfile -ProfileDir $profileFull -ShowIcons $false | Out-Null
 }
 
-Write-Host "=== Snotra 起動計器（時間が主・メモリは従） ===" -ForegroundColor Cyan
+Write-Host "=== Snotra 起動の計測コード（時間が主・メモリは従） ===" -ForegroundColor Cyan
 Write-Host "Exe:        $ExePath"
 Write-Host "Iterations: $Iterations"
 if ($null -ne $profileFull) { Write-Host "Profile:    $profileFull（検証用・SNOTRA_CONFIG_DIR）" }
@@ -120,7 +120,7 @@ try {
     $outPath = Join-Path $env:TEMP ("snotra_bench_{0}.out" -f $run)
     foreach ($p in @($errPath, $outPath)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
 
-    # **外から独立に測る壁時計。** 内側の申告と突き合わせる相手であり、計器が自分の
+    # **外から独立に測る壁時計。** 内側の申告と突き合わせる相手であり、計測コードが自分の
     # 出力だけで辻褄を合わせる形（同語反復化）を外から検出する唯一の材料である。
     $wall = [System.Diagnostics.Stopwatch]::StartNew()
     if ($null -ne $profileFull) {
@@ -192,7 +192,7 @@ try {
     Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue
   } else {
     # **空文字を作らない**（#872: PowerShell の env 復元が空文字を作り、測定ハーネスの
-    # 全反復が黙って計器つきで走っていた）。`SNOTRA_TRACE` は `env_flag` ゆえ空文字は
+    # 全反復が黙って計測を有効にしたまま走っていた）。`SNOTRA_TRACE` は `env_flag` ゆえ空文字は
     # 「無効」に落ちるが、復元の形は smoke 群と揃える。
     $env:SNOTRA_TRACE = $savedTrace
   }
@@ -201,7 +201,7 @@ try {
 Write-Host ""
 if ($runs.Count -gt 0) {
   Write-Host "=== 区間ごとの min / p50 / max（ms） ===" -ForegroundColor Cyan
-  # **最小値だけに畳まない。** 分散こそが観測対象である（この計器の存在理由）。
+  # **最小値だけに畳まない。** 分散こそが観測対象である（この計測コードの存在理由）。
   $summary = foreach ($k in @($PhaseKeys + @('post_main'))) {
     $values = @($runs | ForEach-Object { $_.$k } | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ })
     if ($values.Count -eq 0) {
@@ -225,9 +225,9 @@ if ($runs.Count -gt 0) {
 if ($failures.Count -gt 0) {
   Write-Host "=== 失敗 ===" -ForegroundColor Red
   $failures | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
-  throw "起動計器の検査が失敗しました（$($failures.Count) 件）"
+  throw "起動の計測コードの検査が失敗しました（$($failures.Count) 件）"
 }
 
 if ($runs.Count -eq 0) { throw "有効な標本が 1 つも取れませんでした" }
 
-Write-Host "起動計器 passed（$($runs.Count) runs）。" -ForegroundColor Green
+Write-Host "起動の計測コード passed（$($runs.Count) runs）。" -ForegroundColor Green

@@ -536,7 +536,5 @@ fn measure_recent_history_cost() {
         hits = out.len();
     }
     println!("  recent_limit = {limit}, 返した件数 = {hits}, 最小 {best:.1} ms");
-    println!(
-        "  = 呼ばれたときの 1 回の額（{n} 件の正規化キーを導出して照合する）"
-    );
+    println!("  = 呼ばれたときの 1 回の額（{n} 件の正規化キーを導出して照合する）");
 }

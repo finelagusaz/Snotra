@@ -625,6 +625,16 @@ mod tests {
         }
     }
 
+    /// **照合器は名前の側に自前の折りたたみを当てない**（#1395）。名前も絞り込みも照合の入口で畳み済みである。
+    /// nucleo-matcher の `normalize` を有効にしたままだと、照合器が名前の側にだけ 0.3.1 の壊れた表を当て
+    /// （`ᴀ` → `A`）、畳まれていない絞り込みの `ᴀ` と食い違って外れた。
+    #[test]
+    fn fuzzy_filter_does_not_refold_the_name_inside_the_matcher() {
+        use crate::search::SearchMode;
+        let out = filter_sorted(&[sr("ᴀbc.txt")], "ᴀ", SearchMode::Fuzzy, 8);
+        assert_eq!(out.len(), 1);
+    }
+
     /// 絞り込みと名前の両辺に `SPEC.md`「4.2 クエリ正規化」の空白の正規化を通す（#1284）。
     ///
     /// 名前の側には Windows のファイル名に置ける空白（連続空白・U+3000・NBSP）を使う。返る名前は元の綴りの

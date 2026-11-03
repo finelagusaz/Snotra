@@ -65,12 +65,21 @@ struct FuzzyScratch {
     haystack: Vec<char>,
 }
 
+/// 照合器の設定。**照合器自身の折りたたみ（`normalize`）は切る**——名前も needle も照合の入口
+/// （[`crate::query::normalize_for_match`]）で畳み済みであり、照合器は名前の側にだけ
+/// nucleo-matcher 0.3.1 の壊れた表を当て直して needle と食い違う（#1395）。
+fn matcher_config() -> MatcherConfig {
+    let mut config = MatcherConfig::DEFAULT;
+    config.normalize = false;
+    config
+}
+
 // D-5: one Matcher per thread that calls fuzzy_match_score, reused across calls on that thread.
 // Matcher::new() is one alloc_zeroed of 133,120 B in nucleo-matcher 0.3.1 (measured 2026-10-24);
 // thread_local avoids paying it per rayon chunk boundary or per folder filter call.
 thread_local! {
     static MATCHER: RefCell<FuzzyScratch> = RefCell::new(FuzzyScratch {
-        matcher: Matcher::new(MatcherConfig::DEFAULT),
+        matcher: Matcher::new(matcher_config()),
         haystack: Vec::new(),
     });
 }

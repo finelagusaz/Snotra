@@ -762,3 +762,18 @@ fn nfd_accented_entry_name_matches_like_its_nfc_form() {
         assert_eq!(results.len(), 1, "{mode:?}");
     }
 }
+
+/// **U+1E00 台の字も、分解したときの基底文字へ畳まれる**（#1395）。nucleo-matcher 0.3.1 の表は
+/// `ḋ` を `e` へ、`ẗ` を `n` へ写していたので、`ḋata` は `data` に当たらず、`ẗest` は `nest` に当たった。
+#[test]
+fn latin_extended_additional_names_fold_to_their_base_letter() {
+    let names = |results: Vec<SearchResult>| -> Vec<String> {
+        results.into_iter().map(|r| r.name).collect()
+    };
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+        let mut engine = SearchEngine::new(make_entries(&["ḋata", "ẗest"]));
+        let data = names(engine.search("data", 8, &empty_history(), mode));
+        let nest = names(engine.search("nest", 8, &empty_history(), mode));
+        assert_eq!((data, nest), (vec!["ḋata".to_string()], vec![]), "{mode:?}");
+    }
+}

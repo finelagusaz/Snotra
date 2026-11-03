@@ -28,7 +28,7 @@ export function checkCiTable(snapshot) {
   const start = lines.findIndex((l) => /^\| 検証コマンド \| workflow \|/.test(l));
   if (start === -1) return [finding(p, 1, "「CI/CD メモ」対応表（| 検証コマンド | workflow |）が見つからない")];
   // 終了条件は「最初の空行」である。`startsWith("|")` で打ち切ると、表の途中に非表の行が 1 行
-  // 紛れただけで**以降の行が照合されないまま緑になる**（#863 で発見した 2 つ目の沈黙経路。
+  // 紛れただけで**以降の行が照合されないまま緑になる**（#863 で発見した 2 つ目の黙って失敗する経路。
   // 崩れた行の黙殺が 1 つ目）。走査の終わりは表の終わりであって、最初の異常ではない。
   for (let i = start + 2; i < lines.length && lines[i].trim() !== ""; i++) {
     if (!lines[i].startsWith("|")) {

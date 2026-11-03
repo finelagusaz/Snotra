@@ -7,7 +7,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 ## アーキテクチャ
 
 - 本体との連携は `config.toml` ファイル1点のみ。IPC は使わない
-  - **射程は「本体との連携」である。** スタートアップ登録（`HKCU\...\Run`）はこの射程の外で、設定アプリが `config.toml` 以外へ書く唯一の永続状態である——本体は読まず、読むのは Windows のサインイン処理だけなので連携先は増えていない。正本は `SPEC.md` §7.7、機構は `snotra_core::autostart`
+  - **適用範囲は「本体との連携」である。** スタートアップ登録（`HKCU\...\Run`）はこの適用範囲の外で、設定アプリが `config.toml` 以外へ書く唯一の永続状態である——本体は読まず、読むのは Windows のサインイン処理だけなので連携先は増えていない。正本は `SPEC.md` §7.7、機構は `snotra_core::autostart`
 - 7タブの設定エディタ（General / Search / Index / Visual / Opener / Instant Command / Backup）。バージョン情報はサイドバーに表示
 - 設定の読み書きは `snotra-core::Config` を直接使用。本体は `notify` クレートで変更を検知する
 
@@ -28,7 +28,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 設定 UI のデザイン規約とトークンの SSOT は **`SETTINGS-DESIGN.md`**（クレート直下）。`src/style.rs` が実装（トークン + ヘルパー）。
 
-- **色 / 余白 / ScrollArea / フォントサイズは `style` のトークン・ヘルパーを通す**——各タブに直書きしない。**射程**: `Color32::from_rgb` の直書きが許されるのは visual の色編集機能だけである。
+- **色 / 余白 / ScrollArea / フォントサイズは `style` のトークン・ヘルパーを通す**——各タブに直書きしない。**適用範囲**: `Color32::from_rgb` の直書きが許されるのは visual の色編集機能だけである。
 - タイポグラフィは `style::apply_type_ramp(ctx, heading_semibold)` が Fluent タイプランプ（見出し18 / 本文14 / 副文12）と見出しの Semibold を一括登録する。見出し（`section_heading` / `modal_header`）は Semibold、本文・副文は Regular。`heading_semibold` は `configure_fonts` の戻り値で、Semibold フォント不在時は Regular にフォールバック。`run()` で `apply_win11_theme` の後に呼ぶ。
 - 新タブ・新パーツの追加時は `SETTINGS-DESIGN.md`「新タブ追加チェックリスト」に従い、逸脱が要る場合は先に同書を更新する。
 
@@ -47,7 +47,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 - **発生例（#456）**: フッターの status ラベル（「未保存の変更があります」）が `has_changes()` の切り替わりで出現/消失すると、その後に置いた RTL（右寄せ・矩形固定）アクションボタン群の auto-id 種がずれ、矩形は同じなのに id が変わって発火した（破棄押下でボタン周辺に赤枠が1フレーム）。debug 限定（`cfg!(debug_assertions)`）で release 不可視。
 - **id を安定させるときは `UiBuilder::new().scope_id(Id::unique(...))`（`IdSource::Explicit`。egui 0.36 までの名前は `.id(Id::new(...))`）でコンテナに明示 id を与える**——`push_id` / `id_salt` では直らない。`IdSource::Child` は `unique_id = stable_id.with(next_auto_id_salt)` と**親の auto カウンタを混ぜる**ため、前置ウィジェット数の変化が依然 id に流入する。明示 id はこのカウンタ混入を断ち、配下 auto-id が安定する。`with_layout(layout, f)` は `scope_builder(UiBuilder::new().layout(layout), f)` の薄いラッパなので、`.scope_id()` を足すだけでレイアウト・挙動は不変。
-- **この id 不安定性は egui_kittest で headless 再現し、回帰テストで固定する**: `.click()` は press+release を 1 step 内で処理し過渡フレームを潰すため、ポインタイベントを `_step` 単位で個別に送り、各フレームの `output().shapes` に `Color32::RED` の rect_stroke が出ないことを検証する（`kittest_discard_no_rect_id_instability_warning`）。**射程**: この赤枠検出は `check_for_id_clash`（ID 重複）の回帰も同時に捕捉する。
+- **この id 不安定性は egui_kittest で headless 再現し、回帰テストで固定する**: `.click()` は press+release を 1 step 内で処理し過渡フレームを潰すため、ポインタイベントを `_step` 単位で個別に送り、各フレームの `output().shapes` に `Color32::RED` の rect_stroke が出ないことを検証する（`kittest_discard_no_rect_id_instability_warning`）。**適用範囲**: この赤枠検出は `check_for_id_clash`（ID 重複）の回帰も同時に捕捉する。
 
 ### Win キーの制限
 
@@ -59,7 +59,7 @@ eframe は毎フレーム `App::ui()`（旧 `update()`。eframe 0.35 で `logic(
 
 ### フォント登録（`set_fonts`）の注意点
 
-- **複数フォントを1つの `FontFamily` に混ぜると混在テキストでベースラインがずれる。混在スクリプトを描くパーツは、両スクリプトをカバーする単一フォントで統一する**: Latin と CJK を別フォント（例 Segoe UI Semibold + Yu Gothic UI Semibold）で1ファミリに積むと、異なる vertical metrics + `FontTweak` により同一行（混在見出し「PATH 実行ファイル」等）で縦位置がずれる（#399）。**射程**: この欠陥は型チェック・clippy・ユニットテストを素通りし**視覚スモークでのみ顕在化**する
+- **複数フォントを1つの `FontFamily` に混ぜると混在テキストでベースラインがずれる。混在スクリプトを描くパーツは、両スクリプトをカバーする単一フォントで統一する**: Latin と CJK を別フォント（例 Segoe UI Semibold + Yu Gothic UI Semibold）で1ファミリに積むと、異なる vertical metrics + `FontTweak` により同一行（混在見出し「PATH 実行ファイル」等）で縦位置がずれる（#399）。**適用範囲**: この欠陥は型チェック・clippy・ユニットテストを検出されず**視覚スモークでのみ顕在化**する
 - **`set_fonts` は登録フォントを起動時に eager parse し、不正データで panic する。フォントを渡す前に `font.rs` の `face_index_valid` で検証する**: ttc の範囲外 face index 等は `set_fonts` 内のパースで panic（release は `panic = "abort"` なので即 abort・`catch_unwind` 不可）。`std::fs::read` の成否だけでは「ファイルは在るが face が無い」を弾けないため、`face_index_valid`（ttc ヘッダの `numFonts` を確認）を挟む。外部リソースの「不在時フォールバック」を書くときは、不在の種類（**ファイル不在 / 存在するが不正 / パース不能**）を分解して各検知点を用意する
 
 ## draft / saved 二重状態モデル
@@ -71,7 +71,7 @@ eframe は毎フレーム `App::ui()`（旧 `update()`。eframe 0.35 で `logic(
 - **has_changes()**: `draft != saved` で判定。Save/Discard ボタンの有効化に使用
 - **Discard**: `draft = saved.clone()` で全タブの編集を一括破棄
 - **Reset to default**: `draft = Config::normalized_default()` で既定値に戻す（saved は変更しない → has_changes() が true になり Save が必要）。`normalized_default()` は `apply_migrations()` 適用済みの「正規化済み（Option フィールドが全 Some）」既定値を返すため、`saved` との `PartialEq` がタブ遷移順序（DragValue の `get_or_insert`）に依存しない
-- **タブ別ダーティ点（`•`）: Config に新セクションを追加したら `app.rs` の `SECTION_TABLE` も更新する**: ダーティ点は `SECTION_TABLE`（Config セクション → TabId 対応表、SSOT）から導出しており、更新は 1 箇所で足りる。**更新漏れを検出する機構は無い**——`section_table_covers_all_config_fields` の `..` なし destructure が強制するのは「新フィールドを一度は目にすること」だけで、`新フィールド: _,` の 1 行を足せばコンパイルは通り、`SECTION_TABLE` が古いまま 2 本とも緑になる（2026-08-09 実測・#1008）。射程の正本は同テストと `SECTION_TABLE` の doc
+- **タブ別ダーティ点（`•`）: Config に新セクションを追加したら `app.rs` の `SECTION_TABLE` も更新する**: ダーティ点は `SECTION_TABLE`（Config セクション → TabId 対応表、SSOT）から導出しており、更新は 1 箇所で足りる。**更新漏れを検出する機構は無い**——`section_table_covers_all_config_fields` の `..` なし destructure が強制するのは「新フィールドを一度は目にすること」だけで、`新フィールド: _,` の 1 行を足せばコンパイルは通り、`SECTION_TABLE` が古いまま 2 本とも緑になる（2026-08-09 実測・#1008）。適用範囲の正本は同テストと `SECTION_TABLE` の doc
 
 ### 保存フロー
 
@@ -98,7 +98,7 @@ index / opener / instant の3タブが共通して使うモーダルの状態機
 
 - `ModalMode::Create`: `open_create()`（フィールドを `F::default()` に初期化）→ モーダル表示 → Save で `common::save_entry` が Vec に `push`。複製は `open_create_with(fields)`
 - `ModalMode::Edit`: `open_edit(index, fields)` で既存値をコピー → モーダル表示 → Save で `common::save_entry` がインデックス指定で上書き。Delete ボタンも表示（`common::delete_entry`）
-- **インデックス陳腐化ガード: モーダルの境界チェックは `save_entry` / `delete_entry` に任せ、各タブで書かない**: Edit モードで保持する `editing` はモーダルを開いた時点のスナップショット。モーダル表示中に外部で行が削除されるケース（このアプリでは発生しないが）に備え、両者が境界チェックを内蔵する（範囲外は no-op）。**射程**: opener はネスト `(rule, tool)` のため Save/Delete の境界チェックのみ固有ロジック（`save_opener` / Delete ハンドラ）に残る
+- **インデックス陳腐化ガード: モーダルの境界チェックは `save_entry` / `delete_entry` に任せ、各タブで書かない**: Edit モードで保持する `editing` はモーダルを開いた時点のスナップショット。モーダル表示中に外部で行が削除されるケース（このアプリでは発生しないが）に備え、両者が境界チェックを内蔵する（範囲外は no-op）。**適用範囲**: opener はネスト `(rule, tool)` のため Save/Delete の境界チェックのみ固有ロジック（`save_opener` / Delete ハンドラ）に残る
 - モーダルの egui 描画（`show_modal` の `ui.xxx()` 列）はタブごとに固有のまま各タブに残す。共通化するのは状態遷移・境界チェックだけ
 
 ## 非同期ファイルピッカーパターン
@@ -133,7 +133,7 @@ OpenerRule のターゲットは文字列プレフィックスで種別を表現
 - ユニットテストは書かない方針（egui UI コードはモック困難）。ロジックのテストは `snotra-core` 側で行う
   - 例外1: 純粋な非 egui ヘルパー（例 `font.rs` の `face_index_valid`）の境界テストはインラインで置いてよい。egui モック困難の理由が当たらず、かつ degrade パスが視覚スモークで再現できない（dev 機には対象フェイスが在る）ため、テストが唯一の検証手段になる
   - 例外2: **UI 操作 + 状態観測**は `egui_kittest`（AccessKit）でヘッドレステストできる（下記「ヘッドレス UI テスト」）。「egui モック困難」は描画のモックを指し、AccessKit ツリー経由の操作には当たらない
-  - 例外3: **UI が持つ定数と `snotra-core` の既定値の一致**は、その UI と同じ述語を通してインラインで固定する（例 `tabs/visual.rs` の `default_config_matches_obsidian_preset`）。`PRESETS` の型を変えない判断（`docs/adr/ADR-config-default-fallback-references.md`）ゆえ置換で消せず、テストが唯一の検知手段になる（#795）。**そのテストが見るのは、現に書いてある色ぶんの比較だけである**——`PresetDef` に色を足したときの手当てを強制する機構は無い（射程の正本は同テストのコメント・#1008）。**述語は UI が使うもの（`preset_matches`）をそのまま呼ぶ**——自前で比較を書くと UI が守る不変条件より厳しい主張になる
+  - 例外3: **UI が持つ定数と `snotra-core` の既定値の一致**は、その UI と同じ述語を通してインラインで固定する（例 `tabs/visual.rs` の `default_config_matches_obsidian_preset`）。`PRESETS` の型を変えない判断（`docs/adr/ADR-config-default-fallback-references.md`）ゆえ置換で消せず、テストが唯一の検知手段になる（#795）。**そのテストが見るのは、現に書いてある色ぶんの比較だけである**——`PresetDef` に色を足したときの手当てを強制する機構は無い（適用範囲の正本は同テストのコメント・#1008）。**述語は UI が使うもの（`preset_matches`）をそのまま呼ぶ**——自前で比較を書くと UI が守る不変条件より厳しい主張になる
 
 ## ヘッドレス UI テスト（egui_kittest）
 

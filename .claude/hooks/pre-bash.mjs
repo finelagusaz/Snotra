@@ -40,7 +40,7 @@
 // 詳細と実測の根拠は issue #482。
 
 // 実測（#482 Phase 2 のフォールトインジェクション V2）: Windows の PowerShell tool の tool_name は
-// 文字列 "PowerShell" である。matcher が取りこぼすと hook は気づかれないまま素通りするため
+// 文字列 "PowerShell" である。matcher が取りこぼすと hook は気づかれないまま検出されないため
 // （それがこの issue の D1 そのもの）、ここは推測ではなく実測値で固定している。
 
 import { readFileSync, existsSync } from "node:fs";
@@ -51,7 +51,7 @@ import path from "node:path";
 /** この hook が管轄するツール。matcher が部分一致しても、ここが最終的な境界になる。 */
 export const TARGET_TOOLS = Object.freeze(["Bash", "PowerShell"]);
 
-/** git 1 コマンドあたりの上限。hook 全体の timeout に丸投げすると kill された沈黙が
+/** git 1 コマンドあたりの上限。hook 全体の timeout に丸投げすると kill された見逃しが
  *  exit≠2 になり fail-open になる。自分で打ち切って block する。 */
 export const GIT_TIMEOUT_MS = 10_000;
 
@@ -297,7 +297,7 @@ const SHAPE_REMEDY = Object.freeze({
  * ような `{ ok: false }` を持つ reader 形にすると、失敗しえないものへ失敗の表現を与えて嘘になる。
  *
  * **`platform` が渡されないときは Windows 専用判定を発火させない。** これは「判定不能」ではなく
- * 「規範の射程外」であり、block にすると非 Windows で false block になる。製品コードでこの状態へ至るのは、
+ * 「規範の対象外」であり、block にすると非 Windows で false block になる。製品コードでこの状態へ至るのは、
  * 呼び出し側が `decide` へ platform を渡さないときである。`main()` のその配線は、ソースカナリアと
  * process 級 e2e（`npm test` は ubuntu と windows の両方で走る）が固定する。
  *
@@ -417,7 +417,7 @@ function findUp(startDir, relTarget) {
 
 /**
  * リポジトリルート（cwd から最近接の `.git` へ遡って導出）の `workspace/plan.md` の完了状態。
- * cwd がサブディレクトリ（例: src-tauri/）でもゲートが沈黙で外れないようにする（I2）。
+ * cwd がサブディレクトリ（例: src-tauri/）でもゲートが黙って外れないようにする（I2）。
  * `.git` が見つからなければ cwd 自身を root とみなす（リポジトリ外での誤爆を作らない）。
  * plan.md が無ければ管轄外、存在するのに読めなければ判定不能。
  */
@@ -433,7 +433,7 @@ export function readPlanState(cwd) {
 }
 
 /** 要約の照合で git を呼ぶときの上限。hook 全体の上限は 30 秒（`.claude/settings.json`）で、越えると
- *  非ブロッキングのエラー＝素通りになる。`readGitState`（2 本 × 10 秒）と合わせても収まるよう、2 本 × 4 秒にする */
+ *  非ブロッキングのエラー＝検出されなくなる。`readGitState`（2 本 × 10 秒）と合わせても収まるよう、2 本 × 4 秒にする */
 export const VERIFY_GIT_TIMEOUT_MS = 4_000;
 
 const VERIFY_REMEDY =

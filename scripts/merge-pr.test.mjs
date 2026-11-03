@@ -102,7 +102,7 @@ describe("run — 正常経路", () => {
     let probes = 0;
     const f = fake({ "cat-file": () => ({ status: probes++ === 0 ? 1 : 0, stdout: "", stderr: "" }) });
     expect(run(ARGS, "/repo", f.deps)).toBe(0);
-    expect(f.calls).toContain("fetch"); // 無いと indexOf が -1 を返し、下の比較だけでは素通りする
+    expect(f.calls).toContain("fetch"); // 無いと indexOf が -1 を返し、下の比較だけでは検出されない
     expect(f.calls.indexOf("fetch")).toBeLessThan(f.calls.indexOf("pr merge"));
   });
 });

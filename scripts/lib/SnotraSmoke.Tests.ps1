@@ -44,7 +44,7 @@ BeforeDiscovery {
     }
 
     # 既定 ExePath の検査の母集団（#1293）。**discovery 相で作る**——`-ForEach` は discovery で展開されるので、
-    # BeforeAll で作った値は届かない。母集団の意味と射程は当該 Describe のヘッダが正本。
+    # BeforeAll で作った値は届かない。母集団の意味と適用範囲は当該 Describe のヘッダが正本。
     # `-Filter '*.ps1'` は Win32 の照合で `.ps1xml` にも当たりうるので、拡張子で絞る。
     $harnessCodeLines = @{}
     foreach ($script in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..') -File | Where-Object Extension -eq '.ps1') {
@@ -54,7 +54,7 @@ BeforeDiscovery {
     $exePathMentions = @($harnessCodeLines.Keys | Where-Object { $harnessCodeLines[$_] -match '\$ExePath\b' } | Sort-Object)
 
     # PositionalBinding の検査の母集団（#1296）。**`package.json` の scripts から導く**——npm が `--` を
-    # 落とす経路を通るのは、npm script の入口だけである。意味と射程は当該 Describe のヘッダが正本。
+    # 落とす経路を通るのは、npm script の入口だけである。意味と適用範囲は当該 Describe のヘッダが正本。
     $packageJson = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../package.json') -Raw | ConvertFrom-Json
     $npmEntryScripts = @(
         $packageJson.scripts.PSObject.Properties.Value |
@@ -262,9 +262,9 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     #
     # **守るのは「既定の分岐が導出を通ること」であって、`$ExePath` の最終値ではない。** 入口
     # （`param()` の既定が空リテラル）・導出（`$PSScriptRoot` 起点）・使用点（それを渡す）の 3 点を
-    # それぞれ 1 つずつ見る。3 点とも独立に必要であることは、片方だけ壊す変異が素通りすることで測った。
+    # それぞれ 1 つずつ見る。3 点とも独立に必要であることは、片方だけ壊す変異が検出されないことで測った。
     #
-    # **これは下限の主張である——覆うのは各点の代表的な書き方だけで、同義の別構文は射程外。**
+    # **これは下限の主張である——覆うのは各点の代表的な書き方だけで、同義の別構文は対象外。**
     # `Set-Variable` で値を差し替える形、`$ExePath` を導出の**後で**上書きする形は通る（実測）。
     # ソースの形を見る述語の原理的な天井であり、`Should` を足しても「その形以外」が残り続けるので
     # ここで止める。実行時の最終値を追うにはハーネス自身を起動する検査が要り、別の費用の話になる。
@@ -281,7 +281,7 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # 名指したもの以外が導出から脱落しても緑のまま）。**導出が 0 件なら Pester がコンテナごと
     # 失敗させる**（空の `-ForEach` は既定で discovery エラー・実測）ので、件数の検査は置かない。
     #
-    # **射程の外**（どれも、この Describe には映らない）:
+    # **適用範囲の外**（どれも、この Describe には映らない）:
     # - `scripts/` 直下以外の `.ps1`。再帰にすると、補集合の検査でこのファイル自身が `$ExePath` を語る側に
     #   当たり、許可リストへ自分を足すことになる（実測）。起動ハーネスは `package.json` から呼ばれる直下の入口である
     # - `$ExePath` 以外の名前で本体のパスを持つ形（`-Exe` への改名を含む）。語が消えると補集合の検査にも映らない
@@ -298,7 +298,7 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
 
         # (1) 入口——`param()` の既定が空でなければ、導出は一度も走らない。
         # **「空リテラルが在る」ことを見る**（「`=` の右が空」ではない）——後者だと行継続で折って
-        # 次行へ直書きする形が素通りし、しかも cwd がスクリプトと同じコピーでも症状が出る（実測）。
+        # 次行へ直書きする形が検出されず、しかも cwd がスクリプトと同じコピーでも症状が出る（実測）。
         $paramDefaults = @($harnessLines | Where-Object { $_ -match '^\s*\[string\]\s*\$ExePath\s*=' })
         $paramDefaults.Count | Should -Be 1 -Because "param() の ExePath 宣言が 1 行だけ在ること"
         # **末尾のカンマと行末コメントを先に剥がしてから明示比較する**——正規表現へ畳むと
@@ -346,7 +346,7 @@ Describe 'npm script の入口は PositionalBinding = $false で位置引数を�
     # `smoke:manual -- -Only 1` の `1` が `$ExePath` になった）。`[CmdletBinding(PositionalBinding = $false)]`
     # があれば、PowerShell 自身が束縛の段で止める（`-File` で exit 1・本体は走らない）。
     #
-    # **射程の外**: スイッチ単独（`-PostToPr` 等）を npm が吸う形は、値が残らないのでスクリプトからは
+    # **適用範囲の外**: スイッチ単独（`-PostToPr` 等）を npm が吸う形は、値が残らないのでスクリプトからは
     # 見えない——文書の規則（`--` を落とさない呼び方）が残る理由である。母集団は `package.json` の
     # `-File scripts/*.ps1` だけで、workflow や他のスクリプトからだけ呼ばれる `.ps1` は載らない。
     #
@@ -463,7 +463,7 @@ Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
         $found.seq | Should -Be 1
     }
 
-    It '読み取りに失敗した周回を「まだ出ていない」と同じ沈黙へ潰さない' {
+    It '読み取りに失敗した周回を「まだ出ていない」と同じ見逃しへ潰さない' {
         # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction SilentlyContinue` は
         # 空を返すので、**読めなかったと未発生が同じ $null になる**。
         $dir = Join-Path $TestDrive 'unreadable'
@@ -614,7 +614,7 @@ Describe 'ConvertFrom-SnotraWtsInfoEx（#866 ロック検出の解釈）' {
 
     It 'SessionId が呼び出し元と食い違えば「読めた」と言わない（オフセット仮定の検算）' {
         # オフセットが 1 つずれると、無関係な 0 が「ロック中」と読まれる。SessionId の一致が
-        # その沈黙経路に対する唯一の検知点である
+        # その黙って失敗する経路に対する唯一の検知点である
         { ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -SessionId 3) -ExpectedSessionId 7 } |
             Should -Throw '*SessionId が呼び出し元と一致しません*'
     }
@@ -641,7 +641,7 @@ Describe 'Assert-SnotraSessionUnlocked（#866 寄せる向きの非対称）' {
         { Assert-SnotraSessionUnlocked -Operation 'ウィンドウのキャプチャ' } | Should -Throw '*画面がロックされている*'
     }
 
-    It '非ロックなら素通りする' {
+    It '非ロックなら検出されない' {
         Mock -ModuleName SnotraSmoke Get-SnotraSessionLockState { [pscustomobject]@{ Locked = $false } }
         { Assert-SnotraSessionUnlocked } | Should -Not -Throw
     }

@@ -2,7 +2,7 @@
  * `checkLspConfig` のカナリア。
  *
  * 2 層に分けてある。(1) 実リポジトリを指す薄いテスト 1 本——設定が現に生きていることを言う。
- * (2) temp へ複製したツリーへの故障注入——不変条件の**足ごと**に壊して、実際に赤くなることを測る
+ * (2) temp へ複製したツリーへの故障注入——不変条件の**条件ごと**に壊して、実際に赤くなることを測る
  * （`.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」）。
  *
  * **変異は必ず複製に当てる。** 稼働中の `.claude/settings.json` は hook の配線そのものを運ぶ live な
@@ -72,7 +72,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(violationsAfter(() => {})).toEqual([]);
   });
 
-  it("足 3a — initializationOptions.checkOnSave が消えると赤", () => {
+  it("条件 3a — initializationOptions.checkOnSave が消えると赤", () => {
     const v = violationsAfter((dir) => {
       const lsp = readJson(dir, LSP_JSON);
       delete lsp["rust-analyzer"].initializationOptions.checkOnSave;
@@ -81,7 +81,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/checkOnSave/);
   });
 
-  it("足 3b — initializationOptions.workspace.symbol.search が消えると赤", () => {
+  it("条件 3b — initializationOptions.workspace.symbol.search が消えると赤", () => {
     const v = violationsAfter((dir) => {
       const lsp = readJson(dir, LSP_JSON);
       delete lsp["rust-analyzer"].initializationOptions.workspace;
@@ -90,14 +90,14 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/workspace\.symbol\.search/);
   });
 
-  it("足 1 — .lsp.json が JSON として壊れると赤", () => {
+  it("条件 1 — .lsp.json が JSON として壊れると赤", () => {
     const v = violationsAfter((dir) => {
       fs.writeFileSync(path.join(dir, LSP_JSON), '{ "rust-analyzer": { broken\n');
     });
     expect(v.join("\n")).toMatch(/\.lsp\.json を読めない/);
   });
 
-  it("足 2 — extensionToLanguage から .rs が消えると赤", () => {
+  it("条件 2 — extensionToLanguage から .rs が消えると赤", () => {
     const v = violationsAfter((dir) => {
       const lsp = readJson(dir, LSP_JSON);
       delete lsp["rust-analyzer"].extensionToLanguage[".rs"];
@@ -106,7 +106,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/extensionToLanguage/);
   });
 
-  it("足 4 — 公式 plugin が true に戻ると赤（.rs に LSP が 2 つ）", () => {
+  it("条件 4 — 公式 plugin が true に戻ると赤（.rs に LSP が 2 つ）", () => {
     const v = violationsAfter((dir) => {
       const settings = readJson(dir, SETTINGS_JSON);
       settings.enabledPlugins["rust-analyzer-lsp@claude-plugins-official"] = true;
@@ -115,9 +115,9 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/rust-analyzer-lsp@claude-plugins-official/);
   });
 
-  // 足 4 は分岐が 2 本ある。片方（公式を戻す）だけ測ると、判定が真偽を取り違えていても——
+  // 条件 4 は分岐が 2 本ある。片方（公式を戻す）だけ測ると、判定が真偽を取り違えていても——
   // つまり「自分の plugin が false・公式が true」を要求していても——検査は緑になりうる。
-  it("足 4b — 自分の plugin が false になると赤", () => {
+  it("条件 4b — 自分の plugin が false になると赤", () => {
     const v = violationsAfter((dir) => {
       const settings = readJson(dir, SETTINGS_JSON);
       settings.enabledPlugins["snotra-rust-lsp@snotra"] = false;
@@ -126,7 +126,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/enabledPlugins\["snotra-rust-lsp@snotra"\] が true でない/);
   });
 
-  it("足 5 — 配送だけが死んでも赤（.lsp.json は無傷）", () => {
+  it("条件 5 — 配送だけが死んでも赤（.lsp.json は無傷）", () => {
     const v = violationsAfter((dir) => {
       const settings = readJson(dir, SETTINGS_JSON);
       settings.extraKnownMarketplaces.snotra.source.path = "./.claude/does-not-exist";
@@ -135,10 +135,10 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/marketplace\.json を読めない/);
   });
 
-  // 足 5 は path だけでなく source 種別も見ている。path の変異は「marketplace.json を読めない」で
+  // 条件 5 は path だけでなく source 種別も見ている。path の変異は「marketplace.json を読めない」で
   // 赤くなるため、**extraKnownMarketplaces 検査そのものは誰も縛っていなかった**（code-reviewer が
-  // 各検査を `if (false)` で無力化して実測・14 中 3 件が素通り）。
-  it("足 5b — source 種別だけがずれても赤（path は無傷）", () => {
+  // 各検査を `if (false)` で無力化して実測・14 中 3 件が見逃し）。
+  it("条件 5b — source 種別だけがずれても赤（path は無傷）", () => {
     const v = violationsAfter((dir) => {
       const settings = readJson(dir, SETTINGS_JSON);
       settings.extraKnownMarketplaces.snotra.source.source = "file";
@@ -147,14 +147,14 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/extraKnownMarketplaces\.snotra\.source が/);
   });
 
-  it("足 5c — plugin.json が JSON として壊れると赤", () => {
+  it("条件 5c — plugin.json が JSON として壊れると赤", () => {
     const v = violationsAfter((dir) => {
       fs.writeFileSync(path.join(dir, PLUGIN_JSON), '{ "name": broken\n');
     });
     expect(v.join("\n")).toMatch(/plugin\.json を読めない/);
   });
 
-  it("足 7c — marketplace entry の name がずれると赤（entry 実在検査を縛る）", () => {
+  it("条件 7c — marketplace entry の name がずれると赤（entry 実在検査を縛る）", () => {
     const v = violationsAfter((dir) => {
       const marketplace = readJson(dir, MARKETPLACE_JSON);
       marketplace.plugins[0].name = "snotra-rust-lsp-renamed";
@@ -164,8 +164,8 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
   });
 
   // 「.rs を宣言する LSP サーバは常にちょうど 1 つ」を担う検査。二重宣言は Claude Code 側では
-  // 先勝ち + warn ＝ 沈黙に近い失敗なので、ここで縛らないと誰も見ない。
-  it("足 9 — .lsp.json のサーバが 2 つになると赤", () => {
+  // 先勝ち + warn ＝ 気づかれにくい失敗なので、ここで縛らないと誰も見ない。
+  it("条件 9 — .lsp.json のサーバが 2 つになると赤", () => {
     const v = violationsAfter((dir) => {
       const lsp = readJson(dir, LSP_JSON);
       lsp["other-ls"] = { command: "other-ls", extensionToLanguage: { ".rs": "rust" } };
@@ -174,7 +174,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/サーバがちょうど 1 つでない/);
   });
 
-  it("足 6 — plugin.json の lspServers が .lsp.json を上書きしうる形になると赤", () => {
+  it("条件 6 — plugin.json の lspServers が .lsp.json を上書きしうる形になると赤", () => {
     const v = violationsAfter((dir) => {
       const manifest = readJson(dir, PLUGIN_JSON);
       manifest.lspServers = { "rust-analyzer": { command: "rust-analyzer" } };
@@ -183,7 +183,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/plugin\.json に lspServers/);
   });
 
-  it("足 6 — marketplace entry の lspServers も赤", () => {
+  it("条件 6 — marketplace entry の lspServers も赤", () => {
     const v = violationsAfter((dir) => {
       const marketplace = readJson(dir, MARKETPLACE_JSON);
       marketplace.plugins[0].lspServers = { "rust-analyzer": { command: "rust-analyzer" } };
@@ -192,7 +192,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/marketplace entry に lspServers/);
   });
 
-  it("足 7 — marketplace 名がキーとずれると赤（沈黙で load されない形）", () => {
+  it("条件 7 — marketplace 名がキーとずれると赤（黙って load されない形）", () => {
     const v = violationsAfter((dir) => {
       const marketplace = readJson(dir, MARKETPLACE_JSON);
       marketplace.name = "snotra-renamed";
@@ -201,9 +201,9 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/name が extraKnownMarketplaces のキーと一致しない/);
   });
 
-  // 足 7 も分岐が 2 本ある（marketplace 名と plugin 名）。plugin 名のずれは entry からも
+  // 条件 7 も分岐が 2 本ある（marketplace 名と plugin 名）。plugin 名のずれは entry からも
   // `enabledPlugins` のキー前半からも外れるので、同じく沈黙して load されない。
-  it("足 7b — plugin.json の name が entry とずれると赤", () => {
+  it("条件 7b — plugin.json の name が entry とずれると赤", () => {
     const v = violationsAfter((dir) => {
       const manifest = readJson(dir, PLUGIN_JSON);
       manifest.name = "snotra-rust-lsp-renamed";
@@ -212,14 +212,14 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/plugin\.json の name が entry と一致しない/);
   });
 
-  it("足 8 — rust-analyzer.toml が checkOnSave を書くと赤（ratoml が client を上書きする）", () => {
+  it("条件 8 — rust-analyzer.toml が checkOnSave を書くと赤（ratoml が client を上書きする）", () => {
     const v = violationsAfter((dir) => {
       fs.appendFileSync(path.join(dir, "rust-analyzer.toml"), "\ncheckOnSave = false\n");
     });
     expect(v.join("\n")).toMatch(/rust-analyzer\.toml に checkOnSave/);
   });
 
-  it("足 8 — rust-analyzer.toml が diagnostics を書いても赤", () => {
+  it("条件 8 — rust-analyzer.toml が diagnostics を書いても赤", () => {
     const v = violationsAfter((dir) => {
       fs.appendFileSync(path.join(dir, "rust-analyzer.toml"), "\n[diagnostics]\nenable = false\n");
     });
@@ -227,9 +227,9 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
   });
 
   // rust-analyzer のバイナリは rust-toolchain.toml の `components` が保証する（#1239）。宣言が消えると
-  // toolchain の次の入れ替えで LSP が沈黙で落ちる——cargo / clippy / test は緑のまま。
-  // 見るのは宣言だけで、実際に入っているかは射程の外（runner には無い）。
-  it("足 10 — rust-toolchain.toml の components から rust-analyzer が消えると赤", () => {
+  // toolchain の次の入れ替えで LSP が黙って落ちる——cargo / clippy / test は緑のまま。
+  // 見るのは宣言だけで、実際に入っているかは適用範囲の外（runner には無い）。
+  it("条件 10 — rust-toolchain.toml の components から rust-analyzer が消えると赤", () => {
     const v = violationsAfter((dir) => {
       const p = path.join(dir, "rust-toolchain.toml");
       fs.writeFileSync(p, fs.readFileSync(p, "utf-8").replace(/,\s*"rust-analyzer"/, ""));
@@ -237,7 +237,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/rust-toolchain\.toml の components に rust-analyzer が無い/);
   });
 
-  it("足 10b — components の行ごと消えても赤", () => {
+  it("条件 10b — components の行ごと消えても赤", () => {
     const v = violationsAfter((dir) => {
       const p = path.join(dir, "rust-toolchain.toml");
       fs.writeFileSync(p, fs.readFileSync(p, "utf-8").replace(/^components\s*=.*$/m, ""));
@@ -247,7 +247,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
 
   // 別テーブルの `components` を採ってはならない——先頭一致だと `[other]` 側の宣言で緑になる
   // （レビューの故障注入 P19 で実測した偽陰性）。
-  it("足 10c — 別テーブルの components に在っても [toolchain] に無ければ赤", () => {
+  it("条件 10c — 別テーブルの components に在っても [toolchain] に無ければ赤", () => {
     const v = violationsAfter((dir) => {
       const p = path.join(dir, "rust-toolchain.toml");
       const body = fs.readFileSync(p, "utf-8").replace(/,\s*"rust-analyzer"/, "");
@@ -256,8 +256,8 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
     expect(v.join("\n")).toMatch(/rust-toolchain\.toml の components に rust-analyzer が無い/);
   });
 
-  // 引用キーは TOML として正当なので、素の識別子だけを見る判定では素通りする（偽陰性）。
-  it("足 8b — ratoml が引用キーで書いても赤", () => {
+  // 引用キーは TOML として正当なので、素の識別子だけを見る判定では検出されない（偽陰性）。
+  it("条件 8b — ratoml が引用キーで書いても赤", () => {
     const v = violationsAfter((dir) => {
       fs.appendFileSync(path.join(dir, "rust-analyzer.toml"), '\n"checkOnSave" = false\n');
     });
@@ -266,7 +266,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
 
   // crate 直下の ratoml も local 水準で効く。発火（basename アンカー）と判定の母集団を
   // 揃えていないと、hook が走ったのに別のファイルを見て緑になる。
-  it("足 8c — crate 直下の ratoml も見る", () => {
+  it("条件 8c — crate 直下の ratoml も見る", () => {
     const v = violationsAfter((dir) => {
       const crate = path.join(dir, "snotra-core");
       fs.mkdirSync(crate, { recursive: true });
@@ -298,7 +298,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
   });
 
   // TOML はリテラル文字列もキーに使える。`"?` だけでは分岐の片方しか閉じない。
-  it("足 8b2 — ratoml が単一引用のキーで書いても赤", () => {
+  it("条件 8b2 — ratoml が単一引用のキーで書いても赤", () => {
     const v = violationsAfter((dir) => {
       fs.appendFileSync(path.join(dir, "rust-analyzer.toml"), "\n'checkOnSave' = false\n");
     });
@@ -307,7 +307,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
 
   // 行末コメントの除去は**偽陽性を防ぐ側**の挙動なので、赤の変異では縛れない。
   // 「赤くならないこと」を測る 1 本を置かないと、次に誰かが戻しても何も落ちない。
-  it("足 8d — キーを論じる行末コメントでは赤くならない（発火しない向きの検算）", () => {
+  it("条件 8d — キーを論じる行末コメントでは赤くならない（発火しない向きの検算）", () => {
     const v = violationsAfter((dir) => {
       fs.appendFileSync(
         path.join(dir, "rust-analyzer.toml"),
@@ -319,7 +319,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
 
   // ratoml が 1 枚も無ければ禁止キー検査は空虚に真になる。検知器が守る対象を失ったことを、
   // 検知器自身が言えなければならない。
-  it("足 8e — rust-analyzer.toml が消えると赤（空虚な真を防ぐ）", () => {
+  it("条件 8e — rust-analyzer.toml が消えると赤（空虚な真を防ぐ）", () => {
     const v = violationsAfter((dir) => {
       fs.rmSync(path.join(dir, "rust-analyzer.toml"));
     });
@@ -328,7 +328,7 @@ describe("checkLspConfig — 故障注入（複製に当てる）", () => {
 
   // 「ツリーに 1 枚でもあればよい」にすると、設定を crate 側へ移す変更で root が消えても緑になる。
   // 空虚な真は 1 段内側にも作れる——問うのは所在であって存在ではない。
-  it("足 8e2 — root が消えて crate 直下だけ残っても赤", () => {
+  it("条件 8e2 — root が消えて crate 直下だけ残っても赤", () => {
     const v = violationsAfter((dir) => {
       fs.rmSync(path.join(dir, "rust-analyzer.toml"));
       const crate = path.join(dir, "snotra-core");

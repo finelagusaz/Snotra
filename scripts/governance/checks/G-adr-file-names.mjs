@@ -33,7 +33,7 @@ export function adrFiles(snapshot) {
 export function checkAdrFileNames(snapshot) {
   const findings = [];
   const files = adrFiles(snapshot);
-  // 空母集団は明示 fail——走査が空でも「逸脱なし」に見える沈黙経路を塞ぐ（#497）
+  // 空母集団は明示 fail——走査が空でも「逸脱なし」に見える黙って失敗する経路を塞ぐ（#497）
   if (files.length === 0) return [finding("docs/adr", 1, "ADR が 0 件（G-adr-file-names 母集団の欠落）")];
   for (const f of files) {
     const base = f.slice("docs/adr/".length);

@@ -13,10 +13,10 @@
 //   `checks/` 配下の各検査・`registry.mjs` も含む全層が同じ制約を負う
 // - findings ゼロ → exit 0 + 検査の本数を印字
 // - findings あり → exit 1 + `file:line` 付き全件列挙。免除注記の機構は設けない
-// - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（沈黙経路の閉塞）
+// - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（黙って失敗する経路の閉塞）
 // - 検査の登録は `scripts/governance/checks/` の走査から導出される（`registry.mjs`）——ファイルを
 //   置けばそのまま検査になり、忘れうる登録行が無い。ファイル名と export した `id` の食い違いは
-//   `registry.mjs` が throw で拒む（#1088 が問うた「検査が沈黙で 1 本落ちる」構造の解消）
+//   `registry.mjs` が throw で拒む（#1088 が問うた「検査が黙って 1 本落ちる」構造の解消）
 // - 各検査は自分が読む母集団を自分で導く。宣言（ドメイン）も、その縮みを見張る層も持たない
 //   ——錨の層ごと撤去した経緯は `ADR-governance-anchor-layer-discarded`
 // - facade（本ファイル）が持つのは母集団の算出・0 件検知・CLI 起動であり、
@@ -103,7 +103,7 @@ export function runAll(snapshot) {
 }
 
 // fileURLToPath を使う — URL.pathname は空白等を percent-encode するため resolve と一致せず、
-// 「検査ゼロ件のまま exit 0」という沈黙経路になる（レビュー H1 で実測）
+// 「検査ゼロ件のまま exit 0」という黙って失敗する経路になる（レビュー H1 で実測）
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const { findings, checkCount } = runAll(makeSnapshot(process.cwd()));

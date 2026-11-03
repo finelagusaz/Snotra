@@ -28,10 +28,10 @@ export function run(snapshot, ctx) {
 //            群 allow による打ち消し**（`all = "allow"` を 1 行足すと deny の行を残したまま禁止が消える。
 //            clippy 1.94.0 で実測: exit 0・診断 0 件）。この lint は **warn 既定**ゆえ、どの形でも黙る
 // **CI は exit code でしか検出しないため、上記の warning は誰にも届かない。**
-// 沈黙は二重である——それがこの検査を冗長でなくしている性質である（cargo のキャッシュを一切介さない
+// 見逃しは二重である——それがこの検査を冗長でなくしている性質である（cargo のキャッシュを一切介さない
 // Node の静的読み取りなので、6 経路すべてが入力テキストの差分として現れる）。
 //
-// 射程外（意図的）: reason 文言の変更・`#[allow]` による迂回（lint に内在する性質）・
+// 対象外（意図的）: reason 文言の変更・`#[allow]` による迂回（lint に内在する性質）・
 // disallowed_methods 以外の clippy lint のレベル・clippy.toml と cargo のキャッシュの関係
 // （挙動と 2026-08-18 の再測定は clippy.toml 冒頭の「この設定が死ぬ経路」が正本）。
 //
@@ -39,7 +39,7 @@ export function run(snapshot, ctx) {
 // - member 側の opt-in（src-tauri の `[lints] workspace = true`）は **G-workspace-lints が全 member について
 //   見る**ため重ねない。**deny が実効するのはその opt-in が在る間だけ**であり、両検査は組で 1 つの命題を守る。
 // - ルート Cargo.toml が読めない事実は G-workspace-lints でも鳴る（1 事実 2 件）。**沈黙させない側を選ぶ**
-//   ——黙って skip すれば、それ自体が新しい沈黙経路になる。
+//   ——黙って skip すれば、それ自体が新しい黙って失敗する経路になる。
 // - disallowed_methods を**ハイフン**（`disallowed-methods`）で書いた形は非実効と判定する＝**赤になる**。
 //   向きが赤（沈黙しない）なので受容するが、**次の人の最も安い直し方が「検査を緩める」にならない**よう
 //   直し方を書いておく: Cargo の lints テーブルは lint 名をそのまま書くのでアンダースコアにする

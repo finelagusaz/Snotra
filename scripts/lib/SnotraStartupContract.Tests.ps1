@@ -135,8 +135,8 @@ Describe '起動計器の契約検査（#1009）' {
         }
 
         It '内側 < 外側は正常（下限は意図的に置いていない）' {
-            # 終端を手前で打ち切る変異（#1009 の (j)）が素通りするのはこの非対称ゆえである。
-            # **その射程はモジュールの doc が正本**——ここは非対称が実在することだけを固定する。
+            # 終端を手前で打ち切る変異（#1009 の (j)）が検出されないのはこの非対称ゆえである。
+            # **その適用範囲はモジュールの doc が正本**——ここは非対称が実在することだけを固定する。
             Test-Payload -Data (New-StartupPayload) -ObservedMs 999999 | Should -HaveCount 0
         }
     }
@@ -144,7 +144,7 @@ Describe '起動計器の契約検査（#1009）' {
     Context 'event と ok / reason の整合' {
         It '失敗を startup:ready と騙ったら落ちる' {
             # **変異 (e) そのもの。** #1009 で実機に当てたとき、この検査を足す前は
-            # ホットキー登録が実際に失敗しているのにハーネスが全面的に素通りした。
+            # ホットキー登録が実際に失敗しているのにハーネスが全面的に検出されなかった。
             $data = New-StartupPayload @{ ok = $false; reason = 'hotkey-registration' }
             (Test-Payload -Data $data -EventName 'startup:ready') -join ' ' |
                 Should -Match 'event が ok と食い違う'

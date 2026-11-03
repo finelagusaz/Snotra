@@ -109,7 +109,7 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
 
   it("種 9: 配線カナリア（G-near-heading-refs） — 近傍形も runAll 経由で `.rs` から出る", () => {
     // **腕ごとに 1 本ずつ要る。** 種 8 だけでは `scanNearHeadingRefs` の引数を md の腕へ戻す変異が
-    // 素通りする（種 4 はリテラル母集団で呼ぶので buildChecks を通らず、実リポジトリの `.rs` 近傍参照は
+    // 検出されない（種 4 はリテラル母集団で呼ぶので buildChecks を通らず、実リポジトリの `.rs` 近傍参照は
     // 0 件なので dogfood も evidence も動かない）。G-stale-identifiers が配線 describe を 2 本置いたのと同じ形
     const { findings } = runAll(rs('/// 詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\nfn f() {}\n'));
     expect(findings.some((f) => f.file === "src/a.rs" && f.message.includes("正準形でない"))).toBe(true);
@@ -135,7 +135,7 @@ describe("G-heading-refs / G-near-heading-refs のスクリプトの腕（コメ
 
   it("種 2: 文字列リテラルの中の同じ参照は見ない（負の fixture を偽陽性にしない契約の実体）", () => {
     // **これが「`*.test.mjs` を外す」の代わりに置いた意味のマッピングである。**拡張子で外すと
-    // `*.Tests.ps1` のような別の綴りが素通りし、fixture を持たないテストのコメントまで落ちる。
+    // `*.Tests.ps1` のような別の綴りが検出されず、fixture を持たないテストのコメントまで落ちる。
     // この it が落ちたら、母集団の定義が拡張子のマッピングへ戻った合図
     const s = scan("scripts/a.test.mjs", 'const doc = "`CLAUDE.md`「Git 運用」";\n');
     expect(s.findings).toEqual([]);
@@ -264,9 +264,9 @@ describe("makeSnapshot の走査除外（#722）", () => {
   it("生成物の除外はルート錨止めである（任意の深さの同名ディレクトリを落とさない・#1089）", () => {
     // 守りたい対象 = ネストしたソースディレクトリ。名前一致・全階層で落とすと、
     // `demo/src/target/orphan.rs` のような `.rs` が**どの深さでも**母集団から消え、
-    // `mod` 宣言を持たない孤児でも findings 0（緑）になる——向きは沈黙である。
+    // `mod` 宣言を持たない孤児でも findings 0（緑）になる——向きは見逃しである。
     // 今日のリポジトリにネストした target/dist/node_modules は 0 件（2026-08-17 実測）ゆえ
-    // 露出は 0 で、塞いだのは将来この形が現れたときの沈黙である。
+    // 露出は 0 で、塞いだのは将来この形が現れたときの見逃しである。
     const root = mkdtempSync(path.join(tmpdir(), "gov-walk-nested-"));
     try {
       for (const d of ["demo/src/target", "target", "node_modules", "dist", "ui/node_modules"]) {
@@ -278,7 +278,7 @@ describe("makeSnapshot の走査除外（#722）", () => {
       writeFileSync(path.join(root, "dist/bundle.js"), "");
       writeFileSync(path.join(root, "ui/node_modules/dep.js"), "");
       const files = makeSnapshot(root).files;
-      expect(files, "ネストした target/ 配下が沈黙で母集団から消えている").toContain("demo/src/target/orphan.rs");
+      expect(files, "ネストした target/ 配下が黙って母集団から消えている").toContain("demo/src/target/orphan.rs");
       // ルート直下の生成物は従来どおり落ちる
       expect(files.filter((f) => f.startsWith("target/"))).toEqual([]);
       expect(files.filter((f) => f.startsWith("node_modules/"))).toEqual([]);
@@ -395,7 +395,7 @@ describe("linesOutsideFences — マスクと、釣り合わないフェンス�
 describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊れ方を赤にする）", () => {
   // 守りたい対象 = 節を食う検査の母集団。切り出し器は狭すぎ／広すぎの 2 方向に壊れ、
   // 向きを決めるのは切り出し器ではなく**切り出した結果を食う述語**である
-  // （許可集合への所属なら広がりは沈黙、集合の一致なら誤報）。ゆえにここでは
+  // （許可集合への所属なら広がりは見逃し、集合の一致なら誤報）。ゆえにここでは
   // 「宣言と実際の文書構造の食い違い」だけを機構で縛る。
   const opts = (ending) => ({ file: "doc.md", ending, by: "G-fixture" });
   const DOC = ["# t", "## A", "本文1", "### A1", "本文2", "## B", "本文3", ""].join("\n");
@@ -486,7 +486,7 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
     expect(r.body).toBe("本文\n```\n## B\n```\n");
   });
 
-  it("閉じていないフェンスは ending の両側で赤くなる（`eof` 側の沈黙を塞いだ地点）", () => {
+  it("閉じていないフェンスは ending の両側で赤くなる（`eof` 側の見逃しを塞いだ地点）", () => {
     // **この検査は一度、逆の主張を固定していた。** マスクを入れた直後は `ending: "eof"` が
     // findings 0 件・body が EOF まで伸びる形で沈黙し（マスク以前は④で赤かった）、その姿を
     // 残余として固定していた。`linesOutsideFences` が釣り合いを検算するようになって塞がっている。

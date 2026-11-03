@@ -558,7 +558,7 @@ describe("readPlanState — 実ファイル読み取り", () => {
   });
 
   // I2: session cwd がリポジトリのサブディレクトリ（例: src-tauri/）だと、素朴な
-  // path.join(cwd, "workspace/plan.md") は永遠に見つからずゲートだけが沈黙で外れる。
+  // path.join(cwd, "workspace/plan.md") は永遠に見つからずゲートだけが黙って外れる。
   it("cwd がリポジトリのサブディレクトリでも、最近接の .git を遡ってリポジトリルートの plan.md を見る", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-plan-root-"));
     mkdirSync(path.join(dir, ".git"));
@@ -599,7 +599,7 @@ function runHook(payload, cwd) {
 
 describe("プロセス起動 — exit code の契約", () => {
   // exit 2 だけがブロックする。exit 1 は「非ブロッキング」でコマンドが実行される
-  it("壊れた payload は exit 2（exit 1 では素通りする）", () => {
+  it("壊れた payload は exit 2（exit 1 では検出されない）", () => {
     const res = runHook("{ not json");
     expect(res.status).toBe(2);
     expect(res.stderr).toContain("BLOCKED");
@@ -754,7 +754,7 @@ describe("fail-closed の骨格カナリア", () => {
 
   // #768 I5: platform 省略時は Windows 専用判定が発火しない。その寄せ方が安全なのは
   // main() が必ず process.platform を渡すからである。この 1 行が抜けると Windows で
-  // 3 判定が沈黙で外れる——振る舞いテストからは「非 Windows での正常動作」と見分けがつかない。
+  // 3 判定が黙って外れる——振る舞いテストからは「非 Windows での正常動作」と見分けがつかない。
   it("main() は decide へ process.platform を渡す", () => {
     expect(code).toMatch(/decide\(\s*payload,\s*\{[\s\S]*?platform:\s*process\.platform,?\s*\}\s*\)/);
   });
@@ -977,7 +977,7 @@ describe("judgeCommandShape — platform ゲート", () => {
     expect(judgeCommandShape(cmd, "win32")?.action).toBe("block");
   });
 
-  it.each(WIN_ONLY)("%s は darwin で allow（規範の射程外）", (_label, cmd) => {
+  it.each(WIN_ONLY)("%s は darwin で allow（規範の対象外）", (_label, cmd) => {
     expect(judgeCommandShape(cmd, "darwin")).toBeNull();
   });
 
@@ -985,7 +985,7 @@ describe("judgeCommandShape — platform ゲート", () => {
     expect(judgeCommandShape(cmd, "linux")).toBeNull();
   });
 
-  // I5: platform 省略は「判定不能」ではなく「射程外」。block にすると非 Windows で false block になる。
+  // I5: platform 省略は「判定不能」ではなく「対象外」。block にすると非 Windows で false block になる。
   // この状態へ至る経路は「呼び出し側の渡し忘れ」1 本だけで、下のソースカナリアと e2e が配線を固定する。
   it.each(WIN_ONLY)("%s は platform 省略時 allow（I5）", (_label, cmd) => {
     expect(judgeCommandShape(cmd)).toBeNull();
@@ -1077,7 +1077,7 @@ describe("decide — options の platform の配線", () => {
   // #772 の検証で「手を抜く読者」が突いた自己分類の余地: 拒否文言[2]は事故の根拠を
   // 「Bash では黙って食われて」と書くので、「PowerShell ツールを使えば適用外」と読める。
   // **判定は `decide` の入口で両ツールを覆う**——読んだ理由でツールを替えても降りられない。
-  // 文言側もその射程を明記したので、機構と文言の両方をここで縛る。
+  // 文言側もその適用範囲を明記したので、機構と文言の両方をここで縛る。
   it("`\\` パスは PowerShell tool でも block し、文言が両ツール発火を明記する", () => {
     const winPath = `Get-Content C:${"\\"}workspace${"\\"}x.md`;
     for (const payload of [bash(winPath), pwsh(winPath)]) {
@@ -1149,7 +1149,7 @@ describe("5 述語は全域関数である（I2・no-throw）", () => {
 
 describe("settings.json ドリフト検出カナリア", () => {
   // PreToolUse の発火（matcher）は settings.json、判定は pre-bash.mjs が SSOT。
-  // matcher が後退すると hook は気づかれないまま素通りする（本 issue の D1 そのもの）。
+  // matcher が後退すると hook は気づかれないまま検出されない（本 issue の D1 そのもの）。
   const settings = JSON.parse(readFileSync(fileURLToPath(new URL("../settings.json", import.meta.url)), "utf8"));
   const preToolUse = settings.hooks.PreToolUse;
 
@@ -1170,7 +1170,7 @@ describe("settings.json ドリフト検出カナリア", () => {
     expect(JSON.stringify(preToolUse)).not.toContain("grep");
   });
 
-  // hook 全体の timeout を越えると非ブロッキングのエラー＝素通りになる。`gh pr create` の
+  // hook 全体の timeout を越えると非ブロッキングのエラー＝検出されなくなる。`gh pr create` の
   // 1 回で走る git は readGitState の 2 本と要約の照合の 2 本で、最悪はその和である。
   // 本数は手で書いている——git 呼び出しを足したら、ここの係数も足す（本数の増加はこのテストでは落ちない）。
   // 残りの約 2 秒に Node の起動と動的 import が入る

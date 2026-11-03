@@ -39,17 +39,17 @@ describe("G-module-index/G-references 母集団カナリア — #701", () => {
     for (const crate of withClaudeMd) {
       expect(
         Object.keys(MODULE_INDEX_CRATES),
-        `${crate} が MODULE_INDEX_CRATES に無い。src/exts を添えて追加すること（索引ドリフトが沈黙で通る）`,
+        `${crate} が MODULE_INDEX_CRATES に無い。src/exts を添えて追加すること（索引ドリフトが黙って通る）`,
       ).toContain(crate);
       expect(
         docs,
-        `${crate}/CLAUDE.md が G-references 母集団に無い。governanceDocs の正規表現を更新すること（参照切れが沈黙で通る）`,
+        `${crate}/CLAUDE.md が G-references 母集団に無い。governanceDocs の正規表現を更新すること（参照切れが黙って通る）`,
       ).toContain(`${crate}/CLAUDE.md`);
     }
   });
 });
 
-describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () => {
+describe("runAll（空母集団の明示 fail = 黙って失敗する経路の閉塞）", () => {
   it("対象文書・rules・skills が空なら findings を返す", () => {
     const s = snap({});
     const { findings } = runAll(s);

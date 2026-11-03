@@ -19,7 +19,7 @@ Alt+Q である（`SnotraSmoke.psm1` の `New-SnotraVerificationProfile`）。�
 排他に効くか等——は測っていない）。ゆえに `register_prepared` を変えたらここも揃えること。
 
 キー自体は `New-SnotraVerificationProfile` の既定から読む。**リテラルで書くと既定が変わった
-ときに沈黙で no-op 化する**——占有できていない対照の起動は普通に成功し、「素通りしなかった」と
+ときに黙って no-op 化する**——占有できていない対照の起動は普通に成功し、「検出されなかった」と
 いう誤った結論になる。
 
 .NOTES
@@ -57,7 +57,7 @@ public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 '@
 }
 
-# **キーは検証用プロファイルの既定から読む**（リテラルで書くと既定が変わったとき沈黙で
+# **キーは検証用プロファイルの既定から読む**（リテラルで書くと既定が変わったとき黙って
 # no-op 化する）。`bench-startup.ps1 -UseVerificationProfile` はこの既定で config を作り直す。
 function Get-ParameterDefault {
   param([string]$Name)
@@ -82,7 +82,7 @@ $modifiers = $MOD_ALT -bor $MOD_NOREPEAT
 if (-not [Snotra.HotkeyOccupier]::RegisterHotKey([IntPtr]::Zero, $HOTKEY_ID, $modifiers, $vk)) {
   $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
   # **ここで失敗したら占有できていない。** 呼び出し側が「握れた」と誤読すると、
-  # 対照の起動が普通に成功して「(e) は素通りしなかった」という誤った結論になる。
+  # 対照の起動が普通に成功して「(e) は検出されなかった」という誤った結論になる。
   throw "$hotkeyModifier+$hotkeyKey を握れませんでした（GetLastError=$err）。既に誰かが握っているか、Snotra が起動中です"
 }
 

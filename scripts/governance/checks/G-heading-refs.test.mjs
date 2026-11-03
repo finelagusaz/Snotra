@@ -48,7 +48,7 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
     expect(checkHeadingRefs(s, ["docs/x.md"])).toEqual([]);
   });
 
-  it("解決できない対象は finding（沈黙経路の閉塞）", () => {
+  it("解決できない対象は finding（黙って失敗する経路の閉塞）", () => {
     const s = snap({ "docs/x.md": "`docs/gone.md`「節」\n" });
     const f = checkHeadingRefs(s, ["docs/x.md"]);
     expect(f[0].message).toContain("見出し参照の対象が解決できない");

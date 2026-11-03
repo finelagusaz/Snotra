@@ -21,7 +21,7 @@ function stripRustComments(src) {
 // **識別子として書かれた陳腐化は機械で拾える**。G-references が見るのはパスの実在までで、
 // 識別子の実在は誰も見ていなかった。
 //
-// **自称スコープ**（#891 で広げた。射程の内訳は `ADR-stale-identifier-detector-scope` の追記節）。
+// **自称スコープ**（#891 で広げた。適用範囲の内訳は `ADR-stale-identifier-detector-scope` の追記節）。
 // 見るのは次の 3 群の中の**バッククォート内 camelCase / SCREAMING_SNAKE / lowercase snake_case
 // 識別子**だけである（型で修飾した形は末尾セグメントを見る・#993。判定の正本は `staleTarget`）:
 // - `.claude/**` の規範の散文（`staleIdentifierDocs`）
@@ -70,7 +70,7 @@ function stripRustComments(src) {
 // **外部ツールの語彙は空白の規則が外す**: コマンドを書いた span（`gh pr view <PR> --json closingIssuesReferences` 等）は
 // 空白を含むので、そもそも判定対象にならない。かつては行に
 // コマンドが在れば**その行ごと**捨てていたが、#993 で撤去した——日本語の長い段落にコマンドを
-// 1 つ書いただけで段落の識別子が全滅する**沈黙経路**であり、しかも空白の規則と役目が重複していた
+// 1 つ書いただけで段落の識別子が全滅する**黙って失敗する経路**であり、しかも空白の規則と役目が重複していた
 // （実測: コマンド span 153 件のすべてが空白を含み、行の述語を置く／置かないで結果が完全一致）。
 // #984 の陳腐化を隠していたのはこの経路である。
 //
@@ -119,7 +119,7 @@ const STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
 const STALE_SNAKE_IDENT = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(\(\))?$/;
 /** 同じく lowercase snake_case（`_` 1 つ以上・#975）。**このリポジトリの主要言語の語彙はここに居る**
  *  ——Rust の関数名・テスト名・フィールド名はすべて lowercase snake_case であり、上の 2 述語は
- *  そのどれにも当たらなかった（`index_tree.rs` の doc が存在しないテスト名を引いたまま素通りした）。
+ *  そのどれにも当たらなかった（`index_tree.rs` の doc が存在しないテスト名を引いたまま検出されなかった）。
  *  **3 述語は先頭文字と字種で相互排他である**（camelCase は `_` を含まず、SCREAMING は先頭が大文字）
  *  ゆえ、どれが当たっても `scanStaleIdentifiers` の照合件数は 1 しか進まない */
 const STALE_LOWER_SNAKE_IDENT = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(\(\))?$/;
@@ -128,7 +128,7 @@ const STALE_LOWER_SNAKE_IDENT = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(\(\))?$/;
  *  「単語 1 つの識別子は対象外」と同じで、外部の型名は語彙源をどう広げても免罪できない
  *  （`ADR-stale-identifier-detector-scope` の #993 の追記節に測定表がある）。
  *  **`.` の除外はトークン全体ではなくセグメントへ当てる**——先に当てると
- *  `icon.rs::encode_batch_binary` の形が素通りする（実測で唯一の真の陳腐化がこの形だった）。
+ *  `icon.rs::encode_batch_binary` の形が検出されない（実測で唯一の真の陳腐化がこの形だった）。
  *  **捕獲群を読まない**のは 3 述語と同じ理由である（`scanStaleIdentifiers` のコメント）。 */
 function staleTarget(raw) {
   const bare = raw.replace(/\(\)$/, "");

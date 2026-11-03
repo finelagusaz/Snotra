@@ -4,9 +4,9 @@ import { snap } from "../test-helpers.mjs";
 import { makeSnapshot, workspaceMembers } from "../lib.mjs";
 import { checkModuleLinkage, declaredModuleFiles } from "./G-module-linkage.mjs";
 
-// G-module-linkage が塞ぐのは **G-module-index が塞がない足**である（#1085 で足ごとに実測）。
+// G-module-linkage が塞ぐのは **G-module-index が塞がない経路**である（#1085 で条件ごとに実測）。
 // 索引にも mod にも書かない形は G-module-index が赤にするので、ここで守るのは
-// 「索引には載るが mod 宣言が無い」＝どの検査も緑だった足のほうである。
+// 「索引には載るが mod 宣言が無い」＝どの検査も緑だった経路のほうである。
 describe("G-module-linkage checkModuleLinkage", () => {
   const cargo = '[workspace]\nmembers = ["demo"]\nresolver = "2"\n';
   const base = {
@@ -23,7 +23,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
     expect(checkModuleLinkage(snap(base))).toEqual([]);
   });
 
-  it("赤（守りたい足）: 索引には載るが mod 宣言が無い .rs", () => {
+  it("赤（守りたい経路）: 索引には載るが mod 宣言が無い .rs", () => {
     // G-module-index を満たす（＝CLAUDE.md に載っている）状態でも、mod 宣言が無ければ赤になる。
     const s = snap({
       ...base,
@@ -64,7 +64,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
     expect(checkModuleLinkage(s)).toEqual([]);
   });
 
-  // 以下 3 本は 2026-08-14 のレビューが実測で見つけた**沈黙の経路**を塞いだことを固定する。
+  // 以下 3 本は 2026-08-14 のレビューが実測で見つけた**見逃しの経路**を塞いだことを固定する。
   // どれも「宣言らしき綴りを拾ってしまい、孤児を到達済みに見せる」形だった。
   it("赤: ブロックコメントの中の mod 宣言を拾わない（孤児が緑にならない）", () => {
     const s = withLib("/*\nmod ghost;\n*/\n", { "demo/src/ghost.rs": "" });
@@ -89,7 +89,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
 
   // --- 字句スキャナの両方向（2026-08-14 のレビューが実測した 8 入力＋BOM）---
   // 初版はコメントの潰しと引用符の数え上げが別パスで、一方の数え違いがもう一方の判定を反転させた。
-  // **誤検出（赤）と沈黙（緑）の両方が出る**ため、両向きを固定する。
+  // **誤検出（赤）と見逃し（緑）の両方が出る**ため、両向きを固定する。
   describe("コードでない部分の判別", () => {
     it("緑: 文字列の中の // をコメントと誤認しない（誤認すると閉じ引用符を食べて以降の宣言が消える）", () => {
       expect(checkModuleLinkage(withLib('pub const U: &str = "http://example.com";\n'))).toEqual([]);
@@ -147,7 +147,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
 
   // 実リポジトリで緑（`G-workspace-lints` / `G-clippy-disallowed` が持つのと同型のカナリア）。
   // **ドッグフードとは別の命題である**——あちらは「宣言を拾えるか」、こちらは「いま findings が無いか」。
-  // これが無いと、実コードの回帰は `npm test` を素通りして PR CI まで気づけない。
+  // これが無いと、実コードの回帰は `npm test` で検出されずに PR CI まで気づけない。
   it("カナリア: 実リポジトリで緑", () => {
     const s = makeSnapshot(fileURLToPath(new URL("../../..", import.meta.url)));
     expect(workspaceMembers(s).error, "母集団が取れない（カナリアの欠落）").toBeNull();

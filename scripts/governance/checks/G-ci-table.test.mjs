@@ -24,7 +24,7 @@ describe("G-ci-table checkCiTable", () => {
     });
     expect(checkCiTable(s)).toEqual([]);
   });
-  it("赤: 崩れた行を黙って飛ばさない（照合されないまま素通りする false green・#863）", () => {
+  it("赤: 崩れた行を黙って飛ばさない（照合されないまま検出されない false green・#863）", () => {
     const s = snap({ ...base, "docs/build-commands.md": table("| `npm test` |\n| `npm test` | `ci.yml` | PR |") });
     const f = checkCiTable(s);
     expect(f.some((x) => x.message.includes("そろっていない"))).toBe(true);

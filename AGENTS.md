@@ -15,7 +15,7 @@
 - 開発原則・デバッグ指針（汎用）: `docs/development-principles.md` — 局面 → 立てる問い
 - コメント規約: `docs/comment-guidelines.md` — 様式を規定する
 - ビルド・テストコマンド: `docs/build-commands.md` — 索引と行動形
-- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`） — 行動形 + 射程の明示
+- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`） — 行動形 + 適用範囲の明示
 - 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md` — 書式は定めない
 - 実装前チェック: `.claude/rules/` — `A のときは B する。C が起きたため（#NNN 実測）`
 - 意思決定記録（なぜ B を却下したか）: `docs/adr/ADR-<slug>.md`（否定の知識が生じた決定のみ。連番を振らない） — 書式は定めない（凍結された歴史ゆえ）

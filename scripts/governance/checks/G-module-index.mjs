@@ -50,7 +50,7 @@ export const MODULE_INDEX_CRATES = {
 
 /** 索引が覆うべき production ファイル。
  *  **crate の一覧は `MODULE_INDEX_CRATES` から出る**（ルート `Cargo.toml` からではない）。
- *  この 2 本目の導出は意図である。**食い違いを全部捕まえる検知器は無い**——性質ごとの守り手は
+ *  この 2 本目の導出は意図である。**食い違いを全部検出する検知器は無い**——性質ごとの守り手は
  *  上の `MODULE_INDEX_CRATES` の doc が名指す（そこが正本）。`crateSourceFiles` と畳んではならない。 */
 export function moduleIndexSources(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
   return snapshot.files.filter((f) =>

@@ -40,7 +40,7 @@ const failed = [];
 let removed = 0;
 
 for (const t of targets) {
-  // dirty 判定。status が取れない（壊れた登録など）場合も保守側＝スキップに倒す
+  // dirty 判定。status が取れない（壊れた登録など）場合も保守側＝スキップにする
   let dirty = true;
   try {
     dirty = git(["-C", t.path, "status", "--porcelain"]).trim() !== "";

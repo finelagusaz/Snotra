@@ -35,7 +35,7 @@
 //!
 //! **`scan_all` 区間（`report_scan_all_cost`）は実走査そのものゆえ、Phase A の実行時間が
 //! 大きく伸びる。** 所要はファイルシステムキャッシュの状態で数倍にぶれるので、初見で走らせる
-//! と無出力のまま長く待つことになる（秒数はここに書かない——書けば測り直すたびに腐る）。
+//! と無出力のまま長く待つことになる（秒数はここに書かない——書けば測り直すたびに古くなる）。
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -224,10 +224,10 @@ fn synthetic_entries(n: usize) -> Vec<AppEntry> {
 // Phase A: 実運用点（実 index.bin）
 // ---------------------------------------------------------------------------
 
-/// `index.bin` のヘッダーが名乗る形式バージョン（ファイルが無ければ `None`）。
+/// `index.bin` のヘッダーが示す形式バージョン（ファイルが無ければ `None`）。
 ///
 /// **ロード側に問わずファイルを直接読む。** 知りたいのは「どの形式が実運用点に置かれて
-/// いるか」であって、ロードがどの枝を選んだかではない——両者は一致するとは限らず
+/// いるか」であって、ロードがどの分岐を選んだかではない——両者は一致するとは限らず
 /// （config_hash 不一致なら版が現行でも全走査へ落ちる）、食い違ったときに区別が付くのは
 /// 独立に読んだ側だけである。保存先の導出は `Config::config_dir()` の 1 点を通す。
 ///
@@ -261,7 +261,7 @@ fn measure_real_index_footprint() {
         config.search.migemo_enabled, config.search.show_hidden_system
     );
 
-    // **ロードより前に読む。** cache-miss の枝はこの区間の中で現行版を書き出すので、
+    // **ロードより前に読む。** cache-miss の分岐はこの区間の中で現行版を書き出すので、
     // あとから読むと「測る前に何が置かれていたか」ではなく「測ったあと何が残ったか」に
     // なってしまう——旧版を測った実行が現行版と自称する。
     let on_disk_version = on_disk_index_version();
@@ -287,29 +287,29 @@ fn measure_real_index_footprint() {
         result.material.has_masks()
     );
     // **どの版を測ったかを出さないと、この数字は読めない。** 旧版の `index.bin` は
-    // フォールバック枝で読まれ、ツリーは `target_path` を実体化してから建て直される
+    // フォールバック分岐で読まれ、ツリーは `target_path` を実体化してから建て直される
     // ——現行版の削減はそこには現れないのに、出力の見た目は成功時とまったく同じである
     // （昇格の機序は `snotra-core/CLAUDE.md`「indexer.rs の索引更新の契機」）。
     //
     // **先にロードが当たったかで分け、版はその中で見る**（版のリテラルで分けない）。当たらな
-    // かったなら版が何であれ全走査の枝であり、フォールバック枝や現行版と名乗ると測った枝を
-    // 偽って名乗る。
+    // かったなら版が何であれ全走査の分岐であり、フォールバック分岐や現行版と示すと測った分岐を
+    // 偽って示す。
     let current = indexer::INDEX_CACHE_VERSION;
     if !result.stats.cache_hit {
         match on_disk_version {
             Some(v) => println!(
                 "  on-disk 形式: v{v} — ロードが当たらなかった（製品が読まない版・config の\
-                 不一致・破損のいずれか）。**以下は全走査（cache-miss）の枝の数字である。**\
+                 不一致・破損のいずれか）。**以下は全走査（cache-miss）の分岐の数字である。**\
                  この実行が現行 v{current} を書き出したので、もう 1 回走らせて測り直すこと"
             ),
-            None => println!("  on-disk 形式: index.bin を読めなかった（全走査の枝である）"),
+            None => println!("  on-disk 形式: index.bin を読めなかった（全走査の分岐である）"),
         }
     } else {
         match on_disk_version {
             Some(v) if v == current => println!("  on-disk 形式: v{v}（現行）"),
             Some(v) => println!(
-                "  on-disk 形式: v{v} — 旧版である。**以下はフォールバック枝の数字であり、\
-                 現行 v{current} の常駐ではない。** この実行のロードの旧版枝が現行版へ書き戻した\
+                "  on-disk 形式: v{v} — 旧版である。**以下はフォールバック分岐の数字であり、\
+                 現行 v{current} の常駐ではない。** この実行のロードの旧版の分岐が現行版へ書き戻した\
                  ので、もう 1 回走らせて測り直すこと"
             ),
             None => println!("  on-disk 形式: ロード前に版を読めなかった（版は不明）"),
@@ -327,10 +327,10 @@ fn measure_real_index_footprint() {
     // （足すと二重計上で残余が負に振れる）。分けて出すのは、読むバイト数と deserialize が
     // オンディスク形式の変更に対して**逆向きに振る舞う**ためである。
     //
-    // `cache_save` も枝によっては同じ扱いが要る（`LoadOrScanStats::cache_save` の
-    // doc）。cache-miss 枝では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 枝で
+    // `cache_save` も分岐によっては同じ扱いが要る（`LoadOrScanStats::cache_save` の
+    // doc）。cache-miss 分岐では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 分岐で
     // 旧版昇格が走った場合はここに入る save 時間が `cache_load` の内数**——足すと
-    // 二重計上になり、残余が負へ振れる。cache-hit 枝は
+    // 二重計上になり、残余が負へ振れる。cache-hit 分岐は
     // scan/sort が常に ZERO なのでそちらは無条件のままでよく、除外が要るのは
     // `cache_save` だけである。
     //
@@ -376,7 +376,7 @@ fn measure_real_index_footprint() {
     // **エントリ数に比例する確保がロードと構築のどちらの計測にも入っていなかった**
     // （反復 6 の digest がどのフェーズにも現れなかったのと同じ形）。反復 9 でその積み上げ
     // は消えたが、**計器はそのまま残す**——エントリ数に比例する仕事がここへ戻る退行を
-    // 捕まえられるのは、この区間を名指しで測るこの行だけである。
+    // 検出できるのは、この区間を名指しで測るこの行だけである。
     //
     // **返り値は entries へ混ぜない。** PATH スキャンはファイルシステムを読むため実行ごとに
     // ぶれ、混ぜると常駐がバイト単位で再現しなくなる（決定性は内訳と実測を突き合わせる
@@ -458,9 +458,9 @@ fn measure_real_index_footprint() {
 /// cache-miss の起動で `LoadOrScanStats` が測る。
 ///
 /// **`LoadOrScanStats` をここの代理に使ってはならない。** あれはロード経路
-/// （`load_or_scan_with_stats`）の計測であり、しかも枝ごとに片方しか埋まらない——cache-hit 枝は
+/// （`load_or_scan_with_stats`）の計測であり、しかも分岐ごとに片方しか埋まらない——cache-hit 分岐は
 /// `scan` / `sort` / `cache_save` が `Duration::ZERO` である（`indexer.rs` の該当分岐）。
-/// Phase A（このハーネス）は実 `index.bin` を読むため通常 cache-hit 枝を通り、走査の区間は
+/// Phase A（このハーネス）は実 `index.bin` を読むため通常 cache-hit 分岐を通り、走査の区間は
 /// **1 つも埋まらない**。
 ///
 /// **広げない理由**: `sort_entries_canonical` は `indexer.rs` の `pub(crate)` ゆえ、この統合
@@ -477,7 +477,7 @@ fn measure_real_index_footprint() {
 /// （設計書 `docs/superpowers/specs/2026-08-09-scan-all-seen-conditional-design.md` §4）。
 ///
 /// **この区間は実走査そのものゆえ、Phase A の実行時間が大きく伸びる。** 所要はファイルシステムの
-/// キャッシュの状態で数倍にぶれるので、ここに秒数を書かない（書けば測り直すたびに腐る）。
+/// キャッシュの状態で数倍にぶれるので、ここに秒数を書かない（書けば測り直すたびに古くなる）。
 fn report_scan_all_cost(config: &Config) {
     reset_peak();
     let t0 = snap();
@@ -527,9 +527,9 @@ fn report_cache_bytes(n: usize) {
     let Some(b) = indexer::cache_byte_breakdown_in(&Config::config_dir().expect("config dir"))
     else {
         // **「どの版としても読めない」と書いてはならない。** この計器の射程は製品の
-        // フォールバック鎖より狭く、製品は読めるがここでは読めない古い版が在りうる
+        // フォールバックチェーンより狭く、製品は読めるがここでは読めない古い版が在りうる
         // （`cache_byte_breakdown_in` の doc）。版の一覧もここへ書き写さない——焼き込むと
-        // 版を足したときにこの 1 行だけが腐る。
+        // 版を足したときにこの 1 行だけが古くなる。
         println!("\n  --- index.bin の内訳: この計器が読める版では読めなかったためスキップ ---");
         return;
     };

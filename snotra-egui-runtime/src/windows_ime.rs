@@ -332,7 +332,7 @@ fn held_keys() -> Vec<PhysicalScan> {
 
 /// キーのメッセージの物理キー。lParam の 16–23 bit がスキャンコード、24 bit が拡張キー。
 /// **スキャンコードが 0 なら VK から導く**（`keybd_event(vk, 0, …)` の注入はこの形で届く・tao と同じ）。
-/// その場合は取り込み（[`held_keys`]）と同じ関数で導くので鍵が揃う。lParam にスキャンコードがある
+/// その場合は取り込み（[`held_keys`]）と同じ関数で導くのでキーが揃う。lParam にスキャンコードがある
 /// 実打鍵では、拡張キー（テンキーの Enter 等）が取り込みの値と拡張ビットだけ食い違いうる——
 /// focus 獲得時に押していたテンキーの Enter は抑止されない（Escape・英字は食い違わない）。
 fn physical_scan(vk: u16, lparam: u32) -> PhysicalScan {

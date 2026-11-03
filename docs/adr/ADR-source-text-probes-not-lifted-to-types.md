@@ -25,7 +25,7 @@
 `activation_entry_points_consult_the_display_gate` は、起動の入口（`activate_or_execute` / `shift_activate`）の本体に `plain_results_hidden(` と `results_area_collapsed(` の綴りが在ることを測る。証人型案は「ゲートを通った」ことの証人をフレームの冒頭で構築し、入口へ渡す形にする。
 
 - **ゲートの入力のうち `view_kind` と `instant_rows` はフレームに凍結できない。** `layout::present_results` の doc が、それらは `on_enter` の前後で正当に変わるため凍結できず、読み点を動かさないことでしか守れないと書く。ゆえに構築できるのは入口の冒頭——**既にガードが立っている場所そのもの**である
-- **消費点が 1 つに畳めない。** `shift_activate` の `tools >= 2` 枝は `SearchState::enter_tool` を直接呼び、`activate_or_execute` も `start_launch` も通らない。合流点 `start_launch` へ寄せる案は `ADR-activation-gate-placement` が既に閉じている
+- **消費点が 1 つに畳めない。** `shift_activate` の `tools >= 2` 分岐は `SearchState::enter_tool` を直接呼び、`activate_or_execute` も `start_launch` も通らない。合流点 `start_launch` へ寄せる案は `ADR-activation-gate-placement` が既に閉じている
 - **`EventLoopProof` の強さが移植できない。** あちらは別 crate（`snotra-egui-runtime`）の `pub(crate) fn new()` で crate 外から構築できないことと、`PhantomData<*const ()>` で持ち出しもできないことの 2 段で立つ。`snotra` は `[lib]` を持たない単一 bin crate なので前段が使えない
 - **型が塞いだのは偽造だけである。** `FrameIndexing` / `FrameVisibleRows` はタプルフィールドが private で、読む関数（`read_indexing` / `read_visible_rows`）は `pub(super)` に閉じている。それでも `LauncherController::indexing()` という第 2 の口が在り、`run_search_with` がそこから読む。読み直しを塞いでいるのは同じファイルの別の検査 `activation_uses_frame_values_not_live_reads` である
 
@@ -35,14 +35,14 @@
 
 **守るべき 2 つ目の経路がまだ無い。**
 
-`start_index_build_invalidates_the_icon_cache` は、`start_index_build` の本体に `invalidate_icon_cache(` の綴りが在ることを測る。融合案は、CAS の成功が無効化を伴うことを型で表す（ガード型を返す、あるいは無効化を `try_begin_index_build` の成功枝の内側へ入れる）。
+`start_index_build_invalidates_the_icon_cache` は、`start_index_build` の本体に `invalidate_icon_cache(` の綴りが在ることを測る。融合案は、CAS の成功が無効化を伴うことを型で表す（ガード型を返す、あるいは無効化を `try_begin_index_build` の成功分岐の内側へ入れる）。
 
 - **「開始したのに無効化しない」経路が構築されていない。** `try_begin_index_build` を production で呼び出すのは `start_index_build` だけで、無効化はその数行下に隣接する。`start_index_build` の呼び出し元は複数あるが、いずれもこの同じ CAS を通る
 - **融合は依存を増やす。** `IconCacheState` は Tauri の managed state で `app.try_state::<…>()` を要するため、`state.rs` から `icon.rs` と `AppHandle` への新しい依存が生じる
 - **2 メソッド契約が射程へ入る。** `src-tauri/CLAUDE.md`「実装パターン」が `try_begin_index_build()` と `finish_index_build()` を唯一の正しい経路として固定しており、あいだにガード型を挟むとその契約と `state.rs` の既存テスト群を同時に動かすことになる
-- **`#[must_use]` は代わりにならない。** `src-tauri/CLAUDE.md`「モジュール構成」が実測として、捕まえるのは「一度も見なかった」だけで `if ….is_some() { }` のような「見たが捨てた」形は通ると記録している。現状は `if !state.try_begin_index_build() { return false; }` というまさにその形である
+- **`#[must_use]` は代わりにならない。** `src-tauri/CLAUDE.md`「モジュール構成」が実測として、検出するのは「一度も見なかった」だけで `if ….is_some() { }` のような「見たが捨てた」形は通ると記録している。現状は `if !state.try_begin_index_build() { return false; }` というまさにその形である
 
-**足りなさが構造的である理由**: 融合が買うのは「開始と無効化が離れること」への守りだが、離れる余地は呼び出し点が増えたときに初めて生まれる。同じ関数の隣接する数行に留まるあいだ、費用（新しい依存・2 メソッド契約の改訂）だけが先に立つ。**なお呼び出しの単純な削除は `-D warnings` の `dead_code` が先に捕まえる**が、これは条件つきの守りである——検査自身の doc が、呼び出し点が増えればその二重の守りは消えると書いている。**便益が立つ瞬間と、二重の守りが消える瞬間は同じである。**
+**足りなさが構造的である理由**: 融合が買うのは「開始と無効化が離れること」への守りだが、離れる余地は呼び出し点が増えたときに初めて生まれる。同じ関数の隣接する数行に留まるあいだ、費用（新しい依存・2 メソッド契約の改訂）だけが先に立つ。**なお呼び出しの単純な削除は `-D warnings` の `dead_code` が先に検出する**が、これは条件つきの守りである——検査自身の doc が、呼び出し点が増えればその二重の守りは消えると書いている。**便益が立つ瞬間と、二重の守りが消える瞬間は同じである。**
 
 ### `view.rs` のフレーム内 1 回読みを消費トークンで守る
 
@@ -61,7 +61,7 @@
 
 記録として残す。いずれも成立しない。
 
-- **「マクロで倒せなかったから」**——どのサイトも列挙の問題ではなく、マクロは候補ですらない。理由は「1 つの列挙から機械的に導ける不変条件」という要件を満たさないことであって、手そのものの失敗ではない
+- **「マクロで片づけられなかったから」**——どのサイトも列挙の問題ではなく、マクロは候補ですらない。理由は「1 つの列挙から機械的に導ける不変条件」という要件を満たさないことであって、手そのものの失敗ではない
 - **「依存を増やせないから」**——アイコン無効化案の依存増は費用の 1 つとして数えたが、どの案も新しい外部依存を要さない。依存の禁止は決定の根拠に無い
 - **「今の実装が壊れているから直せない」**——どのサイトも 2026-08-17 時点で露出は 0 である。守りの層を選ぶ判断であって、欠陥の扱いではない
 
@@ -75,7 +75,7 @@
 
 - **表示ゲート**: `snotra` が `[lib]` を得た日、または `FrameIndexing` の読み口が 1 つへ閉じた日
 - **アイコン無効化**: `try_begin_index_build` の production 呼び出し点が 2 つ以上になった日（`dead_code` の二重の守りが消えるのと同じ瞬間に便益が立つ）
-- **1 回読み**: `indexing` の正当な第 2 の読み口のどちらかが消えた日、または `visible_rows` 側だけを先に倒す実利が出た日
+- **1 回読み**: `indexing` の正当な第 2 の読み口のどちらかが消えた日、または `visible_rows` 側だけを先に移す実利が出た日
 - **横断**: 「守りたい不変条件が 1 つの列挙から導ける」形の新しいサイトが現れた日——そこは `Phase` と同じ手が当たる
 
 ## 隣接する決定との境界

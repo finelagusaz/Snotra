@@ -225,7 +225,7 @@ fn deserialize_minimal_config_uses_defaults() {
 /// キー欠落の経路を通らず、この乖離は見えない。
 ///
 /// 各 struct について「空セクションのデシリアライズ結果 == `Default` 実装」を固定し、
-/// 必須フィールドの混入をその struct の範囲で捕まえる（#824）。**新しい struct を
+/// 必須フィールドの混入をその struct の範囲で検出する（#824）。**新しい struct を
 /// `Config` へ足したときにこの群へ 1 本足すことは機構では強制されない**——`Config` 全体を
 /// 見るのは `config_parses_with_all_sections_omitted` の側である。
 #[test]

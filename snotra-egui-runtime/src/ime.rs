@@ -13,7 +13,7 @@ use std::ops::Range;
 /// **消費されるかは `Visuals::ime_composition.legacy_visuals` に懸かっている。** 真だと egui は
 /// `cursor_purpose` を `Selection` に固定し、**この値を一度も参照せず**変換中を選択帯で描く
 /// ——テストが緑でも画面には何も現れない状態になる。egui はこれを **Windows で既定 `true`**
-/// にするため、**Snotra は `search_input_ui` の入口で偽へ倒している**（理由と経緯は同関数の
+/// にするため、**Snotra は `search_input_ui` の入口で偽にしている**（理由と経緯は同関数の
 /// 当該コメント）。**その 1 行を戻すと、この関数は計算されるだけで描画へ届かなくなる。**
 pub(crate) fn active_range_chars(
     text: &str,

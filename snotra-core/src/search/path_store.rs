@@ -32,7 +32,7 @@
 //! **素直に「1 件ごとに根まで辿って書き直す」と全経路が 1.6〜1.9 倍遅くなる**（実測）。
 //! 速さは走査の形から来る:
 //!
-//! - 索引はソート順ゆえ**隣り合うエントリは祖先を共有する** → [`PathCursor`] が鎖を持ち回り、
+//! - 索引はソート順ゆえ**隣り合うエントリは祖先を共有する** → [`PathCursor`] がチェーンを持ち回り、
 //!   バッファを巻き戻して 1 段だけ書き足す
 //! - 整列している範囲の中なら**index の順序がフルパスのバイト順と一致する** →
 //!   [`PathStore::cmp_paths`] は組み立てずに index を比べる（tie-break は `c:\` のような
@@ -176,7 +176,7 @@ impl PathStore {
     }
 
     /// 余剰容量の検知器（`search/tests/build.rs`）が読む確保量。
-    /// 余剰は検索結果を変えないため、挙動テストでは捕まらない。
+    /// 余剰は検索結果を変えないため、挙動テストでは検出されない。
     #[cfg(test)]
     pub(super) fn capacity(&self) -> usize {
         self.entries.capacity()
@@ -244,8 +244,8 @@ impl PathStore {
     /// あり、増分は段数ぶんの読みだけである。規則の正本は
     /// [`crate::indexer::normalize_entry_key_into`] である。
     ///
-    /// **製品はこれを呼ばない**——全件走査は [`PathCursor`] が祖先の鎖を持ち回る形で組み立てる。
-    /// ここに残すのは**カーソルの正しさを固定する参照実装**としてであり、鎖の状態に依らない
+    /// **製品はこれを呼ばない**——全件走査は [`PathCursor`] が祖先のチェーンを持ち回る形で組み立てる。
+    /// ここに残すのは**カーソルの正しさを固定する参照実装**としてであり、チェーンの状態に依らない
     /// この素直な形と 1 バイトも違わないことを `path_store_cursor_matches_full_rebuild` が
     /// 順・逆順・乱順の 3 通りで検証する（カーソルは最適化であって意味の変更ではない）。
     #[cfg(test)]
@@ -351,13 +351,13 @@ impl TreeNodes for PathStore {
     }
 }
 
-/// 全件走査のあいだ、直前に組み立てた祖先の鎖を持ち回るカーソル。
+/// 全件走査のあいだ、直前に組み立てた祖先のチェーンを持ち回るカーソル。
 ///
 /// **索引はソート順に並んでいるので、隣り合うエントリは祖先をほぼ共有する。** 毎回根まで
-/// 辿って全部書き直すと、共有している部分を何度も書き直すことになる。鎖を持ち回れば、
+/// 辿って全部書き直すと、共有している部分を何度も書き直すことになる。チェーンを持ち回れば、
 /// 大半のエントリは**バッファを巻き戻して 1 段だけ書き足す**だけで済む。
 ///
-/// 親が鎖に載っているかの判定は `u32` の線形走査（高々 [`crate::index_tree::CHAIN_CAP`] 個・実測の深さは平均
+/// 親がチェーンに載っているかの判定は `u32` の線形走査（高々 [`crate::index_tree::CHAIN_CAP`] 個・実測の深さは平均
 /// 6.05 段）であり、メモリを追いかけない。外れたときは根まで辿って作り直すので、
 /// **順序が乱れた入力でも結果は変わらない**（速さだけが落ちる）。
 ///
@@ -365,7 +365,7 @@ impl TreeNodes for PathStore {
 /// 使い回し」に替えたとき 152 → 23 ms になった。
 pub(super) struct PathCursor {
     buf: String,
-    /// いま `buf` に載っている鎖: `(index, その段まで書いた時点の buf の長さ)`。
+    /// いま `buf` に載っているチェーン: `(index, その段まで書いた時点の buf の長さ)`。
     /// 先頭が根で、末尾が直前に組み立てたエントリ。
     stack: Vec<(u32, u32)>,
 }
@@ -378,7 +378,7 @@ impl PathCursor {
         }
     }
 
-    /// `i` の正規化キーを組み立てて貸す。鎖の状態に依らない素直な組み立て（`PathStore::normalized_into`・`cfg(test)`）と**必ず同じバイト列**を
+    /// `i` の正規化キーを組み立てて貸す。チェーンの状態に依らない素直な組み立て（`PathStore::normalized_into`・`cfg(test)`）と**必ず同じバイト列**を
     /// 返す（差し替えは最適化であって意味の変更ではない）。
     ///
     /// **記録側（`normalize_entry_key`）と 1 バイトも違わないことがここの契約である**——ずれると
@@ -390,7 +390,7 @@ impl PathCursor {
     pub(super) fn normalized(&mut self, store: &PathStore, i: usize) -> &str {
         let parent = store.entries[i].parent;
         if parent == NO_PARENT {
-            // 根そのもの。鎖を作り直して終わり（下の共通処理を通さない——通すと
+            // 根そのもの。チェーンを作り直して終わり（下の共通処理を通さない——通すと
             // 自分自身を 2 回書いてしまう）。
             self.buf.clear();
             self.stack.clear();
@@ -409,7 +409,7 @@ impl PathCursor {
                 self.buf.truncate(self.stack[pos].1 as usize);
                 self.stack.truncate(pos + 1);
             }
-            // 外れ: 根まで辿って鎖ごと作り直す。`chain[0]` は `i` 自身なので下の共通処理へ譲る。
+            // 外れ: 根まで辿ってチェーンごと作り直す。`chain[0]` は `i` 自身なので下の共通処理へ譲る。
             None => {
                 let (root, chain, depth) = walk_to_root(store, i);
                 self.buf.clear();
@@ -429,7 +429,7 @@ impl PathCursor {
         &self.buf
     }
 
-    /// 1 段ぶんを書き足して鎖へ積む。**小文字化は書き足した範囲だけに当てる**——
+    /// 1 段ぶんを書き足してチェーンへ積む。**小文字化は書き足した範囲だけに当てる**——
     /// 全体へ当て直すと、巻き戻しで節約したぶんを取り戻してしまう。
     #[inline]
     fn append(&mut self, store: &PathStore, idx: usize) {
@@ -459,7 +459,7 @@ pub(super) fn with_cursor<R>(store: &PathStore, i: usize, f: impl FnOnce(&str) -
 
 thread_local! {
     /// 全件走査のカーソル。rayon の worker ごとに 1 本である。
-    /// 走査は連続した index を順に舐めるので、worker ごとに鎖がウォームアップされる。
+    /// 走査は連続した index を順に舐めるので、worker ごとにチェーンがウォームアップされる。
     static CURSOR: std::cell::RefCell<PathCursor> =
         const { std::cell::RefCell::new(PathCursor::new()) };
 

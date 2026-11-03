@@ -309,7 +309,7 @@ pub fn expand_exec_args(
 
 /// 結果リストの副テキスト（`SPEC.md`「19.2 設定構造」の `display`）を `action` から導く。
 ///
-/// **`Legacy` の枝は実運用では到達しない防御である**——`apply_migrations()` が `Url` へ移すため
+/// **`Legacy` の分岐は実運用では到達しない防御である**——`apply_migrations()` が `Url` へ移すため
 /// load を通った config には残らない。`match` の網羅性のために置く（`InstantAction` に variant が
 /// 在る以上、挙動は決まっていなければならない）。
 ///
@@ -342,7 +342,7 @@ fn display_text(action: &InstantAction) -> String {
 /// **呼び出し元は config の読みの中からこれを呼ぶ。** 行うのは文字列の確保までで、I/O も錠も
 /// 取らない（読みの中で何をしてよいかの契約は `snotra` の `AppState::read_config` の doc が正本）。
 ///
-/// [`display_text`] の算出を `description` 空の枝に置いてあるのは、**非空なら出来上がった
+/// [`display_text`] の算出を `description` 空の分岐に置いてあるのは、**非空なら出来上がった
 /// 文字列をその場で捨てることになる**からである（#1124 以前はそうしていた）。
 pub fn matching_results(
     commands: &[InstantCommand],
@@ -1041,7 +1041,7 @@ mod tests {
 
     /// **実運用では到達しない防御的分岐である**——`Legacy` は `apply_migrations()` が `Url` へ
     /// 移すため、load を通った config には残らない（`Config::load` の正常系・default 落ち・
-    /// 設定 GUI の保存・backup import のいずれもそうである）。`match` の網羅性のために枝が
+    /// 設定 GUI の保存・backup import のいずれもそうである）。`match` の網羅性のために分岐が
     /// 在る以上、その挙動は固定しておく。
     #[test]
     fn matching_results_display_legacy_is_defensive() {
@@ -1114,7 +1114,7 @@ mod tests {
 
     #[test]
     fn legacy_rows_skip_icon_extraction() {
-        // 移行で到達しない防御枝だが、`match` の網羅として挙動は決まっていなければならない。
+        // 移行で到達しない防御分岐だが、`match` の網羅として挙動は決まっていなければならない。
         let cmds = vec![InstantCommand {
             name: "l".into(),
             description: String::new(),

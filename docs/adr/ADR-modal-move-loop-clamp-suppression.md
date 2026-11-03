@@ -51,7 +51,7 @@
 `WindowExtWindows` が公開するのは `hwnd` / `hinstance` / `set_enable` / `set_taskbar_icon` /
 `set_overlay_icon` / `theme` / `reset_dead_keys` / `begin_resize_drag` であり、**wndproc フック・
 サブクラス化の公開 API は無い**（`platform/windows.rs` を走査して 0 件）。`WM_MOVING` を
-捕まえるには今も `hwnd()` から自前で `SetWindowSubclass` する必要がある。
+検出するには今も `hwnd()` から自前で `SetWindowSubclass` する必要がある。
 
 **理由 2（「離した時点の復帰で満たされる」）は射程が狭かった**——キーボード移動に「離す」は
 無い。だが #1194 の計測で拘束そのものが再現しなかったため、**この欠けは採否を変えない**。
@@ -59,13 +59,13 @@
 ## 却下 3 — モーダルループ中に `ctx.request_repaint()` で鎖を繋ぐ
 
 却下 1 を採った場合に要る補助案だった。「確定後の最初のフレームで 1 度だけ戻る」を保証するには、
-フラグが偽へ落ちた最初のフレームが要る——ループ中の各フレームで repaint を再要求して鎖を繋ぐ、
+フラグが偽へ落ちた最初のフレームが要る——ループ中の各フレームで repaint を再要求してチェーンを繋ぐ、
 という形である。
 
 **独立に実測で潰れた。** 一時通知（updater toast）を出した条件でも、モーダルループ中のフレームは
 0 枚だった。toast は armed 期限を持ち毎フレーム残余を再要求する
 （`src-tauri/CLAUDE.md`「期限を待つ状態（armed）は…」）にもかかわらず、**`request_repaint_after`
-の鎖はモーダルループを越えない**。繋ぐ相手のフレームが来ない。
+のチェーンはモーダルループを越えない**。繋ぐ相手のフレームが来ない。
 
 ## `.claude/rules/src-tauri.md` の `PlatformBridge` 既定に逆らった点
 

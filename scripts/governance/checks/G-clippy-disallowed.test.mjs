@@ -13,7 +13,7 @@ import {
 describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化・#950）", () => {
   // 赤フィクスチャは「clippy が exit 0 で沈黙した入力」そのもの（clippy 1.94.0 で実測）。
   // 各エントリは**リテラルで書く**——カナリアから生成すると緑が恒真になり、名指しの意味が消える。
-  // **件数も issue 番号も書かない**——群を足すたびに、そういう行が腐る。
+  // **件数も issue 番号も書かない**——群を足すたびに、そういう行が古くなる。
   // reason に `（#751）` を入れてあるのは意図的で、引用符を見ないコメント除去（tomlLine）が
   // 行を切ることを緑側で押さえる。
   const R = 'reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）"';
@@ -105,7 +105,7 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   });
 
   // --- 赤クラス 2: レベル側（沈黙経路 0。**実リポジトリは Phase 1 以降これを満たすので、
-  //     clippyMethodsDenied が常に true を返す実装を捕まえるのはこのフィクスチャだけである**）---
+  //     clippyMethodsDenied が常に true を返す実装を検出するのはこのフィクスチャだけである**）---
   it("赤: ルートから [workspace.lints.clippy] 節ごと消える（2 行削除＝最も起きやすい形）", () => {
     red({ "Cargo.toml": '[workspace]\nmembers = ["src-tauri"]\n\n[workspace.lints.rustdoc]\nbroken_intra_doc_links = "deny"\n' }).toEqual(["Cargo.toml"]);
   });
@@ -120,7 +120,7 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   it("赤: style = { level = \"allow\", priority = 1 } でも同じく打ち消される", () => {
     red({ "Cargo.toml": '[workspace.lints.clippy]\ndisallowed_methods = "deny"\nstyle = { level = "allow", priority = 1 }\n' }).toEqual(["Cargo.toml"]);
   });
-  it("緑: 群の allow が priority = -1 で先に当たる形は禁止が生き残る（実測どおり緑へ倒す）", () => {
+  it("緑: 群の allow が priority = -1 で先に当たる形は禁止が生き残る（実測どおり緑にする）", () => {
     expect(run({ "Cargo.toml": '[workspace.lints.clippy]\ndisallowed_methods = "deny"\nall = { level = "allow", priority = -1 }\n' })).toEqual([]);
   });
   it("緑: 打ち消さない lint の allow は誤爆しない（節に allow を書く正当な用途を残す）", () => {
@@ -150,7 +150,7 @@ describe("G-clippy-disallowed checkClippyDisallowed（clippy.toml の空洞化�
   });
 
   // --- 母集団の欠落 ---
-  it("赤: 母集団の欠落は 3 入力それぞれで鳴る（沈黙させない側へ倒す）", () => {
+  it("赤: 母集団の欠落は 3 入力それぞれで鳴る（沈黙させない側を選ぶ）", () => {
     expect(checkClippyDisallowed(snap({})).map((x) => x.file)).toEqual(["src-tauri/clippy.toml", "src-tauri/Cargo.toml", "Cargo.toml"]);
   });
 

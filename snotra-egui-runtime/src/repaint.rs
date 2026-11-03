@@ -97,7 +97,7 @@ const FALLBACK_INTERVAL_NANOS: u64 = 1_000_000_000 / 60;
 
 /// リフレッシュレート(Hz)から配送の下限間隔へ（契約②・#737）。
 /// 0/1 は DEVMODE の慣習で「取得できていない」を意味する番兵値なので None
-/// （呼び出し側 `set_min_interval` が 60Hz フォールバックへ倒す）。
+/// （呼び出し側 `set_min_interval` が 60Hz へフォールバックする）。
 fn interval_from_hz(hz: u32) -> Option<Duration> {
     // 上限 1000Hz: 異常値（間隔 0ns で gate が無効化する類）を防ぐ現実的な天井（レビュー L4）。
     (2..=1_000)
@@ -231,7 +231,7 @@ impl RepaintScheduler {
     }
 
     /// 配送の下限間隔をリフレッシュレートで設定する（契約②・#737）。
-    /// `None` と番兵値（0/1）は 60Hz フォールバックへ倒す。反映は次の dispatch から
+    /// `None` と番兵値（0/1）は 60Hz へフォールバックする。反映は次の dispatch から
     /// （遅れて効いても最大 1 dispatch の誤差で自己回復する level-triggered 値）。
     pub(crate) fn set_min_interval(&self, hz: Option<u32>) {
         let interval = hz
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn interval_from_hz_rejects_sentinel_and_converts() {
-        // 0/1 は DEVMODE の「取得できていない」番兵値——間隔にせず None（60Hz へ倒すのは呼び出し側）。
+        // 0/1 は DEVMODE の「取得できていない」番兵値——間隔にせず None（60Hz へフォールバックするのは呼び出し側）。
         assert_eq!(interval_from_hz(0), None);
         assert_eq!(interval_from_hz(1), None);
         // 60Hz ≈ 16.67ms / 144Hz ≈ 6.94ms（µs 精度で確認）。

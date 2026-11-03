@@ -63,7 +63,7 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
   });
 
   it("種 3: `#[cfg(test)]` の内側のコメントも見る（テストコードを母集団から外さない）", () => {
-    // #925 が実際に見つけた腐り 1 件は `snotra-settings/src/tabs/visual.rs` の `#[cfg(test)]` の
+    // #925 が実際に見つけた陳腐化 1 件は `snotra-settings/src/tabs/visual.rs` の `#[cfg(test)]` の
     // 内側にあった。走査元へ `#[cfg(test)]` 以降を落とす変換を入れると、この it が落ちる
     // ——テストコードを母集団から外さないのは意図である
     const src = 'fn f() {}\n\n#[cfg(test)]\nmod tests {\n    // 根拠は `CLAUDE.md`「Git 運用」\n    #[test]\n    fn t() {}\n}\n';
@@ -102,7 +102,7 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
     expect(headingRefSourceDocs(s)).toEqual(["src/a.rs"]);
   });
 
-  it("種 8: 配線カナリア（G-heading-refs） — runAll 経由で `.rs` の腐りが findings に出る", () => {
+  it("種 8: 配線カナリア（G-heading-refs） — runAll 経由で `.rs` の陳腐化が findings に出る", () => {
     const { findings } = runAll(rs('/// `CLAUDE.md`「Git 運用」\nfn f() {}\n'));
     expect(findings.some((f) => f.file === "src/a.rs" && f.message.includes("見出し参照が着地しない"))).toBe(true);
   });
@@ -189,7 +189,7 @@ describe("G-heading-refs / G-near-heading-refs のスクリプトの腕（コメ
     ]);
   });
 
-  it("種 8: 配線カナリア — runAll 経由でスクリプトのコメントの腐りが findings に出る", () => {
+  it("種 8: 配線カナリア — runAll 経由でスクリプトのコメントの陳腐化が findings に出る", () => {
     const { findings } = runAll(src("scripts/a.mjs", '// `CLAUDE.md`「Git 運用」\n'));
     expect(findings.some((f) => f.file === "scripts/a.mjs" && f.message.includes("見出し参照が着地しない"))).toBe(true);
   });
@@ -204,7 +204,7 @@ describe("凍結された歴史（ADR-adr-frozen-history）— 精度の辺は�
   // 生きた層 → ADR と ADR → ADR の短縮引用・生きた層 → ADR 見出し（実在の辺）は照合し続ける。
   // 種はどれも「稼働中のガードを弱めず、合成スナップショットへ蒔く」（.claude/rules/safety-nets.md）。
 
-  it("種 1: ADR 内の腐った正準参照は見ない（緑）。対照: 同じ参照が生きた文書なら赤", () => {
+  it("種 1: ADR 内の古くなった正準参照は見ない（緑）。対照: 同じ参照が生きた文書なら赤", () => {
     const rotten = "`docs/gone.md`「消えた節」\n";
     const adr = snap({ "docs/adr/ADR-a.md": `# ADR-a: x\n${rotten}` });
     expect(checkHeadingRefs(adr, headingRefDocs(adr))).toEqual([]);
@@ -293,7 +293,7 @@ describe("makeSnapshot の走査除外（#722）", () => {
 
 describe("linesOutsideFences — マスクと、釣り合わないフェンスの検知", () => {
   // 守りたい対象 = この関数を通す検査の母集団。閉じないフェンスは以降の全行を「内側」にするので、
-  // 検知を**この関数の中**へ置く（外の検査にすると、その文書一覧が消費側の写しになって腐る）
+  // 検知を**この関数の中**へ置く（外の検査にすると、その文書一覧が消費側の写しになって古くなる）
   const F = "doc.md";
 
   it("緑: 釣り合っていればフェンスの内側だけを落とし、finding は出ない", () => {
@@ -435,7 +435,7 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
     expect(r.findings[0].message).toContain('ending: "heading"');
   });
 
-  it("赤④: ending:\"eof\" なのに終端が在る（宣言が腐った——片側だけ検算すると宣言が写しとして腐る）", () => {
+  it("赤④: ending:\"eof\" なのに終端が在る（宣言が古くなった——片側だけ検算すると宣言が写しとして古くなる）", () => {
     // ④ が無いと `ending` の宣言そのものが「誰も検算しない散文」になり、次に読む人はそれを信じる
     const r = sectionOf(DOC, /^## A$/, opts("eof"));
     expect(r.body).toBeNull();
@@ -522,7 +522,7 @@ describe("sectionOf — 節の切り出しの契約（母集団の 4 つの壊�
     expect(() => sectionOf(DOC, /^## A$/, { file: "doc.md", ending: "heading", by: "" })).toThrow(/by/);
   });
 
-  it("finding は宣言元の検査 id を名乗る（①〜④のすべて）", () => {
+  it("finding は宣言元の検査 id を示す（①〜④のすべて）", () => {
     const dup = ["# t", "## A", "x", "## A", "y", "## C", ""].join("\n");
     const msgs = [
       sectionOf(DOC, /^## Z$/, opts("heading")), // ①

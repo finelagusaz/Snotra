@@ -149,7 +149,7 @@ pub fn try_serialize_with_header<T: Serialize>(
     postcard::to_extend(payload, buf).map_err(|_| BinError::SerializeFailed)
 }
 
-/// ヘッダーが名乗る形式バージョンを読む（本体は復号しない）。短すぎれば `None`。
+/// ヘッダーが示す形式バージョンを読む（本体は復号しない）。短すぎれば `None`。
 ///
 /// **ヘッダーの配置（magic 4 B + version u32 LE）を知る場所をここ 1 つに閉じるための口である。**
 /// 版を発見する用途は [`try_deserialize_with_header`] では満たせない——あちらは期待する版を
@@ -482,7 +482,7 @@ mod tests {
             rest: Vec<u32>,
         }
         let dir = temp_dir("binfile_peek_first");
-        // 版 9 で書く（`BinFile` が名乗る版とわざと違える）。
+        // 版 9 で書く（`BinFile` が示す版とわざと違える）。
         let bytes = try_serialize_with_header(
             *b"TEST",
             9,

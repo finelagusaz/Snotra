@@ -57,7 +57,7 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
   });
 
   // 赤フィクスチャは実際に検出された `G12_NO_LAUNCHER_READ`（#825 の PR が消した語・SCREAMING_SNAKE
-  // 述語が捕まえた実測例）。緑の対 `NO_LAUNCHER_READ` は下の SNAKE_SRC が合成語彙として供給する
+  // 述語が検出した実測例）。緑の対 `NO_LAUNCHER_READ` は下の SNAKE_SRC が合成語彙として供給する
   //（実装側の同名定数は #894 で撤去済み——このフィクスチャは実リポジトリに依存しない）。
   const SNAKE_SRC = { "src-tauri/src/a.rs": "const NO_LAUNCHER_READ = 1;\n" };
 
@@ -95,7 +95,7 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(run("`expand` と `collapse` と `mount`\n")).toEqual([]);
   });
 
-  it("照合件数を返す（「腐りゼロ」と「照合していない」の区別・#497）", () => {
+  it("照合件数を返す（「陳腐化ゼロ」と「照合していない」の区別・#497）", () => {
     const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `otherName`\n" }), [DOC]);
     expect(r.checked).toBe(2);
     expect(r.findings).toHaveLength(2);
@@ -239,7 +239,7 @@ describe("G-stale-identifiers の凍結フィクスチャ（#984 の実在の欠
   const SRC = { "snotra-core/src/a.rs": "fn from_material() {}\n" };
   const LINE = (name) => `模範例は \`Engine::${name}\`。\`npm run governance:check\` が見る\n`;
 
-  it("コマンドと同居する行の修飾形が腐っていれば赤", () => {
+  it("コマンドと同居する行の修飾形が古くなっていれば赤", () => {
     const f = checkStaleIdentifiers(snap({ ...SRC, [DOC]: LINE("new_from_cache") }), [DOC]);
     expect(f).toHaveLength(1);
     expect(f[0].message).toContain("Engine::new_from_cache");
@@ -299,7 +299,7 @@ describe("G-stale-identifiers の配線（buildChecks が開発ガイドと固�
   };
   const rot = "- `deadCamelWord` を使う\n";
 
-  it("開発ガイド（docs/**）の腐りは finding（赤）", () => {
+  it("開発ガイド（docs/**）の陳腐化は finding（赤）", () => {
     const f = wired({ ...base, "docs/hooks.md": rot });
     expect(f).toHaveLength(1);
     expect(f[0].file).toBe("docs/hooks.md");
@@ -318,7 +318,7 @@ describe("G-stale-identifiers の配線（buildChecks が開発ガイドと固�
     expect(wired({ ...base, "docs/superpowers/specs/y.md": rot })).toEqual([]);
   });
 
-  it("SCREAMING_SNAKE の腐りも配線を通って届く（#825 が消した実在の語）", () => {
+  it("SCREAMING_SNAKE の陳腐化も配線を通って届く（#825 が消した実在の語）", () => {
     const f = wired({ ...base, "docs/hooks.md": "- `G12_NO_LAUNCHER_READ` へ載せる\n" });
     expect(f).toHaveLength(1);
     expect(f[0].message).toContain("G12_NO_LAUNCHER_READ");

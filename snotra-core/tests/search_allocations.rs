@@ -253,7 +253,7 @@ fn fuzzy_full_scan_does_not_allocate_per_candidate() {
 /// 回帰テスト: `search_with_options` は incremental を再利用しない検索のたびに
 /// 全エントリの添字を `Vec<usize>` へ集めてから走査していた。パスクエリは前回候補を
 /// 再利用しないので（`IncrementalCache::caches_candidates`）、打鍵のたびにこの形になる。
-/// 確保の**回数**は 1 回のままなので回数では捕まらず、バイト数で見る。
+/// 確保の**回数**は 1 回のままなので回数では検出されず、バイト数で見る。
 #[test]
 fn path_query_full_scan_does_not_allocate_per_entry() {
     on_single_worker(|| {
@@ -275,7 +275,7 @@ fn path_query_full_scan_does_not_allocate_per_entry() {
     });
 }
 
-/// 親フォルダの鎖の下にファイルを並べた索引。ファイルのフルパスは根から
+/// 親フォルダのチェーンの下にファイルを並べた索引。ファイルのフルパスは根から
 /// `DEEP_FOLDERS` 段を足して組み立てることになる（親が索引に無いと、パスは根 1 段で
 /// 組み上がり、組み立ての成長が起きない）。
 ///

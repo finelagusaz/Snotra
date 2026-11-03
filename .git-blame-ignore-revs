@@ -10,7 +10,7 @@
 
 # **記録するのは main 上の SHA である。** このリポジトリは squash 専用なので、feature ブランチ上の
 # コミット SHA は main の blame グラフに現れない——それを書いても no-op になり、しかも
-# **存在しない rev を無視しても git は静かに成功する**ので腐っても気づけない（ADR-rustfmt-gate）。
+# **存在しない rev を無視しても git は静かに成功する**ので古くなっても気づけない（ADR-rustfmt-gate）。
 # ゆえに整形は単独 PR で先にマージし、その squash SHA をここへ書く。
 
 # style: cargo fmt --all を全体へ適用 (#860) — 63 files / +2159 -810

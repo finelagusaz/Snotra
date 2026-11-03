@@ -187,7 +187,7 @@ fn path_query_leaves_the_incremental_candidates_empty() {
 
 #[test]
 fn non_path_query_still_populates_the_incremental_candidates() {
-    // 逆向き: 述語の反転・収集の無条件停止を捕まえる。
+    // 逆向き: 述語の反転・収集の無条件停止を検出する。
     let mut engine = SearchEngine::new(path_drift_entries());
     let h = empty_history();
 
@@ -206,7 +206,7 @@ fn non_path_query_still_populates_the_incremental_candidates() {
 
 #[test]
 fn path_query_results_are_identical_to_a_fresh_engine() {
-    // read 側（can_reuse）だけ述語を落とすドリフトを捕まえる唯一の形。
+    // read 側（can_reuse）だけ述語を落とすドリフトを検出する唯一の形。
     // 打鍵列 "c" → "c:\" は can_reuse の他条件（prev_mode 一致 / prev_candidates 非空 /
     // starts_with / dot 単調性 / kana 単調性）を**全部満たす**ため、has_path_sep だけが
     // 分岐点になる。既存の path_match_incremental_cache_monotonic は 2 打鍵ともパスクエリで、
@@ -259,7 +259,7 @@ const SPLIT_FIXTURE_LEN: usize = 5_000;
 
 // **分割が起きることは件数の前提でしか守れない**——葉の数は外から見えないので、
 // `MIN_PAR_CANDIDATES` が上がって葉が 1 枚になると、join が走らず、容量テストは join の予約を
-// 外す誤りを捕まえなくなる（パスクエリのテストは 1 枚でも葉の予約を見るので赤のままである）。
+// 外す誤りを検出しなくなる（パスクエリのテストは 1 枚でも葉の予約を見るので赤のままである）。
 // その前提をコンパイル時に固定する。
 const _: () = assert!(
     SPLIT_FIXTURE_LEN >= 2 * MIN_PAR_CANDIDATES,
@@ -270,7 +270,7 @@ const _: () = assert!(
 ///
 /// 回帰テスト: reduce の join で `extend` の前に `reserve_exact` しないと、葉が倍々で伸ばした
 /// `Vec` がそのまま左辺になり、根で 2 の冪まで膨らむ（#1280。額と、膨らんだ版の壁時計は
-/// `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）。**確保回数では捕まらない**——
+/// `PERFORMANCE.md`「採用: 検索の rayon の葉ごとの確保を減らす（#1280）」）。**確保回数では検出されない**——
 /// その誤りは回数をむしろ減らす。ゆえに容量そのものを見る。**壁時計の機序を固定するテストではない**
 /// （容量だけを縮めても退行は消えなかった）。同じ誤りが残す観測点を CI に置くためにある。
 ///
@@ -353,7 +353,7 @@ fn unsplit_search_does_not_reserve_beyond_the_candidates() {
 /// 回帰テスト: 再利用時の走査は添字の範囲を回し、`map` の中で前回候補へ読み替える
 /// （`search_with_options` のコメント）。`incremental_search_gives_correct_results_on_extension` の
 /// fixture は分割が起きる規模に届かないので、
-/// **件数に依存する誤り**（前回候補を途中で打ち切る等）を見られない——このテストが単独で捕まえる
+/// **件数に依存する誤り**（前回候補を途中で打ち切る等）を見られない——このテストが単独で検出する
 /// のはその型である。**見えるのは、取りこぼしが top-k の選ばれる前回候補の末尾に掛かるときである**
 /// （分割の境目の 1 件だけを落とす誤りは、その候補が top-k の外なら結果を変えず、ここでも緑になる）。
 ///

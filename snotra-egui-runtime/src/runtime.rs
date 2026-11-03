@@ -182,7 +182,7 @@ struct ActiveWindow {
 
 /// モニターのリフレッシュレートを取得して配送の下限間隔へ供給する（契約②・#737）。
 /// 返り値は現在の HMONITOR（変化検知キャッシュの更新用）。取得できない環境では
-/// `set_min_interval(None)` が 60Hz フォールバックへ倒す。
+/// `set_min_interval(None)` が 60Hz へフォールバックする。
 fn refresh_min_interval(window: &tauri::Window, scheduler: &RepaintScheduler) -> Option<isize> {
     let hwnd = window.hwnd().ok().map(|h| h.0 as isize);
     let monitor = hwnd.and_then(crate::monitor::window_monitor);
@@ -242,7 +242,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                 }
                 // 契約②（#737）: 配送の下限間隔の backstop。ウィンドウが静止したまま OS 設定で
                 // リフレッシュレートが変わる・モニターが抜き差しされる経路は Moved でも
-                // ScaleFactorChanged でも捕まらないため、show のたびに必ず来る Focused(true)
+                // ScaleFactorChanged でも検出されないため、show のたびに必ず来る Focused(true)
                 // で再取得する（頻度は低い）。**全ウィンドウ**に適用するのは、従属ウィンドウ（results）が
                 // focusable(false) + SW_SHOWNOACTIVATE で Focused を一度も受けないため
                 // ——両ウィンドウは設計上同じモニターに載る（results は main 直下へ追従・/symmetric-check #737）。

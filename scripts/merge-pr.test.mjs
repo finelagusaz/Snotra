@@ -334,7 +334,7 @@ describe("run — マージの成否は PR の状態で確定する", () => {
   });
 });
 
-describe("run — マージ後の検証（落ちたら exit 3・最初に「マージ済み」を名乗る）", () => {
+describe("run — マージ後の検証（落ちたら exit 3・最初に「マージ済み」を示す）", () => {
   const post = (over) => {
     const f = fake(over);
     const code = run(ARGS, "/repo", f.deps);
@@ -469,7 +469,7 @@ describe("run — マージ後の検証（落ちたら exit 3・最初に「マ�
     const f = fake({ "issue view": { status: 1, stdout: "", stderr: "x" } });
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
     expect(f.text()).toContain("マージ済み");
-    // gh の失敗は反映の遅れではないので待たない（待つ変異は終了コードだけでは捕まらない）
+    // gh の失敗は反映の遅れではないので待たない（待つ変異は終了コードだけでは検出されない）
     expect(f.sleeps).toEqual([]);
   });
 });

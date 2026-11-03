@@ -113,7 +113,7 @@ pub(crate) fn load_icon_pngs(
         .map(|p| {
             // キャッシュにあれば PNG。無ければ、この呼び出しで失敗した理由を返す。
             // どちらでもない（= miss でも失敗でもない）は起こらないが、起きたときに
-            // 恒久扱いしないよう `Unavailable` へ倒す。
+            // 恒久扱いしないよう `Unavailable` にする。
             let outcome = match c.get(&p) {
                 Some(png) => IconOutcome::Png(png.to_vec()),
                 None => match failures.remove(&p) {

@@ -30,9 +30,9 @@ issue は「repo 所有の plugin root に `.lsp.json` を置き、`initializati
 - **`--plugin-dir` を常用運用にする**: 却下（issue の判断を追認）。起動手段に依存し、clone 後の再現性が無い。
 - **`claude plugin validate --strict` をマニフェスト以外の検査にも使う**: 却下。**この検証器は `.lsp.json` を視界に入れない**——JSON として壊しても抑制キーを消しても `✔ Validation passed` / exit 0 を返す（スクラッチ plugin へ 3 パターンの変異を注入して実測。呼び出し側とレビュア側の 2 者が独立に再現）。マニフェスト 2 枚の妥当性はこの検証器に委ね、`.lsp.json` の意味的整合は自前カナリアが持つ、と層を分けた。
 - **検査 id を新設する（`lsp-validate` 等）**: 却下。`BUDGETS` + `buildCommand` の `case` + `repro` + `docs/hooks.md` の新行 + `REPRESENTATIVE_EDITS` の 5 点セットが同時に要るのに、得られるのはマニフェスト検証だけで、それは `claude plugin validate` が既に持つ。`hook-selftest` へ相乗りする形が最小。
-- **検査層を 2 枚にする（`governance-check.mjs` へ `G-lsp-config` を足す）**: 却下。独立導出レビューの推奨だったが、(i) ファイル削除は CI の `npm test` が回すカナリアが捕まえる（カナリアは実ファイルを読むので、消えれば落ちる）、(ii) `G-stale-identifiers` への語彙供給は判定を非 test の `.mjs` へ置くことで果たされる、(iii) 残る差は `skip-ci` ラベル付き PR だけである。設定 JSON だけを触る変更に `skip-ci` を付ける動機は薄く、層を 1 枚増やす費用に見合わない。
-- **`selectChecks` の ratoml 分岐を basename でアンカーし、判定は repo 直下の 1 枚だけを読む**: 却下（**レビューの修正案をそのまま採らなかった**）。それだと `snotra-core/rust-analyzer.toml` を編集したとき **hook は走るのに判定は別のファイルを見て緑**になる。割り当てられたファイルの緑は「合格」を意味するので、**沈黙より悪い**。発火と判定の母集団を揃えるため `findRatomlFiles` でツリー全体を走査する側へ倒した。
-- **ratoml 走査で `readdirSync` の throw を握って続行する**: 却下。読めない枝を黙って飛ばすのは fail-open であり、throw は vitest がエラーで落ちる＝沈黙しない。**受容する残余として doc に書く**側を採った。
+- **検査層を 2 枚にする（`governance-check.mjs` へ `G-lsp-config` を足す）**: 却下。独立導出レビューの推奨だったが、(i) ファイル削除は CI の `npm test` が回すカナリアが検出する（カナリアは実ファイルを読むので、消えれば落ちる）、(ii) `G-stale-identifiers` への語彙供給は判定を非 test の `.mjs` へ置くことで果たされる、(iii) 残る差は `skip-ci` ラベル付き PR だけである。設定 JSON だけを触る変更に `skip-ci` を付ける動機は薄く、層を 1 枚増やす費用に見合わない。
+- **`selectChecks` の ratoml 分岐を basename でアンカーし、判定は repo 直下の 1 枚だけを読む**: 却下（**レビューの修正案をそのまま採らなかった**）。それだと `snotra-core/rust-analyzer.toml` を編集したとき **hook は走るのに判定は別のファイルを見て緑**になる。割り当てられたファイルの緑は「合格」を意味するので、**沈黙より悪い**。発火と判定の母集団を揃えるため `findRatomlFiles` でツリー全体を走査する側を選んだ。
+- **ratoml 走査で `readdirSync` の throw を握って続行する**: 却下。読めないディレクトリを黙って飛ばすのは fail-open であり、throw は vitest がエラーで落ちる＝沈黙しない。**受容する残余として doc に書く**側を採った。
 - **`diagnostics` の抑制を同じサイクルで入れる**: 却下（先送り・ユーザー判断）。抑制の機構は 2 層ある——Claude Code 側の `diagnostics: false`（publishDiagnostics の**注入だけ**を止め、navigation は保つ）と、RA 側の `initializationOptions.diagnostics.enable=false`（**計算しない**）。issue は後者しか想定していなかった。一方 2026-08-14 の自前実測では `<new-diagnostics>` の量は編集由来 3〜9 件に対し底値 96 件で、**設定で消せるのは実セッションに出ていない底値のほう**であり、しかも `unlinked-file`（`.rs` を作って `mod` 忘れ）は cargo から見えないので失うと代替検知が無い。**先に実効設定を実測してから決める。**
 
 ## 受容する残余
@@ -53,7 +53,7 @@ issue は「repo 所有の plugin root に `.lsp.json` を置き、`initializati
 |---|---|---|
 | 条件 | 宣言した相対パスが**存在しない**ツリー | **パスが両方に存在していても**起きる |
 | 経路 | reconciler が `keeping materialized entry` と書いて古い登録を維持する | `known_marketplaces.json` の `installLocation` が**最初に登録したツリーを固定する** |
-| 古い枝の worktree | 別ツリーの plugin を使い続ける | **公式 plugin へ素直に落ちる**（project 設定はツリーごとに読まれる） |
+| 古いブランチの worktree | 別ツリーの plugin を使い続ける | **公式 plugin へ素直に落ちる**（project 設定はツリーごとに読まれる） |
 
 測り方: worktree 側の `.lsp.json` の**サーバ名だけ**を変えて起動し、debug log に現れる `plugin:<plugin>:<サーバ名>` でどちらのファイルが読まれたかを判別した。当初の機序（`keeping materialized entry`）はバイナリから逐語で抽出した実在の分岐だが、**この現象の原因ではなかった**——実在することと、それが原因であることは別である。
 

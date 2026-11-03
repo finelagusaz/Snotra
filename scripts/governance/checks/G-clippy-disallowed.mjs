@@ -38,7 +38,7 @@ export function run(snapshot, ctx) {
 // 受容する残余:
 // - member 側の opt-in（src-tauri の `[lints] workspace = true`）は **G-workspace-lints が全 member について
 //   見る**ため重ねない。**deny が実効するのはその opt-in が在る間だけ**であり、両検査は組で 1 つの命題を守る。
-// - ルート Cargo.toml が読めない事実は G-workspace-lints でも鳴る（1 事実 2 件）。**沈黙させない側へ倒す**
+// - ルート Cargo.toml が読めない事実は G-workspace-lints でも鳴る（1 事実 2 件）。**沈黙させない側を選ぶ**
 //   ——黙って skip すれば、それ自体が新しい沈黙経路になる。
 // - disallowed_methods を**ハイフン**（`disallowed-methods`）で書いた形は非実効と判定する＝**赤になる**。
 //   向きが赤（沈黙しない）なので受容するが、**次の人の最も安い直し方が「検査を緩める」にならない**よう
@@ -130,7 +130,7 @@ const lintPriority = (value) => (value.startsWith("{") ? tomlInt(value.match(/pr
  *  **エントリは 3 つの綴りで書ける**（インライン形・dotted 形・サブテーブル形）。TOML 上は等価で
  *  clippy の挙動も同じなので、**3 つとも読む**——1 つでも落とすとその綴りだけが緑を通る（実測）。
  *  priority で向きが決まり、群が**同じか大きい** priority を持つときだけ打ち消す（`priority = -1` で
- *  群を先に当てる形は禁止が生き残ることを実測したので、緑に倒す）。**`>=` は `all` で測った境界に
+ *  群を先に当てる形は禁止が生き残ることを実測したので、緑にする）。**`>=` は `all` で測った境界に
  *  合わせた保守的な規則である**——同 priority の `style` は実測では打ち消さないが、ここでは赤になる
  *  （fail-closed。直し方は `priority = -1` で群を先に当てること）。
  *  隣の rustdocLintsAreDenied が「節内の全エントリが deny」という ∀ で同型の穴を塞いでいるのに対し、

@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 1 回ぶんのペイロードが契約を満たすか検査し、破れの一覧を返す（空なら合格）。
 
 .DESCRIPTION
-**下に並べた各項が検査の正本である**（数は書かない——足すたびに腐る）:
+**下に並べた各項が検査の正本である**（数は書かない——足すたびに古くなる）:
 
 - **キーの過不足** — 全区間の `*_ns` / `*_ms` が在ること。`Set-StrictMode` 下で欠落キーは
   `$null` ではなく `PropertyNotFoundException` を投げる（実測）ので、存在判定は
@@ -35,13 +35,13 @@ $ErrorActionPreference = 'Stop'
 
   **両向きを検査する。** 「説明されない `null`」だけを見る形は片手落ちで、**スキップした
   区間に `0` を書く誤りが素通りする**（変異 (f) を書いてみて気づいた——`null` と `0` を
-  区別する設計の要なのに、検査が片方向だった）。枝フラグが「通らない」と言っている区間に
+  区別する設計の要なのに、検査が片方向だった）。分岐フラグが「通らない」と言っている区間に
   値が在るのも同じ重さの破れである。
 - **恒等式** — `post_main_ns == sum_phase_ns + unmarked_tail_ns`。**ms 表示値の和は検査
   しない**（丸めは表示境界でだけ行うので、正しくても境界で合わない）。
 
   **この検査は弱い。** `unmarked_tail_ns` は `post_main - sum_phase` として計算されるので、
-  等式は**構成上ほぼ常に真**である——実際に捕まえるのは `sum_phase > post_main`（飽和が
+  等式は**構成上ほぼ常に真**である——実際に検出するのは `sum_phase > post_main`（飽和が
   起きる側）だけで、変異「`post_main` を部分和から作る」（同語反復化）は素通りする（実測）。
 - **外部の壁時計との突き合わせ** — 上の弱さを埋める。ハーネスは `Start-Process` から終端の
   trace が届くまでを**独立に**測っており、`pre_main + post_main` がそれを超えることはない。
@@ -50,7 +50,7 @@ $ErrorActionPreference = 'Stop'
 
   **この検査が見ないもの: 内側の申告が実際より小さくなる方向。** 下限が無いので、終端を
   ホットキー登録の完了より手前で打ち切る変異は**原理的に素通りする**（#1009 で (j) として
-  実測）。下限を置けば捕まるが、**trace の到着遅れと区別できない**ため置いていない。
+  実測）。下限を置けば検出されるが、**trace の到着遅れと区別できない**ため置いていない。
 - **`event` と `ok` / `reason` の整合** — イベント名が意味を運ぶ設計
   （`ADR-startup-instrument-contract-shape`）ゆえ、**名前と中身が食い違ったら壊れている**。
   #1009 で実測: ホットキー登録が実際に失敗した起動で `event` だけを `startup:ready` に偽ると、
@@ -59,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 
   **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は `startup.rs` の
   `terminal` が 1 つの `match` から組で導く（#1026）ので、`outcome` を取り違える変異は両方が
-  揃って動き素通りする。捕まえるのは**名前と `ok` が実バイナリの出力で食い違ったこと**である
+  揃って動き素通りする。検出するのは**名前と `ok` が実バイナリの出力で食い違ったこと**である
   ——`terminal` の誤りに加え、`finish` が `terminal_line` の組を使わずに名前を作る退行もここへ
   現れうる（食い違う経路をその run が踏んだときに限る。`smoke.yml` が意図して踏むのは
   成功経路だけである）。**その退行のうち、組の名前を `_` で明示的に捨てる形はここにしか
@@ -71,7 +71,7 @@ $ErrorActionPreference = 'Stop'
   （`every_outcome_pairs_event_and_ok_in_one_place`）である。
 - **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total` の
   差である。**非負性が乗る前提と、破れたときに負値がそのまま出力へ現れることは
-  `startup.rs` の `to_json` が正本**。ここはその前提が破れたことを外から捕まえる。
+  `startup.rs` の `to_json` が正本**。ここはその前提が破れたことを外から検出する。
 #>
 function Test-SnotraStartupPayload {
     [CmdletBinding()]
@@ -112,7 +112,7 @@ function Test-SnotraStartupPayload {
         # pre_main は Phase ではない（壁時計。取得失敗なら null で正しく、値が在っても正しい）。
         if ($k -eq 'pre_main') { continue }
 
-        # この区間が `null` であるべきか。**枝フラグと到達位置だけで決まる。**
+        # この区間が `null` であるべきか。**分岐フラグと到達位置だけで決まる。**
         $i = $PhaseKey.IndexOf($k)
         $skippedByBranch =
         ($k -eq 'index_load' -and $Data.first_run) -or
@@ -152,7 +152,7 @@ function Test-SnotraStartupPayload {
 
     # --- event と ok / reason の整合 ---
     # **名前が意味を運ぶなら、名前と中身は一致しなければならない。** 他の検査はキーの存在と
-    # 数値しか見ないので、`event` を偽った起動を 1 つも捕まえない（#1009 で実測）。
+    # 数値しか見ないので、`event` を偽った起動を 1 つも検出しない（#1009 で実測）。
     $expectedEvent = if ($Data.ok) { 'startup:ready' } else { 'startup:failed' }
     if ($EventName -ne $expectedEvent) {
         $failures += "event が ok と食い違う: event=$EventName / ok=$($Data.ok) / reason=$($Data.reason)（期待 $expectedEvent）"
@@ -166,7 +166,7 @@ function Test-SnotraStartupPayload {
     }
 
     # --- index_load_unattributed_ms の非負性 ---
-    # `null` は正常（first-run 枝では `LoadOrScanStats` 自体が無い）。値が在るときだけ検める。
+    # `null` は正常（first-run 分岐では `LoadOrScanStats` 自体が無い）。値が在るときだけ検める。
     if ($null -ne $Data.index_load_unattributed_ms -and [long]$Data.index_load_unattributed_ms -lt 0) {
         $failures += ("index_load_unattributed_ms が負: $($Data.index_load_unattributed_ms)" +
             "（外側の index_load が内側の LoadOrScanStats.total を下回った——" +

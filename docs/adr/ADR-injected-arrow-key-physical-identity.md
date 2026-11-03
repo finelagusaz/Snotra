@@ -24,8 +24,8 @@
 - **`Send-SnotraKey` に `-Extended` を足し、`MapVirtualKey` で導いた scancode と `KEYEVENTF_EXTENDEDKEY` を渡す**: 却下。**直す理由が無い。** egui のイベントへ載る `physical_key` は `key_from_key_code` 経由であり（`input.rs` の `on_keyboard_event`）、A–Z しか map しないので **`Numpad2` でも `ArrowDown` でも等しく `None`** になる。下流に両者を区別する材料が無く、`Numpad2` として届いた 400 件はすべて `ArrowDown` として実っている。
 - **`keybd_event` を `SendInput` へ移す**: 上と同じ理由で却下。加えて `Send-SnotraKey` は**打鍵注入の唯一の実装**であり（smoke / Pester / 視覚検査のすべてがここを通る）、動機の無い書き換えは全検査の入力層を一度に動かす。
 - **「矢印を撃つ検査を書いた人が最初に踏む穴」として先回りで直す**: 却下。**踏まない**——その人の打鍵も `ArrowDown` として実る。なお現時点で矢印キーを注入する検査は 0 件である（`scripts/` の `*.ps1` / `*.psm1` を `0x25`〜`0x28` で走査・実測）。
-- **`admit_key` の `held_since_focus_gain` が `Numpad2` と `ArrowDown` を別のキーとして数える点を塞ぐ**: 却下。**この筋書きは成立しない**——`held.insert` は `if is_synthetic` の枝にしか無く、通常の押下はそもそも集合へ入らない。
-  - この却下理由は**書き直したものである**。当初は「押下と解放が同じ physical で対になるので破れない」と条件つきで書いたが、その条件は発動しない枝の話だった。**判定が正しくても、添えた機序は独立に誤りうる**（ルート `CLAUDE.md`「レビューの委譲では〜機序まで一次証拠で裁定する」の実例）。
+- **`admit_key` の `held_since_focus_gain` が `Numpad2` と `ArrowDown` を別のキーとして数える点を塞ぐ**: 却下。**この筋書きは成立しない**——`held.insert` は `if is_synthetic` の分岐にしか無く、通常の押下はそもそも集合へ入らない。
+  - この却下理由は**書き直したものである**。当初は「押下と解放が同じ physical で対になるので破れない」と条件つきで書いたが、その条件は発動しない分岐の話だった。**判定が正しくても、添えた機序は独立に誤りうる**（ルート `CLAUDE.md`「レビューの委譲では〜機序まで一次証拠で裁定する」の実例）。
 - **`rx_key` に logical も載せる**: 却下（当面）。#999 では `push_key` の `mapped=` が同じ問いに答えたため、新しい出力を足さずに決着した。`mapped=false` が出て初めて「何として届いたか」が要る。
 
 ## 帰結
@@ -36,4 +36,4 @@
   - `Start-SnotraProcess -Trace -ExtraVariables @{ SNOTRA_EGUI_INPUT_TRACE = '1' }` で**2 系統を同時に立てる**（`SNOTRA_TRACE` と `SNOTRA_EGUI_INPUT_TRACE` は独立で、前者が `egui_results:show`、後者が `rx_key` / `push_key` / `take` を出す）
   - **注入側の計器は呼び出し側 PowerShell の env が握る**。`Start-SnotraProcess` は env をその中でだけ立てて戻すので、打鍵を撃つ区間で `$env:SNOTRA_EGUI_INPUT_TRACE` を立て直さないと `SNOTRA_SMOKE_INJECT` が 1 行も出ない
   - 注入時刻は情報ストリームへ出るので `Send-SnotraKey ... 6>> $log` で拾う（本体の `rx_key` は子プロセスの stderr で別ストリーム。時計はどちらも epoch ms）
-  - 判定は `take` の**行の有無ではなく `ts_ms` の階差**で行い、**階差が伸びただけでは重さを名乗らない**（待ちの区間でも伸びる）
+  - 判定は `take` の**行の有無ではなく `ts_ms` の階差**で行い、**階差が伸びただけでは重さを示さない**（待ちの区間でも伸びる）

@@ -11,7 +11,7 @@ Claude Code 固有の運用。開発プロセスは `AGENTS.md`（次行で自�
 
 ## Git/GitHub 運用
 
-- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` は best-effort（`cherry-pick` / `revert` / `update-ref` 等は素通りする）。取りこぼしは push 時に ruleset が捕まえる
+- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` は best-effort（`cherry-pick` / `revert` / `update-ref` 等は素通りする）。取りこぼしは push 時に ruleset が検出する
 - **ブランチへ main を取り込むときは rebase ではなく merge する** — push 済みのブランチの rebase は force-push を要し、auto mode の分類器が拒む（#1357）。squash マージなので merge コミットは main に残らない
 - **squash マージは `/merge-pr` からツール（`npm run merge:pr`）で行う** — `gh pr merge` を手で打たない（`--auto` も）。ツールを経ないマージ（Web UI・手打ち）は人間専用。理由は `docs/adr/ADR-squash-merge-issue-autoclose.md`
 
@@ -32,7 +32,7 @@ Claude Code 固有の運用。開発プロセスは `AGENTS.md`（次行で自�
 - **委譲した検査の成果物は、呼び出し側が指定したパスへ書かせる。** 返り値だけに頼ると、届かなかったとき実施の有無すら区別できない。名前を `report*.md` にしない（harness が Write を拒む）
 - **長時間の委譲は中断を前提にする。** 各 Phase の green 後にコミットさせ、検査なら「測る前に、いま持っている分を出力先へ書け」と指示する
 - **レビューの委譲では、意図的に分けた構造を根拠つきで先に渡す。** 渡さないと DRY 違反として挙がる
-- **指摘 0 件の報告は、報告が名乗る対象（ブランチ・sha・件数）を自分の状態と突き合わせてから受け取る**
+- **指摘 0 件の報告は、報告が示す対象（ブランチ・sha・件数）を自分の状態と突き合わせてから受け取る**
 - **確信の持てない所見（⚠️）も返り値に含めさせる。** 前段の裁定は争点の形で渡し、差分が消した行の不変条件を探す逆向きの監査を 1 枠置く
 - **採るのは所見であって、添えられた機序の説明ではない。** 直した版を実データへ当ててから対処を決める
 

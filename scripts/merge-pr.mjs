@@ -77,7 +77,7 @@ export function parseArgs(argv) {
 }
 
 // 9 形（close / fix / resolve とその -s / -d 形）。コロンの有無・他リポジトリ・issue URL・`GH-N` を含め、
-// 大文字小文字を問わない。過剰検出の側へ倒す（拾い損ねると一覧に現れないまま閉じる。`GH-N` が close に
+// 大文字小文字を問わない。過剰検出の側を選ぶ（拾い損ねると一覧に現れないまま閉じる。`GH-N` が close に
 // 効くかは確かめていないが、拾っても失うのは再実行 1 回である）
 const KEYWORD = String.raw`\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b`;
 const TARGET = String.raw`(?:[\w.-]+\/[\w.-]+#\d+|#\d+|GH-\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)`;

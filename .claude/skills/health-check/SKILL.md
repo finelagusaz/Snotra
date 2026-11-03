@@ -13,14 +13,14 @@ allowed-tools:
 
 コードベースとドキュメントの衛生状態を検証する。発見事項を報告し、修正は行わない。
 
-**決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 2・3・4・6・8・9 は全面的にそこへ機械化済みで、対応表は `references/mechanized-checks.md` にある（**Check 番号は序数参照の腐敗を避けるため振り直さない**——下の欠番はその表が説明する）。Check 1・5・10 は一部だけが機械化されており、意味判断の残置部分が下にある。本スキルで実行するのは:
+**決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 2・3・4・6・8・9 は全面的にそこへ機械化済みで、対応表は `references/mechanized-checks.md` にある（**Check 番号は序数参照の陳腐化を避けるため振り直さない**——下の欠番はその表が説明する）。Check 1・5・10 は一部だけが機械化されており、意味判断の残置部分が下にある。本スキルで実行するのは:
 
 1. `npm run governance:check` を実行し、赤ならその全件を発見事項（Critical）として報告する
 2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep）と Check 7（メモリ整合）— を従来どおり実施する
 
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 
-→ **`npm run governance:check`（G-module-index・#587）が機械検査する。ここでは実行しない。** **ただし `governance:check` が照合するのは `MODULE_INDEX_CRATES` に載っている crate だけである**——crate を新設して同表へ足し忘れると、その `CLAUDE.md` のモジュール構成は丸ごと未照合のまま緑になる（2026-08-09 実測・#1008）。**足し忘れそのものは別の層が捕まえる**: `scripts/governance-check.test.mjs` の母集団カナリア（#701）が実 `Cargo.toml` の `[workspace] members` を読み、`CLAUDE.md` を持つ member が `MODULE_INDEX_CRATES` と `governanceDocs()` の両方に載ることを `npm test` で固定する。テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance/checks/G-module-index.mjs`）とそのテスト（`G-module-index.test.mjs`）が固定する（per-check 分割・#1088 でここへ移った。**facade（`scripts/governance-check.mjs`）は `checks/` から何も再輸出しないので、import 元は `checks/` 側である**・#1094）。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
+→ **`npm run governance:check`（G-module-index・#587）が機械検査する。ここでは実行しない。** **ただし `governance:check` が照合するのは `MODULE_INDEX_CRATES` に載っている crate だけである**——crate を新設して同表へ足し忘れると、その `CLAUDE.md` のモジュール構成は丸ごと未照合のまま緑になる（2026-08-09 実測・#1008）。**足し忘れそのものは別の層が検出する**: `scripts/governance-check.test.mjs` の母集団カナリア（#701）が実 `Cargo.toml` の `[workspace] members` を読み、`CLAUDE.md` を持つ member が `MODULE_INDEX_CRATES` と `governanceDocs()` の両方に載ることを `npm test` で固定する。テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance/checks/G-module-index.mjs`）とそのテスト（`G-module-index.test.mjs`）が固定する（per-check 分割・#1088 でここへ移った。**facade（`scripts/governance-check.mjs`）は `checks/` から何も再輸出しないので、import 元は `checks/` 側である**・#1094）。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
 
 ## Check 5 — docs/build-commands.md コマンドの整合（SSOT）
 

@@ -31,7 +31,7 @@ invalid_html_tags = "deny"
 # （`-D warnings` 無しで exit 0・診断なしを実測）。
 # **この節へ `all = "allow"` のような群の allow を足すと、deny の行を残したまま禁止が消える**
 # （実測: exit 0・診断 0 件）。群を allow にしたいなら `priority = -1` で先に当てること。
-# この節の消失・降格と、`all` / `style` の allow による打ち消しは G-clippy-disallowed が捕まえる
+# この節の消失・降格と、`all` / `style` の allow による打ち消しは G-clippy-disallowed が検出する
 # （上流 clippy が 3 つ目の群へ disallowed_methods を入れたら、その群は見張られない）。
 [workspace.lints.clippy]
 disallowed_methods = "deny"

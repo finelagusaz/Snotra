@@ -183,7 +183,7 @@ impl<U> UpdaterUi<U> {
     /// にした**後**に返すため、Available へ戻す経路が無い（#934）。`Installing` に入ると `toast()` は
     /// ボタン無効で出続け、`dismiss` も Installing 中は拒否するので **toast すら消せない**。
     /// **`egui_shell/` の「処置を返す純粋核」で、プロセスの再起動まで回復経路が無いのはここだけである**
-    /// （`consume_reset_pending` も one-shot だが回復は次の show で来る）。**ただし `#[must_use]` が捕まえるのは
+    /// （`consume_reset_pending` も one-shot だが回復は次の show で来る）。**ただし `#[must_use]` が検出するのは
     /// 「一度も見なかった」だけである**——`if ….is_some() { }` は「使用」と判定され `Update` は失われる。
     #[must_use = "Update を取り出し phase を Installing にした後ゆえ、落とすと install 不能で固着する（#934）"]
     pub fn try_begin_install(&mut self) -> Option<U> {

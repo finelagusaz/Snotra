@@ -148,11 +148,11 @@ DPI も正しい）ため、既存のガードはすべて通り、`CopyFromScre
 有効な Bitmap** を返す。判定側が落ちたとしてもメッセージは色や描画経路を指すので、読んだ人は
 レンダリングを疑い始める（#866 実測）。ここで名指しして止める。
 
-**倒す向きを 2 つに分ける。** 「ロック中と判定できた」は throw、「**判定できなかった**」は警告のみで
+**寄せる向きを 2 つに分ける。** 「ロック中と判定できた」は throw、「**判定できなかった**」は警告のみで
 続行する。この関数の仕事は*誤った結果*を防ぐことであり、状態を読めないホストで実行そのものを
 拒めば、情報を足さずにツールを失う。加えて `Get-SnotraWindowCapture` は Pester の Integration
-テスト経由で **CI（GitHub Actions の Windows runner）でも走る**——判定不能を throw に倒すと、
-runner の WTS の振る舞いが未知のまま CI を壊しうる。**ロックという確定した事実にだけ強く倒す。**
+テスト経由で **CI（GitHub Actions の Windows runner）でも走る**——判定不能を throw にすると、
+runner の WTS の振る舞いが未知のまま CI を壊しうる。**ロックという確定した事実にだけ強く寄せる。**
 #>
 function Assert-SnotraSessionUnlocked {
     [CmdletBinding()]
@@ -406,7 +406,7 @@ function Start-SnotraProcess {
 - **導出は `param()` の中に書けない。** 既定値の束縛は `Import-Module` より前に起きる（実測）ので、
   既定は空リテラルにし、解決は import の後で行う。
 - **導出の起点はスクリプトが住むリポジトリ（`$PSScriptRoot` 起点）であって cwd ではない。**
-- **明示された `-ExePath` の意味は変えない**（相対パスは cwd 相対のまま）。導出するのは既定の枝だけである。
+- **明示された `-ExePath` の意味は変えない**（相対パスは cwd 相対のまま）。導出するのは既定の分岐だけである。
 - 解決後は絶対形へ正規化して出力へ載せる——どのコピーを測ったかが読み手に見える形が、
   `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。
 
@@ -433,7 +433,7 @@ function Resolve-SnotraCargoExecutable {
     Push-Location -LiteralPath $RepositoryRoot
     try {
         $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath
-        # `Pop-Location` より前に捕まえる（後続の cmdlet が $LASTEXITCODE を運ぶとは限らない）。
+        # `Pop-Location` より前に検出する（後続の cmdlet が $LASTEXITCODE を運ぶとは限らない）。
         $cargoExit = $LASTEXITCODE
     } finally {
         Pop-Location
@@ -639,7 +639,7 @@ function Read-SnotraTraceSnapshot {
     # **読み取りの失敗を空と同じ値へ潰さない**（#872）。`-ErrorAction SilentlyContinue` は
     # 落ちた読みに対しても空を返すため、Available=true / Events 0 件 / Dropped 0 という
     # **正常な空ログと見分けられない値**になり、稼働中のアプリを観測する経路で
-    # 「読めなかった」が「まだ出ていない」と区別できなくなる。読めなければ Available を倒す
+    # 「読めなかった」が「まだ出ていない」と区別できなくなる。読めなければ Available を false にする
     # （`manual-smoke.ps1` の `Get-TraceVerdict` はこれを見て判定そのものを見送る）。
     # **不在（ReadError=$null）と失敗（ReadError あり）は別の状態である。**
     try {
@@ -687,7 +687,7 @@ trace に述語を満たす事象が現れるまで待つ（待ちループの�
 
 **諦める条件を scriptblock で受け取らない。** この関数は module スコープで評価するため、
 呼び出し側の変数を読むにはクロージャが要る。ところが `.GetNewClosure()` は Pester の `It` の中では
-**親スコープの変数を捕まえない**（実測: 予算 4000ms に対し中断せず 4031ms 待った）。捕まえ
+**親スコープの変数をキャプチャしない**（実測: 予算 4000ms に対し中断せず 4031ms 待った）。キャプチャし
 損ねても**発火しないだけ**なので通った実行では観測されず、「本体が死んでも予算いっぱい待つ」
 という退化が黙って入る。プロセスを型付きで受け取れば、この間違いは書けなくなる。
 
@@ -1022,7 +1022,7 @@ function Get-SnotraWindowCapture {
 
     # **可視判定より先に見る。** ロック中は IsWindowVisible も矩形も真っ当な値を返し、
     # ここから下は最後まで成功して**中身だけが違う Bitmap** を返す（#866）。
-    # 判定不能を throw へ倒さない理由は Assert-SnotraSessionUnlocked のコメント。
+    # 判定不能を throw にしない理由は Assert-SnotraSessionUnlocked のコメント。
     Assert-SnotraSessionUnlocked -Operation 'ウィンドウのキャプチャ'
 
     if (-not [SnotraSmokeInterop.Native]::IsWindowVisible($Handle)) {

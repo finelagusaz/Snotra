@@ -8,7 +8,7 @@
 // 設計: payload 全体を grep するのではなく tool_input.command **だけ**を読み、
 // 「コマンド位置」に現れる `gh pr create` を検出して、それが走る瞬間にコミットが
 // remote に存在するかを判定する。真になる経路は 2 つある:
-//   1. 静的 — 鎖の中で `git push` が `&&` で先行する（`&&` が前段の成功を保証する）
+//   1. 静的 — チェーンの中で `git push` が `&&` で先行する（`&&` が前段の成功を保証する）
 //   2. 動的 — upstream が設定済みで、未 push コミットが無い
 //
 // 判定単位は 2 種類ある。
@@ -66,7 +66,7 @@ const AT_CMD_POS = String.raw`(?:^|[;&|\n\r(){}])\s*`;
 // 全体が失敗するときに 2^n 通りを探索する——`git --f0=v0 … --f23=v23 x` の 225 字で **747ms**
 // かかった（実測）。#768 でこの FLAG が `git` セグメント判定経由で**全コマンド**に乗ったため、
 // hook の timeout（exit≠2 = 非ブロッキング）で fail-open する経路になっていた。
-// `--?[^-\s]` はダッシュの直後に非ダッシュを要求するので分割は 1 通りに決まる（`--` 単独は別枝）。
+// `--?[^-\s]` はダッシュの直後に非ダッシュを要求するので分割は 1 通りに決まる（`--` 単独は別分岐）。
 const FLAG = String.raw`(?:(?:--?[^-\s]\S*|--)(?:\s+[^-\s]\S*)?\s+)*`;
 
 // `GH_TOKEN=x gh pr create` のような環境変数の前置もコマンド位置と見なす。
@@ -80,20 +80,20 @@ export const GH_PR_CREATE = new RegExp(
 );
 
 // `git -C <tree> push` は意図的に一致させない。別ツリーへ push しても
-// このツリーのコミットは remote に載らないため、安全な鎖ではない。
+// このツリーのコミットは remote に載らないため、安全なチェーンではない。
 export const GIT_PUSH = new RegExp(`${AT_CMD_POS}(git\\s+(?:-\\S+\\s+)*push\\b)`);
 
 // `git push --dry-run` は何も送信しない。動詞の名前ではなく意味を見る。
 const DRY_RUN = /(?:^|\s)(?:--dry-run|-n)(?:\s|$)/;
 
-// 鎖の途中で cwd が変わると、どのリポジトリに PR が作られるか判定できない。
+// チェーンの途中で cwd が変わると、どのリポジトリに PR が作られるか判定できない。
 export const CWD_CHANGE = new RegExp(`${AT_CMD_POS}((?:cd|pushd|popd|chdir|Set-Location)\\b)`, "i");
 
 const REMEDY = "`git push -u origin HEAD` してから PR を作るか、`git push … && gh pr create` と `&&` で繋いでください。";
 
 // コマンドの区切り文字。終端探索（segmentEnd）と区切り列の列挙（hasSafeChain）で共有する。
 // 同じ文字クラスのリテラルを 3 か所目に作らないため定数へ寄せた（#768 の /dry-check）。
-// 共有しているので、区切りの扱い（行継続の解釈など）を変えると `gh pr create` の安全な鎖の判定も動く。
+// 共有しているので、区切りの扱い（行継続の解釈など）を変えると `gh pr create` の安全なチェーンの判定も動く。
 const SEPARATOR_CLASS = String.raw`[;&|\n\r]`;
 const SEPARATOR = new RegExp(SEPARATOR_CLASS);
 const SEPARATOR_RUN = new RegExp(`${SEPARATOR_CLASS}+`, "g");
@@ -127,7 +127,7 @@ export function hasSafeChain(command) {
   const pushEnd = segmentEnd(command, pushAt);
   if (pushEnd > ghAt) return false; // push が後ろにある
 
-  // `git push --dry-run` は送信しない。安全な鎖ではない。
+  // `git push --dry-run` は送信しない。安全なチェーンではない。
   if (DRY_RUN.test(command.slice(pushAt, pushEnd))) return false;
 
   const separators = command.slice(pushEnd, ghAt).match(SEPARATOR_RUN) ?? [];
@@ -152,7 +152,7 @@ const HEREDOC_OP = /(?<![<>])<<(?!<)-?[ \t]*(['"]?)([A-Za-z_]\w*)\1/g;
 // 演算子と区切り語の直後に来てよいもの: 区切り・リダイレクト・改行・文末。
 // **引用の閉じ（`"` / `'`）は入っていない** — これが `grep "x << y" f | head` を誤検出から守る。
 // **`)` も入れない** — `node -e "console.log(1<<n)"` のようなシフト演算子を誤爆する（実測）。
-// 代償として `(cat <<EOF)` のようなサブシェル内の heredoc はこの枝で拾えないが、終端行の
+// 代償として `(cat <<EOF)` のようなサブシェル内の heredoc はこの分岐で拾えないが、終端行の
 // 索引が拾うので取りこぼしにはならない。
 const HEREDOC_FOLLOW = /^[ \t]*(?:[<>|&;]|\r?\n|$)/;
 // 語だけの行 = heredoc 終端行の候補。
@@ -297,7 +297,7 @@ const SHAPE_REMEDY = Object.freeze({
  * ような `{ ok: false }` を持つ reader 形にすると、失敗しえないものへ失敗の表現を与えて嘘になる。
  *
  * **`platform` が渡されないときは Windows 専用判定を発火させない。** これは「判定不能」ではなく
- * 「規範の射程外」であり、block へ倒すと非 Windows で false block になる。製品コードでこの状態へ至るのは、
+ * 「規範の射程外」であり、block にすると非 Windows で false block になる。製品コードでこの状態へ至るのは、
  * 呼び出し側が `decide` へ platform を渡さないときである。`main()` のその配線は、ソースカナリアと
  * process 級 e2e（`npm test` は ubuntu と windows の両方で走る）が固定する。
  *
@@ -322,7 +322,7 @@ export function judgeCommandShape(command, platform) {
  *
  * 「管轄外」と「判定不能」を混同しない。前者は allow（対象ツール以外・`gh pr create` 以外）、
  * 後者は block（見えないものは通さない）。**reader は 3 つとも必須で、`gh pr create` の経路で
- * 渡されていなければ block する**（配線忘れを allow へ倒さない）。
+ * 渡されていなければ block する**（配線忘れを allow にしない）。
  *
  * `platform` は `judgeCommandShape` へそのまま渡る（省略時の意味はそちらの注釈が SSOT）。
  */
@@ -347,7 +347,7 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
     return block("PR 作成の前に作業ディレクトリを変更しています。どのリポジトリに PR が作られるか判定できません。");
   }
 
-  // reader はすべて必須（#1299）。渡されなければ止める——配線忘れを allow へも未捕捉の例外へも倒さない
+  // reader はすべて必須（#1299）。渡されなければ止める——配線忘れを allow にも未捕捉の例外にもしない
   for (const [name, reader] of Object.entries({ readPlanState, readVerifyState, readGitState })) {
     if (typeof reader !== "function") return block(`${name} が渡されていません（hook の配線の欠陥）。判定できません。`);
   }
@@ -361,7 +361,7 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
     );
   }
 
-  // ツールの要約の照合（#1299）。`hasSafeChain` の allow より前に置く——安全な鎖は「push が先に走る」ことしか
+  // ツールの要約の照合（#1299）。`hasSafeChain` の allow より前に置く——安全なチェーンは「push が先に走る」ことしか
   // 保証せず、検証とは無関係である
   const verified = readVerifyState();
   if (!verified.ok) return block(`${verified.reason}`);
@@ -385,7 +385,7 @@ export function readGitState(cwd) {
   if (upstream.error) {
     return { ok: false, reason: `git rev-parse を実行できません: ${upstream.error.code ?? upstream.error.message}` };
   }
-  // 非ゼロは「upstream 未設定」または「リポジトリ外」。どちらも block へ倒すため区別しない。
+  // 非ゼロは「upstream 未設定」または「リポジトリ外」。どちらも block にするため区別しない。
   if (upstream.status !== 0) return { ok: true, upstream: null, unpushed: false };
 
   const log = git(["log", "@{u}..HEAD", "--oneline"]);

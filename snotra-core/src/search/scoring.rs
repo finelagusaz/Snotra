@@ -341,14 +341,14 @@ impl SearchEngine {
     #[inline]
     pub(super) fn entry_view(&self, i: usize) -> EntryView<'_> {
         let entry = self.entries.get(i);
-        // 鎖を上から解く（`build.rs` の `assemble`）。`lower_names[i]` の `None` は
+        // チェーンを上から解く（`build.rs` の `assemble`）。`lower_names[i]` の `None` は
         // 「表示名と同一」、`lower_file_names[i]` の共有フラグは「解決後の `lower_name` と
         // 同一」を意味する。
         //
-        // **`None` の枝だけがアリーナを引く。** 表示名は [`PathStore`] の連結バイト列に在り、
+        // **`None` の分岐だけがアリーナを引く。** 表示名は [`PathStore`] の連結バイト列に在り、
         // `entry` と同じキャッシュラインには載らない（オフセット表と blob の 2 読み）。
-        // 実データでこの枝は 86.6% を通るが、通った先で読むのは**どのみち照合に要る文字列**
-        // であって余分な読みではない。フラグの枝（下）は今も分岐だけで済む。
+        // 実データでこの分岐は 86.6% を通るが、通った先で読むのは**どのみち照合に要る文字列**
+        // であって余分な読みではない。フラグの分岐（下）は今も分岐だけで済む。
         let lower_name = self
             .lower_names
             .get(i)
@@ -420,7 +420,7 @@ impl SearchEngine {
         // **区切りを含む needle は、区切りを含まない名前に部分列として存在しえない。**
         // ゆえに Fuzzy の name/file_name スコアリングは**証明として**飛ばせる（#1057）。
         // 額は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを行わない」が
-        // 正本である（**ここへ写さない**——計器を回すたびに腐る）。
+        // 正本である（**ここへ写さない**——計器を回すたびに古くなる）。
         //
         // **3 つの条件はどれも落とせない**:
         // - `Fuzzy` — Prefix/Substring は `starts_with` / `find` であって部分列ではない。

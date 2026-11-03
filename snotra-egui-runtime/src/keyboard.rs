@@ -27,7 +27,7 @@ pub(crate) enum NativeInput {
 
 /// 物理キーの同一性（スキャンコード。拡張キーは `0xE000` を立てる）。
 ///
-/// **#927 の抑止の鍵にする**——VK を鍵にすると、変換中に `VK_PROCESSKEY` で届く押しっぱなしの
+/// **#927 の抑止のキーにする**——VK をキーにすると、変換中に `VK_PROCESSKEY` で届く押しっぱなしの
 /// 英字を、focus 獲得時に取り込んだ VK と照合できない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PhysicalScan(pub(crate) u16);
@@ -618,7 +618,7 @@ mod tests {
         assert!(down(&mut t, VK_Z, SCAN_Z).events.is_empty());
     }
 
-    /// 鍵は物理キーである: 変換中に `VK_PROCESSKEY` で届く押しっぱなしの英字も照合される。
+    /// キーは物理キーである: 変換中に `VK_PROCESSKEY` で届く押しっぱなしの英字も照合される。
     #[test]
     fn suppression_matches_process_key_by_physical_scan() {
         let mut t = KeyboardTranslator::default();

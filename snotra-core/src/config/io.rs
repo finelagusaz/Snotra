@@ -1,7 +1,7 @@
 //! `config.toml` の読み書きと、TOML 文字列との相互変換。
 //!
 //! **読み込み失敗は種類で扱いを分ける**——不在・内容破損・一時的失敗で保全方針が違う。区分は
-//! [`LoadOutcome`] が、各枝が何を保全するかは [`Config::load_from_dir_reporting`] の rustdoc が
+//! [`LoadOutcome`] が、各分岐が何を保全するかは [`Config::load_from_dir_reporting`] の rustdoc が
 //! 正本である（`Err(_)` 一括の first-run 扱いは実データを既定値で潰す・#338/#343）。
 
 use std::fs;

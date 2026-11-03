@@ -553,7 +553,7 @@ impl LowerFileColumn {
     /// **フラグ 2 本を足して 1 つで返してはならない。** 呼び出し側（`search/footprint.rs` の
     /// `arena_part`）は「1 行 = 1 確保」でブロックを数えるので、束ねた瞬間に 1 つ数え落とす
     /// ——**未帰属 +1 blocks として実測に出た**（2026-08-12。バイトは合っていたので、
-    /// バイトだけを見る検算では捕まらない）。
+    /// バイトだけを見る検算では検出されない）。
     pub(crate) fn footprint_bytes(&self) -> (usize, usize, usize, usize) {
         let (blob, offsets, present) = self.strings.footprint_bytes();
         (blob, offsets, present, self.same_as_lower.footprint_bytes())
@@ -722,7 +722,7 @@ mod tests {
     ///
     /// これが `INDEX_CACHE_VERSION` を上げずに `IndexCache.lower_names` の型を替えられた
     /// 根拠であり、破れると**全ユーザーの `index.bin` が黙って読めなくなる**（版が同じまま
-    /// 形式だけ変わるので、フォールバックの鎖はどの枝も拾わず cache-miss ＝ 全走査へ落ちる）。
+    /// 形式だけ変わるので、フォールバックのチェーンはどの分岐も拾わず cache-miss ＝ 全走査へ落ちる）。
     ///
     /// **両向きを見る。** 書いた側が一致することと、`Vec<Option<String>>` として書かれた
     /// 旧バイト列を読み戻せることは別の主張である。
@@ -765,7 +765,7 @@ mod tests {
     }
 
     /// **3 状態すべてに加えて、`Text` の中身の形も混ぜる。** variant のタグだけを網羅した
-    /// fixture では、タグの並べ替えは捕まえられても**文字列の中身をいじる変異**（`trim_end`
+    /// fixture では、タグの並べ替えは検出できても**文字列の中身をいじる変異**（`trim_end`
     /// 等）が素通りする——`Absent` / `SameAsLowerName` / `Text("x")` だけの fixture でそれを
     /// 実測した（2026-08-12）。末尾空白と空文字を持たせるのはそのためであり、
     /// **痩せさせてはならない。**
@@ -851,9 +851,9 @@ mod tests {
 
     /// **壊れた長さプレフィックスは、巨大確保ではなく `Err` で落ちる。**
     ///
-    /// 化けた 5 バイトの varint は 40 億件を名乗れる。上限を外すと 16 GiB の確保を試み、
+    /// 化けた 5 バイトの varint は 40 億件を示せる。上限を外すと 16 GiB の確保を試み、
     /// release は `panic="abort"` ゆえ**起動そのものが落ちる**（検索結果が変わる形ではないので
-    /// 挙動テストでは捕まらない）。
+    /// 挙動テストでは検出されない）。
     #[test]
     fn corrupt_length_prefix_fails_instead_of_preallocating() {
         let hostile = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];

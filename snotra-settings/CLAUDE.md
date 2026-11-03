@@ -71,7 +71,7 @@ eframe は毎フレーム `App::ui()`（旧 `update()`。eframe 0.35 で `logic(
 - **has_changes()**: `draft != saved` で判定。Save/Discard ボタンの有効化に使用
 - **Discard**: `draft = saved.clone()` で全タブの編集を一括破棄
 - **Reset to default**: `draft = Config::normalized_default()` で既定値に戻す（saved は変更しない → has_changes() が true になり Save が必要）。`normalized_default()` は `apply_migrations()` 適用済みの「正規化済み（Option フィールドが全 Some）」既定値を返すため、`saved` との `PartialEq` がタブ遷移順序（DragValue の `get_or_insert`）に依存しない
-- **タブ別ダーティ点（`•`）: Config に新セクションを追加したら `app.rs` の `SECTION_TABLE` も更新する**: ダーティ点は `SECTION_TABLE`（Config セクション → TabId 対応表、SSOT）から導出しており、更新は 1 箇所で足りる。**更新漏れを捕まえる機構は無い**——`section_table_covers_all_config_fields` の `..` なし destructure が強制するのは「新フィールドを一度は目にすること」だけで、`新フィールド: _,` の 1 行を足せばコンパイルは通り、`SECTION_TABLE` が古いまま 2 本とも緑になる（2026-08-09 実測・#1008）。射程の正本は同テストと `SECTION_TABLE` の doc
+- **タブ別ダーティ点（`•`）: Config に新セクションを追加したら `app.rs` の `SECTION_TABLE` も更新する**: ダーティ点は `SECTION_TABLE`（Config セクション → TabId 対応表、SSOT）から導出しており、更新は 1 箇所で足りる。**更新漏れを検出する機構は無い**——`section_table_covers_all_config_fields` の `..` なし destructure が強制するのは「新フィールドを一度は目にすること」だけで、`新フィールド: _,` の 1 行を足せばコンパイルは通り、`SECTION_TABLE` が古いまま 2 本とも緑になる（2026-08-09 実測・#1008）。射程の正本は同テストと `SECTION_TABLE` の doc
 
 ### 保存フロー
 

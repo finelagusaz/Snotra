@@ -95,7 +95,7 @@ function Test-IsFill {
 # Bitmap → 行ごとの「入力欄の塗り画素数」。**I/O 側**（判定は純関数が持つ）。
 #
 # **`[int]` へ上げてからシフトする。** PowerShell の `-shl` は左オペランドの型で動くため、
-# `[byte] -shl 16` は型幅で切り詰められて 0 になる——R と G が消えた鍵は 1 画素とも一致せず、
+# `[byte] -shl 16` は型幅で切り詰められて 0 になる——R と G が消えたキーは 1 画素とも一致せず、
 # 「塗りが 1 行も見つからない」形で**沈黙する**（2026-08-11 に実測）。この形とインライン化の
 # 理由は `scripts/visual-check-colors.ps1` の `Get-WindowColorHistogram` のコメントが正本。
 function Get-FillHitsPerRow {

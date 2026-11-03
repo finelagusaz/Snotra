@@ -121,7 +121,7 @@ impl IndexMaterial {
 
     /// 派生データを持っているか。**検知器と計測ハーネスのためだけに在る**（`SearchEngine::footprint_rows` と同じ `#[doc(hidden)] pub` の扱い）。
     ///
-    /// **製品コードはこれを読んで分岐してはならない。** 建て方の分岐は `SearchEngine::from_material` の 1 か所に閉じており、そこへ戻すために `Option` を外へ出していない。ここが要るのは 2 つの理由による: (1) `extend_with_path_entries` が**マスクを取り落とさない**ことを検知器が名指しで測れるようにする——落とすと `from_material` が黙ってツリーからの導出へ切り替わり、A/B 一致は**成立したまま**削減だけが消える（挙動テストでは捕まらない類の退行）。(2) `tests/memory_footprint.rs` が「どちらの枝を測ったか」を出力に添える——添えないとその数字は読めない。
+    /// **製品コードはこれを読んで分岐してはならない。** 建て方の分岐は `SearchEngine::from_material` の 1 か所に閉じており、そこへ戻すために `Option` を外へ出していない。ここが要るのは 2 つの理由による: (1) `extend_with_path_entries` が**マスクを取り落とさない**ことを検知器が名指しで測れるようにする——落とすと `from_material` が黙ってツリーからの導出へ切り替わり、A/B 一致は**成立したまま**削減だけが消える（挙動テストでは検出されない類の退行）。(2) `tests/memory_footprint.rs` が「どちらの分岐を測ったか」を出力に添える——添えないとその数字は読めない。
     #[doc(hidden)]
     pub fn has_masks(&self) -> bool {
         self.masks.is_some()

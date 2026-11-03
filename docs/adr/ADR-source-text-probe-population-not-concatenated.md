@@ -39,11 +39,11 @@ let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/egui_shell/launcher_controll
 
 **却下**（`/plan-review` の独立導出が「新しい子モジュールが黙って母集団の外に落ちる」として要対処で挙げた）。**所見が立つ前提が成立しない**——その導出は「`include_str!` はパスを計算できないので母集団はリテラルの配列にならざるをえない」を置いていたが、`read_dir` は母集団をファイルシステムから導くので、子を足せば `mod` を書かなくても自動で母集団へ入る。
 
-**ずれの向きも逆である**: `mod` 宣言のある `.rs` の欠落は起こりえず（コンパイルエラー）、`mod` 宣言の無い `.rs` の混入は誤爆＝赤方向で `governance:check` の `G-module-linkage` が別に捕まえる。**足す前に「壊れたとき緑が緑のまま推移するか」を問うと、推移しない。**
+**ずれの向きも逆である**: `mod` 宣言のある `.rs` の欠落は起こりえず（コンパイルエラー）、`mod` 宣言の無い `.rs` の混入は誤爆＝赤方向で `governance:check` の `G-module-linkage` が別に検出する。**足す前に「壊れたとき緑が緑のまま推移するか」を問うと、推移しない。**
 
 ### 母集団に下限の assert（「2 枚以上」等）を置く
 
-**却下。** 数え上げは足すたびに腐る（`AGENTS.md`「検証の作法」）。空母集団は `sole_file_with` の「ちょうど 1 枚」assert が赤にする——**3 本の検査すべてで実測した**。
+**却下。** 数え上げは足すたびに古くなる（`AGENTS.md`「検証の作法」）。空母集団は `sole_file_with` の「ちょうど 1 枚」assert が赤にする——**3 本の検査すべてで実測した**。
 
 ### 親モジュール `egui_shell/launcher_controller.rs` を母集団へ含める
 
@@ -61,12 +61,12 @@ let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/egui_shell/launcher_controll
 
 ## 受容した残余
 
-**塞がない死角を宣言する。正本は各シンボルの doc である**（ここへ写すと、あちらを直したときこの行だけが腐る）。
+**塞がない死角を宣言する。正本は各シンボルの doc である**（ここへ写すと、あちらを直したときこの行だけが古くなる）。
 
 - **4 本目の入口の新設は沈黙する**——対象の正本が `entry_points` 配列で、母集団の側から導かれていない。**#1201 が消したのは「移動で射程が黙って狭まる」側だけである**
 - **inline `#[cfg(test)] mod tests` の混入**——`read_to_string` は属性を解釈しない。曝露面が 1 枚から直下の子全部へ広がる
 - ~~**`owners_of_all` を「ファイルごとに呼ぶ」ことに検知器は無い**（散文の契約）~~ — **`/simplify` の altitude 枠の指摘で閉じた**（合成 fixture の回帰テストを置いた。`owners_of_all` / `sole_file_with` は `&[(String, String)]` 上の純関数なので fixture が当たる——実ディレクトリを読む `sources` とは違う。この区別を当初せず 3 関数まとめて「fixture では測れない」と判じていた）
-- **`file_type` の `Err` 枝は発火を実測していない**——Windows の `DirEntry::file_type` は `FindNextFileW` のデータから組み追加 I/O をしないため、壊れた junction を置いても `Ok` が返る
+- **`file_type` の `Err` 分岐は発火を実測していない**——Windows の `DirEntry::file_type` は `FindNextFileW` のデータから組み追加 I/O をしないため、壊れた junction を置いても `Ok` が返る
 
 ## 実測した機構（フォールトインジェクション）
 

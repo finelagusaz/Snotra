@@ -1,6 +1,6 @@
 //! 構築（`assemble` / 各コンストラクタ）の不変条件のテスト。
 //!
-//! 検索の結果は正しいまま余剰容量だけが常駐する、という失敗は**挙動テストで捕まらない**。
+//! 検索の結果は正しいまま余剰容量だけが常駐する、という失敗は**挙動テストで検出されない**。
 //! ここはその 1 点を守る。
 
 use super::common::{make_entries, real_index_entries, real_scanned_entries};
@@ -29,7 +29,7 @@ struct CollapseCounts {
 /// 保存側の導出と `assemble` の測り直しが、同じ入力に対して **`entry_view` の読み替えまで
 /// 一致する**ことを全件で確かめる。
 ///
-/// 反復 11 で cache-miss の枝が `new_from_tree`（`Measured` を `assemble` が測って潰す）から
+/// 反復 11 で cache-miss の分岐が `new_from_tree`（`Measured` を `assemble` が測って潰す）から
 /// `new_with_cached_masks`（保存が返す `Collapsed` をそのまま使う）へ移った。一致は
 /// **構成的には示せる**——`name` はツリーが逐語で持ち、`lower_file_name` の材料は原文と組み直しが
 /// バイト一致し（`path_store_raw_matches_target_path_over_real_index` が実データ全件で接地）、
@@ -109,7 +109,7 @@ fn assert_engines_agree(
             "{label}/migemo={migemo_enabled}: index {i} の共有フラグがずれている"
         );
         // **表現そのものも比べる。** 読み替えが一致していても、片方だけが実体を持ち続けて
-        // いれば削減が失われている（結果は正しいままなので挙動テストでは捕まらない）。
+        // いれば削減が失われている（結果は正しいままなので挙動テストでは検出されない）。
         assert_eq!(
             a.lower_names.get(i).is_none(),
             b.lower_names.get(i).is_none(),
@@ -314,7 +314,7 @@ fn path_merge_keeps_the_sorted_prefix_even_though_the_whole_tree_is_no_longer_so
 /// この変異で 2 腕が同時に落ち、「空マージがフラグを下ろす」退行と「マージ前からフラグが偽」の退行を
 /// 区別できなくなる（レビュー M-2）。
 /// **`Engine::sorted_by_path` の本体を `true` リテラルへ潰す変異でも実測してある**——
-/// 腕 4 の**偽の側だけ**が落ちる（真の側は素通りする）。恒真の退行を捕まえるのはこの 1 本である。
+/// 腕 4 の**偽の側だけ**が落ちる（真の側は素通りする）。恒真の退行を検出するのはこの 1 本である。
 ///
 /// **腕ごとに守る不変条件が違う。** 腕 1 は基準線（整列済みならフラグが立つ）、腕 2 は「非空の
 /// マージで下りる」、腕 3 は下の「空マージでは下りない」、**腕 4 は `Engine` 段の passthrough を
@@ -425,7 +425,7 @@ fn path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries() {
 ///
 /// **起動経路と背景の再構築（`drain_index`）は同じ `IndexMaterial::extend_with_path_entries` を通る**ので、この 1 本が両方を覆う。**crate 外からそこを迂回するコードは書けない**——ツリーとマスクは `IndexMaterial` の private フィールドで、`IndexTree::extend_with_roots` も `pub(crate)` である。**ただし crate 内では書ける**（`snotra-core` の中に PATH マージの呼び出し点は無いので、現状は残余ではなく余地である）。
 ///
-/// **派生データを持たない枝はここを通らない。** [`path_merge_extends_the_tree_even_without_derived_data`] がそちらを持つ——ツリーへの追加が `if let Some` の内側へ入る誤りに、この検知器は原理的に当たらない（派生データを持つ枝しか通らないため。変異を注入して、あちらだけが赤くなることを実測した）。
+/// **派生データを持たない分岐はここを通らない。** [`path_merge_extends_the_tree_even_without_derived_data`] がそちらを持つ——ツリーへの追加が `if let Some` の内側へ入る誤りに、この検知器は原理的に当たらない（派生データを持つ分岐しか通らないため。変異を注入して、あちらだけが赤くなることを実測した）。
 #[test]
 fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     let mut base = vec![
@@ -501,11 +501,11 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
 ///
 /// **この腕は到達可能な製品経路である。** 到達する条件は**初回起動**（`main` が空のツリーから材料を作る）、`Config::config_dir` が引けず `indexer::rebuild_and_save` が派生データを返さないとき、そして `load_cache_in` の**マスクを持たない版の腕**である。**「派生文字列を持たない古い版のキャッシュヒット」と書いてはならない**（かつてそう書いていた）——そちらは `Some(CachedMasks { lower: None })` を返すので**この腕を通らない**。`CachedMasks` の doc の「古い版は `None`」は `lower` の話であり、材料そのものの有無ではない。条件の正本は `load_cache_in` の分岐である。**「起こりえない状態のテスト」として削らないこと。**
 ///
-/// 守るのは 1 つ: ツリーへの追加が `masks` の有無に**引きずられない**こと。追加を `if let Some` の内側へ書いてしまうと、`None` の枝では PATH エントリが索引から丸ごと落ちる——**panic も型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである（上の検知器は `Some` の枝しか通らないので、この誤りには当たらない）。
+/// 守るのは 1 つ: ツリーへの追加が `masks` の有無に**引きずられない**こと。追加を `if let Some` の内側へ書いてしまうと、`None` の分岐では PATH エントリが索引から丸ごと落ちる——**panic も型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである（上の検知器は `Some` の分岐しか通らないので、この誤りには当たらない）。
 ///
 /// **効いているのは `tree.len()` の等値検査だけである。** 下の A/B 比較は、この腕では A 側と同じ計算になるので**原理的に失敗しない**——`extend_with_roots` を共有しているため、その関数を変えれば A と B が同じだけ動く。**「根として足すべきものを親解決して足す変更を見逃す」と書いてはならない**（かつてそう書いていた・ラウンド 2 の指摘への修正で持ち込み、ラウンド 3 が「消えた」と誤判定し、`/code-review` の再実行が現存を実測した）: `IndexTree::build` の doc が「**結果は変わらず、記憶域が増えるだけである**」と書くとおり、根か親解決かは `materialize` を通した像に差を生まない。
 ///
-/// **それでも A/B を置いてあるのは、`extend_with_path_entries` 自身が `entries` を並べ替える変更を捕まえるためである**（`len` は等しいまま `entry_view(i)` が食い違う）。絞る・重複を落とす変更は `len` に出るので、A/B が要るのは並べ替えだけである。**この 1 点は未計測である**（変異を注入していない）。
+/// **それでも A/B を置いてあるのは、`extend_with_path_entries` 自身が `entries` を並べ替える変更を検出するためである**（`len` は等しいまま `entry_view(i)` が食い違う）。絞る・重複を落とす変更は `len` に出るので、A/B が要るのは並べ替えだけである。**この 1 点は未計測である**（変異を注入していない）。
 #[test]
 fn path_merge_extends_the_tree_even_without_derived_data() {
     let mut base = vec![
@@ -598,7 +598,7 @@ fn owned(names: &[&str]) -> Vec<String> {
     names.iter().map(|s| s.to_string()).collect()
 }
 
-/// 余剰容量は「検索は正しいが常駐だけが増える」形の劣化ゆえ、挙動テストでは捕まらない。
+/// 余剰容量は「検索は正しいが常駐だけが増える」形の劣化ゆえ、挙動テストでは検出されない。
 ///
 /// 経路は `new_with_cached_masks` の [`CachedLower::Raw`] 腕を選ぶ——`Vec<String>` → `Vec<Box<str>>` の
 /// 変換が確保ブロックを再利用して余剰を持ち越すため、実運用で余剰が最も乗る経路である。
@@ -694,7 +694,7 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
 ///
 /// **測り直しの有無はここでは測れない**（測り直しても結果は変わらない・`DerivedStrings` の
 /// doc）。索引の内部表現（`is_none` とフラグ）まで見るのは、**検索結果が正しいまま削減だけが
-/// 失われる**形の退行を捕まえるためである。
+/// 失われる**形の退行を検出するためである。
 #[test]
 fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
     let entries = vec![
@@ -835,13 +835,13 @@ fn shared_file_name_flag_is_measured_not_inferred_from_is_folder() {
     }
 }
 
-/// **共有は鎖になっている**: `lower_file_names[i]` → `lower_names[i]` → `entries[i].name`。
-/// 両方の輪が同時に外れるエントリ（既に小文字の folder）で、`entry_view` が鎖を上から解いて
+/// **共有はチェーンになっている**: `lower_file_names[i]` → `lower_names[i]` → `entries[i].name`。
+/// 両方の輪が同時に外れるエントリ（既に小文字の folder）で、`entry_view` がチェーンを上から解いて
 /// 元のバイトを返すことを固定する。
 ///
-/// **鎖の順序を誤ると削減だけが減り、結果は正しいまま**である——`assemble` が先に
+/// **チェーンの順序を誤ると削減だけが減り、結果は正しいまま**である——`assemble` が先に
 /// `lower_names` を潰すと file name 側の比較相手が消えて共有を取りこぼすが、`entry_view` は
-/// どちらでも正しい値を返すので**挙動だけを見るテストでは捕まらない**。ゆえに索引が実際に
+/// どちらでも正しい値を返すので**挙動だけを見るテストでは検出されない**。ゆえに索引が実際に
 /// 文字列を落としたか（`is_none`）まで見る。
 #[test]
 fn shared_lower_name_chain_collapses_both_links() {
@@ -872,7 +872,7 @@ fn shared_lower_name_chain_collapses_both_links() {
         );
         assert!(
             engine.lower_names.get(0).is_none(),
-            "migemo={migemo_enabled}: name と同一なら鎖の上段が落ちる"
+            "migemo={migemo_enabled}: name と同一ならチェーンの上段が落ちる"
         );
         assert!(
             engine.lower_file_names.text_at(0).is_none(),

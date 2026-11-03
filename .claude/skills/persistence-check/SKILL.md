@@ -80,7 +80,7 @@ $ARGUMENTS から対象の永続化構造を特定し、ソースコードを読
     （1 分岐だけ直しても別分岐に破壊的フォールバックが残る・#343）
 ```
 
-区分の正本は `snotra-core/src/config/io.rs` の `LoadOutcome`、各枝の保全の正本は同じファイルの `Config::load_from_dir_reporting` の doc。
+区分の正本は `snotra-core/src/config/io.rs` の `LoadOutcome`、各分岐の保全の正本は同じファイルの `Config::load_from_dir_reporting` の doc。
 
 ## Step 5 — 派生・移行経路の整合
 

@@ -85,7 +85,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
     失うものが無い。⚠️ 付随事項: 撤去後、21 本の `export const domains` 行は誰も使わない宣言として残る。
     検査ファイル本体は今回対象外ゆえ、行を消すか注釈として残すかは別の判断である。
     また registry.mjs //!（L5-6）と governance-check.mjs の契約コメント（L25-27）の散文が
-    腐るので、撤去する場合は同じ変更で削る。
+    古くなるので、撤去する場合は同じ変更で削る。
 
 --- 項目 4: manifest の domains 列 ⚠️ --------------------------------------
 
@@ -97,7 +97,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
     ない（禁止線は「黙って壊れて空虚に緑」であって「見える削除にゴム印が要らなくなる」ではない）。
     ⚠️ ただし残余を名指す: 5 ドメイン（headingRefDocs / headingRefSourceDocs /
     headingRefCommentDocs / staleIdentifierDocs / staleIdentifierGuideDocs）は**どの検査も宣言して
-    いない**ため、削除しても registry の未知名 throw（項目 3）では捕まらない。この 5 本にとって
+    いない**ため、削除しても registry の未知名 throw（項目 3）では検出されない。この 5 本にとって
     manifest 列は npm test の外にある唯一の機械検出である。連携残余（§2）で併せて裁定する。
 
 --- 項目 5: 錨の総称反証テスト（Phase 3 の B） ⚠️ ---------------------------
@@ -137,7 +137,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 
 (a) scripts/governance-check.test.mjs「facade の公開面（export { … } の凍結）」（L113-）
 (b) facade の再輸出一覧が短いこと自体の機構上の役目（governance-check.mjs L73-89: #1094 で
-    再輸出を絞ったから、検査ファイルの消失が manifest 差分で捕まる）を機械で凍結する。
+    再輸出を絞ったから、検査ファイルの消失が manifest 差分で検出される）を機械で凍結する。
     第 2 層（manifest）の検出能力を守る機構 = 第 3 層。
 (c) checks/ の関数を facade へ再輸出し直す後退——manifest の検査消失検出が import エラーの遮蔽へ
     戻る形——が npm test で赤くならなくなる。
@@ -152,7 +152,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 
 項目 3（registry の未知名 throw）・項目 4（manifest domains 列）・項目 5（レシピ残骸 assert）を
 **同時に**撤去すると、DOMAIN_SPECS エントリの削除は全ドメインについて機械の視界から消える。
-なお今日ですら、エントリとレシピを同一 PR で消す協調削除を捕まえるのは manifest 列だけである
+なお今日ですら、エントリとレシピを同一 PR で消す協調削除を検出するのは manifest 列だけである
 （レシピを同時に消せば残骸 assert は緑・削られた側のドメインを G-domain-anchors は見ない）。
 3 点撤去後に残る網は「domains.mjs への loud な diff を人間がレビューする」のみ。
 
@@ -177,7 +177,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 
 3-2. G-domain-anchors（checks/ 内・21 本対象外だが名指しで確認）と、その糧である
      scripts/governance/domains.mjs（DOMAIN_SPECS L56-296・buildDomains L299-305）
-     根拠: 自身の //! が「これは『検査を検査する層』である」と名乗るため、素朴な適用の第一候補に
+     根拠: 自身の //! が「これは『検査を検査する層』である」と示すため、素朴な適用の第一候補に
      なる。だがこれこそ原則が許す 1 段目であり、消せば #1143 級（母集団が**空でないまま縮む**）が
      再び全面的に沈黙する。domains.mjs はその錨データ本体——検査だけ残してデータを消せば
      「ドメインが 0 件」の finding で恒久に赤くなる（fail-closed）ので、一体で残す。

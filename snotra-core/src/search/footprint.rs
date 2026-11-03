@@ -14,7 +14,7 @@
 //! # 網羅性はコンパイラに担保させる
 //!
 //! [`SearchEngine::footprint_rows`] は `self` を**網羅的に分解**する（`..` を書かない）。
-//! 並列 Vec を足したときに、`CLAUDE.md` のチェックリストではなくコンパイラが漏れを捕まえる
+//! 並列 Vec を足したときに、`CLAUDE.md` のチェックリストではなくコンパイラが漏れを検出する
 //! ——文書の契約ではなく構造で担保する形である。**`..` を足してはならない。**
 //!
 //! # 数える勘定
@@ -66,7 +66,7 @@ impl FootprintRow {
 ///
 /// **フラグ 2 本のように 2 つの確保を 1 行へ束ねてはならない**——ブロックを 1 つ数え落とす
 /// （**未帰属 +1 blocks として実測に出た**。バイトは合っていたので、バイトだけの検算では
-/// 捕まらない）。
+/// 検出されない）。
 pub(super) fn arena_part(label: &'static str, bytes: usize, count: usize) -> FootprintRow {
     FootprintRow {
         label,
@@ -156,7 +156,7 @@ impl SearchEngine {
             lower_names.len(),
         ));
 
-        // 比較相手は**解決後**の `lower_name`（鎖の上段が潰れていれば表示名）。フラグが立って
+        // 比較相手は**解決後**の `lower_name`（チェーンの上段が潰れていれば表示名）。フラグが立って
         // いる分は列に実体を持たないので、ここへは現れない。
         let mut leaked_files =
             FootprintRow::empty("lower_file_names（= lower_names なのに実体を持つ・件数）");

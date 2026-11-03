@@ -2,7 +2,7 @@
 #
 # **ここに書けるのは workspace 水準と local 水準のキーである。** rust-analyzer は設定を 4 水準
 # （global / local / workspace / client）に分けており、リポジトリ直下の `rust-analyzer.toml` は
-# そのうち **2 枝**を運ぶ——`RatomlFile::Workspace` が抱えるのが
+# そのうち **2 つの分岐**を運ぶ——`RatomlFile::Workspace` が抱えるのが
 # `WorkspaceLocalConfigInput { workspace, local }` で、local の解決器も source root を遡りながら
 # `RatomlFile::Workspace(config) => config.local.<key>` を読むためである。ゆえに `diagnostics.*`
 # のような local 水準のキーもここで設定できる。一方 `files.exclude` / `hover.*` /

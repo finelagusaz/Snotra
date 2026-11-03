@@ -81,7 +81,7 @@ fn built_at_text(built_at: Option<u64>, tr: &Tr) -> String {
     };
     match chrono::Local.timestamp_opt(secs, 0).single() {
         Some(dt) => format_built_at(&dt),
-        // 範囲外の値（壊れたファイル）も「未構築」へ倒す。
+        // 範囲外の値（壊れたファイル）も「未構築」にする。
         None => tr.t(TrKey::LabelIndexNotBuilt).to_string(),
     }
 }
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(format_built_at(&dt), "2026-08-04 09:12");
     }
 
-    /// **不在は「未構築」へ倒す。** `index.bin` が無い・読めない・壊れているを
+    /// **不在は「未構築」にする。** `index.bin` が無い・読めない・壊れているを
     /// 区別しない——ユーザーにとってはどれも「まだ構築していない」と同じである。
     #[test]
     fn an_absent_index_renders_as_not_built() {
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(built_at_text(None, &tr), tr.t(TrKey::LabelIndexNotBuilt));
     }
 
-    /// **`i64` に収まらない値は「未構築」へ倒す。** `i64::try_from` が `Err` を返す経路。
+    /// **`i64` に収まらない値は「未構築」にする。** `i64::try_from` が `Err` を返す経路。
     /// `secs as i64` の `as` キャストだと two's complement で wrap し
     /// （`u64::MAX as i64 == -1` は有効なタイムスタンプ）壊れたファイルへもっともらしい
     /// 誤った日付を表示してしまう——この回帰を防ぐ。
@@ -288,7 +288,7 @@ mod tests {
         );
     }
 
-    /// **`i64` には収まるが chrono の表現可能範囲を超える値も「未構築」へ倒す。**
+    /// **`i64` には収まるが chrono の表現可能範囲を超える値も「未構築」にする。**
     /// 上のテストとは別の防壁（`timestamp_opt(...).single()` が `None` を返す経路）を測る。
     #[test]
     fn a_timestamp_beyond_chronos_range_renders_as_not_built() {

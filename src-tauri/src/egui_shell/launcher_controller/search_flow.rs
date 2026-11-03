@@ -4,7 +4,7 @@
 //! `drain_search`・`clear_search` が `SearchState` の `set_results` / `accept_worker_rows` を呼ぶ。
 //! **ここだけではない**: `activation.rs` も撃つ（`start_launch` の in-flight 失効と `on_enter` の
 //! flush。どちらも理由は当該 doc が持ち、前者は `layout.rs` の表示ゲートの導出根拠でもある）。
-//! **差し替え点を数え上げないこと**——足すたびにこの行だけが腐る。母集団は
+//! **差し替え点を数え上げないこと**——足すたびにこの行だけが古くなる。母集団は
 //! `git grep 'state\.set_results('` が持つ。
 //!
 //! ここに**無いもの**:
@@ -91,7 +91,7 @@ impl LauncherController {
                         }
                         let query = self.state.query().to_string();
                         let seq = self.state.issue_search(self.last_input_at, Instant::now());
-                        // 送信できたなら**結果が届くまで前の行を保つ**（folder cache 未着枝と同じ扱い）。
+                        // 送信できたなら**結果が届くまで前の行を保つ**（folder cache 未着分岐と同じ扱い）。
                         if self
                             .search_tx
                             .send(crate::egui_shell::SearchRequest { seq, query })
@@ -102,8 +102,8 @@ impl LauncherController {
                             // 経路）を問わず必ずここを通る——死因ごとの塞ぎ方より射程が広い。
                             // **再送では回復しない**（受け手はもう居ない）ため、前の行を保つと
                             // 保持が恒久化し、debounce が armed でない Enter が旧クエリの項目を
-                            // 起動する（`on_enter` の flush が「どちらの枝でもクリアする」理由と
-                            // 同じ危険である）。上の空クエリ枝と同じ処置へ合流させる。
+                            // 起動する（`on_enter` の flush が「どちらの分岐でもクリアする」理由と
+                            // 同じ危険である）。上の空クエリ分岐と同じ処置へ合流させる。
                             self.state.set_results(Vec::new());
                         }
                     }
@@ -121,7 +121,7 @@ impl LauncherController {
                         // 既定の instant コマンドを返すと「たまたま既定と一致する利用者にだけ正しい」
                         // 行が出て、**しかもその行は起動できない**——`execute_instant_selected` の
                         // 読みは同じ不在で `None` へ落ち、`egui_instant_error` を残して何もしない。
-                        // 空へ倒せば、起動できない行がそもそも出ない。
+                        // 空にすれば、起動できない行がそもそも出ない。
                         // なお不在そのものが実運用で起きない（`.manage` は `.setup` より前・根拠は
                         // `crate::egui_shell::read_config` のコメントと
                         // ADR-config-default-fallback-references）。

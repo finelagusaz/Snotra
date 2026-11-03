@@ -213,7 +213,7 @@ mod tests {
     /// 示す——reset を抜けば `Hide` になる状況を作れている、という対照である。
     ///
     /// **このテストは `consume_reset_pending` の `reset()` 呼び出しが消えたことを検出しない**
-    /// （実測: 呼び出しを削除しても blur 系 12 本すべて通る）。**消失を捕まえるのはテストではなく
+    /// （実測: 呼び出しを削除しても blur 系 12 本すべて通る）。**消失を検出するのはテストではなく
     /// `dead_code` である**——射程と脆さは `BlurGrace::reset` の doc が正本。
     /// **`reset` の実装が部分的になった場合**（例: `Blurred` のときだけ戻す）は、
     /// テスト A ではなく `blur_grace_resets_prior_focus_across_hide` が落ちる（実測）。
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn blur_hides_only_when_all_gates_pass() {
         use super::blur_should_hide;
-        // focused, grace_elapsed, auto_hide。各行は 1 つだけ倒して落ちることを見るので、
+        // focused, grace_elapsed, auto_hide。各行は 1 つだけ反転させて落ちることを見るので、
         // この 4 行が「3 連言」を一意に固定する（ゲートが 3 つで全部である根拠は関数の doc）。
         assert!(blur_should_hide(false, true, true)); // 全成立 → hide
         assert!(!blur_should_hide(true, true, true)); // フォーカス復帰 → hide しない

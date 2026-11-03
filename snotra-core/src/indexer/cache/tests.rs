@@ -1,4 +1,4 @@
-//! `index.bin` の入出力のテスト——オンディスク形式の凍結、版のフォールバック鎖、旧版の形式昇格、
+//! `index.bin` の入出力のテスト——オンディスク形式の凍結、版のフォールバックチェーン、旧版の形式昇格、
 //! キャッシュと走査の振り分け、書き込みの排他。
 
 use super::super::keys::normalize_entry_key;
@@ -322,11 +322,11 @@ const GOLDEN_V6: &[u8] = &[
 /// **v6 の凍結バイト列から `load_cache_in` が読めること。**
 ///
 /// **`index_tree_raw_matches_frozen_v6_specimen` では代用できない。** あちらは
-/// `try_deserialize_with_header` を直接呼ぶので、`load_cache_in` の枝選択・`config_hash` の
+/// `try_deserialize_with_header` を直接呼ぶので、`load_cache_in` の分岐選択・`config_hash` の
 /// 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない。
 ///
-/// **v6 は、v7 が現行になったときにフォールバック枝へ落ちた版である。** そのとき
-/// この枝は新設であり、かつ**最初に通る人が最も多い**枝でもあった。
+/// **v6 は、v7 が現行になったときにフォールバック分岐へ落ちた版である。** そのとき
+/// この分岐は新設であり、かつ**最初に通る人が最も多い**分岐でもあった。
 ///
 /// **`CachedLower::Collapsed` で返らなければならない。** v6 の列は記録側が潰したものであり、
 /// 未測定の全件を表す `Raw` ではない（分ける理由は `CachedLower` の doc）。
@@ -373,7 +373,7 @@ fn frozen_v6_bytes_load_as_collapsed_through_load_cache_in() {
         other => panic!("v6 は Collapsed で返らなければならない（実際: {other:?}）"),
     }
 
-    // config_hash が違えば stale 扱いで None（他の版の枝と同じ規律）。
+    // config_hash が違えば stale 扱いで None（他の版の分岐と同じ規律）。
     assert!(load_cache_in(&dir, 12346, LegacyUpgrade::Skip).is_none());
 
     let _ = fs::remove_dir_all(&dir);
@@ -590,11 +590,11 @@ fn save_cache_sorted_in_then_load_cache_in_roundtrip() {
     assert_eq!(tree.name_at(1), "Projects");
     let masks = masks.expect("v6 cache should include masks");
 
-    // **書いたものと返したものが同一である。** cache-miss の枝はこの返り値をそのまま
+    // **書いたものと返したものが同一である。** cache-miss の分岐はこの返り値をそのまま
     // 索引の材料にするので、ここがずれると「保存したキャッシュで次回起動したとき」と
     // 「保存した回の起動」で索引の姿が変わる——**どちらも結果は正しく出る**ので挙動
-    // テストでは捕まらない。同じ値どうしの同一性ゆえ ⚠（save 側の潰し方が `assemble` の
-    // 測り直しと一致するか）の証拠にはならない。捕まえるのは「返す側だけを別実装で
+    // テストでは検出されない。同じ値どうしの同一性ゆえ ⚠（save 側の潰し方が `assemble` の
+    // 測り直しと一致するか）の証拠にはならない。検出するのは「返す側だけを別実装で
     // 計算する」退行である。
     //
     // **列ごとに分解しない。** 手で分解すると、`CachedMasks` に列が増えたとき**足し忘れ
@@ -642,9 +642,9 @@ fn save_cache_sorted_in_then_load_cache_in_roundtrip() {
 /// 走査が 1 回でも走れば現れるので、時計や環境に依存せず決定論的である。
 ///
 /// **残る死角**: この検知器が守るのは「走査という副作用が起きないこと」ではなく
-/// 「cache-hit の材料がキャッシュ由来であること」である。cache-hit 枝へ
+/// 「cache-hit の材料がキャッシュ由来であること」である。cache-hit 分岐へ
 /// `let _ = scan_all(...)` のように結果を捨てる走査を足す退行は、材料が変わらない
-/// ので**この検知器では捕まらない**（変異確認で実測。詳細はコミットの報告に残す）。
+/// ので**この検知器では検出されない**（変異確認で実測。詳細はコミットの報告に残す）。
 #[test]
 fn a_cache_hit_startup_does_not_scan() {
     let dir = temp_dir("cache_hit_no_scan");
@@ -745,7 +745,7 @@ fn load_cache_upgrades_a_legacy_format_in_place() {
 /// **昇格は保存の直前に整列する**（`sort_entries_canonical` の契約）。
 ///
 /// **3 つの書き手のうち、入力の並びが自分の制御下に無いのはここだけである**——他の 2 つ
-/// （cache-miss 枝・`rebuild_and_save`）は自分で走査した結果を数行上で整列させるが、昇格が
+/// （cache-miss 分岐・`rebuild_and_save`）は自分で走査した結果を数行上で整列させるが、昇格が
 /// 受け取るのは**過去の版が過去の canon で書いたファイル**であり、その並びを今の canon が
 /// 保証する理由は無い。ゆえに「契約を守り忘れる」以外に「そもそも整列していない入力が
 /// 来る」経路がここにだけ在る。
@@ -753,7 +753,7 @@ fn load_cache_upgrades_a_legacy_format_in_place() {
 /// **測るのは正しさではなくサイズである。** [`crate::index_tree::IndexTree::build`] は
 /// 未整列を許容し（親の二分探索が空振りするだけで別の親を返さない）、取りこぼした
 /// エントリは根になって**自分のフルパスを `table` へ実体で置く**。検索結果は正しいまま
-/// `index.bin` が太るので、挙動テストでは捕まらない。
+/// `index.bin` が太るので、挙動テストでは検出されない。
 #[test]
 fn legacy_upgrade_sorts_before_saving_so_the_tree_stays_shared() {
     let _guard = INDEX_LOCK_TEST_GUARD
@@ -900,11 +900,11 @@ fn upgrade_carries_the_built_at_it_read() {
 /// （#1054 で main の全体実行 6 回中 1 回・#1063 で別実行の 1 回）。**`Some(0)` はここでは
 /// 合格である**——通ったこと自体は variant が持ち、速さは判定に関わらない。
 ///
-/// **`Some` は「実際に書けた」ではなく「昇格の枝を通った」である**（`upgrade_legacy_cache_in`
+/// **`Some` は「実際に書けた」ではなく「昇格の分岐を通った」である**（`upgrade_legacy_cache_in`
 /// は save の失敗を飲む——理由はその doc）。書き戻しの成否を固定するのは
 /// `load_cache_upgrades_a_legacy_format_in_place` /
 /// `load_cache_does_not_rewrite_when_the_format_is_current` の対であり、ここの射程は
-/// 「計器がその枝を通ったことを報告するか」だけである。
+/// 「計器がその分岐を通ったことを報告するか」だけである。
 #[test]
 fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
     // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
@@ -942,7 +942,7 @@ fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
     // **速さではなく通ったかを見る**（`Some(Duration::ZERO)` も合格。理由はこのテストの doc）。
     assert!(
         legacy_result.upgrade_save.is_some(),
-        "旧版を Write で読んだら昇格 save の枝を通ること（`None` は\
+        "旧版を Write で読んだら昇格 save の分岐を通ること（`None` は\
          `upgrade_legacy_cache_in` のクロージャを一度も通っていないことを意味する）"
     );
 
@@ -973,7 +973,7 @@ fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
         load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write).expect("現行版が読めること");
     assert_eq!(
         current_result.upgrade_save, None,
-        "現行版は昇格しないので枝を通らないこと（`Some` は速さに関わらず\
+        "現行版は昇格しないので分岐を通らないこと（`Some` は速さに関わらず\
          `upgrade_legacy_cache_in` を通ったことを意味する）"
     );
 
@@ -984,7 +984,7 @@ fn load_cache_reports_upgrade_save_only_when_it_upgrades_a_legacy_format() {
 /// **`LoadOrScanStats::cache_save` レベルで固定する。** 上のテストは
 /// `LoadCacheResult::upgrade_save`（`load_cache_in` の返り値）までしか見ておらず、
 /// それを呼び出し元の `cache_save` へ運ぶ配線（`load_or_scan_with_stats_in` の
-/// cache-hit 枝、`cache_save: result.upgrade_save`）自体は固定していない
+/// cache-hit 分岐、`cache_save: result.upgrade_save`）自体は固定していない
 /// ——**最終レビュー Important 1 の実際の欠陥はこの配線が `cache_save: 0` を
 /// 焼き込んでいたことであり**、`upgrade_save` 単体の検知器はこの配線を落とす
 /// 退行（`result.upgrade_save` を使わず `0` を書く）では落ちない。
@@ -1007,7 +1007,7 @@ fn load_or_scan_with_stats_reports_upgrade_save_in_cache_save() {
     // **ここを `LoadCacheResult` 側と同じ variant 判定へ替えることはできない**（#1054 /
     // #1063 で替えたのは向こうだけである）——`LoadOrScanStats::cache_save` は
     // 外向き計器で覗く variant を持たず、しかもこの assert が「配線が `result.upgrade_save`
-    // を捨てて `ZERO` を焼き込む」退行を捕まえる唯一の検知器である。時間を見るのをやめると
+    // を捨てて `ZERO` を焼き込む」退行を検出する唯一の検知器である。時間を見るのをやめると
     // 検知器が 1 つ減る。
     //
     // **20,000 件という規模は、もはやこの検知器の必要条件ではない**（#1178）。かつては
@@ -1042,8 +1042,8 @@ fn load_or_scan_with_stats_reports_upgrade_save_in_cache_save() {
     assert!(cache_bin_file_in(&legacy_dir).save_bytes(&bytes), "save");
 
     let result = load_or_scan_with_stats_in(&legacy_dir, &scan, false);
-    // **`cache_hit` を先に確かめる。** hash が合わず miss 枝へ落ちた場合も
-    // `cache_save > 0` にはなりうるが、それは cache-miss 枝の独立フェーズとしての
+    // **`cache_hit` を先に確かめる。** hash が合わず miss 分岐へ落ちた場合も
+    // `cache_save > 0` にはなりうるが、それは cache-miss 分岐の独立フェーズとしての
     // save であって、昇格 save の配線を固定したことにはならない——この assert が
     // 検知器の前提を保証する。
     assert!(
@@ -1052,7 +1052,7 @@ fn load_or_scan_with_stats_reports_upgrade_save_in_cache_save() {
     );
     assert!(
         result.stats.cache_save > Duration::ZERO,
-        "cache-hit 枝で旧版昇格が走ったら LoadOrScanStats::cache_save が非 ZERO になること\
+        "cache-hit 分岐で旧版昇格が走ったら LoadOrScanStats::cache_save が非 ZERO になること\
          （load_or_scan_with_stats_in の配線 result.upgrade_save を落とす退行の検知器）"
     );
 
@@ -1090,8 +1090,8 @@ fn load_or_scan_with_stats_reports_upgrade_save_in_cache_save() {
     let _ = fs::remove_dir_all(&current_dir);
 }
 
-/// **v2 の `Write` 枝を独立に固定する。** v2 はマスクを持たない唯一の版であり、
-/// `finish_legacy_read` の `LegacyRead { masks: None, .. }` を通る構造的に他と違う枝
+/// **v2 の `Write` 分岐を独立に固定する。** v2 はマスクを持たない唯一の版であり、
+/// `finish_legacy_read` の `LegacyRead { masks: None, .. }` を通る構造的に他と違う分岐
 /// （`Skip` なら `from_tree`、`Write` なら `upgrade_legacy_cache_in` 経由で `derived`）。
 /// v4〜v6 の `Write` テストだけでは、`masks: None` を渡したときも `upgrade_legacy_cache_in`
 /// が正しく呼ばれることまでは固定されない（レビューの ⚠️ 指摘）。
@@ -1144,7 +1144,7 @@ fn load_cache_upgrades_a_legacy_v2_format_in_place() {
 }
 
 /// **現行版を読んだときは書き直さない。** ここが退行すると毎起動 17 MiB を書く
-/// （結果は正しいまま静かに遅くなるので挙動テストでは捕まらない）。
+/// （結果は正しいまま静かに遅くなるので挙動テストでは検出されない）。
 ///
 /// **`built_at` を事前に過去へ固定した現行版を fixture として直接ディスクへ置く。**
 /// `save_cache_sorted_in` で作ってから読む形（旧版）だと save→load が同一プロセス内で
@@ -1154,8 +1154,8 @@ fn load_cache_upgrades_a_legacy_v2_format_in_place() {
 /// 現在時刻へ動くので粒度に依存しない。
 #[test]
 fn load_cache_does_not_rewrite_when_the_format_is_current() {
-    // 現行版の `Write` 枝は分岐しないためロックは取らないが、`Write` を渡す以上は将来の
-    // 退行（現行版の判定漏れで旧版枝へ落ちる等）に備えて直列化しておく（Minor 7 の指摘）。
+    // 現行版の `Write` 分岐は分岐しないためロックは取らないが、`Write` を渡す以上は将来の
+    // 退行（現行版の判定漏れで旧版の分岐へ落ちる等）に備えて直列化しておく（Minor 7 の指摘）。
     let _guard = INDEX_LOCK_TEST_GUARD
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -1200,9 +1200,9 @@ fn load_cache_does_not_rewrite_when_the_format_is_current() {
 
 /// **v7 は cache-miss であり、ロードは書き戻さない**（#1309）。v7 の派生の列は照合用の
 /// 正規化を 1 つにする前の意味で書かれているので、読めば旧い意味の列で検索することになる。
-/// 置き換えは呼び出し側の全走査（cache-miss 枝）が行い、ロードはファイルに触らない。
+/// 置き換えは呼び出し側の全走査（cache-miss 分岐）が行い、ロードはファイルに触らない。
 ///
-/// **`Write` を渡す。** 旧版枝へ誤って落ちれば昇格の書き戻しが起き、バイト列が変わる。
+/// **`Write` を渡す。** 旧版の分岐へ誤って落ちれば昇格の書き戻しが起き、バイト列が変わる。
 #[test]
 fn frozen_v7_is_a_cache_miss_and_is_not_rewritten() {
     let _guard = INDEX_LOCK_TEST_GUARD
@@ -1237,7 +1237,7 @@ fn breakdown_still_reads_the_frozen_v7() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **`Skip` は書き戻さない。** `load_cached_entries`（corpus テストの入口）が通す枝で、
+/// **`Skip` は書き戻さない。** `load_cached_entries`（corpus テストの入口）が通す分岐で、
 /// ここが `Write` へ退行すると、開発者の実 `%APPDATA%\Snotra\index.bin` を読むだけの
 /// テスト実行が実データを書き換えてしまう（#1013 と同型）。`built_at` が動かないことで
 /// 書き戻しが起きていないことを測る。
@@ -1398,17 +1398,17 @@ fn load_cache_v3_fallback_yields_masks_without_lower_names() {
     assert!(v4_result.is_err(), "v3 bytes should not deserialize as v4");
 }
 
-/// **`load_cache_in` が返す `version` は、実際に読めた枝と一致しなければならない。**
+/// **`load_cache_in` が返す `version` は、実際に読めた分岐と一致しなければならない。**
 ///
-/// **フォールバックの鎖のどの枝で読めたのかを外から見る手段はこれしか無い**（材料だけを
-/// 見ても v5 の枝と v6 の枝は区別できない）。しかも**取り違えても検索結果は正しいまま**で
-/// ある——枝選択の退行は「読めてはいるが想定と違う形式で読んでいる」形で静かに残る。
-/// ゆえに **`load_cache_in` の全枝**の値をここで固定する（枝の数を書かない——版を足した
-/// ときにこの散文だけが腐り、しかも「揃っている」と読めてしまう。実際に v7 を足したとき
-/// 「5 枝すべて」のまま v6 が抜けた）。
+/// **フォールバックのチェーンのどの分岐で読めたのかを外から見る手段はこれしか無い**（材料だけを
+/// 見ても v5 の分岐と v6 の分岐は区別できない）。しかも**取り違えても検索結果は正しいまま**で
+/// ある——分岐選択の退行は「読めてはいるが想定と違う形式で読んでいる」形で静かに残る。
+/// ゆえに **`load_cache_in` の全分岐**の値をここで固定する（分岐の数を書かない——版を足した
+/// ときにこの散文だけが古くなり、しかも「揃っている」と読めてしまう。実際に v7 を足したとき
+/// 「5 つの分岐すべて」のまま v6 が抜けた）。
 ///
 /// **既存の v2 / v3 テストでは代用できない。** あちらは `try_deserialize_with_header` を
-/// 直接呼んでおり `load_cache_in` の枝選択を通らないので、`version` の帰属を見ていない。
+/// 直接呼んでおり `load_cache_in` の分岐選択を通らないので、`version` の帰属を見ていない。
 #[test]
 fn load_cache_in_reports_the_version_it_actually_read() {
     let entries = vec![AppEntry {
@@ -1432,7 +1432,7 @@ fn load_cache_in_reports_the_version_it_actually_read() {
         .collect();
 
     // **現行版**: 製品の save 経路そのものを通す（版のリテラルを書かない——比較相手は
-    // `INDEX_CACHE_VERSION` であり、番号を書くとこのコメントだけが版を上げたとき腐る）。
+    // `INDEX_CACHE_VERSION` であり、番号を書くとこのコメントだけが版を上げたとき古くなる）。
     let dir = temp_dir("version_reported_current");
     save_cache_sorted_in(&dir, entries.clone(), config_hash, BuiltAt::Scanned);
     assert_eq!(
@@ -1444,7 +1444,7 @@ fn load_cache_in_reports_the_version_it_actually_read() {
     let _ = fs::remove_dir_all(&dir);
 
     // v7: 線上表現は現行版と同じだが、読まない（cache-miss）。**実運用点が今まさに
-    // 置かれている版**であり、現行版の枝で読めてしまうと旧い意味の派生の列を使い続ける。
+    // 置かれている版**であり、現行版の分岐で読めてしまうと旧い意味の派生の列を使い続ける。
     let dir = temp_dir("version_reported_v7");
     fs::write(dir.join("index.bin"), GOLDEN_V7).expect("write v7");
     assert!(
@@ -1557,7 +1557,7 @@ fn load_cache_in_reports_the_version_it_actually_read() {
     assert_eq!(v2_result.version, 2);
     assert!(
         !v2_result.material.has_masks(),
-        "v2 はマスクを持たない（枝を取り違えていないことの裏取り）"
+        "v2 はマスクを持たない（分岐を取り違えていないことの裏取り）"
     );
     let _ = fs::remove_dir_all(&dir);
 }

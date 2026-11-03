@@ -2,7 +2,7 @@
 # 宛先が refs/heads/main の push を拒否する。
 #
 # source ではなく destination を見る。ゆえに `git push origin HEAD:main` も
-# `git push origin :main`（削除）も捕まえる。これが「リポジトリの状態を守る」語彙。
+# `git push origin :main`（削除）も検出する。これが「リポジトリの状態を守る」語彙。
 #
 # stdin: <local ref> <local sha> <remote ref> <remote sha>
 . "$(dirname "$0")/_lib.sh"

@@ -56,7 +56,7 @@ export { makeSnapshot, governanceDocs };
 /** 検査の登録表を組む。**検査 ID の SSOT は `checks/` ディレクトリの一覧である**——ファイルを
  *  置けばそのまま検査になり、ファイル名が `id` と一致することは `registry.mjs` の
  *  `checkModulesFrom` が強制する。サマリ行の件数もこの配列から計算するので、
- *  「G1..G15 passed」のような範囲を手で書く面が存在しない（範囲は黙って腐る。実例が
+ *  「G1..G15 passed」のような範囲を手で書く面が存在しない（範囲は黙って古くなる。実例が
  *  `docs/build-commands.md` に「G1〜G12」と残っていた・#812）。
  *  ID は `G-<name>` 形で連番を持たない——連番は「いま空いている最大値 + 1」をマージの瞬間に
  *  確定させるため、並行する 2 本の PR が同じ値を見る（`.claude/rules/governance-docs.md`「序数で他を指してはならない」）。 */

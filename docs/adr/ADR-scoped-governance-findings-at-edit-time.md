@@ -6,7 +6,7 @@
 **job が赤くなったのは 9 回、findings は 15 件**で、**12/15 が `G-module-index` と `G-references` の 2 本**だった。
 
 **CI ログは「検査の発火実績」ではなく「ローカルの輪から漏れた残り」しか映さない**（PR 前に
-`npm run governance:check` を回す運用なので、そこで捕まえた分は痕跡を残さずに消える）。ゆえに
+`npm run governance:check` を回す運用なので、そこで検出した分は痕跡を残さずに消える）。ゆえに
 「CI で 0 件だから不要」は使えない基準である——`G-heading-refs` は CI で 0 件だが、同じ期間に main の
 履歴では 48 コミットが参照ラベルを追随させている。逆に、**CI へ漏れてくる検査は「ローカルの輪から
 漏れる種類」を名指ししている**。
@@ -26,9 +26,9 @@
 - **gate にする（`selectChecks` へ検査 id を足し、exit code を動かす）**: 却下。**新規 `.rs` を書いた直後は
   索引が未更新であるのが正常な作業順**なので、gate にすると構造的に必ず赤くなる——
   「**永久に赤いゲートはゲートが無いのと機能的に同じ**」（`ADR-declared-colors-over-modal-color`）。
-  加えて gate 枝は `docs/hooks.md` の発火一覧表・`BUDGETS`・`buildCommand` の repro 正規化・
+  加えて gate 分岐は `docs/hooks.md` の発火一覧表・`BUDGETS`・`buildCommand` の repro 正規化・
   `G-hook-fires` の `sawEmptyRow`（`.md` が id を発火すると現行の `（なし）` 行が空でなくなる）まで
-  玉突きで動かす。reminder 枝ではこの 4 点セットが無傷である。
+  玉突きで動かす。reminder 分岐ではこの 4 点セットが無傷である。
 - **`governance:check` 全体を毎編集で回す**: 却下。ただし**却下の理由は費用ではない**。実測すると
   `node scripts/governance-check.mjs` は 0.65 秒（`npm run` 経由で 1.1〜1.3 秒）で、すでに受け入れている
   `dependentsReminder` の hook 全体 330〜386 ms と同じ桁である。**却下の理由は帰属**——全体を回すと

@@ -6,7 +6,7 @@
 
 インデックス再構築中は `SPEC.md` §4.7 の表示ゲート（`search_state::plain_results_hidden`）が通常結果を results 窓から隠すが、**行データと選択は保持する**（「クリア案」は SU6 で却下済み——SolidJS 非 parity・instant carve-out 破壊・bool エッジのパルス見逃し。正本は `docs/superpowers/specs/2026-07-21-phase2-softbuffer-migration-roadmap.md`）。
 
-一方、起動側のガードは `if !self.state.results().is_empty()` だけで表示ゲートを参照していなかった。`SearchState::is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 枝を通らないため、隠れたままの行が起動しうる。#1072 が塞いだのは同じ族の unsettled 側の切片だけだった。**競合を要さない**——2026-08-16 に使い捨てプロファイルで再現した（`egui_results:hide` の 1.4 秒後に `egui_launch`）。
+一方、起動側のガードは `if !self.state.results().is_empty()` だけで表示ゲートを参照していなかった。`SearchState::is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 分岐を通らないため、隠れたままの行が起動しうる。#1072 が塞いだのは同じ族の unsettled 側の切片だけだった。**競合を要さない**——2026-08-16 に使い捨てプロファイルで再現した（`egui_results:hide` の 1.4 秒後に `egui_launch`）。
 
 ## 決定
 
@@ -23,19 +23,19 @@
 
 **それでも却下した。** ガードの意味は「選んだ行が、いま画面に出ている行ではない」であり、**行の選択の性質**である。`start_launch` へ届く時点で引数は `LaunchWork`（path / query / tools）へ解決済みで、行そのものはもう無い。判定に要る `view_kind` / `instant_rows` を `&self` から読み直すことになり、「解決済みの起動要求」の層で行の話を蒸し返す形になる。
 
-**却下しても数は減らない**という事実も効いた——`shift_activate` の `tools >= 2` 枝は `start_launch` を通らず `SearchState::enter_tool` を直接呼ぶ（LSP の findReferences で確認）ため、どちらの案でも `shift_activate` には個別のガードが要る。
+**却下しても数は減らない**という事実も効いた——`shift_activate` の `tools >= 2` 分岐は `start_launch` を通らず `SearchState::enter_tool` を直接呼ぶ（LSP の findReferences で確認）ため、どちらの案でも `shift_activate` には個別のガードが要る。
 
 ### 2. `activate`（`folder_load_pending` の隣）へ置く
 
 **一度この案を計画に書き、独立導出レビューの指摘で覆した。** 同型の既存ガード `folder_load_pending`（「列挙未着の間は前ビューの行を起動しない」）が `activate` に在るので、隣に並べれば 2 つが常に一緒に読まれる。
 
-**却下の理由は射程である。** `activate` は `activate_or_execute` の plain 枝でしかなく、**行 index を受け取る層の合流点ではない**。クリック逆流（`view.rs` の `take_clicked_for`）と `shift_activate` の `tools <= 1` 委譲は `activate_or_execute` を通るので、そこへ置けば 1 か所で覆える。`plain_results_hidden` は tool ビュー・instant 行では**構造的に偽**（`Results ∧ !instant_rows` を条件に持つ）なので、上の層へ移しても他経路を阻害しない。
+**却下の理由は射程である。** `activate` は `activate_or_execute` の plain 分岐でしかなく、**行 index を受け取る層の合流点ではない**。クリック逆流（`view.rs` の `take_clicked_for`）と `shift_activate` の `tools <= 1` 委譲は `activate_or_execute` を通るので、そこへ置けば 1 か所で覆える。`plain_results_hidden` は tool ビュー・instant 行では**構造的に偽**（`Results ∧ !instant_rows` を条件に持つ）なので、上の層へ移しても他経路を阻害しない。
 
 ### 3. 「ゲート ∧ 行が空でない」の合成を純粋関数へ切り出す
 
 #1072 は `is_unsettled(armed, pending_seq)` として合成を名前のある純粋関数へ出し、受け入れ条件を測れる単位にした。同じ手を提案されたが**却下した——今回は合成が存在しない**。ガードは `plain_results_hidden` 単体で、「行が空でない」の判定は別の層にある（`on_enter` の `!self.state.results().is_empty()` と `activate` の `results().get(index)`）。無い合成に名前を付ければ、真実が 2 か所になる。
 
-呼び出し点の脱落は代わりに**ソーステキスト検査**が捕まえる（`activation_entry_points_consult_the_display_gate`）。`launcher_controller.rs` にテスト席が無い（`LauncherController` の構築が `AppHandle` と engine lock を要求する）ため、述語のテストは「述語が何を返すか」しか測れない。先例は `src-tauri/src/indexing.rs` の `start_index_build_invalidates_the_icon_cache`。
+呼び出し点の脱落は代わりに**ソーステキスト検査**が検出する（`activation_entry_points_consult_the_display_gate`）。`launcher_controller.rs` にテスト席が無い（`LauncherController` の構築が `AppHandle` と engine lock を要求する）ため、述語のテストは「述語が何を返すか」しか測れない。先例は `src-tauri/src/indexing.rs` の `start_index_build_invalidates_the_icon_cache`。
 
 ### 4. `indexing` を素の `bool` で配る
 

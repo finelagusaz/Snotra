@@ -58,7 +58,7 @@ export function scanHeadingRefs(snapshot, docs) {
         }
         if (!anchors.some((a) => a.startsWith(normAnchor(label)))) {
           findings.push(
-            finding(doc, lineNo, `見出し参照が着地しない: \`${target}\`「${label}」（${p} に該当する見出し・リード文が無い）`),
+            finding(doc, lineNo, `見出し参照が着地しない: \`${target}\`「${label}」（${p} に該当する見出しが無い）`),
           );
         }
       }

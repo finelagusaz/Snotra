@@ -11,7 +11,7 @@
 //!   編集の後に起きる全件走査を測れない
 //! - **結果の同一性**。クエリごとに件数と、`(name, path)` の列を順に畳んだダイジェストを出す。
 //!   版の A/B で突き合わせ、検索結果が 1 件も変わらないことを確かめる。**パスの原文は出さない**
-//!   ——実 `index.bin` は利用者の実ファイルパスを持つ（`docs/development-principles.md`「一時的な足場は、撤去までを新設の時点で決める」）
+//!   ——実 `index.bin` は利用者の実ファイルパスを持つ（`docs/development-principles.md`「観測と計装」の「一時的な足場は、撤去までを新設の時点で決める」）
 //! - 実 `index.bin` は **PATH マージあり・なし**（PATH 由来のエントリは file name が name と
 //!   一致しない）× **Substring・Fuzzy**。`normal_mode` は実 config の値ではなく両方を掃く
 //!   ——実運用点が Substring の機体でも、既定の Fuzzy の利用者に効くかを同じ表で見るため

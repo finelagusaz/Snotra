@@ -289,7 +289,7 @@ fn fold_once(s: &str) -> Cow<'_, str> {
     }
 
     // 写した結果が空白になる文字も空白の連続として扱い、圧縮と前後の除去を写したあとの
-    // 列に当てる。今の nucleo の表にそういう文字は無い（全コードポイントで 0 件）が、
+    // 列に当てる。今の [`fold_char`] の写像にそういう文字は無い（全コードポイントで 0 件）が、
     // 表が変わって現れれば、ここで扱わない限り 2 回目の適用で結果が変わる——そのときは
     // 冪等性の検知器が落ちる。
     let mut out = String::with_capacity(trimmed.len());
@@ -791,13 +791,24 @@ mod tests {
             let Some(base) = super::decomposed_base(c) else {
                 continue;
             };
-            let old = nucleo_normalize(c);
-            if old == c {
+            // 比べるのはどちらも製品の経路（小文字化 → 写像 → 小文字化）の出力である。分解の結果だけを
+            // 比べると `fold_latin` の配線の誤りを見逃し、0.3.1 の表を直に引くと、先に小文字化する
+            // 製品の経路と違う字（`İ` は小文字化で 2 字になる）を誤って数える。
+            let lower: String = c.to_lowercase().collect();
+            let old: String = c
+                .to_lowercase()
+                .map(nucleo_normalize)
+                .flat_map(char::to_lowercase)
+                .collect();
+            if old == lower {
                 continue;
             }
             compared += 1;
-            if !old.eq_ignore_ascii_case(&base) {
-                failures.push(format!("{c:?}: 0.3.1 {old:?} / 分解 {base:?}"));
+            let new: String = super::fold_char(c).collect();
+            if new != old {
+                failures.push(format!(
+                    "{c:?}: 0.3.1 {old:?} / 新 {new:?}（分解 {base:?}）"
+                ));
             }
         }
         assert!(compared > 0, "比べた字が 0 件では裏付けにならない");

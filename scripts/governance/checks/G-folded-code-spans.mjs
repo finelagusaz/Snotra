@@ -53,7 +53,7 @@ export function run(snapshot, ctx) {
 //     **7 行すべてが誤検出**だった（フェンスの記号と、それを説明する散文）ので広げていない。
 //     今日の実ツリーに実例は 0 件
 //
-// **宣言する死角——赤側へ倒れるもの（沈黙しないので人が解く）:**
+// **宣言する死角——赤になる側のもの（沈黙しないので人が解く）:**
 //   - **`.rs` の rustdoc コードフェンスの内側**。`linesOfComments` はフェンスをマスクしない
 //     （`lib.mjs` の `refScanLines` 周辺が同型の残余を既に宣言している）。今日 0 件
 //   - **`.rs` の raw string の中で `//` から始まる行**をコメントと誤判定する。`linesOfComments` の
@@ -115,7 +115,7 @@ export function scanFoldedCodeSpans(snapshot, docs) {
       continue;
     }
     // 「開いたまま」は行をまたいで持ち越す。**走査行が途切れたら捨てる**——別のコメントブロックや
-    // フェンスの向こう側の偶奇が混ざると、沈黙側にも誤報側にも倒れうる。
+    // フェンスの向こう側の偶奇が混ざると、沈黙にも誤報にもなりうる。
     let inside = false;
     let openLine = 0;
     let openTail = "";

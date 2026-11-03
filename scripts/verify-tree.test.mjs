@@ -238,7 +238,7 @@ describe("verify-tree run", () => {
     expect(r.output).toContain("sha が本体の HEAD でない");
   });
 
-  it("2 巡目は同じ木を新しい sha へ合わせて再利用する", { timeout: T }, () => {
+  it("2 ラウンド目は同じ木を新しい sha へ合わせて再利用する", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     const next = commitFile(repo, "next.txt", "next\n");

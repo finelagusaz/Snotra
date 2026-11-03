@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 # | H5 | hide を挟まない連続 `egui_results:show` は異常 | 二重発火抑止（`ResultsWindow.visible` の `swap`）の破れ |
 # | H7 | `egui_search:settled` が `dispatch_seq < pending_seq` で現れたら異常 | seq 照合そのものが外れた（#1004。**射程は下記のとおり狭い**） |
 #
-# **判定不能を PASS へ化けさせない**のがこのモジュールの要石である。「該当イベントが無い」
+# **判定不能を PASS にしない**のがこのモジュールの要石である。「該当イベントが無い」
 # 「`rows` が読めない」「main の可視状態が未観測」「区間が閉じていない」「parse できなかった
 # 行がある」はすべて SKIP であって合格ではない。
 #

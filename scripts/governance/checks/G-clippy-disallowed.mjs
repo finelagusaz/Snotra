@@ -40,7 +40,7 @@ export function run(snapshot, ctx) {
 //   見る**ため重ねない。**deny が実効するのはその opt-in が在る間だけ**であり、両検査は組で 1 つの命題を守る。
 // - ルート Cargo.toml が読めない事実は G-workspace-lints でも鳴る（1 事実 2 件）。**沈黙させない側へ倒す**
 //   ——黙って skip すれば、それ自体が新しい沈黙経路になる。
-// - disallowed_methods を**ハイフン**（`disallowed-methods`）で書いた形は非実効と判定する＝**赤に倒れる**。
+// - disallowed_methods を**ハイフン**（`disallowed-methods`）で書いた形は非実効と判定する＝**赤になる**。
 //   向きが赤（沈黙しない）なので受容するが、**次の人の最も安い直し方が「検査を緩める」にならない**よう
 //   直し方を書いておく: Cargo の lints テーブルは lint 名をそのまま書くのでアンダースコアにする
 //   （ハイフンなのは clippy.toml 側のキーだけである）。
@@ -70,7 +70,7 @@ const SRC_TAURI_MANIFEST = "src-tauri/Cargo.toml";
  *  拾わない。**コメント除去を先に通す**——通さないと `#` でコメントアウトされたエントリを「在る」と数え、
  *  `disallowed-methods = []` との組み合わせが緑を通る（実測。あのファイルはコメントで長く説明する様式ゆえ、
  *  一時的な無効化はこの形で起きるのが最も自然である）。
- *  配列の終端は最初の `]` とする。reason に `]` を書くと途中で切れてカナリアが欠け**赤に倒れる**。 */
+ *  配列の終端は最初の `]` とする。reason に `]` を書くと途中で切れてカナリアが欠け**赤になる**。 */
 export function disallowedMethodPaths(text) {
   const body = text.split("\n").map(stripTomlComment).join("\n");
   const array = body.match(/disallowed-methods\s*=\s*\[([\s\S]*?)\]/);
@@ -89,7 +89,7 @@ export function disallowedMethodPaths(text) {
  *  同型な読み取り（clippy.toml / src-tauri の Cargo.toml / ルート Cargo.toml）を取り違えても緑を通す**。
  *  節を絞ることで、その取り違えは赤として現れる（#950 の対称性検査で発見）。
  *
- *  ルート直下の dotted 形（`dependencies.egui = …`）は cargo 上有効だが非実効と判定する＝**赤に倒れる**。
+ *  ルート直下の dotted 形（`dependencies.egui = …`）は cargo 上有効だが非実効と判定する＝**赤になる**。
  *  向きが赤なので受容する。直し方: `[dependencies]` テーブルで書く。
  *  **`[target.<cfg>.dependencies]` を受けるのは非対称な残余である**——cfg がビルド対象で偽なら egui は依存に
  *  入らず、禁止パスは解決せず clippy は無診断で沈黙する。現構成では到達不能（実データの egui は素の
@@ -115,7 +115,7 @@ export function declaresEguiDependency(text) {
 const DISALLOWED_METHODS_GROUPS = ["all", "style"];
 
 /** TOML の整数リテラル。**数値区切りの `_` を落とす**——落とさないと `1_0`（TOML では 10）から 1 だけを
- *  読み、群の allow が実際より小さい priority に見えて緑へ倒れる（#950 のレビューで実測）。 */
+ *  読み、群の allow が実際より小さい priority に見えて緑になる（#950 のレビューで実測）。 */
 const tomlInt = (text) => Number((String(text).match(/-?[0-9_]+/)?.[0] ?? "0").replaceAll("_", ""));
 
 /** 同じく priority。文字列形は既定の 0。**priority が大きいほど後に当たる**ので、群の allow が個別 lint の
@@ -131,7 +131,7 @@ const lintPriority = (value) => (value.startsWith("{") ? tomlInt(value.match(/pr
  *  clippy の挙動も同じなので、**3 つとも読む**——1 つでも落とすとその綴りだけが緑を通る（実測）。
  *  priority で向きが決まり、群が**同じか大きい** priority を持つときだけ打ち消す（`priority = -1` で
  *  群を先に当てる形は禁止が生き残ることを実測したので、緑に倒す）。**`>=` は `all` で測った境界に
- *  合わせた保守的な規則である**——同 priority の `style` は実測では打ち消さないが、ここでは赤に倒れる
+ *  合わせた保守的な規則である**——同 priority の `style` は実測では打ち消さないが、ここでは赤になる
  *  （fail-closed。直し方は `priority = -1` で群を先に当てること）。
  *  隣の rustdocLintsAreDenied が「節内の全エントリが deny」という ∀ で同型の穴を塞いでいるのに対し、
  *  こちらは節に allow を書く正当な用途を残すため、**打ち消しうる群だけを名指しして**塞ぐ。

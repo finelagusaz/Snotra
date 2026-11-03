@@ -75,7 +75,7 @@ describe("G-references checkReferences", () => {
     const f = checkReferences(s, ["AGENTS.md"], () => new Set());
     expect(f.some((x) => x.message.includes("docs/typo-nonexistent.md"))).toBe(true);
   });
-  it("既定引数は何も免除しない（注入を忘れた経路は緑でなく赤へ倒れる）", () => {
+  it("既定引数は何も免除しない（注入を忘れた経路は緑でなく赤になる）", () => {
     const s = snap({ "AGENTS.md": "`test-results/.last-run.json` を見よ\n" });
     expect(checkReferences(s, ["AGENTS.md"])).toHaveLength(1);
   });

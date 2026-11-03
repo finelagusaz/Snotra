@@ -21,7 +21,7 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(run("フラグは `newValue` を見る\n", { "src-tauri/src/a.rs": "let newValue = 1;\n" })).toEqual([]);
   });
 
-  it("ソースのコメントにしか無いものは finding（由来注記を語彙に化けさせない・#736 実測 11 件）", () => {
+  it("ソースのコメントにしか無いものは finding（由来注記を語彙にすり替えない・#736 実測 11 件）", () => {
     const f = run("`resetForShow()` でクリアする\n", { "src-tauri/src/a.rs": "// resetForShow 相当\nlet x = 1;\n" });
     expect(f).toHaveLength(1);
   });

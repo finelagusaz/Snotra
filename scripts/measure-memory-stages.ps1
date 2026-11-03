@@ -19,6 +19,8 @@
     **アプリが実際に登録した VK 列**を読む（`smoke-egui.ps1` と同じ。理由はあちらの注入箇所のコメント）。
     そのため本体を `SNOTRA_TRACE=1` で起動する。trace が無かった頃の段階列（PERFORMANCE.md）とは、
     この 1 点で計測の条件が違う
+  - 索引キャッシュに当たる起動で測る。外れていたら（`startup:ready` の `cache_hit=false`）1 度だけ
+    再起動し、それでも外れれば止める
   - trace の stderr は `$env:TEMP` へ書く（実 config の trace は利用者の実パスを載せるので、リポジトリへ置かない）
   - `[general] auto_hide_on_focus_lost = false` は**推奨であって必須ではない**。上記の
     同一プロセス実行でフォーカスを保つため、`true` のままでも段階列は取れる（実測で
@@ -54,7 +56,9 @@ param(
     [string]$Query = 'code',
     # 空なら release 本体を導く（#1179・#1293）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
     [string]$ExePath = '',
-    [string]$HotkeyVks = ''
+    [string]$HotkeyVks = '',
+    # 起動の終端を待つ上限。索引キャッシュが外れた起動は全走査を含む（実 config で約 83 秒）。
+    [int]$StartupTimeoutSeconds = 240
 )
 
 $ErrorActionPreference = 'Stop'
@@ -120,18 +124,52 @@ Start-Sleep -Seconds 2
 # **finally で必ず落とす**。段階の途中で throw すると（実際に踏んだ）計測対象が起動したまま
 # 残り、次の `cargo build` が exe を掴まれて「アクセスが拒否されました」で落ちる。
 # 起動したものを片付ける責務は、成功経路だけに置いてはならない。
-$errPath = Join-Path $env:TEMP ("snotra-measure-stages-{0}.stderr.log" -f [guid]::NewGuid().ToString('N'))
-try {
-    # 実 config を読ませるので `Start-SnotraProcess`（検証用プロファイル専用）は使わない。
+$errPaths = @()
+
+# 起動して、起動の終端（`startup:ready` / `startup:failed`）を待つ。終端の data を返す。
+# 実 config を読ませるので `Start-SnotraProcess`（検証用プロファイル専用）は使わない。
+function Start-TracedSnotra {
+    $path = Join-Path $env:TEMP ("snotra-measure-stages-{0}.stderr.log" -f [guid]::NewGuid().ToString('N'))
+    $script:errPaths += $path
     Invoke-SnotraEnvironment -Variables @{ SNOTRA_TRACE = '1' } -ScriptBlock {
-        Start-Process -FilePath $ExePath -RedirectStandardError $errPath | Out-Null
+        Start-Process -FilePath $ExePath -RedirectStandardError $path | Out-Null
     }
-    Write-Host "trace: $errPath"
-    # 索引ロードと起動段の初期化が落ち着くまで待つ。**この 14 秒は背景再スキャン（#1001 で
-    # 撤去済み）が走っていた頃の見積もりであり、今は余裕が過大である。** 縮めると段階 A が
-    # 測る対象そのものが変わる（まだ動いている初期化を含む値になる）ので、**縮めるなら
-    # 新しい値を実測してから**——過去の A/B とも比較できなくなる。
-    Start-Sleep -Seconds 14
+    $launchedAt = Get-Date
+    Write-Host "trace: $path"
+    $terminal = Wait-SnotraTraceCondition -Path $path -TimeoutMs ($StartupTimeoutSeconds * 1000) `
+        -Description 'trace の startup:ready / startup:failed' `
+        -Predicate { $_.event -eq 'startup:ready' -or $_.event -eq 'startup:failed' }
+    if ($null -eq $terminal) { throw "起動の終端を ${StartupTimeoutSeconds} 秒以内に観測できない（$path）。" }
+    if (-not $terminal.data.ok) { throw "本体の起動が失敗した（reason=$($terminal.data.reason)）。" }
+    [pscustomobject]@{ Path = $path; LaunchedAt = $launchedAt; Data = $terminal.data }
+}
+
+# **finally で必ず落とす**。段階の途中で throw すると（実際に踏んだ）計測対象が起動したまま
+# 残り、次の `cargo build` が exe を掴まれて「アクセスが拒否されました」で落ちる。
+# 起動したものを片付ける責務は、成功経路だけに置いてはならない。
+try {
+    # **段階 A は、索引キャッシュに当たった起動だけで測る。** 外れると起動の中で全走査が走り
+    # （実 config で約 83 秒・2026-11-03）、14 秒後の段階 A は走査の途中を測って何も言わずに
+    # 出力していた。外れたら、走査が保存したキャッシュに当てるため 1 度だけ再起動する。
+    $started = Start-TracedSnotra
+    if (-not $started.Data.cache_hit) {
+        Write-Host ("索引キャッシュが外れていた（first_run={0}・index_load={1} ms）。キャッシュに当てるため再起動する。" -f `
+            $started.Data.first_run, $started.Data.index_load_ms) -ForegroundColor Yellow
+        Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        $started = Start-TracedSnotra
+        if (-not $started.Data.cache_hit) {
+            throw "再起動しても索引キャッシュに当たらない（first_run=$($started.Data.first_run)）。段階 A を測れない。"
+        }
+    }
+    $errPath = $started.Path
+    Write-Host ("索引キャッシュに当たった起動を測る（index_load={0} ms）。" -f $started.Data.index_load_ms)
+    # 起動から 14 秒後に測る。**この 14 秒は背景再スキャン（#1001 で撤去済み）が走っていた頃の
+    # 見積もりであり、今は余裕が過大である。** 縮めると段階 A が測る対象そのものが変わる
+    # （まだ動いている初期化を含む値になる）ので、**縮めるなら新しい値を実測してから**——
+    # 過去の A/B とも比較できなくなる。起点は上の終端の待ちの前（起動の時刻）に置き、従来と揃える。
+    $remaining = 14 - ((Get-Date) - $started.LaunchedAt).TotalSeconds
+    if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int]($remaining * 1000)) }
     Invoke-Stage 'A. アイドル（一度も表示せず）'
 
     # 注入する VK 列は段階 A の後で読む（14 秒の待機の前後で段階 A の条件を変えない）。
@@ -166,6 +204,6 @@ try {
 finally {
     Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
 }
-Write-Host "trace は $errPath に残した（実パスを含む。不要なら消す）" -ForegroundColor DarkGray
+Write-Host "trace は $($errPaths -join ' / ') に残した（実パスを含む。不要なら消す）" -ForegroundColor DarkGray
 Write-Host "########## 終了: $Label ##########" -ForegroundColor Cyan
 Write-Host '注: PrivWS は trim 後の値になりうる。確保需要は PrivComm を見ること。' -ForegroundColor DarkGray

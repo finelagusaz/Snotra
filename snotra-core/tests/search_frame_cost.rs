@@ -1,8 +1,9 @@
-//! #634 G-SYNC: egui 直 `Engine` 同期 search のフレームコスト実測ハーネス。
+//! #634 G-SYNC: egui 経路の `Engine::search` 1 回のコストを測るハーネス。
 //!
-//! egui 経路（`src-tauri/src/egui_shell/launcher_controller/` の `run_search_with`）は trailing
-//! debounce 1 回の `engine.search` を UI スレッド同期で呼ぶ。本ハーネスはその
-//! フレーム占有の支配項 `Engine::search` を、合成インデックスの規模別に実測する。
+//! egui 経路は trailing debounce 1 回ごとに `engine.search` を呼ぶ。#634 の時点では UI スレッドで
+//! 同期に呼んでいたが、#1004 から検索 worker で走る（`src-tauri/src/egui_shell/launcher_controller/search_flow.rs`
+//! の `//!`）。本ハーネスは、その 1 回の支配項 `Engine::search` を合成インデックスの規模別に実測する。
+//! 今の値が意味するのは「フレームを止める額」ではなく「打鍵から結果が出るまでの遅れの下限」である。
 //!
 //! タイミング測定は CI 共有ランナーで不安定なため `#[ignore]`。手元で release 実行する:
 //! `cargo test -p snotra-core --release --test search_frame_cost -- --ignored --nocapture`
@@ -14,7 +15,9 @@
 //! `src/search/tests/performance.rs` の `bench_search` とは測る層が異なる（重複でない）:
 //! あちらは `SearchEngine::search`（下層 API・固定 limit 10・空履歴・Fuzzy 固定）の
 //! スケーリング、こちらは `Engine::search`（facade・config 実効 limit・履歴ブースト込み）
-//! ＝ egui view の実呼び出し形のフレームコスト。
+//! ＝ egui 経路の実呼び出し形のコスト。
+//!
+//! **撤去条件**: `Engine::search` を製品の検索経路から外す変更と同じ PR で消す。
 
 use std::time::Instant;
 

@@ -566,6 +566,8 @@ fn path_merge_extends_the_tree_even_without_derived_data() {
 ///
 /// 合成 fixture では作れないものを足す——深い階層・非 ASCII・空白・大文字の拡張子、
 /// 根と非根が混ざったツリー。`#[ignore]` は実環境依存ゆえで、CI の保証は上の合成が持つ。
+///
+/// **撤去条件**: 保存側の潰し方（`Collapsed`）を製品から消す変更と同じ PR で消す。それまでは恒久の検知器である。
 #[test]
 #[ignore = "実ファイルシステムの全走査・手元で明示的に走らせる"]
 fn save_side_collapse_agrees_with_assemble_over_real_index() {

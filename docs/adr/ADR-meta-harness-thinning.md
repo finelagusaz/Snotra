@@ -9,7 +9,7 @@
 3. 編集後の自動検証（PostToolUse フック）
 4. 常時ロードされる規範の圧縮（ルート `CLAUDE.md` のフック節と委譲節・`AGENTS.md` の機構に関する行・`.claude/rules/safety-nets.md`）。規則は残し、事件の経緯を落とした
 
-守ったもの: 参照の腐りを見る検査群・製品の設定を照合する検査群・`/plan-review` の Step 2b・`.githooks/` と GitHub ruleset・PreToolUse フック。
+守ったもの: 参照の陳腐化を見る検査群・製品の設定を照合する検査群・`/plan-review` の Step 2b・`.githooks/` と GitHub ruleset・PreToolUse フック。
 
 ## 撤去の単位 — 検査の良し悪しではなく「何を走査しているか」
 

@@ -858,7 +858,7 @@ mod tests {
     /// 旧実装が両辺を `Ascii` の生バイトとして突き合わせて得ていた一致を、修正後も保つ（#1276）。
     ///
     /// 回帰テスト: haystack だけを `Utf32String::from` の形へ替え、needle を `Utf32Str::new` のまま残すと、
-    /// `(Unicode, Ascii)` の組になってこの一致が落ちる——片側だけ替える退行を捕まえる。
+    /// `(Unicode, Ascii)` の組になってこの一致が落ちる——片側だけ替える退行を検出する。
     #[test]
     fn fuzzy_filter_keeps_old_byte_level_matches() {
         use crate::search::SearchMode;

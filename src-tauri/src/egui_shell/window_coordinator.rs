@@ -37,8 +37,8 @@
 //!
 //! **可視性を変える操作はイベントループスレッドに閉じてある**——`show_egui_main` / `hide_egui_main` /
 //! `drive_results_window` / `ResultsWindow::{show, hide}` は `&snotra_egui_runtime::EventLoopProof` を要求する。
-//! **可視性を変える新しい操作にも同じ証人を要求する**——型が捕まえるのは「別スレッドから呼ぶ」ことだけで、
-//! 証人の付け忘れや引数からの除去は捕まえない。閉じたのはこれらの関数であって `tauri::Window` の生の面
+//! **可視性を変える新しい操作にも同じ証人を要求する**——型が検出するのは「別スレッドから呼ぶ」ことだけで、
+//! 証人の付け忘れや引数からの除去は検出しない。閉じたのはこれらの関数であって `tauri::Window` の生の面
 //! ではない（何が外に残るかは `hide_egui_main` の doc）。
 //!
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
@@ -388,7 +388,7 @@ pub(crate) fn show_egui_main(
         // `set_size(width, m.bar_height)` を撃ち、`position_on_target_monitor` が
         // `outer_size()` で読み戻していた——**畳むこと自体に目的は無く、値を渡す手段が
         // OS のウィンドウしか無かった**（継ぎ目 2）。導出できなければ位置決めをしない（取得失敗時に
-        // 何もしない側へ倒すのは、クランプ経路と同じ倒し方である）。
+        // 何もしない側を選ぶのは、クランプ経路と同じ寄せ方である）。
         let derived_bar = derive_bar_rect_phys(&window, width, m.bar_height);
         if let Some(bar) = &derived_bar {
             position_on_target_monitor(app, &window, *bar);
@@ -558,7 +558,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // 「results.hide() 済み・main_visible=true」の隙間へ割り込むフレームはもはや構築できない
     // ——この順序を保つのは、show 側の「show() の後に true を立てる」（順序不変制約）との
     // 対称のためである。どちらも「main が可視でない期間に visible=true と読ませない」向きに
-    // 倒している。
+    // 寄せている。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.main_visible.set(false);
     }
@@ -676,7 +676,7 @@ pub(crate) fn wake_results(app: &tauri::AppHandle) {
 /// なく**この関数が 1 つであること**で担保する（同じ値を 2 か所で計算させると、次の利用者が
 /// 写しを書く）。
 ///
-/// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側へ倒す。
+/// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側を選ぶ。
 #[cfg(windows)]
 struct BarAnchor {
     pos: tauri::PhysicalPosition<i32>,
@@ -699,7 +699,7 @@ struct BarAnchor {
 /// 保存）と [`derive_bar_rect_phys`]（show の位置決め）。**非クライアント分の合成を
 /// 呼び出し側 2 か所へ書き写さないために型で配る**。
 ///
-/// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側へ倒す。
+/// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側を選ぶ。
 #[cfg(windows)]
 struct FrameGeom {
     /// ウィンドウの現在の外形（物理）。**バー矩形の幅として使うのは [`read_bar_anchor`] だけである**
@@ -725,11 +725,11 @@ impl FrameGeom {
     ///
     /// **合成をここ 1 か所に置く**——消費者は [`read_bar_anchor`] をはじめ複数あり、書き写すと
     /// 「片方だけが非クライアント分を落とす」形の欠陥が沈黙で入る（#738 の実例）。件数を
-    /// 書かないのは、**足すたびに腐る数**だからである（呼び出し点は grep で数える）。
+    /// 書かないのは、**足すたびに古くなる数**だからである（呼び出し点は grep で数える）。
     ///
-    /// **この合成そのものの誤り（`inset_h` を半分にする等）を捕まえる自動検査は無い。**
+    /// **この合成そのものの誤り（`inset_h` を半分にする等）を検出する自動検査は無い。**
     /// 呼び出し点が 1 つに寄った以上、片方だけを壊す変異は
-    /// [`check_show_bar_rect`] が捕まえるが、**ここを壊すと全消費者が同じだけずれる**ので
+    /// [`check_show_bar_rect`] が検出するが、**ここを壊すと全消費者が同じだけずれる**ので
     /// 検出器も型検査もテストも沈黙する（実測: `+ self.inset_h / 2` で clippy / test /
     /// `smoke:egui` / 検出器のすべてが緑・#878）。**発見経路は目視だけである**
     /// （`docs/build-commands.md`「D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）」）——#878 が
@@ -1043,8 +1043,8 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 /// 生成される（`egui_shell/mod.rs` のウィンドウ生成）ため通常の経路で size ループへは入らないが、
 /// **この述語は「size ループでは真にならない」ことを保証しない。**
 ///
-/// 取得に失敗したら **`false`（＝モーダルループ中ではない）へ倒す。** クランプ側から見ると
-/// 「働きすぎる」側であり、これは差し替え前の挙動に近い。逆へ倒すとクランプが黙って死ぬ
+/// 取得に失敗したら **`false`（＝モーダルループ中ではない）にする。** クランプ側から見ると
+/// 「働きすぎる」側であり、これは差し替え前の挙動に近い。逆にするとクランプが黙って死ぬ
 /// ——`ADR-main-window-clamp-on-pointer-release` 却下 5 が「検知手段が無い」と記録した形に
 /// 戻ってしまう（いまは `egui_main:clamp` の系列が検知手段である）。
 #[cfg(windows)]
@@ -1076,7 +1076,7 @@ fn main_in_modal_move_loop(_window: &tauri::Window) -> bool {
     false
 }
 
-/// 取得に失敗したら**クランプしない側へ倒す**（`position_on_target_monitor` と同じ）。
+/// 取得に失敗したら**クランプしない側を選ぶ**（`position_on_target_monitor` と同じ）。
 #[cfg(windows)]
 pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64) {
     let Some(main) = app.get_window("main") else {
@@ -1183,7 +1183,7 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 ///
 /// **「クランプが動いたか」を見る形は採らなかった。** `WorkArea::clamp` は矩形が境界を
 /// 越えたときにしか座標を変えないため、ウィンドウが作業領域の内側にいる限り導出が壊れていても
-/// 沈黙する（＝**守りたい退行の足を 1 本も捕まえない配置がある**）。却下の詳細は
+/// 沈黙する（＝**守りたい退行の足を 1 本も検出しない配置がある**）。却下の詳細は
 /// `ADR-show-path-derives-bar-rect`。
 ///
 /// # 何を突き合わせているのか——**2 軸の強さは同じではない**
@@ -1196,7 +1196,7 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 ///
 /// **高さ軸は 2 つの呼び出し点の A/B である。** show 側もここも同じ
 /// [`FrameGeom::bar_height_phys`] を通るので、**共有した導出そのものの誤り**（`inset_h` の
-/// 読み違い・`bar_rect_height_phys` の丸め）は両側が同じだけずれて沈黙する。捕まえるのは
+/// 読み違い・`bar_rect_height_phys` の丸め）は両側が同じだけずれて沈黙する。検出するのは
 /// 「**片方の呼び出し点だけが変わった**」形である。実測（#878）: show 側の呼び出しを
 /// [`FrameGeom::bar_height_phys`] から素の [`layout::bar_rect_height_phys`] へ差し替える
 /// （＝非クライアント分を落とす・#738 が名指す欠陥形）と、**幅が一致したまま高さ 10 px 差
@@ -1391,7 +1391,7 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
 /// [`MainVisible::get`] の live-read。`drive_results_window` が show の事前ゲート
 /// （`layout::present_results` の連言①）として 1 回読む。
 ///
-/// `EguiShellState` 不在は false（results を出さない側へ倒す）。
+/// `EguiShellState` 不在は false（results を出さない側を選ぶ）。
 fn read_main_visible(app: &tauri::AppHandle) -> bool {
     app.try_state::<EguiShellState>()
         .map(|sh| sh.main_visible.get())

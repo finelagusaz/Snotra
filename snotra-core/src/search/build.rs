@@ -3,7 +3,7 @@
 //! Wave 1（文字列正規化）→ Wave 2（文字ビットマスク）→ kana マスクの並列構築と、
 //! IndexCache 復元経路（派生文字列が在れば Wave 1 スキップ、無ければ通常構築）を担う。
 //! **版の番号を書かない**——版と variant の対応は [`CachedLower`] / [`DerivedStrings`] が持ち、
-//! 番号を書くと版を上げるたびにこの散文だけが腐る（[`crate::indexer::INDEX_CACHE_VERSION`] の
+//! 番号を書くと版を上げるたびにこの散文だけが古くなる（[`crate::indexer::INDEX_CACHE_VERSION`] の
 //! doc が名指しで禁じている）。全コンストラクタは
 //! `assemble` に集約し、並列 Vec 長・kana 系 2 本の {0, entries.len()} 不変条件を一元検証する。
 //! 検索ホットパス（`search_with_options` 系）は親 `search.rs` に残す。
@@ -128,12 +128,12 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
         || {
             // migemo 無効時は kana を構築しない（空のアリーナ）。
             if migemo_enabled {
-                // **ここは逐次のままでよい。** この枝が通るのは cache-miss（走査 22〜30 秒）の
+                // **ここは逐次のままでよい。** この分岐が通るのは cache-miss（走査 22〜30 秒）の
                 // 内側だけで、キャッシュヒット起動が通るのは `new_with_cached_masks` の
                 // `kana_for_cached` である——**あちらは並列を保つ**（そちらの doc が理由を持つ）。
                 //
                 // 合計バイト数は見込まない（`with_capacity` の第 2 引数が 0）——先に知るには
-                // 全件を `to_kana` して数えるしかなく、この枝ではその 1 パスのほうが高くつく。
+                // 全件を `to_kana` して数えるしかなく、この分岐ではその 1 パスのほうが高くつく。
                 let mut arena = NameArena::with_capacity(entries.len(), 0);
                 for e in entries {
                     arena.push(&to_kana(&normalize_for_match(&e.name)));
@@ -245,7 +245,7 @@ impl SearchEngine {
         // 建つ前には呼べない。位置を控える `Vec<usize>` を挟む形もあるが、**制約に足場で
         // 応えるより、制約が満たされる場所まで展開を遅らせるほうが構造が 1 段浅くなる**
         // （`PathStore::build` は派生文字列を一切見ないので、遅らせる障害は無い）。
-        // **どちらの枝も、出口では同じ 2 本の列（`crate::str_arena`）になる。** 潰す判定を
+        // **どちらの分岐も、出口では同じ 2 本の列（`crate::str_arena`）になる。** 潰す判定を
         // 通すかどうかだけが違い、`Collapsed` は記録側が測った結果をそのまま表現として使う
         // ——ここで測り直しても結果は変わらず、費用だけが掛かる（[`DerivedStrings`] の doc）。
         //
@@ -268,13 +268,13 @@ impl SearchEngine {
                 }
                 (lower_names, lower_file_names)
             }
-            // 重複する派生文字列を落としながら列へ積む。**共有は鎖になっている**:
+            // 重複する派生文字列を落としながら列へ積む。**共有はチェーンになっている**:
             //
             //   `lower_file_names[i]` → `lower_names[i]` → `entries[i].name`
             //
             // **判定を全部済ませてから落とす。** 先に `lower_name` を潰すと、前段の比較相手が
             // 消えて file name 側の共有を取りこぼす（結果は正しいまま削減だけが減るので、
-            // **挙動テストでは捕まらない**種類の誤りである）。両方を同時に返す
+            // **挙動テストでは検出されない**種類の誤りである）。両方を同時に返す
             // `measure_derived_sharing` と、元の列を書き換えずに新しい列へ積むこの形が、
             // その順序を構造として保っている。
             //
@@ -547,7 +547,7 @@ impl SearchEngine {
             // 派生文字列を持たない版からのフォールバック: Wave 1 を並列実行（migemo フラグを反映）。
             None => {
                 // 派生文字列が一切無いので Wave 1 を走らせる（実体へ戻す理由は
-                // [`wave1_from_tree`] の doc）。**ロードの旧版枝が現行版へ書き戻すまでの
+                // [`wave1_from_tree`] の doc）。**ロードの旧版の分岐が現行版へ書き戻すまでの
                 // 1 回だけ通る経路である**（書き戻しの契機は `indexer` の `load_cache_in`）。
                 let (lower_names, lower_file_names, kana) = wave1_from_tree(&tree, migemo_enabled);
                 (

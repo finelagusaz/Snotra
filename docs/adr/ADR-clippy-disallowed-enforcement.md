@@ -6,7 +6,7 @@
 
 `disallowed-methods` が空洞化する経路は 6 本あり、すべて clippy が exit 0 のまま沈黙する（起票者が 2026-08-06 に実測）。ファイルの削除・空配列化・エントリ 1 行の消失は完全な沈黙、メソッド名の書き損じは warning を出すが `-D warnings` でも exit 0、crate 名の書き損じと `egui` 依存の消滅は診断そのものが出ない。**PostToolUse hook は exit code でしか検出しないため、warning はエージェントにも届かない**——沈黙は二重である。
 
-実装レビューの過程で 7 本目が判明した（**沈黙経路 0**）: `disallowed_methods` は warn 既定であり、禁止が赤くなるのは `ci.yml` と `.claude/hooks/post-edit.mjs` が `-D warnings` を渡している間だけだった。**これは `clippy.toml` のテキストが何も変わらないので、内容側の静的検査では原理的に捕まらない。**
+実装レビューの過程で 7 本目が判明した（**沈黙経路 0**）: `disallowed_methods` は warn 既定であり、禁止が赤くなるのは `ci.yml` と `.claude/hooks/post-edit.mjs` が `-D warnings` を渡している間だけだった。**これは `clippy.toml` のテキストが何も変わらないので、内容側の静的検査では原理的に検出されない。**
 
 実装レビューではさらに 8 本目が出た（**deny の打ち消し**）: `[workspace.lints.clippy]` へ `all = "allow"` を 1 行足すと、`disallowed_methods = "deny"` の行を残したまま禁止が完全に消える（clippy 1.94.0 で実測: exit 0・診断 0 件）。**レベルを構造へ移す決定が、その構造自身に新しい沈黙経路を作った**——ゆえに移した先も検査の対象に含める。
 
@@ -19,7 +19,7 @@
 1. **レベル**: ルート `Cargo.toml` へ `[workspace.lints.clippy] disallowed_methods = "deny"` を置き、`-D warnings` への依存そのものを消す。
 2. **内容**: `governance:check` へ `G-clippy-disallowed` を新設し、`clippy.toml` の禁止集合（カナリア 7 件の在否）・`src-tauri` の `egui` 依存・**1 で置いた deny が実在し、かつ同じ節の群 `allow` に打ち消されていないこと**を静的に照合する。
 
-先例の食い違いは「捕捉実績」ではなく「**最終防衛線の有無**」で裁いた。`.githooks/` の取りこぼしは GitHub ruleset が捕まえるが、`clippy.toml` にはその層が無い——ゆえに #706 側へ寄せた。
+先例の食い違いは「捕捉実績」ではなく「**最終防衛線の有無**」で裁いた。`.githooks/` の取りこぼしは GitHub ruleset が検出するが、`clippy.toml` にはその層が無い——ゆえに #706 側へ寄せた。
 
 ## 検討した代替案と却下理由
 
@@ -40,6 +40,6 @@
 2. **カナリアが見るのは名指しした件の在否だけであって、それが解決することは見ない。** 名指しの母集団は `REQUIRED_DISALLOWED_METHODS` であり、**そこへ登録せずに足したパスの書き損じ**は `does not refer to a reachable function` の warning が exit 0 で流れる元の沈黙のままである（禁止を足すときはカナリアへも足す、が運用である。#1067 の群 2 はそうした）。**名指しした件も同じ穴を持つ**——上流 egui のピンを動かして API が消えても、`clippy.toml` のテキストは 1 文字も変わらないので検査は緑を返す。`clippy.toml` 冒頭の「違反を注入して赤くなることを測れ」という規範が、どちらに対しても唯一の防御である。
 3. **打ち消しうる lint group の名指しは、上流の群構成に追随している間だけ正しい。** `disallowed_methods` を含む群は `clippy::all` と `clippy::style` の 2 つで（`clippy-driver -W help` で数え上げ）、検査はこの 2 つの `allow` だけを打ち消しと見る。上流が 3 つ目の群へ入れたら、配列が更新されるまで沈黙する。**群を ∀ で塞がない**（隣の `rustdocLintsAreDenied` はそうしている）のは、`[workspace.lints.clippy]` が唯一の設定面だからである——member 側の `[lints]` での局所上書きは cargo が `cannot override 'workspace.lints' in 'lints'` で拒むため、正当な `allow` もここにしか書けない。∀ にすると、その正当な用途が検査を緩める圧力に変わる。
 4. **`reason` 文言の変更と `#[allow]` による迂回は射程外である**（lint に内在する性質）。
-5. **`disallowed_methods` 以外の clippy lint のレベルは、どの検査も見ていない。** 1 で置いた deny は `G-clippy-disallowed` が見張るが、他の clippy lint を `[workspace.lints.clippy]` へ足しても降格を捕まえる機構は無い。
+5. **`disallowed_methods` 以外の clippy lint のレベルは、どの検査も見ていない。** 1 で置いた deny は `G-clippy-disallowed` が見張るが、他の clippy lint を `[workspace.lints.clippy]` へ足しても降格を検出する機構は無い。
 6. **deny が実効するのは member 側の opt-in が在る間だけである。** `src-tauri` の `[lints] workspace = true` は `G-workspace-lints` が全 member について見ており、両検査は**組で 1 つの命題を守る**。片方だけを消す変更は、もう片方の緑に隠れる。
 7. **`disallowed_methods` をハイフンで書いた形は非実効と判定する（赤になる）。** 向きが赤なので受容するが、次の人の最も安い直し方が「検査を緩める」にならないよう、直し方をソースのコメントへ書いた。

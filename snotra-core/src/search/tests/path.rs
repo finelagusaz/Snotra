@@ -200,11 +200,11 @@ fn path_match_history_key_unified_across_separators() {
     assert_eq!(results[0].name, "app1"); // history boost で上位
 }
 
-// --- PathCursor（祖先の鎖の持ち回り）の正しさ ---
+// --- PathCursor（祖先のチェーンの持ち回り）の正しさ ---
 
-/// 鎖の当たり外れを両方通す fixture。**兄弟の連続**（当たり）と**部分木の割り込み**
+/// チェーンの当たり外れを両方通す fixture。**兄弟の連続**（当たり）と**部分木の割り込み**
 /// （外れ）を意図的に混ぜる。区切り `\`(0x5C) は `-`(0x2D) や `.`(0x2E) より大きいので、
-/// `C:\a` の直後に `C:\a-x` が割り込んで `C:\a` が鎖から押し出される並びになる。
+/// `C:\a` の直後に `C:\a-x` が割り込んで `C:\a` がチェーンから押し出される並びになる。
 fn cursor_fixture() -> Vec<AppEntry> {
     let folders = [
         "C:\\a",
@@ -246,10 +246,10 @@ fn cursor_fixture() -> Vec<AppEntry> {
     entries
 }
 
-/// **カーソルは最適化であって意味の変更ではない。** 鎖の状態に依らない素直な組み立て
+/// **カーソルは最適化であって意味の変更ではない。** チェーンの状態に依らない素直な組み立て
 /// （`PathStore::normalized_into`）と 1 バイトも違わないことを、走査順を変えて固定する。
 ///
-/// 3 通りを通すのが要点である——順方向は鎖が当たり続ける経路、逆順と乱順は毎回外れて
+/// 3 通りを通すのが要点である——順方向はチェーンが当たり続ける経路、逆順と乱順は毎回外れて
 /// 全書き直しへ落ちる経路。**片方だけ通しても、巻き戻しの誤りか全書き直しの誤りかの
 /// どちらかが隠れる。** 現物（`normalize_entry_key`）との一致も同時に確かめる。
 #[test]
@@ -282,7 +282,7 @@ fn path_store_cursor_matches_full_rebuild() {
     ];
     let mut full = String::new();
     for (label, order) in orders {
-        // 走査ごとに鎖を空から始める（カーソルの寿命 = 1 走査）。
+        // 走査ごとにチェーンを空から始める（カーソルの寿命 = 1 走査）。
         let mut cursor = PathCursor::new();
         for i in order {
             store.normalized_into(&mut full, i);
@@ -391,7 +391,7 @@ fn index_tree_file_key_matches_normalize_file_name_key_over_real_index() {
 /// カーソル経由であり、素直な組み立て（`PathStore::normalized_into`）はその参照実装にすぎない。
 ///
 /// ここが 1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが
-/// 消える）。走査順は製品と同じ昇順＝鎖が当たり続ける経路で、外れる経路は
+/// 消える）。走査順は製品と同じ昇順＝チェーンが当たり続ける経路で、外れる経路は
 /// [`path_store_cursor_matches_full_rebuild`] が逆順・乱順で受け持つ。
 #[test]
 fn path_store_cursor_matches_normalize_entry_key_over_real_index() {
@@ -455,7 +455,7 @@ fn fuzzy_name_match_survives_when_display_name_contains_path_separator() {
 ///
 /// **併合の経路そのものを通す。** PATH 併合は `IndexTree::extend_with_roots` が表示名をファイル名、
 /// `target_path` をフルパスにして根として積む形で、**`IndexTree::build` は通らない**（別実装）。
-/// ゆえに `build` だけのテストでは併合側の変異を 1 つも捕まえられない。先例は
+/// ゆえに `build` だけのテストでは併合側の変異を 1 つも検出できない。先例は
 /// `search/tests/build.rs` の PATH マージ検証（同じ `build` → `extend_with_roots` →
 /// `new_from_tree` の並び）。
 ///
@@ -487,7 +487,7 @@ fn path_env_merge_does_not_raise_any_name_has_path_sep() {
 ///
 /// 比較相手は「範囲を 0 へ潰して高速路を殺した同じ索引」である（#1067）。**この検知器が
 /// 要るのは `cmp_paths` が tie-break の最終キーだからである**——結果の集合は変わらず、
-/// **順序だけ**が静かに動く形の退行しか起きない。件数の一致では捕まらない。
+/// **順序だけ**が静かに動く形の退行しか起きない。件数の一致では検出されない。
 ///
 /// **PATH マージを通すのが要点である。** 通さないと索引は全件が範囲の中に居て、A も B も
 /// 同じ経路を通る（`force_unsorted_for_test` を当てた B 側だけが遅い経路になるので比較は

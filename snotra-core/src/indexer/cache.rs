@@ -1,4 +1,4 @@
-//! `index.bin` の入出力——オンディスク形式（現行版と旧版へのフォールバック鎖）、キャッシュと
+//! `index.bin` の入出力——オンディスク形式（現行版と旧版へのフォールバックチェーン）、キャッシュと
 //! 走査の振り分け（[`load_or_scan_with_stats`]）、保存、旧版を現行版へ書き直す形式昇格。
 //!
 //! **書き込みは `INDEX_WRITE_LOCK` で単一書き手に直列化する**——`BinFile::save` の tmp→rename は
@@ -76,14 +76,14 @@ pub struct LoadOrScanStats {
     /// `cache_load` は「読む」と「deserialize する」の 2 つを 1 つの数にしており、
     /// **両者はオンディスク形式の変更に対して逆向きに振る舞う**——読むバイトを減らせば前者は
     /// 減るが、形式を圧縮すれば後者は増えうる。分けずに測ると、どちらが効いたのか原理的に
-    /// 区別できない。cache-miss の枝では [`Duration::ZERO`]（読む対象が無い）。
+    /// 区別できない。cache-miss の分岐では [`Duration::ZERO`]（読む対象が無い）。
     pub cache_read: Duration,
     pub scan: Duration,
     pub sort: Duration,
-    /// キャッシュ保存にかかった時間。**枝によって和への足し方が違う。**
+    /// キャッシュ保存にかかった時間。**分岐によって和への足し方が違う。**
     ///
-    /// cache-miss 枝（scan して save する）では `scan` / `sort` に続く独立フェーズであり、
-    /// フェーズの和に足す。**cache-hit 枝で旧版昇格（`upgrade_legacy_cache_in`）が走った
+    /// cache-miss 分岐（scan して save する）では `scan` / `sort` に続く独立フェーズであり、
+    /// フェーズの和に足す。**cache-hit 分岐で旧版昇格（`upgrade_legacy_cache_in`）が走った
     /// 場合はここに昇格の save 時間が入るが、`cache_load` の内数である**
     /// （`cache_read` と同じ扱い——足すと二重計上になり、`total` から差し引く残余計算が
     /// 負に振れる）。save は `load_cache_in` 呼び出しの
@@ -214,7 +214,7 @@ struct IndexCacheV6 {
     char_masks: Vec<u64>,
     file_name_char_masks: Vec<u64>,
     /// **v7 と線上表現が同一なので、同じ列の型で読む。** ここを `Vec<Option<String>>` の
-    /// ままにすると、旧版枝でだけ per-entry の `String` が 41,994 個復活し、しかも
+    /// ままにすると、旧版の分岐でだけ per-entry の `String` が 41,994 個復活し、しかも
     /// `CachedLower::Collapsed` へ渡すために詰め替えが要る（正本は `crate::str_arena` の doc）。
     lower_names: LowerNameColumn,
     lower_file_names: LowerFileColumn,
@@ -283,19 +283,19 @@ struct IndexCacheV2 {
     config_hash: u64,
 }
 
-/// `index.bin` の有効性を判定する鍵。**走査対象そのものの同一性だけを表す**（入力の内訳と、
+/// `index.bin` の有効性を判定するキー。**走査対象そのものの同一性だけを表す**（入力の内訳と、
 /// `include_path_env` / `migemo_enabled` を含めない理由は [`scan_identity_hash`] の doc）。
 ///
 /// **この値は `index.bin` に焼き込まれ、次の起動が同じ計算で照合する**（[`load_cache_in`] の
-/// 各枝の `config_hash != config_hash` 判定）。ゆえに**入力・順序・ハッシュ関数のどれを変えても
+/// 各分岐の `config_hash != config_hash` 判定）。ゆえに**入力・順序・ハッシュ関数のどれを変えても
 /// 全ユーザーのキャッシュが一斉に無効になる**——不一致は破損ではなく「設定が変わった」と
-/// 読まれるので、次の起動は cache-miss 枝へ落ちて 22〜30 秒の全走査を払う（索引の更新は
+/// 読まれるので、次の起動は cache-miss 分岐へ落ちて 22〜30 秒の全走査を払う（索引の更新は
 /// 明示操作だけという設計上、これが自動で走る唯一の場所である）。
 ///
 /// **[`DefaultHasher`] の出力は Rust のリリース間で安定しない**（std の契約——値ではなく
 /// アルゴリズムが未規定である）。ツールチェインを上げた版を配ると、設定を何も変えていない
 /// ユーザーが一度だけ全走査を払いうる。**症状は「その日の起動だけ遅い」で、検索結果は
-/// 正しいまま**ゆえ挙動テストでは捕まらない。安定を要求するなら std ではないハッシュへ
+/// 正しいまま**ゆえ挙動テストでは検出されない。安定を要求するなら std ではないハッシュへ
 /// 移すことになり、それ自体が同じ一斉無効化を 1 回払う。
 fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -326,7 +326,7 @@ fn cache_bin_file_in(dir: &Path) -> BinFile {
     BinFile::new_in(dir, INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
 
-/// `index.bin` が名乗る最終構築時刻（UNIX 秒）を読む。読めなければ `None`。
+/// `index.bin` が示す最終構築時刻（UNIX 秒）を読む。読めなければ `None`。
 ///
 /// **索引本体を読まない。** 設定アプリがこれを呼ぶので、17 MiB の確保を持ち込まない。
 ///
@@ -341,7 +341,7 @@ pub fn index_built_at_in(dir: &Path) -> Option<u64> {
 /// `index.bin` に載っているときだけエントリを返す（**走査は絶対にしない**）。実データを
 /// corpus として使うテスト専用。
 ///
-/// **`load_or_scan_with_stats` で代用してはならない。** あちらの cache-miss の枝は全走査を
+/// **`load_or_scan_with_stats` で代用してはならない。** あちらの cache-miss の分岐は全走査を
 /// 走らせたうえで `index.bin` を書く。`INDEX_WRITE_LOCK` はプロセス内の `static` ゆえ、
 /// **テストバイナリが複数プロセスに分かれると排他が効かず**、固定 tmp 名（`index.bin.tmp`）の
 /// 食い合いでキャッシュが壊れうる（`snotra-core/CLAUDE.md`「index.bin 書き込みの排他」）。
@@ -385,12 +385,12 @@ struct Scanned {
 
 /// 全走査して [`sort_entries_canonical`] を通し、2 段を測って返す。
 ///
-/// **保存する枝と保存しない枝（`Config::config_dir` が引けないとき）が同じここを通る。**
+/// **保存する分岐と保存しない分岐（`Config::config_dir` が引けないとき）が同じここを通る。**
 /// 書き起こすと計器が 2 部出荷になり、片方だけが段を足したときに `scan` / `sort` の
-/// 意味が枝ごとにずれる——**どちらの枝を測ったのかは `LoadOrScanStats` の値からは
+/// 意味が分岐ごとにずれる——**どちらの分岐を測ったのかは `LoadOrScanStats` の値からは
 /// 区別できない**ので、ずれても数字はもっともらしいまま残る。
 ///
-/// **`INDEX_WRITE_LOCK` は取らない。** 走査は共有資源に触れないが、保存する枝は
+/// **`INDEX_WRITE_LOCK` は取らない。** 走査は共有資源に触れないが、保存する分岐は
 /// 「走査から保存までを 1 回のロック取得で覆う」ことに依存している（→
 /// [`upgrade_legacy_cache_in`] だけがその例外である理由は `LoadCacheResult::upgrade_save`
 /// の doc）。ゆえにロックの範囲は呼び出し側が決める。
@@ -442,7 +442,7 @@ fn load_or_scan_with_stats_in(
             cache_read: result.read,
             scan: Duration::ZERO,
             sort: Duration::ZERO,
-            // 昇格が走らなかった枝は `None` ゆえ `ZERO`（`LoadCacheResult::upgrade_save` の doc）。
+            // 昇格が走らなかった分岐は `None` ゆえ `ZERO`（`LoadCacheResult::upgrade_save` の doc）。
             // **この値は計器であって、昇格の有無の判定には使えない**——判定を負っているのは
             // 向こうの variant であり、こちらは時間を運ぶだけである（#1054 / #1063）。
             // `cache_load` の内数——フェーズの和には足さない
@@ -485,7 +485,7 @@ fn load_or_scan_with_stats_in(
         cache_hit: false,
         hash: hash_took,
         cache_load: cache_load_took,
-        // cache-miss の枝は `index.bin` を読み切れていない（不在・stale・破損のいずれか）。
+        // cache-miss の分岐は `index.bin` を読み切れていない（不在・stale・破損のいずれか）。
         cache_read: Duration::ZERO,
         scan: scan_took,
         sort: sort_took,
@@ -505,7 +505,7 @@ fn load_or_scan_with_stats_in(
 ///
 /// 保存先（`Config::config_dir()`）を解決してから [`load_or_scan_with_stats_in`] へ委譲する薄い
 /// 包みである。解決できない環境では保存できないが索引は建てられる——`save_cache_sorted` の
-/// `None` 枝と同じ方針で、走査はして `index.bin` へは書かない。
+/// `None` 分岐と同じ方針で、走査はして `index.bin` へは書かない。
 ///
 /// **cache-hit でも書きうる。** 常に `LegacyUpgrade::Write` で読むので、置かれているのが
 /// 旧版なら**その場で現行版へ書き戻す**（`upgrade_legacy_cache_in`）。ゆえに `#[ignore]` の
@@ -536,7 +536,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
                 stats: LoadOrScanStats {
                     cache_hit: false,
                     // **照合する相手が居ないので計算しない。** `config_hash` は `index.bin` へ
-                    // 焼き込んで次の起動と突き合わせるための値であり、書かない枝では
+                    // 焼き込んで次の起動と突き合わせるための値であり、書かない分岐では
                     // 消費者が居ない（かつては捨てる前提で計算し、この項目を埋めていた）。
                     hash: Duration::ZERO,
                     cache_load: Duration::ZERO,
@@ -553,9 +553,9 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
 
 /// `index.bin` へ書く `built_at` の出どころ。
 ///
-/// **「走査した時刻」を名乗る値なので、走査していない書き手が現在時刻を打ってはならない。**
+/// **「走査した時刻」を示す値なので、走査していない書き手が現在時刻を打ってはならない。**
 /// 形式昇格（[`upgrade_legacy_cache_in`]）は旧版のバイト列を現行版へ詰め替えるだけで
-/// 走査を伴わないため、ここで現在時刻を打つと**索引の中身は何日も前のまま、名乗る時刻だけが
+/// 走査を伴わないため、ここで現在時刻を打つと**索引の中身は何日も前のまま、示す時刻だけが
 /// 今**になる。表示（設定アプリの最終構築日時・[`index_built_at_in`]）はそれを唯一の手がかりに
 /// 「再構築が要ることに気づく」ためにあるので、嘘をつく相手は**最も索引が古い層**——旧版のまま
 /// 放置していたユーザー——に限られる。
@@ -588,9 +588,9 @@ impl BuiltAt {
 /// `target_path` の `String` を move で吸い上げる。借りる形にすると保存のたびに全件を
 /// clone することになり、削ったはずの 36.01 MiB が保存経路で復活する。返り値にしてあるのは、
 /// 呼び出し側がそのまま索引の材料に使えるようにするためである（`rebuild_and_save` と
-/// cache-miss の枝が実際にそうする）。
+/// cache-miss の分岐が実際にそうする）。
 ///
-/// **派生データを持たない材料を返す枝がある。** `config_dir` が引けないときは `index.bin` を書かないので派生データも計算しない——常に計算する形にすると、誰も読まない列を全件ぶん組み立てることになる。**この分岐がこの性質の正本である**（数え上げは他へ書かない）。
+/// **派生データを持たない材料を返す分岐がある。** `config_dir` が引けないときは `index.bin` を書かないので派生データも計算しない——常に計算する形にすると、誰も読まない列を全件ぶん組み立てることになる。**この分岐がこの性質の正本である**（数え上げは他へ書かない）。
 fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial {
     let Some(dir) = Config::config_dir() else {
         return IndexMaterial::from_tree(IndexTree::build(entries));
@@ -605,7 +605,7 @@ fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial 
 /// この契約は型に無いので、**呼び出し元をこのモジュールの中に閉じておくこと**が唯一の担保で
 /// ある（→「index.bin 書き込みの排他」）。導出だけを要する検知器は [`derive_columns`] を呼ぶ。
 ///
-/// **書いた 4 本をそのまま返す。** かつては書いた直後に捨てており、cache-miss の枝は
+/// **書いた 4 本をそのまま返す。** かつては書いた直後に捨てており、cache-miss の分岐は
 /// `new_from_tree` がツリーを実体化して Wave 1/2 を建て直していた——**計算したものを捨ててから、
 /// 同じものを作り直していた**（実測は `PERFORMANCE.md`「採用: 保存が返した派生データを cache-miss がそのまま使う」）。
 ///
@@ -651,7 +651,7 @@ fn save_cache_sorted_in(
 ///
 /// **書いた派生データをそのまま返す。** かつては捨てており、呼び出し側はツリーしか受け取れず Wave 1/2 を建て直していた——**計算したものを捨ててから、同じものを作り直していた**（額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」）。
 ///
-/// **派生データを持つかは [`IndexMaterial`] の内側の話である**（保存先が引けない枝では計算しない）。**持たない場合を数え上げてはならない**——正本は `save_cache_sorted` の分岐である。
+/// **派生データを持つかは [`IndexMaterial`] の内側の話である**（保存先が引けない分岐では計算しない）。**持たない場合を数え上げてはならない**——正本は `save_cache_sorted` の分岐である。
 ///
 /// PATH エントリをマージするなら [`IndexMaterial::extend_with_path_entries`] を通すこと。
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMaterial {
@@ -678,7 +678,7 @@ struct LoadCacheResult {
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read` へ運ぶ）。
     read: Duration,
     /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
-    /// （`LoadOrScanStats::cache_save` へ運ぶ）。昇格が走らなかった枝（現行版・
+    /// （`LoadOrScanStats::cache_save` へ運ぶ）。昇格が走らなかった分岐（現行版・
     /// `LegacyUpgrade::Skip`）では `None`。
     ///
     /// **`Some` を作れるのは [`upgrade_legacy_cache_in`] の内側だけである。** ゆえに
@@ -691,21 +691,21 @@ struct LoadCacheResult {
     /// 「`Some` かどうか」を見る読み方は変わらない。
     ///
     /// **`INDEX_WRITE_LOCK` の取得待ちを含む。** 昇格は読み終えてからロックを取りに行くので、
-    /// 計測の始点がロックの外にある——**cache-miss 枝の `cache_save` とは非対称で**、
+    /// 計測の始点がロックの外にある——**cache-miss 分岐の `cache_save` とは非対称で**、
     /// あちらは scan ごとロックの内側なので待ちが save の数に乗らない。**今のところ待ちは
     /// 立たない**: 製品の呼び出し元は `main` の起動段の 1 つだけで、もう一方の書き手
     /// （索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。
     /// 待ちが立ちうる書き手を足す日には、この値が「save が遅い」と読める形で嘘をつく。
     upgrade_save: Option<Duration>,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
-    /// ときは旧版であり、`Write` のときは旧版枝（`upgrade_legacy_cache_in`）がその場で
+    /// ときは旧版であり、`Write` のときは旧版の分岐（`upgrade_legacy_cache_in`）がその場で
     /// 現行版へ書き戻す（[`LegacyUpgrade`] の doc）。
     ///
     /// **読み手はテストだけである**（`allow(dead_code)` はそのためである）。かつては背景
-    /// 再スキャンの昇格判定の入力だったが、昇格がロードの旧版枝へ移り、判定は枝そのものに
-    /// なった。**残すのは、フォールバックの鎖のどの枝で読めたのかを外から見る手段がこれ
-    /// しか無いからである**——材料だけを見ても v5 の枝で読めたのか v6 の枝で読めたのかは
-    /// 区別できず、鎖の枝選択の退行は静かに通る。
+    /// 再スキャンの昇格判定の入力だったが、昇格がロードの旧版の分岐へ移り、判定は分岐そのものに
+    /// なった。**残すのは、フォールバックのチェーンのどの分岐で読めたのかを外から見る手段がこれ
+    /// しか無いからである**——材料だけを見ても v5 の分岐で読めたのか v6 の分岐で読めたのかは
+    /// 区別できず、チェーンの分岐選択の退行は静かに通る。
     #[allow(dead_code)]
     version: u32,
 }
@@ -727,11 +727,11 @@ fn load_cache(config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResul
     load_cache_in(&dir, config_hash, upgrade)
 }
 
-/// 旧版を読んだ枝の共通処理: **走査結果を既に手に持っているので、その場で現行版へ書き戻す。**
+/// 旧版を読んだ分岐の共通処理: **走査結果を既に手に持っているので、その場で現行版へ書き戻す。**
 ///
 /// **返す材料は書き戻しの副産物である**（`save_cache_sorted_in` が返すツリーとマスクをそのまま
 /// 使う）。旧版が持っていたマスクは捨てて derive し直すが、これは**昇格する起動でだけ払う
-/// 一回性の代価**であり、以後は現行版の枝に入る。
+/// 一回性の代価**であり、以後は現行版の分岐に入る。
 ///
 /// **保存に失敗してもロードは成功させる。** 昇格は最適化であって、失敗が索引の可用性を
 /// 落としてはならない——落とすと、書けない環境（読み取り専用・ディスク満杯）で
@@ -742,7 +742,7 @@ fn load_cache(config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResul
 /// （`IndexMaterial` の型 doc）。列長は `derive_columns` が 1 周で 4 本を埋める構成上の
 /// 保証であり、`Option` で失敗を返す理由が無い。
 ///
-/// **`built_at` は旧版が名乗っていた値を持ち越す**（[`BuiltAt::Carried`]）。ここは走査しない
+/// **`built_at` は旧版が示していた値を持ち越す**（[`BuiltAt::Carried`]）。ここは走査しない
 /// 書き手なので、現在時刻を打つと「最後に走査した時刻」の意味が壊れる（理由の正本は
 /// [`BuiltAt`] の doc）。検知器は `upgrade_carries_the_built_at_it_read`。
 fn upgrade_legacy_cache_in(
@@ -762,7 +762,7 @@ fn upgrade_legacy_cache_in(
     // **`index.bin` を書く経路はすべて書き込みロックを経由する契約である。**
     //
     // **ここで測る save_ms はロック取得の待ちを含む**（`Instant::now()` が
-    // `with_index_write_lock` より前にある）。**cache-miss 枝の `cache_save` とは
+    // `with_index_write_lock` より前にある）。**cache-miss 分岐の `cache_save` とは
     // 非対称である**——あちらは scan + sort + save をまとめて包むロックの内側で計測を
     // 始めるので、待ちは `scan` より前に落ちて save の数には乗らない。直前の
     // `sort_entries_canonical` を含めない点だけが両者で揃っている。
@@ -787,21 +787,21 @@ fn upgrade_legacy_cache_in(
     }
 }
 
-/// 旧版枝が読み終えた生の材料。**判定（`LegacyUpgrade`）はまだ載っていない。**
+/// 旧版の分岐が読み終えた生の材料。**判定（`LegacyUpgrade`）はまだ載っていない。**
 ///
 /// `masks` は v2 だけ `None`（マスクを持たない版）。それ以外の旧版は必ず `Some`。
 struct LegacyRead {
     entries: Vec<AppEntry>,
     masks: Option<CachedMasks>,
     version: u32,
-    /// 旧版が名乗っていた最終構築時刻。**昇格はこれを持ち越す**（理由は [`BuiltAt`] の doc）。
+    /// 旧版が示していた最終構築時刻。**昇格はこれを持ち越す**（理由は [`BuiltAt`] の doc）。
     built_at: u64,
 }
 
-/// 旧版枝の出口を一本化する。**`match upgrade` を書くのはここ 1 か所だけである。**
+/// 旧版の分岐の出口を一本化する。**`match upgrade` を書くのはここ 1 か所だけである。**
 ///
-/// 旧版枝を 1 本足すときは、その版のバイト列を [`LegacyRead`] へ組み立ててここへ渡すだけでよい
-/// ——`Write`/`Skip` の 2 腕を枝ごとに書き起こす義務は生まれない（判定の写しを作らない）。
+/// 旧版の分岐を 1 本足すときは、その版のバイト列を [`LegacyRead`] へ組み立ててここへ渡すだけでよい
+/// ——`Write`/`Skip` の 2 腕を分岐ごとに書き起こす義務は生まれない（判定の写しを作らない）。
 fn finish_legacy_read(
     dir: &Path,
     config_hash: u64,
@@ -845,7 +845,7 @@ fn finish_legacy_read(
 /// `std::sync::Mutex` は再入できないので、その場で自己デッドロックする（**索引ロードが
 /// 永久に返らない**形なので、テストが落ちるのではなくハングする）。
 ///
-/// **ロードは「読むだけ」に見えるが、旧版枝は書き手である**——`load_cache_in` を「読み取り
+/// **ロードは「読むだけ」に見えるが、旧版の分岐は書き手である**——`load_cache_in` を「読み取り
 /// なのでロックの内側でも安全」と読んだ瞬間にこの罠へ落ちる。実際の呼び出し順は
 /// [`load_or_scan_with_stats_in`] が正本で、そこはロックの**外**でこれを呼び、cache-miss と
 /// 判ってから初めてロックを取る。
@@ -897,7 +897,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
     // **v7 は読まない（cache-miss ＝ 1 回だけの全走査）。** 線上表現は現行版と同じだが、
     // `lower_names` / `lower_file_names` とマスクは照合用の正規化を 1 つにする前の意味で
     // 書かれている（名前の空白を正規化していない・#1309）。v7 は `entries` を持たないので、
-    // 旧版枝のように手に持った走査結果から導き直して書き戻すことができない——ツリーから作り
+    // 旧版の分岐のように手に持った走査結果から導き直して書き戻すことができない——ツリーから作り
     // 直すと「indexer.rs の索引更新の契機」が戒める複製が戻る。却下した扱いは
     // `docs/adr/ADR-index-v7-cache-miss.md`。
     //
@@ -1042,7 +1042,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
 }
 
 /// `index.bin` の scan + save 区間を直列化する書き込みロック。
-/// 書き手（`rebuild_and_save` / cache-miss save / ロードの旧版枝の昇格）が共有する。
+/// 書き手（`rebuild_and_save` / cache-miss save / ロードの旧版の分岐の昇格）が共有する。
 /// `save_cache_sorted` 自体はロックを取らない（呼び出し側が保持する契約）。
 ///
 /// **形式昇格だけは、読みがロックの外にある。** 内容を決めてから保存するまでの間に別の書き手が

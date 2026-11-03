@@ -37,8 +37,8 @@ use crate::str_arena::{StrSink, capped_capacity};
 /// 親を持たないことを表す番兵。このとき `aux` は [`IndexTree::table`] のフルパスを指す。
 pub(crate) const NO_PARENT: u32 = u32::MAX;
 
-/// 祖先の鎖の長さの上限。**構築時に強制する**（[`IndexTree::build`]）ので、組み立て側は
-/// 鎖がこれを超えないことを前提にしてよい。
+/// 祖先のチェーンの長さの上限。**構築時に強制する**（[`IndexTree::build`]）ので、組み立て側は
+/// チェーンがこれを超えないことを前提にしてよい。
 ///
 /// 上限を組み立て側の打ち切りで実現してはならない——打ち切ると「根でないもの」を根として
 /// 扱い、`table[aux]`（拡張子）をパスの先頭として書いてしまう。**短いパスではなく誤った
@@ -141,7 +141,7 @@ impl NameArena {
     ///
     /// **アリーナへの push は逐次だが、逐次化してはならない。** kana 列を毎起動で組む
     /// `SearchEngine::new_with_cached_masks` は `to_kana` を全件へ当てるので、逐次で回すと
-    /// 秒オーダーが起動に乗る（額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」が正本。**ここへ写さない**——計器を回すたびに腐る）。
+    /// 秒オーダーが起動に乗る（額は `PERFORMANCE.md`「採用: `kana_lower_names` も文字列アリーナで持つ」が正本。**ここへ写さない**——計器を回すたびに古くなる）。
     /// 塊の中だけ並列に組み、ここで繋ぐ。
     ///
     /// **並べ替えない——順序を保つのは渡す側の責務である。** `collect` が順序を保つ
@@ -257,8 +257,8 @@ impl<'de> Visitor<'de> for NameArenaVisitor {
         f.write_str("a sequence of strings")
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<NameArena, A::Error> {
-        // **`size_hint` を素で信じてはならない。** これは壊れた `index.bin` が名乗る長さで
-        // あり、4 バイトの化けた varint が 40 億件を名乗りうる。頭打ちの理屈と額は
+        // **`size_hint` を素で信じてはならない。** これは壊れた `index.bin` が示す長さで
+        // あり、4 バイトの化けた varint が 40 億件を示しうる。頭打ちの理屈と額は
         // [`capped_capacity`] が持つ（派生文字列の列と同じ導出であり、写しを置かない）。
         //
         // 実データは 312,108 件で上限を超えるが、超過分は `Vec` の伸長が拾う（1 回の再確保）。
@@ -325,10 +325,10 @@ pub(crate) trait TreeNodes {
     fn table_str(&self, id: u32) -> &str;
 }
 
-/// 根まで辿って途中の index を積む。返すのは（根, 鎖, 段数）。`chain[0]` が `i` 自身、
+/// 根まで辿って途中の index を積む。返すのは（根, チェーン, 段数）。`chain[0]` が `i` 自身、
 /// `chain[depth - 1]` が根の直下である。
 ///
-/// **鎖が配列に収まることは構築時に保証されている**（[`CHAIN_CAP`]）。`parent < self` が
+/// **チェーンが配列に収まることは構築時に保証されている**（[`CHAIN_CAP`]）。`parent < self` が
 /// 循環を、深さの打ち止めが長さを、それぞれ表現不能にしているので、ここに打ち切りの
 /// 分岐は要らない——`debug_assert` は不変条件が壊れたときに黙って誤ったパスを返す
 /// のではなく落ちるためにある。
@@ -343,7 +343,7 @@ pub(crate) fn walk_to_root<N: TreeNodes + ?Sized>(
     while nodes.parent_of(cur) != NO_PARENT {
         debug_assert!(
             depth < CHAIN_CAP,
-            "鎖が CHAIN_CAP を超えた（構築側の不変条件違反）"
+            "チェーンが CHAIN_CAP を超えた（構築側の不変条件違反）"
         );
         chain[depth] = cur as u32;
         depth += 1;
@@ -374,7 +374,7 @@ pub(crate) fn push_separator(buf: &mut String) {
 /// 結果は元の `AppEntry.target_path` とバイト一致する。**この一致がツリー表現の要石である**
 /// ——`target_path` をディスクにも索引にも持たない以上、原文を要求する消費者（tie-break の
 /// `cmp_paths`・`SearchResult.path`）はすべてここの出力を受け取る。1 バイトずれても
-/// **それらしい**パスが返るので挙動テストでは捕まらない。合成 fixture での保証は
+/// **それらしい**パスが返るので挙動テストでは検出されない。合成 fixture での保証は
 /// `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild` が常に持ち、実データの
 /// 全件照合は同ファイルの `path_store_raw_matches_target_path_over_real_index` が受け持つ
 /// ——**後者は `#[ignore]` で、原文をファイルシステムの走査から取る**（`index.bin` から
@@ -482,7 +482,7 @@ impl IndexTree {
     /// index 比較の高速路へ入り、**同スコアのエントリどうしの tie-break だけ**がパス順でなく
     /// 格納順になる。エントリは消えず、panic も起きず、順序は安定している。
     /// 上の 4 つ（索引が短くなる・添字 panic・停止しない）とは桁が違うので、全件の組み直しを
-    /// 毎起動払う側には倒さない。
+    /// 毎起動払う側は選ばない。
     ///
     /// **`pub(crate)` である**——受け取る [`NameArena`] が crate の内側の表現であり、
     /// `index.bin` を読む経路（`indexer::load_cache_in`）以外にツリーを列から組む入口は無い。
@@ -622,9 +622,9 @@ impl IndexTree {
     /// ピークには v7 がディスクから消したのと同額（約 36 MiB）が戻る。**壁時計ではなくピークが
     /// 対価である**——`tests/memory_footprint.rs` が測っているのはそちらの側である。
     ///
-    /// 通る経路は「派生文字列を自前で導出しなければならない構築」に限られる: `SearchEngine::from_material` が派生データを持たない材料を受けた枝（初回起動と、保存側がそれを返さなかったとき）と、派生文字列を持たない古い版を読んだときの Wave 1。加えて corpus テストと `load_cached_entries` が通る。
+    /// 通る経路は「派生文字列を自前で導出しなければならない構築」に限られる: `SearchEngine::from_material` が派生データを持たない材料を受けた分岐（初回起動と、保存側がそれを返さなかったとき）と、派生文字列を持たない古い版を読んだときの Wave 1。加えて corpus テストと `load_cached_entries` が通る。
     ///
-    /// **保存側が `CachedMasks` を返したなら、cache-miss 起動も設定からの再構築もここを通らない**（反復 11 と後続）。**「もう通らない」と無条件に書いてはならない**——返らなかったときの枝が上の列挙に在り、そちらは今もここへ落ちる。`PERFORMANCE.md` が構築段 peak -83.27 MiB として計上しているのはこの実体化が消えたぶんであり、**`materialize` の削減を「cache-miss で効く」と見積もってはならない。**
+    /// **保存側が `CachedMasks` を返したなら、cache-miss 起動も設定からの再構築もここを通らない**（反復 11 と後続）。**「もう通らない」と無条件に書いてはならない**——返らなかったときの分岐が上の列挙に在り、そちらは今もここへ落ちる。`PERFORMANCE.md` が構築段 peak -83.27 MiB として計上しているのはこの実体化が消えたぶんであり、**`materialize` の削減を「cache-miss で効く」と見積もってはならない。**
     ///
     /// **`index.bin` のキャッシュヒット（＝ほとんどの起動）もここを通らない。**
     pub(crate) fn materialize(&self) -> Vec<AppEntry> {
@@ -691,7 +691,7 @@ impl IndexTree {
         let mut is_folder_col = Vec::with_capacity(n);
         let mut parent_col = Vec::with_capacity(n);
         let mut aux_col = Vec::with_capacity(n);
-        // 鎖の長さは**ここで**打ち止める。`parent < i` ゆえ親の深さは既に確定しており、
+        // チェーンの長さは**ここで**打ち止める。`parent < i` ゆえ親の深さは既に確定しており、
         // 1 引き算で数えられる（[`CHAIN_CAP`] の doc に理由）。
         // 値は高々 `CHAIN_CAP - 1` = 63 ゆえ `u8` で足りる（n = 312,625 で一時確保が半分）。
         let mut depths: Vec<u8> = Vec::with_capacity(n);
@@ -751,7 +751,7 @@ impl IndexTree {
         }
         // **`self` を網羅的に分解してから積む。** 手で 5 本を push する形は、列を 1 本足した
         // ときにここだけ触り忘れてもコンパイルが通る——`empty` / `build` / `from_parts` は
-        // 構造体リテラルゆえコンパイラが捕まえるのに、この関数だけが漏れる。積み損ねた列は
+        // 構造体リテラルゆえコンパイラが検出するのに、この関数だけが漏れる。積み損ねた列は
         // `PathStore::adopt` の連鎖 `zip` が最短で黙って切り、`debug_assert` は release で
         // 消えるので、**PATH 経由でしか届かないプログラムが検索から静かに消える**。
         let Self {
@@ -818,7 +818,7 @@ impl IndexTree {
 ///
 /// ソート順では兄弟がほぼ連続して現れるので、同じ親を何度も探索し直すのが元の無駄である。
 /// 部分木が割り込むと外れる（`dir\a`, `dir\a\x`, `dir\b` で `dir` が押し出される）ため
-/// 直近の祖先の鎖を覆えるだけの段数を持つ。**段数は実測で決めた**（312,377 件・並列・
+/// 直近の祖先のチェーンを覆えるだけの段数を持つ。**段数は実測で決めた**（312,377 件・並列・
 /// 各 3 回の最小値）: 2 段 25.3 ms / **4 段 23.8 ms** / 8 段 25.6 ms。深さの平均は 6.05 段
 /// だが、8 段では線形走査が伸びて損が勝つ。
 #[derive(Default)]
@@ -950,7 +950,7 @@ mod tests {
     ///
     /// これが `INDEX_CACHE_VERSION` を上げずに `IndexCache.names` の型を替えられた根拠であり、
     /// 破れると**全ユーザーの `index.bin` が黙って読めなくなる**（版が同じまま形式だけ変わる
-    /// ので、フォールバックの鎖はどの枝も拾わず cache-miss ＝ 22〜30 秒の全走査へ落ちる）。
+    /// ので、フォールバックのチェーンはどの分岐も拾わず cache-miss ＝ 22〜30 秒の全走査へ落ちる）。
     ///
     /// **`index_cache_on_disk_format_is_stable`（golden bytes）と役割が違う。** あちらは
     /// `IndexCache` 全体の凍結バイト列を守り、こちらは**なぜそれが凍結されたままでいられるか**
@@ -1032,15 +1032,15 @@ mod tests {
 
     /// **壊れた長さプレフィックスは、巨大確保ではなく `Err` で落ちる。**
     ///
-    /// `index.bin` は自分が書いたファイルだが、化けた 5 バイトの varint は 40 億件を名乗れる。
+    /// `index.bin` は自分が書いたファイルだが、化けた 5 バイトの varint は 40 億件を示せる。
     /// `Vec<String>` のときは serde の訪問子が事前確保を頭打ちにしていたので、この入力は
     /// 「読めなかった」＝ cache-miss ＝再走査へ穏やかに落ちていた。**自前の訪問子は同じ上限を
     /// 自分で持たない限りそれを迂回する**——迂回すると確保失敗になり、release は
     /// `panic="abort"` ゆえ**起動そのものが落ちる**（検索結果が変わる形ではないので挙動
-    /// テストでは捕まらない）。
+    /// テストでは検出されない）。
     #[test]
     fn corrupt_length_prefix_fails_instead_of_preallocating() {
-        // 要素数だけを名乗り、中身を 1 バイトも持たないバイト列（postcard の varint で
+        // 要素数だけを示し、中身を 1 バイトも持たないバイト列（postcard の varint で
         // 約 40 億）。**上限を外すと 16 GiB の確保を試みる。**
         let hostile = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
         let got: Result<NameArena, _> = postcard::from_bytes(&hostile);
@@ -1170,7 +1170,7 @@ mod tests {
             "parent >= i を受理してはならない"
         );
 
-        // 5. 深さが CHAIN_CAP 以上。**鎖を実際に伸ばして測る**——上限の値を書き写すと、
+        // 5. 深さが CHAIN_CAP 以上。**チェーンを実際に伸ばして測る**——上限の値を書き写すと、
         //    定数を変えたときにこのテストだけが古い前提のまま緑になる。
         let n = CHAIN_CAP + 1;
         let deep: Vec<String> = (0..n).map(|i| format!("d{i}")).collect();

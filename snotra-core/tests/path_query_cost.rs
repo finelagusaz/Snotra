@@ -20,7 +20,7 @@
 //! SSOT は `docs/build-commands.md`）。
 //!
 //! **製品レベルの関数はどれも実 `index.bin` を書き換えうる**（`load_or_scan_with_stats` を
-//! 通るため。**数を書かない**——1 本足すたびに腐る）。旧版を読んだらその場で現行版へ昇格するので、
+//! 通るため。**数を書かない**——1 本足すたびに古くなる）。旧版を読んだらその場で現行版へ昇格するので、
 //! **旧版のロードを測りたければ先に退避すること**（契約は同関数の doc）。走らせてから気づいても、
 //! その版はもう手元に無い。
 //!
@@ -30,7 +30,7 @@
 //!   [`measure_path_query_frame_cost_at_operating_point`] / [`measure_recent_history_cost`] は
 //!   実 `index.bin` を実起動と同じ経路で読み、`Engine::search` / `SearchEngine::recent_history`
 //!   をそのまま叩く。**判定に使うのはこちらである。**
-//!   （**数を見出しに書かない**——製品レベルの関数を 1 本足すたびに腐る）
+//!   （**数を見出しに書かない**——製品レベルの関数を 1 本足すたびに古くなる）
 //! - **走査だけを切り出した写し**: [`measure_path_query_sweep_cost`] は `normalized_key` を
 //!   保持するか導出するかを比べた反復 2 の記録であり、スコアリング・履歴照合・top-k 組立が
 //!   乗っていない。**見積もりが甘くなる**（実測で写し +3 ms に対し製品は +8〜16 ms）。
@@ -259,7 +259,7 @@ fn measure_path_query_frame_cost() {
 /// PATH が空・全件重複の構成ではフラグが立ったまま残る（検知器は `search/tests/build.rs` の
 /// `path_merge_lowers_the_sort_flag_only_when_it_actually_adds_entries`）。
 ///
-/// # この計器が単独で捕まえる経路
+/// # この計器が単独で検出する経路
 ///
 /// 2 つあり、**既存のどの計器も見ていない**: (1) PATH マージ後の `sorted_by_path = false` での
 /// tie-break、(2) `normal_mode = "substring"` での name スコアリング。
@@ -286,7 +286,7 @@ fn measure_path_query_frame_cost() {
 ///
 /// **撤去条件を持たない恒久の計器である。** 実運用点との乖離は #1057 が発見し、#1059 は
 /// 過去の表との比較可能性を優先して既存ハーネスを据え置いた。#1067 は 3 サイクル目として
-/// 「送る」のをやめ、既存を据え置いたまま別計器を足す側へ倒した。
+/// 「送る」のをやめ、既存を据え置いたまま別計器を足す側を選んだ。
 /// **`RETROSPECTIVE.md` を参照先にしない**——あれはサイクルごとに上書きされるので、
 /// 恒久の doc から見出しを引くと次のサイクルで着地しなくなる。
 ///
@@ -359,7 +359,7 @@ fn measure_path_query_frame_cost_at_operating_point() {
                 "\n  --- PATH マージ {}{} （+{merged} 件・ツリー {n_before} → {n_after}） / \
                  normal_mode = {mode:?} / sorted_by_path = {} ---",
                 // **ループ変数ではなく実際に足した件数で刷る。** `include_path_env = false` の
-                // 機体では 2 腕が同一の測定になり、ループ変数だと片方が嘘のラベルを名乗る
+                // 機体では 2 腕が同一の測定になり、ループ変数だと片方が嘘のラベルを示す
                 // ——この doc が上で「代理指標にしてはならない」と書いた誤りの、出力側の鏡像である。
                 if merged > 0 { "あり" } else { "なし" },
                 // **2 腕が同一構成になる場合はそう書く。** `include_path_env = false` の機体

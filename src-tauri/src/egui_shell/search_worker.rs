@@ -32,7 +32,7 @@ pub fn coalesce(first: SearchRequest, rest: impl Iterator<Item = SearchRequest>)
 ///
 /// **逆向きの契約が対である。** この worker の死（`AppState` 不在・engine lock の毒・将来足す
 /// 経路のいずれでも）は、`req_rx` が drop されることで**送信側の `Err`** として現れ、
-/// `LauncherController::run_search_with` の Plain 枝が行をクリアして誤起動を止める。無界チャネル
+/// `LauncherController::run_search_with` の Plain 分岐が行をクリアして誤起動を止める。無界チャネル
 /// ゆえ `Err` は「受け手が死んだ」以外を意味しない（混雑による偽陽性が無い）。**検知は 1 要求ぶん
 /// 遅れる**——死を招いた要求は応答もクリアも得ず、次の送信が失敗して初めて現れる。
 pub fn spawn_search_worker(app: tauri::AppHandle) -> (Sender<SearchRequest>, Receiver<SearchMsg>) {
@@ -46,7 +46,7 @@ pub fn spawn_search_worker(app: tauri::AppHandle) -> (Sender<SearchRequest>, Rec
             // 落ちると、送信は成功し続け seq は永久に settle せず、UI は古い行を保ったまま
             // 無音になる——**沈黙する失敗を選ばない**。ここで抜ければ `req_rx`
             // が drop され、次の送信が `Err` として送信側へ死を伝える（→ `run_search_with` の
-            // Plain 枝が行をクリアする）。**現に到達しない**（`AppState` は Builder 段階で
+            // Plain 分岐が行をクリアする）。**現に到達しない**（`AppState` は Builder 段階で
             // manage され `unmanage` の呼び出し点は無い）が、到達したときに沈黙しない形を選ぶ。
             let Some(state) = app.try_state::<crate::AppState>() else {
                 return;

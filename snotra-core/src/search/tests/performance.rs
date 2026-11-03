@@ -98,7 +98,7 @@ fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
 
 // `measure_kana_footprint` / `measure_kana_memory_footprint`（issue #337 の ROI ゲート）は
 // 撤去した（#1056）。**製品が捨てた表現を測る計器になっていたためである**——あれは
-// `entries` から自前で `Vec<Box<str>>` を組んで「kana_lower_names のメモリ実体」と名乗って
+// `entries` から自前で `Vec<Box<str>>` を組んで「kana_lower_names のメモリ実体」と示して
 // いたが、`kana_lower_names` は `NameArena` になり、あの物体は索引のどこにも存在しない。
 // `search/footprint.rs` の `//!` が明文で禁じている型（「構築前の `Vec<AppEntry>` を
 // 走査して代用しない——その走査は存在しない物体を測る」）の再発であり、`#[ignore]` ゆえ
@@ -206,7 +206,7 @@ fn bench_new_scaling() {
     }
 }
 
-/// migemo on/off の構築コスト差を計測する（issue #337）。kana 構築（to_kana の全エントリ map）をスキップした分の差を可視化する。構築はロック外（`PrebuiltIndex`）で行われ、ロック保持時間は `apply_prebuilt_index` の O(1) ムーブのみ（migemo 状態に依存しない）。**コンストラクタを名指ししない**——製品が通るのは `from_material` の 1 つであり、`PrebuiltIndex::new` は `#[cfg(test)]` ゆえ製品から呼べない（同関数の doc）。**この一文は 2 度腐った**（`new` → `from_cache`/`from_tree` → `from_material`）ので、次に触るときは名前を書かず「入口は 1 つ」だけを残すことを検討する。
+/// migemo on/off の構築コスト差を計測する（issue #337）。kana 構築（to_kana の全エントリ map）をスキップした分の差を可視化する。構築はロック外（`PrebuiltIndex`）で行われ、ロック保持時間は `apply_prebuilt_index` の O(1) ムーブのみ（migemo 状態に依存しない）。**コンストラクタを名指ししない**——製品が通るのは `from_material` の 1 つであり、`PrebuiltIndex::new` は `#[cfg(test)]` ゆえ製品から呼べない（同関数の doc）。**この一文は 2 度古くなった**（`new` → `from_cache`/`from_tree` → `from_material`）ので、次に触るときは名前を書かず「入口は 1 つ」だけを残すことを検討する。
 fn bench_new_migemo(label: &str, n: usize, migemo_enabled: bool) {
     use std::time::Instant;
     let entries = make_bench_entries_katakana(n);

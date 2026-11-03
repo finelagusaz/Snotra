@@ -1,7 +1,7 @@
 //! ウィンドウが載っているモニターのリフレッシュレート取得（#737・契約②「配送には下限間隔がある」の供給側）。
 //!
 //! カスケードは 現在モード（動的）→ OS 既定（レジストリ）→ None の順で、None は呼び出し側
-//! （`RepaintScheduler::set_min_interval`）が 60Hz フォールバックへ倒す（issue #737 コメントの
+//! （`RepaintScheduler::set_min_interval`）が 60Hz へフォールバックする（issue #737 コメントの
 //! 取得順・config キーは持たない＝ユーザー合意 2026-07-26）。`dmDisplayFrequency` の 0/1 は
 //! 「ハードウェア既定を使う」の番兵値（DEVMODE の慣習）であり、実レートとして扱わない。
 //!

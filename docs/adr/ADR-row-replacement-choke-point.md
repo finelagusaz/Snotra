@@ -2,7 +2,7 @@
 
 ## 文脈
 
-#1039 で、同じ出来事（`SearchState` の行が総入れ替わる）に対する 2 つの義務——(A) `rows_generation` の前進（#699 のクリック照合が読む）と (B) 検索 worker の in-flight の失効（#1004 の seq が読む）——を 1 か所へ合流させることになった。それまで (A) は `SearchState` の内側に、(B) は呼び出し側（`LauncherController`）が手で撃つ規約として散っており、11 箇所の手書き `dispatch.invalidate()` と 3 箇所の漏れ（`enter_tool` / `on_escape` の 2 枝）が生じていた。
+#1039 で、同じ出来事（`SearchState` の行が総入れ替わる）に対する 2 つの義務——(A) `rows_generation` の前進（#699 のクリック照合が読む）と (B) 検索 worker の in-flight の失効（#1004 の seq が読む）——を 1 か所へ合流させることになった。それまで (A) は `SearchState` の内側に、(B) は呼び出し側（`LauncherController`）が手で撃つ規約として散っており、11 箇所の手書き `dispatch.invalidate()` と 3 箇所の漏れ（`enter_tool` / `on_escape` の 2 つの分岐）が生じていた。
 
 issue 本文のスケッチと、`/plan-review` Step 2b の独立導出は、どちらも**公開メソッド `apply_rows(origin: RowOrigin, rows, now)`** ——行の由来を enum で受ける単一の入口——を提案していた。
 
@@ -18,11 +18,11 @@ view 種別ガード（Folder/Tool ビュー中は遅着 worker 結果を採ら�
 
 - **`SearchDispatch` を消して `SearchState` が `in_flight: Option<u64>` を直に持つ**: 却下。計時（`key_at` / `dispatched_at`）と seq が別の型へ分かれ、`Settled`（`since_key` / `since_dispatch`）の導出が 2 型に跨がる。`SearchDispatch` は既に「時計を内部で読まない」純粋核（`now` を引数で受ける）なので、丸ごと private フィールドとして内包する追加コストが無い。
 
-- **`is_unsettled` を肯定形 `is_settled` にする**（issue 本文が想定した極性）: 却下。呼び出し点に `!` が出るだけでなく、`results_view.rs` の `RowsSnapshot::input_idle` の doc が持つ導出——「食い違うのは `armed == false ∧ pending != 0` のときである」——が極性反転で式ごと書き直しになる。否定形を保てばこの行は腐らず、リンク先の張り替えだけで済む。
+- **`is_unsettled` を肯定形 `is_settled` にする**（issue 本文が想定した極性）: 却下。呼び出し点に `!` が出るだけでなく、`results_view.rs` の `RowsSnapshot::input_idle` の doc が持つ導出——「食い違うのは `armed == false ∧ pending != 0` のときである」——が極性反転で式ごと書き直しになる。否定形を保てばこの行は古くならず、リンク先の張り替えだけで済む。
 
 - **view 種別ガードを `put_rows` の内側へ置く**: 却下。`put_rows` に `view_kind()` を読ませると経路ごとに意味が変わる——`enter_tool` は `self.tool` を `Some` にした**後**に呼ぶので、ガードが自分自身を弾く。呼ぶ側は既に自分がどの遷移の途中かを知っており、判定を共有する理由が無い。
 
-- **view ガードを `accept` より**前**に置く**: 却下。Folder ビューで届いた結果が pending を残したまま捨てられ、**生成 1 : 破棄 0 の終端**ができる（`/symmetric-check` Step 2b）。seq 不一致のときだけ pending を保つのが正しい——そのときはより新しい要求がまだ飛んでいる。**ただし逆順で user-visible な実害が出る並びは構成できていない**——Folder ビューから出る経路（`on_escape` の folder 枝 / `reset` / `run_search_with` の Folder 枝）はすべて `put_rows` を通って失効させ、残っている間の唯一の消費者 `is_unsettled` も `should_flush_on_enter` が `ViewKind::Results` を要求するため Folder 中は読まれないためである。**却下の理由は実害ではなく不変条件の局所性である**——逆順にすると「生成 1 : 破棄 1」の成立根拠が呼び出し点の外（Folder の全出口）へ散る。
+- **view ガードを `accept` より**前**に置く**: 却下。Folder ビューで届いた結果が pending を残したまま捨てられ、**生成 1 : 破棄 0 の終端**ができる（`/symmetric-check` Step 2b）。seq 不一致のときだけ pending を保つのが正しい——そのときはより新しい要求がまだ飛んでいる。**ただし逆順で user-visible な実害が出る並びは構成できていない**——Folder ビューから出る経路（`on_escape` の folder 分岐 / `reset` / `run_search_with` の Folder 分岐）はすべて `put_rows` を通って失効させ、残っている間の唯一の消費者 `is_unsettled` も `should_flush_on_enter` が `ViewKind::Results` を要求するため Folder 中は読まれないためである。**却下の理由は実害ではなく不変条件の局所性である**——逆順にすると「生成 1 : 破棄 1」の成立根拠が呼び出し点の外（Folder の全出口）へ散る。
 
 - **folder token と dispatch seq を newtype で分ける**: 却下。どちらも `u64` を返す生成メソッドで、取り違えても型・テスト・smoke が通る（**受容する残余**）。newtype を採らないのは、取り違えが「folder の行が永久に出ない」という目に見える形で現れるためである。代わりに両メソッドの doc で相互に名指しした。
 

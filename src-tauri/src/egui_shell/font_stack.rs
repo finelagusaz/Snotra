@@ -4,7 +4,7 @@
 //! [`JP_FONT_BYTES`] は `OnceLock`（**set-once・never-clear**）を厳守する: [`jp_font_bytes`]
 //! が返す参照は `transmute` で `'static` 化しており、その健全性はこの不変条件だけを根拠に
 //! 成り立つ。再 set・クリアの経路を足してはならない。
-//! フォント登録の枝は次のとおり（#532 SU4 の形に #689 が 1 枝を足した）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**枝を列挙するのは、この index 0 の不変条件が枝ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
+//! フォント登録の分岐は次のとおり（#532 SU4 の形に #689 が 1 つの分岐を足した）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**分岐を列挙するのは、この index 0 の不変条件が分岐ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
 //!
 //! **index 0 を破ると Latin と CJK が混在する行のベースラインがずれる**（2 フォントで積むとずれること自体は
 //! `snotra-settings/CLAUDE.md` の #399）。softbuffer の `fill_mesh` はカバレッジ AA を持たず、2 フォント間の
@@ -22,7 +22,7 @@ static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 /// かな + JIS 第1水準に加え、**第2水準を混ぜているのが要点**——かなと常用漢字だけ持つ
 /// 中途半端な和文フォントを弾くため。判定が緩いと jp_font を落としたあとで第2水準が
 /// 豆腐（□）になり、クラッシュしない字単位の静かな欠落として残る。
-/// 判定は「厳しすぎて jp_font を残す」方向へ倒す（安全側）。
+/// 判定は「厳しすぎて jp_font を残す」方向にする（安全側）。
 const CJK_PROBE: &[char] = &[
     // かな（必須）
     'あ', 'ん', 'ア', 'ヴ', 'ー', // JIS 第1水準（常用寄り）
@@ -34,7 +34,7 @@ const CJK_PROBE: &[char] = &[
 ///
 /// 真なら jp_font fallback は不要で、`YuGothM.ttc`（13.26 MiB）+ egui のグリフ機構を
 /// 丸ごと積まずに済む（#687 の実測: user_font 分だけでアイドル 20.6 MiB）。
-/// パース不能なバイト列は `false`（= jp_font を積む安全側）へ倒す。
+/// パース不能なバイト列は `false`（= jp_font を積む安全側）にする。
 fn font_covers_cjk(bytes: &[u8], face_index: u32) -> bool {
     let Ok(face) = ttf_parser::Face::parse(bytes, face_index) else {
         return false;
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn font_covers_cjk_rejects_unparsable_bytes() {
-        // パース不能は「カバーしていない」＝ jp_font を積む安全側へ倒す。
+        // パース不能は「カバーしていない」＝ jp_font を積む安全側にする。
         assert!(!super::font_covers_cjk(&[], 0));
         assert!(!super::font_covers_cjk(&[0u8; 64], 0));
     }

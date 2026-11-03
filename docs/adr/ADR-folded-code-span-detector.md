@@ -50,7 +50,7 @@
 
 ## 派生した決定: reminder の表 ↔ 判定の照合を機構へ載せた
 
-この作業の `/symmetric-check` が、**`SCAN_SCOPED` へ 1 本足したとき `docs/hooks.md`「検査ではない reminder（発火一覧に現れない）」の表との対応を誰も検算しない**ことを見つけた（片方だけ足しても緑のまま推移する）。**この型は一度腐っている**——`selectChecks` の写しである発火一覧が同じ形で腐り、その手当てが `G-hook-fires` である（#863。さらに前は ルート `CLAUDE.md` の同じ表が腐って `docs/hooks.md` へ退去した・#474〜#497）。
+この作業の `/symmetric-check` が、**`SCAN_SCOPED` へ 1 本足したとき `docs/hooks.md`「検査ではない reminder（発火一覧に現れない）」の表との対応を誰も検算しない**ことを見つけた（片方だけ足しても緑のまま推移する）。**この型は一度古くなっている**——`selectChecks` の写しである発火一覧が同じ形で古くなり、その手当てが `G-hook-fires` である（#863。さらに前は ルート `CLAUDE.md` の同じ表が古くなって `docs/hooks.md` へ退去した・#474〜#497）。
 
 **`G-edit-findings-table` を新設し、`G-hook-fires` と同じ形で解いた**——判定を再実装せず、`edit-findings.mjs` の `SCAN_SCOPED` を **import して読む**（同検査のヘッダが言う「抽出で近似すると、閉じたい写しを一段下で作り直すことになる」がそのまま当たるため）。表の「判定」列は判定関数名を綴る形へ変え、機械可読にした。
 
@@ -74,7 +74,7 @@
 - **母集団の外（`docs/adr/` ・`docs/superpowers/` の `.md`、行末インラインコメント）では、2 形とも規範が要求するだけで機構は黙る。** 規範の側は射程を機構に合わせていない（`docs/comment-guidelines.md`「日本語の折返し」が「機構の射程と無関係に全ツリーへ掛かる」と明記する）——**機構の死角を規範の免除と読ませないため**である。ADR 自身がその母集団に居るので、**この文書のコードスパンを折れば規範違反だが誰も赤くしない**。
 - **`allHeadingRefDocs` を食う検査が 3 本から 4 本へ増えた。** 新しい母集団を作らない選択の代償であり、**次にこの切り出しを変える人は 4 本すべてを測り直す必要がある**（`.claude/rules/safety-nets.md`「機構自身の配置を変えたら、その母集団を食う述語を測り直す」の引き金）。導出そのものの呼び出し点は増えていない——`governance-check.mjs` が 1 回導出して `ctx.allRefDocs` で配る形は変えていない。
 - **`G-edit-findings-table` は表の散文を見ない。** 発火条件が実装とずれること（母集団の取り違え・拡張子ゲートの記述）と、`SCAN_SCOPED` の外に在る 4 判定（`checkModuleIndex` / `checkReferences` / `checkAdrFileNames` / `reportFor`）の**手で並べた写し**は残る。名前を変えれば import が失敗して鳴るが、**呼び出しごと消えても気づかない**。
-- **撤去した語彙は 2 か所に残る。** `docs/superpowers/plans/2026-08-10-search-worker.md` は「1 段落 1 行」を計画本文へ写しており、`ADR-folded-canonical-reference-detector` は「規範化している向きと逆を向く」と**一般則が在る前提**で書いている。どちらも凍結された歴史であり、`ADR-adr-frozen-history` のとおり腐るに任せる。生きた層に残った出現は、`docs/comment-guidelines.md` の「かつて課していた」という**撤去の描写だけ**である（撤去時に 4 つの綴りで `git grep` して確かめた。**別綴りの同義表現までは覆っていない**）。
+- **撤去した語彙は 2 か所に残る。** `docs/superpowers/plans/2026-08-10-search-worker.md` は「1 段落 1 行」を計画本文へ写しており、`ADR-folded-canonical-reference-detector` は「規範化している向きと逆を向く」と**一般則が在る前提**で書いている。どちらも凍結された歴史であり、`ADR-adr-frozen-history` のとおり古くなるに任せる。生きた層に残った出現は、`docs/comment-guidelines.md` の「かつて課していた」という**撤去の描写だけ**である（撤去時に 4 つの綴りで `git grep` して確かめた。**別綴りの同義表現までは覆っていない**）。
 
 ## 関連
 

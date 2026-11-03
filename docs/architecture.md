@@ -167,7 +167,7 @@ sequenceDiagram
         View->>View: Debouncer（leading 発火 + trailing 50ms を arm）
         View->>State: issue_search(seq)
         View->>W: SearchRequest{seq, query}
-        Note over View: この枝自身は行を差し替えない<br/>（同じ update の後半の drain が前の要求を採ることはある）
+        Note over View: この分岐自身は行を差し替えない<br/>（同じ update の後半の drain が前の要求を採ることはある）
     else Results / Plain（空クエリ・indexing 中）
         View->>State: set_results(空)（同期。worker 経由だと消した文字が 1 フレーム残る）
     else Results / Instant
@@ -236,7 +236,7 @@ sequenceDiagram
 
 #### 例外は Enter である
 
-最終クエリの結果がまだ行へ反映されていない間の Enter は worker の往復を待てないため、`on_enter` がその場で同期 `engine.search` を走らせる（判定は `should_flush_on_enter`、正当性の理由は同関数のコメント。**「未反映」の中身は第 3 引数を導く `SearchState::is_unsettled` の doc が正本である**）。**この条件は debounce の予約中に限らない**（#1038）——#631 が塞いだ欠陥が同じ形で戻っていた（含意が壊れた経緯は同 doc）。**発火しうるウィンドウは「打鍵 → 50 ms」から「打鍵 → 50 ms + worker の走査（実運用点の値は `Engine::config_handle` の doc が持つ）と、その結果を採り込むフレーム」へ広がった**（**上端**は走査の完了ではなく `drain_search` の `accept` である。起動突入・空クエリ・reset は**行を同期で差し替えることによって**これより早く閉じる・#1039。**folder からの Escape だけは閉じない**——復帰させる行は展開前のものであって復元 query の最終結果ではないため、#1079 が突入時点の未反映を frame へ控えて復帰時に立て直す。ゆえにウィンドウは folder の往復を跨いで持ち越され、閉じるのは復帰後に行が実際に差し替わったときである）。**1 回あたりの費用は #1076 で勘定が変わった**（それ以前は「変わらない」と書いていた——根拠は `on_enter` が判定より前に `instant_prefix` で `engine.lock()` を取ることで、flush するかによらず走査待ちを払っていたためである）。**その無条件の待ちは #1076 で消えた。** ゆえに今は flush の有無で分かれる: **flush に進まない Enter は engine の錠を待たない**（config は `read_config` から読む）。**flush に進む Enter のうち、クエリが空でも `indexing` 中でもないものだけが**同期 `engine.search` の錠待ちと走査を負う——**クエリが空のときと `indexing` 中のときは行を同期でクリアするだけで engine の錠を取らない**（枝は `on_enter` が持つ。どちらも到達する: 全消し直後の Enter は `armed` ゆえ flush に進み、索引再構築中の Enter も同様である）。#1038 が広げたのは flush に進むウィンドウであるから、**その広がったぶんの Enter は #1076 以降、走査待ちを新たに負う——空クエリと `indexing` 中の枝に当たらない限りにおいて**（以前はどちらでも払っていたので差が出なかった）。**このフレームだけは検索がフレームに乗る。これは受容している**——結果を確定させる Enter は 1 回だけで、打鍵ごとに払う費用ではない。**IME 変換確定の Enter がここへ紛れないのは、`read_post_widget_input` が `response.changed()` より後で Enter を読むからである**（確定した文字列が state へ入った後の値で起動する・同関数の doc が正本）
+最終クエリの結果がまだ行へ反映されていない間の Enter は worker の往復を待てないため、`on_enter` がその場で同期 `engine.search` を走らせる（判定は `should_flush_on_enter`、正当性の理由は同関数のコメント。**「未反映」の中身は第 3 引数を導く `SearchState::is_unsettled` の doc が正本である**）。**この条件は debounce の予約中に限らない**（#1038）——#631 が塞いだ欠陥が同じ形で戻っていた（含意が壊れた経緯は同 doc）。**発火しうるウィンドウは「打鍵 → 50 ms」から「打鍵 → 50 ms + worker の走査（実運用点の値は `Engine::config_handle` の doc が持つ）と、その結果を採り込むフレーム」へ広がった**（**上端**は走査の完了ではなく `drain_search` の `accept` である。起動突入・空クエリ・reset は**行を同期で差し替えることによって**これより早く閉じる・#1039。**folder からの Escape だけは閉じない**——復帰させる行は展開前のものであって復元 query の最終結果ではないため、#1079 が突入時点の未反映を frame へ控えて復帰時に立て直す。ゆえにウィンドウは folder の往復を跨いで持ち越され、閉じるのは復帰後に行が実際に差し替わったときである）。**1 回あたりの費用は #1076 で勘定が変わった**（それ以前は「変わらない」と書いていた——根拠は `on_enter` が判定より前に `instant_prefix` で `engine.lock()` を取ることで、flush するかによらず走査待ちを払っていたためである）。**その無条件の待ちは #1076 で消えた。** ゆえに今は flush の有無で分かれる: **flush に進まない Enter は engine の錠を待たない**（config は `read_config` から読む）。**flush に進む Enter のうち、クエリが空でも `indexing` 中でもないものだけが**同期 `engine.search` の錠待ちと走査を負う——**クエリが空のときと `indexing` 中のときは行を同期でクリアするだけで engine の錠を取らない**（分岐は `on_enter` が持つ。どちらも到達する: 全消し直後の Enter は `armed` ゆえ flush に進み、索引再構築中の Enter も同様である）。#1038 が広げたのは flush に進むウィンドウであるから、**その広がったぶんの Enter は #1076 以降、走査待ちを新たに負う——空クエリと `indexing` 中の分岐に当たらない限りにおいて**（以前はどちらでも払っていたので差が出なかった）。**このフレームだけは検索がフレームに乗る。これは受容している**——結果を確定させる Enter は 1 回だけで、打鍵ごとに払う費用ではない。**IME 変換確定の Enter がここへ紛れないのは、`read_post_widget_input` が `response.changed()` より後で Enter を読むからである**（確定した文字列が state へ入った後の値で起動する・同関数の doc が正本）
 
 #### 行を差し替えたら in-flight は必ず失効する。これは規約ではなく機構である（#1039）
 
@@ -277,7 +277,7 @@ worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用
 | パスマッチ（部分文字列探索） | O(**フルパス長** × クエリ長) | パスクエリ |
 | 履歴照合 3 種 | O(フルパス長) のハッシュ ×3 | **マッチ成立後のみ** |
 
-**フルパスは表示名より 1 桁近く長い**（実測は `PERFORMANCE.md`「索引の常駐の内訳」）。組み立てが償却で済むのは `PathCursor` が祖先の鎖を持ち回り、大半のエントリで巻き戻して 1 段だけ書き足すからである（鎖が外れたときだけ根まで辿り直す・`search/path_store.rs` が正本）。
+**フルパスは表示名より 1 桁近く長い**（実測は `PERFORMANCE.md`「索引の常駐の内訳」）。組み立てが償却で済むのは `PathCursor` が祖先のチェーンを持ち回り、大半のエントリで巻き戻して 1 段だけ書き足すからである（チェーンが外れたときだけ根まで辿り直す・`search/path_store.rs` が正本）。
 
 #### パスクエリだけが 2 つの絞り込みを同時に失う
 

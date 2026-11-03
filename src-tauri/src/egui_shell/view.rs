@@ -59,7 +59,7 @@ const SEARCH_INPUT_MARGIN: egui::Margin = egui::Margin::symmetric(4, 2);
 ///
 /// **`text_edit_width`（既定 280）の上限は効かない**——`add_sized` は
 /// `Layout::centered_and_justified` の子 ui を作り、AtomLayout は justified なら
-/// `max_size.x = f32::INFINITY` へ倒す（`atom_layout.rs:304-312`）。`builder.rs:478` の
+/// `max_size.x = f32::INFINITY` にする（`atom_layout.rs:304-312`）。`builder.rs:478` の
 /// `allocate_width = desired_width.at_most(available_width)` はそこで捨てられる。
 ///
 /// **frame expansion（`builder.rs:721-725`）も効かない**——差し替わるのは `.allocate(ui)` の
@@ -213,8 +213,8 @@ fn move_text_cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 /// **適用する**値であり、順序の不変条件を負うのはこちらだけである（理由は `search_input_ui` の doc）。
 ///
 /// **3 フィールドは同型（`Color32`）ゆえ、構築時に取り違えても型は通る。** `search_input_ui` の
-/// **中**での取り違えは同関数の検査が捕まえるが、**呼び出し側で `VisualSnapshot` から詰めるとき**の
-/// 取り違えは型でもテストでも捕まらない——区別できる観測は非既定色での目視だけである
+/// **中**での取り違えは同関数の検査が検出するが、**呼び出し側で `VisualSnapshot` から詰めるとき**の
+/// 取り違えは型でもテストでも検出されない——区別できる観測は非既定色での目視だけである
 /// （`docs/build-commands.md`「`[visual]` の色を変える変更は、**非既定色で**目視する」）。
 pub(crate) struct InputVisuals {
     /// `TextEdit` の背景（`Visuals::extreme_bg_color`）。
@@ -486,7 +486,7 @@ struct PostWidgetInput {
 ///
 /// egui の既定は `interaction.interact_radius = 5.0`——矩形の**外 5px** までを近傍として
 /// その widget の当たりに含める。`hit_test` は「大きな drag 背景の上に載った小さな click
-/// widget」を助ける枝を持ち、そこで**背景のドラッグを捨てて**近傍の widget へ click も drag も
+/// widget」を助ける分岐を持ち、そこで**背景のドラッグを捨てて**近傍の widget へ click も drag も
 /// 渡す。main ウィンドウはまさにその形（背景 = `Sense::drag()` の `max_rect`・入力欄 =
 /// `Sense::click_and_drag()`）ゆえ、バー帯の余白 `Metrics::bar_inset`（既定 7.0）のうち
 /// **内側 5px が入力欄に食われ**、入力欄以外の全域をドラッグして移動可能という
@@ -824,7 +824,7 @@ impl EguiView for SearchWindowView {
         // **ここより前で新しいウィジェット・子 `Ui` を作るなら、visuals を読まないことを
         // 確かめるか、その `Ui` へ自分で visuals を渡すこと。** `update()` の冒頭からここまでは
         // 3 値が未適用の区間であり、適用が `update()` の前半に在った #751 当時より**広い**。
-        // **この区間の退行を捕まえる自動検査は無い**——移設で入った検査は `search_input_ui` を
+        // **この区間の退行を検出する自動検査は無い**——移設で入った検査は `search_input_ui` を
         // 単独で駆動するので、ここには届かない。残るのは**カテゴリ D の非既定色目視**だけである
         //（受容する残余・`ADR-visuals-order-detector-at-choke-point`）。現時点でこの区間に visuals を読む描画は
         // 無い: `ui.interact` は `create_widget` を呼ぶが（`ui.rs:906` → `:920`）ヒットテストの
@@ -847,7 +847,7 @@ impl EguiView for SearchWindowView {
             // **測る font と描く font は同じ `bar_font` でなければならない。** 片方だけ
             // 替えると、広く測れば egui が末尾を削って `…` が二重に付き（leaf が消える）、
             // 狭く測れば要らぬ省略が入る——**どちらも検出器を持たない**（型でも
-            // テストでも捕まらず、カテゴリ D の目視だけが見る受容残余である）。
+            // テストでも検出されず、カテゴリ D の目視だけが見る受容残余である）。
             // 色（`name_color`）は galley の寸法に効かないので、描画側の
             // `weak_text_color`（egui が無条件に上書きする）との食い違いは無害である。
             let hint: String = match hint_plan {
@@ -927,7 +927,7 @@ impl EguiView for SearchWindowView {
         //
         // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
         // 射程が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
-        // 腐る。正本は `indexing_raw` の参照そのもの（`launcher_controller/activation/tests.rs` の
+        // 古くなる。正本は `indexing_raw` の参照そのもの（`launcher_controller/activation/tests.rs` の
         // `activation_uses_frame_values_not_live_reads` が、起動側で読み直しが
         // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
         // `indexing` 読みは用途が違い（行をクリアするか）、到達経路ごとにその時点で判断するのが
@@ -1132,7 +1132,7 @@ impl EguiView for SearchWindowView {
         // `indexing` だけである**——`view_kind` と `instant_rows_query` はここで読むのが正しい
         // （`on_enter` が Tool ビューへ入る等、この行より前で正当に変わる）。
         //
-        // **受容する残余が 2 つある。** (1) この値は `indexing_raw` を読んだ時点のもので、表示ゲートとしては最大 1 フレーム古い——`on_enter` の同期 `engine.search` は engine lock を握る（実運用点での保持時間は `Engine::config_handle` の doc）ので、その間に立つ余地がある。帰結は results ウィンドウが隠れるのが 1 フレーム遅れることだけで、**起動と表示は同じ値を見たまま**である。(2) `run_search_with` の `indexing` 読みは live のままである（用途が違う——行をクリアするか。**到達経路は数えない**——凍結より前に走るものも後に走るものも在り、足すたびに腐る）。食い違うと「Enter が 1 フレーム飲まれる」か「行が空で何も起きない」になり、どちらも次フレームの再検索が回復する。
+        // **受容する残余が 2 つある。** (1) この値は `indexing_raw` を読んだ時点のもので、表示ゲートとしては最大 1 フレーム古い——`on_enter` の同期 `engine.search` は engine lock を握る（実運用点での保持時間は `Engine::config_handle` の doc）ので、その間に立つ余地がある。帰結は results ウィンドウが隠れるのが 1 フレーム遅れることだけで、**起動と表示は同じ値を見たまま**である。(2) `run_search_with` の `indexing` 読みは live のままである（用途が違う——行をクリアするか。**到達経路は数えない**——凍結より前に走るものも後に走るものも在り、足すたびに古くなる）。食い違うと「Enter が 1 フレーム飲まれる」か「行が空で何も起きない」になり、どちらも次フレームの再検索が回復する。
         let plain_hidden = crate::egui_shell::plain_results_hidden(
             self.controller.state().view_kind(),
             self.controller.instant_rows_query().is_some(),
@@ -1206,7 +1206,7 @@ impl EguiView for SearchWindowView {
         // 行が変わったなら通知が届いた——正常」。reset-on-show の memo リセット（fail-safe）は
         // show 側の導出が退行しても最初のフレームで動的高さ算出が直すため、外から観測する
         // smoke の高さ断言を無力化する（過渡は 1 フレーム=約16ms、`Wait-SnotraWindow` は
-        // 200ms ポーリング + 100ms 間隔では捕まらない）。ここは in-process で
+        // 200ms ポーリング + 100ms 間隔では検出されない）。ここは in-process で
         // 「起きてはならないことが起きていないか」を突き合わせる
         // （`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。
         //
@@ -1519,7 +1519,7 @@ mod tests {
 
     /// IME 変換中は**選択帯ではなく下線**で描かれ、**変換対象の節が濃い下線で示される**。
     ///
-    /// `search_input_ui` の入口で `ime_composition.legacy_visuals` を偽へ倒していることが前提で、
+    /// `search_input_ui` の入口で `ime_composition.legacy_visuals` を偽にしていることが前提で、
     /// **戻すと下線は 1 本も引かれない**（egui は `cursor_purpose` を `Selection` に固定して
     /// 選択帯で描く）——変異注入で実測した。egui はこの値を **Windows で既定 `true`** にするため、
     /// **バージョンを上げた拍子に既定へ戻る類の退行**がありうる。この検査がその検知点である。
@@ -1857,14 +1857,14 @@ mod tests {
     /// 走らせ、`hint` クロージャが受け取る子 `Ui` の値を突き合わせる。**新テストが落ちたとき、
     /// 上のテストが緑なら原因は製品コード側だと切り分けられる**——併存はその対照のためである。
     ///
-    /// #751 が「コンパイラもユニットテストも `check:colors` も smoke も捕まえない受容残余」と
+    /// #751 が「コンパイラもユニットテストも `check:colors` も smoke も検出しない受容残余」と
     /// 記録した順序不変条件は、#949 の移設とこの検査で**検知手段を持つ**。
     ///
     /// **`Harness` ではなく素の `run_ui` を使う。** 初回 pass であることが症状の成立条件そのもの
     /// であり、`egui_kittest::Harness` は構築の時点で既に 1 フレーム走らせる
     ///（`kittest_first_frame_requests_focus_before_text_edit` の doc に実測が在る）。
     ///
-    /// **この検査が捕まえないもの**は `search_input_ui` の doc（`update()` 側の未適用区間）。
+    /// **この検査が検出しないもの**は `search_input_ui` の doc（`update()` 側の未適用区間）。
     #[test]
     fn search_input_ui_applies_theme_values_to_child_ui_in_the_first_pass() {
         let ctx = egui::Context::default();
@@ -1905,8 +1905,8 @@ mod tests {
     /// バー余白の 1 点を突いて `(背景がドラッグを取ったか, 入力欄が hover したか)` を返す。
     ///
     /// **`update()` の登録順を再現する**——背景ドラッグ（`Sense::drag()` の `max_rect`）が先、
-    /// 入力欄が後。`hit_test` の「大きな drag 背景の上に載った小さな click widget を助ける」枝は
-    /// 背景があって初めて通り、その枝こそが食い込みの実体だからである。
+    /// 入力欄が後。`hit_test` の「大きな drag 背景の上に載った小さな click widget を助ける」分岐は
+    /// 背景があって初めて通り、その分岐こそが食い込みの実体だからである。
     ///
     /// 幾何は既定 config の実値（`Metrics::from_config(15, 6, 28)`: 余白 7・欄高 29）。
     /// `offset` は入力欄の矩形からの符号付き距離（正 = 外側の余白、負 = 欄の内側）。
@@ -2042,7 +2042,7 @@ mod tests {
     /// `(欄の上端からの余り, 欄の下端までの余り)` を返す。
     ///
     /// 幾何は既定 config の導出（`Metrics::from_config(font_size, 6, 28)`）から取る——
-    /// 欄高を検査に書き写すと、`bar_padding` の導出が変わったときにここだけが腐る。
+    /// 欄高を検査に書き写すと、`bar_padding` の導出が変わったときにここだけが古くなる。
     ///
     /// **空 galley を除くのは、text が空のフレームで `TextEdit` がキャレット用に 0 幅の galley を
     /// 積むためである**（hint の galley と同じ位置に重なる・実測）。除かないと 1 件のはずの

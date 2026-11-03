@@ -90,7 +90,7 @@ pub fn file_char_mask(lower_file_name: Option<&str>) -> u64 {
 
 /// 1 エントリぶんの派生文字列が、どこまで上流と重複しているか。
 ///
-/// 鎖は `lower_file_name` → `lower_name` → `name` の順で、各段が上流と一致すれば持たずに済む。
+/// チェーンは `lower_file_name` → `lower_name` → `name` の順で、各段が上流と一致すれば持たずに済む。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DerivedSharing {
     /// `lower_name` が `name` とバイト一致する（`normalize_for_match` が名前をそのまま返す）。
@@ -111,7 +111,7 @@ pub struct DerivedSharing {
 ///
 /// **両方を同時に測るのは、呼び出し側に順序の責任を持たせないためである。** file name 側の
 /// 比較相手は「潰す前の `lower_name`」であり、name 側を先に潰すとその相手が消えて共有を
-/// 取りこぼす（結果は正しいまま削減だけが減るので、挙動テストでは捕まらない）。
+/// 取りこぼす（結果は正しいまま削減だけが減るので、挙動テストでは検出されない）。
 ///
 /// **`is_folder` から推論してはならない。** 実データでは folder の 100% が一致するが、それは
 /// indexer の名前導出規則（folder は `file_name()`、file は `file_stem()`）の帰結であって、

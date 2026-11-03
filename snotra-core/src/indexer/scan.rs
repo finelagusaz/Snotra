@@ -19,7 +19,7 @@ mod tests;
 
 /// 2 つの**正規化済み**の根について、`a` が `b` の祖先か同一か。
 ///
-/// **境界の 2 枝を 1 本にまとめてはならない。** [`crate::config::normalize_scan_path_key`] は
+/// **境界の 2 つの分岐を 1 本にまとめてはならない。** [`crate::config::normalize_scan_path_key`] は
 /// ドライブ根だけ末尾 `\` を残す（`c:\` に対し `c:\tools`）。ドライブ根にも境界チェックを
 /// 課すと `c:\\tools` を探して偽になり、非ドライブ根から外すと `c:\tools` が `c:\toolsextra`
 /// を入れ子だと誤判定する。
@@ -101,7 +101,7 @@ impl Dedup {
     /// `&str` で引く（`Borrow<str>`）。**記録側と照合側が同じ関数を通ることがバイト一致の
     /// 根拠である**——別実装を書き起こしてはならない。
     ///
-    /// **この関数の照合枝で確保が戻る退行は、CI では捕まらない。** 走査結果が同じままなので
+    /// **この関数の照合分岐で確保が戻る退行は、CI では検出されない。** 走査結果が同じままなので
     /// 挙動テストにも `root_roles` の単体テストにも映らず、`tests/memory_footprint.rs` の確保
     /// 回数（`#[ignore]` の手動計測）だけが見る。`scan_all` の結線の退行も同じである。確保の側で
     /// CI が守るのは、役割の割り当て（`root_roles_over_the_real_shape_leave_the_largest_root_inert`）
@@ -268,7 +268,7 @@ fn compare_ascii_lower(lower: &str, raw: &str) -> std::cmp::Ordering {
 /// **`save_cache_sorted(_in)` を呼ぶ側は直前にここを通す契約である。** 親の解決は整列済みを
 /// 前提に `target_path` を二分探索するので（[`crate::index_tree`] の `resolve_one`）、崩すと
 /// 親が解決されないままツリーが平たくなり、接頭辞共有で削ったフルパスが `table` へ実体で戻る。
-/// **症状は「`index.bin` が太る」だけで検索結果は正しいまま**ゆえ、挙動テストでは捕まらない。
+/// **症状は「`index.bin` が太る」だけで検索結果は正しいまま**ゆえ、挙動テストでは検出されない。
 pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
     entries.sort_by(|a, b| {
         a.target_path

@@ -23,7 +23,7 @@
 //! 端数であり、正本は [`Timeline::to_json`] の当該ブロック）。
 //! **累積タイムラインの区間和は telescoping sum であり、総和の検算では「マークを 1 つ
 //! 落とす」誤りを原理的に検出できない**（落ちた区間の時間は隣へ吸収され、等式は崩れない）。
-//! 取り落としを捕まえるのはキーの網羅であって総和ではない。
+//! 取り落としを検出するのはキーの網羅であって総和ではない。
 //!
 //! # 終端は 1 か所ではない
 //!
@@ -33,7 +33,7 @@
 //!
 //! 呼び出し点は `main.rs`（`setup_platform_thread` / `egui_shell::create` の早期 return /
 //! `setup_hotkey_listener`）と `platform/mod.rs`（arm）に在り、**列挙は [`StartupFailure`]
-//! の variant が持つ**（数をここへ書くと、経路を足したときにこの行だけが腐る）。
+//! の variant が持つ**（数をここへ書くと、経路を足したときにこの行だけが古くなる）。
 //!
 //! 一度きり性は [`FINISHED`] の CAS が持つ。**二重の守りではなく必須である**——platform の
 //! 初期化に失敗した後、`setup_hotkey_listener` が bridge 不在をもう一度観測して二つ目の
@@ -276,7 +276,7 @@ fn terminal(outcome: Result<(), StartupFailure>) -> Terminal {
     }
 }
 
-/// 起動経路のどの枝を通ったか。**出力に載せる**——反復 11 の「計器が測る枝と変更が触る枝が
+/// 起動経路のどの分岐を通ったか。**出力に載せる**——反復 11 の「計器が測る分岐と変更が触る分岐が
 /// 同じか」を読み手が毎回確かめられるようにするため。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Branch {
@@ -414,7 +414,7 @@ impl Timeline {
             ),
         );
 
-        // `load_or_scan_with_stats` の中にある未命名の処理。**first-run 枝では
+        // `load_or_scan_with_stats` の中にある未命名の処理。**first-run 分岐では
         // `LoadOrScanStats` 自体が存在しないので `null`**（0 にしない）。
         //
         // **`i64` で引くので、負値は panic せず出力に現れる。** 非負であることは
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn index_and_from_index_are_inverse_over_the_whole_enum() {
-        // **数のずれを捕まえるのは型である**（`ALL` の長さが `COUNT` で型づけてある）。
+        // **数のずれを検出するのは型である**（`ALL` の長さが `COUNT` で型づけてある）。
         // ここが測るのは数ではなく**並び**——`ALL` の並び順と判別子の割り当て順が
         // 同じ引数列から来る、という 1 段の推論である。マクロ本体が `ALL` を宣言順とは
         // 別の順で読むようになれば型は何も言わないので、**この推論を狙って測る検査は
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn index_load_unattributed_is_null_without_stats() {
-        // first-run 枝では `LoadOrScanStats` 自体が存在しない。**0 にしない。**
+        // first-run 分岐では `LoadOrScanStats` 自体が存在しない。**0 にしない。**
         let mut t = Timeline::new(None);
         t.mark(Phase::IndexLoad, ms(50));
         let json = t.to_json(ms(50), Ok(()));
@@ -902,7 +902,7 @@ mod tests {
     // **この 2 本のうち、引き算の向きを守るのは上のテストだけである。** #1027 で内側も
     // `Duration` になった結果、`to_json` の 2 引数は同じ型になり、**入れ替えても型が通る**
     // （変更前は内側が `u64` だったので compile-fail だった——型が持っていた保証が失われ、
-    // 実行時の検査へ移った。上のテストのほかに `bench-startup.ps1` の `>= 0` も反転を捕まえる
+    // 実行時の検査へ移った。上のテストのほかに `bench-startup.ps1` の `>= 0` も反転を検出する
     // ——どちらも実測）。**下のテストは反転を検出しない**——外側 50.9 ms と内側 50.5 ms は
     // どちらも 50 ms へ落ちるので差が対称になる。
 
@@ -917,7 +917,7 @@ mod tests {
         // 実際に落ちることを実測してある。
         //
         // **前提 1（外側の区間が内側を包む）はこのテストの射程ではない**——あちらは構造では
-        // 消えず、`bench-startup.ps1` の `>= 0` が外から捕まえる（`to_json` の当該コメント）。
+        // 消えず、`bench-startup.ps1` の `>= 0` が外から検出する（`to_json` の当該コメント）。
         let mut t = Timeline::new(None);
         t.mark(Phase::IndexLoad, Duration::from_micros(50_900));
         t.set_index_load_stats_total(Duration::from_micros(50_500));

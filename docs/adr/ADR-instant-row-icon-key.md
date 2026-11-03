@@ -18,10 +18,10 @@ as-built を実機で測ったところ（`SNOTRA_CONFIG_DIR` で隔離したプ
 ## 検討した代替案と却下理由
 
 - **案 A: SPEC の字面に合わせる（instant 行を種別に依らず全スキップ）**: 却下。字面どおりに直すと、**exec 種別で今日出ている本物のアイコンが消える**。それは退行に見える挙動であり、しかも §19.5 が根拠にしていた前提（`path` はファイルパスではない）自体が偽である以上、「仕様に合わせる」は誤った前提へ合わせることになる。`RowsSnapshot` に `bool` を 1 つ足すだけで済む点は案 C より単純だが、単純さは誤った挙動を選ぶ理由にならない。
-- **案 B: as-built を追認する（§19.5 の当該行を書き換えるだけ・コードは触らない）**: 却下。差分はゼロで済むが、**仕様が無駄を追認する形になる**——URL 行に対する毎打鍵の抽出要求と、`is_transient` ゆえ latch されない再試行がそのまま残る。しかも instant 枝は毎打鍵 `search_debounce.cancel()` を撃つので、plain 側には効いている perf ゲート（`input_idle`）が instant では構造的に常に開いている。「今そうなっている」ことは「そうあるべき」の理由にならない。
+- **案 B: as-built を追認する（§19.5 の当該行を書き換えるだけ・コードは触らない）**: 却下。差分はゼロで済むが、**仕様が無駄を追認する形になる**——URL 行に対する毎打鍵の抽出要求と、`is_transient` ゆえ latch されない再試行がそのまま残る。しかも instant 分岐は毎打鍵 `search_debounce.cancel()` を撃つので、plain 側には効いている perf ゲート（`input_idle`）が instant では構造的に常に開いている。「今そうなっている」ことは「そうあるべき」の理由にならない。
 - **案 C の変種: exec 種別でも `description` が設定されていればスキップする**（副テキストとアイコンが同じものを指す形に揃える）: 却下（2026-08-18 のユーザー裁定）。`description` は**副テキストを何にするかを決める設定**であってアイコンの話ではない。二軸（種別 / description の有無）を交差させると、同じ exe を起動する 2 つのコマンドが description の有無だけでアイコンの有無を分ける。
 - **キーを `SearchResult` に持たせず、行と並ぶ別ベクタ（`Vec<Option<String>>`）で運ぶ**: 却下。行は `SearchState.results` に一元化されており、`set_results` / `put_rows` / `enter_tool` / folder drain / search worker が総入れ替えする。並列ベクタは**それら全経路で長さと順序を手で同期させる規約**を生む。行自身に持たせれば、移行漏れは全構築点で compile-fail（E0063）になる。
-- **スキップを `RowsSnapshot::input_idle` 側で表現する**: 却下。あれは「main の `search_debounce` が予約を持っていないか」を運ぶ perf ヒューリスティックであり、**「打鍵が止まった」より広い**（#1074）。ここへ instant の条件を足すと、**worker 走査中のアイコン取得まで一緒に遅れる**退行が入り、しかも絵は正しく見えるので挙動テストでは捕まらない。この禁止は `icon_textures.rs` の `icon_gate_keeps_input_idle_semantics` がソーステキストで固定する。
+- **スキップを `RowsSnapshot::input_idle` 側で表現する**: 却下。あれは「main の `search_debounce` が予約を持っていないか」を運ぶ perf ヒューリスティックであり、**「打鍵が止まった」より広い**（#1074）。ここへ instant の条件を足すと、**worker 走査中のアイコン取得まで一緒に遅れる**退行が入り、しかも絵は正しく見えるので挙動テストでは検出されない。この禁止は `icon_textures.rs` の `icon_gate_keeps_input_idle_semantics` がソーステキストで固定する。
 
 ## 帰結
 

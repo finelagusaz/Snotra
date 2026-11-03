@@ -62,7 +62,7 @@ fn root_roles_treat_exact_duplicates_as_overlap() {
     assert_eq!((roles[1].check, roles[1].record), (true, false));
 }
 
-/// **境界の 2 枝を 1 本にまとめると、ここが落ちる**（`c:\tools` は `c:\toolsextra` の
+/// **境界の 2 つの分岐を 1 本にまとめると、ここが落ちる**（`c:\tools` は `c:\toolsextra` の
 /// 接頭辞だが、次の 1 バイトが `\` ではないので入れ子ではない）。
 #[test]
 fn root_roles_ignore_siblings_sharing_a_prefix() {

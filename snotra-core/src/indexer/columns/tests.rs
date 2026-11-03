@@ -123,7 +123,7 @@ fn extend_cached_masks_collapses_before_appending_to_collapsed_vecs() {
 /// 潰した後に取ると、`lower_name` が `None` へ潰れた件は `name` から、file name が
 /// `SameAsLowerName` / `Absent` へ潰れた件は `file_char_mask(None) == 0` から取ることに
 /// なり、**pre-filter が false negative を出してその経路のエントリだけが検索でヒット
-/// しなくなる**。結果は「それらしく」出るので挙動テストでは捕まらない——ここで潰れた件の
+/// しなくなる**。結果は「それらしく」出るので挙動テストでは検出されない——ここで潰れた件の
 /// マスクを、潰す前の文字列から取ったマスクと直接突き合わせる。
 ///
 /// `derive_columns` は I/O を持たないので temp dir を要さない。

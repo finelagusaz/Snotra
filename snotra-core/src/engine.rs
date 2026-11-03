@@ -134,9 +134,9 @@ impl Engine {
 
     /// [`IndexMaterial`] から構築する。**起動経路が通る唯一の入口である。**
     ///
-    /// **派生データの有無で入口を分けない**（かつては `new_from_tree` / `new_from_cache` の 2 本があり、呼び出し側が `match` で捌いていた）。分岐は `SearchEngine::from_material` の 1 か所に閉じており、**どちらの枝が選ばれるかを決める条件の正本は `indexer::save_cache_sorted` と `indexer::load_cache_in` の分岐である**。
+    /// **派生データの有無で入口を分けない**（かつては `new_from_tree` / `new_from_cache` の 2 本があり、呼び出し側が `match` で捌いていた）。分岐は `SearchEngine::from_material` の 1 か所に閉じており、**どちらの分岐が選ばれるかを決める条件の正本は `indexer::save_cache_sorted` と `indexer::load_cache_in` の分岐である**。
     ///
-    /// **版の番号を書かない。** 番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が「現行は v5・実運用点は v6 のまま」というそれ自体矛盾した文が残った事例を記録している）。
+    /// **版の番号を書かない。** 番号を書くと版を上げるたびにこの散文だけが古くなる（`INDEX_CACHE_VERSION` の doc が「現行は v5・実運用点は v6 のまま」というそれ自体矛盾した文が残った事例を記録している）。
     pub fn from_material(material: IndexMaterial, history: HistoryStore, config: Config) -> Self {
         let search_engine = SearchEngine::from_material(material, config.search.migemo_enabled);
         Self {

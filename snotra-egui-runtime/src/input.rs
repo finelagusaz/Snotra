@@ -47,7 +47,7 @@ pub(crate) fn input_trace_enabled() -> bool {
 
 /// 到達した入力を 1 件 1 行で残す（#872/#936 の型 B＝打鍵の喪失を、層ごとに割るための計器）。
 ///
-/// **`[trace]` を名乗らない。** あちらの `seq` は `src-tauri/src/trace.rs` の単一 `AtomicU64` が
+/// **`[trace]` を示さない。** あちらの `seq` は `src-tauri/src/trace.rs` の単一 `AtomicU64` が
 /// 持つ全順序であり、この crate からは触れない。seq を欠いた `[trace]` 行は
 /// `SnotraTraceInvariants.psm1` が「捨てた行」に数えて smoke を degrade させる（`$seq` が
 /// null の行は順序にも区間にも載せられないため）。既存の `SNOTRA_EGUI_WAKE_TRACE` と同じ

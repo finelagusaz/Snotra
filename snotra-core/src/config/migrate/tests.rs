@@ -509,14 +509,14 @@ fn apply_migrations_normalizes_additional() {
 /// `apply_migrations` の順序依存のうち 1 つを pin する——(1) `additional` → `scan` の追加は、
 /// (5) `scan` の正規化・dedup より前に来なければならない。
 ///
-/// **`migrate_additional_to_scan` が作る 2 つの枝を両方通す。** legacy パスは、既存 `scan` の
+/// **`migrate_additional_to_scan` が作る 2 つの分岐を両方通す。** legacy パスは、既存 `scan` の
 /// エントリへマージされるか、新しいエントリとして push されるかのどちらかで、**どちらも
 /// 綴りを直さずに置く**（照合は生の小文字比較、push は原文のまま）。整えるのは後続の (5) だけ
 /// なので、入れ替えると前者は重複が残り、後者は前後の空白が落ちない。空白の残る `scan` は
 /// 存在しないディレクトリを指し、indexer は**静かに何も索引しない**。
 ///
-/// 2 種の変異でそれぞれ別の assert が落ちることを実測してある——入れ替えだけならマージ枝が、
-/// 照合を正規化キーへ替えて入れ替えると（マージ枝が成立してしまうので）push 枝が落ちる。
+/// 2 種の変異でそれぞれ別の assert が落ちることを実測してある——入れ替えだけならマージ分岐が、
+/// 照合を正規化キーへ替えて入れ替えると（マージ分岐が成立してしまうので）push 分岐が落ちる。
 ///
 /// **見ているのは順序制約そのものではなく、それが守っている 2 つの帰結である。** 両方の帰結を
 /// 別経路で埋め合わせる変異——たとえば `migrate_additional_to_scan` 側が照合も trim も自分で
@@ -533,9 +533,9 @@ fn legacy_additional_moves_into_scan_before_scan_paths_are_normalized() {
         extensions: vec![".lnk".to_string()],
         include_folders: false,
     }];
-    // 既存エントリと同じディレクトリを、正規化しないと一致しない綴りで置く（マージされる枝）。
+    // 既存エントリと同じディレクトリを、正規化しないと一致しない綴りで置く（マージされる分岐）。
     config.paths.additional.push("C:/Tools/".to_string());
-    // どの既存エントリとも一致しない綴りを置く（新規に push される枝）。
+    // どの既存エントリとも一致しない綴りを置く（新規に push される分岐）。
     config.paths.additional.push("  D:\\Bin  ".to_string());
 
     assert!(config.apply_migrations());

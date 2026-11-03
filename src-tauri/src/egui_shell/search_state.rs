@@ -96,7 +96,7 @@ pub struct FolderFrame {
     /// 復帰後の Enter に不要な同期 `engine.search` が 1 回乗る。**受容する。** 余分な費用はその 1 回
     /// だけであり、**過剰近似の向きは安全側である**——[`should_flush_on_enter`] は `unsettled` が
     /// 真のときに flush を**足す**だけなので、**古い行のまま起動する side にはならない**（偽陽性が
-    /// 何をするかは flush の枝で分かれる: 通常は行を作り直し、空クエリ・`indexing()` 中は
+    /// 何をするかは flush の分岐で分かれる: 通常は行を作り直し、空クエリ・`indexing()` 中は
     /// `set_results(Vec::new())` で起動そのものが止まる——後者は flush の既定の扱いである）。
     /// **ウィンドウの長さをここに書かない**（interval の正本は `LauncherController` が `Debouncer::new` へ
     /// 渡す値であって、この doc ではない）。
@@ -195,7 +195,7 @@ pub struct SearchState {
     /// （#1079）。[`SearchState::is_unsettled`] の第 3 の disjunct であり、folder の往復を
     /// 跨いで未反映を運ぶ唯一の材料である。
     ///
-    /// **立てるのは [`SearchState::on_escape`] の folder 枝だけ、落とすのは
+    /// **立てるのは [`SearchState::on_escape`] の folder 分岐だけ、落とすのは
     /// [`SearchState::put_rows`] だけである。** 後者に置いたのは #1039 の設計を踏襲するため
     /// ——行が実際に差し替われば、それが何であれ「復帰した行」ではなくなる。**show を跨ぐ
     /// クリアが構造で付いてくるのもここに置いた帰結である**（[`SearchState::reset`] が
@@ -206,7 +206,7 @@ pub struct SearchState {
     /// しか無い**からである**——`enter_tool` の production 呼び出しは `shift_activate` の 1 つ、その
     /// `shift_activate` の呼び出しは `on_enter` の 1 つで、`on_enter` は flush を先に済ませる
     /// （クリック経路は `activate_or_execute` を直呼びし `enter_tool` へ届かない・2026-08-14 実測）。
-    /// folder の上に積まれた tool から Escape 2 回で戻る並びは、2 回目の folder 枝が控えを立て直す。
+    /// folder の上に積まれた tool から Escape 2 回で戻る並びは、2 回目の folder 分岐が控えを立て直す。
     ///
     /// **却下: 「folder から復帰したら無条件に立てる」。** [`FolderFrame::unsettled_at_entry`] を
     /// 持たずに済み `enter_folder` の signature も変えずに済むが、**未反映が無いまま往復した場合
@@ -284,7 +284,7 @@ impl SearchState {
         self.rows_generation += 1;
         self.dispatch.invalidate();
         // 行が差し替わった以上、いま在るのは「復帰した行」ではない（#1079）。**立てる側は
-        // `on_escape` の folder 枝だけで、そこは必ずこの後に立て直す**（順序に意味がある）。
+        // `on_escape` の folder 分岐だけで、そこは必ずこの後に立て直す**（順序に意味がある）。
         self.restored_rows_stale = false;
     }
 
@@ -477,7 +477,7 @@ impl SearchState {
     /// Escape ラダー（M2）: folder 中は展開前状態へ復帰、top-level は Hide。
     /// folder 離脱時は folder_gen を進めて遅延到着した旧ナビ結果を無効化する。
     ///
-    /// **folder 枝は復帰させた行の未反映を [`SearchState::restored_rows_stale`] へ立て直す**（#1079）。
+    /// **folder 分岐は復帰させた行の未反映を [`SearchState::restored_rows_stale`] へ立て直す**（#1079）。
     /// `→` / `←` で folder へ入る経路（`on_nav_keys` の 2 箇所）は `on_enter` を通らないので #631 の
     /// flush が走らず、[`SearchState::enter_folder`] は行を差し替えない（[`SearchState::put_rows`] を
     /// 通らない）ので in-flight が残る。ところが復帰でその `put_rows` を通った瞬間、`invalidate` が
@@ -573,7 +573,7 @@ impl SearchState {
     /// **view ガードが production で発火するのは Folder ビューだけである。** Tool 側は
     /// [`SearchState::enter_tool`] が [`SearchState::put_rows`] を通って in-flight を失効させ、
     /// Tool ビュー中は新しい要求も出ない（`run_search_with` の `ViewKind::Tool` 腕が no-op）ため、
-    /// `accept` が成功したうえで `view_kind() == Tool` になる並びが存在しない。**Tool 枝は
+    /// `accept` が成功したうえで `view_kind() == Tool` になる並びが存在しない。**Tool 分岐は
     /// 防御として残してあるだけである**——`enter_tool` が `put_rows` を通らなくなれば生きる。
     #[must_use = "落とすと計時 trace（egui_search:settled）の since_key_us / since_dispatch_us を導く材料が消え、打鍵起点・dispatch 起点の経過が観測できなくなる（#1004）"]
     pub fn accept_worker_rows(
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn late_worker_rows_do_not_overwrite_restored_rows_after_escape() {
         let base = Instant::now();
-        // (1) tool 復帰の枝
+        // (1) tool 復帰の分岐
         let mut s = SearchState::new();
         s.set_results(vec![res("a"), res("b")]);
         s.enter_tool("C:/t.txt".into(), false, make_tools());
@@ -1017,7 +1017,7 @@ mod tests {
         );
         assert_eq!(names(&s), before, "復帰した行が上書きされていないこと");
 
-        // (2) folder 復帰の枝。片方だけ直すと穴が残る。
+        // (2) folder 復帰の分岐。片方だけ直すと穴が残る。
         let mut s = SearchState::new();
         s.set_results(vec![res("a"), res("b")]);
         s.enter_folder("C:/dir".into(), false);
@@ -1168,7 +1168,7 @@ mod tests {
 
     /// #1079 の検知器。**folder を往復すると述語が自分の意味に反して偽を返す**——`enter_folder` は
     /// 行を差し替えない（[`SearchState::put_rows`] を通らない）ので in-flight が残り、`on_escape` の
-    /// folder 枝が復帰させる行は**展開前の行**、すなわち復元した query の最終結果ではない。それなのに
+    /// folder 分岐が復帰させる行は**展開前の行**、すなわち復元した query の最終結果ではない。それなのに
     /// `put_rows` の `invalidate` が in-flight を**無条件に**落とすため `pending_seq == 0` になる。
     ///
     /// **worker の結果が folder 中に届くことは要件ではない。** #1079 の issue 本文と `on_escape` の
@@ -1196,9 +1196,9 @@ mod tests {
         );
     }
 
-    /// #1079: **突入時に捕まえるのは `pending_seq` だけではない。** [`SearchState::enter_folder`] が
+    /// #1079: **突入時に検出するのは `pending_seq` だけではない。** [`SearchState::enter_folder`] が
     /// [`SearchState::is_unsettled`] を丸ごと撃つ以上、debounce が予約を持ったまま（trailing 未発火で
-    /// in-flight がまだ無い）突入した場合も捕まる。**`armed` の項を落とす変異——`enter_folder` の合成を
+    /// in-flight がまだ無い）突入した場合も検出される。**`armed` の項を落とす変異——`enter_folder` の合成を
     /// `self.dispatch.pending_seq() != 0` に書き換える——でここが落ちる**（それ以外の #1079 のテストは
     /// 全部緑のまま通ることを 2026-08-14 に実測した。`is_unsettled` 自身の `armed` を守る
     /// `unsettled_covers_in_flight_after_trailing_fired` は、合成の呼び出し側であるここを覆わない）。
@@ -1297,8 +1297,8 @@ mod tests {
     }
 
     /// #1079 × §18.5 の直交: **tool は folder の上に積まれる。** その状態の Escape は 2 回に
-    /// 分かれ、1 回目（tool 枝）が [`SearchState::put_rows`] でフラグを落としても、2 回目
-    /// （folder 枝）が frame から立て直す。**tool 枝は `self.tool.take()` で早期 return し
+    /// 分かれ、1 回目（tool 分岐）が [`SearchState::put_rows`] でフラグを落としても、2 回目
+    /// （folder 分岐）が frame から立て直す。**tool 分岐は `self.tool.take()` で早期 return し
     /// `self.folder` に触らない**ので、控えた値は tool の出入りとは独立に生き残る。
     #[test]
     fn tool_stacked_on_folder_still_restores_the_captured_unsettled() {
@@ -1319,7 +1319,7 @@ mod tests {
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
         assert!(
             s.is_unsettled(false),
-            "folder 枝が frame の控えを立て直す（tool の出入りで失われない）"
+            "folder 分岐が frame の控えを立て直す（tool の出入りで失われない）"
         );
     }
 

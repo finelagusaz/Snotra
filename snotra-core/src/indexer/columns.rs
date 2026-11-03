@@ -19,11 +19,11 @@ mod tests;
 
 /// 事前計算済みの派生データ。SearchEngine の構築時に渡すことで起動時の計算をスキップする。
 ///
-/// 出所は `index.bin` から読んだもの（キャッシュヒット）と、`save_cache_sorted_in` が書いたその足で返したもの（反復 11 以降）である。**出所を数え上げてはならない**——かつて「**出所は 2 つある**」と書きながら**同じ段落の次の文で数え上げを禁じていた**（`docs/comment-guidelines.md`「第一原則: コメントは理由を書く」が経路の数を書かないよう定めているのに、自分で反した形）。正本は `save_cache_sorted` と `load_cache_in` の分岐であり、数えた散文は枝が増えるたびに腐る。**出所によって表現は変わらない**——潰し方の判定は `query::measure_derived_sharing` の 1 か所を通るので、消費側は出所を区別しない（区別するのは `lower` の variant だけである）。
+/// 出所は `index.bin` から読んだもの（キャッシュヒット）と、`save_cache_sorted_in` が書いたその足で返したもの（反復 11 以降）である。**出所を数え上げてはならない**——かつて「**出所は 2 つある**」と書きながら**同じ段落の次の文で数え上げを禁じていた**（`docs/comment-guidelines.md`「第一原則: コメントは理由を書く」が経路の数を書かないよう定めているのに、自分で反した形）。正本は `save_cache_sorted` と `load_cache_in` の分岐であり、数えた散文は分岐が増えるたびに古くなる。**出所によって表現は変わらない**——潰し方の判定は `query::measure_derived_sharing` の 1 か所を通るので、消費側は出所を区別しない（区別するのは `lower` の variant だけである）。
 ///
 /// - `char_masks` / `file_name_char_masks`: この型が在るなら必ず在る
 /// - `lower`: 派生文字列を持たない古い版を読んだときは `None` → Wave 1 計算が走る。
-///   **版の番号を書かない**（`Engine::from_material` の doc と同じ理由で、番号を書くと版を上げるたびにこの散文だけが腐る）
+///   **版の番号を書かない**（`Engine::from_material` の doc と同じ理由で、番号を書くと版を上げるたびにこの散文だけが古くなる）
 ///
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
 /// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）。
@@ -193,7 +193,7 @@ fn derive_entry_lowers(entry: &AppEntry) -> (u64, u64, String, Option<String>) {
 ///
 /// **潰す前にマスクを取るという順序は、この 1 か所にしかない。**（`derive_entry_lowers` が
 /// 返した後でだけ `collapse_lower_pair` を当てる。）記録側（[`derive_columns`]）と追記側
-/// （`extend_cached_masks` の `Collapsed` 枝）が同じここを通ることが、ディスクとメモリで
+/// （`extend_cached_masks` の `Collapsed` 分岐）が同じここを通ることが、ディスクとメモリで
 /// 潰れ方とマスクが一致する根拠である。検知器は `derived_masks_come_from_the_uncollapsed_strings`。
 fn derive_entry_collapsed(entry: &AppEntry) -> (u64, u64, Option<String>, LowerFileName) {
     let (char_mask, file_mask, lower_name, lower_file) = derive_entry_lowers(entry);
@@ -242,7 +242,7 @@ pub(crate) fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEnt
                 masks.char_masks.push(char_mask);
                 masks.file_name_char_masks.push(file_mask);
             }
-            // 潰さない列。**この枝は潰す段を持たないので順序の不変条件も持たない**
+            // 潰さない列。**この分岐は潰す段を持たないので順序の不変条件も持たない**
             // （`assemble` が後で測る）。
             Some(CachedLower::Raw {
                 ref mut lower_names,

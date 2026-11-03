@@ -57,8 +57,8 @@ impl Config {
     /// Called by `load()` (auto-save on change) and import (caller decides when to save).
     ///
     /// **`additional` → `scan` の追加が正規化より先であることは検知器が守る**
-    /// （`legacy_additional_moves_into_scan_before_scan_paths_are_normalized`）: 既存 `scan` へマージされる枝と
-    /// 新規に push される枝の両方を通し、2 種の変異でそれぞれ別の assert が落ちることを実測してある。
+    /// （`legacy_additional_moves_into_scan_before_scan_paths_are_normalized`）: 既存 `scan` へマージされる分岐と
+    /// 新規に push される分岐の両方を通し、2 種の変異でそれぞれ別の assert が落ちることを実測してある。
     /// 見ているのは順序制約そのものではなく、それが守っている 2 つの帰結である（射程と死角は同テストの
     /// doc が正本）。`migrate_additional_to_scan_*` の 4 本は private fn を直接呼ぶので、この並びを通らない。
     pub fn apply_migrations(&mut self) -> bool {

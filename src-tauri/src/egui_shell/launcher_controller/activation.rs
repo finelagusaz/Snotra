@@ -5,7 +5,7 @@
 //! どの子モジュールに在っても検査は生き続ける**（移設して測った——移すだけなら 3 本とも緑、
 //! 移した先でゲートを落とすと赤。同じ移設を変更前の版へ当てると赤だった）。**どの入口が対象かの
 //! 正本は散文ではなく `tests.rs` の `entry_points` 配列である**——ここで数え上げると、足したときに
-//! この行だけが腐る。
+//! この行だけが古くなる。
 //!
 //! **ただし追加は今も沈黙する。** **別の子モジュールに 4 本目の入口を新設する形は、どの検査も
 //! 赤にしない**——`entry_points` は明示の配列で、母集団の側から導かれていないためである。
@@ -426,7 +426,7 @@ impl LauncherController {
         //
         // **`start_launch`（起動の合流点）へ寄せない理由は、③のときと同じではない。**
         // `ADR-activation-gate-placement` 却下 1 は 2 つの独立した理由を挙げるが、
-        // **④に当たるのは (b) だけである**——「却下しても数は減らない」（`tools >= 2` の枝が
+        // **④に当たるのは (b) だけである**——「却下しても数は減らない」（`tools >= 2` の分岐が
         // `start_launch` を通らないので `shift_activate` には個別のガードが要る）。(a)
         // （「ガードの意味は行の選択の性質であり、`start_launch` へ届く時点で行はもう無い」）は、
         // **④の述語が行の情報を一切取らないので当たらない**。同じ結論を同じ理由で支えていると
@@ -436,13 +436,13 @@ impl LauncherController {
         }
         // §4.7 の表示ゲートで隠れている行は起動しない（#1077）。index 再構築中の通常結果は
         // results ウィンドウから消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
-        // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 枝を
+        // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 分岐を
         // 通らず、**画面に 1 行も出ていないまま古い行を起動する**（2026-08-16 に実機再現）。
         // #1072 が塞いだのは同じ族の unsettled 側の切片だけだった。
         //
         // **判定は表示側と同じ述語を使う**——別式を書けば真実が 2 つになり、片方だけ変わる
         // 将来が生まれる。ゲートが真になるのは `Results ∧ !instant_rows` のときだけなので、
-        // 下の tool / instant の枝は構造的に阻害されない（§19.7 の carve-out は不変）。
+        // 下の tool / instant の分岐は構造的に阻害されない（§19.7 の carve-out は不変）。
         //
         // **止めるのは不可逆な起動だけである**——行を消さないのは `folder_load_pending` と
         // 同じ方針で、前フレーム結果の保持は意図的設計ゆえ温存する。→ / ← のフォルダ突入も
@@ -483,14 +483,14 @@ impl LauncherController {
             return;
         }
         // §4.5 の連言④（#1106）。**`activate_or_execute` の同じガードでは覆えない**——
-        // `tools >= 2` の枝はそちらを通らず `SearchState::enter_tool` を直接呼ぶ（③と同じ理由）。
+        // `tools >= 2` の分岐はそちらを通らず `SearchState::enter_tool` を直接呼ぶ（③と同じ理由）。
         // ツール選択への入場も、1 行も出ていない行を対象に始まる点で起動と同じ性質を持つ。
         // 理由の全文は `activate_or_execute` のガードのコメントが正本である。
         if results_area_collapsed(visible_rows.get()) {
             return;
         }
         // §4.7 の表示ゲート（#1077）。**`activate_or_execute` の同じガードでは覆えない**——
-        // `tools >= 2` の枝はそちらを通らず `SearchState::enter_tool` を直接呼ぶ。ツール選択への
+        // `tools >= 2` の分岐はそちらを通らず `SearchState::enter_tool` を直接呼ぶ。ツール選択への
         // 入場も、ユーザーが見ていない行を対象に始まる点で起動と同じ性質を持つ。理由の全文と、
         // `indexing` を引数で受け取る理由は `activate_or_execute` のガードのコメントが正本である。
         if plain_results_hidden(
@@ -614,7 +614,7 @@ impl LauncherController {
                     engine.search(&query)
                 })
             };
-            // **どちらの枝でも同期で行を差し替える**——空クエリ・indexing 中にクリアを落とすと、古い行が残ったまま直後の activate_or_execute がそれを起動する（`run_search_with` の Plain 早期 return が旧実装で担っていた処置である）。
+            // **どちらの分岐でも同期で行を差し替える**——空クエリ・indexing 中にクリアを落とすと、古い行が残ったまま直後の activate_or_execute がそれを起動する（`run_search_with` の Plain 早期 return が旧実装で担っていた処置である）。
             self.state.set_results(searched.unwrap_or_default());
             // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
             // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。

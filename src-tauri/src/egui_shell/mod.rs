@@ -263,7 +263,7 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
         app,
         |c| c.general.auto_update,
         // AppState は setup 前に managed されるため実運用では到達不能。到達したら
-        // 「設定を読めていない」状態なので、勝手に更新を始めない Disabled へ倒す（#648 F）。
+        // 「設定を読めていない」状態なので、勝手に更新を始めない Disabled にする（#648 F）。
         || AutoUpdateMode::Disabled,
     );
     if mode == AutoUpdateMode::Disabled {

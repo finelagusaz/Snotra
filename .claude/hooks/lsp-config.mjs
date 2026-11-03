@@ -75,8 +75,8 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf-8"));
  *
  * 除外は**名前一致・全階層**であってパス固定ではない（`crates/dist/` のような名前の crate が
  * できれば取りこぼす）。`target` を全階層で外すのは cargo の入れ子 target のため。
- * `readdirSync` が権限エラーや壊れた junction で throw する経路は**受容する**——vitest が
- * エラーで落ちるので沈黙せず、fail-closed の向きである（続行させると読めない分岐を黙って飛ばす）。
+ * `readdirSync` が権限エラーや壊れた junction で throw しても catch しない。vitest がエラーで落ちるので
+ * 沈黙しない（fail-closed）。catch して続行すると、読めないディレクトリを黙って飛ばしてしまう。
  */
 export function findRatomlFiles(rootDir) {
   const found = [];

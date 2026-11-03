@@ -1248,7 +1248,10 @@ mod tests {
                 children += 1;
             }
             tree.file_key_into(&mut buf, &mut seg, i);
-            assert_eq!(buf, want[i], "プレフィルタのキーが正規化とずれている（{path}）");
+            assert_eq!(
+                buf, want[i],
+                "プレフィルタのキーが正規化とずれている（{path}）"
+            );
         }
         assert_eq!(
             roots, 2,

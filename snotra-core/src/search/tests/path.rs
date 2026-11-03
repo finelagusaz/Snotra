@@ -375,7 +375,10 @@ fn index_tree_file_key_matches_normalize_file_name_key_over_real_index() {
             children += 1;
         }
         tree.file_key_into(&mut buf, &mut seg, i);
-        assert_eq!(&buf, want, "プレフィルタのキーが正規化とずれている（index {i}）");
+        assert_eq!(
+            &buf, want,
+            "プレフィルタのキーが正規化とずれている（index {i}）"
+        );
     }
     // **両方の分岐が通ったことを数える。** 根は実データで 0.1% 未満しか居ないので、数えないと
     // 「根の分岐は 1 度も走らなかった」を一致と読み違える。

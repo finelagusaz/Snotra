@@ -16,10 +16,10 @@ export function run(snapshot, ctx) {
 // （`docs/comment-guidelines.md`「日本語の折返し」が 2026-08-08 の実測で記録した形。
 // うち 1 件は `current_thread().id() == context.main_thread_id` を丸ごと分断していた）。
 //
-// **既製の道具は持てない。固定版 1.98 で実測した**（`ADR-folded-code-span-detector`）:
+// **既製のツールは持てない。固定版 1.98 で実測した**（`ADR-folded-code-span-detector`）:
 // rustfmt の `wrap_comments` は stable で警告のみ出して無視され、nightly でも向きが逆
 // （`comment_width` へ**折り込む**側の機能である）。clippy は doc lint を全部有効にしても 0 件。
-// 整形器も lint も「人間が正規表現で検索する」ことをモデルに持たないためで、道具の欠落ではない。
+// 整形器も lint も「人間が正規表現で検索する」ことをモデルに持たないためで、ツールの欠落ではない。
 //
 // **述語は折返しの意味を見ない。** 見るのは「その行末でスパンが開いたままか」だけである。
 // 単独のバッククォートを左から順に対応づけ、**開いた行と閉じた行が違えば finding** にする。

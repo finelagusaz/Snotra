@@ -62,7 +62,7 @@ function fake(over = {}) {
     readFile: () => "本文\n",
     mainRoot: () => "/repo",
     verify: over.verify ?? (() => ({ ok: true })),
-    cleanup: over.cleanup ?? ((root, branch) => (cleanups.push({ root, branch, after: [...calls] }), { ok: true, notes: ["削除: 木"] })),
+    cleanup: over.cleanup ?? ((root, branch) => (cleanups.push({ root, branch, after: [...calls] }), { ok: true, notes: ["削除: worktree"] })),
     sleep: (ms) => sleeps.push(ms),
     out: (s) => out.push(s),
     err: (s) => out.push(s),
@@ -107,7 +107,7 @@ describe("run — 正常経路", () => {
   });
 });
 
-describe("run — マージ済みのブランチの道具の木と要約を片づける（#1359）", () => {
+describe("run — マージ済みのブランチのツールの worktree と要約を片づける（#1359）", () => {
   it("exit 0 のときだけ、本体のルートと PR の head のブランチを渡して片づけ、結果を出す", () => {
     const f = fake();
     expect(run(ARGS, "/repo", f.deps)).toBe(0);
@@ -115,13 +115,13 @@ describe("run — マージ済みのブランチの道具の木と要約を片�
     expect(f.cleanups[0].root).toBe("/repo");
     expect(f.cleanups[0].branch).toBe("chore/x");
     expect(f.cleanups[0].after).toContain("issue list"); // 事後検証を終えてから
-    expect(f.text()).toContain("削除: 木");
+    expect(f.text()).toContain("削除: worktree");
   });
   it("片づけられなくても exit 0 のまま（マージは済んでいる）。理由を出す", () => {
-    const f = fake({ cleanup: () => ({ ok: false, notes: ["消せなかった: 木"] }) });
+    const f = fake({ cleanup: () => ({ ok: false, notes: ["消せなかった: worktree"] }) });
     expect(run(ARGS, "/repo", f.deps)).toBe(0);
     expect(f.text()).toContain("片づけられなかった");
-    expect(f.text()).toContain("消せなかった: 木");
+    expect(f.text()).toContain("消せなかった: worktree");
   });
   it("片づけが投げても exit 0 のまま。理由を出す", () => {
     const f = fake({

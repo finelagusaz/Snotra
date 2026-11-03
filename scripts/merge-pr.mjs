@@ -1,4 +1,4 @@
-// merge:pr — PR を squash マージし、閉じる issue をマージの前後で照合する道具（#1312）。
+// merge:pr — PR を squash マージし、閉じる issue をマージの前後で照合するツール（#1312）。
 // 手順の読み方（終了コードごとの次の一手）は `/merge-pr` が持ち、なぜこの形かは
 // `docs/adr/ADR-squash-merge-issue-autoclose.md` が持つ。
 // shebang を置かない — CI の Windows checkout（autocrlf=true）で CRLF 化された shebang 行は
@@ -15,13 +15,13 @@
 // - 件名（`--subject`）・`--auto`・`--delete-branch` を渡す口を持たない
 // - マージ前に `closingIssuesReferences` を宣言（`--closes`）と完全一致で照合する。本文は直さない（人へ返す）
 // - マージ後の検索は ISO 8601 の `mergedAt` だけを渡し、0 件を「該当なし」として受け取る経路を持たない
-// - 道具の要約の照合は hook と共有する（`.claude/hooks/pre-bash.mjs` の `verifiedSummaryState`）
+// - ツールの要約の照合は hook と共有する（`.claude/hooks/pre-bash.mjs` の `verifiedSummaryState`）
 // - gh / git は `shell: false` で呼ぶ（`closed:>=` の `>` を shell に渡さない）
 // - --dry-run は `gh pr merge` の手前で止める。マージ前の書き込みは `git fetch`（head の commit を手元へ取る。
 //   GitHub 側は変えない）だけであり、照合に要るので dry-run でも行う。`--` を落とした
 //   `npm run merge:pr <PR> --dry-run` では npm が `--dry-run` を自分の設定として食う（`npm_config_dry_run` だけが届く）
 //   ので、それも dry-run として拾う——拾わないと本番になる
-// - exit 0 の後に、そのブランチの道具の木と要約を片づける（#1359。どのスキルを経たかに依らず閉じるため）。
+// - exit 0 の後に、そのブランチのツールの worktree と要約を片づける（#1359。どのスキルを経たかに依らず閉じるため）。
 //   exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -150,7 +150,7 @@ class PostError extends Error {}
 const describe = (e, stack = false) => String((stack ? e?.stack : undefined) ?? e?.message ?? e);
 
 /**
- * 道具の本体。終了コードを返す。`deps` はテストが gh / git / 要約の照合を差し替えるための口
+ * ツールの本体。終了コードを返す。`deps` はテストが gh / git / 要約の照合を差し替えるための口
  */
 export function run(argv, cwd, deps = realDeps) {
   let opts;
@@ -212,7 +212,7 @@ export function run(argv, cwd, deps = realDeps) {
       );
     }
 
-    // head の commit を手元に揃えてから、道具の要約を照合する（#1304）
+    // head の commit を手元に揃えてから、ツールの要約を照合する（#1304）
     if (deps.exec("git", ["cat-file", "-e", `${pr.headRefOid}^{commit}`], root).status !== 0) {
       call(deps, root, "git", ["fetch", "-q", "origin", `refs/pull/${opts.pr}/head`], EnvError);
       call(deps, root, "git", ["cat-file", "-e", `${pr.headRefOid}^{commit}`], EnvError);
@@ -220,7 +220,7 @@ export function run(argv, cwd, deps = realDeps) {
     const verified = deps.verify(root, pr.headRefName, pr.headRefOid);
     if (!verified.ok) {
       refusals.push(
-        `道具の要約の照合に通らない: ${verified.reason}\n  復帰: gh pr checkout ${opts.pr} → npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ> → この道具を再実行`,
+        `ツールの要約の照合に通らない: ${verified.reason}\n  復帰: gh pr checkout ${opts.pr} → npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ> → このツールを再実行`,
       );
     }
 
@@ -356,14 +356,14 @@ export function run(argv, cwd, deps = realDeps) {
   }
   deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）${tally}${ghNote}`);
 
-  // マージ済みのブランチの道具の木と要約は、もう誰も読まない（#1359）。片づけるのは exit 0 のときだけである——
+  // マージ済みのブランチのツールの worktree と要約は、もう誰も読まない（#1359）。片づけるのは exit 0 のときだけである——
   // exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない（マージは済んでいる）
   try {
     const cleaned = deps.cleanup(root, pr.headRefName);
-    if (cleaned.ok) deps.out(`道具の木と要約の片づけ:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
-    else deps.err(`道具の木と要約を片づけられなかった（マージは済んでいる）:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
+    if (cleaned.ok) deps.out(`ツールの worktree と要約の片づけ:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
+    else deps.err(`ツールの worktree と要約を片づけられなかった（マージは済んでいる）:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
   } catch (e) {
-    deps.err(`道具の木と要約を片づけられなかった（マージは済んでいる）: ${describe(e)}`);
+    deps.err(`ツールの worktree と要約を片づけられなかった（マージは済んでいる）: ${describe(e)}`);
   }
   return 0;
 }

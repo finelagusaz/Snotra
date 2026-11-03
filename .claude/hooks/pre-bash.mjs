@@ -1,6 +1,6 @@
 // PreToolUse (Bash|PowerShell) ガード。`gh pr create` が (1) 空 PR を作るのを防ぎ、
 // (2) workspace/plan.md に未チェックの作業項目を残したまま PR になるのを防ぎ（#749）、
-// (4) 道具（`npm run verify:tree`）が最後に green を返した sha のあとに `workspace/` の外の変更が
+// (4) ツール（`npm run verify:tree`）が最後に green を返した sha のあとに `workspace/` の外の変更が
 // 載ったまま PR になるのを防ぐ（#1299。`readVerifyState`）。
 // さらに (3) コマンドの形だけで判定できる規範 5 件を判定する（#768。`judgeCommandShape`)。
 // (3) は常時ロード規範から降ろしたもので、**全コマンドで走る**（(1)(2)(4) は `gh pr create` 検出後のみ）。
@@ -361,7 +361,7 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
     );
   }
 
-  // 道具の要約の照合（#1299）。`hasSafeChain` の allow より前に置く——安全な鎖は「push が先に走る」ことしか
+  // ツールの要約の照合（#1299）。`hasSafeChain` の allow より前に置く——安全な鎖は「push が先に走る」ことしか
   // 保証せず、検証とは無関係である
   const verified = readVerifyState();
   if (!verified.ok) return block(`${verified.reason}`);
@@ -438,29 +438,29 @@ export const VERIFY_GIT_TIMEOUT_MS = 4_000;
 
 const VERIFY_REMEDY =
   "変更をコミットしてから、本体の作業ツリーで `npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ>` を回し、" +
-  "green の要約を作ってください（カテゴリは `docs/build-commands.md`「変更後の検証チェックリスト」で判定する。E と F は道具が常に回す）。";
+  "green の要約を作ってください（カテゴリは `docs/build-commands.md`「変更後の検証チェックリスト」で判定する。E と F はツールが常に回す）。";
 
 /**
- * 道具の要約の中身の判定（#1299）。照合を続けてよければ null、止めるなら理由を返す。
- * 照合するのは道具の A〜F だけである——委譲のレビューが見た sha は見ない（裁定は `docs/adr/ADR-pr-gate-verified-sha.md`）。
+ * ツールの要約の中身の判定（#1299）。照合を続けてよければ null、止めるなら理由を返す。
+ * 照合するのはツールの A〜F だけである——委譲のレビューが見た sha は見ない（裁定は `docs/adr/ADR-pr-gate-verified-sha.md`）。
  */
 export function judgeSummary(summary, branch) {
-  if (summary == null) return `このブランチ（${branch}）の道具の要約が無い。${VERIFY_REMEDY}`;
+  if (summary == null) return `このブランチ（${branch}）のツールの要約が無い。${VERIFY_REMEDY}`;
   if (summary.branch !== branch) {
-    return `道具の要約が別のブランチ（${summary.branch}）のものである（今のブランチは ${branch}）。${VERIFY_REMEDY}`;
+    return `ツールの要約が別のブランチ（${summary.branch}）のものである（今のブランチは ${branch}）。${VERIFY_REMEDY}`;
   }
-  if (summary.status !== "green") return `道具の要約が green でない（status: ${summary.status}）。${VERIFY_REMEDY}`;
+  if (summary.status !== "green") return `ツールの要約が green でない（status: ${summary.status}）。${VERIFY_REMEDY}`;
   // 40 桁の 16 進に限る。`-` で始まる値を git の位置引数へ渡すと、オプション（`--output=<path>` 等）として解釈される
   // SHA-256 形式の repo（64 桁）では常に止まる（fail-closed。このリポジトリは SHA-1）
   if (typeof summary.sha !== "string" || !/^[0-9a-f]{40}$/.test(summary.sha)) {
     const got = typeof summary.sha === "string" ? `（${summary.sha}）` : "（sha が無い）";
-    return `道具の要約の sha が 40 桁の 16 進でない${got}。${VERIFY_REMEDY}`;
+    return `ツールの要約の sha が 40 桁の 16 進でない${got}。${VERIFY_REMEDY}`;
   }
   return null;
 }
 
 /**
- * 道具の要約が green で、要約の sha から HEAD までに `workspace/` の外の変更が無いか。
+ * ツールの要約が green で、要約の sha から HEAD までに `workspace/` の外の変更が無いか。
  * `summaryPathFor` は `scripts/verify-tree.mjs` の同名の関数（`main()` が `gh pr create` を検出したときだけ
  * 動的に読み込んで渡す）。null なら読み込めなかったので止める。
  */
@@ -485,8 +485,8 @@ export function readVerifyState(cwd, summaryPathFor, importError = null) {
 }
 
 /**
- * `branch` の道具の要約が green で、要約の sha から `target` までに `workspace/` の外の変更が無いか。
- * 消費者は 2 つ: PR 前ゲート（`readVerifyState` が `target: "HEAD"` で呼ぶ）と、マージの道具
+ * `branch` のツールの要約が green で、要約の sha から `target` までに `workspace/` の外の変更が無いか。
+ * 消費者は 2 つ: PR 前ゲート（`readVerifyState` が `target: "HEAD"` で呼ぶ）と、マージのツール
  * （`scripts/merge-pr.mjs` が PR の head の sha と head ブランチ名で呼ぶ・#1312）。判定を写さないために共有する。
  * `target` は git が解決できる rev であること（commit を手元へ取ってくるのは呼び出し側の仕事）。
  */
@@ -503,7 +503,7 @@ export function verifiedSummaryState({ root, branch, target, summaryPathFor }) {
     try {
       summary = JSON.parse(readFileSync(file, "utf8"));
     } catch (e) {
-      return { ok: false, reason: `道具の要約を読めません（${e.message}）。${VERIFY_REMEDY}` };
+      return { ok: false, reason: `ツールの要約を読めません（${e.message}）。${VERIFY_REMEDY}` };
     }
   }
   const judged = judgeSummary(summary, branch);
@@ -513,14 +513,14 @@ export function verifiedSummaryState({ root, branch, target, summaryPathFor }) {
   // `workspace/` の外から中への移動で移動元を出さない。`-z`: 引用符で囲まれたパスが接頭辞に当たらなくなる形を防ぐ
   const diff = git(["diff", "--name-only", "--no-renames", "-z", summary.sha, target]);
   if (diff.error || diff.status !== 0) {
-    return { ok: false, reason: `道具の要約の sha（${summary.sha}）から ${target} までの差分を取れません。${VERIFY_REMEDY}` };
+    return { ok: false, reason: `ツールの要約の sha（${summary.sha}）から ${target} までの差分を取れません。${VERIFY_REMEDY}` };
   }
   const outside = diff.stdout.split("\0").filter((p) => p !== "" && !p.startsWith("workspace/"));
   if (outside.length > 0) {
     const shown = outside.slice(0, 10).join(", ") + (outside.length > 10 ? ` ほか ${outside.length - 10} 件` : "");
     return {
       ok: false,
-      reason: `道具の要約の sha（${summary.sha.slice(0, 8)}）のあとに、workspace/ の外の変更が載っています（${shown}）。${VERIFY_REMEDY}`,
+      reason: `ツールの要約の sha（${summary.sha.slice(0, 8)}）のあとに、workspace/ の外の変更が載っています（${shown}）。${VERIFY_REMEDY}`,
     };
   }
   return { ok: true };

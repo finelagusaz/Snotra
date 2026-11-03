@@ -107,7 +107,7 @@ const summaryOf = (repo) => JSON.parse(readFileSync(`${verifyTree(repo)}.summary
 describe("parseCategoryCommands — 実際の docs/build-commands.md", () => {
   const doc = readFileSync(path.join(HERE, "..", "docs", "build-commands.md"), "utf8");
 
-  it("道具が回すカテゴリ（A・C・E・F）は、どれもコマンドを 1 件以上持つ", () => {
+  it("ツールが回すカテゴリ（A・C・E・F）は、どれもコマンドを 1 件以上持つ", () => {
     for (const c of ["A", "C", "E", "F"]) {
       const r = parseCategoryCommands(doc, c);
       expect(r.findings, c).toEqual([]);
@@ -128,7 +128,7 @@ describe("parseCategoryCommands — 実際の docs/build-commands.md", () => {
 });
 
 describe("summaryPathFor — 要約の既定の置き場（hook と共有する導出）", () => {
-  it("ブランチ名の / などを - に置き換えた、道具の木の隣のパスを返す", () => {
+  it("ブランチ名の / などを - に置き換えた、ツールの worktree の隣のパスを返す", () => {
     const p = summaryPathFor(path.join("C:", "repo"), "fix/pr-gate");
     expect(p).toBe(path.join("C:", "repo", ".claude", "worktrees", "agent-verify-fix-pr-gate.summary.json"));
   });
@@ -141,7 +141,7 @@ describe("summaryPathFor — 要約の既定の置き場（hook と共有する�
 });
 
 describe("verify-tree run", () => {
-  it("要求が無くても E と F を回し、要約が sha と木の HEAD を名乗る", { timeout: T }, () => {
+  it("要求が無くても E と F を回し、要約が sha と worktree の HEAD を名乗る", { timeout: T }, () => {
     const repo = initRepo();
     const sha = git(repo, ["rev-parse", "HEAD"]);
 
@@ -204,7 +204,7 @@ describe("verify-tree run", () => {
     ]);
   });
 
-  it("要求したカテゴリのコマンドが 0 件なら exit 2 にし、木を作らない", { timeout: T }, () => {
+  it("要求したカテゴリのコマンドが 0 件なら exit 2 にし、worktree を作らない", { timeout: T }, () => {
     const repo = initRepo({ withCFence: false });
     const sha = git(repo, ["rev-parse", "HEAD"]);
 
@@ -238,7 +238,7 @@ describe("verify-tree run", () => {
     expect(r.output).toContain("sha が本体の HEAD でない");
   });
 
-  it("2 ラウンド目は同じ木を新しい sha へ合わせて再利用する", { timeout: T }, () => {
+  it("2 ラウンド目は同じ worktree を新しい sha へ合わせて再利用する", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     const next = commitFile(repo, "next.txt", "next\n");
@@ -250,7 +250,7 @@ describe("verify-tree run", () => {
     expect(summaryOf(repo).sha).toBe(next);
   });
 
-  it("再利用する木に追跡ファイルの変更が残っていれば exit 2", { timeout: T }, () => {
+  it("再利用する worktree に追跡ファイルの変更が残っていれば exit 2", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     writeFileSync(path.join(verifyTree(repo), "package.json"), "{}");
@@ -259,10 +259,10 @@ describe("verify-tree run", () => {
     const r = runScript(repo, ["run", "--sha", next]);
 
     expect(r.status, r.output).toBe(2);
-    expect(r.output).toContain("再利用する木に追跡ファイルの変更がある");
+    expect(r.output).toContain("再利用する worktree に追跡ファイルの変更がある");
   });
 
-  it("git の想定外の失敗（再利用する木の checkout が未追跡ファイルと衝突）は、赤（1）ではなく 2", { timeout: T }, () => {
+  it("git の想定外の失敗（再利用する worktree の checkout が未追跡ファイルと衝突）は、赤（1）ではなく 2", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     writeFileSync(path.join(verifyTree(repo), "next.txt"), "untracked in the tree\n");
@@ -328,7 +328,7 @@ describe("verify-tree run", () => {
     expect(s.warnings.join("\n")).toContain("読めない");
   });
 
-  it("登録だけ残ってディレクトリが消えた道具の木を作り直す", { timeout: T }, () => {
+  it("登録だけ残ってディレクトリが消えたツールの worktree を作り直す", { timeout: T }, () => {
     const repo = initRepo();
     const sha = git(repo, ["rev-parse", "HEAD"]);
     expect(runScript(repo, ["run", "--sha", sha]).status).toBe(0);
@@ -348,7 +348,7 @@ describe("verify-tree align", () => {
     return wt;
   }
 
-  it("委譲先の木を sha へ合わせ、sha と木を名乗る", { timeout: T }, () => {
+  it("委譲先の worktree を sha へ合わせ、sha と worktree を名乗る", { timeout: T }, () => {
     const repo = initRepo();
     const wt = agentTree(repo);
     const next = commitFile(repo, "next.txt", "next\n");
@@ -408,7 +408,7 @@ describe("verify-tree align", () => {
     expect(git(wt, ["rev-parse", "HEAD"])).toBe(next);
   });
 
-  it(".delegate/ が ignore されていれば exit 2（木を生かし続ける前提が崩れる）", { timeout: T }, () => {
+  it(".delegate/ が ignore されていれば exit 2（worktree を生かし続ける前提が崩れる）", { timeout: T }, () => {
     const repo = initRepo();
     const wt = agentTree(repo);
     writeFileSync(path.join(repo, ".gitignore"), ".claude/worktrees/\nnode_modules/\n.delegate/\n");
@@ -431,8 +431,8 @@ describe("verify-tree align", () => {
   });
 });
 
-describe("discardBranchArtifacts — マージ済みのブランチの木と要約を消す（#1359）", () => {
-  it("本体が別のブランチへ移った後でも、引数のブランチの木・要約・ログを消す", { timeout: T }, () => {
+describe("discardBranchArtifacts — マージ済みのブランチの worktree と要約を消す（#1359）", () => {
+  it("本体が別のブランチへ移った後でも、引数のブランチの worktree・要約・ログを消す", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     git(repo, ["checkout", "-q", "main"]); // マージの後、本体は feat/x に居ない
@@ -447,7 +447,7 @@ describe("discardBranchArtifacts — マージ済みのブランチの木と要�
     expect(git(repo, ["branch", "--list", "feat/x"])).toContain("feat/x"); // ブランチそのものには触れない
   });
 
-  it("木が無く要約だけが残っていても、要約を消して ok", { timeout: T }, () => {
+  it("worktree が無く要約だけが残っていても、要約を消して ok", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     expect(runScript(repo, ["remove"]).status).toBe(0); // /implement の Step 4 の後の形（要約だけが残る）
@@ -459,7 +459,7 @@ describe("discardBranchArtifacts — マージ済みのブランチの木と要�
     expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(false);
   });
 
-  it("木が dirty なら木も要約も消さず、理由を返す（投げない）", { timeout: T }, () => {
+  it("worktree が dirty なら worktree も要約も消さず、理由を返す（投げない）", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     writeFileSync(path.join(verifyTree(repo), "package.json"), "{}");
@@ -473,14 +473,14 @@ describe("discardBranchArtifacts — マージ済みのブランチの木と要�
     expect(existsSync(`${verifyTree(repo)}.summary.json`)).toBe(true);
   });
 
-  it("木も要約も無ければ、何もせず ok", { timeout: T }, () => {
+  it("worktree も要約も無ければ、何もせず ok", { timeout: T }, () => {
     const repo = initRepo();
     expect(discardBranchArtifacts(repo, "feat/x").ok).toBe(true);
   });
 });
 
 describe("verify-tree remove", () => {
-  it("道具の木を消す", { timeout: T }, () => {
+  it("ツールの worktree を消す", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
 
@@ -491,7 +491,7 @@ describe("verify-tree remove", () => {
     expect(existsSync(`${verifyTree(repo)}.summary.log`)).toBe(false);
   });
 
-  it("道具の木を消しても要約は残り、木が消えた時刻を持つ（PR 前ゲートが読む・#1299）", { timeout: T }, () => {
+  it("ツールの worktree を消しても要約は残り、worktree が消えた時刻を持つ（PR 前ゲートが読む・#1299）", { timeout: T }, () => {
     const repo = initRepo();
     const sha = git(repo, ["rev-parse", "HEAD"]);
     expect(runScript(repo, ["run", "--sha", sha]).status).toBe(0);
@@ -505,7 +505,7 @@ describe("verify-tree remove", () => {
     expect(typeof s.removed_at).toBe("string");
   });
 
-  it("道具の木が dirty なら消さずに exit 1", { timeout: T }, () => {
+  it("ツールの worktree が dirty なら消さずに exit 1", { timeout: T }, () => {
     const repo = initRepo();
     expect(runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"])]).status).toBe(0);
     writeFileSync(path.join(verifyTree(repo), "package.json"), "{}");
@@ -514,7 +514,7 @@ describe("verify-tree remove", () => {
     expect(existsSync(verifyTree(repo))).toBe(true);
   });
 
-  it("--delegate-tree は .delegate/ だけが残る委譲先の木とブランチを消す", { timeout: T }, () => {
+  it("--delegate-tree は .delegate/ だけが残る委譲先の worktree とブランチを消す", { timeout: T }, () => {
     const repo = initRepo();
     const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
     git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
@@ -528,7 +528,7 @@ describe("verify-tree remove", () => {
     expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toBe("");
   });
 
-  it("--delegate-tree は align で detach された木でも、harness の命名のブランチを消す", { timeout: T }, () => {
+  it("--delegate-tree は align で detach された worktree でも、harness の命名のブランチを消す", { timeout: T }, () => {
     const repo = initRepo();
     const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
     git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
@@ -544,7 +544,7 @@ describe("verify-tree remove", () => {
     expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toBe("");
   });
 
-  it("--delegate-tree は、git が返す名前と字面の違うパス（junction 経由）でも同じ木として照合する", { timeout: T }, () => {
+  it("--delegate-tree は、git が返す名前と字面の違うパス（junction 経由）でも同じ worktree として照合する", { timeout: T }, () => {
     // GitHub の Windows runner では tmpdir() が 8.3 短縮名（RUNNER~1）を返し、path.resolve では一致しなかった。
     // 短縮名は手元で作れないので、同じ「字面は違うが実体は同じ」を junction で作る
     const repo = initRepo();
@@ -563,7 +563,7 @@ describe("verify-tree remove", () => {
     expect(existsSync(wt)).toBe(false);
   });
 
-  it("--delegate-tree はロックされた木を消さず、報告も残す", { timeout: T }, () => {
+  it("--delegate-tree はロックされた worktree を消さず、報告も残す", { timeout: T }, () => {
     const repo = initRepo();
     const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
     git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
@@ -576,7 +576,7 @@ describe("verify-tree remove", () => {
     git(repo, ["worktree", "unlock", wt]);
   });
 
-  it("--delegate-tree は .delegate/ 以外の変更が残る木を消さない", { timeout: T }, () => {
+  it("--delegate-tree は .delegate/ 以外の変更が残る worktree を消さない", { timeout: T }, () => {
     const repo = initRepo();
     const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
     git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);

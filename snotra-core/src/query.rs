@@ -164,7 +164,8 @@ fn fold_char(c: char) -> impl Iterator<Item = char> {
 ///
 /// **nucleo-matcher 0.3.1 の写像を使うのは 3 の範囲だけである。** その表は U+1D00 以降を誤った字へ
 /// 写し（`ẗ`→`n`）、結合文字を 2 つ持つ字を畳まない（#1395）。3 の範囲の写像は
-/// `fold_char_below_1d00_is_pinned` が固定している。
+/// `fold_char_below_1d00_is_pinned` が固定している。照合器を替えずにこの写像を持つ理由は
+/// `docs/adr/ADR-latin-fold-own-mapping.md`。
 fn fold_latin(c: char) -> char {
     if let Some(base) = decomposed_base(c) {
         return base;

@@ -225,7 +225,7 @@ function New-SnotraTraceFailSafeResult {
         # `SnotraTraceInvariants.Tests.ps1` のソース走査テスト（除外リテラル）の 2 か所に在る**
         # ——別の文字へ変えるとテスト側だけが古い値を除外し続け、新しい印を不変条件名として
         # 拾って偽の FAIL になる。片方だけが直る写しであり、#1008 が数えて回った型そのものである
-        # （安全側に倒れるので見逃しより軽い、という理由で写しのまま残している）。
+        # （安全側に倒れるので偽陰性より軽い、という理由で写しのまま残している）。
         Unjudgeable      = @( @{ Invariant = '*'; Seq = 0; SectionId = 0; Reason = $Reason } )
         Observed         = @{ ResultsShow = 0; HideWindow = 0 }
         DroppedLineCount = $DroppedLineCount

@@ -66,7 +66,7 @@ Describe 'Get-SnotraTraceInvariantNames' {
         # - **コードとコメントを区別しない**（取り逃す側ではなく、誤って拾う側の穴である）。
         #   走査はファイル全文を見るので、`.psm1` のコメントへ `Invariant = 'H6'` の形の
         #   **例示**を書いた瞬間、判定本体に無い名前として偽の FAIL になる。安全側なので
-        #   見逃しよりは軽いが、直し方は「例示を別の書き方にする」であってこの検査ではない。
+        #   偽陰性よりは軽いが、直し方は「例示を別の書き方にする」であってこの検査ではない。
         $source = Get-Content -LiteralPath $script:TraceModulePath -Raw
         # `'*'` は fail-safe が「不変条件を特定できない」ことを表す印であり、名前ではない。
         $judged = @([regex]::Matches($source, "(?:-Invariant\s+|Invariant\s*=\s*)'([^']*)'") |

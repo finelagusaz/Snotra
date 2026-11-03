@@ -64,7 +64,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
     expect(checkModuleLinkage(s)).toEqual([]);
   });
 
-  // 以下 3 本は 2026-08-14 のレビューが実測で見つけた**見逃しの経路**を塞いだことを固定する。
+  // 以下 3 本は 2026-08-14 のレビューが実測で見つけた**偽陰性の経路**を塞いだことを固定する。
   // どれも「宣言らしき綴りを拾ってしまい、孤児を到達済みに見せる」形だった。
   it("赤: ブロックコメントの中の mod 宣言を拾わない（孤児が緑にならない）", () => {
     const s = withLib("/*\nmod ghost;\n*/\n", { "demo/src/ghost.rs": "" });
@@ -89,7 +89,7 @@ describe("G-module-linkage checkModuleLinkage", () => {
 
   // --- 字句スキャナの両方向（2026-08-14 のレビューが実測した 8 入力＋BOM）---
   // 初版はコメントの潰しと引用符の数え上げが別パスで、一方の数え違いがもう一方の判定を反転させた。
-  // **誤検出（赤）と見逃し（緑）の両方が出る**ため、両向きを固定する。
+  // **偽陽性（赤）と偽陰性（緑）の両方が出る**ため、両向きを固定する。
   describe("コードでない部分の判別", () => {
     it("緑: 文字列の中の // をコメントと誤認しない（誤認すると閉じ引用符を食べて以降の宣言が消える）", () => {
       expect(checkModuleLinkage(withLib('pub const U: &str = "http://example.com";\n'))).toEqual([]);

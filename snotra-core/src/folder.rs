@@ -558,7 +558,7 @@ mod tests {
     /// 外れる）。拡張子は `.md` にしてある——`.txt` の `x` が 1 行目の needle に一致してしまうため。
     ///
     /// **結合文字は合成しないもの（U+20DD）を使う。** 合成できる結合文字は、照合の入口の合成（NFC・#1285）で
-    /// 前の字と 1 字になって畳まれ、needle も haystack も ASCII になる——書記素の扱いを測れなくなる。
+    /// 前の字と 1 字になってから ASCII へ畳まれる。needle も haystack も ASCII になり、書記素の扱いを測れない。
     #[test]
     fn fuzzy_filter_drops_combining_marks_in_needle_like_search() {
         use crate::search::SearchMode;

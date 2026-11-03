@@ -176,41 +176,15 @@ impl Engine {
         }
     }
 
-    pub fn finalize_folder_list(
-        &self,
-        entries: Vec<folder::DirEntryData>,
-        ctx: FolderListContext,
-    ) -> Vec<SearchResult> {
-        // ctx は I/O 開始前にロックなしで取得したスナップショット。
-        // 設定変更が並走した場合 result_limit が 1 件ずれる可能性があるが、
-        // Mutex 保持時間の最小化を優先する設計判断として許容する。
-        // history は常に現在の最新状態を使用する（スコアリングのみへの影響）。
-        folder::score_entries(entries, &self.history, ctx.max_results)
-    }
-
     /// folder ナビゲーション時に全件を全順序でソート（上限なし）して返す。driver がキャッシュし、
     /// 打鍵フィルタは `FolderListContext::filter_sorted` で同期に行う（#532 SU3 M2 B）。
-    /// history は最新状態を使う（`finalize_folder_list` と同様・スコアリングのみへの影響）。
+    /// history は呼んだ時点の最新状態を使う。`ctx` は I/O の前にロックの外で取ったスナップショットなので、
+    /// 設定と history の時点は揃わないが、history が効くのは並び順だけである。
     pub fn finalize_folder_list_unlimited(
         &self,
         entries: Vec<folder::DirEntryData>,
     ) -> Vec<SearchResult> {
         folder::sort_entries_unlimited(entries, &self.history)
-    }
-
-    /// フォルダ内エントリを同期的に列挙してスコアリング済み結果を返す。
-    /// Tauri コマンドは `capture_folder_list_context` + `finalize_folder_list` の
-    /// 非同期2フェーズ版を使う。こちらは `folder.rs` のユニットテスト向け同期ラッパー。
-    pub fn list_folder(&self, dir: &str, filter: &str) -> Vec<SearchResult> {
-        let ctx = self.capture_folder_list_context();
-        folder::list_folder(
-            Path::new(dir),
-            filter,
-            ctx.mode,
-            ctx.show_hidden_system,
-            &self.history,
-            ctx.max_results,
-        )
     }
 
     pub fn record_launch(&mut self, path: &str, query: &str) {

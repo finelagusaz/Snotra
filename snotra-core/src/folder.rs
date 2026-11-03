@@ -1,8 +1,11 @@
 //! フォルダ内エントリの列挙とフィルタ/ソート。
 //!
 //! ソート順は「`is_folder` 降順 → 展開回数降順 → 小文字名昇順 → path 昇順」で先頭が最優先。
-//! `select_nth_unstable_by`（O(N) 平均の top-k 選択）＋安定ソートの2段階で、入力順に
-//! 依存しない確定順序を保つ。
+//! path を最終の比較にした全順序なので、入力順に依存しない確定順序になる。
+//!
+//! 製品の経路は `read_dir_entries`（絞り込みなし）→ [`sort_entries_unlimited`] → 打鍵ごとの
+//! [`filter_sorted`] である（#532 SU3 M2 B）。列挙の時点で絞り込んで上位 k 件だけを選ぶ旧経路
+//! （`list_folder` / `score_entries`）は製品から呼ばれなくなっていたので撤去した（#1391）。
 
 use nucleo_matcher::Utf32String;
 use std::path::Path;
@@ -18,22 +21,6 @@ pub struct DirEntryData {
     path: String,
     name: String,
     is_folder: bool,
-}
-
-pub fn list_folder(
-    dir: &Path,
-    filter: &str,
-    mode: SearchMode,
-    show_hidden_system: bool,
-    history: &HistoryStore,
-    max_results: usize,
-) -> Vec<SearchResult> {
-    let entries = match read_dir_entries(dir, filter, mode, show_hidden_system) {
-        Ok(entries) => entries,
-        Err(_) => return error_result(dir),
-    };
-
-    score_entries(entries, history, max_results)
 }
 
 pub(crate) fn read_dir_entries(
@@ -101,7 +88,7 @@ fn folder_entry_cmp(
         .then_with(|| a_entry.path.cmp(&b_entry.path))
 }
 
-/// (lower_name, exp_count, index) の並び替えキーを構築する（score_entries / sort_entries_unlimited 共有）。
+/// (lower_name, exp_count, index) の並び替えキーを構築する。
 fn build_sort_keys(entries: &[SearchResult], history: &HistoryStore) -> Vec<(String, u32, usize)> {
     entries
         .iter()
@@ -118,7 +105,7 @@ fn build_sort_keys(entries: &[SearchResult], history: &HistoryStore) -> Vec<(Str
         .collect()
 }
 
-/// keyed の順序で entries を並べ替えて所有権を取り出す（clone 回避の mem::replace・共有ヘルパー）。
+/// keyed の順序で entries を並べ替えて所有権を取り出す（clone 回避の mem::replace）。
 fn collect_by_keyed(
     mut entries: Vec<SearchResult>,
     keyed: Vec<(String, u32, usize)>,
@@ -157,34 +144,6 @@ pub fn sort_entries_unlimited(
         })
         .collect();
     let mut keyed = build_sort_keys(&entries, history);
-    keyed.sort_by(|a, b| folder_entry_cmp(&entries, a, b));
-    collect_by_keyed(entries, keyed)
-}
-
-pub(crate) fn score_entries(
-    entries: Vec<DirEntryData>,
-    history: &HistoryStore,
-    max_results: usize,
-) -> Vec<SearchResult> {
-    let entries: Vec<SearchResult> = entries
-        .into_iter()
-        .map(|e| SearchResult {
-            name: e.name,
-            path: e.path,
-            is_folder: e.is_folder,
-            is_error: false,
-            icon: IconSource::FromPath,
-        })
-        .collect();
-    let k = max_results.min(entries.len());
-    if k == 0 {
-        return vec![];
-    }
-    let mut keyed = build_sort_keys(&entries, history);
-    if k < keyed.len() {
-        keyed.select_nth_unstable_by(k - 1, |a, b| folder_entry_cmp(&entries, a, b));
-        keyed.truncate(k);
-    }
     keyed.sort_by(|a, b| folder_entry_cmp(&entries, a, b));
     collect_by_keyed(entries, keyed)
 }
@@ -275,6 +234,24 @@ mod tests {
         HistoryStore::empty()
     }
 
+    /// 製品の経路をそのまま組む: 絞り込みなしで列挙（`folder_nav`）→ 全件ソート → 打鍵の絞り込み
+    /// （`search_flow` の `filter_sorted`）。列挙に失敗したら `error_result` を返す点も製品と同じ。
+    fn list_like_product(
+        dir: &Path,
+        filter: &str,
+        mode: SearchMode,
+        show_hidden_system: bool,
+        history: &HistoryStore,
+        max: usize,
+    ) -> Vec<SearchResult> {
+        match read_dir_entries(dir, "", mode, show_hidden_system) {
+            Ok(entries) => {
+                filter_sorted(&sort_entries_unlimited(entries, history), filter, mode, max)
+            }
+            Err(_) => error_result(dir),
+        }
+    }
+
     /// `empty_history()` は名前どおり空でなければならない（#963）。
     /// **CI では常に緑で開発機でだけ落ちる**性質は `engine.rs` の同名テストの doc を参照。
     #[test]
@@ -286,13 +263,14 @@ mod tests {
     }
 
     #[test]
-    fn list_folder_returns_files_and_dirs() {
+    fn folder_list_returns_files_and_dirs() {
         let dir = temp_dir_with_contents("basic");
         fs::write(dir.join("file1.txt"), "").unwrap();
         fs::write(dir.join("file2.txt"), "").unwrap();
         fs::create_dir(dir.join("subdir")).unwrap();
 
-        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
+        let results =
+            list_like_product(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert!(names.contains(&"file1.txt"));
         assert!(names.contains(&"file2.txt"));
@@ -302,12 +280,13 @@ mod tests {
     }
 
     #[test]
-    fn list_folder_folders_come_before_files() {
+    fn folder_list_folders_come_before_files() {
         let dir = temp_dir_with_contents("order");
         fs::write(dir.join("alpha.txt"), "").unwrap();
         fs::create_dir(dir.join("zsubdir")).unwrap();
 
-        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
+        let results =
+            list_like_product(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         assert!(results[0].is_folder);
         assert!(!results.last().unwrap().is_folder);
 
@@ -315,13 +294,13 @@ mod tests {
     }
 
     #[test]
-    fn list_folder_filter_excludes_non_matching() {
+    fn folder_list_filter_excludes_non_matching() {
         let dir = temp_dir_with_contents("filter");
         fs::write(dir.join("readme.txt"), "").unwrap();
         fs::write(dir.join("config.toml"), "").unwrap();
         fs::write(dir.join("build.rs"), "").unwrap();
 
-        let results = list_folder(
+        let results = list_like_product(
             &dir,
             "toml",
             SearchMode::Substring,
@@ -336,11 +315,11 @@ mod tests {
     }
 
     #[test]
-    fn list_folder_filter_is_case_insensitive() {
+    fn folder_list_filter_is_case_insensitive() {
         let dir = temp_dir_with_contents("filter_case");
         fs::write(dir.join("README.TXT"), "").unwrap();
 
-        let results = list_folder(
+        let results = list_like_product(
             &dir,
             "readme",
             SearchMode::Substring,
@@ -354,36 +333,38 @@ mod tests {
     }
 
     #[test]
-    fn list_folder_respects_max_results() {
+    fn folder_list_respects_max_results() {
         let dir = temp_dir_with_contents("maxresults");
         for i in 0..10 {
             fs::write(dir.join(format!("file{}.txt", i)), "").unwrap();
         }
 
-        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 3);
+        let results = list_like_product(&dir, "", SearchMode::Substring, true, &empty_history(), 3);
         assert_eq!(results.len(), 3);
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn list_folder_empty_dir_returns_empty() {
+    fn folder_list_empty_dir_returns_empty() {
         let dir = temp_dir_with_contents("empty");
 
-        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
+        let results =
+            list_like_product(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         assert!(results.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn list_folder_nonexistent_dir_returns_empty() {
+    fn folder_list_nonexistent_dir_returns_empty() {
         // 名前へ pid を含めるのは、このテストが「存在しないこと」を共有 `%TEMP%` 上の固定名に期待しているからである（誰かが同名を作れば落ちる・#985）。
         let dir = std::env::temp_dir().join(format!(
             "snotra_folder_test_nonexistent_zzz-{}",
             std::process::id()
         ));
-        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
+        let results =
+            list_like_product(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         assert_eq!(results.len(), 1);
         assert!(results[0].is_error);
         assert_eq!(results[0].name, ""); // UI 文字列はロジック層に持たない
@@ -396,7 +377,8 @@ mod tests {
         fs::create_dir(dir.join("alpha")).unwrap();
         fs::create_dir(dir.join("mu")).unwrap();
 
-        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
+        let results =
+            list_like_product(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "mu", "zeta"]);
 
@@ -409,7 +391,8 @@ mod tests {
         fs::write(dir.join("report.txt"), "").unwrap();
         fs::write(dir.join("my_report.txt"), "").unwrap();
 
-        let results = list_folder(&dir, "rep", SearchMode::Prefix, true, &empty_history(), 100);
+        let results =
+            list_like_product(&dir, "rep", SearchMode::Prefix, true, &empty_history(), 100);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert!(names.contains(&"report.txt"));
         assert!(!names.contains(&"my_report.txt"));
@@ -422,7 +405,8 @@ mod tests {
         let dir = temp_dir_with_contents("fuzzy_filter");
         fs::write(dir.join("Visual Studio Code.txt"), "").unwrap();
 
-        let results = list_folder(&dir, "vsc", SearchMode::Fuzzy, true, &empty_history(), 100);
+        let results =
+            list_like_product(&dir, "vsc", SearchMode::Fuzzy, true, &empty_history(), 100);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Visual Studio Code.txt");
 
@@ -434,7 +418,7 @@ mod tests {
         let dir = temp_dir_with_contents("substring_not_fuzzy");
         fs::write(dir.join("Visual Studio Code.txt"), "").unwrap();
 
-        let results = list_folder(
+        let results = list_like_product(
             &dir,
             "vsc",
             SearchMode::Substring,
@@ -458,7 +442,7 @@ mod tests {
             .status()
             .expect("attrib command failed");
 
-        let results = list_folder(
+        let results = list_like_product(
             &dir,
             "",
             SearchMode::Substring,
@@ -474,118 +458,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    // --- パフォーマンス計測 ---
-    // `cargo test -p snotra-core bench_folder_ -- --ignored --nocapture` で実行
-
-    fn bench_folder_search(
-        label: &str,
-        n: usize,
-        filter: &str,
-        show_hidden_system: bool,
-        expected_results: usize,
-    ) {
-        use std::time::Instant;
-
-        let tag = format!("bench_folder_{}_{}", label, n);
-        let dir = temp_dir_with_contents(&tag);
-
-        for i in 0..n {
-            let file_name = if i + 1 == n {
-                format!("needle_match_{i}.txt")
-            } else {
-                format!("filler_file_{i}.txt")
-            };
-            fs::write(dir.join(file_name), "").unwrap();
-        }
-
-        let history = empty_history();
-
-        let warmup = list_folder(
-            &dir,
-            filter,
-            SearchMode::Substring,
-            show_hidden_system,
-            &history,
-            n.max(100),
-        );
-        assert_eq!(warmup.len(), expected_results);
-        if expected_results == 1 {
-            assert_eq!(warmup[0].name, format!("needle_match_{}.txt", n - 1));
-        }
-
-        let iters = 20usize;
-        let mut total_ns = 0u128;
-        for _ in 0..iters {
-            let t = Instant::now();
-            let results = list_folder(
-                &dir,
-                filter,
-                SearchMode::Substring,
-                show_hidden_system,
-                &history,
-                n.max(100),
-            );
-            total_ns += t.elapsed().as_nanos();
-            assert_eq!(results.len(), expected_results);
-        }
-
-        let avg_us = total_ns / iters as u128 / 1000;
-        println!("[{label}] entries={n}, avg={avg_us}µs ({iters} iters)");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_folder_narrow_filter() {
-        for &n in &[1_000, 5_000, 10_000] {
-            bench_folder_search("folder_narrow", n, "needle", true, 1);
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_folder_hidden_filter_all() {
-        for &n in &[1_000, 5_000, 10_000] {
-            bench_folder_search("folder_hidden_all", n, "", false, n);
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_folder_topk_sort() {
-        // max_results << N のケース: top-k 選択の効果を確認する
-        // N=10_000 エントリを max_results=50 で絞り込む
-        for &n in &[1_000, 5_000, 10_000] {
-            use std::time::Instant;
-            let tag = format!("bench_topk_{n}");
-            let dir = temp_dir_with_contents(&tag);
-            for i in 0..n {
-                fs::write(dir.join(format!("file_{i:05}.txt")), "").unwrap();
-            }
-            let history = empty_history();
-            let max_results = 50;
-            // warmup
-            let warmup = list_folder(&dir, "", SearchMode::Substring, true, &history, max_results);
-            assert_eq!(warmup.len(), max_results);
-            let iters = 20usize;
-            let mut total_ns = 0u128;
-            for _ in 0..iters {
-                let t = Instant::now();
-                let results =
-                    list_folder(&dir, "", SearchMode::Substring, true, &history, max_results);
-                total_ns += t.elapsed().as_nanos();
-                assert_eq!(results.len(), max_results);
-            }
-            let avg_us = total_ns / iters as u128 / 1000;
-            println!(
-                "[topk_sort] entries={n}, max_results={max_results}, avg={avg_us}µs ({iters} iters)"
-            );
-            let _ = fs::remove_dir_all(&dir);
-        }
-    }
-
-    // --- score_entries の top-k 境界テスト ---
+    // --- 並び順のテスト ---
 
     fn make_file(name: &str) -> DirEntryData {
         DirEntryData {
@@ -595,95 +468,10 @@ mod tests {
         }
     }
 
-    fn make_folder(name: &str) -> DirEntryData {
-        DirEntryData {
-            name: name.to_string(),
-            path: format!("C:\\test\\{}", name),
-            is_folder: true,
-        }
-    }
-
-    #[test]
-    fn score_entries_fewer_entries_than_max_returns_all() {
-        // N=3 < max_results=10 → 全 3 件が返る
-        let entries = vec![make_file("a"), make_file("b"), make_file("c")];
-        let results = score_entries(entries, &empty_history(), 10);
-        assert_eq!(results.len(), 3);
-    }
-
-    #[test]
-    fn score_entries_max_results_zero_returns_empty() {
-        // max_results=0 は k=0 ガードで即返却する
-        let entries = vec![make_file("a"), make_file("b")];
-        let results = score_entries(entries, &empty_history(), 0);
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn score_entries_k_equals_n_returns_all() {
-        // N==max_results → truncate なしで全件返る
-        let entries = vec![make_file("a"), make_file("b"), make_file("c")];
-        let results = score_entries(entries, &empty_history(), 3);
-        assert_eq!(results.len(), 3);
-    }
-
-    #[test]
-    fn score_entries_k_one_returns_top_folder_over_files() {
-        // k=1 のとき最優先（フォルダ）だけが返る
-        let entries = vec![make_file("alpha"), make_folder("zeta"), make_file("beta")];
-        let results = score_entries(entries, &empty_history(), 1);
-        assert_eq!(results.len(), 1);
-        assert!(results[0].is_folder);
-        assert_eq!(results[0].name, "zeta");
-    }
-
-    #[test]
-    fn score_entries_top_k_contains_correct_entries_in_order() {
-        // 2 フォルダ + 3 ファイルで k=3: フォルダ 2 件 + ファイル先頭 1 件が
-        // ソート順（フォルダ降順 → 名前昇順）で返る
-        let entries = vec![
-            make_file("delta"),
-            make_folder("zeta"),
-            make_file("alpha"),
-            make_folder("alpha_dir"),
-            make_file("beta"),
-        ];
-        let results = score_entries(entries, &empty_history(), 3);
-        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(names, vec!["alpha_dir", "zeta", "alpha"]);
-    }
-
-    #[test]
-    fn score_entries_top_k_order_independent_of_input_order() {
-        // select_nth_unstable_by は不安定なため、最終 sort_by がなければ
-        // 入力順によって結果順序が変わる。この回帰テストでその不変条件を固定する。
-        let entries1 = vec![
-            make_file("charlie"),
-            make_file("alpha"),
-            make_file("echo"),
-            make_file("bravo"),
-            make_file("delta"),
-        ];
-        let entries2 = vec![
-            make_file("echo"),
-            make_file("delta"),
-            make_file("bravo"),
-            make_file("alpha"),
-            make_file("charlie"),
-        ];
-        let r1 = score_entries(entries1, &empty_history(), 3);
-        let r2 = score_entries(entries2, &empty_history(), 3);
-        let names1: Vec<&str> = r1.iter().map(|r| r.name.as_str()).collect();
-        let names2: Vec<&str> = r2.iter().map(|r| r.name.as_str()).collect();
-        // 入力順によらず同一の top-3 が同一順で返る
-        assert_eq!(names1, vec!["alpha", "bravo", "charlie"]);
-        assert_eq!(names1, names2);
-    }
-
     #[test]
     fn folder_cmp_is_total_order_by_path() {
         // "Café" と "Cafe" は normalize_for_match で同キー化する（アクセント畳込み）。
-        // path tie-breaker が無いと select_nth_unstable の境界順が read_dir 順へ漏れる。
+        // path tie-breaker が無いと、同キーの 2 件の順が read_dir 順へ漏れる。
         // empty_history() は既存 folder テストのヘルパー（`HistoryStore::empty()`）。
         let hist = empty_history();
         let entries = vec![
@@ -711,41 +499,6 @@ mod tests {
         assert_eq!(a[0].path, "C:\\d\\Cafe");
     }
 
-    #[test]
-    fn unlimited_filter_take_equals_score_entries() {
-        // B の中核: 「全ソート→filter→take-k」＝「filter→score_entries→take-k」。
-        // 全順序化した今、両者は同一（境界の tie も path で確定）。
-        use crate::search::SearchMode;
-        let hist = empty_history();
-        let entries = vec![
-            DirEntryData {
-                path: "C:\\d\\Café".into(),
-                name: "Café".into(),
-                is_folder: false,
-            },
-            DirEntryData {
-                path: "C:\\d\\Cafe".into(),
-                name: "Cafe".into(),
-                is_folder: false,
-            },
-            DirEntryData {
-                path: "C:\\d\\dog".into(),
-                name: "dog".into(),
-                is_folder: false,
-            },
-        ];
-        // 経路 A: 全ソート → filter("cafe") → take(1)
-        let sorted = sort_entries_unlimited(entries.clone(), &hist);
-        let a = filter_sorted(&sorted, "cafe", SearchMode::Substring, 1);
-        // 経路 B: read_dir 相当の filter を read_dir_entries で（filter="cafe"）→ score_entries(max=1)
-        let filtered = read_dir_entries_for_test(entries, "cafe", SearchMode::Substring);
-        let b = score_entries(filtered, &hist, 1);
-        assert_eq!(
-            a.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
-            b.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
-        );
-    }
-
     /// **並べ替えのキーも照合の入口を通す**（#1309）。前に空白を持つ名前は、その空白を除いた
     /// 名前の位置に並ぶ。キーだけを別の写像（空白を触らない小文字化と折りたたみ）へ戻すと、
     /// `' '` が英字より前に来て ` b` が `a` より先になる。
@@ -757,24 +510,6 @@ mod tests {
             sorted.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
             ["a", " b"]
         );
-    }
-
-    /// read_dir_entries のフィルタ段だけをテストで再現する（実 I/O を避ける）。matches_filter は
-    /// private だが同一モジュールから呼べる。
-    #[cfg(test)]
-    fn read_dir_entries_for_test(
-        entries: Vec<DirEntryData>,
-        filter: &str,
-        mode: crate::search::SearchMode,
-    ) -> Vec<DirEntryData> {
-        let filter_norm = normalize_for_match(filter);
-        let needle = Utf32String::from(filter_norm.as_ref());
-        entries
-            .into_iter()
-            .filter(|e| {
-                filter_norm.is_empty() || matches_filter(&e.name, &filter_norm, &needle, mode)
-            })
-            .collect()
     }
 
     #[test]
@@ -920,27 +655,20 @@ mod tests {
     /// `read_dir_entries` も同じ [`matches_filter`] を通るので、絞り込み側の正規化がこの経路でも揃うことを
     /// 固定する（#1284）。
     #[test]
-    fn list_folder_filter_trims_whitespace() {
+    fn read_dir_entries_filter_trims_whitespace() {
         let dir = temp_dir_with_contents("filter_trim");
         fs::write(dir.join("report.txt"), "").unwrap();
         fs::write(dir.join("other.md"), "").unwrap();
 
-        let results = list_folder(
-            &dir,
-            "report ",
-            SearchMode::Fuzzy,
-            true,
-            &empty_history(),
-            100,
-        );
-        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        let entries = read_dir_entries(&dir, "report ", SearchMode::Fuzzy, true).unwrap();
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["report.txt"]);
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn score_entries_expansion_count_prioritizes_frequently_opened_folder() {
+    fn expansion_count_prioritizes_frequently_opened_folder() {
         // expansion_count が高いフォルダは同一グループ内で先頭に来る
         let mut history = empty_history();
         history.record_folder_expansion("C:\\test\\often");
@@ -965,10 +693,9 @@ mod tests {
                 is_folder: true,
             },
         ];
-        // k=2: often(3回) > rarely(1回) > never(0回) の順で上位 2 件が選ばれる
-        let results = score_entries(entries, &history, 2);
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].name, "often");
-        assert_eq!(results[1].name, "rarely");
+        // often(3回) > rarely(1回) > never(0回) の順に並ぶ
+        let results = sort_entries_unlimited(entries, &history);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["often", "rarely", "never"]);
     }
 }

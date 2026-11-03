@@ -92,7 +92,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 ## engine.rs のロック最小化パターン
 
 - `Config` だけは `Mutex<Engine>` の外から読める（`config_handle()`）が、書き（`update_config`）は `&mut self` のまま内側に置く。この非対称を崩さない（理由は `engine.rs` の `config` フィールドの doc）
-- `FolderListContext`: ロック内でスナップショット → ロック外で I/O → ロック内で `finalize_folder_list()`
+- `FolderListContext`: ロック内でスナップショット → ロック外で I/O → ロック内で `finalize_folder_list_unlimited()`
 - `PrebuiltIndex`: ロック外で構築 → ロック内でスワップ。入口は `PrebuiltIndex::from_material` の 1 つ
 - `PreparedHistorySave`: ロック内で snapshot → ロック外で `save()`
 - 新しい `Engine` メソッドで I/O や索引構築をロック内に入れない

@@ -3123,9 +3123,7 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 - **操作中の上限（2026-07-26・release・#737 実測）**: `RequestRedraw` の配送はウィンドウが載るモニターのリフレッシュレートで頭打ち（取得失敗時 60Hz・contract-design spec 契約②）。144Hz 機の A/B でポインタ移動中の results 間隔 p50 が 3.5ms → **7.1ms（≈141fps）**、>200fps 相当の間隔（<5ms）が 4,829 → 170（−96%・残余は event queue のジッタとみられる——`SNOTRA_EGUI_WAKE_TRACE` の送信間隔での裏取りは未実施）、paint 占有 17.6% → 8.9%。**ポインタ移動中の p50 がリフレッシュレートの逆数を大きく下回ったら回帰を疑う**
 - **可視アイドルの基準値（2026-07-26・release・#628 実測）**: main 2.0 fps / results 2.0 fps（＝ egui のキャレット点滅の下限）・paint 平均 0.96ms・**CPU 0.59%（1 コア比）**。修正前は 11.9 / 19.8 fps・5.1% だった。差は `RawInput::predicted_dt` の既定値（1/60 秒）が短い repaint 予約を「即時再描画」へ飽和させ、点滅の遷移ごとに約 26ms スピンしていたことによる（`snotra-egui-runtime/src/input.rs` の `take` を参照）。**アイドルで 2 fps を超えていたら回帰を疑う**
 - コアロジックのマイクロベンチは `ignored` テストとして保持する。実行コマンドは [docs/build-commands.md](docs/build-commands.md) の「検索パフォーマンス計測」を SSOT として参照
-- フォルダ列挙のホットパス確認には bench フィルタを絞る: `cargo test -p snotra-core bench_folder_ -- --ignored --nocapture`（SSOT の bench コマンドに対するフィルタ違いとして個別記載）
-- `bench_folder_narrow_filter` は「大量エントリ + 狭いフィルタ」で、非一致エントリに不要な文字列化や属性判定をしていないかを確認する
-- `bench_folder_hidden_filter_all` は `show_hidden_system = false` 相当で、`metadata()` を伴う属性判定コスト込みの回帰を確認する
+- フォルダ列挙のベンチ（`bench_folder_*` 3 本）は撤去した（#1391）。経緯と最後の測定は「フォルダ列挙（`bench_folder_*`、max_results=50）」の節にある
 - **warm frame は日をまたいで比較しない**——同一ホスト・同一バイナリでも日によって 3 倍変わる。構成 A / B の比較は必ず**同日・同条件で両方を測る**（#532 Phase 1 の検証バイナリで実測: 2026-07-17 に 26-30ms、7/14 は 8-10ms。変動の原因は未解明ゆえ、日をまたいだ数値の差を改善・退行と読んではならない）
 
 ## 起動の端から端まで（2026-08-09 計測・release・7 標本）
@@ -3302,6 +3300,26 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 | folder_hidden_all | 1,000 | 3,251 µs |
 | folder_hidden_all | 5,000 | 8,899 µs |
 | folder_hidden_all | 10,000 | 14,829 µs |
+
+**計測コードは 2026-11-03 まで在り、撤去した（#1391）。** 3 本とも `folder::list_folder`（列挙の時点で絞り込み、
+`score_entries` の top-k で上位を選ぶ経路）を測っていたが、製品はこの経路を通らなくなっていた。製品は
+`read_dir_entries`（絞り込みなし）→ `sort_entries_unlimited`（全件ソート）→ 打鍵ごとの `filter_sorted` である
+（#532 SU3 M2 B）。`list_folder` / `score_entries` / `Engine::list_folder` / `Engine::finalize_folder_list` も
+同じ変更で撤去した。測り直すときは `git show 7083a3c1:snotra-core/src/folder.rs` から戻す。
+
+撤去の前に、`bench_folder_hidden_filter_all` の時間を区間に分けて測った（2026-11-03・release・一時的な計測コード・
+各 20 回の平均・単位 µs）:
+
+| エントリ数 | ベンチ全体 | 列挙（hidden=false） | 列挙（hidden=true） | top-k | 全件ソート（製品） |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 772 | 681 | 679 | 206 | 181 |
+| 5,000 | 3,777 | 3,654 | 3,391 | 902 | 840 |
+| 10,000 | 7,599 | 7,032 | 7,506 | 1,777 | 1,675 |
+
+- 時間の約 9 割は列挙（`read_dir_entries`）である
+- **属性判定（`show_hidden_system = false` の `metadata()`）の費用は、hidden=true との差がノイズ（±5%）に埋もれて見えない。**
+  このベンチが見張るとしていた区間は、ベンチの値からは読めなかった
+- top-k と全件ソートの列は入力の clone（90〜920 µs）を含むので、区間の和はベンチ全体と一致しない
 
 ### ホットキー表示レイテンシ（`show_main_and_emit`、SNOTRA_TRACE=1 計測、2026-03-07）
 

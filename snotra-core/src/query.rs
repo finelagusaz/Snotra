@@ -1,14 +1,16 @@
 //! クエリと履歴キーの正規化、および文字存在ビットマスク計算。
 //!
 //! 照合用の正規化の唯一の入口 `normalize_for_match`（クエリとエントリ名の両側が通る・
-//! SPEC §4.2。Unicode の合成（NFC）を含む。変える文字が無ければ `Cow` で借用）、履歴クエリキー正規化
+//! SPEC §4.2。Unicode の合成（NFC）とラテン文字の折りたたみ `fold_latin` を含む。変える文字が無ければ
+//! `Cow` で借用）、履歴クエリキー正規化
 //! `normalize_history_query_key`、検索/インデクサ双方が使う `char_bitmask`
 //! （bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等であることは全コードポイントの
 //! 検知器と 2 字の列の検知器で固定してある。
 
 use std::borrow::Cow;
 
-use icu_normalizer::ComposingNormalizerBorrowed;
+use icu_normalizer::properties::{CanonicalDecompositionBorrowed, Decomposed};
+use icu_normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
 use nucleo_matcher::chars::normalize as nucleo_normalize;
 
 /// ASCII ローマ字をひらがなに変換する（カタカナもひらがなに正規化）。
@@ -143,21 +145,66 @@ pub fn lower_file_name(target_path: &str) -> Option<String> {
 
 /// 1 文字ぶんの照合用の写像。小文字化 → 折りたたみ → 小文字化の順である。
 ///
-/// **最後の小文字化が冪等性を閉じる。** nucleo の表は小文字を大文字へ写すことがあり
+/// **最後の小文字化が冪等性を閉じる。** [`fold_latin`] は小文字を大文字へ写すことがあり
 /// （`ʀ` → `R`・U+0262 `ɢ` → `G`）、そこで止めると 2 回目の適用で結果が変わる。
 #[inline]
 fn fold_char(c: char) -> impl Iterator<Item = char> {
     c.to_lowercase()
-        .map(nucleo_normalize)
+        .map(fold_latin)
         .flat_map(char::to_lowercase)
 }
+
+/// ラテン文字の折りたたみ（SPEC §4.2）。[`fold_char`] が小文字化した字に当てる。
+///
+/// 1. canonical 分解したときの基底文字が ASCII の英字なら、その英字（`ǘ`→`u`・`ẗ`→`t`）
+/// 2. 上付き・下付き（U+2070〜U+209F）は、互換分解が ASCII の英字 1 字ならその英字（`ⁱ`→`i`）。
+///    数字は畳まない
+/// 3. U+1D00 未満の残り（分解できない `ł`・`ø`・`ß` など）は nucleo-matcher の写像
+/// 4. それ以外は畳まない
+///
+/// **nucleo-matcher 0.3.1 の写像を使うのは 3 の範囲だけである。** その表は U+1D00 以降を誤った字へ
+/// 写し（`ẗ`→`n`）、結合文字を 2 つ持つ字を畳まない（#1395）。3 の範囲の写像は
+/// `fold_char_below_1d00_is_pinned` が固定している。
+fn fold_latin(c: char) -> char {
+    if let Some(base) = decomposed_base(c) {
+        return base;
+    }
+    match c {
+        '\u{2070}'..='\u{209F}' => {
+            let s = c.to_string();
+            let d = NFKD.normalize(&s);
+            let mut it = d.chars();
+            match (it.next(), it.next()) {
+                (Some(x), None) if x.is_ascii_alphabetic() => x,
+                _ => c,
+            }
+        }
+        '\0'..='\u{1CFF}' => nucleo_normalize(c),
+        _ => c,
+    }
+}
+
+/// canonical 分解の先頭を辿った基底文字が、`c` と違う ASCII の英字ならそれを返す。
+fn decomposed_base(c: char) -> Option<char> {
+    let mut base = c;
+    while let Decomposed::Expansion(first, _) = CANONICAL_DECOMPOSITION.decompose(base) {
+        base = first;
+    }
+    (base != c && base.is_ascii_alphabetic()).then_some(base)
+}
+
+const CANONICAL_DECOMPOSITION: CanonicalDecompositionBorrowed<'static> =
+    CanonicalDecompositionBorrowed::new();
+
+/// Unicode の互換分解（NFKD）。[`fold_latin`] が上付き・下付きの字にだけ使う。
+const NFKD: DecomposingNormalizerBorrowed<'static> = DecomposingNormalizerBorrowed::new_nfkd();
 
 /// [`fold_char`] が `c` をそれ自身 1 文字へ写すか。借用の判定は、組み立てと同じ写像に
 /// この問いを当てるだけで決める——別の条件を書くと、片方だけが変わる文字で割れる（#1310）。
 #[inline]
 fn folds_to_itself(c: char) -> bool {
     if c.is_ascii() {
-        // ASCII では nucleo の表は恒等であり、変わるのは大文字だけ（全コードポイントの
+        // ASCII では [`fold_latin`] は恒等であり、変わるのは大文字だけ（全コードポイントの
         // 検知器がこの近道も通す）。
         return !c.is_ascii_uppercase();
     }
@@ -535,7 +582,7 @@ mod tests {
                     vec![' ']
                 } else {
                     c.to_lowercase()
-                        .map(nucleo_normalize)
+                        .map(super::fold_latin)
                         .flat_map(char::to_lowercase)
                         .collect()
                 }
@@ -698,5 +745,94 @@ mod tests {
             .collect();
         failures.sort_unstable();
         assert!(failures.is_empty(), "冪等でない {}", report(&failures));
+    }
+
+    /// **ラテン文字の折りたたみは、分解したときの基底文字へ畳む**（`SPEC.md`「4.2 クエリ正規化」・#1395）。
+    /// nucleo-matcher 0.3.1 の表は U+1D00 以降を誤った字へ写し（`ẗ`→`n`・`ḋ`→`e`・`ⁱ`→`a`）、結合文字を
+    /// 2 つ持つ字（`ǘ`・`ȫ`）を畳まなかった。誤って写していた字のうち、分解で英字にならない字は畳まない。
+    #[test]
+    fn latin_letters_fold_to_their_base_letter() {
+        let cases = [
+            ("ẗ", "t"),
+            ("ḋ", "d"),
+            ("Ḋ", "d"),
+            ("ⁱ", "i"),
+            ("ₕ", "h"),
+            ("ǘ", "u"),
+            ("Ǘ", "u"),
+            ("ȫ", "o"),
+            // 0.3.1 で正しく畳めていた字は変わらない。
+            ("ł", "l"),
+            ("ß", "s"),
+            ("Č", "c"),
+            ("é", "e"),
+            // 分解で英字にならない字は畳まない（上付きの数字・小型大文字・反転した c）。
+            ("⁹", "⁹"),
+            ("ᴀ", "ᴀ"),
+            ("ↄ", "ↄ"),
+        ];
+        let got: Vec<(&str, String)> = cases
+            .iter()
+            .map(|&(s, _)| (s, normalize_for_match(s).into_owned()))
+            .collect();
+        let want: Vec<(&str, String)> = cases.iter().map(|&(s, w)| (s, w.to_string())).collect();
+        assert_eq!(got, want);
+    }
+
+    /// **0.3.1 で正しく畳めていた字は、自前の写像でも同じ字へ畳む**（#1395）。U+1D00 未満で、0.3.1 も
+    /// 分解の規則も字を変える字を比べる——自前の写像は分解できない字に 0.3.1 の写像そのものを使うので、
+    /// その字どうしを比べても循環する。循環しない比較はここだけで、残りは
+    /// `fold_char_below_1d00_is_pinned` が固定する。
+    #[test]
+    fn fold_char_agrees_with_0_3_1_where_both_fold() {
+        let mut compared = 0;
+        let mut failures = Vec::new();
+        for c in (0..0x1D00_u32).filter_map(char::from_u32) {
+            let Some(base) = super::decomposed_base(c) else {
+                continue;
+            };
+            let old = nucleo_normalize(c);
+            if old == c {
+                continue;
+            }
+            compared += 1;
+            if !old.eq_ignore_ascii_case(&base) {
+                failures.push(format!("{c:?}: 0.3.1 {old:?} / 分解 {base:?}"));
+            }
+        }
+        assert!(compared > 0, "比べた字が 0 件では裏付けにならない");
+        assert!(
+            failures.is_empty(),
+            "0.3.1 と食い違う {}",
+            report(&failures)
+        );
+    }
+
+    /// **U+1D00 未満の写像を固定する**（#1395）。0.3.1 の表を写さずに、依存の更新や規則の変更で写像が
+    /// 動いたことに気づくための検知器である。動いたのが意図した変更なら、`index.bin` の版を上げてから
+    /// この値を更新する（照合用の名前は `index.bin` に保存されている）。字を変える出力がすべて ASCII で
+    /// あることも確かめる。
+    #[test]
+    fn fold_char_below_1d00_is_pinned() {
+        const PINNED: u64 = 0xdc5f_e5cd_198b_1006;
+        // FNV-1a（64 bit）。字ごとに出力と区切りを畳む。
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut non_ascii = Vec::new();
+        for c in (0..0x1D00_u32).filter_map(char::from_u32) {
+            let out: String = super::fold_char(c).collect();
+            let lower: String = c.to_lowercase().collect();
+            if out != lower && !out.is_ascii() {
+                non_ascii.push(format!("{c:?} -> {out:?}"));
+            }
+            for b in out.bytes().chain([0xff]) {
+                hash = (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        assert!(
+            non_ascii.is_empty(),
+            "ASCII でない写像 {}",
+            report(&non_ascii)
+        );
+        assert_eq!(hash, PINNED, "U+1D00 未満の写像が変わった（{hash:#018x}）");
     }
 }

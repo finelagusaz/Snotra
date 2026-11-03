@@ -153,7 +153,7 @@ fn bitmask_filter_skips_non_matching_entries() {
 
 #[test]
 fn bitmask_filter_does_not_skip_accented_entries() {
-    // nucleo はアクセント正規化（é→e）でマッチするため、
+    // 照合の入口がアクセントを畳む（é→e）ので、Fuzzy はアクセント付きの名前にも当たる。
     // ビットマスクフィルタがアクセント付きエントリを除外してはならない
     let entries = vec![AppEntry {
         name: "Café".to_string(),

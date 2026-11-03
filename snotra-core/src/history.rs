@@ -896,6 +896,22 @@ mod tests {
         assert_eq!(migrated.query["が"]["c:\\fake\\app.lnk"], 5);
     }
 
+    /// **結合文字を 2 つ持つ字で記録したクエリキーも、基底文字のキーと 1 つに合わさる**（#1395）。
+    /// nucleo-matcher 0.3.1 の表は `ǘ` を畳まなかった。
+    #[test]
+    fn migrate_normalize_keys_merges_doubly_accented_and_base_query_keys() {
+        let mut data = HistoryData::default();
+        for (key, count) in [("ǘ", 2), ("u", 3)] {
+            data.query
+                .entry(key.to_string())
+                .or_default()
+                .insert("c:\\fake\\app.lnk".to_string(), count);
+        }
+        let migrated = migrate_normalize_keys(data);
+        assert_eq!(migrated.query.len(), 1);
+        assert_eq!(migrated.query["u"]["c:\\fake\\app.lnk"], 5);
+    }
+
     #[test]
     fn migrate_normalize_keys_normalizes_query_inner_map() {
         let mut data = HistoryData::default();

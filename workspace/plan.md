@@ -90,35 +90,35 @@
 
 ### Phase 1 — Red
 
-- [ ] 受け入れ 1・3 のテスト（`query.rs`）
-- [ ] 受け入れ 2 の検知器 2 本（`query.rs`・ダイジェストは現行の写像で一度測って固定し、Phase 2 の後に 22 字ぶん変わった値へ更新する）
-- [ ] 履歴の `ǘ` / `u` のテスト（`history.rs`）
-- [ ] 受け入れ 4 のテスト（`search/tests/basic.rs`）
-- [ ] 受け入れ 5 のテスト（`folder.rs`）
-- [ ] 受け入れ 1・3・4・5 が現行で落ち、受け入れ 2 が現行で緑であることを確かめる
+- [x] 受け入れ 1・3 のテスト（`query.rs`）
+- [x] 受け入れ 2 の検知器 2 本（`query.rs`・ダイジェストは現行の写像で一度測って固定し、Phase 2 の後に 22 字ぶん変わった値へ更新する）
+- [x] 履歴の `ǘ` / `u` のテスト（`history.rs`）
+- [x] 受け入れ 4 のテスト（`search/tests/basic.rs`）
+- [x] 受け入れ 5 のテスト（`folder.rs`）
+- [x] 受け入れ 1・3・4・5 が現行で落ち、受け入れ 2 が現行で緑であることを確かめる → 実測: 受け入れ 1・2（2 本）・4・履歴が現行で落ちた。受け入れ 5（`ᴀbc` × `ᴀ`）は現行で緑——現行の写像が両側の `ᴀ` を `a` へ畳むため。照合器の `normalize` を戻す変異 (c) の検知器としては、新しい写像の下で働く（計画の想定の訂正）
 
 ### Phase 2 — 写像と照合器
 
-- [ ] `fold_latin` を足し、`fold_char` を差し替える。`folds_to_itself` の ASCII の近道のコメントを直す
-- [ ] テストの `reference_fold_once` を `fold_latin` に追従させる
-- [ ] `scoring.rs` の照合器を `normalize = false` にする
-- [ ] `search/tests/ranking.rs` L156 のコメント
+- [x] `fold_latin` を足し、`fold_char` を差し替える。`folds_to_itself` の ASCII の近道のコメントを直す
+- [x] テストの `reference_fold_once` を `fold_latin` に追従させる
+- [x] `scoring.rs` の照合器を `normalize = false` にする
+- [x] `search/tests/ranking.rs` L156 のコメント
 
 ### Phase 3 — 索引の版
 
-- [ ] `INDEX_CACHE_VERSION` を 10、`INDEX_WIRE_SINCE` の doc、`load_cache_in` の注記
-- [ ] `GOLDEN_V10`・凍結 `GOLDEN_V9`・`frozen_v9_*`・`breakdown_still_reads_the_frozen_v9`・`load_cache_in_reports_the_version_it_actually_read`
-- [ ] 版の言及の追従を `git grep -n "GOLDEN_V9\|凍結 v9\|v9・#1285\|v7・v8"` で数えて直す（plan-review 軽微 6: `tests.rs` の `GOLDEN_V9` を指す doc とアサーションのメッセージ、「`GOLDEN_V9` との差は版のバイトだけ」、`cache.rs` の `INDEX_WIRE_SINCE` の doc、`load_cache_in` の注記）
+- [x] `INDEX_CACHE_VERSION` を 10、`INDEX_WIRE_SINCE` の doc、`load_cache_in` の注記
+- [x] `GOLDEN_V10`・凍結 `GOLDEN_V9`・`frozen_v9_*`・`breakdown_still_reads_the_frozen_v9`・`load_cache_in_reports_the_version_it_actually_read`
+- [x] 版の言及の追従を `git grep -n "GOLDEN_V9\|凍結 v9\|v9・#1285\|v7・v8"` で数えて直す（plan-review 軽微 6: `tests.rs` の `GOLDEN_V9` を指す doc とアサーションのメッセージ、「`GOLDEN_V9` との差は版のバイトだけ」、`cache.rs` の `INDEX_WIRE_SINCE` の doc、`load_cache_in` の注記）
 
 ### Phase 4 — 文書
 
-- [ ] `SPEC.md` §4.2
-- [ ] `query.rs` の `//!` と `fold_char` の doc
+- [x] `SPEC.md` §4.2
+- [x] `query.rs` の `//!` と `fold_char` の doc
 
 ### Phase 5 — 検証
 
 - [ ] 検証チェックリストの該当カテゴリをすべて実行
-- [ ] 互換分解（NFKD）の表が増やすバイナリサイズを、`snotra` の release ビルドの exe サイズの前後で測り、PR 本文の材料として残す
+- [x] 互換分解（NFKD）の表が増やすバイナリサイズを、`snotra` の release ビルドの exe サイズの前後で測り、PR 本文の材料として残す → 規則 2 の互換分解を外した版 10,779,136 B、入れた版 10,836,480 B（+57,344 B・+0.5%）。許容
 
 ## 未確定（実装前に潰す）
 

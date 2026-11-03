@@ -46,7 +46,7 @@ export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
 
 /** `.claude/skills/` ツリーの md。
  *  `SKILL.md` だけでなく配下の md も含む——ADR の短縮引用は SKILL.md の外にも書かれる。
- *  **`references/` の腕には、縮みを見張る側を置いていない**（宣言する死角）——母集団へ 1 件しか
+ *  **`references/` の系統には、縮みを見張る側を置いていない**（宣言する死角）——母集団へ 1 件しか
  *  出さないため、置いても単一ファイルの見張りにしかならないからである。**「どの層も赤くしない」とは
  *  書けない**——実在するファイルが消えれば、それを指す参照の側が鳴る（#1155 の実測で 1 件）。
  *  ここに無いのは検出ではなく、原因を母集団の縮みとして名指す帰属である。 */
@@ -69,7 +69,7 @@ export function scanAdrCitations(snapshot, docs) {
     const text = snapshot.read(doc);
     if (text == null) continue;
     const isMd = doc.endsWith(".md");
-    // 非 md の腕はフェンスのマスクを掛けないので、釣り合いの検算も要らない（落ちる行が無い）
+    // 非 md の系統はフェンスのマスクを掛けないので、釣り合いの検算も要らない（落ちる行が無い）
     const lines = isMd ? linesOutsideFences(text, doc, findings) : text.split("\n").map((l, i) => [i + 1, l]);
     for (const [lineNo, line] of lines) {
       for (const m of line.matchAll(ADR_CITATION)) {

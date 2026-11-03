@@ -17,12 +17,12 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 - `search.rs` と子 `search/build.rs`・`search/query_plan.rs`・`search/scoring.rs`・`search/path_store.rs`・`search/footprint.rs`。テストは `search/tests/` に機能別（`mod.rs`・`common.rs`・`basic.rs`・`ranking.rs`・`incremental.rs`・`migemo.rs`・`path.rs`・`build.rs`・`performance.rs`）
   - **並列の列は添字で対応づけて持つ**: `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks`。すべてが `Vec` ではない（`lower_names` / `lower_file_names` は `str_arena`、表示名と `kana_lower_names` は `index_tree` の `NameArena`）。列を足すときは下の「実装前チェック（必須）」
 - `indexer.rs` と子 `indexer/scan.rs`・`indexer/keys.rs`・`indexer/columns.rs`・`indexer/cache.rs`・`indexer/cache/breakdown.rs`・`indexer/path_env.rs`。共有治具は `indexer/test_support.rs` の 1 つだけ（ガードを写すと相互排除が消える）
-- crate ルートの統合テスト（手元専用の計器か CI で走る検知器かは各 `//!`・計測値は `PERFORMANCE.md`）: `tests/search_frame_cost.rs`・`tests/memory_footprint.rs`・`tests/path_query_cost.rs`・`tests/match_cost.rs`・`tests/dir_stat_cost.rs`・`tests/search_allocations.rs`
+- crate ルートの統合テスト（手元専用の計測コードか CI で走る検知器かは各 `//!`・計測値は `PERFORMANCE.md`）: `tests/search_frame_cost.rs`・`tests/memory_footprint.rs`・`tests/path_query_cost.rs`・`tests/match_cost.rs`・`tests/dir_stat_cost.rs`・`tests/search_allocations.rs`
 
 ## 開発ルール
 
 - **UI 表示文字列を持たない。** エラーは `is_error: true` や専用の error 型で返し、文言は UI 層（`src-tauri/src/egui_shell/strings.rs`・`snotra-settings/src/i18n.rs`）が組み立てる。理由は UI 非依存であること（Win32 非依存ではない）
-- **テストから実 `%APPDATA%\Snotra` に触れない。** 読む側: fixture に `HistoryStore::load()` を使わない（空は `HistoryStore::empty()`、内容は `HistoryStore::load_in` へ注入。食い違いは CI では緑のまま開発機でだけ出る・#963）。書く側: `Config::config_dir()` を内部で解決する製品の入口を通るテストへ記録を足すと、テストは緑のまま実ファイルを書く。dir を注入する入口（`load_cache_in` / `save_cache_sorted_in` の形）へ寄せ、`SNOTRA_CONFIG_DIR` で迂回しない（プロセス大域ゆえ並列の他テストを動かす）。検算はフルテスト前後で実ファイルが変わらないことを測る。`tests/` の `#[ignore]` 計器だけは `load()` でよい
+- **テストから実 `%APPDATA%\Snotra` に触れない。** 読む側: fixture に `HistoryStore::load()` を使わない（空は `HistoryStore::empty()`、内容は `HistoryStore::load_in` へ注入。食い違いは CI では緑のまま開発機でだけ出る・#963）。書く側: `Config::config_dir()` を内部で解決する製品の入口を通るテストへ記録を足すと、テストは緑のまま実ファイルを書く。dir を注入する入口（`load_cache_in` / `save_cache_sorted_in` の形）へ寄せ、`SNOTRA_CONFIG_DIR` で迂回しない（プロセス大域ゆえ並列の他テストを動かす）。検算はフルテスト前後で実ファイルが変わらないことを測る。`tests/` の `#[ignore]` 計測コードだけは `load()` でよい
 - `#[cfg(windows)]` のテストは `#[cfg(windows)]` で囲むか `if let Some(..) =` でスキップする。`assert!(value.is_some())` のような環境前提のアサーションを書かない
 
 ## 実装前チェック（必須）

@@ -10,4 +10,4 @@
 | Check 6 — `docs/development-principles.md` 参照の実在性 | G-references（#587） | Check 3 と同様（走査元・適用範囲も同じ） |
 | Check 8 — `.claude/rules/` パスパターンの有効性 | 撤去（2026-09-29） | G-rules-globs として機械化された後、ハーネス自身を照合する層ごと撤去した |
 | Check 9 — スキル定義の整合性 | 撤去（2026-09-29） | G-skill-table として機械化された後、ハーネス自身を照合する層ごと撤去した |
-| Check 11 — 格下げ中のメタ層の発火計数 | 撤去（2026-09-29） | 観測対象の面積計器と evidence 行が計器ごと撤去された（`ADR-governance-meta-demotion` の追記） |
+| Check 11 — 格下げ中のメタ層の発火計数 | 撤去（2026-09-29） | 観測対象の面積の計測コードと evidence 行が計測コードごと撤去された（`ADR-governance-meta-demotion` の追記） |

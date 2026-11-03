@@ -5,7 +5,7 @@ import { checkFoldedHeadingRefs, scanFoldedHeadingRefs } from "./G-folded-headin
 // 守りたい対象 = #1154 で実測した 33 件。折れた正準形は `HEADING_REF` も `NEAR_REF` も
 // **一致を生成しない**ので、`checked` にも `findings` にも現れない——「照合していない」と
 // 「差分ゼロ」を分ける証跡すら残らない形である。
-// **例示に実在の対象を置かない**——`checks/` はこの検査群の母集団（コメントの腕）だからである。
+// **例示に実在の対象を置かない**——`checks/` はこの検査群の母集団（コメントの系統）だからである。
 // プレースホルダは `isRefTargetSpelling` に当たらないので、この検査自身の finding にならない。
 describe("G-folded-heading-refs checkFoldedHeadingRefs（正準形の参照が物理改行で折れた形・#1154）", () => {
   const run = (text, file = "docs/x.md") => checkFoldedHeadingRefs(snap({ [file]: text }), [file]);

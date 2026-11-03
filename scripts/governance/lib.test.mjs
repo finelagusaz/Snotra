@@ -39,7 +39,7 @@ describe("gitIgnoredPaths（存在に依らずパス名で判定する・#1088�
   });
 });
 
-describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925）", () => {
+describe("G-heading-refs / G-near-heading-refs のソースの系統（`.rs`・#925）", () => {
   // 守りたい対象 = `.rs` のコメントに書かれた正準形が、参照先の改題・移動・削除で沈黙すること。
   // 種はすべて合成スナップショットへ蒔く（ライブの検査もリポジトリのファイルも弱めない・
   // `.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」）。
@@ -84,13 +84,13 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
   });
 
   it("種 6: md の母集団が 0 件なら runAll が明示 fail（`.rs` が非空でも鳴る）", () => {
-    // 種 5 と別の it にする——1 本に束ねると、片方の腕が埋めた長さで他方の消滅が隠れる形を
+    // 種 5 と別の it にする——1 本に束ねると、片方の系統が埋めた長さで他方の消滅が隠れる形を
     // テスト側で再現してしまう（`runAll` のコメントが `staleDocs` / `staleGuides` で名指しした失敗）
     const { findings } = runAll(snap({ "src/a.rs": "fn f() {}\n" }));
     expect(findings.some((f) => f.message.includes("対象 md が 0 件"))).toBe(true);
   });
 
-  it("種 7: 判定対象外の不混入（`.rs` の腕は他の拡張子を拾わない）", () => {
+  it("種 7: 判定対象外の不混入（`.rs` の系統は他の拡張子を拾わない）", () => {
     const s = snap({
       "src/a.rs": "",
       "src/b.ts": "",
@@ -108,7 +108,7 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
   });
 
   it("種 9: 配線カナリア（G-near-heading-refs） — 近傍形も runAll 経由で `.rs` から出る", () => {
-    // **腕ごとに 1 本ずつ要る。** 種 8 だけでは `scanNearHeadingRefs` の引数を md の腕へ戻す変異が
+    // **系統ごとに 1 本ずつ要る。** 種 8 だけでは `scanNearHeadingRefs` の引数を md の系統へ戻す変異が
     // 検出されない（種 4 はリテラル母集団で呼ぶので buildChecks を通らず、実リポジトリの `.rs` 近傍参照は
     // 0 件なので dogfood も evidence も動かない）。G-stale-identifiers が配線 describe を 2 本置いたのと同じ形
     const { findings } = runAll(rs('/// 詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\nfn f() {}\n'));
@@ -116,7 +116,7 @@ describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925
   });
 });
 
-describe("G-heading-refs / G-near-heading-refs のスクリプトの腕（コメント行・#1138）", () => {
+describe("G-heading-refs / G-near-heading-refs のスクリプトの系統（コメント行・#1138）", () => {
   // 守りたい対象 = スクリプトのコメントに書かれた正準形が、参照先の改題で沈黙すること。
   // #1137 で `/implement` を改番したとき `.md` の 3 件は名指しされ、`scripts/race-boundaries.mjs`
   // の 1 件だけが沈黙した。種はすべて合成スナップショットへ蒔く。
@@ -163,7 +163,7 @@ describe("G-heading-refs / G-near-heading-refs のスクリプトの腕（コメ
   });
 
   it("種 6: スクリプトの母集団が 0 件なら runAll が明示 fail（md と `.rs` が非空でも鳴る）", () => {
-    // 腕ごとに 1 本ずつ要る（種 5 / 種 6 が `.rs` と md について置いたのと同型）
+    // 系統ごとに 1 本ずつ要る（種 5 / 種 6 が `.rs` と md について置いたのと同型）
     const { findings } = runAll(snap({ "CLAUDE.md": TARGET, "src/a.rs": "fn f() {}\n" }));
     expect(findings.some((f) => f.message.includes("対象スクリプト"))).toBe(true);
   });

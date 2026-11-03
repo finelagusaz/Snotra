@@ -72,7 +72,7 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
 
   // 見出し名が鉤括弧を入れ子に含む形（#1188）。旧実装はラベルの文字クラスが `[^「」\n]` で、
   // **一致そのものが生成されなかった**——findings にも checked にも現れないので
-  // 「照合していない」と「差分ゼロ」が区別できない。ゆえに緑だけでは接地せず、
+  // 「照合していない」と「差分ゼロ」が区別できない。ゆえに緑だけでは裏付けにならず、
   // 赤の fixture が「一致が生成されるようになった」ことを証明する側になる。
   const NESTED = "## 第一原則: コメントは「なぜ」を書く\n\n本文\n";
   const NESTED_REF = { "docs/y.md": "詳細は `docs/c.md`「第一原則: コメントは「なぜ」を書く」を見よ\n" };
@@ -119,7 +119,7 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
     expect(scanHeadingRefs(s, ["docs/y.md"])).toEqual({ findings: [], checked: 0 });
   });
 
-  it("md の腕の母集団は履歴資料・作業バッファ・凍結された歴史（docs/adr/）を除く全 md", () => {
+  it("md の系統の母集団は履歴資料・作業バッファ・凍結された歴史（docs/adr/）を除く全 md", () => {
     const s = snap({
       "PERFORMANCE.md": "",
       ".claude/agents/code-reviewer.md": "",
@@ -127,7 +127,7 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
       "workspace/plan.md": "",
       "docs/adr/ADR-x.md": "",
       // 判定対象外の不混入（md 側）。`src/main.rs` は #925 以降 `headingRefSourceDocs` が
-      // 拾う側へ移ったため、md の腕の負のカナリアは非 md の別拡張子で張り直してある
+      // 拾う側へ移ったため、md の系統の負のカナリアは非 md の別拡張子で張り直してある
       "Cargo.toml": "",
       "src/main.rs": "",
     });

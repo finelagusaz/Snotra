@@ -15,7 +15,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `ime.rs` — IME をオフにする Win32 IMM API の薄いラッパー
 - `trace.rs` — `SNOTRA_TRACE` 環境変数ゲートの構造化トレースログ
 - `heap_trace.rs` — Rust ヒープ常駐の計装（`heap-trace` feature でのみ有効）
-- `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計器
+- `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計測コード
 - `monitor.rs` — マルチモニター対応の Win32 ヘルパー
 - `working_set.rs` — 非表示アイドル時のプロセスツリー working set 回収
 - `commands/` — egui view・トレイが共有する core 関数群（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）

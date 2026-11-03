@@ -17,7 +17,7 @@ paths:
 
 - `snotra-settings.exe` などの子プロセスを spawn したら、`main.rs` の exit ハンドラで `child.kill()` する（生成と破棄のペア）。
 - Win32 を呼ぶ経路を新しく作るときは、`PlatformBridge` を通すことを既定にする。`platform::{PlatformBridge, PlatformCommand}` で、platform スレッドのメッセージループへ処理を渡す。既存の直接の呼び出しは残っている。
-- 状態フラグを true にしたら、false に戻す経路とセットで設計する。戻す責務を持つ関数に `#[must_use]` を付け、`let _ =` での無視を compile-fail で検出する（実例は `launch_settings_process`）。一般則は `AGENTS.md`「条件別チェック（トリガー → 参照先）」の対称ペアの行にある。
+- 状態フラグを true にしたら、false に戻す経路とセットで設計する。戻す責務を持つ関数に `#[must_use]` を付ける（実例は `launch_settings_process`）。返り値をそのまま捨てる呼び出しは、CI の `clippy -D warnings` で失敗する。`let _ =` で捨てる形は警告なしで通るので、レビューで見る。一般則は `AGENTS.md`「条件別チェック（トリガー → 参照先）」の対称ペアの行にある。
 - Win32 に依存するモジュール（`ime.rs`、`platform/` の `hotkey.rs` など）は、ユニットテストできる前提にしない。
 
 ## トリガー → 検査

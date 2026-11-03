@@ -1,4 +1,4 @@
-# ADR-index-material-over-per-layer-constructors: 木と派生データの組の不変条件を 1 つの型で持ち、層ごとのコンストラクタで捌かない
+# ADR-index-material-over-per-layer-constructors: ツリーと派生データの組の不変条件を 1 つの型で持ち、層ごとのコンストラクタで捌かない
 
 ## 文脈
 
@@ -6,14 +6,14 @@
 `Option` を捌く」形だが、レビューで**同じ `Option` 分岐が `PrebuiltIndex` / `Engine` / `SearchEngine` の
 3 層・5 呼び出し点へ写っている**ことが判明した。根は最下層の 2 コンストラクタで、上の 2 層はその写しである。
 
-同時に、木とマスクの**長さが揃うこと**を守っていたのは `assemble` の `debug_assert` だけで、release
+同時に、ツリーとマスクの**長さが揃うこと**を守っていたのは `assemble` の `debug_assert` だけで、release
 （このワークスペースは `panic = "abort"`）では何も守っていなかった。破綻はビルド時に沈黙し、索引を
 入れ替えた後の初回検索で並列 Vec の添字外アクセスとしてプロセスごと落ちる形で初めて出る。
 
 ## 決定
 
-**木と派生データを `indexer::IndexMaterial`（フィールド private）へ束ね、索引を建てる入口を
-`from_material` の 1 つへまとめる。** マージ（マスクへ追記 ＋ 木へ根として追加）はその型のメソッドに
+**ツリーと派生データを `indexer::IndexMaterial`（フィールド private）へ束ね、索引を建てる入口を
+`from_material` の 1 つへまとめる。** マージ（マスクへ追記 ＋ ツリーへ根として追加）はその型のメソッドに
 なり、ディスクから来た組は `from_untrusted` が列長を検証する。
 
 このリポジトリが既に明文化している原理の 1 段上への適用である——`SearchEngine::new_with_cached_masks`

@@ -150,7 +150,7 @@ DPI も正しい）ため、既存のガードはすべて通り、`CopyFromScre
 
 **倒す向きを 2 つに分ける。** 「ロック中と判定できた」は throw、「**判定できなかった**」は警告のみで
 続行する。この関数の仕事は*誤った結果*を防ぐことであり、状態を読めないホストで実行そのものを
-拒めば、情報を足さずに道具を失う。加えて `Get-SnotraWindowCapture` は Pester の Integration
+拒めば、情報を足さずにツールを失う。加えて `Get-SnotraWindowCapture` は Pester の Integration
 テスト経由で **CI（GitHub Actions の Windows runner）でも走る**——判定不能を throw に倒すと、
 runner の WTS の振る舞いが未知のまま CI を壊しうる。**ロックという確定した事実にだけ強く倒す。**
 #>

@@ -105,7 +105,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 ## indexer.rs の索引更新の契機
 
 - 更新の契機と `index.bin` を書く契機は別である（`indexer/cache.rs` の `//!`）。旧版の書き戻しは `load_cache_in` の旧版枝（`upgrade_legacy_cache_in`）に置く
-- **木を直に読む版（`entries` を持たない版）の枝で、木から作り直して昇格させない**——ロード直後に全エントリの複製が戻る（却下した案は `docs/adr/ADR-index-v7-cache-miss.md`）
+- **ツリーを直に読む版（`entries` を持たない版）の枝で、ツリーから作り直して昇格させない**——ロード直後に全エントリの複製が戻る（却下した案は `docs/adr/ADR-index-v7-cache-miss.md`）
 
 ## `scan_all` の重複排除
 

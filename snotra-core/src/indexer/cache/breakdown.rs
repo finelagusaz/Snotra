@@ -67,7 +67,7 @@ pub struct CacheByteBreakdown {
 enum EntryRepr<'a> {
     /// v6 以下: `AppEntry` の列を丸ごと持つ（`target_path` が実体で入っている）。
     Flat(&'a [AppEntry]),
-    /// v7: 木の列。`target_path` は親と拡張子 id に置き換わり、実体は根のぶんだけ `table` に残る。
+    /// v7: ツリーの列。`target_path` は親と拡張子 id に置き換わり、実体は根のぶんだけ `table` に残る。
     ///
     /// **`sorted_by_path` も持つ。** 1 バイトしか無いが、`IndexCache` に居る以上
     /// 帰属しなければ残余が 0 にならない——そして残余の検算は、列を 1 本落とした誤りと
@@ -98,7 +98,7 @@ impl EntryRepr<'_> {
         // ラベルで探し直す必要は無い）。
         let label = match self {
             Self::Flat(_) => "entries",
-            Self::Tree { .. } => "木（5 列 + 整列済みフラグ）",
+            Self::Tree { .. } => "ツリー（5 列 + 整列済みフラグ）",
         };
         let bytes = match self {
             Self::Flat(e) => serialized_len(e)?,
@@ -170,7 +170,7 @@ impl EntryRepr<'_> {
                 sorted_by_path: _,
             } => vec![
                 CacheByteRow {
-                    label: "木: 長さプレフィックス（5 列）",
+                    label: "ツリー: 長さプレフィックス（5 列）",
                     bytes: varint_len(n) * 4 + varint_len(table.len()),
                     items: 5,
                 },

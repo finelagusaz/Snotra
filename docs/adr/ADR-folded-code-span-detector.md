@@ -41,7 +41,7 @@
   - **rustfmt**: `rustfmt.toml` に wrap_comments を立てて折れたスパンへ当てると、`can't set ... unstable features are only available in nightly channel` を出して**無視され**、折れは 1 文字も直らない（exit 0）。仮に nightly へ移しても**向きが逆**である——指定幅へ**折り込む**オプションであり、8000 行超のコメントを一斉に折って害 1 を量産する
   - **clippy**: pedantic + doc 系の lint を全部有効にして折れたスパンへ当てて **0 件**。唯一鳴った doc_paragraphs_missing_punctuation は「。」を終端と認めない**誤検出 2 件**で、日本語 doc では使えない
   - **母集団が届かない**: 実在 6 箇所の内訳は `.md` 1 / `.rs` 2 / `.mjs` 1 / `.ps1` 2 で、**完璧な Rust lint でも 6 件中 2 件**しか覆わない
-  - **理由は道具の欠落ではない**: 折れたスパンは**正しい CommonMark** であり rustdoc は soft line break を跨いで正しく描画する。害は `grep` にしか出ず、**整形器も lint も「人間が正規表現で検索する」ことをモデルに持たない**
+  - **理由はツールの欠落ではない**: 折れたスパンは**正しい CommonMark** であり rustdoc は soft line break を跨いで正しく描画する。害は `grep` にしか出ず、**整形器も lint も「人間が正規表現で検索する」ことをモデルに持たない**
 - **機構を足さず、規範だけを縮める**: **却下。** 害 1 の再発が誰も検知しないまま残り、却下 3 の受容する残余がそのまま生き延びる。上の `git blame` が示すとおり、規範 1 行では実際に足りなかった。
 - **「1 段落 1 行」を規範として残す**: **却下。** 実測 3151 件で、機構の書き手自身が守っていない。`ADR-folded-canonical-reference-detector`「検討した代替案と却下理由」が「機構と規範が逆を向く」形を退けた向きの、鏡像の適用である。
 - **`COMMENT_FAMILY` へ `.rs` を足してコメント行を取る**: **却下。** `refScanLines` の意味論が変わり、`G-heading-refs` / `G-near-heading-refs` / `G-folded-heading-refs` の母集団が**同じ変更で動く**（`.rs` の走査対象が全行からコメント行へ縮む）。#925 以来の意図的な母集団であり、検査対象を変更しながら検査を検証しない（#489）。採ったのは `linesOfComments` へ既定引数の第 3 引数を足し、**既存の呼び出し点を 1 つも動かさない**形である。

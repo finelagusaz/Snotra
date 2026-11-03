@@ -95,7 +95,7 @@ pub enum CachedLower {
     },
 }
 
-/// 木と派生 4 本を導出しただけの中間の姿。**I/O もロック契約も持たない。**
+/// ツリーと派生 4 本を導出しただけの中間の姿。**I/O もロック契約も持たない。**
 ///
 /// 分けてあるのは、`index.bin` を書く関数と「潰しの導出」を突き合わせたい検知器が別物だから
 /// である——書き込みごと公開すると、検知器がファイルシステムと、型に無いロック契約
@@ -132,7 +132,7 @@ impl DerivedColumns {
     }
 }
 
-/// エントリから木と派生 4 本を導出する。**I/O を持たない。**
+/// エントリからツリーと派生 4 本を導出する。**I/O を持たない。**
 pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
     // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（運ぶ器は [`crate::indexer::IndexMaterial`] であり、受け取る経路をここで数えない）。
     //
@@ -159,7 +159,7 @@ pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
         collapsed_lower_file_names.push(lower_file.as_slot());
     }
 
-    // **木を建てるのは派生文字列を導出し終えた後である。** 建てる段が `target_path` を
+    // **ツリーを建てるのは派生文字列を導出し終えた後である。** 建てる段が `target_path` を
     // 吸い上げるので、順序を入れ替えると `lower_file_name(&e.target_path)` の材料が消える。
     let tree = IndexTree::build(entries);
 

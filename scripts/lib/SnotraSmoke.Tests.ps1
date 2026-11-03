@@ -646,7 +646,7 @@ Describe 'Assert-SnotraSessionUnlocked（#866 倒す向きの非対称）' {
         { Assert-SnotraSessionUnlocked } | Should -Not -Throw
     }
 
-    It '判定不能は警告のみで続行する（未知ホスト・CI runner で道具を失わないため）' {
+    It '判定不能は警告のみで続行する（未知ホスト・CI runner でツールを失わないため）' {
         Mock -ModuleName SnotraSmoke Get-SnotraSessionLockState { throw 'WTSQuerySessionInformationW に失敗しました（Win32 error 87）。' }
         { Assert-SnotraSessionUnlocked -WarningAction SilentlyContinue } | Should -Not -Throw
     }

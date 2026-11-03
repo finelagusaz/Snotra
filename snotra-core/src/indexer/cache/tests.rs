@@ -96,7 +96,7 @@ type GoldenFixture = (
 /// 3 つの網羅をここで背負う。どれが欠けても、その表現のバイトが凍結されずに素通りする:
 ///
 /// - **`LowerFileName` の 3 状態すべて**（タグの値が変わっても golden が気づかない）
-/// - **木の根と非根の両方**（1..2 件目が親子）。根の `aux` はフルパスの id、非根の `aux` は
+/// - **ツリーの根と非根の両方**（1..2 件目が親子）。根の `aux` はフルパスの id、非根の `aux` は
 ///   拡張子の id という**同じ列の 2 つの意味**が、これで初めて両方バイトに現れる
 /// - **`sorted_by_path` が真になる並び**（`target_path` のバイト昇順）。偽だけを凍結すると、
 ///   フラグの位置や極性が変わっても 1 バイトも動かない
@@ -202,10 +202,10 @@ fn index_cache_on_disk_format_is_stable() {
     assert_eq!(restored.names.get(1), "app");
     assert!(!restored.is_folder[1]);
 
-    // **木の 3 列は、組み直したフルパスで検算する。** `names` / `is_folder` だけを見ると
+    // **ツリーの 3 列は、組み直したフルパスで検算する。** `names` / `is_folder` だけを見ると
     // `parent` / `aux` / `table` は「新コードの出力を新コードで読み返した」だけになり、
     // 親や拡張子の取り違えをそのまま凍結する。突き合わせる相手は fixture の
-    // `target_path` リテラル——木を通っていない唯一の原文である。
+    // `target_path` リテラル——ツリーを通っていない唯一の原文である。
     let restored_tree = IndexTree::from_parts(
         restored.names.into_owned(),
         restored.is_folder.into_owned(),
@@ -214,7 +214,7 @@ fn index_cache_on_disk_format_is_stable() {
         restored.table.into_owned(),
         restored.sorted_by_path,
     )
-    .expect("凍結 v8 の列が木の不変条件を満たすこと");
+    .expect("凍結 v8 の列がツリーの不変条件を満たすこと");
     assert!(
         restored.sorted_by_path,
         "fixture はバイト昇順ゆえ真である（偽だけを凍結するとフラグが動いても気づかない）"
@@ -233,11 +233,11 @@ fn index_cache_on_disk_format_is_stable() {
     assert_eq!(restored.lower_file_names.into_owned(), lower_file_names);
 }
 
-/// **旧形式の凍結バイト列が、木の組み直しの唯一の接地である。**
+/// **旧形式の凍結バイト列が、ツリーの組み直しの唯一の接地である。**
 ///
 /// v7 は `target_path` を持たないので、v7 から実体化した値と組み直しを突き合わせても
 /// 「組み直しの結果どうし」を比べることにしかならない。ここでは **v6 の凍結バイト列**
-/// ——すなわち木を知らない時代に書かれた原文——から読み、木へ組み替えて組み直した結果が
+/// ——すなわちツリーを知らない時代に書かれた原文——から読み、ツリーへ組み替えて組み直した結果が
 /// 1 バイトも違わないことを見る。
 ///
 /// 実データ規模の corpus は `search/tests/path.rs` が受け持つ（開発機限定）。ここは
@@ -266,7 +266,7 @@ fn index_tree_raw_matches_frozen_v6_specimen() {
 /// 書かれていた旧バイト列」が存在せず、新コードの出力を凍結する以外に採りようがない
 /// （`snotra-core/CLAUDE.md`「データ永続化の注意」が禁じている向きは、**旧形式の後方互換を
 /// 新出力の golden で代用すること**である）。後方互換はここではなく `GOLDEN_V6` /
-/// `GOLDEN_V5` / `GOLDEN_V4` からの load テストが持ち、木の組み直しの接地は
+/// `GOLDEN_V5` / `GOLDEN_V4` からの load テストが持ち、ツリーの組み直しの接地は
 /// `index_tree_raw_matches_frozen_v6_specimen` が持つ。
 ///
 /// **末尾の `lower_file_names` は `LowerFileName` のタグである**: `Absent` = 0、
@@ -345,8 +345,8 @@ fn frozen_v6_bytes_load_as_collapsed_through_load_cache_in() {
     assert_eq!(tree.len(), 3);
     assert_eq!(tree.name_at(0), "Firefox");
 
-    // 木は `target_path` から建て直される。原文へ戻せることまで見る——v6 の実体を
-    // 捨てて木にした段で取りこぼせば、以後この索引のパスは静かに壊れる。
+    // ツリーは `target_path` から建て直される。原文へ戻せることまで見る——v6 の実体を
+    // 捨ててツリーにした段で取りこぼせば、以後この索引のパスは静かに壊れる。
     let mut buf = String::new();
     tree.path_into(&mut buf, 0);
     assert_eq!(buf, "C:\\apps\\firefox.lnk");
@@ -762,7 +762,7 @@ fn legacy_upgrade_sorts_before_saving_so_the_tree_stays_shared() {
     let dir = temp_dir("upgrade_sort");
 
     // **正準の並びの逆順で置く。** 旧版ファイルが今の canon と違う順序で書かれていた
-    // 場合を治具にする（昇格が整列を怠ると、この並びのまま木を建てることになる）。
+    // 場合を治具にする（昇格が整列を怠ると、この並びのままツリーを建てることになる）。
     let entries = vec![
         AppEntry {
             name: "c".into(),
@@ -814,7 +814,7 @@ fn legacy_upgrade_sorts_before_saving_so_the_tree_stays_shared() {
         assert!(
             !written.table.iter().any(|s| s == child),
             "親が解決されず {child} のフルパスが `table` へ実体で戻った\
-             ——木が平たくなり `index.bin` が太る（`sort_entries_canonical` の doc）"
+             ——ツリーが平たくなり `index.bin` が太る（`sort_entries_canonical` の doc）"
         );
     }
 
@@ -1611,8 +1611,8 @@ fn with_index_write_lock_holds_lock_during_closure() {
     );
 }
 
-/// **木の節点数は索引のエントリ件数である。** `save_cache_sorted_in` は走査結果を木へ
-/// 組み替えて返すので、件数が食い違えば下流の並列 Vec と木で長さがずれる。
+/// **ツリーの節点数は索引のエントリ件数である。** `save_cache_sorted_in` は走査結果をツリーへ
+/// 組み替えて返すので、件数が食い違えば下流の並列 Vec とツリーで長さがずれる。
 #[test]
 fn tree_len_is_the_entry_count() {
     let entries = vec![
@@ -1630,6 +1630,6 @@ fn tree_len_is_the_entry_count() {
     let n = entries.len();
     let dir = temp_dir("tree_len_is_entry_count");
     let (tree, _) = save_cache_sorted_in(&dir, entries, 0, BuiltAt::Scanned);
-    assert_eq!(tree.len(), n, "木の len は索引のエントリ件数と一致する");
+    assert_eq!(tree.len(), n, "ツリーの len は索引のエントリ件数と一致する");
     let _ = fs::remove_dir_all(&dir);
 }

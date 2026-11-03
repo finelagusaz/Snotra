@@ -21,7 +21,7 @@ mod build;
 // 統合テストからは private フィールドへ届かず、代用すると測る対象が製品からずれる。
 mod footprint;
 pub use footprint::FootprintRow;
-// `target_path` の圧縮表現（フォルダ木の接頭辞共有）は子モジュールへ分離。
+// `target_path` の圧縮表現（フォルダツリーの接頭辞共有）は子モジュールへ分離。
 mod path_store;
 use path_store::PathStore;
 // クエリ計画（QueryPlan・prepare_query_plan の純粋導出）は子モジュールへ分離（#599）。
@@ -114,7 +114,7 @@ impl From<&SearchConfig> for SearchOptions {
 /// Adding a new derived field requires updating `new()` and keeping all Vecs in sync —
 /// enforce this by running the full test suite after any structural change.
 pub struct SearchEngine {
-    /// エントリ本体（`name` / `is_folder`）と、`target_path` をフォルダ木の接頭辞共有で
+    /// エントリ本体（`name` / `is_folder`）と、`target_path` をフォルダツリーの接頭辞共有で
     /// 保持する表現。フルパスは持たず、必要な時点で組み立てる（`search/path_store.rs` の `//!`）。
     entries: PathStore,
     /// 派生文字列の並列 Vec は `Box<str>` で保持する。これらは構築後に伸長しないため、

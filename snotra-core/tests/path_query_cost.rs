@@ -179,7 +179,7 @@ fn sweep_derived(
 /// パス区切りを含むクエリの**製品レベル**フレームコスト（実 `index.bin` × `Engine::search`）。
 ///
 /// **既存の計器はどれもここを測れない。** `tests/search_frame_cost.rs` は合成索引であり
-/// パス区切りクエリを 1 本も持たない（しかもパス長 66.4 B・浅い一様木で、実運用の
+/// パス区切りクエリを 1 本も持たない（しかもパス長 66.4 B・浅い一様ツリーで、実運用の
 /// 119.3 B・深さ平均 6.05 段とは別物）。`measure_path_query_sweep_cost` は走査だけを
 /// 切り出した写しであって、`Engine::search`（config 実効 limit・履歴ブースト・top-k 組立込み）
 /// ではない。
@@ -200,7 +200,7 @@ fn measure_path_query_frame_cost() {
         indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
     let n = result.material.tree().len();
     let history = HistoryStore::load();
-    // **木を `Vec<AppEntry>` へ戻さない。** 実体化と木の再構築で同じ木を 2 度建てることになる（`IndexTree::materialize` の doc）。
+    // **ツリーを `Vec<AppEntry>` へ戻さない。** 実体化とツリーの再構築で同じツリーを 2 度建てることになる（`IndexTree::materialize` の doc）。
     let mut engine = Engine::from_material(result.material, history, config);
 
     println!("\n=== パスクエリのフレームコスト（実 index.bin・{n} 件・Engine::search）===");
@@ -268,7 +268,7 @@ fn measure_path_query_frame_cost() {
 ///
 /// 検索結果の正しさ（挙動テストの担当）と、実 UI スレッドが本当にこの額を払うか
 /// （`smoke:egui` の担当）。**合否も言わない**——出力に添えた諸元を人間が読んで初めて
-/// 「実運用点を再現できたか」が確かめられる。判定を持たない道具も層に数えてよい、という原則に依っている
+/// 「実運用点を再現できたか」が確かめられる。判定を持たないツールも層に数えてよい、という原則に依っている
 /// （`docs/development-principles.md`「検証の層と、層と層の隙間」）。
 ///
 /// # 実データを直接読む
@@ -328,7 +328,7 @@ fn measure_path_query_frame_cost_at_operating_point() {
 
     for merge_path_env in [true, false] {
         // **材料は構成ごとに読み直す**——`extend_with_path_entries` は `IndexMaterial` を
-        // 消費する形で木を伸ばすので、使い回すと 2 周目が汚れる。
+        // 消費する形でツリーを伸ばすので、使い回すと 2 周目が汚れる。
         let result =
             indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
         let mut material = result.material;
@@ -356,7 +356,7 @@ fn measure_path_query_frame_cost_at_operating_point() {
             engine.update_config(cfg);
 
             println!(
-                "\n  --- PATH マージ {}{} （+{merged} 件・木 {n_before} → {n_after}） / \
+                "\n  --- PATH マージ {}{} （+{merged} 件・ツリー {n_before} → {n_after}） / \
                  normal_mode = {mode:?} / sorted_by_path = {} ---",
                 // **ループ変数ではなく実際に足した件数で刷る。** `include_path_env = false` の
                 // 機体では 2 腕が同一の測定になり、ループ変数だと片方が嘘のラベルを名乗る

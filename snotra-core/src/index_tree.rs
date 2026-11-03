@@ -1,4 +1,4 @@
-//! `target_path` をフォルダ木の接頭辞共有で表す（オンディスクと索引が共有する表現）。
+//! `target_path` をフォルダツリーの接頭辞共有で表す（オンディスクと索引が共有する表現）。
 //!
 //! 索引の 8 割はフォルダで、パスは親子で接頭辞を共有する。`indexer` の名前導出規則
 //! （folder は `file_name()` / file は `file_stem()`）ゆえ、**フォルダの末尾成分は `name`
@@ -281,7 +281,7 @@ impl<'de> Deserialize<'de> for NameArena {
 /// [`IndexTree`] の列を借りて見る口（保存側が使う）。
 ///
 /// **フィールドに名前を付ける。** `parent` と `aux` はどちらも `Vec<u32>` なので、タプルで
-/// 返すと**取り違えてもコンパイルが通る**——そして取り違えた木は panic せず、パスの組み立てが
+/// 返すと**取り違えてもコンパイルが通る**——そして取り違えたツリーは panic せず、パスの組み立てが
 /// 静かに壊れる（`CachedMasks` を組で束ねているのと同じ理屈）。
 pub(crate) struct TreeColumns<'a> {
     pub(crate) names: &'a NameArena,
@@ -304,7 +304,7 @@ pub(crate) struct OwnedTreeColumns {
     pub(crate) sorted_prefix_len: usize,
 }
 
-/// 木の 1 ノードを読む口。**記憶域の並べ方だけを抽象化する**——規則は [`raw_path_into`] が
+/// ツリーの 1 ノードを読む口。**記憶域の並べ方だけを抽象化する**——規則は [`raw_path_into`] が
 /// 唯一持つ。
 ///
 /// 実装は 2 つある（[`IndexTree`] の並列 Vec と、索引側 `PathStore` の構造体の列）。
@@ -371,7 +371,7 @@ pub(crate) fn push_separator(buf: &mut String) {
 
 /// `i` のフルパスを**原文のまま**組み立てる（小文字化も `/` → `\` 変換も trim もしない）。
 ///
-/// 結果は元の `AppEntry.target_path` とバイト一致する。**この一致が木表現の要石である**
+/// 結果は元の `AppEntry.target_path` とバイト一致する。**この一致がツリー表現の要石である**
 /// ——`target_path` をディスクにも索引にも持たない以上、原文を要求する消費者（tie-break の
 /// `cmp_paths`・`SearchResult.path`）はすべてここの出力を受け取る。1 バイトずれても
 /// **それらしい**パスが返るので挙動テストでは捕まらない。合成 fixture での保証は
@@ -382,7 +382,7 @@ pub(crate) fn push_separator(buf: &mut String) {
 /// corpus であって保証ではない。
 ///
 /// **CI で走る接地は `indexer` の `index_tree_raw_matches_frozen_v6_specimen` だけである**
-/// ——v6 の凍結バイト列（木を 1 度も通っていない原文）と組み直しを突き合わせる。合成の
+/// ——v6 の凍結バイト列（ツリーを 1 度も通っていない原文）と組み直しを突き合わせる。合成の
 /// 標本 1 つぶんであり、実データ規模のカバレッジは上の `#[ignore]` 2 本が持つ。
 #[inline]
 pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, i: usize) {
@@ -398,10 +398,10 @@ pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, 
     }
 }
 
-/// 木の並列 Vec 表現。`index.bin` が持つ形であり、索引側はこれを受け取って組み替える。
+/// ツリーの並列 Vec 表現。`index.bin` が持つ形であり、索引側はこれを受け取って組み替える。
 ///
 /// **並べ方が索引側と違うのは意図的である。** ここは並列 Vec（SoA）、索引側の `PathStore` は
-/// 1 件 12 B の構造体の列（AoS）で持つ——索引は木を辿る段で `parent` と `aux` を同じ段で読むため
+/// 1 件 12 B の構造体の列（AoS）で持つ——索引はツリーを辿る段で `parent` と `aux` を同じ段で読むため
 /// 同じキャッシュラインに載るほうがミスが少なく、ディスクの形は並列 Vec のほうが小さい
 /// （`Vec<u32>` は postcard の varint で詰まる）。辿る規則を 1 つに保つ仕掛けは [`TreeNodes`]。
 ///
@@ -411,8 +411,8 @@ pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, 
 /// [`Self::empty`] しかない**。
 ///
 /// **これは額ではなく構造の変更である。** 以前は `pub(crate)` ゆえ、crate 内から構造体
-/// リテラルで木を組めた——つまり `from_parts` の検証（列の長さ・`aux` の範囲・`parent < i`・
-/// 深さの上限）を**迂回した木が表現できた**。迂回した木の帰結は `from_parts` の doc が
+/// リテラルでツリーを組めた——つまり `from_parts` の検証（列の長さ・`aux` の範囲・`parent < i`・
+/// 深さの上限）を**迂回したツリーが表現できた**。迂回したツリーの帰結は `from_parts` の doc が
 /// 4 つ挙げているが、どれも「索引が黙って短くなる」「組み立てが止まらない」の側で、
 /// 検索結果は正しく見える。**表現できなくすればチェックリストが要らなくなる。**
 pub struct IndexTree {
@@ -462,7 +462,7 @@ impl TreeNodes for IndexTree {
 }
 
 impl IndexTree {
-    /// ディスクから読んだ 5 本の列を、不変条件を**確かめてから**木にする。
+    /// ディスクから読んだ 5 本の列を、不変条件を**確かめてから**ツリーにする。
     ///
     /// **確かめずに組んではならない。** 列は `index.bin` から独立に読まれるので、壊れた
     /// ファイルは長さの揃わない列や範囲外の添字を与えうる。それぞれの帰結は:
@@ -485,7 +485,7 @@ impl IndexTree {
     /// 毎起動払う側には倒さない。
     ///
     /// **`pub(crate)` である**——受け取る [`NameArena`] が crate の内側の表現であり、
-    /// `index.bin` を読む経路（`indexer::load_cache_in`）以外に木を列から組む入口は無い。
+    /// `index.bin` を読む経路（`indexer::load_cache_in`）以外にツリーを列から組む入口は無い。
     pub(crate) fn from_parts(
         names: NameArena,
         is_folder: Vec<bool>,
@@ -525,12 +525,12 @@ impl IndexTree {
             aux,
             table,
             // **ディスクは「全体が整列か」しか持たない**（形式を変えずに済ませるため）。
-            // 読み戻した木はまだマージを受けていないので、真なら全件が範囲である。
+            // 読み戻したツリーはまだマージを受けていないので、真なら全件が範囲である。
             sorted_prefix_len: if sorted_by_path { n } else { 0 },
         })
     }
 
-    /// エントリを 1 件も持たない木（初回起動）。
+    /// エントリを 1 件も持たないツリー（初回起動）。
     ///
     /// `table` は空にしない——0 番の空文字は `aux` の既定値が指す先であり、
     /// [`Self::from_parts`] もそれを不変条件として検査する。
@@ -578,7 +578,7 @@ impl IndexTree {
 
     /// 列へほどく（索引側が並べ方を組み替えるための口）。
     ///
-    /// **返した列から木へ戻る道は無い**——[`Self::from_parts`] は検証を通すので、ほどいた列を
+    /// **返した列からツリーへ戻る道は無い**——[`Self::from_parts`] は検証を通すので、ほどいた列を
     /// そのまま構造体リテラルへ流し込む形は書けない。
     pub(crate) fn into_columns(self) -> OwnedTreeColumns {
         let Self {
@@ -602,7 +602,7 @@ impl IndexTree {
     /// `i` の表示名（アリーナの切り出し）。
     ///
     /// [`TreeNodes::name_of`] と同じものを返すが、あちらは**辿る規則のための口**である。
-    /// 木そのものを走査する呼び出し元（kana の構築など）はトレイトを import せずに済むよう
+    /// ツリーそのものを走査する呼び出し元（kana の構築など）はトレイトを import せずに済むよう
     /// こちらを使う。
     pub(crate) fn name_at(&self, i: usize) -> &str {
         self.names.get(i)
@@ -616,9 +616,9 @@ impl IndexTree {
         self.names.len() == 0
     }
 
-    /// 木を `Vec<AppEntry>` へ戻す（フルパスを組み直して実体化する）。
+    /// ツリーを `Vec<AppEntry>` へ戻す（フルパスを組み直して実体化する）。
     ///
-    /// **実体化は木が消したはずの 312,625 個の `String` をその場で作り直す**ので、通した区間の
+    /// **実体化はツリーが消したはずの 312,625 個の `String` をその場で作り直す**ので、通した区間の
     /// ピークには v7 がディスクから消したのと同額（約 36 MiB）が戻る。**壁時計ではなくピークが
     /// 対価である**——`tests/memory_footprint.rs` が測っているのはそちらの側である。
     ///
@@ -640,7 +640,7 @@ impl IndexTree {
             })
             .collect()
     }
-    /// `Vec<AppEntry>` を木表現へ組み替える。
+    /// `Vec<AppEntry>` をツリー表現へ組み替える。
     ///
     /// **入力が `target_path` のバイト順に整列していることを前提にするが、要求はしない。**
     /// 親は二分探索で引き、`binary_search_by` が `Ok` を返すのは完全一致のときだけなので、
@@ -723,7 +723,7 @@ impl IndexTree {
             parent: parent_col,
             aux: aux_col,
             table,
-            // 走査した木はまだマージを受けていないので、整列していれば全件が範囲である。
+            // 走査したツリーはまだマージを受けていないので、整列していれば全件が範囲である。
             sorted_prefix_len: if sorted_by_path { n } else { 0 },
         }
     }
@@ -789,7 +789,7 @@ impl IndexTree {
     ///
     /// `seg` は作業用に使い回すバッファで、中身は捨てられる。
     ///
-    /// **フルパスを組み立てない。** 木では末尾成分が `name` + 拡張子でそのまま取れるので、
+    /// **フルパスを組み立てない。** ツリーでは末尾成分が `name` + 拡張子でそのまま取れるので、
     /// 根まで辿る必要が無い（篩は 312,691 回走るので、ここが区間を支配する）。
     ///
     /// **根だけは別の腕を通る。** 根は `table` にフルパスを持つため、そこから末尾成分を
@@ -1199,9 +1199,9 @@ mod tests {
     /// 入る**（件数が増えるだけで panic も失敗も起きない）。
     ///
     /// **両腕が実際に通ったことを数える。** 非根の腕は実データの 99.94% を占めるのに、
-    /// `scan_path_dirs_*` の fixture はどれも 1 要素の木を渡すので**その 1 件は必ず根になる**
+    /// `scan_path_dirs_*` の fixture はどれも 1 要素のツリーを渡すので**その 1 件は必ず根になる**
     /// ——つまり非根の腕はどのテストからも実行されていなかった。腕ごとの件数を assert しないと、
-    /// 木の建ち方が変わって全件が根に落ちてもこのテストは緑のままになる。
+    /// ツリーの建ち方が変わって全件が根に落ちてもこのテストは緑のままになる。
     #[test]
     fn file_key_matches_normalize_file_name_key_on_both_arms() {
         // `target_path` のバイト昇順。`name` は indexer の導出規則（folder は `file_name()`、

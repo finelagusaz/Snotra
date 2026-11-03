@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // 走査元は `import.meta.url` 起点である。**`process.cwd()` 起点にしてはならない**——別ツリーを cwd にして
-// 走らせたとき「読むコードと読む木がずれる」（#1092 の H1 と同じ型）。
+// 走らせたとき「読むコードと読むツリーがずれる」（#1092 の H1 と同じ型）。
 const CHECKS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "checks");
 
 /** `dir` 直下の検査モジュールを id 昇順で返す。形が不正なら**そのファイル名を名指しして throw する**

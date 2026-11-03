@@ -53,7 +53,7 @@ const PLAN_OPEN = (n = 1) => () => ({ ok: true, exists: true, unchecked: n });
 /** 存在するのに読めない */
 const PLAN_UNREADABLE = () => ({ ok: false, reason: "EACCES" });
 
-/** 道具の要約が green で、要約の sha から HEAD まで workspace/ の外の差分が無い（#1299） */
+/** ツールの要約が green で、要約の sha から HEAD まで workspace/ の外の差分が無い（#1299） */
 const VERIFIED = () => ({ ok: true });
 /** 要約の照合が通らない */
 const NOT_VERIFIED = () => ({ ok: false, reason: "要約の sha のあとに workspace/ の外の変更がある" });
@@ -354,7 +354,7 @@ describe("decide — plan.md ゲート", () => {
   });
 });
 
-describe("decide — 道具の要約ゲート（#1299）", () => {
+describe("decide — ツールの要約ゲート（#1299）", () => {
   const safe = `git push -u origin HEAD && ${ghPrCreate()}`;
 
   it("照合が通らなければ block（push の鎖が安全でも）", () => {
@@ -500,18 +500,18 @@ describe("readVerifyState — 本物の git と要約ファイル", () => {
     git(dir, ["tag", "feat/x"]);
     expect(read(dir)).toEqual({ ok: true });
   });
-  it("hook が道具を読み込めなかったとき、その理由を拒否文言に載せる", () => {
+  it("hook がツールを読み込めなかったとき、その理由を拒否文言に載せる", () => {
     const r = readVerifyState(verifiedRepo(), null, "SyntaxError: boom");
     expect(r.ok).toBe(false);
     expect(r.reason).toContain("SyntaxError: boom");
   });
-  it("summaryPathFor が渡されなければ（hook が道具を読み込めなかった）止める", () => {
+  it("summaryPathFor が渡されなければ（hook がツールを読み込めなかった）止める", () => {
     expect(readVerifyState(verifiedRepo(), null).ok).toBe(false);
   });
 });
 
-describe("verifiedSummaryState — HEAD 以外の照合の相手（マージの道具の使い方・#1312）", () => {
-  // 道具は今のブランチではなく PR の head ブランチ名と head の sha で照合する。HEAD は main に居てよい
+describe("verifiedSummaryState — HEAD 以外の照合の相手（マージのツールの使い方・#1312）", () => {
+  // ツールは今のブランチではなく PR の head ブランチ名と head の sha で照合する。HEAD は main に居てよい
   const check = (dir, target, branch = "feat/x") => verifiedSummaryState({ root: dir, branch, target, summaryPathFor });
 
   it("今のブランチが別でも、名指したブランチの要約と sha で照合する", () => {

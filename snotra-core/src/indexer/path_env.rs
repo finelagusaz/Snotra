@@ -204,7 +204,7 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
     let mut raw_buf = String::new();
     let mut norm_buf = String::new();
     for i in 0..existing.len() {
-        // **篩はフルパスを組み立てない。** 木では末尾成分が `name` + 拡張子で直接取れるので、
+        // **篩はフルパスを組み立てない。** ツリーでは末尾成分が `name` + 拡張子で直接取れるので、
         // ここが 312,691 回走っても根まで辿る必要が無い（`IndexTree::file_key_into`）。
         existing.file_key_into(&mut file_buf, &mut seg_buf, i);
         let Some(idxs) = by_file_key.get(file_buf.as_str()) else {

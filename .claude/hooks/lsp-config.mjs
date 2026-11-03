@@ -3,7 +3,7 @@
  * 設定は `.claude/lsp/` が運び、`.claude/settings.json` の `extraKnownMarketplaces` + `enabledPlugins` で配送する。
  * `.lsp.json` は JSON でコメントを持てないので、RA の扱いの正本はこの doc である。
  *
- * **RA は semantic navigation の道具であり、検証の権威ではない。** 確定判定は fmt / clippy / crate test
+ * **RA は semantic navigation のツールであり、検証の権威ではない。** 確定判定は fmt / clippy / crate test
  * （手動と CI）が持ち、そこへ LSP の状態（診断の到着順・quiescence）を混ぜない。診断は抑制しない
  * （`.lsp.json` に `diagnostics` キーを置かない）。理由は `docs/adr/ADR-ra-diagnostics-suppression.md`。
  *
@@ -96,7 +96,7 @@ export function findRatomlFiles(rootDir) {
 /**
  * `rootDir` のツリーが持つ LSP 設定の不変条件を検査し、違反の一覧を返す（空配列 = 合格）。
  *
- * root を引数で受けるのは、実リポジトリと「temp へ複製した木」の両方を同じ判定に掛けるためである。
+ * root を引数で受けるのは、実リポジトリと「temp へ複製したツリー」の両方を同じ判定に掛けるためである。
  * 故障注入は複製にだけ当てる。
  */
 export function checkLspConfig(rootDir) {

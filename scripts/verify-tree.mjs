@@ -1,11 +1,11 @@
 // scripts/verify-tree.mjs
 //
 // `/implement` Step 3 の権威ある検証（`docs/build-commands.md` のカテゴリ A〜F）を、sha に固定した
-// worktree で回す道具（issue #1298）。HEAD 合わせと「対象が無いから緑」の拒否を、指示文ではなく
-// この道具の構造に置く。
+// worktree で回すツール（issue #1298）。HEAD 合わせと「対象が無いから緑」の拒否を、指示文ではなく
+// このツールの構造に置く。
 //
 //   npm run verify:tree -- run --sha <sha> [--categories A,C,D] [--also <npm-script>]... [--out <path>]
-//   node <本体>/scripts/verify-tree.mjs align --sha <sha>      # 委譲先が自分の木の cwd で打つ
+//   node <本体>/scripts/verify-tree.mjs align --sha <sha>      # 委譲先が自分の worktree の cwd で打つ
 //   npm run verify:tree -- remove [--delegate-tree <path>]
 //
 // `<sha>` は `git rev-parse` が 1 つのコミットへ解決する値（短い sha・`HEAD` 等）。40 桁へ解決してから使う
@@ -17,10 +17,10 @@
 //   （写しを持たない）。読めたコマンドが 0 件なら exit 2（文書の改題・フェンスの書き換えで黙って空にしない）
 // - E と F は要求に依らず常に回す（数秒で終わり、該当の判定に意味判断が混じるため）。D は回さず
 //   `handoff` と書く（`smoke:manual` は人間専用）。B はコマンドを持たないので受け付けない
-// - 道具の木は `.claude/worktrees/agent-verify-<branch>`。`agent-` 接頭辞は `clean:worktrees` が
+// - ツールの worktree は `.claude/worktrees/agent-verify-<branch>`。`agent-` 接頭辞は `clean:worktrees` が
 //   取りこぼしを拾うため。node_modules の junction は張らない（`.claude/rules/safety-nets.md`）
-// - 委譲先は harness の木（`isolation: "worktree"`）に居る。出力を木の外へ出すと木が「変更なし」になり、
-//   停止時に harness が片づけ、再開した委譲先は本体で動く（#1298 で実測）。ゆえに報告は木の中の
+// - 委譲先は harness の worktree（`isolation: "worktree"`）に居る。出力を worktree の外へ出すと worktree が「変更なし」になり、
+//   停止時に harness が片づけ、再開した委譲先は本体で動く（#1298 で実測）。ゆえに報告は worktree の中の
 //   `.delegate/`（どのコミットにも現れず、ignore もされないパス）に置かせ、`align` がその前提を確かめる
 // - 出力するパスは `/` 区切り（pre-bash hook の `usesBackslashPath` を踏ませない）
 
@@ -100,7 +100,7 @@ function treePathFor(root, branch) {
 
 /**
  * 本体の作業ツリーのルート。linked worktree からは要約の置き場（本体の `.claude/worktrees/`）を正しく導けないので
- * 拒む。マージの道具（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う
+ * 拒む。マージのツール（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う
  */
 export function mainRoot(cwd) {
   const root = git(cwd, ["rev-parse", "--show-toplevel"]);
@@ -110,11 +110,11 @@ export function mainRoot(cwd) {
   return root;
 }
 
-/** 本体の作業ツリーのルートと、現在のブランチから導いた道具の木のパス */
+/** 本体の作業ツリーのルートと、現在のブランチから導いたツールの worktree のパス */
 function mainContext() {
   const root = mainRoot(process.cwd());
   const branch = git(root, ["branch", "--show-current"]);
-  if (branch === "") throw new EnvError("本体が detached HEAD——道具の木の名前をブランチから決められない");
+  if (branch === "") throw new EnvError("本体が detached HEAD——ツールの worktree の名前をブランチから決められない");
   return { root, branch, tree: treePathFor(root, branch) };
 }
 
@@ -160,20 +160,20 @@ function dependencyWarnings(root, sha) {
   try {
     installed = JSON.parse(readFileSync(installedPath, "utf8")).packages ?? {};
   } catch {
-    return [`${posix(installedPath)} が読めない——木は本体の node_modules を解決するので、依存の版を確かめられない`];
+    return [`${posix(installedPath)} が読めない——worktree は本体の node_modules を解決するので、依存の版を確かめられない`];
   }
   const drift = Object.entries(lock)
     .filter(([name, meta]) => name !== "" && !meta.optional && installed[name]?.version !== meta.version)
     .map(([name, meta]) => `${name}（lock ${meta.version} / 入っている ${installed[name]?.version ?? "無し"}）`);
   if (drift.length === 0) return [];
-  return [`sha の package-lock.json と本体の node_modules が食い違う——木は本体の node_modules を解決するので、別の版を測りうる: ${drift.join(", ")}`];
+  return [`sha の package-lock.json と本体の node_modules が食い違う——worktree は本体の node_modules を解決するので、別の版を測りうる: ${drift.join(", ")}`];
 }
 
 function cmdRun(opts) {
   const { root, branch, tree } = mainContext();
   const sha = resolveSha(root, opts.sha);
 
-  // ---- 木を作る前に、回す物と前提をすべて確かめる（回す物が無いのに cold の木を残さない）
+  // ---- worktree を作る前に、回す物と前提をすべて確かめる（回す物が無いのに cold の worktree を残さない）
   const requested = (opts.categories ?? "").split(",").map((c) => c.trim()).filter(Boolean);
   for (const c of requested) {
     if (c === "B") throw new EnvError("B はコマンドを持たない（docs/build-commands.md の B 節）。E が常に回る");
@@ -207,18 +207,18 @@ function cmdRun(opts) {
   const head = git(root, ["rev-parse", "HEAD"]);
   if (head !== sha) throw new EnvError(`sha が本体の HEAD でない（HEAD ${head} / sha ${sha}）`);
 
-  // ---- 木を作るか、再利用する
+  // ---- worktree を作るか、再利用する
   git(root, ["worktree", "prune"]); // ディレクトリだけ消えた登録が add を阻まないように
   if (worktrees(root).some((w) => w.path === canon(tree))) {
     const changed = git(tree, ["status", "--porcelain", "--untracked-files=no"]);
-    if (changed !== "") throw new EnvError(`再利用する木に追跡ファイルの変更がある: ${posix(tree)}\n${changed}`);
+    if (changed !== "") throw new EnvError(`再利用する worktree に追跡ファイルの変更がある: ${posix(tree)}\n${changed}`);
     git(tree, ["checkout", "-q", "--detach", sha]);
   } else {
-    if (existsSync(tree)) throw new EnvError(`木のパスに登録されていないディレクトリがある: ${posix(tree)}`);
+    if (existsSync(tree)) throw new EnvError(`worktree のパスに登録されていないディレクトリがある: ${posix(tree)}`);
     git(root, ["worktree", "add", "-q", "--detach", tree, sha]);
   }
   const treeHead = git(tree, ["rev-parse", "HEAD"]);
-  if (treeHead !== sha) throw new EnvError(`木の HEAD が sha でない（HEAD ${treeHead} / sha ${sha}）`);
+  if (treeHead !== sha) throw new EnvError(`worktree の HEAD が sha でない（HEAD ${treeHead} / sha ${sha}）`);
 
   // ---- 回す（警告は先に出しておく——回した後に throw して結果を失わないため）
   const warnings = dependencyWarnings(root, sha);
@@ -287,10 +287,10 @@ function cmdAlign(opts) {
     throw new EnvError(`checkout --detach ${sha} が失敗した: ${e.stderr ?? e.message}`);
   }
   const head = git(tree, ["rev-parse", "HEAD"]);
-  if (head !== sha) throw new EnvError(`木の HEAD が sha でない（HEAD ${head} / sha ${sha}）`);
-  // ignore されたパスは木を「変更あり」に保たない。checkout 後の sha の .gitignore で判定する
+  if (head !== sha) throw new EnvError(`worktree の HEAD が sha でない（HEAD ${head} / sha ${sha}）`);
+  // ignore されたパスは worktree を「変更あり」に保たない。checkout 後の sha の .gitignore で判定する
   const ignored = spawnSync("git", ["check-ignore", "-q", `${DELEGATE_DIR}/report.txt`], { cwd: tree });
-  if (ignored.status === 0) throw new EnvError(`${DELEGATE_DIR}/ が ignore されている——報告を置いても木が片づけられる`);
+  if (ignored.status === 0) throw new EnvError(`${DELEGATE_DIR}/ が ignore されている——報告を置いても worktree が片づけられる`);
   if (ignored.status !== 1) throw new EnvError(`git check-ignore が判定できなかった（status ${ignored.status}）——ignore されていないとは言えない`);
   console.log(JSON.stringify({ sha, worktree: posix(tree), delegate_dir: posix(path.join(tree, DELEGATE_DIR)) }));
   return 0;
@@ -304,7 +304,7 @@ function removeTree(root, tree) {
     return false;
   }
   if (existsSync(tree)) {
-    console.error(`登録は消えたがディレクトリが残った（cwd がこの木の中にあるプロセスが握っている）: ${posix(tree)}`);
+    console.error(`登録は消えたがディレクトリが残った（cwd がこの worktree の中にあるプロセスが握っている）: ${posix(tree)}`);
     return false;
   }
   console.log(`削除: ${posix(tree)}`);
@@ -312,13 +312,13 @@ function removeTree(root, tree) {
 }
 
 /**
- * マージ済みのブランチの、道具の木と要約とログを消す（#1359）。`merge:pr` が事後検証を通したあとに呼ぶ。
+ * マージ済みのブランチの、ツールの worktree と要約とログを消す（#1359）。`merge:pr` が事後検証を通したあとに呼ぶ。
  *
  * `remove` との違いは 2 つ。対象は本体の現在のブランチではなく引数のブランチである（マージの後、本体は
  * 別のブランチに居る）。要約も消す（要約を読む PR 前ゲートは、PR を作った時点で役目を終えている）。
  * ブランチそのものには触れない。
  *
- * 木を消せなければ（dirty・ロック・cwd を握るプロセス）、要約も残して `ok: false` と理由を返す。
+ * worktree を消せなければ（dirty・ロック・cwd を握るプロセス）、要約も残して `ok: false` と理由を返す。
  * 投げない——呼び出し側はマージを終えており、片づけの失敗でその結果を変えないため。
  */
 export function discardBranchArtifacts(root, branch) {
@@ -328,10 +328,10 @@ export function discardBranchArtifacts(root, branch) {
     try {
       git(root, ["worktree", "remove", tree]);
     } catch (e) {
-      return { ok: false, notes: [`道具の木を消せなかった（dirty なら git が拒む）: ${posix(tree)}\n${(e.stderr ?? e.message).trim()}`] };
+      return { ok: false, notes: [`ツールの worktree を消せなかった（dirty なら git が拒む）: ${posix(tree)}\n${(e.stderr ?? e.message).trim()}`] };
     }
     if (existsSync(tree)) {
-      return { ok: false, notes: [`登録は消えたがディレクトリが残った（cwd がこの木の中にあるプロセスが握っている）: ${posix(tree)}`] };
+      return { ok: false, notes: [`登録は消えたがディレクトリが残った（cwd がこの worktree の中にあるプロセスが握っている）: ${posix(tree)}`] };
     }
     notes.push(`削除: ${posix(tree)}`);
   }
@@ -340,7 +340,7 @@ export function discardBranchArtifacts(root, branch) {
     rmSync(file, { force: true });
     notes.push(`削除: ${posix(file)}`);
   }
-  if (notes.length === 0) notes.push(`道具の木も要約も無い: ${posix(tree)}`);
+  if (notes.length === 0) notes.push(`ツールの worktree も要約も無い: ${posix(tree)}`);
   return { ok: true, notes };
 }
 
@@ -348,9 +348,9 @@ function cmdRemove(opts) {
   const { root, branch, tree } = mainContext();
   let ok = true;
   if (existsSync(tree)) ok = removeTree(root, tree) && ok;
-  else console.log(`道具の木は無い: ${posix(tree)}`);
+  else console.log(`ツールの worktree は無い: ${posix(tree)}`);
   // 既定の置き場のログは消す。**要約は残す**——PR 前ゲート（`.claude/hooks/pre-bash.mjs`）が
-  // `gh pr create` の時点で読むため（#1299）。木が消えたことは要約自身に書き足す。
+  // `gh pr create` の時点で読むため（#1299）。worktree が消えたことは要約自身に書き足す。
   // `--out` で外へ出したものは呼び出し側が持つ
   if (ok) {
     rmSync(`${tree}.summary.log`, { force: true });
@@ -365,18 +365,18 @@ function cmdRemove(opts) {
     const target = canon(opts.delegateTree);
     const entry = worktrees(root).find((w) => w.path === target);
     if (!entry) throw new EnvError(`登録された worktree でない: ${posix(target)}`);
-    if (target === canon(root) || target === canon(tree)) throw new EnvError(`委譲先の木でない: ${posix(target)}`);
+    if (target === canon(root) || target === canon(tree)) throw new EnvError(`委譲先の worktree でない: ${posix(target)}`);
     const others = changesOutsideDelegate(target);
     if (others.length > 0) {
       console.error(`${DELEGATE_DIR}/ 以外の変更が残っている——消さない: ${posix(target)}\n${others.join("\n")}`);
       return 1;
     }
-    // ロックされた木は `--force` なしの remove が拒む。先に `.delegate/` を消すと、報告だけ失って木が残る
+    // ロックされた worktree は `--force` なしの remove が拒む。先に `.delegate/` を消すと、報告だけ失って worktree が残る
     if (entry.locked) {
       console.error(`ロックされている（委譲先がまだ動いているか）——何も消さない: ${posix(target)}`);
       return 1;
     }
-    // align が detach するので、porcelain にはブランチが載らない。harness の命名（`worktree-<木の名前>`）から導く
+    // align が detach するので、porcelain にはブランチが載らない。harness の命名（`worktree-<worktree の名前>`）から導く
     const harnessBranch = `worktree-${path.basename(target)}`;
     const branch = entry.branch ?? (git(root, ["branch", "--list", harnessBranch]) !== "" ? harnessBranch : null);
     rmSync(path.join(target, DELEGATE_DIR), { recursive: true, force: true });

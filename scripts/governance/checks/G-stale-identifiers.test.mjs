@@ -232,8 +232,8 @@ describe("G-stale-identifiers の母集団ごとの 0 件検知（兄弟が非�
 
 // #984 の実在の欠陥を凍結したフィクスチャ。`f1827b0:docs/comment-guidelines.md` の当該行の骨格で、
 // **同じ行に `npm` のコマンドと修飾形の名前が同居する**——2 つの穴が同時に効いていた形である（#993）。
-// 片足ずつ戻した測定は `ADR-stale-identifier-detector-scope` の #993 の追記節が持つ（テストからは
-// 実装を変異させられないため、ここで固定するのは「両足そろえば赤い」ことだけである）。
+// 修正を片方ずつ戻した測定は `ADR-stale-identifier-detector-scope` の #993 の追記節が持つ（テストからは
+// 実装を変異させられないため、ここで固定するのは「両方の修正がそろえば赤い」ことだけである）。
 describe("G-stale-identifiers の凍結フィクスチャ（#984 の実在の欠陥）", () => {
   const DOC = "docs/comment-guidelines.md";
   const SRC = { "snotra-core/src/a.rs": "fn from_material() {}\n" };

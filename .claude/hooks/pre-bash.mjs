@@ -270,8 +270,8 @@ export function pullWithoutFfOnly(command) {
 const SHAPE_REMEDY = Object.freeze({
   heredoc:
     "bash の HEREDOC は Windows で引用境界が壊れ、終端マーカーがコミットメッセージ本文へ漏れる事故が起きています。" +
-    "複数行テキストは Write ツールで一時ファイルへ書いて `git commit -F <path>` / `--body-file <path>` で渡すか、" +
-    "PowerShell の here-string `@'...'@`（閉じ `'@` は必ず行頭）を使ってください。" +
+    "複数行テキストは Write ツールで一時ファイルへ書き、`git commit -F <path>` / `--body-file <path>` で渡してください" +
+    "（ファイルの中身なら Write ツールで直接書く）。" +
     "**コマンドに書くパスは、先頭から末尾まで区切りを `/` にしてください**（絶対パスなら `C:/Users/...` の形）。",
   backslashPath:
     "パス区切りの `\\` はエスケープが要るため壊れやすく、Bash では黙って食われて**エラーではなく誤った結果**になります" +

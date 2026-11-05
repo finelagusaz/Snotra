@@ -1,0 +1,86 @@
+# adversarial-1394 (最終)
+
+## 測定方法
+リポジトリ外 (scratchpad/probe, scratchpad/core_copy) に snotra-core のコピーを置き、コピー側だけ
+「config_hash 比較を無効化」「INDEX_CACHE_VERSION=7」にして %APPDATA%\Snotra\index.bin を読むだけで展開した。
+実ファイルとリポジトリは無変更 (git status は ?? workspace/ のまま)。
+
+## 壊せた項目 (所見)
+
+F1. 争点1 後半「パスキーを使うほかの消費者に同じ NFC 問題を持つものは無い」は偽 (全称否定)。
+  - snotra-core/src/opener.rs:64-80 find_matching_tools は `path.to_lowercase().replace('/', "\\")` と
+    設定の条件パス (`cond.to_lowercase()`) を `starts_with` で比べる。NFC を通らないので、NFC で書いた
+    フォルダ条件が NFD のパスに当たらない同型の問題がある (パス部分一致という点で同じ形。ただし #1394 の射程外で、
+    検索の履歴/索引キーとは無関係)。
+  - この所見を偽にする手順: opener.rs の starts_with 比較が (a) NFC を通す、または (b) 条件パスと比較対象が
+    OS 由来の同一バイト列しか取らないことを示す (設定は利用者入力なので (b) は成り立たない見込み)。
+  - 範囲を「検索の履歴キー・索引キーの消費者」に限れば命題は残る (下の「壊せなかった」参照)。
+
+F2. 測定環境 (最重要)。開発機の実 index.bin は version 7、440,746 B (2026-11-04 21:19)。現行 INDEX_CACHE_VERSION=10 で、
+  v7〜v9 は cache-miss (cache.rs の load_cache_in 内コメント)。リポジトリの load_cached_entries(scan, hidden) は
+  **None を返す** (probe で実行して確認)。ゆえにこの機では
+  - tests/path_query_cost.rs の load_real_index() 経由 (derives_same_bytes_as_normalize_entry_key = #[ignore] なしの検知器を含む)
+  - search/tests/path.rs の実インデックス 4 本 (357/407/507/579 行目付近)
+  が「実インデックスが無いためスキップします。」で黙って緑になる。メモの「実運用点 312,377 パス・1.7%」はこの機の現状からは
+  再現できない。実装後の費用測定 (メモの未解決2) もこの機では実索引を使えない。先に rescan して index.bin を v10 に
+  する必要がある (rescan は実ファイルを書き換えるので、人間の許可がいる)。
+  - この所見を偽にする手順: `load_cached_entries(&Config::load().paths.scan, hidden)` が Some を返す状態で
+    `cargo test -p snotra-core --release -- --ignored measure_path_query --nocapture` を走らせ、スキップ文言が出ないことを見る。
+
+F3. 測定環境。tests/search_allocations.rs の path_query_full_scan_does_not_allocate_per_entry は
+  fixture が target_path=`C:\apps\{ascii}.exe`、クエリ `c:\apps\` で全件 ASCII (engine_where_every_entry_matches, 154-167 行)。
+  NFC 合成の分岐 (非 ASCII キー) を一度も通らない。メモは「ASCII のみ」と書いているが、結論の側 (合成を足しても
+  この検知器が緑のまま = 検知器は新経路について何も保証しない) が書かれていない。非 ASCII/NFD の path fixture を
+  足さない限り、NFC.normalize が Cow::Owned を毎エントリ返す退行を CI は捕まえない。
+  - この所見を偽にする手順: 実装後に NFD を含む target_path を持つ fixture を同テストに加え、合成で毎エントリ確保する
+    変異 (`NFC.normalize(key).into_owned()`) を当てて落ちることを確かめる。
+
+F4. 争点5 / メモ 43 行目の数値。実データ (stale v7, 16,841 エントリ。312,377 ではない):
+  非 ASCII を含む target_path 441 件 = **2.62%** (メモ 1.7% と食い違う。母集団が別物なので反証ではなく「この機では再現しない」)。
+  NFD (結合文字を含み NFC で変わる) パスは **7 件**、名前も 7 件。7 件はすべて C:\Toolbox\LimeChat\log\#... (IRC ログ名)。
+  例: `#うかへ゛ん`、`#へは゜らし゛`。NFD は実在する (争点5 は真)。ただし 312k の運用点での件数は未測定 ⚠️。
+  - この所見を偽にする手順: v10 の index を作り直してから同じ probe (結合文字を数える) を実行して比較する。
+
+F5. ⚠️ メモの「意図した挙動の変化」の裏面。typing 中の挙動は後退しうる。実測 (probe/fuzz):
+  パス `c:\log\#へ゜らし゛` で、クエリ `\#へ` (NFC のまま) は現行 (NFC なし) では部分一致するが、
+  両辺 lower→NFC 後は `\#ぺ…` になり一致しない (false)。IME が確定前に「へ」を挟む打鍵の途中経路で、
+  ヒットが一瞬消える。メモは「か で終わる部分クエリが一致しなくなる」と書いており認識済みだが、SPEC §4.2 の記述変更が要る。
+  (名前照合 #1285 と同じ扱いだが、パスクエリは打鍵ごと全件走査の唯一の経路なので、検索結果のちらつきとして見える。)
+  - 偽にする手順: 実装後に上のパス/クエリで Engine::search の結果を見る。
+
+## 壊せなかった項目
+
+C1. 争点2「正規化キーは index.bin に保持されない」: IndexCache の全フィールド (names, is_folder, parent, aux, table,
+  sorted_by_path, config_hash, char_masks, file_name_char_masks, lower_names, lower_file_names) を確認。パス全体の
+  正規化キーは無い (lower_names/lower_file_names は名前単位)。実 index.bin は v7 で展開できたが、これも名前列とツリーで、
+  キー列は無い。形式変更は要らない。
+
+C2. 争点3「小文字化 → NFC を両辺に当てれば正準等価が一致する」: 全 Unicode スカラー値 (1,114,112 − 2,048)、
+  それぞれに 15 種の結合文字 (U+3099/309A/0300/0301/0307/0323/0345/0308/030A/0338/0344/0F73/1161/11A8/302E) を 1 個付けた列
+  (計 17,793,024 件) と、cased または分解を持つ 14,361 文字 + 結合文字 2 個の全順列 (3,231,225 件) で
+  f(s)=NFC(lower(s)) が f(NFD(s)) == f(NFC(s)) == f(s) かつ f(f(s)) == f(s) を検査。反例 0 件。
+  İ (U+0130)、Ω (U+2126)、K (U+212A)、ᾈ なども含まれる。実データ 16,841 パスでも 0 件。
+  注意: 未検査の領域は 3 文字以上の結合文字列と、文字間にまたがる文脈依存 (最終 σ は char::to_lowercase が非文脈依存なので無関係)。
+  ⚠️ 全コードポイント検知器を置く提案は妥当 (query.rs の既存検知器の形で足りる)。ただし f は fold_char を含まないため、
+  normalize_for_match のような反復 (MAX_COMPOSE_ROUNDS) は不要なことも fuzz で確認した (f の冪等性)。
+
+C3. 争点4「pos は UI に使われない」: SearchResult (ui_types.rs) のフィールドは name/path/is_folder/is_error/icon のみ。
+  pos を受ける箇所は scoring.rs の PATH_BASE - pos の 1 か所 (grep: path_query は query_plan.rs と scoring.rs 507 のみ)。
+  強調表示に使う経路は無い。壊せなかった。
+
+C4. 争点1 前半 (履歴の移行が要らない): with_normalized_key の利用者は scoring.rs:512 (パスマッチ+履歴3種) と
+  search.rs:476 recent_history (key を履歴キーとバイト一致で引く) の 2 つだけ。どちらも識別用キーとしてしか使わず、
+  メモの分け方 (照合の直前だけ NFC) なら履歴側は変わらない。record_launch の呼び出しは
+  src-tauri/commands/launch.rs:56 (SearchResult.path = 索引のパスそのもの) と folder_nav (OS から来た dir) で、
+  どちらも同じバイト列を記録側と照合側で通す。壊せなかった。
+  folder.rs の絞り込みは normalize_for_match 経由 (NFC 済み) で、パスキーの部分一致は使っていない。
+
+C5. メモの技術的主張: icu_normalizer 2.4.0 の ComposingNormalizerBorrowed に normalize / normalize_to (マクロ生成, W: fmt::Write) /
+  is_normalized / split_normalized がある。path_store.rs の CURSOR は RefCell で with_cursor の f 内から再借用すると panic (doc どおり)。
+  path_query は query_plan.rs 122-136 の記述どおり (trim → '/' と '¥' を '\' → to_lowercase)。
+  path_history_key は normalize_history_query_key 経由 (139-143) で別物。メモの記述は正しい。
+
+## 付記
+- 「ほかの消費者」の母集団は git grep の結果 (normalize_entry_key: history.rs, indexer/scan.rs, path_env.rs, index_tree.rs, search/*) と
+  opener.rs, folder.rs, src-tauri を見た。egui/tauri 側にパス部分一致は見つからなかった (grep 範囲: to_lowercase/contains/memmem/normalize_*)。
+  grep なので ⚠️ 見落としは排除できない。

@@ -113,9 +113,10 @@
 - [x] 性能を実装後に 2 面とも測り、ベースラインと比べる（AC7）。値を `PERFORMANCE.md` へ書く
 - [x] 一時的な非 ASCII のベンチを消す
 - [x] コメント（`query_plan.rs`・`scoring.rs`・`path_store.rs` の `//!`）と `snotra-core/CLAUDE.md`・`docs/architecture.md` を直す
-- [ ] 変更後の検証チェックリストの該当カテゴリと `governance:check` を通す
+- [x] 変更後の検証チェックリストの該当カテゴリと `governance:check` を通す
   - ラウンド 1: sha 50f48af5 / verify:tree green（A・E・F）/ 指摘 8 件（Medium 2・Low 6、Critical/High 0）/ 変異 9 個中 生存 1（M7: クエリが ASCII ならパス側の合成を飛ばす）
   - ラウンド 2: sha 454aa9de / verify:tree green（A・E・F）/ 前回指摘 6 件解消・新規指摘 0 / 追加変異 2 個中 生存 1（M10: NFC を NFKC に替える）→ `path_match_does_not_apply_compatibility_decomposition` を追加（主ツリーで M10 を注入し assert で赤・ハッシュ照合で巻き戻し）
+  - ラウンド 3: sha 0289cdbf / verify:tree green（A・E・F）/ 新規指摘 0（⚠️ Low 1: ループの早期停止で `game` の行単独の検知は未測定。全角英字の互換分解は Unicode の仕様どおりなので採らない）/ M10 を assert で検知・生存 0
 - [x] レビュー指摘への対処: M7 の検知器 `path_match_composes_the_path_even_for_an_ascii_query` を追加（M7 を主ツリーで注入して assert で赤・ハッシュ照合で巻き戻し）、SPEC §4.1 の区切り統一をクエリとパスで書き分け、§4.2 に前後空白の除去を足す、`compose_for_path_match` の doc の言い過ぎ・検知器の doc の「製品の経路そのもの」を直す、`query.rs` の use 群をまとめる。採らない: `path_query` の `.to_owned()`（検索 1 回 1 度で費用は無視できる）、glossary への追加（「識別用のキー」「照合用の合成」は標準の語の組み合わせで、`docs/comment-guidelines.md`「言語（日英）」の対象になる造語ではない）
 
 ## 未確定（実装前に潰す）

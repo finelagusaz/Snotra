@@ -687,11 +687,20 @@ fn path_match_on_nfd_path_receives_history_boost() {
     assert_eq!(names, ["b_app", "a_app"]);
 }
 
-/// **パスとクエリは、正準等価（NFC と NFD）なら同じ照合用の文字列になる**（#1394）。両辺は製品の経路
-/// そのもの——パス側は `normalize_entry_key` → [`crate::query::compose_for_path_match`]、クエリ側は
-/// `prepare_query_plan` の `path_query`——を通す。canonical 分解を持つ全コードポイントについて、
-/// 片方を NFD・もう片方を NFC で与え、両向きで比べる。小文字化と合成の順序が正準等価を壊す字が
-/// 現れると、ここが落ちる。
+/// **クエリが ASCII でも、パス側は合成してから照合する**（#1394）。NFC は非 ASCII を ASCII へ写す
+/// 字を持つ（U+037E GREEK QUESTION MARK → `;`）。「クエリが ASCII ならパス側の合成を飛ばす」近道を
+/// 入れると、U+037E を含むパスに `;` のクエリが当たらなくなる。
+#[test]
+fn path_match_composes_the_path_even_for_an_ascii_query() {
+    let entries = vec![make_entry("app", "C:\\tools\\x\u{37e}y\\app.exe")];
+    let mut engine = SearchEngine::new(entries);
+    let results = engine.search("x;y\\", 8, &empty_history(), SearchMode::Substring);
+    assert_eq!(results.len(), 1);
+}
+
+/// **パスとクエリは、正準等価（NFC と NFD）なら同じ照合用の文字列になる**（#1394）。canonical 分解を
+/// 持つ全コードポイントについて、片方を NFD・もう片方を NFC で与え、両向きで比べる（両辺の作り方は
+/// `assert_sides_agree`）。小文字化と合成の順序が正準等価を壊す字が現れると、ここが落ちる。
 #[test]
 fn path_match_sides_agree_on_canonically_equivalent_input() {
     let singles = (0..=0x10FFFF_u32)
@@ -732,9 +741,10 @@ fn path_match_sides_agree_on_composing_pairs() {
 }
 
 /// `inputs` の各列について、NFD と NFC の片方をパス、もう片方をクエリとして両向きで照合用の文字列を
-/// 比べる。両辺は製品の経路そのもの——パス側は `normalize_entry_key` →
-/// [`crate::query::compose_for_path_match`]、クエリ側は `prepare_query_plan` の `path_query`——を通す。
-/// NFD と NFC が同じ列は比べない。比べた件数が `min_compared` に届かなければ、母集団の作り方の誤りとして落とす。
+/// 比べる。クエリ側は製品の `prepare_query_plan` の `path_query` そのもの、パス側は
+/// `normalize_entry_key` → [`crate::query::compose_for_path_match`] である。**パス側は `scoring.rs` の
+/// 照合の配線を通らない**——そこで合成を外す誤りは、AC のテスト（`path_match_nfc_query_finds_nfd_path`
+/// など）が捕まえる。NFD と NFC が同じ列は比べない。比べた件数が `min_compared` に届かなければ、母集団の作り方の誤りとして落とす。
 fn assert_sides_agree(inputs: impl Iterator<Item = String> + Send, min_compared: usize) {
     use crate::indexer::normalize_entry_key;
     use crate::search::query_plan::prepare_query_plan;

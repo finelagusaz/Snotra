@@ -40,8 +40,9 @@ pub fn normalize_history_query_key(query: &str) -> Cow<'_, str> {
 /// 通す。** 識別用のパスキー（`indexer::normalize_entry_key`）には当てない——当てると履歴のキーが
 /// 変わる（#1394）。
 ///
-/// 合成を飛ばすのは `s` 自身が ASCII のときだけである。**相手側が ASCII だからといって飛ばしては
-/// ならない**——NFC には非 ASCII を ASCII へ写す字がある（U+037E → `;`）。
+/// 合成を飛ばすかは `s` 自身で決める（ASCII か、すでに NFC か）。**相手側が ASCII だからといって
+/// 飛ばしてはならない**——NFC には非 ASCII を ASCII へ写す字がある（U+037E → `;`。検知器は
+/// `search/tests/path.rs` の `path_match_composes_the_path_even_for_an_ascii_query`）。
 pub(crate) fn compose_for_path_match<'a>(buf: &'a mut String, s: &'a str) -> &'a str {
     if s.is_ascii() {
         return s;
@@ -356,6 +357,8 @@ mod tests {
         DerivedSharing, char_bitmask, compose_for_path_match, measure_derived_sharing,
         name_char_mask, normalize_for_match, normalize_history_query_key, to_kana,
     };
+    use nucleo_matcher::chars::normalize as nucleo_normalize;
+    use std::borrow::Cow;
 
     /// **合成しなくてよい入力は、そのまま返してバッファに触れない**（#1394）。パスクエリの全件走査は
     /// 全キーをここへ通すので、ASCII と NFC 済みのキーで書き写しが起きると、その費用が全件に乗る。
@@ -378,8 +381,6 @@ mod tests {
             "c:\\ツール\\がーむ\\é"
         );
     }
-    use nucleo_matcher::chars::normalize as nucleo_normalize;
-    use std::borrow::Cow;
 
     /// **`lower_file` が `None` のとき、共有フラグを立ててはならない。**
     ///

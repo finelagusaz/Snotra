@@ -15,8 +15,10 @@ use std::borrow::Cow;
 use memchr::memmem::Finder;
 use nucleo_matcher::Utf32String;
 
+use crate::indexer::normalize_entry_key;
 use crate::query::{
-    char_bitmask, contains_path_sep, normalize_for_match, normalize_history_query_key, to_kana,
+    char_bitmask, compose_for_path_match, contains_path_sep, normalize_for_match,
+    normalize_history_query_key, to_kana,
 };
 
 use super::{SearchMode, SearchOptions, kana_char_mask};
@@ -49,7 +51,8 @@ pub(super) struct QueryPlan<'a> {
     pub(super) kana_query_mask: Option<u64>,
     /// `norm_query` の UTF-32 事前計算（Fuzzy マッチで全スレッド共有）。
     pub(super) needle_u32: Utf32String,
-    /// パスマッチ用クエリ（生クエリベース・アクセント/連続スペース保持）。`has_path_sep` 時のみ。
+    /// パスマッチ用クエリ（生クエリベース・アクセント/連続スペース保持・合成〈NFC〉済み）。
+    /// `has_path_sep` 時のみ。
     pub(super) path_query: Option<String>,
     /// パスクエリの履歴照合キー（`normalize_history_query_key` 由来）。`path_query` とは別。
     pub(super) path_history_key: Option<String>,
@@ -120,17 +123,12 @@ pub(super) fn prepare_query_plan<'a>(
     // （フィールドの doc が正本）。
     let norm_query_has_path_sep = contains_path_sep(norm_query.as_ref());
     let path_query: Option<String> = if has_path_sep {
-        // normalize_entry_key と同じ正規化: 小文字化 + / と ¥ を \ に統一
-        let trimmed = query.trim();
-        let mut pq = String::with_capacity(trimmed.len());
-        for ch in trimmed.chars() {
-            if ch == '/' || ch == '\u{00a5}' {
-                pq.push('\\');
-            } else {
-                pq.extend(ch.to_lowercase());
-            }
-        }
-        Some(pq)
+        // パス側と同じ関数列を通す: `¥` を `\` に揃えてから `normalize_entry_key`（trim・小文字化・
+        // `/` → `\`）、そのあとに照合用の合成（`compose_for_path_match`・#1394）。`¥` の置換だけが
+        // クエリ側に固有である（パス側は `¥` を区切りとして扱わない）。
+        let pq = normalize_entry_key(&query.replace('\u{00a5}', "\\"));
+        let mut buf = String::new();
+        Some(compose_for_path_match(&mut buf, &pq).to_owned())
     } else {
         None
     };

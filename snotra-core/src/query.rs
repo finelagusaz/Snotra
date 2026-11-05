@@ -2,7 +2,8 @@
 //!
 //! 照合用の正規化の唯一の入口 `normalize_for_match`（クエリとエントリ名の両側が通る・
 //! SPEC §4.2。Unicode の合成（NFC）とラテン文字の折りたたみ `fold_latin` を含む。変える文字が
-//! 無ければ `Cow` で借用）、履歴クエリキー正規化 `normalize_history_query_key`、検索/インデクサ
+//! 無ければ `Cow` で借用）、パスマッチの照合用の合成 `compose_for_path_match`、
+//! 履歴クエリキー正規化 `normalize_history_query_key`、検索/インデクサ
 //! 双方が使う `char_bitmask`（bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化が冪等である
 //! ことは全コードポイントの検知器と 2 字の列の検知器で固定してある。
 
@@ -30,6 +31,33 @@ pub fn normalize_history_query_key(query: &str) -> Cow<'_, str> {
     } else {
         nq
     }
+}
+
+/// パスマッチ（`SPEC.md`「4.1 検索方式」）の照合用の合成（NFC）。合成しなくてよければ `s` を、
+/// 合成したら `buf` に書いた結果を返す（`buf` の中身は捨てられる）。
+///
+/// **パス側（`search/scoring.rs`）とクエリ側（`search/query_plan.rs` の `path_query`）が、この 1 つを
+/// 通す。** 識別用のパスキー（`indexer::normalize_entry_key`）には当てない——当てると履歴のキーが
+/// 変わる（#1394）。
+///
+/// 合成を飛ばすかは `s` 自身で決める（ASCII か、すでに NFC か）。**相手側が ASCII だからといって
+/// 飛ばしてはならない**——NFC には非 ASCII を ASCII へ写す字がある（U+037E → `;`。検知器は
+/// `search/tests/path.rs` の `path_match_composes_the_path_even_for_an_ascii_query`）。
+pub(crate) fn compose_for_path_match<'a>(buf: &'a mut String, s: &'a str) -> &'a str {
+    if s.is_ascii() {
+        return s;
+    }
+    // 合成済みの接頭辞を切り出し、残りだけを合成する（`ComposingNormalizerBorrowed::normalize` と
+    // 同じ手順で、接頭辞を 2 度走査しない）。
+    let (head, tail) = NFC.split_normalized(s);
+    if tail.is_empty() {
+        return s;
+    }
+    buf.clear();
+    buf.push_str(head);
+    // `String` への書き込みは失敗しない。
+    let _ = NFC.normalize_to(tail, buf);
+    buf
 }
 
 /// パス区切り文字（`\` `/` `¥`）を 1 つでも含むか。
@@ -326,11 +354,33 @@ fn fold_once(s: &str) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DerivedSharing, char_bitmask, measure_derived_sharing, name_char_mask, normalize_for_match,
-        normalize_history_query_key, to_kana,
+        DerivedSharing, char_bitmask, compose_for_path_match, measure_derived_sharing,
+        name_char_mask, normalize_for_match, normalize_history_query_key, to_kana,
     };
     use nucleo_matcher::chars::normalize as nucleo_normalize;
     use std::borrow::Cow;
+
+    /// **合成しなくてよい入力は、そのまま返してバッファに触れない**（#1394）。パスクエリの全件走査は
+    /// 全キーをここへ通すので、ASCII と NFC 済みのキーで書き写しが起きると、その費用が全件に乗る。
+    #[test]
+    fn compose_for_path_match_returns_the_input_when_already_composed() {
+        for s in ["c:\\tools\\app.exe", "c:\\ツール\\がーむ\\app.exe"] {
+            let mut buf = String::from("untouched");
+            let out = compose_for_path_match(&mut buf, s);
+            assert!(std::ptr::eq(out, s), "{s:?}");
+            assert_eq!(buf, "untouched", "{s:?}");
+        }
+    }
+
+    /// 合成済みの接頭辞の後ろだけを合成しても、全体を合成した結果と一致する（#1394）。
+    #[test]
+    fn compose_for_path_match_composes_after_a_composed_prefix() {
+        let mut buf = String::from("stale");
+        assert_eq!(
+            compose_for_path_match(&mut buf, "c:\\ツール\\か\u{3099}ーむ\\e\u{301}"),
+            "c:\\ツール\\がーむ\\é"
+        );
+    }
 
     /// **`lower_file` が `None` のとき、共有フラグを立ててはならない。**
     ///

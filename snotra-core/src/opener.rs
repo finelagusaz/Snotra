@@ -136,15 +136,16 @@ pub fn find_matching_tools<'a>(
 /// この 1 つを通る（`SPEC.md`「18.3 起動フロー」）。具体度もこの長さで数える——生の長さで
 /// 数えると、正準等価でもバイト長の違う NFD の条件が、より深い NFC の条件に勝ちうる。
 ///
-/// 保存される `target` も [`normalize_opener_target`] で同じ合成を通るが、手書きの `config.toml` や
-/// 呼び出し側が渡すパスは通っていないので、照合の直前にも当てる。合成は条件を `target` から
-/// 切り出した**後**に当てる（`extract_ext_part` はバイト長で位置を出す）。
+/// 保存される `target` は読み込みの移行（[`normalize_opener_target`]）で合成済みだが、呼び出し側が
+/// 渡すパスは合成されていない。`rules` も読み込みを通ったものとは限らないので、照合の直前に両辺へ
+/// 当てる。合成は条件を `target` から切り出した**後**に当てる（`extract_ext_part` はバイト長で位置を出す）。
 fn match_key(s: &str) -> String {
     lower_composed(&s.replace('/', "\\"))
 }
 
 /// 小文字化してから合成（NFC）する。互換分解（NFKC）はしない。小文字化を合成より先に置く——逆にすると、
-/// `J` + U+030C が `ǰ`（U+01F0）に揃わない（検知器は `find_matching_tools_lowercases_before_composing`）。
+/// `J` + U+030C が `ǰ`（U+01F0）に揃わない（検知器は照合側が `find_matching_tools_lowercases_before_composing`、
+/// 保存側が `normalize_opener_target_composes_path_condition_and_extensions`）。
 fn lower_composed(s: &str) -> String {
     let lower = s.to_lowercase();
     // 呼ばれるのはルールと拡張子の数に比例し、小さい。確保を節約しない。
@@ -924,11 +925,21 @@ mod tests {
             normalize_opener_target(&format!("ext:{NFD_GAME},md:C:\\{NFD_GAME}")),
             format!("ext:.md,.{NFC_GAME}:c:\\{NFC_GAME}")
         );
-        // 互換分解はしない。
+        // 小文字化を合成より先に置く（`J` + U+030C は `ǰ` に揃う。逆の順では揃わない）。
+        assert_eq!(
+            normalize_opener_target("folder:C:\\J\u{30C}"),
+            "folder:c:\\\u{1F0}"
+        );
+        assert_eq!(
+            normalize_opener_target("ext:J\u{30C}:C:\\J\u{30C}"),
+            "ext:.\u{1F0}:c:\\\u{1F0}"
+        );
+        // 互換分解はしない（パス条件でも拡張子でも）。
         assert_eq!(
             normalize_opener_target("folder:c:\\\u{FF41}"),
             "folder:c:\\\u{FF41}"
         );
+        assert_eq!(normalize_opener_target("ext:\u{FF4D}d"), "ext:.\u{FF4D}d");
     }
 
     #[test]

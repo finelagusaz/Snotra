@@ -59,6 +59,8 @@
 - [x] AC7 のテストを書いて Red → `opener_specificity_order` を直して Green
 - [x] `compose_for_path_match` の doc を更新
 - [x] `cargo fmt` / `cargo clippy -p snotra-core` / `cargo test -p snotra-core` が通る
+- [x] ラウンド 1（a6401c29）: verify:tree green（A・E・F）/ 指摘 Medium 1・Low 2・⚠️ 3 / 変異 10 個中 1 個生存（M9: 小文字化と合成の順序の入れ替え）
+- [x] ラウンド 1 の対処: 順序の検知器 `find_matching_tools_lowercases_before_composing` を足し、`match_key` の doc に順序の理由を書く（Medium-1）。確保のコメントの頻度の誤りを直す（Low-1）。Low-2（`compose_for_path_match` の doc の呼び出し元）は「保存される `target` には当てない」を伝える役があるので残す
 
 ## 未確定（実装前に潰す）
 

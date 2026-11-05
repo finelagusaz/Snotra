@@ -138,9 +138,11 @@ pub fn find_matching_tools<'a>(
 ///
 /// 照合の直前でだけ使い、保存される `target`（`normalize_opener_target`）には当てない。
 /// 合成は条件を `target` から切り出した**後**に当てる（`extract_ext_part` はバイト長で位置を出す）。
+/// 小文字化を合成より先に置く——逆にすると、`J` + U+030C が `ǰ`（U+01F0）に当たらない（検知器は
+/// `find_matching_tools_lowercases_before_composing`）。
 fn match_key(s: &str) -> String {
     let key = s.to_lowercase().replace('/', "\\");
-    // 起動 1 回に 1 度の呼び出しなので、確保を節約しない。
+    // 呼ばれるのはルールと拡張子の数だけで、小さい。確保を節約しない。
     let mut buf = String::new();
     compose_for_path_match(&mut buf, &key).to_owned()
 }
@@ -858,6 +860,23 @@ mod tests {
             &[("Hit", "hit.exe", "")],
         )];
         assert_eq!(matched_name("C:\\ab\\x", true, &rules), None);
+    }
+
+    #[test]
+    fn find_matching_tools_lowercases_before_composing() {
+        // `J` + U+030C の合成済みの大文字は無く、小文字の `ǰ`（U+01F0）だけがある。
+        // 合成を小文字化より先にすると、両辺が別の綴りに落ちて当たらない。
+        for (cond, path) in [("J\u{30C}", "\u{1F0}"), ("\u{1F0}", "J\u{30C}")] {
+            let rules = vec![make_rule(
+                &format!("folder:c:\\{cond}"),
+                &[("Hit", "hit.exe", "")],
+            )];
+            assert_eq!(
+                matched_name(&format!("C:\\{path}\\x"), true, &rules).as_deref(),
+                Some("Hit"),
+                "条件 {cond:?} / パス {path:?}"
+            );
+        }
     }
 
     #[test]

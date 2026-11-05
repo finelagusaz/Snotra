@@ -39,7 +39,8 @@ pub fn normalize_history_query_key(query: &str) -> Cow<'_, str> {
 /// **パス側（`search/scoring.rs`）とクエリ側（`search/query_plan.rs` の `path_query`）が、この 1 つを
 /// 通す。** 識別用のパスキー（`indexer::normalize_entry_key`）には当てない——当てると履歴のキーが
 /// 変わる（#1394）。opener のパス条件の照合（`SPEC.md`「18.3 起動フロー」）も、`opener.rs` の
-/// `match_key` からこれを通す。そこでも、保存される `target` には当てない（#1399）。
+/// `match_key` と、保存される `target` の正規化（`normalize_opener_target`）からこれを通す。
+/// 設定の `target` は識別用のキーではないので、大文字小文字と同じく保存の時点で揃える（#1399）。
 ///
 /// 合成を飛ばすかは `s` 自身で決める（ASCII か、すでに NFC か）。**相手側が ASCII だからといって
 /// 飛ばしてはならない**——NFC には非 ASCII を ASCII へ写す字がある（U+037E → `;`。検知器は

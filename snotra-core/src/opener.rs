@@ -136,15 +136,20 @@ pub fn find_matching_tools<'a>(
 /// この 1 つを通る（`SPEC.md`「18.3 起動フロー」）。具体度もこの長さで数える——生の長さで
 /// 数えると、正準等価でもバイト長の違う NFD の条件が、より深い NFC の条件に勝ちうる。
 ///
-/// 照合の直前でだけ使い、保存される `target`（`normalize_opener_target`）には当てない。
-/// 合成は条件を `target` から切り出した**後**に当てる（`extract_ext_part` はバイト長で位置を出す）。
-/// 小文字化を合成より先に置く——逆にすると、`J` + U+030C が `ǰ`（U+01F0）に当たらない（検知器は
-/// `find_matching_tools_lowercases_before_composing`）。
+/// 保存される `target` も [`normalize_opener_target`] で同じ合成を通るが、手書きの `config.toml` や
+/// 呼び出し側が渡すパスは通っていないので、照合の直前にも当てる。合成は条件を `target` から
+/// 切り出した**後**に当てる（`extract_ext_part` はバイト長で位置を出す）。
 fn match_key(s: &str) -> String {
-    let key = s.to_lowercase().replace('/', "\\");
-    // 呼ばれるのはルールと拡張子の数だけで、小さい。確保を節約しない。
+    lower_composed(&s.replace('/', "\\"))
+}
+
+/// 小文字化してから合成（NFC）する。互換分解（NFKC）はしない。小文字化を合成より先に置く——逆にすると、
+/// `J` + U+030C が `ǰ`（U+01F0）に揃わない（検知器は `find_matching_tools_lowercases_before_composing`）。
+fn lower_composed(s: &str) -> String {
+    let lower = s.to_lowercase();
+    // 呼ばれるのはルールと拡張子の数に比例し、小さい。確保を節約しない。
     let mut buf = String::new();
-    compose_for_path_match(&mut buf, &key).to_owned()
+    compose_for_path_match(&mut buf, &lower).to_owned()
 }
 
 /// "ext:" プレフィックスの後の部分から拡張子リストとパス条件を分離する。
@@ -179,7 +184,7 @@ fn normalize_opener_target(target: &str) -> String {
             if path_trimmed.is_empty() {
                 return "folder".to_string();
             }
-            let normalized_path = normalize_scan_path_key(path_trimmed);
+            let normalized_path = lower_composed(&normalize_scan_path_key(path_trimmed));
             if normalized_path.is_empty() {
                 return "folder".to_string();
             }
@@ -188,15 +193,11 @@ fn normalize_opener_target(target: &str) -> String {
         if kind.eq_ignore_ascii_case("ext") {
             // rest から拡張子部分とパス条件を分離
             let (raw_exts, path_suffix) = split_ext_and_path(rest);
-            let exts = normalize_extensions(
-                &raw_exts
-                    .split(',')
-                    .map(|ext| ext.to_string())
-                    .collect::<Vec<_>>(),
-            );
+            let exts =
+                normalize_extensions(&raw_exts.split(',').map(lower_composed).collect::<Vec<_>>());
             let ext_str = exts.join(",");
             return if let Some(path) = path_suffix {
-                let normalized_path = normalize_scan_path_key(path);
+                let normalized_path = lower_composed(&normalize_scan_path_key(path));
                 if normalized_path.is_empty() {
                     format!("ext:{ext_str}")
                 } else {
@@ -910,6 +911,44 @@ mod tests {
         let tools2 = find_matching_tools("C:\\workspace\\project", true, &rules2);
         assert_eq!(tools2.len(), 1);
         assert_eq!(tools2[0].name, "VSCode");
+    }
+
+    #[test]
+    fn normalize_opener_target_composes_path_condition_and_extensions() {
+        // 保存される綴りも合成する（大文字小文字を小文字へ揃えるのと同じ扱い・#1399）。
+        assert_eq!(
+            normalize_opener_target(&format!("folder:C:\\{NFD_GAME}")),
+            format!("folder:c:\\{NFC_GAME}")
+        );
+        assert_eq!(
+            normalize_opener_target(&format!("ext:{NFD_GAME},md:C:\\{NFD_GAME}")),
+            format!("ext:.md,.{NFC_GAME}:c:\\{NFC_GAME}")
+        );
+        // 互換分解はしない。
+        assert_eq!(
+            normalize_opener_target("folder:c:\\\u{FF41}"),
+            "folder:c:\\\u{FF41}"
+        );
+    }
+
+    #[test]
+    fn normalize_openers_merges_canonically_equivalent_rules() {
+        // NFC と NFD で書いた同じ条件は 1 つのルールに束ねる。束ねないと照合では同じ具体度になり、
+        // 後ろのルールのツールがどのパスでも選ばれなくなる（#1399）。
+        let rules = vec![
+            make_rule(&format!("folder:c:\\{NFC_GAME}"), &[("A", "a.exe", "")]),
+            make_rule(&format!("folder:c:\\{NFD_GAME}"), &[("B", "b.exe", "")]),
+        ];
+        let normalized = normalize_openers(&rules);
+        assert_eq!(normalized.len(), 1, "{normalized:?}");
+        let names: Vec<&str> = normalized[0]
+            .tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(names, ["A", "B"]);
+        // 冪等である（読み込みのたびに書き戻さない）。
+        assert_eq!(normalize_openers(&normalized), normalized);
     }
 
     #[test]

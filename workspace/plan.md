@@ -53,12 +53,12 @@
 
 ## フェーズの作業項目
 
-- [ ] SPEC.md §18.3 を更新
-- [ ] `match_key` を no-op で置き、AC1〜AC6 のテストを書いて Red を確かめる
-- [ ] `match_key` に合成を入れ、Green
-- [ ] AC7 のテストを書いて Red → `opener_specificity_order` を直して Green
-- [ ] `compose_for_path_match` の doc を更新
-- [ ] `cargo fmt` / `cargo clippy -p snotra-core` / `cargo test -p snotra-core` が通る
+- [x] SPEC.md §18.3 を更新
+- [x] `match_key` を no-op で置き、AC1〜AC6 のテストを書いて Red を確かめる
+- [x] `match_key` に合成を入れ、Green（Red は 5 本。具体度のテストは合成前は自明に通るので、合成後に具体度を生の長さへ戻す変異で Red を確認）
+- [x] AC7 のテストを書いて Red → `opener_specificity_order` を直して Green
+- [x] `compose_for_path_match` の doc を更新
+- [x] `cargo fmt` / `cargo clippy -p snotra-core` / `cargo test -p snotra-core` が通る
 
 ## 未確定（実装前に潰す）
 

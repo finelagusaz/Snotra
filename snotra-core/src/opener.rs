@@ -4,6 +4,7 @@
 //! 依存方向は `config.rs` → `opener.rs`（config が opener の型・関数を re-export で使う）。
 
 use crate::config::{normalize_extensions, normalize_scan_path_key};
+use crate::query::compose_for_path_match;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -61,7 +62,7 @@ pub fn find_matching_tools<'a>(
     is_folder: bool,
     rules: &'a [OpenerRule],
 ) -> &'a [OpenerTool] {
-    let path_lower = path.to_lowercase().replace('/', "\\");
+    let path_lower = match_key(path);
     let path_ext = path_lower
         .rfind('.')
         .map(|i| &path_lower[i..])
@@ -75,9 +76,9 @@ pub fn find_matching_tools<'a>(
         let path_cond = extract_path_condition(target);
 
         // パス条件チェック（パス境界で一致を検証）
-        if let Some(cond) = path_cond {
-            let cond_lower = cond.to_lowercase().replace('/', "\\");
-            if !path_lower.starts_with(&cond_lower) {
+        let cond_key = path_cond.map(match_key);
+        if let Some(cond_lower) = &cond_key {
+            if !path_lower.starts_with(cond_lower.as_str()) {
                 continue;
             }
             // パス条件がパス境界で終わっていることを確認
@@ -97,7 +98,7 @@ pub fn find_matching_tools<'a>(
         } else if target.starts_with("ext:") {
             let ext_part = extract_ext_part(target);
             ext_part.split(',').any(|raw_ext| {
-                let ext = raw_ext.trim().to_lowercase();
+                let ext = match_key(raw_ext.trim());
                 let ext_with_dot = if ext.starts_with('.') {
                     ext
                 } else {
@@ -113,7 +114,7 @@ pub fn find_matching_tools<'a>(
             continue;
         }
 
-        let specificity = path_cond.map_or(0, |c| c.len());
+        let specificity = cond_key.as_ref().map_or(0, String::len);
 
         if let Some((_, best_spec)) = best {
             if specificity > best_spec {
@@ -129,6 +130,19 @@ pub fn find_matching_tools<'a>(
         Some((idx, _)) => &rules[idx].tools,
         None => &[],
     }
+}
+
+/// 照合用に揃えた綴り（小文字化 → `/` を `\` に → 合成〈NFC〉）。パス・パス条件・拡張子が
+/// この 1 つを通る（`SPEC.md`「18.3 起動フロー」）。具体度もこの長さで数える——生の長さで
+/// 数えると、正準等価でもバイト長の違う NFD の条件が、より深い NFC の条件に勝ちうる。
+///
+/// 照合の直前でだけ使い、保存される `target`（`normalize_opener_target`）には当てない。
+/// 合成は条件を `target` から切り出した**後**に当てる（`extract_ext_part` はバイト長で位置を出す）。
+fn match_key(s: &str) -> String {
+    let key = s.to_lowercase().replace('/', "\\");
+    // 起動 1 回に 1 度の呼び出しなので、確保を節約しない。
+    let mut buf = String::new();
+    compose_for_path_match(&mut buf, &key).to_owned()
 }
 
 /// "ext:" プレフィックスの後の部分から拡張子リストとパス条件を分離する。
@@ -233,7 +247,7 @@ pub fn normalize_openers(openers: &[OpenerRule]) -> Vec<OpenerRule> {
 pub fn opener_specificity_order(target: &str) -> (u8, i64) {
     let path_cond = extract_path_condition(target);
     let is_folder = target == "folder" || target.starts_with("folder:");
-    let path_len = path_cond.map_or(0i64, |p| p.len() as i64);
+    let path_len = path_cond.map_or(0i64, |p| match_key(p).len() as i64);
 
     if is_folder {
         if path_cond.is_some() {
@@ -731,6 +745,131 @@ mod tests {
     #[test]
     fn find_in_path_returns_none_for_nonexistent() {
         assert!(find_in_path("__snotra_nonexistent_binary_xyz__").is_none());
+    }
+
+    // ---- 正準等価（NFC / NFD）の照合（#1399） ----
+
+    /// 「ゲーム」の合成形（NFC）と分解形（NFD・ケ + U+3099）。
+    const NFC_GAME: &str = "\u{30B2}\u{30FC}\u{30E0}";
+    const NFD_GAME: &str = "\u{30B1}\u{3099}\u{30FC}\u{30E0}";
+
+    fn matched_name(path: &str, is_folder: bool, rules: &[OpenerRule]) -> Option<String> {
+        find_matching_tools(path, is_folder, rules)
+            .first()
+            .map(|t| t.name.clone())
+    }
+
+    #[test]
+    fn find_matching_tools_path_condition_matches_canonically_equivalent_path() {
+        for (cond, path) in [(NFC_GAME, NFD_GAME), (NFD_GAME, NFC_GAME)] {
+            let rules = vec![
+                make_rule(&format!("folder:c:\\{cond}"), &[("Hit", "hit.exe", "")]),
+                make_rule(&format!("ext:.txt:c:\\{cond}"), &[("ExtHit", "e.exe", "")]),
+            ];
+            assert_eq!(
+                matched_name(&format!("C:\\{path}\\sub"), true, &rules).as_deref(),
+                Some("Hit"),
+                "folder: 条件 {cond:?} / パス {path:?}"
+            );
+            assert_eq!(
+                matched_name(&format!("C:\\{path}\\a.txt"), false, &rules).as_deref(),
+                Some("ExtHit"),
+                "ext: 条件 {cond:?} / パス {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn find_matching_tools_boundary_holds_after_composition() {
+        // NFC の条件は、NFD で綴った「ゲーム123」に境界の途中で当たってはならない。
+        let rules = vec![make_rule(
+            &format!("folder:c:\\{NFC_GAME}"),
+            &[("Hit", "hit.exe", "")],
+        )];
+        assert_eq!(
+            matched_name(&format!("C:\\{NFD_GAME}123\\x"), true, &rules),
+            None
+        );
+        // NFD の条件で、パスが条件ちょうどで終わる場合は当たる。
+        let rules = vec![make_rule(
+            &format!("folder:c:\\{NFD_GAME}"),
+            &[("Hit", "hit.exe", "")],
+        )];
+        assert_eq!(
+            matched_name(&format!("C:\\{NFC_GAME}"), true, &rules).as_deref(),
+            Some("Hit")
+        );
+    }
+
+    #[test]
+    fn find_matching_tools_specificity_counts_composed_length() {
+        // 浅い条件を NFD で書くと、生のバイト長は深い NFC の条件より長い（濁点の 3 バイト）。
+        // 具体度を合成後の長さで数えるなら、深い方が勝つ。
+        let shallow_nfd = "folder:c:\\\u{30B1}\u{3099}";
+        let deep_nfc = "folder:c:\\\u{30B2}\\a";
+        assert!(
+            extract_path_condition(shallow_nfd).unwrap().len()
+                > extract_path_condition(deep_nfc).unwrap().len(),
+            "前提: 浅い NFD の条件の方が生のバイト長が長い"
+        );
+        let rules = vec![
+            make_rule(shallow_nfd, &[("Shallow", "s.exe", "")]),
+            make_rule(deep_nfc, &[("Deep", "d.exe", "")]),
+        ];
+        assert_eq!(
+            matched_name("C:\\\u{30B2}\\a\\b", true, &rules).as_deref(),
+            Some("Deep")
+        );
+    }
+
+    #[test]
+    fn find_matching_tools_ext_matches_canonically_equivalent_extension() {
+        // 拡張子だけが非 ASCII のルール。NFD で書いた拡張子は、NFD のパスにも NFC のパスにも当たる。
+        let ext_nfc = "\u{30B2}";
+        let ext_nfd = "\u{30B1}\u{3099}";
+        for (rule_ext, path_ext) in [(ext_nfd, ext_nfd), (ext_nfd, ext_nfc), (ext_nfc, ext_nfd)] {
+            let rules = vec![make_rule(
+                &format!("ext:{rule_ext}"),
+                &[("Hit", "hit.exe", "")],
+            )];
+            assert_eq!(
+                matched_name(&format!("C:\\a\\file.{path_ext}"), false, &rules).as_deref(),
+                Some("Hit"),
+                "ルール {rule_ext:?} / パス {path_ext:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn find_matching_tools_composes_the_path_even_for_an_ascii_condition() {
+        // U+037E（ギリシャ語の疑問符）は NFC で `;` へ写る。条件が ASCII でもパス側は合成する。
+        let rules = vec![make_rule("folder:c:\\a;b", &[("Hit", "hit.exe", "")])];
+        assert_eq!(
+            matched_name("C:\\a\u{037E}b\\x", true, &rules).as_deref(),
+            Some("Hit")
+        );
+    }
+
+    #[test]
+    fn find_matching_tools_does_not_apply_compatibility_decomposition() {
+        // 全角の英字は NFKC でしか半角へ写らない。互換分解はしない。
+        let rules = vec![make_rule(
+            "folder:c:\\\u{FF41}\u{FF42}",
+            &[("Hit", "hit.exe", "")],
+        )];
+        assert_eq!(matched_name("C:\\ab\\x", true, &rules), None);
+    }
+
+    #[test]
+    fn opener_specificity_order_equal_for_canonically_equivalent_conditions() {
+        assert_eq!(
+            opener_specificity_order(&format!("folder:c:\\{NFC_GAME}")),
+            opener_specificity_order(&format!("folder:c:\\{NFD_GAME}"))
+        );
+        assert_eq!(
+            opener_specificity_order(&format!("ext:.txt:c:\\{NFC_GAME}")),
+            opener_specificity_order(&format!("ext:.txt:c:\\{NFD_GAME}"))
+        );
     }
 
     #[test]

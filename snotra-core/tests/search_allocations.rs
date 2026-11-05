@@ -275,6 +275,37 @@ fn path_query_full_scan_does_not_allocate_per_entry() {
     });
 }
 
+/// パスクエリの照合用の合成（NFC）は、エントリごとに確保しない（#1394）。
+///
+/// [`path_query_full_scan_does_not_allocate_per_entry`] の fixture は ASCII だけで、合成の分岐を
+/// 1 度も通らない。ここは全エントリのパスに NFD の成分（`か` + U+3099）を持たせ、全件が合成される
+/// 形で測る。合成先はスレッドローカルのバッファで、ウォームアップ後は容量を使い回す。
+#[test]
+fn path_query_composing_nfd_paths_does_not_allocate_per_entry() {
+    on_single_worker(|| {
+        let history = empty_history();
+        let name: fn(usize) -> String = |i| format!("gamma tool {i:05}");
+        let file_stem: fn(usize) -> String = |i| format!("か\u{3099}ーむ{i:05}");
+        let mut small = engine_where_every_entry_matches(SMALL, name, file_stem);
+        let mut large = engine_where_every_entry_matches(LARGE, name, file_stem);
+        // NFC のクエリ。合成しなければ 1 件も一致せず、`full_scan_allocations` の前提の assert が落ちる。
+        let (small_allocs, small_bytes) = full_scan_allocations(&mut small, "apps\\が", &history);
+        let (large_allocs, large_bytes) = full_scan_allocations(&mut large, "apps\\が", &history);
+        let grew_allocs = large_allocs.saturating_sub(small_allocs);
+        let grew_bytes = large_bytes.saturating_sub(small_bytes);
+        assert!(
+            grew_allocs < (LARGE - SMALL) / 10,
+            "エントリ {} 件の増加に対して確保が {grew_allocs} 回増えた（{small_allocs} → {large_allocs}）",
+            LARGE - SMALL,
+        );
+        assert!(
+            grew_bytes < (LARGE - SMALL) * std::mem::size_of::<usize>() / 2,
+            "エントリ {} 件の増加に対して確保が {grew_bytes} バイト増えた（{small_bytes} → {large_bytes}）",
+            LARGE - SMALL,
+        );
+    });
+}
+
 /// 親フォルダのチェーンの下にファイルを並べた索引。ファイルのフルパスは根から
 /// `DEEP_FOLDERS` 段を足して組み立てることになる（親が索引に無いと、パスは根 1 段で
 /// 組み上がり、組み立ての成長が起きない）。

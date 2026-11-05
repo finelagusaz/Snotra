@@ -15,6 +15,7 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
 
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::history::HistoryStore;
+use crate::query::compose_for_path_match;
 use crate::ui_types::{IconSource, SearchResult};
 
 use super::path_store::CompactEntry;
@@ -138,6 +139,13 @@ pub(crate) fn fuzzy_match_score(haystack: &str, needle: Utf32Str<'_>) -> Option<
 /// 中へ正規化を要する処理を足すときは外へ出すこと（誤りは沈黙せず panic として出る）。
 pub(super) fn with_normalized_key<R>(paths: &PathStore, i: usize, f: impl FnOnce(&str) -> R) -> R {
     super::path_store::with_cursor(paths, i, f)
+}
+
+thread_local! {
+    /// パスマッチの照合の直前に、正規化キーを合成（NFC）する先（[`compose_for_path_match`]）。
+    /// **`with_normalized_key` の `f` の中で借りるので、カーソルとは別のセルに置く。**
+    /// 容量を再利用するのでウォームアップ後の確保は起きない。
+    static PATH_MATCH_BUF: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
@@ -508,14 +516,18 @@ impl SearchEngine {
             return None;
         }
 
-        // 1 エントリにつき 1 回だけ詰める——下のパスマッチと履歴照合 3 種が同じ結果を見る。
+        // 1 エントリにつき 1 回だけ詰める——下のパスマッチと履歴照合 3 種が同じキーから始める。
+        // パスマッチだけが照合の直前に合成（NFC）を当て、履歴照合は識別用のキーをそのまま使う。
         with_normalized_key(&self.entries, i, |key| {
             // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
             // スコア PATH_BASE(3000) は Kana(4500) より低く、名前マッチを常に優先する。
             let score = score.or_else(|| {
                 // 照合は検索 1 回に 1 度だけ作った照合器で行う（`QueryPlan::path_finder`）。
                 plan.path_finder.as_ref().and_then(|pq| {
-                    let pos = pq.find(key.as_bytes())?;
+                    let pos = PATH_MATCH_BUF.with(|cell| {
+                        let mut buf = cell.borrow_mut();
+                        pq.find(compose_for_path_match(&mut buf, key).as_bytes())
+                    })?;
                     Some(
                         (score_tier::PATH_BASE - (pos as i64).min(score_tier::PATH_POS_CAP)).max(1),
                     )

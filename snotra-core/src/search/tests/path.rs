@@ -621,3 +621,169 @@ fn skipping_name_scoring_changes_nothing_over_real_index() {
         queries.len()
     );
 }
+
+/// NFD（`か` + U+3099）で保存されたパス。macOS 由来のファイル名などで起きる。
+const NFD_GAME: &str = "か\u{3099}ーむ";
+
+/// **NFD で保存されたパスに、NFC のクエリがパスマッチで当たる**（`SPEC.md`「4.1 検索方式」・#1394）。
+#[test]
+fn path_match_nfc_query_finds_nfd_path() {
+    let entries = vec![make_entry(
+        "app",
+        &format!("C:\\tools\\{NFD_GAME}\\app.exe"),
+    )];
+    let mut engine = SearchEngine::new(entries);
+    for q in ["がーむ\\", "がーむ\\app", "tools\\が"] {
+        let results = engine.search(q, 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1, "{q:?}");
+    }
+}
+
+/// **NFC で保存されたパスに、NFD のクエリがパスマッチで当たる**（#1394）。
+#[test]
+fn path_match_nfd_query_finds_nfc_path() {
+    let entries = vec![make_entry("app", "C:\\tools\\がーむ\\app.exe")];
+    let mut engine = SearchEngine::new(entries);
+    let results = engine.search(
+        &format!("{NFD_GAME}\\"),
+        8,
+        &empty_history(),
+        SearchMode::Substring,
+    );
+    assert_eq!(results.len(), 1);
+}
+
+/// **合成するので、結合文字の直前で終わる部分クエリは NFD のパスに当たらない**
+/// （`SPEC.md`「4.2 クエリ正規化」・#1394）。合成しなかった頃は `tools\か` が `か` + U+3099 の
+/// `か` に当たっていた。名前の照合（#1285）と同じ扱いである。
+#[test]
+fn path_match_query_ending_before_a_combining_mark_does_not_match() {
+    let entries = vec![make_entry(
+        "app",
+        &format!("C:\\tools\\{NFD_GAME}\\app.exe"),
+    )];
+    let mut engine = SearchEngine::new(entries);
+    let results = engine.search("tools\\か", 8, &empty_history(), SearchMode::Substring);
+    assert!(results.is_empty(), "{results:?}");
+}
+
+/// **NFD のパスでも、パスマッチに履歴のブーストが乗る**（#1394）。履歴の照合は合成する前の
+/// 識別用のキー（`normalize_entry_key`）で行う。記録したパスは合成していないので、合成したキーで
+/// 照合するとブーストが消える。ブーストが無ければ名前の昇順で `a_app` が先に来る。
+#[test]
+fn path_match_on_nfd_path_receives_history_boost() {
+    let dir = format!("C:\\tools\\{NFD_GAME}");
+    let entries = vec![
+        make_entry("a_app", &format!("{dir}\\a_app.exe")),
+        make_entry("b_app", &format!("{dir}\\b_app.exe")),
+    ];
+    let mut history = HistoryStore::empty();
+    for _ in 0..5 {
+        history.record_launch(&format!("{dir}\\b_app.exe"), "");
+    }
+    let mut engine = SearchEngine::new(entries);
+    let results = engine.search("がーむ\\", 8, &history, SearchMode::Substring);
+    let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["b_app", "a_app"]);
+}
+
+/// **パスとクエリは、正準等価（NFC と NFD）なら同じ照合用の文字列になる**（#1394）。両辺は製品の経路
+/// そのもの——パス側は `normalize_entry_key` → [`crate::query::compose_for_path_match`]、クエリ側は
+/// `prepare_query_plan` の `path_query`——を通す。canonical 分解を持つ全コードポイントについて、
+/// 片方を NFD・もう片方を NFC で与え、両向きで比べる。小文字化と合成の順序が正準等価を壊す字が
+/// 現れると、ここが落ちる。
+#[test]
+fn path_match_sides_agree_on_canonically_equivalent_input() {
+    let singles = (0..=0x10FFFF_u32)
+        .filter_map(char::from_u32)
+        .map(|c| c.to_string());
+    assert_sides_agree(singles, 10_000);
+}
+
+/// **2 字の列（基底 + 結合文字）でも、正準等価なら両辺が一致する**（#1394）。単一字の検知器は、
+/// 小文字化で基底が変わった字が後ろの結合文字と合成する形を見ない（`É` + U+0301 のような列）。
+///
+/// 母集団は、1 字目が小文字化で変わる字と canonical 分解の 1 字目、2 字目が canonical 分解の 2 字目
+/// （合成の相手になりうる結合文字）の組である。
+#[test]
+fn path_match_sides_agree_on_composing_pairs() {
+    use icu_normalizer::properties::{CanonicalDecompositionBorrowed, Decomposed};
+    let all = || (0..=0x10FFFF_u32).filter_map(char::from_u32);
+    let dec = CanonicalDecompositionBorrowed::new();
+    let pairs: Vec<(char, char)> = all()
+        .filter_map(|c| match dec.decompose(c) {
+            Decomposed::Expansion(a, b) => Some((a, b)),
+            _ => None,
+        })
+        .collect();
+    let mut firsts: Vec<char> = all()
+        .filter(|&c| c.to_lowercase().ne(std::iter::once(c)))
+        .chain(pairs.iter().map(|&(a, _)| a))
+        .collect();
+    firsts.sort_unstable();
+    firsts.dedup();
+    let mut seconds: Vec<char> = pairs.iter().map(|&(_, b)| b).collect();
+    seconds.sort_unstable();
+    seconds.dedup();
+    let inputs = firsts
+        .iter()
+        .flat_map(|&a| seconds.iter().map(move |&b| format!("{a}{b}")));
+    assert_sides_agree(inputs, 10_000);
+}
+
+/// `inputs` の各列について、NFD と NFC の片方をパス、もう片方をクエリとして両向きで照合用の文字列を
+/// 比べる。両辺は製品の経路そのもの——パス側は `normalize_entry_key` →
+/// [`crate::query::compose_for_path_match`]、クエリ側は `prepare_query_plan` の `path_query`——を通す。
+/// NFD と NFC が同じ列は比べない。比べた件数が `min_compared` に届かなければ、母集団の作り方の誤りとして落とす。
+fn assert_sides_agree(inputs: impl Iterator<Item = String> + Send, min_compared: usize) {
+    use crate::indexer::normalize_entry_key;
+    use crate::search::query_plan::prepare_query_plan;
+    use rayon::iter::{ParallelBridge, ParallelIterator};
+    let nfd = icu_normalizer::DecomposingNormalizerBorrowed::new_nfd();
+    let nfc = icu_normalizer::ComposingNormalizerBorrowed::new_nfc();
+    let options = SearchOptions::default();
+    let path_side = |s: &str| {
+        let key = normalize_entry_key(&format!("\\{s}"));
+        let mut buf = String::new();
+        crate::query::compose_for_path_match(&mut buf, &key).to_owned()
+    };
+    let query_side = |s: &str| {
+        prepare_query_plan(&format!("\\{s}"), SearchMode::Substring, &options)
+            .and_then(|p| p.path_query)
+            .expect("区切りを含むクエリは path_query を持つ")
+    };
+    let results: Vec<Vec<String>> = inputs
+        .par_bridge()
+        .filter_map(|s| {
+            let d = nfd.normalize(&s);
+            let composed = nfc.normalize(&s);
+            if d == composed {
+                return None;
+            }
+            let failures = [
+                (d.as_ref(), composed.as_ref()),
+                (composed.as_ref(), d.as_ref()),
+            ]
+            .into_iter()
+            .filter_map(|(path, query)| {
+                let (p, q) = (path_side(path), query_side(query));
+                (p != q).then(|| format!("{s:?}: パス {path:?} → {p:?} / クエリ {query:?} → {q:?}"))
+            })
+            .collect();
+            Some(failures)
+        })
+        .collect();
+    assert!(
+        results.len() >= min_compared,
+        "母集団が {} 件しかない",
+        results.len()
+    );
+    let mut failures: Vec<String> = results.into_iter().flatten().collect();
+    failures.sort_unstable();
+    assert!(
+        failures.is_empty(),
+        "{} 件: {:?}",
+        failures.len(),
+        &failures[..failures.len().min(10)]
+    );
+}

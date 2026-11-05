@@ -39,7 +39,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 ### `normalize_entry_key` の冪等性契約
 
 - `indexer::normalize_entry_key` は**冪等**である（規則の定義は `indexer/keys.rs` の `//!` と `normalize_entry_key_into`、検知器は `migrate_normalize_keys_is_idempotent`）。依存するモジュールは `git grep normalize_entry_key` で数える
-- **記録側と照合側は同じ関数を通す。別実装を足さない。** 1 バイトずれても結果は黙ってずれる（ブーストやスコアだけが消える）。パスキーは `normalize_entry_key_into`（末尾セグメント版 `normalize_file_name_key_into` も含む）、照合用の名前とクエリは `query::normalize_for_match`、派生文字列の共有判定は `query::measure_derived_sharing` を通す。照合側の `search/path_store.rs` だけは、性能のためにパスキーの規則を再実装している（一致は `search/tests/path.rs` の `path_store_cursor_matches_*` の 2 本が守る）。パスキーの規則を変えたら、`search/path_store.rs` と `tests/path_query_cost.rs` の写しも直す。クエリ側の `path_query`（`search/query_plan.rs`）は照合用の名前とも別の正規化である
+- **記録側と照合側は同じ関数を通す。別実装を足さない。** 1 バイトずれても結果は黙ってずれる（ブーストやスコアだけが消える）。パスキーは `normalize_entry_key_into`（末尾セグメント版 `normalize_file_name_key_into` も含む）、照合用の名前とクエリは `query::normalize_for_match`、派生文字列の共有判定は `query::measure_derived_sharing` を通す。照合側の `search/path_store.rs` だけは、性能のためにパスキーの規則を再実装している（一致は `search/tests/path.rs` の `path_store_cursor_matches_*` の 2 本が守る）。パスキーの規則を変えたら、`search/path_store.rs` と `tests/path_query_cost.rs` の写しも直す。クエリ側の `path_query`（`search/query_plan.rs`）は照合用の名前とも別の正規化である。パスマッチの照合用の合成（NFC）だけは、パス側とクエリ側が `query::compose_for_path_match` を通す（識別用のパスキーには当てない）
 - 規則を変えるときは、依存するモジュールすべてと冪等性を確かめる
 
 ### `char_bitmask` は `query.rs` に一元化済み

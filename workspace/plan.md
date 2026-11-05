@@ -90,29 +90,29 @@
 
 ### Phase 0 — ベースライン
 
-- [ ] 一時的な非 ASCII のベンチを足し、実装前の値を 3 回測って記録する
+- [x] 一時的な非 ASCII のベンチを足し、実装前の値を 3 回測って記録する — `temp_bench_non_ascii_path_query`（300,000 件・全キー非 ASCII・0.1% NFD）: 8101 / 7753 / 8190 µs（中央値 8101 µs）
 
 ### Phase 1 — 仕様
 
-- [ ] `SPEC.md` §4.1・§4.2 を直す
+- [x] `SPEC.md` §4.1・§4.2 を直す
 
 ### Phase 2 — Red
 
-- [ ] 全コードポイントの検知器と 2 字の列の検知器を書く
-- [ ] `search/tests/path.rs` に AC1〜AC4 のテストを書き、AC1・AC2・AC3 が Red であることを確かめる
+- [x] 全コードポイントの検知器と 2 字の列の検知器を書く
+- [x] `search/tests/path.rs` に AC1〜AC4 のテストを書き、AC1・AC2・AC3 が Red であることを確かめる
 
 ### Phase 3 — Green
 
-- [ ] `query.rs` に `compose_for_path_match` を足す
-- [ ] `query_plan.rs` の `path_query` に当てる
-- [ ] `scoring.rs` のパスマッチの直前に当てる（新しい thread_local のバッファ）
-- [ ] 確保のテスト（AC6）を足す
+- [x] `query.rs` に `compose_for_path_match` を足す
+- [x] `query_plan.rs` の `path_query` に当てる
+- [x] `scoring.rs` のパスマッチの直前に当てる（新しい thread_local のバッファ）
+- [x] 確保のテスト（AC6）を足す
 
 ### Phase 4 — 検証と文書
 
-- [ ] 性能を実装後に 2 面とも測り、ベースラインと比べる（AC7）。値を `PERFORMANCE.md` へ書く
-- [ ] 一時的な非 ASCII のベンチを消す
-- [ ] コメント（`query_plan.rs`・`scoring.rs`・`path_store.rs` の `//!`）と `snotra-core/CLAUDE.md`・`docs/architecture.md` を直す
+- [x] 性能を実装後に 2 面とも測り、ベースラインと比べる（AC7）。値を `PERFORMANCE.md` へ書く
+- [x] 一時的な非 ASCII のベンチを消す
+- [x] コメント（`query_plan.rs`・`scoring.rs`・`path_store.rs` の `//!`）と `snotra-core/CLAUDE.md`・`docs/architecture.md` を直す
 - [ ] 変更後の検証チェックリストの該当カテゴリと `governance:check` を通す
 
 ## 未確定（実装前に潰す）

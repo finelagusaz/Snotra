@@ -698,6 +698,22 @@ fn path_match_composes_the_path_even_for_an_ascii_query() {
     assert_eq!(results.len(), 1);
 }
 
+/// **パスマッチの合成は NFC であり、互換分解（NFKC）はしない**（`SPEC.md`「4.1 検索方式」・#1394）。
+/// 合字 `ﬁ`（U+FB01）と全角英字は互換分解で ASCII になるが、パスマッチでは別の字のままである。
+/// 両辺が同じ関数を通る `assert_sides_agree` は、両方が NFKC になっても一致したままなので、ここで別に固定する。
+#[test]
+fn path_match_does_not_apply_compatibility_decomposition() {
+    let entries = vec![
+        make_entry("app", "C:\\\u{fb01}le\\app.exe"),
+        make_entry("other", "C:\\ｇａｍｅ\\other.exe"),
+    ];
+    let mut engine = SearchEngine::new(entries);
+    for q in ["file\\", "game\\"] {
+        let results = engine.search(q, 8, &empty_history(), SearchMode::Substring);
+        assert!(results.is_empty(), "{q:?}: {results:?}");
+    }
+}
+
 /// **パスとクエリは、正準等価（NFC と NFD）なら同じ照合用の文字列になる**（#1394）。canonical 分解を
 /// 持つ全コードポイントについて、片方を NFD・もう片方を NFC で与え、両向きで比べる（両辺の作り方は
 /// `assert_sides_agree`）。小文字化と合成の順序が正準等価を壊す字が現れると、ここが落ちる。

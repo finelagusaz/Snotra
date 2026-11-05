@@ -524,10 +524,16 @@ impl SearchEngine {
             let score = score.or_else(|| {
                 // 照合は検索 1 回に 1 度だけ作った照合器で行う（`QueryPlan::path_finder`）。
                 plan.path_finder.as_ref().and_then(|pq| {
-                    let pos = PATH_MATCH_BUF.with(|cell| {
-                        let mut buf = cell.borrow_mut();
-                        pq.find(compose_for_path_match(&mut buf, key).as_bytes())
-                    })?;
+                    // ASCII のキー（実運用の大半）はバッファに触れない。判定はキー自身で行う
+                    // （クエリ側で決めない理由は `compose_for_path_match` の doc）。
+                    let pos = if key.is_ascii() {
+                        pq.find(key.as_bytes())
+                    } else {
+                        PATH_MATCH_BUF.with(|cell| {
+                            let mut buf = cell.borrow_mut();
+                            pq.find(compose_for_path_match(&mut buf, key).as_bytes())
+                        })
+                    }?;
                     Some(
                         (score_tier::PATH_BASE - (pos as i64).min(score_tier::PATH_POS_CAP)).max(1),
                     )

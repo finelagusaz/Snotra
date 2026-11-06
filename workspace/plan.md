@@ -180,13 +180,15 @@
 - [x] `git grep` で「単一インスタンスの制御には影響しない」「同時起動はできない」「Alt+Q」の写しを数え、分離プロファイルに関する記述を直す
 
 ### Phase 6 — 検証
-- [ ] `docs/build-commands.md`「変更後の検証チェックリスト」の該当カテゴリ（cargo test / clippy / fmt / Pester / governance:check）
-- [ ] 実機スモーク A: 実機の Snotra を動かしたまま、`SNOTRA_CONFIG_DIR` を temp へ向けて `snotra.exe` を起動し、2 プロセスが並ぶこと・実機の PID が変わらないことを測る
-- [ ] 実機スモーク B: 同じ temp を別の綴り（`/` 区切り・大文字）で 2 回目に起動し、1 回目へ転送されて終わること（プロセス数が増えない）
-- [ ] 実機スモーク A2: 実機（`Alt+Q`）を動かしたまま、空の `SNOTRA_CONFIG_DIR` で起動し、生成された `config.toml` のホットキーが `Alt+F12` であること・登録失敗の通知が出ないこと
-- [ ] 実機スモーク C: 分離プロファイルの設定アプリでスタートアップのチェックボックスが無効であること。前後で `HKCU\...\Run\Snotra` の値が変わらないこと
-- [ ] 実機スモーク D: 実機を動かしたまま `scripts/smoke-egui.ps1` と `scripts/smoke-startup.ps1` を回し、緑であること・実機の PID が変わらないこと
-- [ ] cargo テストの前後で実 `%APPDATA%\Snotra` の mtime と Run の値が変わらないこと。加えて空のディレクトリを `SNOTRA_CONFIG_DIR` にして既定の `cargo test --workspace` を回し、そのディレクトリに何も作られないこと（research A3 の再現手順で、変更前に 1 本作られることを先に確かめる）
+- [x] 計画外: `snotra-core/tests/path_query_cost.rs` の `load_real_index` を読むだけにする（上の空プロファイルの検査で見つけた。非 ignore のテストが `Config::load()` を通っていた）
+- [x] `docs/build-commands.md`「変更後の検証チェックリスト」の該当カテゴリ（cargo test / clippy / fmt / Pester / governance:check）— 主ツリーで手回しは緑（core 686・src-tauri 318・settings 60・Pester 対象 10・governance 17 件）。権威ある一式は Step 3 の verify:tree
+- [x] 実機スモーク A（2026-11-07 実測: 実機 PID 29400 = C:/toolbox/Snotra/snotra.exe の横で target/debug/snotra.exe が PID 28540 として常駐。実機の PID は不変）: 実機の Snotra を動かしたまま、`SNOTRA_CONFIG_DIR` を temp へ向けて `snotra.exe` を起動し、2 プロセスが並ぶこと・実機の PID が変わらないことを測る
+- [x] 実機スモーク B（実測: 大文字化・`/` 区切り・末尾 `/` の綴りで 2 回目を起動 → exit 0 で終了し、snotra プロセスは 2 のまま）: 同じ temp を別の綴り（`/` 区切り・大文字）で 2 回目に起動し、1 回目へ転送されて終わること（プロセス数が増えない）
+- [x] 実機スモーク A2（実測: 生成された config.toml は modifier="Alt"・key="F12"、trace の hotkey:registered は ok=true・vks=[18,123]）: 実機（`Alt+Q`）を動かしたまま、空の `SNOTRA_CONFIG_DIR` で起動し、生成された `config.toml` のホットキーが `Alt+F12` であること・登録失敗の通知が出ないこと
+- [x] 実機スモーク C（実測: 設定アプリの窓を撮影し、チェックボックスが灰色の無効・説明文あり・ホットキー欄 Alt + F12 を目視。Run 値は前後とも "C:/toolbox/Snotra/snotra.exe" の形で不変。設定アプリは AccessKit を UI Automation へ出しておらず、UIA では取れなかった）: 分離プロファイルの設定アプリでスタートアップのチェックボックスが無効であること。前後で `HKCU\...\Run\Snotra` の値が変わらないこと
+- [x] 実機スモーク D（実測: 実機稼働中に smoke-startup 5 回 passed・smoke-egui passed（注入 VK 18,123）。実機の PID は前後とも 29400）: 実機を動かしたまま `scripts/smoke-egui.ps1` と `scripts/smoke-startup.ps1` を回し、緑であること・実機の PID が変わらないこと
+- [x] cargo テストの前後で実 `%APPDATA%\Snotra` の mtime と Run の値が変わらないこと。加えて空のディレクトリを `SNOTRA_CONFIG_DIR` にして既定の `cargo test --workspace` を回し、そのディレクトリに何も作られないこと（research A3 の再現手順で、変更前に 1 本作られることを先に確かめる）
+  - 実測: 変更前は 3b の枠が空の SNOTRA_CONFIG_DIR で config.toml 1 本の生成を確認済み。変更後の初回は**まだ 1 本作られた**——crate ごと・統合テストごとに二分して、非 ignore の `snotra-core/tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key` → `load_real_index` → `Config::load()` と特定した（計画は「`tests/` は `#[ignore]` の計測コード」と見ていたが、このテストは既定のスイートで走る）。読むだけに直した後は 0 件。実 %APPDATA%/Snotra の 12 エントリの名前・サイズ・mtime と Run 値は既定のスイートの前後で不変
 
 変異注入は `/implement`「3b. 委譲へ渡すもの」の委譲先が行う。候補: 実プロファイルの比較を外す／`absolute` を外す／`to_lowercase` を外す／autostart のガードを外す／identifier の差し替えを外す／`-BuildRoot` の絞り込みを外す。
 

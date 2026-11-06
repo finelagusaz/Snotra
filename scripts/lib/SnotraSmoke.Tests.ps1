@@ -91,6 +91,15 @@ include_folders = false
         [IO.Path]::IsPathRooted($created.FullPath) | Should -BeTrue
     }
 
+    It '既定ホットキーは実機の既定 Alt+Q と違う Alt+F12 にする（実機と並走しても登録が衝突しない・#1306）' {
+        # 値の正本は snotra-core/src/hotkey.rs の ISOLATED_PROFILE_HOTKEY_*（分離プロファイルの既定）。
+        $created = New-SnotraVerificationProfile -ProfileDir (Join-Path $TestDrive 'hotkey-default')
+
+        $toml = Get-Content -Raw $created.ConfigPath
+        $toml | Should -Match '(?m)^modifier = "Alt"\r?$'
+        $toml | Should -Match '(?m)^key = "F12"\r?$'
+    }
+
     It 'auto_update を既定で disabled にする（省略すると実ネットワークの更新チェックが走る・#755/#801 是正）' {
         # GeneralConfig.auto_update の既定は Full（snotra-core/src/config.rs の #[default]）。
         # 検証用プロファイルがこれを踏まないことをここで固定する。
@@ -580,6 +589,52 @@ Describe 'Resolve-SnotraExistingProcess' {
         Resolve-SnotraExistingProcess -Policy Stop
 
         Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -ParameterFilter { $Id -eq 123 -and $Force }
+    }
+
+    # -BuildRoot（#1306）: 落とすのはビルド成果物の配下から起動した残留だけで、実機は落とさない。
+    Context '-BuildRoot で絞る' {
+        BeforeAll {
+            function New-FakeProcessAt {
+                param([int]$Id, [AllowNull()][string]$Path)
+                $fake = New-FakeProcess -Id $Id
+                $fake | Add-Member -MemberType NoteProperty -Name Path -Value $Path
+                return $fake
+            }
+        }
+
+        It '配下の残留だけを落とし、実機・区切りの無い兄弟ディレクトリは落とさない' {
+            $inside = New-FakeProcessAt -Id 1 -Path 'C:\repo\target\debug\snotra.exe'
+            $otherBuild = New-FakeProcessAt -Id 2 -Path 'C:\Repo\TARGET\release\snotra.exe'
+            $installed = New-FakeProcessAt -Id 3 -Path 'C:\toolbox\Snotra\snotra.exe'
+            $sibling = New-FakeProcessAt -Id 4 -Path 'C:\repo\target2\debug\snotra.exe'
+            Mock -ModuleName SnotraSmoke Get-Process { @($inside, $otherBuild, $installed, $sibling) }.GetNewClosure()
+            Mock -ModuleName SnotraSmoke Stop-Process {}
+
+            Resolve-SnotraExistingProcess -Policy Stop -BuildRoot 'C:\repo\target'
+
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 2 -Exactly
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 1 }
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 2 }
+        }
+
+        It '実行ファイルを読めないプロセスは候補に残し、警告する（黙って外すと後発が沈黙する）' {
+            $unreadable = New-FakeProcessAt -Id 5 -Path $null
+            Mock -ModuleName SnotraSmoke Get-Process { @($unreadable) }.GetNewClosure()
+            Mock -ModuleName SnotraSmoke Stop-Process {}
+            Mock -ModuleName SnotraSmoke Write-Warning {}
+
+            Resolve-SnotraExistingProcess -Policy Stop -BuildRoot 'C:\repo\target'
+
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 5 }
+            Should -Invoke -ModuleName SnotraSmoke Write-Warning -ParameterFilter { $Message -like '*pid=5*読めません*' }
+        }
+
+        It 'Reject でも、配下に残留が無ければ実機が動いていても拒まない' {
+            $installed = New-FakeProcessAt -Id 3 -Path 'C:\toolbox\Snotra\snotra.exe'
+            Mock -ModuleName SnotraSmoke Get-Process { @($installed) }.GetNewClosure()
+
+            { Resolve-SnotraExistingProcess -Policy Reject -BuildRoot 'C:\repo\target' } | Should -Not -Throw
+        }
     }
 }
 

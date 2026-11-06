@@ -88,8 +88,11 @@ if ($backgroundKey -eq 0x282828) {
     throw "-Color に $Color は渡せません。snotra-egui-runtime の CLEAR_COLOR と同値のため、色が届かなくても同じ色が出ます（この検査が偽緑を返します）。"
 }
 
-# **単一インスタンス衝突は沈黙する**ため、この検査は kill でなく Reject を選ぶ。
-Resolve-SnotraExistingProcess -Policy Reject
+# **単一インスタンス衝突は沈黙する**ため、この検査は kill でなく Reject を選ぶ。拒むのは、
+# このリポジトリのビルド成果物から起動した残留だけである。検証用プロファイルは分離プロファイルで、
+# 実機の Snotra とは単一インスタンスが別なので、実機が動いていても衝突しない（#1306）。
+Resolve-SnotraExistingProcess -Policy Reject `
+    -BuildRoot (Resolve-SnotraCargoTargetDirectory -RepositoryRoot (Resolve-Path (Join-Path $PSScriptRoot '..')).Path)
 
 # --- 検証用プロファイルを作り直す ---
 Remove-Item -Path $stderrLog -Force -ErrorAction SilentlyContinue
@@ -228,7 +231,7 @@ if ($Interactive) {
     Write-Host '目視する 4 点:'
     Write-Host "  1. メインウィンドウの定常の背景が $Color である"
     Write-Host '     → 暗いままなら clear color が届いていない（runtime の CLEAR_COLOR が出ている）'
-    Write-Host '  2. ホットキー（Alt+Q）で出した瞬間も同色である'
+    Write-Host '  2. ホットキー（検証用プロファイルの既定は Alt+F12）で出した瞬間も同色である'
     Write-Host '     → 別の色が一瞬見えてから変わるなら、下地（ネイティブ背景ブラシ）がずれている'
     Write-Host '  3. 結果リストウィンドウ（何か入力して出す）の背景も同色である'
     Write-Host '     → main だけ変わって results が暗いなら、results の経路が届いていない'

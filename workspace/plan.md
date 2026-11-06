@@ -166,18 +166,18 @@
 - [x] kittest で分離プロファイルのとき無効表示になることを固定（既存の `en_harness` の形）
 
 ### Phase 4 — scripts
-- [ ] seed の既定ホットキー・`occupy-hotkey.ps1` の写像・`smoke-egui.ps1` の `-HotkeyVks` 既定とコメント
-- [ ] `Resolve-SnotraCargoTargetDirectory` の括り出し・`Resolve-SnotraExistingProcess -BuildRoot` と 4 か所の呼び出し
-- [ ] `Wait-SnotraWindow` の PID 探索と `FindWindowExW`
-- [ ] Pester の追加
+- [x] seed の既定ホットキー・`occupy-hotkey.ps1` の写像・`smoke-egui.ps1` の `-HotkeyVks` 既定とコメント
+- [x] `Resolve-SnotraCargoTargetDirectory` の括り出し・`Resolve-SnotraExistingProcess -BuildRoot` と 4 か所の呼び出し
+- [x] `Wait-SnotraWindow` の PID 探索と `FindWindowExW`
+- [x] Pester の追加
 
 ### Phase 5 — 文書
-- [ ] SPEC §13（分離プロファイルの定義・単一インスタンス・既定ホットキー `Alt+F12` と、`Alt+Q` へ戻る経路の残余）・§7.7（分離プロファイルでは変更できない）。§7.5 の「既定ホットキー（`Alt+Q`）へ自動修復」は分離プロファイルでも `Alt+Q` のままなので文言は変えず、§13 から参照する
-- [ ] `load_from_dir_reporting` の既存の呼び出し（`config/io/tests.rs` ほか）を新しい引数へ移す（コンパイルで漏れが出る）
-- [ ] `docs/build-commands.md`（env ハッチ節・smoke のプロファイル節・残余）
-- [ ] `docs/glossary.md` に「分離プロファイル」
-- [ ] `location.rs` の `//!` に、保存先の導出に加えてプロファイル鍵の導出を持つことを足す（`src-tauri/src/startup.rs` の「二重起動は終端を出さない」は、同じプロファイルの 2 回目の起動について変更後も真なので触らない）
-- [ ] `git grep` で「単一インスタンスの制御には影響しない」「同時起動はできない」「Alt+Q」の写しを数え、分離プロファイルに関する記述を直す
+- [x] SPEC §13（分離プロファイルの定義・単一インスタンス・既定ホットキー `Alt+F12` と、`Alt+Q` へ戻る経路の残余）・§7.7（分離プロファイルでは変更できない）。§7.5 の「既定ホットキー（`Alt+Q`）へ自動修復」は分離プロファイルでも `Alt+Q` のままなので文言は変えず、§13 から参照する
+- [x] `load_from_dir_reporting` の既存の呼び出し（`config/io/tests.rs` ほか）を新しい引数へ移す（コンパイルで漏れが出る）
+- [x] `docs/build-commands.md`（env ハッチ節・smoke のプロファイル節・残余）
+- [x] `docs/glossary.md` に「分離プロファイル」
+- [x] `location.rs` の `//!` に、保存先の導出に加えてプロファイル鍵の導出を持つことを足す（`src-tauri/src/startup.rs` の「二重起動は終端を出さない」は、同じプロファイルの 2 回目の起動について変更後も真なので触らない）
+- [x] `git grep` で「単一インスタンスの制御には影響しない」「同時起動はできない」「Alt+Q」の写しを数え、分離プロファイルに関する記述を直す
 
 ### Phase 6 — 検証
 - [ ] `docs/build-commands.md`「変更後の検証チェックリスト」の該当カテゴリ（cargo test / clippy / fmt / Pester / governance:check）

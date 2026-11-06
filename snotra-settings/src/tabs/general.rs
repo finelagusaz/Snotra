@@ -168,7 +168,7 @@ pub fn ui(
 
         if state.isolated_profile {
             // 分離プロファイルでは読みも書きもしない（`SPEC.md` §7.7）。チェックの状態は
-            // 実機の登録を表さないので、空のまま無効で見せ、理由を添える。
+            // 普段使いの Snotra の登録を表さないので、空のまま無効で見せ、理由を添える。
             let mut unchecked = false;
             ui.add_enabled(
                 false,

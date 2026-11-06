@@ -59,8 +59,8 @@ impl Config {
     /// - read 失敗 (その他: permission/lock 等): 退避も上書きもせず default → `ReadFailed`
     ///
     /// ここでいう default は**呼び出し側が組んで渡す `defaults`** である（分離プロファイルでは
-    /// ホットキーが違う）。既定値を返す 4 つの腕はすべて `defaults` を使う——腕ごとに食い違うと、
-    /// 壊れた config から復旧するときだけ実機と同じホットキーになり、並走する実機と衝突する。
+    /// ホットキーが違う）。既定値を返す腕はすべて `defaults` を使う——腕ごとに食い違うと、
+    /// 壊れた config から復旧するときだけ普段使いの Snotra と同じホットキーになり、並走する普段使いの Snotra と衝突する。
     fn load_from_dir_reporting(dir: &Path, defaults: Self) -> (Self, LoadOutcome) {
         let path = dir.join("config.toml");
         match fs::read_to_string(&path) {

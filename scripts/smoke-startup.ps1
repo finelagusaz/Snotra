@@ -33,7 +33,7 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
 }
 $ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は上の doc）
 Write-Host "本体: $ExePath"
-# 残留として落とすのは、このリポジトリのビルド成果物から起動したものだけ（実機は落とさない・#1306）。
+# 残留として落とすのは、このリポジトリのビルド成果物から起動したものだけ（普段使いの Snotra は落とさない・#1306）。
 $buildRoot = Resolve-SnotraCargoTargetDirectory -RepositoryRoot $repoRoot
 
 # Two-window architecture (main + results, #646 PR2): startup smoke only exercises

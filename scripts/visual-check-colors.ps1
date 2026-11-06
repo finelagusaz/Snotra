@@ -90,7 +90,7 @@ if ($backgroundKey -eq 0x282828) {
 
 # **単一インスタンス衝突は沈黙する**ため、この検査は kill でなく Reject を選ぶ。拒むのは、
 # このリポジトリのビルド成果物から起動した残留だけである。検証用プロファイルは分離プロファイルで、
-# 実機の Snotra とは単一インスタンスが別なので、実機が動いていても衝突しない（#1306）。
+# 普段使いの Snotra とは単一インスタンスが別なので、普段使いの Snotra が動いていても衝突しない（#1306）。
 Resolve-SnotraExistingProcess -Policy Reject `
     -BuildRoot (Resolve-SnotraCargoTargetDirectory -RepositoryRoot (Resolve-Path (Join-Path $PSScriptRoot '..')).Path)
 

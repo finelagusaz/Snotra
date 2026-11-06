@@ -60,14 +60,14 @@ pub enum AutostartError {
     Registry(u32),
     /// 分離プロファイル（[`crate::config::Config::isolated_profile_key`]）で起動しているので、
     /// 書き換えなかった。`Run` 値はコマンドラインしか持てず env を運べないので、ここから登録した
-    /// 値はサインイン時に実プロファイルで起動し、しかも実機の登録を上書きする（`SPEC.md` §7.7）。
+    /// 値はサインイン時に実プロファイルで起動し、しかも普段使いの Snotra の登録を上書きする（`SPEC.md` §7.7）。
     IsolatedProfile,
 }
 
 /// 分離プロファイルなら `write` を呼ばずに [`AutostartError::IsolatedProfile`] を返す。
 ///
 /// [`enable`] / [`disable`] の書き込みの入口で塞ぐのは、呼び出し側（設定アプリ）が UI の
-/// 分岐を忘れても実機の登録を上書きしないためである。
+/// 分岐を忘れても普段使いの Snotra の登録を上書きしないためである。
 fn unless_isolated(
     isolated_profile: bool,
     write: impl FnOnce() -> Result<(), AutostartError>,
@@ -223,7 +223,7 @@ fn write_enabled() -> Result<(), AutostartError> {
 /// 冪等にするのは、チェックボックスを外す操作が「値を消す」ではなく「登録されていない状態にする」
 /// を意味するためである。外から先に消されていても利用者には成功として見えるべきである。
 ///
-/// 分離プロファイルでは消さない（[`AutostartError::IsolatedProfile`]）。消すと実機の登録が消える。
+/// 分離プロファイルでは消さない（[`AutostartError::IsolatedProfile`]）。消すと普段使いの Snotra の登録が消える。
 pub fn disable() -> Result<(), AutostartError> {
     unless_isolated(is_isolated_profile(), write_disabled)
 }

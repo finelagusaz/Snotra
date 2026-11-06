@@ -148,8 +148,8 @@ function Get-LetterVk {
 # `Start-Sleep -Milliseconds 300` は、待たない `Stop-Process -Force` に対する事実上の待ちで
 # あり（#853 以前からの逐語の持ち越し）、関数の内側に本物の待ちが入った今は説明のつかない
 # 固定遅延として残るだけなので消した。
-# 落とすのはこのリポジトリのビルド成果物の残留だけで、実機の Snotra は落とさない（#1306）。
-# 検証用プロファイルは分離プロファイルなので、実機とは単一インスタンスが別である。
+# 落とすのはこのリポジトリのビルド成果物の残留だけで、普段使いの Snotra は落とさない（#1306）。
+# 検証用プロファイルは分離プロファイルなので、普段使いの Snotra とは単一インスタンスが別である。
 Resolve-SnotraExistingProcess -Policy Stop -BuildRoot (Resolve-SnotraCargoTargetDirectory -RepositoryRoot $repoRoot)
 
 $webviewBefore = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count

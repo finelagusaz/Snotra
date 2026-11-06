@@ -40,7 +40,10 @@ fn is_drive_root(path: &str) -> bool {
     b.len() == 3 && b[1] == b':' && b[2] == b'\\'
 }
 
-// `pub(crate)`: opener ターゲットのパス正規化（`opener.rs::normalize_opener_target`）が共有する。
+// `pub(crate)`: opener ターゲットのパス正規化（`opener.rs::normalize_opener_target`）と、
+// 分離プロファイルの同一性の鍵（`config/location.rs` の `profile_identity`）が共有する。
+// 規則を広げる（Unicode の合成など）と、ファイルシステム上は別のディレクトリが同じプロファイルとして
+// 扱われうる——2 つ目の起動は 1 つ目へ転送されて黙って終わる。広げるなら、あちらを切り離すか確かめる。
 pub(crate) fn normalize_scan_path_key(path: &str) -> String {
     let mut key = path.trim().replace('/', "\\").to_lowercase();
     if key.ends_with('\\') && !is_drive_root(&key) {

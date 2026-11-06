@@ -78,8 +78,8 @@ impl Config {
     /// - **保存先の契約（そのまま使う）は変えず、鍵の導出だけを正規化する。** 同じディレクトリを
     ///   別の綴りで指した 2 プロセスは同じ鍵になり、排他のまま保たれる。実プロファイルを別の
     ///   綴りで指す上書きは `None` になる。
-    /// - `base` を導けない環境でも、上書きがあれば分離する。分離しない側へ倒すと、検証の起動が
-    ///   実機へ転送されて黙って終わる。
+    /// - `base` を導けない環境でも、上書きがあれば分離する。ここで `None` を返すと、検証の起動が
+    ///   普段使いの Snotra へ転送されて黙って終わる。
     fn isolated_profile_key_from(
         override_dir: Option<OsString>,
         base: Option<PathBuf>,
@@ -106,8 +106,11 @@ fn effective_override(override_dir: Option<OsString>) -> Option<OsString> {
 }
 
 /// 同じディレクトリかを比べるための鍵。CWD 起点で絶対化し（存在を要求しない）、
-/// スキャンパスと同じ規則で正規化する。絶対化に失敗したら綴りのまま正規化する
-/// （`None` へ落とすと分離しない側へ倒れる）。
+/// スキャンパスと同じ規則で正規化する。絶対化に失敗しても鍵を作る（作らずに `None` を返すと、
+/// 分離プロファイルなのに分離されない）。
+///
+/// 大文字小文字の同一視は `to_lowercase` で、NTFS の大文字化表とは一致しない（`ß` など）。
+/// その差で別の鍵になるディレクトリ名は、別のプロファイルとして扱う（`SPEC.md` §13）。
 fn profile_identity(path: &Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     normalize_scan_path_key(&absolute.to_string_lossy())

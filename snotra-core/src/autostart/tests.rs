@@ -81,7 +81,7 @@ fn main_exe_from_bare_file_name_is_none() {
     assert_eq!(main_exe_from(Path::new("snotra-settings.exe")), None);
 }
 
-// 不変条件: 分離プロファイルでは書き込みを呼ばない（呼ぶと実機の登録を上書き・削除する）。
+// 不変条件: 分離プロファイルでは書き込みを呼ばない（呼ぶと普段使いの Snotra の登録を上書き・削除する）。
 #[test]
 fn unless_isolated_does_not_write_in_isolated_profile() {
     let got = unless_isolated(true, || panic!("分離プロファイルでレジストリへ書いた"));

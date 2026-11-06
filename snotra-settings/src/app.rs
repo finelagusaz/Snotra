@@ -694,7 +694,7 @@ pub fn run(
             apply_win11_theme(&cc.egui_ctx);
             style::apply_type_ramp(&cc.egui_ctx, heading_semibold);
             // **実レジストリと分離プロファイルを観測する唯一の地点。** `SettingsApp::new` の doc を見よ。
-            // 分離プロファイルではレジストリを読まない（実機の登録は表示の対象ではない・SPEC.md §7.7）。
+            // 分離プロファイルではレジストリを読まない（普段使いの Snotra の登録は表示の対象ではない・SPEC.md §7.7）。
             let startup = if Config::isolated_profile_key().is_some() {
                 tabs::general::StartupObservation::IsolatedProfile
             } else {

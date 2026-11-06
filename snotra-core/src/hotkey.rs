@@ -29,8 +29,8 @@ fn default_hotkey_key() -> String {
 /// 分離プロファイルの既定ホットキーの修飾（`SPEC.md` §13）。
 const ISOLATED_PROFILE_HOTKEY_MODIFIER: &str = "Alt";
 
-/// 分離プロファイルの既定ホットキーのメインキー。修飾を実機の既定と同じ `Alt` 単独に保ち、
-/// キーだけを変える（`Alt` を離す扱いが実機と同じ形で通る）。修飾なしの `F12` はデバッガ予約で
+/// 分離プロファイルの既定ホットキーのメインキー。修飾を実プロファイルの既定と同じ `Alt` 単独に保ち、
+/// キーだけを変える（`Alt` を離す扱いが普段使いの Snotra と同じ形で通る）。修飾なしの `F12` はデバッガ予約で
 /// 登録できないが、`Alt` 付きなら登録できる（2026-11-07 実測）。
 /// `scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile` の既定はこれの写しである。
 const ISOLATED_PROFILE_HOTKEY_KEY: &str = "F12";
@@ -50,7 +50,7 @@ impl Default for HotkeyConfig {
 
 impl HotkeyConfig {
     /// 分離プロファイル（`crate::config::Config::isolated_profile_key`）が既定値の config を
-    /// 使うときのホットキー。実機の既定と違うキーにして、並走する実機との衝突を避ける。
+    /// 使うときのホットキー。実プロファイルの既定と違うキーにして、並走する普段使いの Snotra との衝突を避ける。
     pub fn isolated_profile_default() -> Self {
         Self {
             modifier: ISOLATED_PROFILE_HOTKEY_MODIFIER.to_string(),
@@ -476,7 +476,7 @@ mod tests {
     /// `alt_only && key == Home` を足しても本モジュールのテストは全数緑・#1008）。見ているのは
     /// **判定が意味解析の後に走ること**（alias・重複・大小文字の揺れを吸収した形で当たること）で
     /// あって、**予約ショートカット一覧の網羅ではない。**
-    /// 分離プロファイルの既定は実機の既定と違い、意味 parser を通り、システムショートカットにも
+    /// 分離プロファイルの既定は実プロファイルの既定と違い、意味 parser を通り、システムショートカットにも
     /// Win 修飾にも当たらない（当たると起動のたびに既定値が自動修復で `Alt+Q` へ戻る）。
     #[test]
     fn isolated_profile_default_is_valid_and_differs_from_the_real_default() {

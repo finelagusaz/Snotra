@@ -243,7 +243,7 @@ fn main() {
     // 宣言ウィンドウなし（tauri.conf.json の windows は空・#532 SU7 flip）。メインウィンドウは
     // setup フェーズで egui_shell::create が生成する。
     let mut app_context = tauri::generate_context!();
-    // 分離プロファイルでは、単一インスタンス制御を実機と分ける（SPEC.md §13・#1306）。
+    // 分離プロファイルでは、単一インスタンス制御を普段使いの Snotra と分ける（SPEC.md §13・#1306）。
     // single-instance plugin は setup で identifier から mutex 名を作るので、ここで書き換えれば
     // 足りる。鍵は 16 進だけからなる（`\` が混じると mutex が黙って排他を失う）。
     if let Some(key) = Config::isolated_profile_key() {

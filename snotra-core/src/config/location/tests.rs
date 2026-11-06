@@ -96,7 +96,7 @@ fn key(dir: &str) -> Option<String> {
     Config::isolated_profile_key_from(Some(OsString::from(dir)), roaming())
 }
 
-/// 上書きが無い・空文字なら分離プロファイルではない（実機と同じ単一インスタンス・自動起動）。
+/// 上書きが無い・空文字なら分離プロファイルではない（普段使いの Snotra と同じ単一インスタンス・自動起動）。
 /// 判定は `config_dir_from` の「空文字は未設定」と同じでなければならない——食い違うと、
 /// 保存先は実プロファイルなのに単一インスタンスだけが分かれ、2 プロセスが同じファイルを書く。
 #[test]
@@ -109,7 +109,7 @@ fn isolated_profile_key_is_none_without_override() {
 }
 
 /// 上書きが実プロファイルそのものを指すなら、別の綴りでも分離しない。分離すると、
-/// 実機と並走した 2 プロセスが同じ `config.toml` / `index.bin` を書く。
+/// 普段使いの Snotra と並走した 2 プロセスが同じ `config.toml` / `index.bin` を書く。
 #[test]
 fn isolated_profile_key_is_none_when_override_spells_the_real_profile() {
     for spelling in [
@@ -170,8 +170,8 @@ fn isolated_profile_key_is_sixteen_lowercase_hex_digits() {
     );
 }
 
-/// 既定のディレクトリを導けない環境でも、上書きがあれば分離する（実機と比べられないときに
-/// 分離しない側へ倒すと、検証が実機へ転送されて黙って終わる）。
+/// 既定のディレクトリを導けない環境でも、上書きがあれば分離する（実プロファイルと比べられないときに
+/// `None` を返すと、検証が普段使いの Snotra へ転送されて黙って終わる）。
 #[test]
 fn isolated_profile_key_is_some_without_base() {
     assert!(Config::isolated_profile_key_from(Some(OsString::from(r"C:\tmp\p")), None).is_some());

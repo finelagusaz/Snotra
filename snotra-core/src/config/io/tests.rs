@@ -433,7 +433,7 @@ fn defaults_for_profile_changes_only_the_hotkey() {
     );
 }
 
-/// 初回起動は渡された既定値を保存する（実機と並走する分離プロファイルが `Alt+Q` を書かない）。
+/// 初回起動は渡された既定値を保存する（普段使いの Snotra と並走する分離プロファイルが `Alt+Q` を書かない）。
 #[test]
 fn load_from_dir_first_run_saves_the_given_defaults() {
     let dir = temp_dir("isolated_first_run");
@@ -447,7 +447,7 @@ fn load_from_dir_first_run_saves_the_given_defaults() {
 }
 
 /// 既定値を返す兄弟の腕（parse 失敗・非 UTF-8）も、渡された既定値を使う。腕ごとに食い違うと、
-/// 壊れた config からの復旧のときだけ実機と同じホットキーになる。
+/// 壊れた config からの復旧のときだけ普段使いの Snotra と同じホットキーになる。
 #[test]
 fn load_from_dir_recovery_arms_use_the_given_defaults() {
     for (tag, bytes) in [
@@ -465,6 +465,15 @@ fn load_from_dir_recovery_arms_use_the_given_defaults() {
         );
         let _ = fs::remove_dir_all(&dir);
     }
+
+    // 一時的な読み込み失敗の腕（`config.toml` をディレクトリにして read を失敗させる。
+    // `load_from_dir_transient_read_error_leaves_file_intact` と同じ代理）。
+    let dir = temp_dir("isolated_read_failed");
+    fs::create_dir(dir.join("config.toml")).unwrap();
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, isolated_defaults());
+    assert_eq!(outcome, LoadOutcome::ReadFailed);
+    assert_eq!(config.hotkey, HotkeyConfig::isolated_profile_default());
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// 読めた config は書かれた値を使う（既定値で上書きしない）。

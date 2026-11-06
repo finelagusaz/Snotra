@@ -182,6 +182,7 @@
 ### Phase 6 — 検証
 - [x] 計画外（Step 3 ラウンド 1・verify:tree 02f805f0 で赤）: `SnotraSmoke.Tests.ps1` の実機配管 2 本の `Reject` に `-BuildRoot` を渡す・`-BuildRoot` の `.Path` を try/catch で読む・使われない `FindWindowW` の宣言を消す
 - [x] Step 3 ラウンド 1: アンカー 02f805f0 / verify:tree red（test:powershell の実機配管 2 本・実機稼働中に Reject が実機を拒んだ。A・smoke 2 本・governance は緑）/ 委譲は未起動（赤を直してから起動する）
+- [x] Step 3 ラウンド 2: アンカー 1da1bc99 / verify:tree green / 委譲レビュー: High 2・Medium 3・Low 5（⚠️ 含む）/ 変異 10 本中 9 本検知（生存は main.rs の identifier）・追加 4 本は生存（5b 結線・6b ReadFailed・6c env 結線・8b run）。対処: H1 比喩を言い換え・H2「実機」を「普段使いの Snotra」へ（差分で足した 43 行）・M1 snotra-settings/CLAUDE.md の旧引数名・M2 ReadFailed の腕のテスト・M3/10 Pester 実機配管に分離プロファイル 2 本の並走と別綴りの転送と既定ホットキーの結線を足す・L1 散文の数を外す・L3 normalize_scan_path_key の共有者を明記・L4 NTFS 大文字化表との差を SPEC の残余へ。L2（UI 文言）は承認済みの文言なので据え置き。5b・8b は受容（結線を測ると実 HKCU を書く／run を通るテストが無い）
 - [x] 計画外: `snotra-core/tests/path_query_cost.rs` の `load_real_index` を読むだけにする（上の空プロファイルの検査で見つけた。非 ignore のテストが `Config::load()` を通っていた）
 - [x] `docs/build-commands.md`「変更後の検証チェックリスト」の該当カテゴリ（cargo test / clippy / fmt / Pester / governance:check）— 主ツリーで手回しは緑（core 686・src-tauri 318・settings 60・Pester 対象 10・governance 17 件）。権威ある一式は Step 3 の verify:tree
 - [x] 実機スモーク A（2026-11-07 実測: 実機 PID 29400 = C:/toolbox/Snotra/snotra.exe の横で target/debug/snotra.exe が PID 28540 として常駐。実機の PID は不変）: 実機の Snotra を動かしたまま、`SNOTRA_CONFIG_DIR` を temp へ向けて `snotra.exe` を起動し、2 プロセスが並ぶこと・実機の PID が変わらないことを測る

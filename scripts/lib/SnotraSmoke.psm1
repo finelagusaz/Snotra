@@ -227,7 +227,7 @@ function New-SnotraVerificationProfile {
         [string]$GeneralSection = '',
         [string]$PathEntries = '',
         # 既定は分離プロファイルの既定ホットキーと同じ Alt+F12（正本は `snotra-core/src/hotkey.rs` の
-        # `ISOLATED_PROFILE_HOTKEY_*`）。実機の既定 Alt+Q と違うので、実機と並走しても登録が衝突しない（#1306）。
+        # `ISOLATED_PROFILE_HOTKEY_*`）。実プロファイルの既定 Alt+Q と違うので、普段使いの Snotra と並走しても登録が衝突しない（#1306）。
         [string]$HotkeyModifier = 'Alt',
         [string]$HotkeyKey = 'F12',
         [int]$WindowWidth = 600,
@@ -568,7 +568,7 @@ function Resolve-SnotraExistingProcess {
         [string]$ProcessName = 'snotra',
         # 指定すると、実行ファイルがこのディレクトリの配下にあるプロセスだけを対象にする（#1306）。
         # 検証用プロファイル（分離プロファイル）の起動を邪魔するのは、同じプロファイルの残留だけで、
-        # それはこのリポジトリのビルド成果物から起動されている。実機（インストール先の exe）は
+        # それはこのリポジトリのビルド成果物から起動されている。普段使いの Snotra（インストール先の exe）は
         # 単一インスタンスが別なので、落としも拒みもしない。exe 1 本で絞らないのは、debug / release・
         # `-ExePath` で exe が変わっても、別ビルドの残留を拾うためである（拾い漏れると後発が
         # single-instance で黙って終わる・#872 と同型）。`-ExePath` にリポジトリ外の exe を渡すと、
@@ -965,8 +965,8 @@ function Wait-SnotraWindow {
     # **ウィンドウが現れていても一度も見ないまま**「現れませんでした」と落ちる。
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
-        # 同じタイトルの窓を順に辿り、`-Process` の窓を探す。**最初の 1 窓で止めない**——実機の
-        # Snotra と並走すると（分離プロファイル・#1306）、同じタイトルの実機の窓が先に見つかる。
+        # 同じタイトルの窓を順に辿り、`-Process` の窓を探す。**最初の 1 窓で止めない**——普段使いの
+        # Snotra と並走すると（分離プロファイル・#1306）、同じタイトルの普段使いの Snotra の窓が先に見つかる。
         $handle = [IntPtr]::Zero
         while ($true) {
             $handle = [SnotraSmokeInterop.Native]::FindWindowExW([IntPtr]::Zero, $handle, [NullString]::Value, $Title)

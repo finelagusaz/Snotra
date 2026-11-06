@@ -471,6 +471,29 @@ fn normalize_openers_returns_false_when_no_change() {
     assert!(!config.normalize_openers());
 }
 
+/// #1399 より前に保存された `config.toml` は、NFD のパス条件をそのまま持ちうる。読み込みの移行で
+/// 合成形へ 1 度だけ書き換わり（`true`）、正準等価なルールはツールごと束ねられる。2 度目は書き戻さない。
+#[test]
+fn normalize_openers_composes_and_merges_rules_saved_before_composition() {
+    let nfc = "folder:c:\\\u{30B2}\u{30FC}\u{30E0}";
+    let nfd = "folder:c:\\\u{30B1}\u{3099}\u{30FC}\u{30E0}";
+    let toml = format!(
+        "[[openers]]\ntarget = '{nfd}'\n[[openers.tools]]\nname = 'B'\nexe = 'b.exe'\n\n\
+         [[openers]]\ntarget = '{nfc}'\n[[openers.tools]]\nname = 'A'\nexe = 'a.exe'\n"
+    );
+    let mut config: Config = toml::from_str(&toml).unwrap();
+    assert!(config.apply_migrations());
+    assert_eq!(config.openers.len(), 1, "{:?}", config.openers);
+    assert_eq!(config.openers[0].target, nfc);
+    let names: Vec<&str> = config.openers[0]
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert_eq!(names, ["B", "A"]);
+    assert!(!config.normalize_openers());
+}
+
 #[test]
 fn normalize_openers_returns_false_when_multiple_already_sorted() {
     let mut config = Config {

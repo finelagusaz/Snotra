@@ -180,6 +180,8 @@
 - [x] `git grep` で「単一インスタンスの制御には影響しない」「同時起動はできない」「Alt+Q」の写しを数え、分離プロファイルに関する記述を直す
 
 ### Phase 6 — 検証
+- [x] 計画外（Step 3 ラウンド 1・verify:tree 02f805f0 で赤）: `SnotraSmoke.Tests.ps1` の実機配管 2 本の `Reject` に `-BuildRoot` を渡す・`-BuildRoot` の `.Path` を try/catch で読む・使われない `FindWindowW` の宣言を消す
+- [x] Step 3 ラウンド 1: アンカー 02f805f0 / verify:tree red（test:powershell の実機配管 2 本・実機稼働中に Reject が実機を拒んだ。A・smoke 2 本・governance は緑）/ 委譲は未起動（赤を直してから起動する）
 - [x] 計画外: `snotra-core/tests/path_query_cost.rs` の `load_real_index` を読むだけにする（上の空プロファイルの検査で見つけた。非 ignore のテストが `Config::load()` を通っていた）
 - [x] `docs/build-commands.md`「変更後の検証チェックリスト」の該当カテゴリ（cargo test / clippy / fmt / Pester / governance:check）— 主ツリーで手回しは緑（core 686・src-tauri 318・settings 60・Pester 対象 10・governance 17 件）。権威ある一式は Step 3 の verify:tree
 - [x] 実機スモーク A（2026-11-07 実測: 実機 PID 29400 = C:/toolbox/Snotra/snotra.exe の横で target/debug/snotra.exe が PID 28540 として常駐。実機の PID は不変）: 実機の Snotra を動かしたまま、`SNOTRA_CONFIG_DIR` を temp へ向けて `snotra.exe` を起動し、2 プロセスが並ぶこと・実機の PID が変わらないことを測る

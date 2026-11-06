@@ -629,6 +629,18 @@ Describe 'Resolve-SnotraExistingProcess' {
             Should -Invoke -ModuleName SnotraSmoke Write-Warning -ParameterFilter { $Message -like '*pid=5*読めません*' }
         }
 
+        It '.Path が例外を投げるプロセスも候補に残し、関数自体は落ちない' {
+            $denied = New-FakeProcess -Id 6
+            $denied | Add-Member -MemberType ScriptProperty -Name Path -Value { throw 'Access is denied' }
+            Mock -ModuleName SnotraSmoke Get-Process { @($denied) }.GetNewClosure()
+            Mock -ModuleName SnotraSmoke Stop-Process {}
+            Mock -ModuleName SnotraSmoke Write-Warning {}
+
+            Resolve-SnotraExistingProcess -Policy Stop -BuildRoot 'C:\repo\target'
+
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 6 }
+        }
+
         It 'Reject でも、配下に残留が無ければ実機が動いていても拒まない' {
             $installed = New-FakeProcessAt -Id 3 -Path 'C:\toolbox\Snotra\snotra.exe'
             Mock -ModuleName SnotraSmoke Get-Process { @($installed) }.GetNewClosure()
@@ -731,6 +743,14 @@ Describe 'Set-SnotraForegroundWindow（#1280 前面化の判定）' {
 }
 
 Describe '実機配管' -Tag Integration -Skip:$sessionLocked {
+    BeforeAll {
+        # 各 It 冒頭の `Reject` が拒むのは、このリポジトリのビルド成果物から起動した残留だけである。
+        # 検証用プロファイルは分離プロファイルなので、開発者が普段使いで起動している実インスタンスとは
+        # 単一インスタンスが別で、並走しても検査は空振りしない（#1306）。
+        $script:integrationBuildRoot = Resolve-SnotraCargoTargetDirectory `
+            -RepositoryRoot (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+    }
+
     It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法がウィンドウ矩形と一致する' {
         $profile = Join-Path $TestDrive 'integration-profile'
         $stderr = Join-Path $TestDrive 'integration.err'
@@ -741,7 +761,7 @@ auto_hide_on_focus_lost = false
         $proc = $null
         $capture = $null
         try {
-            Resolve-SnotraExistingProcess -Policy Reject
+            Resolve-SnotraExistingProcess -Policy Reject -BuildRoot $script:integrationBuildRoot
             $proc = Start-SnotraProcess -ConfigDir $created.FullPath `
                 -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderr
             $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 30000
@@ -800,7 +820,7 @@ auto_hide_on_focus_lost = false
 '@
         $proc = $null
         try {
-            Resolve-SnotraExistingProcess -Policy Reject
+            Resolve-SnotraExistingProcess -Policy Reject -BuildRoot $script:integrationBuildRoot
             $proc = Start-SnotraProcess -ConfigDir $created.FullPath -Trace `
                 -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderr
             $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 30000
@@ -857,7 +877,8 @@ auto_hide_on_focus_lost = false
         # **検査が起動した本体だけに絞る。** `Get-Process -Name 'snotra'` はグローバルで、
         # 開発者が普段使いで起動している実インスタンスも掴む。絞らないと (1) それを予告なく
         # Force kill し、(2)「終了待ちが効いていません」という**誤った診断**で赤くする
-        # （その場合の実態は先行インスタンスであり、各 It 冒頭の `Reject` が先に throw する）。
+        # （その場合の実態は先行インスタンスである。ビルド成果物の残留なら各 It 冒頭の `Reject` が先に
+        # throw し、実機なら単一インスタンスが別なので検査を邪魔しない・#1306）。
         #
         # **絞る材料が無ければ落とす（fail-closed）。** 空の `$expected` で絞ると一致が常に
         # 空になり、**検出器は主語ゼロで自明に緑を返す**——「効いていない」と「漏れが無い」が

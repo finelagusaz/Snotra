@@ -11,8 +11,6 @@ function Initialize-SnotraNativeInterop {
 [DllImport("user32.dll")]
 public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-public static extern IntPtr FindWindowW(string cls, string title);
-[DllImport("user32.dll", CharSet = CharSet.Unicode)]
 public static extern IntPtr FindWindowExW(IntPtr parent, IntPtr childAfter, string cls, string title);
 [DllImport("user32.dll")]
 public static extern bool GetWindowRect(IntPtr hWnd, out RECT value);
@@ -582,7 +580,9 @@ function Resolve-SnotraExistingProcess {
     if (-not [string]::IsNullOrEmpty($BuildRoot)) {
         $root = [System.IO.Path]::GetFullPath($BuildRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
         $existing = @($existing | Where-Object {
-                $path = $_.Path
+                # `.Path` は権限の無いプロセスで例外を投げうる（`SnotraSmoke.Tests.ps1` の実機配管の
+                # `AfterAll` と同じ扱い）。
+                $path = try { $_.Path } catch { $null }
                 if ([string]::IsNullOrEmpty($path)) {
                     # 権限で読めないプロセスは候補に残す。黙って外すと、読めない残留が後発を沈黙させる。
                     Write-Warning "pid=$($_.Id) の実行ファイルを読めません。ビルド成果物の残留として扱います。"

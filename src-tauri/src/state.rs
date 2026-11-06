@@ -148,7 +148,11 @@ mod tests {
     use snotra_core::history::HistoryStore;
 
     fn test_state() -> AppState {
-        let engine = Engine::new(Vec::new(), HistoryStore::load(), Config::default());
+        // 実 `history.bin` を読まない（#963・#1306）。存在しないパスを渡すと `load_in` は空で返す。
+        let history = HistoryStore::load_in(
+            &std::env::temp_dir().join(format!("snotra-tauri-test-{}-unused", std::process::id())),
+        );
+        let engine = Engine::new(Vec::new(), history, Config::default());
         AppState::new(engine, false)
     }
 

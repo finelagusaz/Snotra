@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{MAIN_EXE_FILE_NAME, command_line_for, main_exe_from};
+use super::{AutostartError, MAIN_EXE_FILE_NAME, command_line_for, main_exe_from, unless_isolated};
 #[cfg(windows)]
 use super::{as_bytes, wide};
 
@@ -79,4 +79,21 @@ fn main_exe_from_root_is_none() {
 #[test]
 fn main_exe_from_bare_file_name_is_none() {
     assert_eq!(main_exe_from(Path::new("snotra-settings.exe")), None);
+}
+
+// 不変条件: 分離プロファイルでは書き込みを呼ばない（呼ぶと実機の登録を上書き・削除する）。
+#[test]
+fn unless_isolated_does_not_write_in_isolated_profile() {
+    let got = unless_isolated(true, || panic!("分離プロファイルでレジストリへ書いた"));
+    assert_eq!(got, Err(AutostartError::IsolatedProfile));
+}
+
+// 不変条件: 実プロファイルでは書き込みの結果をそのまま返す（成功も失敗も握りつぶさない）。
+#[test]
+fn unless_isolated_passes_the_write_result_through_otherwise() {
+    assert_eq!(unless_isolated(false, || Ok(())), Ok(()));
+    assert_eq!(
+        unless_isolated(false, || Err(AutostartError::Registry(5))),
+        Err(AutostartError::Registry(5))
+    );
 }

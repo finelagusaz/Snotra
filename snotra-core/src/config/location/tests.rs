@@ -88,6 +88,112 @@ fn config_dir_is_wired_to_dirs_config_dir_with_snotra_suffix() {
     }
 }
 
+fn roaming() -> Option<PathBuf> {
+    Some(PathBuf::from(r"C:\Users\x\AppData\Roaming"))
+}
+
+fn key(dir: &str) -> Option<String> {
+    Config::isolated_profile_key_from(Some(OsString::from(dir)), roaming())
+}
+
+/// 上書きが無い・空文字なら分離プロファイルではない（実機と同じ単一インスタンス・自動起動）。
+/// 判定は `config_dir_from` の「空文字は未設定」と同じでなければならない——食い違うと、
+/// 保存先は実プロファイルなのに単一インスタンスだけが分かれ、2 プロセスが同じファイルを書く。
+#[test]
+fn isolated_profile_key_is_none_without_override() {
+    assert_eq!(Config::isolated_profile_key_from(None, roaming()), None);
+    assert_eq!(
+        Config::isolated_profile_key_from(Some(OsString::new()), roaming()),
+        None
+    );
+}
+
+/// 上書きが実プロファイルそのものを指すなら、別の綴りでも分離しない。分離すると、
+/// 実機と並走した 2 プロセスが同じ `config.toml` / `index.bin` を書く。
+#[test]
+fn isolated_profile_key_is_none_when_override_spells_the_real_profile() {
+    for spelling in [
+        r"C:\Users\x\AppData\Roaming\Snotra",
+        r"c:\users\X\appdata\roaming\SNOTRA",
+        "C:/Users/x/AppData/Roaming/Snotra",
+        r"C:\Users\x\AppData\Roaming\Snotra\",
+        r"C:\Users\x\AppData\Roaming\Other\..\Snotra",
+    ] {
+        assert_eq!(key(spelling), None, "{spelling} は実プロファイル");
+    }
+}
+
+/// 同じディレクトリは綴りが違っても同じ鍵になる（同じプロファイル同士は排他のまま）。
+#[test]
+fn isolated_profile_key_is_stable_across_spellings_of_one_directory() {
+    let want = key(r"C:\tmp\snotra-profile");
+    assert!(want.is_some());
+    for spelling in [
+        r"c:\TMP\Snotra-Profile",
+        "C:/tmp/snotra-profile",
+        r"C:\tmp\snotra-profile\",
+        r"C:\tmp\x\..\snotra-profile",
+    ] {
+        assert_eq!(key(spelling), want, "{spelling}");
+    }
+}
+
+/// 相対パスは CWD 起点の絶対パスと同じ鍵になる（`config_dir_from` が相対パスを CWD 起点で
+/// 使うのと同じ解釈）。CWD は読むだけ。
+#[test]
+fn isolated_profile_key_resolves_relative_override_against_cwd() {
+    let cwd = std::env::current_dir().expect("cwd");
+    let absolute = cwd.join("snotra-profile-relative");
+    assert_eq!(
+        key("snotra-profile-relative"),
+        key(&absolute.to_string_lossy())
+    );
+}
+
+/// 違うディレクトリは違う鍵になる（違うプロファイルだけが並走できる）。
+#[test]
+fn isolated_profile_key_differs_between_directories() {
+    assert_ne!(key(r"C:\tmp\profile-a"), key(r"C:\tmp\profile-b"));
+}
+
+/// 鍵は `[0-9a-f]{16}` に限る。tauri の single-instance は identifier から mutex 名を作り、
+/// 作成の失敗を確かめない。`\` が混じると名前空間の区切りとして解釈され、排他が黙って消える
+/// （`SPEC.md` §13）。
+#[test]
+fn isolated_profile_key_is_sixteen_lowercase_hex_digits() {
+    let got = key(r"C:\tmp\snotra-profile").expect("分離プロファイル");
+    assert_eq!(got.len(), 16, "{got}");
+    assert!(
+        got.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{got}"
+    );
+}
+
+/// 既定のディレクトリを導けない環境でも、上書きがあれば分離する（実機と比べられないときに
+/// 分離しない側へ倒すと、検証が実機へ転送されて黙って終わる）。
+#[test]
+fn isolated_profile_key_is_some_without_base() {
+    assert!(Config::isolated_profile_key_from(Some(OsString::from(r"C:\tmp\p")), None).is_some());
+}
+
+/// `isolated_profile_key()` の結線を pin する（env を読むだけ）。既定側の比較相手が
+/// `config_dir()` と同じ `dirs::config_dir()` でないと、実プロファイルを指す上書きが分離と判定される。
+#[test]
+fn isolated_profile_key_is_wired_to_env_and_dirs_config_dir() {
+    assert_eq!(
+        Config::isolated_profile_key(),
+        Config::isolated_profile_key_from(std::env::var_os(ENV_CONFIG_DIR), dirs::config_dir())
+    );
+    if let Some(base) = dirs::config_dir() {
+        let real = base.join("Snotra");
+        assert_eq!(
+            Config::isolated_profile_key_from(Some(real.into_os_string()), dirs::config_dir()),
+            None
+        );
+    }
+}
+
 #[test]
 fn is_first_run_returns_true_when_no_config() {
     // This test relies on Config::config_path() returning a valid path

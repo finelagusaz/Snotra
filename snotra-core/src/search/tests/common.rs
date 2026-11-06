@@ -36,6 +36,20 @@ pub(super) fn pool_of(threads: usize) -> rayon::ThreadPool {
         .expect("rayon のプールを作れない")
 }
 
+/// 実 `%APPDATA%\Snotra\config.toml` を**読むだけ**で `Config` にする。無い・読めない・壊れて
+/// いるときは `None`（呼び出し側は自動スキップへ）。
+///
+/// `Config::load()` を使わないのは、それが製品の読み込みを通るからである。first-run なら既定値の
+/// `config.toml` を作り、移行で変化があれば書き戻し、壊れていれば `.bak` へ退避する——開発機の
+/// 実プロファイルが新形式で揃っている間は何も書かないので、テストは緑のまま、条件の違う開発機で
+/// だけ実ファイルを書く（#1306）。移行はメモリ上でだけ当てる。
+pub(super) fn read_real_config_read_only() -> Option<crate::config::Config> {
+    let content = std::fs::read_to_string(crate::config::Config::config_path()?).ok()?;
+    let mut config = crate::config::Config::from_toml_str(&content).ok()?;
+    config.apply_migrations();
+    Some(config)
+}
+
 /// 実 `%APPDATA%\Snotra\index.bin` に**載っているときだけ**エントリを返す。
 /// scan パス未設定・キャッシュ不在・キャッシュが config と食い違うときは `None`。
 ///
@@ -48,7 +62,7 @@ pub(super) fn pool_of(threads: usize) -> rayon::ThreadPool {
 /// 走査しない入口（[`crate::indexer::load_cached_entries`]）を通すのは必須である——理由は
 /// その doc にある。
 pub(super) fn real_index_entries() -> Option<Vec<AppEntry>> {
-    let config = crate::config::Config::load();
+    let config = read_real_config_read_only()?;
     if config.paths.scan.is_empty() {
         return None;
     }
@@ -71,11 +85,10 @@ pub(super) fn real_index_entries() -> Option<Vec<AppEntry>> {
 /// メッセージを書き分けないこと**——自動スキップの理由が 1 か所に在ることが、「実データで
 /// 固定してある」と読み違えないための唯一の手がかりである。
 pub(super) fn real_scanned_entries() -> Option<Vec<AppEntry>> {
-    let config = crate::config::Config::load();
-    if config.paths.scan.is_empty() {
-        println!("実 config に scan パスが無いためスキップします。");
+    let Some(config) = read_real_config_read_only().filter(|c| !c.paths.scan.is_empty()) else {
+        println!("実 config が無い・読めない、または scan パスが無いためスキップします。");
         return None;
-    }
+    };
     let mut entries =
         crate::indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
     assert!(!entries.is_empty(), "走査が 0 件では裏付けにならない");

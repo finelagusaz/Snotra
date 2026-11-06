@@ -10,7 +10,8 @@
 //!
 //! - **OS I/O（[`is_enabled`] / [`enable`] / [`disable`]）にはテストが無い。** 実 `HKCU` を触るため、
 //!   テストを書くと開発機のスタートアップ登録を書き換える。守っているのは純粋部
-//!   （[`command_line_for`] / `main_exe_from`）だけである。測定のためだけの注入点は足さない
+//!   （[`command_line_for`] / `main_exe_from` / 分離プロファイルのガード `unless_isolated`）だけで、
+//!   [`enable`] / [`disable`] がガードを通る結線は測っていない。測定のためだけの注入点は足さない
 //!   （`docs/adr/ADR-no-test-only-injection-in-product-code.md`）
 //! - **タスクマネージャーで無効化されても検知しない。** Windows は `Run` 値を消さず
 //!   `Explorer\StartupApproved\Run` へ無効マークを置く（2026-09-01 実測: 先頭バイトが
@@ -57,6 +58,28 @@ pub enum AutostartError {
     MainExeNotFound,
     /// レジストリ操作が失敗した。Win32 のエラーコードを持つ。
     Registry(u32),
+    /// 分離プロファイル（[`crate::config::Config::isolated_profile_key`]）で起動しているので、
+    /// 書き換えなかった。`Run` 値はコマンドラインしか持てず env を運べないので、ここから登録した
+    /// 値はサインイン時に実プロファイルで起動し、しかも実機の登録を上書きする（`SPEC.md` §7.7）。
+    IsolatedProfile,
+}
+
+/// 分離プロファイルなら `write` を呼ばずに [`AutostartError::IsolatedProfile`] を返す。
+///
+/// [`enable`] / [`disable`] の書き込みの入口で塞ぐのは、呼び出し側（設定アプリ）が UI の
+/// 分岐を忘れても実機の登録を上書きしないためである。
+fn unless_isolated(
+    isolated_profile: bool,
+    write: impl FnOnce() -> Result<(), AutostartError>,
+) -> Result<(), AutostartError> {
+    if isolated_profile {
+        return Err(AutostartError::IsolatedProfile);
+    }
+    write()
+}
+
+fn is_isolated_profile() -> bool {
+    crate::config::Config::isolated_profile_key().is_some()
 }
 
 /// `Run` 値に書く文字列。**必ず引用符で括る**。
@@ -160,8 +183,13 @@ pub fn is_enabled() -> bool {
 
 /// 登録する。**既存値があっても現在のパスで上書きする**（移動したポータブル版の stale な
 /// エントリはこれで治る）。
-#[cfg(windows)]
+/// 分離プロファイルでは書かない（[`AutostartError::IsolatedProfile`]）。
 pub fn enable() -> Result<(), AutostartError> {
+    unless_isolated(is_isolated_profile(), write_enabled)
+}
+
+#[cfg(windows)]
+fn write_enabled() -> Result<(), AutostartError> {
     use windows::Win32::System::Registry::{KEY_WRITE, REG_SZ, RegSetValueExW};
 
     let exe = main_exe_path().ok_or(AutostartError::MainExeNotFound)?;
@@ -186,7 +214,7 @@ pub fn enable() -> Result<(), AutostartError> {
 }
 
 #[cfg(not(windows))]
-pub fn enable() -> Result<(), AutostartError> {
+fn write_enabled() -> Result<(), AutostartError> {
     Ok(())
 }
 
@@ -194,8 +222,14 @@ pub fn enable() -> Result<(), AutostartError> {
 ///
 /// 冪等にするのは、チェックボックスを外す操作が「値を消す」ではなく「登録されていない状態にする」
 /// を意味するためである。外から先に消されていても利用者には成功として見えるべきである。
-#[cfg(windows)]
+///
+/// 分離プロファイルでは消さない（[`AutostartError::IsolatedProfile`]）。消すと実機の登録が消える。
 pub fn disable() -> Result<(), AutostartError> {
+    unless_isolated(is_isolated_profile(), write_disabled)
+}
+
+#[cfg(windows)]
+fn write_disabled() -> Result<(), AutostartError> {
     use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
     use windows::Win32::System::Registry::{KEY_WRITE, RegDeleteValueW};
 
@@ -209,6 +243,6 @@ pub fn disable() -> Result<(), AutostartError> {
 }
 
 #[cfg(not(windows))]
-pub fn disable() -> Result<(), AutostartError> {
+fn write_disabled() -> Result<(), AutostartError> {
     Ok(())
 }

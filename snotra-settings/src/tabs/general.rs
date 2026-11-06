@@ -20,17 +20,35 @@ use crate::style;
 pub struct GeneralTabState {
     /// 直近に観測したスタートアップ登録の有無。
     enabled: bool,
+    /// 分離プロファイルで起動しているか。真ならスタートアップ節を読みも書きもしない
+    /// （`SPEC.md` §7.7・[`AutostartError::IsolatedProfile`]）。
+    isolated_profile: bool,
     /// 操作結果のインラインメッセージ（次の操作まで表示を維持する）。
     status: super::common::InlineMessage,
 }
 
+/// 起動時に観測したスタートアップ節の状態。**観測するのは `app::run` だけである**——
+/// `SettingsApp::new` で観測すると `en_harness` 経由でヘッドレス UI テストが開発機の
+/// レジストリと env を読む（#963 と同型）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupObservation {
+    /// 実プロファイル。`Run` 値が在るか。
+    Registered(bool),
+    /// 分離プロファイル。レジストリは読まない（`SPEC.md` §7.7）。
+    IsolatedProfile,
+}
+
 impl GeneralTabState {
-    /// 実 OS 状態から初期化する。**呼ぶのは `app::run` だけである**——`SettingsApp::new` から
-    /// 呼ぶと `en_harness` 経由でヘッドレス UI テストが開発機のレジストリを読む（#963 と同型）。
-    pub fn new(autostart_enabled: bool) -> Self {
-        Self {
-            enabled: autostart_enabled,
-            ..Default::default()
+    pub fn new(observation: StartupObservation) -> Self {
+        match observation {
+            StartupObservation::Registered(enabled) => Self {
+                enabled,
+                ..Default::default()
+            },
+            StartupObservation::IsolatedProfile => Self {
+                isolated_profile: true,
+                ..Default::default()
+            },
         }
     }
 }
@@ -63,6 +81,9 @@ fn autostart_message(result: Result<(), AutostartError>, desired: bool, tr: &Tr)
             tr.t_params(TrKey::ErrAutostartRegistry, &[("code", &code.to_string())]),
             true,
         ),
+        Err(AutostartError::IsolatedProfile) => {
+            (tr.t(TrKey::NoteAutostartIsolatedProfile).to_string(), true)
+        }
     }
 }
 
@@ -145,12 +166,23 @@ pub fn ui(
         // 表現できない）。切り替えた時点で OS へ書き、結果をその場のインラインメッセージで返す。
         style::section_heading(ui, tr.t(TrKey::HeadingStartup));
 
-        let mut desired = state.enabled;
-        if ui
-            .checkbox(&mut desired, tr.t(TrKey::CbLaunchAtLogon))
-            .changed()
-        {
-            apply_autostart(state, desired, tr);
+        if state.isolated_profile {
+            // 分離プロファイルでは読みも書きもしない（`SPEC.md` §7.7）。チェックの状態は
+            // 実機の登録を表さないので、空のまま無効で見せ、理由を添える。
+            let mut unchecked = false;
+            ui.add_enabled(
+                false,
+                egui::Checkbox::new(&mut unchecked, tr.t(TrKey::CbLaunchAtLogon)),
+            );
+            ui.label(tr.t(TrKey::NoteAutostartIsolatedProfile));
+        } else {
+            let mut desired = state.enabled;
+            if ui
+                .checkbox(&mut desired, tr.t(TrKey::CbLaunchAtLogon))
+                .changed()
+            {
+                apply_autostart(state, desired, tr);
+            }
         }
 
         state.status.show(ui);

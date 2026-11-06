@@ -148,22 +148,22 @@
 ## 実装の順序
 
 ### Phase 1 — core
-- [ ] `location.rs`: 上書き有効の述語を共通化し、`isolated_profile_key_from` / `profile_identity` / `fnv1a64` / `isolated_profile_key` を足す（Red → Green）
-- [ ] `location/tests.rs`: 未設定・空文字 → None／実プロファイルの別綴り（大文字・`/`・末尾 `\`）→ None／別ディレクトリ → Some／同じディレクトリの別綴り（相対と絶対・大文字小文字・`/`・末尾）→ 同じ鍵／違うディレクトリ → 違う鍵／鍵が `[0-9a-f]{16}`／`base` が None でも上書きがあれば Some／結線の pin（env を読むだけ）
-- [ ] `autostart.rs`: `IsolatedProfile` と `enable` / `disable` のガード。判定核をテストできる形にする（ガードの述語を引数に取る内側の fn に分け、テストは env を書かずに測る）
-- [ ] `search/tests/common.rs`・`path.rs`: `read_real_config_read_only` へ置き換え
-- [ ] `hotkey.rs`: 分離プロファイルの既定ホットキーの定数と `HotkeyConfig::isolated_profile_default()`。テスト: 値が意味 parser を通り、システムショートカットと Win 修飾に当たらず、`HotkeyConfig::default()` と違う
-- [ ] `config/io.rs`: `load_from_dir_reporting(dir, defaults)` と `load_reporting()` の既定値の組み立て。テスト（`config/io/tests.rs`・temp dir）: 分離の既定を渡したとき、FirstRun は保存された `config.toml` のホットキーが `Alt+F12`／parse 失敗・非 UTF-8 の腕も `Alt+F12` を返す／`Loaded` は書かれた値を返す／既定を渡さない（実プロファイル）ときは従来どおり `Alt+Q`
+- [x] `location.rs`: 上書き有効の述語を共通化し、`isolated_profile_key_from` / `profile_identity` / `fnv1a64` / `isolated_profile_key` を足す（Red → Green）
+- [x] `location/tests.rs`: 未設定・空文字 → None／実プロファイルの別綴り（大文字・`/`・末尾 `\`）→ None／別ディレクトリ → Some／同じディレクトリの別綴り（相対と絶対・大文字小文字・`/`・末尾）→ 同じ鍵／違うディレクトリ → 違う鍵／鍵が `[0-9a-f]{16}`／`base` が None でも上書きがあれば Some／結線の pin（env を読むだけ）
+- [x] `autostart.rs`: `IsolatedProfile` と `enable` / `disable` のガード。判定核をテストできる形にする（ガードの述語を引数に取る内側の fn に分け、テストは env を書かずに測る）
+- [x] `search/tests/common.rs`・`path.rs`: `read_real_config_read_only` へ置き換え
+- [x] `hotkey.rs`: 分離プロファイルの既定ホットキーの定数と `HotkeyConfig::isolated_profile_default()`。テスト: 値が意味 parser を通り、システムショートカットと Win 修飾に当たらず、`HotkeyConfig::default()` と違う
+- [x] `config/io.rs`: `load_from_dir_reporting(dir, defaults)` と `load_reporting()` の既定値の組み立て。テスト（`config/io/tests.rs`・temp dir）: 分離の既定を渡したとき、FirstRun は保存された `config.toml` のホットキーが `Alt+F12`／parse 失敗・非 UTF-8 の腕も `Alt+F12` を返す／`Loaded` は書かれた値を返す／既定を渡さない（実プロファイル）ときは従来どおり `Alt+Q`
 
 ### Phase 2 — src-tauri
-- [ ] `main.rs` の identifier 差し替え
-- [ ] `state.rs` / `system.rs` の fixture を `HistoryStore::empty()` へ
+- [x] `main.rs` の identifier 差し替え
+- [x] `state.rs` / `system.rs` の fixture を空の履歴へ（`HistoryStore::empty()` は core の `#[cfg(test)] pub(crate)` で src-tauri から見えないので、`snotra-core/tests/search_allocations.rs` と同じく存在しないパスの `load_in`）
 
 ### Phase 3 — settings
-- [ ] `run` / `SettingsApp::new` / `GeneralTabState` に分離プロファイルを渡す
-- [ ] `general.rs` の無効化と説明・`autostart_message` の腕
-- [ ] `i18n.rs` の `TrKey`（ja / en）
-- [ ] kittest で分離プロファイルのとき無効表示になることを固定（既存の `en_harness` の形）
+- [x] `run` / `SettingsApp::new` / `GeneralTabState` に分離プロファイルを渡す
+- [x] `general.rs` の無効化と説明・`autostart_message` の腕
+- [x] `i18n.rs` の `TrKey`（ja / en）。説明文とエラー文は同じ文言なので `NoteAutostartIsolatedProfile` の 1 キーにした
+- [x] kittest で分離プロファイルのとき無効表示になることを固定（既存の `en_harness` の形）
 
 ### Phase 4 — scripts
 - [ ] seed の既定ホットキー・`occupy-hotkey.ps1` の写像・`smoke-egui.ps1` の `-HotkeyVks` 既定とコメント

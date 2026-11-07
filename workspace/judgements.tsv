@@ -172,5 +172,6 @@ src-tauri/src/state.rs:53	[`Engine::config_handle`] の doc [link]	残す	6	doc 
 src-tauri/src/state.rs:102	[`crate::egui_shell::read_config`] の doc [link]	残す	6	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
 src-tauri/src/state.rs:161	`Engine::config_handle` の doc	残す	7	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
 snotra-core/tests/memory_footprint.rs:535	`cache_byte_breakdown_in` の doc	消す	1-5 すべて	出所の印。530 行で X を呼ぶ（抽出の漏れ。レビュー 1 回目で追加）
-src-tauri/src/egui_shell/results_view.rs:340	（抽出の漏れ）	残す	1	ブロックのコードが X を使わない（レビュー 1 回目で追加）
-src-tauri/src/egui_shell/search_state.rs:859	（抽出の漏れ）	残す	1	ブロックのコードが X を使わない（レビュー 1 回目で追加）
+src-tauri/src/egui_shell/results_view.rs:340	`layout::icon_prefetch_range` の doc	残す	1	ブロックのコードが X を使わない（レビュー 1 回目で追加）
+src-tauri/src/egui_shell/search_state.rs:859	`RowsSnapshot::matches` の doc	残す	1	ブロックのコードが X を使わない（レビュー 1 回目で追加）
+snotra-core/src/instant.rs:8	`format_date` の `///`（ほか 2 件と並び）	残す	7	所在の宣言（レビュー 2 回目で追加）

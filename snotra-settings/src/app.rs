@@ -161,8 +161,8 @@ struct SettingsApp {
 }
 
 impl SettingsApp {
-    /// `autostart_enabled` は**呼び出し側が読んで渡す**——ここで
-    /// [`snotra_core::autostart::is_enabled`] を呼ぶと、`en_harness` 経由でヘッドレス UI テストが
+    /// `startup` は**呼び出し側が観測して渡す**——ここで
+    /// [`snotra_core::autostart::is_enabled`] や分離プロファイルの判定を呼ぶと、`en_harness` 経由でヘッドレス UI テストが
     /// 開発機の実レジストリを読み、初期状態が開発者のマシン状態に依存する（#963 で
     /// `HistoryStore::load()` を fixture に使うのを禁じたのと同型で、**食い違いは CI では緑のまま
     /// 開発機でだけ現れる**）。**スタートアップ登録を読むのは [`run`] だけである。**
@@ -176,7 +176,7 @@ impl SettingsApp {
         first_run: bool,
         initial_tab: Option<String>,
         load_outcome: LoadOutcome,
-        autostart_enabled: bool,
+        startup: tabs::general::StartupObservation,
     ) -> Self {
         let tab = initial_tab
             .as_deref()
@@ -197,7 +197,7 @@ impl SettingsApp {
             opener_state: tabs::opener::OpenerTabState::new(),
             instant_state: tabs::instant::InstantTabState::default(),
             backup_state: tabs::backup::BackupTabState::default(),
-            general_state: tabs::general::GeneralTabState::new(autostart_enabled),
+            general_state: tabs::general::GeneralTabState::new(startup),
             font_list: crate::font::list_system_fonts(),
             hotkey_state: Default::default(),
             last_position: None,
@@ -693,13 +693,19 @@ pub fn run(
             let heading_semibold = crate::font::configure_fonts(&cc.egui_ctx);
             apply_win11_theme(&cc.egui_ctx);
             style::apply_type_ramp(&cc.egui_ctx, heading_semibold);
-            // **実レジストリを読む唯一の地点。** `SettingsApp::new` の doc を見よ。
+            // **実レジストリと分離プロファイルを観測する唯一の地点。** `SettingsApp::new` の doc を見よ。
+            // 分離プロファイルではレジストリを読まない（普段使いの Snotra の登録は表示の対象ではない・SPEC.md §7.7）。
+            let startup = if Config::isolated_profile_key().is_some() {
+                tabs::general::StartupObservation::IsolatedProfile
+            } else {
+                tabs::general::StartupObservation::Registered(snotra_core::autostart::is_enabled())
+            };
             Ok(Box::new(SettingsApp::new(
                 config,
                 first_run,
                 initial_tab,
                 load_outcome,
-                snotra_core::autostart::is_enabled(),
+                startup,
             )))
         }),
     )
@@ -847,7 +853,14 @@ mod tests {
     fn en_harness(config: Config) -> Harness<'static, SettingsApp> {
         // スタートアップ登録は固定値で構築する。**実 OS を読ませない**——読ませると
         // このハーネスを使う全テストの初期状態が開発機のレジストリに依存する。
-        let app = SettingsApp::new(config, false, None, LoadOutcome::Loaded, false);
+        en_harness_with(config, tabs::general::StartupObservation::Registered(false))
+    }
+
+    fn en_harness_with(
+        config: Config,
+        startup: tabs::general::StartupObservation,
+    ) -> Harness<'static, SettingsApp> {
+        let app = SettingsApp::new(config, false, None, LoadOutcome::Loaded, startup);
         // **グリフの欠落を許す**（egui_kittest 0.37 は既定で panic する）。ハーネスは日本語
         // フォントを読まず、言語選択肢などの日本語は描けない。kittest が見るのは操作と状態で
         // あって描画ではない（`snotra-settings/CLAUDE.md`「境界（kittest で検証できないもの）」）。
@@ -867,6 +880,42 @@ mod tests {
         for _ in 0..4 {
             harness.step();
         }
+    }
+
+    // 不変条件: 分離プロファイルでは、スタートアップのチェックボックスが無効で、理由が出る
+    // （SPEC.md §7.7）。**クリックはしない**——無効化が壊れていると実レジストリへ書く。
+    #[test]
+    fn kittest_startup_checkbox_is_disabled_in_isolated_profile() {
+        use egui_kittest::kittest::NodeT;
+        let tr = Tr(Language::En);
+        let mut harness = en_harness_with(
+            en_config(),
+            tabs::general::StartupObservation::IsolatedProfile,
+        );
+        settle(&mut harness);
+        assert!(
+            harness
+                .get_by_label(tr.t(TrKey::CbLaunchAtLogon))
+                .accesskit_node()
+                .is_disabled(),
+            "分離プロファイルではスタートアップのチェックボックスを無効にする"
+        );
+        harness.get_by_label(tr.t(TrKey::NoteAutostartIsolatedProfile));
+
+        let mut harness = en_harness(en_config());
+        settle(&mut harness);
+        assert!(
+            !harness
+                .get_by_label(tr.t(TrKey::CbLaunchAtLogon))
+                .accesskit_node()
+                .is_disabled(),
+            "実プロファイルでは有効のまま"
+        );
+        assert!(
+            harness
+                .query_by_label(tr.t(TrKey::NoteAutostartIsolatedProfile))
+                .is_none()
+        );
     }
 
     // 不変条件: General タブの checkbox クリックで draft != saved（dirty）になる。

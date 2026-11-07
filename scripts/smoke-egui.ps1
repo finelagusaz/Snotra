@@ -10,7 +10,7 @@ param(
   # 登録した VK 列を読む（対応表の SSOT は src-tauri/src/platform/hotkey.rs の PreparedHotkey）。
   # 明示指定したときだけ trace より優先される（trace が出ない旧バイナリの検証など）。
   # pwsh -File / npm 経由で配列引数が壊れないよう文字列で受けて内部で分割する。
-  [string]$HotkeyVks = "18,81"
+  [string]$HotkeyVks = "18,123"
   ,
   # results ウィンドウの検証に使う検索クエリ（1 文字想定）。既定 "z" は seed が置くダミー
   # zsnotrasmoke.exe に一致する（#804: 検証用プロファイルを**常に** seed するので、
@@ -113,8 +113,8 @@ $scanDirToml = $scanDir -replace '\\', '/'
 # PathEntries として渡す（#843）。3 本の seed が同型ではないことは維持する。
 # config.toml を置く共通の理由は New-SnotraVerificationProfile の上のコメントが正本。
 # egui 固有の帰結は「first-run になると実マシンが索引され、results 用に置いた 1 件だけを
-# 出す前提が崩れる」ことである。値は config.rs の既定と同一
-# （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。
+# 出す前提が崩れる」ことである。値は分離プロファイルの既定（snotra-core の hotkey.rs）と同一
+# （hotkey は検証用プロファイルの既定 Alt+F12 = 本スクリプト既定の -HotkeyVks 18,123 と一致）。
 # scan は上の 1 ファイルだけを対象にする（索引は 1 件・ビルドは即座に終わる）。
 # **`scan = []` と `[[paths.scan]]` を併記してはならない**——同一キーの再定義で TOML の
 # parse が落ち、config 破損復旧経路へ落ちる。`[paths]` を空ヘッダで置き、その下に
@@ -148,7 +148,9 @@ function Get-LetterVk {
 # `Start-Sleep -Milliseconds 300` は、待たない `Stop-Process -Force` に対する事実上の待ちで
 # あり（#853 以前からの逐語の持ち越し）、関数の内側に本物の待ちが入った今は説明のつかない
 # 固定遅延として残るだけなので消した。
-Resolve-SnotraExistingProcess -Policy Stop
+# 落とすのはこのリポジトリのビルド成果物の残留だけで、普段使いの Snotra は落とさない（#1306）。
+# 検証用プロファイルは分離プロファイルなので、普段使いの Snotra とは単一インスタンスが別である。
+Resolve-SnotraExistingProcess -Policy Stop -BuildRoot (Resolve-SnotraCargoTargetDirectory -RepositoryRoot $repoRoot)
 
 $webviewBefore = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
 
@@ -326,7 +328,7 @@ try {
   # 失敗でも .bak は現れない（config.rs の backup_invalid）。`[config] ` 付きの eprintln は読み込み
   # 失敗の全 arm に在るので、これが健全な観測点である。**ただし「成功時には出ない」は無条件には
   # 真でない**——duplicate instant command と invalid hotkey fallback は parse 成功後に出る。
-  # この seed は instant_commands 無し・妥当な Alt+Q ゆえどちらも踏まないが、
+  # この seed は instant_commands 無し・妥当な Alt+F12 ゆえどちらも踏まないが、
   # **seed を変えるときはこの前提を確かめること**。
   # visual-check-colors.ps1:143-159 の Test-SeedHealth と同型だが、共有ヘルパーにはしない（#843）。
   $configDiag = @(Select-String -Path $errPath -SimpleMatch '[config] ')

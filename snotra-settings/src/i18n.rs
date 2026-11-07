@@ -68,6 +68,7 @@ pub(crate) enum TrKey {
     StatusAutostartDisabled,
     ErrAutostartExeNotFound,
     ErrAutostartRegistry,
+    NoteAutostartIsolatedProfile,
     HeadingLanguage,
     LabelLanguage,
     LanguageJa,
@@ -274,6 +275,9 @@ fn ja(key: TrKey) -> &'static str {
         TrKey::StatusAutostartDisabled => "スタートアップから削除しました",
         TrKey::ErrAutostartExeNotFound => "snotra.exe が見つかりません",
         TrKey::ErrAutostartRegistry => "レジストリの操作に失敗しました（コード {code}）",
+        TrKey::NoteAutostartIsolatedProfile => {
+            "検証用プロファイル（SNOTRA_CONFIG_DIR）で起動しているため、スタートアップ登録は変更できません"
+        }
         TrKey::HeadingLanguage => "言語",
         TrKey::LabelLanguage => "言語:",
         TrKey::LanguageJa => "日本語",
@@ -496,6 +500,9 @@ fn en(key: TrKey) -> &'static str {
         TrKey::StatusAutostartDisabled => "Removed from startup",
         TrKey::ErrAutostartExeNotFound => "snotra.exe was not found",
         TrKey::ErrAutostartRegistry => "Registry operation failed (code {code})",
+        TrKey::NoteAutostartIsolatedProfile => {
+            "Startup registration can't be changed while running with a verification profile (SNOTRA_CONFIG_DIR)"
+        }
         TrKey::HeadingLanguage => "Language",
         TrKey::LabelLanguage => "Language:",
         TrKey::LanguageJa => "日本語",

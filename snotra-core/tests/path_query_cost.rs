@@ -112,8 +112,14 @@ fn derives_same_bytes_as_normalize_entry_key() {
 /// [`derives_same_bytes_as_normalize_entry_key`] は `#[ignore]` を持たず既定のスイートで走るため、
 /// `load_or_scan_with_stats` だと cold cache の `cargo test` が全走査と `index.bin` の書き込みを
 /// 起こす（理由の全文は当該入口の doc）。
+///
+/// config も同じ理由で**読むだけ**にする。`Config::load()` は first-run なら `config.toml` を作り、
+/// 移行で変化があれば書き戻す——既定のスイートが、実 config の無い・古い開発機でだけ実ファイルを
+/// 書く（#1306）。移行はメモリ上でだけ当てる。
 fn load_real_index() -> Option<Vec<AppEntry>> {
-    let config = Config::load();
+    let content = std::fs::read_to_string(Config::config_path()?).ok()?;
+    let mut config = Config::from_toml_str(&content).ok()?;
+    config.apply_migrations();
     let scan = &config.paths.scan;
     if scan.is_empty() {
         return None;

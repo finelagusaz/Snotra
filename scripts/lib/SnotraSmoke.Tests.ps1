@@ -91,6 +91,15 @@ include_folders = false
         [IO.Path]::IsPathRooted($created.FullPath) | Should -BeTrue
     }
 
+    It '既定ホットキーは実プロファイルの既定 Alt+Q と違う Alt+F12 にする（普段使いの Snotra と並走しても登録が衝突しない・#1306）' {
+        # 値の正本は snotra-core/src/hotkey.rs の ISOLATED_PROFILE_HOTKEY_*（分離プロファイルの既定）。
+        $created = New-SnotraVerificationProfile -ProfileDir (Join-Path $TestDrive 'hotkey-default')
+
+        $toml = Get-Content -Raw $created.ConfigPath
+        $toml | Should -Match '(?m)^modifier = "Alt"\r?$'
+        $toml | Should -Match '(?m)^key = "F12"\r?$'
+    }
+
     It 'auto_update を既定で disabled にする（省略すると実ネットワークの更新チェックが走る・#755/#801 是正）' {
         # GeneralConfig.auto_update の既定は Full（snotra-core/src/config.rs の #[default]）。
         # 検証用プロファイルがこれを踏まないことをここで固定する。
@@ -581,6 +590,64 @@ Describe 'Resolve-SnotraExistingProcess' {
 
         Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -ParameterFilter { $Id -eq 123 -and $Force }
     }
+
+    # -BuildRoot（#1306）: 落とすのはビルド成果物の配下から起動した残留だけで、普段使いの Snotra は落とさない。
+    Context '-BuildRoot で絞る' {
+        BeforeAll {
+            function New-FakeProcessAt {
+                param([int]$Id, [AllowNull()][string]$Path)
+                $fake = New-FakeProcess -Id $Id
+                $fake | Add-Member -MemberType NoteProperty -Name Path -Value $Path
+                return $fake
+            }
+        }
+
+        It '配下の残留だけを落とし、普段使いの Snotra・区切りの無い兄弟ディレクトリは落とさない' {
+            $inside = New-FakeProcessAt -Id 1 -Path 'C:\repo\target\debug\snotra.exe'
+            $otherBuild = New-FakeProcessAt -Id 2 -Path 'C:\Repo\TARGET\release\snotra.exe'
+            $installed = New-FakeProcessAt -Id 3 -Path 'C:\toolbox\Snotra\snotra.exe'
+            $sibling = New-FakeProcessAt -Id 4 -Path 'C:\repo\target2\debug\snotra.exe'
+            Mock -ModuleName SnotraSmoke Get-Process { @($inside, $otherBuild, $installed, $sibling) }.GetNewClosure()
+            Mock -ModuleName SnotraSmoke Stop-Process {}
+
+            Resolve-SnotraExistingProcess -Policy Stop -BuildRoot 'C:\repo\target'
+
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 2 -Exactly
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 1 }
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 2 }
+        }
+
+        It '実行ファイルを読めないプロセスは候補に残し、警告する（黙って外すと後発が沈黙する）' {
+            $unreadable = New-FakeProcessAt -Id 5 -Path $null
+            Mock -ModuleName SnotraSmoke Get-Process { @($unreadable) }.GetNewClosure()
+            Mock -ModuleName SnotraSmoke Stop-Process {}
+            Mock -ModuleName SnotraSmoke Write-Warning {}
+
+            Resolve-SnotraExistingProcess -Policy Stop -BuildRoot 'C:\repo\target'
+
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 5 }
+            Should -Invoke -ModuleName SnotraSmoke Write-Warning -ParameterFilter { $Message -like '*pid=5*読めません*' }
+        }
+
+        It '.Path が例外を投げるプロセスも候補に残し、関数自体は落ちない' {
+            $denied = New-FakeProcess -Id 6
+            $denied | Add-Member -MemberType ScriptProperty -Name Path -Value { throw 'Access is denied' }
+            Mock -ModuleName SnotraSmoke Get-Process { @($denied) }.GetNewClosure()
+            Mock -ModuleName SnotraSmoke Stop-Process {}
+            Mock -ModuleName SnotraSmoke Write-Warning {}
+
+            Resolve-SnotraExistingProcess -Policy Stop -BuildRoot 'C:\repo\target'
+
+            Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 6 }
+        }
+
+        It 'Reject でも、配下に残留が無ければ普段使いの Snotra が動いていても拒まない' {
+            $installed = New-FakeProcessAt -Id 3 -Path 'C:\toolbox\Snotra\snotra.exe'
+            Mock -ModuleName SnotraSmoke Get-Process { @($installed) }.GetNewClosure()
+
+            { Resolve-SnotraExistingProcess -Policy Reject -BuildRoot 'C:\repo\target' } | Should -Not -Throw
+        }
+    }
 }
 
 Describe 'ConvertFrom-SnotraWtsInfoEx（#866 ロック検出の解釈）' {
@@ -676,6 +743,14 @@ Describe 'Set-SnotraForegroundWindow（#1280 前面化の判定）' {
 }
 
 Describe '実機配管' -Tag Integration -Skip:$sessionLocked {
+    BeforeAll {
+        # 各 It 冒頭の `Reject` が拒むのは、このリポジトリのビルド成果物から起動した残留だけである。
+        # 検証用プロファイルは分離プロファイルなので、開発者が普段使いで起動している実インスタンスとは
+        # 単一インスタンスが別で、並走しても検査は空振りしない（#1306）。
+        $script:integrationBuildRoot = Resolve-SnotraCargoTargetDirectory `
+            -RepositoryRoot (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+    }
+
     It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法がウィンドウ矩形と一致する' {
         $profile = Join-Path $TestDrive 'integration-profile'
         $stderr = Join-Path $TestDrive 'integration.err'
@@ -686,7 +761,7 @@ auto_hide_on_focus_lost = false
         $proc = $null
         $capture = $null
         try {
-            Resolve-SnotraExistingProcess -Policy Reject
+            Resolve-SnotraExistingProcess -Policy Reject -BuildRoot $script:integrationBuildRoot
             $proc = Start-SnotraProcess -ConfigDir $created.FullPath `
                 -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderr
             $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 30000
@@ -745,7 +820,7 @@ auto_hide_on_focus_lost = false
 '@
         $proc = $null
         try {
-            Resolve-SnotraExistingProcess -Policy Reject
+            Resolve-SnotraExistingProcess -Policy Reject -BuildRoot $script:integrationBuildRoot
             $proc = Start-SnotraProcess -ConfigDir $created.FullPath -Trace `
                 -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderr
             $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 30000
@@ -792,6 +867,61 @@ auto_hide_on_focus_lost = false
         }
     }
 
+    It '違う分離プロファイルは並んで常駐し、同じプロファイルの別の綴りは 1 本目へ転送して終わる（#1306）' {
+        # 守るもの（SPEC.md §13）: (1) single-instance の identifier をプロファイルごとに差し替える
+        # 結線（`main.rs`。外すと 2 本目が 1 本目へ転送されて終わる）、(2) 同じディレクトリの別の綴りが
+        # 同じ鍵になること、(3) env から既定値（Alt+F12）へ渡る結線（`Config::load_reporting`）。
+        # (3) は B の config.toml を壊しておき、復旧の腕が使う既定値のホットキーで確かめる
+        # （first-run にすると設定アプリが開くので避ける）。A は F11 にして B の F12 と衝突させない。
+        $profileA = Join-Path $TestDrive 'isolated-a'
+        $profileB = Join-Path $TestDrive 'isolated-b'
+        $stderrA = Join-Path $TestDrive 'isolated-a.err'
+        $stderrB = Join-Path $TestDrive 'isolated-b.err'
+        $createdA = New-SnotraVerificationProfile -ProfileDir $profileA -ShowIcons $false -HotkeyKey 'F11'
+        $createdB = New-SnotraVerificationProfile -ProfileDir $profileB -ShowIcons $false
+        Set-Content -LiteralPath $createdB.ConfigPath -Value '{{{ not valid toml'
+        $procA = $null
+        $procB = $null
+        $procC = $null
+        try {
+            Resolve-SnotraExistingProcess -Policy Reject -BuildRoot $script:integrationBuildRoot
+            $procA = Start-SnotraProcess -ConfigDir $createdA.FullPath -Trace `
+                -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderrA
+            $registeredA = Wait-SnotraTraceCondition -Path $stderrA -TimeoutMs 30000 -PollMs 100 `
+                -AbortIfExited $procA -Description 'A の hotkey:registered' `
+                -Predicate { $_.event -eq 'hotkey:registered' }
+            $registeredA | Should -Not -BeNullOrEmpty -Because 'A は普段使いの Snotra へ転送されずに常駐する'
+            $registeredA.data.key | Should -Be 'F11'
+
+            # B は壊れた config から復旧するので auto_update が既定（Full）に戻る。実リリースへの
+            # 更新チェックを走らせないよう、判定より前で return する視覚スモークのハッチを立てる
+            # （`New-SnotraVerificationProfile` が auto_update を disabled にする理由と同じ・#755/#801）。
+            $procB = Start-SnotraProcess -ConfigDir $createdB.FullPath -Trace `
+                -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderrB `
+                -ExtraVariables @{ SNOTRA_EGUI_FAKE_UPDATE_FAILED = '1' }
+            $registeredB = Wait-SnotraTraceCondition -Path $stderrB -TimeoutMs 30000 -PollMs 100 `
+                -AbortIfExited $procB -Description 'B の hotkey:registered（A へ転送されずに起動したか）' `
+                -Predicate { $_.event -eq 'hotkey:registered' }
+            $registeredB | Should -Not -BeNullOrEmpty -Because 'B は A へ転送されずに常駐する'
+            $registeredB.data.ok | Should -BeTrue
+            $registeredB.data.modifier | Should -Be 'Alt'
+            $registeredB.data.key | Should -Be 'F12'
+            $procA.HasExited | Should -BeFalse
+
+            # A と同じディレクトリを、大文字・`/` 区切り・末尾の区切りで指す。
+            $spelling = $createdA.FullPath.ToUpperInvariant().Replace('\', '/') + '/'
+            $procC = Start-SnotraProcess -ConfigDir $spelling -FilePath $env:SNOTRA_PESTER_EXE
+            $procC.WaitForExit(30000) | Should -BeTrue -Because '同じプロファイルの 2 本目は 1 本目へ転送して終わる'
+            $procC.ExitCode | Should -Be 0 -Because '転送による正常終了で、起動失敗ではない'
+            $procA.HasExited | Should -BeFalse
+            $procB.HasExited | Should -BeFalse
+        } finally {
+            foreach ($p in @($procC, $procB, $procA)) {
+                if ($null -ne $p) { [void](Stop-SnotraProcessAndWait -Process $p -Quiet) }
+            }
+        }
+    }
+
     # **待ちきれなかった生き残りを、ここで赤にする**（#872）。各 It の `finally` は
     # `Write-Warning` しか出せない（`finally` からの throw は元の例外を覆い隠すため）ので、
     # 検出点を置かないと Pester 実行全体から生きた snotra.exe が漏れても誰も見ない
@@ -802,7 +932,8 @@ auto_hide_on_focus_lost = false
         # **検査が起動した本体だけに絞る。** `Get-Process -Name 'snotra'` はグローバルで、
         # 開発者が普段使いで起動している実インスタンスも掴む。絞らないと (1) それを予告なく
         # Force kill し、(2)「終了待ちが効いていません」という**誤った診断**で赤くする
-        # （その場合の実態は先行インスタンスであり、各 It 冒頭の `Reject` が先に throw する）。
+        # （その場合の実態は先行インスタンスである。ビルド成果物の残留なら各 It 冒頭の `Reject` が先に
+        # throw し、普段使いの Snotra なら単一インスタンスが別なので検査を邪魔しない・#1306）。
         #
         # **絞る材料が無ければ落とす（fail-closed）。** 空の `$expected` で絞ると一致が常に
         # 空になり、**検出器は主語ゼロで自明に緑を返す**——「効いていない」と「漏れが無い」が

@@ -153,7 +153,7 @@ fn load_from_dir_parse_failure_backs_up_and_does_not_save() {
     let bad = "{{{ not valid toml";
     fs::write(&path, bad).unwrap();
 
-    let (config, outcome) = Config::load_from_dir_reporting(&dir);
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, Config::default());
 
     assert_eq!(outcome, LoadOutcome::RecoveredFromCorrupt);
     // default 値で起動する
@@ -178,7 +178,7 @@ fn load_from_dir_missing_file_is_first_run_and_saves_default() {
     let dir = temp_dir("load_missing");
     let path = dir.join("config.toml"); // 作らない（NotFound = first-run）
 
-    let (config, outcome) = Config::load_from_dir_reporting(&dir);
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, Config::default());
 
     assert_eq!(outcome, LoadOutcome::FirstRun);
     assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
@@ -198,7 +198,7 @@ fn load_from_dir_valid_config_is_parsed() {
     written.appearance.window_width = 777;
     fs::write(&path, toml::to_string_pretty(&written).unwrap()).unwrap();
 
-    let (loaded, outcome) = Config::load_from_dir_reporting(&dir);
+    let (loaded, outcome) = Config::load_from_dir_reporting(&dir, Config::default());
 
     assert_eq!(outcome, LoadOutcome::Loaded);
     assert_eq!(loaded.appearance.window_width, 777);
@@ -220,7 +220,7 @@ fn load_from_dir_repairs_and_saves_invalid_hotkey() {
         written.hotkey.key = key.to_string();
         fs::write(&path, toml::to_string_pretty(&written).unwrap()).unwrap();
 
-        let (loaded, outcome) = Config::load_from_dir_reporting(&dir);
+        let (loaded, outcome) = Config::load_from_dir_reporting(&dir, Config::default());
         assert_eq!(outcome, LoadOutcome::Loaded, "case={case}");
         assert_eq!(loaded.hotkey, HotkeyConfig::default(), "case={case}");
         let saved: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -239,7 +239,7 @@ fn load_from_dir_invalid_utf8_is_backed_up() {
     let invalid_utf8: &[u8] = &[0xFF, 0xFE, 0x00, 0x80];
     fs::write(&path, invalid_utf8).unwrap();
 
-    let (config, outcome) = Config::load_from_dir_reporting(&dir);
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, Config::default());
 
     assert_eq!(outcome, LoadOutcome::RecoveredFromCorrupt);
     assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
@@ -267,7 +267,7 @@ fn load_from_dir_missing_section_is_loaded_not_recovered() {
     let path = dir.join("config.toml");
     fs::write(&path, "[hotkey]\nmodifier = \"Ctrl\"\nkey = \"Space\"\n").unwrap();
 
-    let (config, outcome) = Config::load_from_dir_reporting(&dir);
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, Config::default());
 
     assert_eq!(outcome, LoadOutcome::Loaded);
     assert_eq!(config.hotkey.modifier, "Ctrl");
@@ -289,7 +289,7 @@ fn load_from_dir_transient_read_error_leaves_file_intact() {
     // 退避できないため、退避も上書きもせず据え置く。
     fs::create_dir(&path).unwrap();
 
-    let (config, outcome) = Config::load_from_dir_reporting(&dir);
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, Config::default());
 
     assert_eq!(outcome, LoadOutcome::ReadFailed);
     assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
@@ -403,7 +403,7 @@ name = "gh"
 url = "https://example.com/{q}"
 "#;
     std::fs::write(&path, toml_str).unwrap();
-    let (config, _) = Config::load_from_dir_reporting(&dir);
+    let (config, _) = Config::load_from_dir_reporting(&dir, Config::default());
     assert_eq!(config.instant_commands.len(), 1);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
@@ -411,4 +411,83 @@ url = "https://example.com/{q}"
         "load が config.toml を書き戻していない"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// -- 分離プロファイルの既定値（#1306・SPEC §13） --
+
+fn isolated_defaults() -> Config {
+    Config::defaults_for_profile(true)
+}
+
+/// 分離プロファイルの既定値は、ホットキーだけが実プロファイルの既定と違う。
+#[test]
+fn defaults_for_profile_changes_only_the_hotkey() {
+    let real = Config::defaults_for_profile(false);
+    assert_eq!(real.hotkey, HotkeyConfig::default());
+    let mut isolated = isolated_defaults();
+    assert_eq!(isolated.hotkey, HotkeyConfig::isolated_profile_default());
+    isolated.hotkey = HotkeyConfig::default();
+    assert_eq!(
+        toml::to_string(&isolated).unwrap(),
+        toml::to_string(&real).unwrap()
+    );
+}
+
+/// 初回起動は渡された既定値を保存する（普段使いの Snotra と並走する分離プロファイルが `Alt+Q` を書かない）。
+#[test]
+fn load_from_dir_first_run_saves_the_given_defaults() {
+    let dir = temp_dir("isolated_first_run");
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, isolated_defaults());
+    assert_eq!(outcome, LoadOutcome::FirstRun);
+    assert_eq!(config.hotkey, HotkeyConfig::isolated_profile_default());
+    let saved =
+        Config::from_toml_str(&fs::read_to_string(dir.join("config.toml")).unwrap()).unwrap();
+    assert_eq!(saved.hotkey, HotkeyConfig::isolated_profile_default());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// 既定値を返す初回起動以外の腕も、渡された既定値を使う。腕ごとに食い違うと、
+/// 壊れた config からの復旧のときだけ普段使いの Snotra と同じホットキーになる。
+#[test]
+fn load_from_dir_recovery_arms_use_the_given_defaults() {
+    for (tag, bytes) in [
+        ("isolated_parse_fail", b"{{{ not valid toml".to_vec()),
+        ("isolated_non_utf8", vec![0xff, 0xfe, 0xfd]),
+    ] {
+        let dir = temp_dir(tag);
+        fs::write(dir.join("config.toml"), bytes).unwrap();
+        let (config, outcome) = Config::load_from_dir_reporting(&dir, isolated_defaults());
+        assert_eq!(outcome, LoadOutcome::RecoveredFromCorrupt, "{tag}");
+        assert_eq!(
+            config.hotkey,
+            HotkeyConfig::isolated_profile_default(),
+            "{tag}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // 一時的な読み込み失敗の腕（`config.toml` をディレクトリにして read を失敗させる。
+    // `load_from_dir_transient_read_error_leaves_file_intact` と同じ代理）。
+    let dir = temp_dir("isolated_read_failed");
+    fs::create_dir(dir.join("config.toml")).unwrap();
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, isolated_defaults());
+    assert_eq!(outcome, LoadOutcome::ReadFailed);
+    assert_eq!(config.hotkey, HotkeyConfig::isolated_profile_default());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// 読めた config は書かれた値を使う（既定値で上書きしない）。
+#[test]
+fn load_from_dir_loaded_keeps_the_written_hotkey() {
+    let dir = temp_dir("isolated_loaded");
+    fs::write(
+        dir.join("config.toml"),
+        "[hotkey]\nmodifier = \"Ctrl\"\nkey = \"K\"\n",
+    )
+    .unwrap();
+    let (config, outcome) = Config::load_from_dir_reporting(&dir, isolated_defaults());
+    assert_eq!(outcome, LoadOutcome::Loaded);
+    assert_eq!(config.hotkey.modifier, "Ctrl");
+    assert_eq!(config.hotkey.key, "K");
+    let _ = fs::remove_dir_all(&dir);
 }

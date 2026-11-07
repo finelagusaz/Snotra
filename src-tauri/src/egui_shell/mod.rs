@@ -238,6 +238,8 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
     // 実 release への到達 + download 失敗が要り再現できないため、**これが唯一の観測点**である。
     // 理由は既定幅（window_width 600）で省略が起きる長さにしてある——短い理由では `…` が
     // 出ず、省略経路を目視できない。
+    // `scripts/lib/SnotraSmoke.Tests.ps1` は壊れた config で起動するプロセスの実リリースへの通信を
+    // 止めるのにもこれを使う。判定より後ろへ動かす・撤去するときは、そちらも直す（#1306）。
     if crate::trace::env_flag("SNOTRA_EGUI_FAKE_UPDATE_FAILED") {
         if let Some(st) = app.try_state::<UpdaterUiState>() {
             st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed {

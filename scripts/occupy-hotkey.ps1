@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-Snotra と同じ引数で Alt+Q を握り、Snotra 側の `RegisterHotKey` を実際に失敗させる（issue #1009）。
+Snotra と同じ引数で検証用プロファイルの既定ホットキー（Alt+F12）を握り、Snotra 側の `RegisterHotKey` を実際に失敗させる（issue #1009）。
 
 .DESCRIPTION
 `bench-startup.ps1 -UseVerificationProfile` が毎回作り直す検証用プロファイルの既定ホットキーは
-Alt+Q である（`SnotraSmoke.psm1` の `New-SnotraVerificationProfile`）。このスクリプトが先に
+Alt+F12 である（`SnotraSmoke.psm1` の `New-SnotraVerificationProfile`・#1306）。このスクリプトが先に
 握っておくと Snotra 側の登録が実際に失敗し、`startup:failed` / `reason=hotkey-registration`
 が出る。
 
@@ -14,7 +14,7 @@ Alt+Q である（`SnotraSmoke.psm1` の `New-SnotraVerificationProfile`）。�
 なく対象そのもので測ってから書く」）。
 
 引数は `platform/hotkey.rs` の `register_prepared` と同じにする——
-`RegisterHotKey(NULL, 1, MOD_NOREPEAT | MOD_ALT, VK_Q)`。**同じ引数で握れば Snotra 側が
+`RegisterHotKey(NULL, 1, MOD_NOREPEAT | MOD_ALT, <既定キーの VK>)`。**同じ引数で握れば Snotra 側が
 失敗することは実測した**（どの引数までが「同じ」と見なされるか——`MOD_NOREPEAT` の有無が
 排他に効くか等——は測っていない）。ゆえに `register_prepared` を変えたらここも揃えること。
 
@@ -66,7 +66,15 @@ function Get-ParameterDefault {
 }
 $hotkeyModifier = Get-ParameterDefault -Name 'HotkeyModifier'
 $hotkeyKey = Get-ParameterDefault -Name 'HotkeyKey'
-if ($hotkeyModifier -ne 'Alt' -or $hotkeyKey.Length -ne 1) {
+# VK は英数字 1 文字（VK_A〜VK_Z・VK_0〜VK_9 は ASCII 大文字と同値）と F1〜F12（0x70 起点）だけを
+# 写す。対応表の正本は `platform/hotkey.rs` で、ここは写しなので、写せない形は下で止める。
+$vk = $null
+if ($hotkeyKey -match '^[A-Za-z0-9]$') {
+  $vk = [int][char]$hotkeyKey.ToUpperInvariant()
+} elseif ($hotkeyKey -match '^[Ff]([1-9]|1[0-2])$') {
+  $vk = 0x70 + [int]$Matches[1] - 1
+}
+if ($hotkeyModifier -ne 'Alt' -or $null -eq $vk) {
   # **既定が動いたらここで止める。** 対応する Win32 定数のマッピングを持たないまま握ると、
   # 別のキーを占有して「握れた」と報告し、対照の起動が普通に成功する。
   throw "検証用プロファイルの既定ホットキーが $hotkeyModifier+$hotkeyKey へ変わりました。このスクリプトの Win32 定数を揃えてください"
@@ -76,7 +84,6 @@ if ($hotkeyModifier -ne 'Alt' -or $hotkeyKey.Length -ne 1) {
 $HOTKEY_ID = 1
 $MOD_ALT = 0x0001
 $MOD_NOREPEAT = 0x4000
-$vk = [int][char]$hotkeyKey.ToUpperInvariant()   # 'Q' → 0x51（VK_A〜VK_Z は ASCII 大文字と同値）
 $modifiers = $MOD_ALT -bor $MOD_NOREPEAT
 
 if (-not [Snotra.HotkeyOccupier]::RegisterHotKey([IntPtr]::Zero, $HOTKEY_ID, $modifiers, $vk)) {
@@ -89,7 +96,7 @@ if (-not [Snotra.HotkeyOccupier]::RegisterHotKey([IntPtr]::Zero, $HOTKEY_ID, $mo
 # **`try` は登録の直後から開く**（生成/破棄のペア）。間に置いた行が投げると `finally` を
 # 通らない——実害はプロセス終了で OS が解放するので無いが、ペアは構造で守る。
 try {
-  Write-Host "Alt+Q を握りました（MOD_NOREPEAT|MOD_ALT + VK_Q・id=$HOTKEY_ID）。" -ForegroundColor Green
+  Write-Host ("{0}+{1} を握りました（MOD_NOREPEAT|MOD_ALT + VK 0x{2:X2}・id={3}）。" -f $hotkeyModifier, $hotkeyKey, $vk, $HOTKEY_ID) -ForegroundColor Green
   if ($DurationSeconds -gt 0) {
     Write-Host "$DurationSeconds 秒後に解放します。" -ForegroundColor Cyan
     Start-Sleep -Seconds $DurationSeconds
@@ -101,5 +108,5 @@ try {
   }
 } finally {
   [void][Snotra.HotkeyOccupier]::UnregisterHotKey([IntPtr]::Zero, $HOTKEY_ID)
-  Write-Host "Alt+Q を解放しました。" -ForegroundColor Green
+  Write-Host "$hotkeyModifier+$hotkeyKey を解放しました。" -ForegroundColor Green
 }

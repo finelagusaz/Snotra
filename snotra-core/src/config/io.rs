@@ -3,6 +3,7 @@
 //! **読み込み失敗は種類で扱いを分ける**——不在・内容破損・一時的失敗で保全方針が違う。区分は
 //! [`LoadOutcome`] が、各分岐が何を保全するかは [`Config::load_from_dir_reporting`] の rustdoc が
 //! 正本である（`Err(_)` 一括の first-run 扱いは実データを既定値で潰す・#338/#343）。
+//! 既定値は呼び出し側が組んで渡す（分離プロファイルではホットキーが違う・`Config::load_reporting`）。
 
 use std::fs;
 use std::path::Path;
@@ -31,10 +32,23 @@ impl Config {
     /// 退避通知（トレイ）や読込失敗時の保存ガード（設定画面）が結果を判断するために使う。
     /// `config_dir` が解決できない極端な環境では `(default, FirstRun)` を返す。
     pub fn load_reporting() -> (Self, LoadOutcome) {
+        let defaults = Self::defaults_for_profile(Self::isolated_profile_key().is_some());
         let Some(dir) = Self::config_dir() else {
-            return (Self::default(), LoadOutcome::FirstRun);
+            return (defaults, LoadOutcome::FirstRun);
         };
-        Self::load_from_dir_reporting(&dir)
+        Self::load_from_dir_reporting(&dir, defaults)
+    }
+
+    /// 書かれた config を使えないときの既定値。分離プロファイルではホットキーだけが違う
+    /// （[`HotkeyConfig::isolated_profile_default`]・`SPEC.md` §13）。
+    ///
+    /// [`HotkeyConfig::isolated_profile_default`]: crate::hotkey::HotkeyConfig::isolated_profile_default
+    fn defaults_for_profile(isolated_profile: bool) -> Self {
+        let mut defaults = Self::default();
+        if isolated_profile {
+            defaults.hotkey = crate::hotkey::HotkeyConfig::isolated_profile_default();
+        }
+        defaults
     }
 
     /// `dir`/config.toml を読み込むコア（`config_dir` を注入可能にし統合テストする）。
@@ -43,7 +57,11 @@ impl Config {
     /// - read 失敗 (NotFound): first-run。default を生成・保存 → `FirstRun`
     /// - read 失敗 (InvalidData = 非 UTF-8): 壊れた永続データ。`.bak` 退避 + default → `RecoveredFromCorrupt`
     /// - read 失敗 (その他: permission/lock 等): 退避も上書きもせず default → `ReadFailed`
-    fn load_from_dir_reporting(dir: &Path) -> (Self, LoadOutcome) {
+    ///
+    /// ここでいう default は**呼び出し側が組んで渡す `defaults`** である（分離プロファイルでは
+    /// ホットキーが違う）。既定値を返す腕はすべて `defaults` を使う——腕ごとに食い違うと、
+    /// 壊れた config から復旧するときだけ普段使いの Snotra と同じホットキーになり、並走する普段使いの Snotra と衝突する。
+    fn load_from_dir_reporting(dir: &Path, defaults: Self) -> (Self, LoadOutcome) {
         let path = dir.join("config.toml");
         match fs::read_to_string(&path) {
             Ok(content) => match toml::from_str::<Self>(&content) {
@@ -62,12 +80,12 @@ impl Config {
                     // in-memory default で続行する（save() しない）。
                     eprintln!("[config] failed to parse {}: {e}", path.display());
                     Self::backup_invalid(&path);
-                    (Self::default(), LoadOutcome::RecoveredFromCorrupt)
+                    (defaults, LoadOutcome::RecoveredFromCorrupt)
                 }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // first-run / ファイル不在: default を生成・保存
-                let config = Self::default();
+                let config = defaults;
                 let _ = config.save_to_dir(dir);
                 (config, LoadOutcome::FirstRun)
             }
@@ -78,7 +96,7 @@ impl Config {
                 // 残らず失われる（parse 失敗との保全方針の非対称を解消）。
                 eprintln!("[config] {} is not valid UTF-8: {e}", path.display());
                 Self::backup_invalid(&path);
-                (Self::default(), LoadOutcome::RecoveredFromCorrupt)
+                (defaults, LoadOutcome::RecoveredFromCorrupt)
             }
             Err(e) => {
                 // permission / sharing violation / ロック等の一時的・環境的 read 失敗。
@@ -90,7 +108,7 @@ impl Config {
                     "[config] failed to read {}: {e} (running on defaults; file NOT overwritten)",
                     path.display()
                 );
-                (Self::default(), LoadOutcome::ReadFailed)
+                (defaults, LoadOutcome::ReadFailed)
             }
         }
     }

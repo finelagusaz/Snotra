@@ -1,6 +1,6 @@
 //! パスマッチング（区切り正規化・履歴キー統一・incremental 無効化）のテスト。
 
-use super::common::{empty_history, real_index_entries};
+use super::common::{empty_history, read_real_config_read_only, real_index_entries};
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
 use crate::search::*;
@@ -507,7 +507,7 @@ fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
         println!("実インデックスが無いためスキップします。");
         return;
     };
-    let config = crate::config::Config::load();
+    let config = read_real_config_read_only().expect("real_index_entries が読めた config");
     let build = || {
         let (tree, masks) = crate::indexer::derive_columns(entries.clone()).into_cached_masks();
         let mut material = crate::indexer::IndexMaterial::derived(tree, masks);

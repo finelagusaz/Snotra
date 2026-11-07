@@ -33,6 +33,8 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
 }
 $ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は上の doc）
 Write-Host "本体: $ExePath"
+# 残留として落とすのは、このリポジトリのビルド成果物から起動したものだけ（普段使いの Snotra は落とさない・#1306）。
+$buildRoot = Resolve-SnotraCargoTargetDirectory -RepositoryRoot $repoRoot
 
 # Two-window architecture (main + results, #646 PR2): startup smoke only exercises
 # main show/hide timing; the results window is driven by main's update() and has
@@ -61,7 +63,7 @@ $profileFull = $profile.FullPath
 Write-Host "検証用プロファイル: $profileFull（実ユーザーの config には触れません）"
 
 for ($run = 1; $run -le $Iterations; $run++) {
-  Resolve-SnotraExistingProcess -Policy Stop
+  Resolve-SnotraExistingProcess -Policy Stop -BuildRoot $buildRoot
 
   $errPath = Join-Path $env:TEMP ("snotra_smoke_startup_{0}.err" -f $run)
   $outPath = Join-Path $env:TEMP ("snotra_smoke_startup_{0}.out" -f $run)
@@ -112,7 +114,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # first-run 不発・`*.bin` の ∃）はすべて通り、緑のまま**である。ゆえにここが唯一の
   # 受け皿になる。`[config] ` 付きの eprintln は読み込み失敗の全 arm に在る（成功時に出るのは
   # duplicate instant command と invalid hotkey fallback の 2 系統だけで、
-  # この seed は instant_commands 無し・妥当な Alt+Q ゆえどちらも踏まない）。
+  # この seed は instant_commands 無し・妥当な Alt+F12 ゆえどちらも踏まない）。
   # smoke-egui.ps1 と visual-check-colors.ps1 の Test-SeedHealth が同型の判定を持つ（#843）。
   if (Test-Path $errPath) {
     foreach ($d in @(Select-String -Path $errPath -SimpleMatch '[config] ')) {

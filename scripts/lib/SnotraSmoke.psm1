@@ -11,7 +11,7 @@ function Initialize-SnotraNativeInterop {
 [DllImport("user32.dll")]
 public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-public static extern IntPtr FindWindowW(string cls, string title);
+public static extern IntPtr FindWindowExW(IntPtr parent, IntPtr childAfter, string cls, string title);
 [DllImport("user32.dll")]
 public static extern bool GetWindowRect(IntPtr hWnd, out RECT value);
 [DllImport("user32.dll")]
@@ -226,8 +226,10 @@ function New-SnotraVerificationProfile {
         # 名指しで止める）。
         [string]$GeneralSection = '',
         [string]$PathEntries = '',
+        # 既定は分離プロファイルの既定ホットキーと同じ Alt+F12（正本は `snotra-core/src/hotkey.rs` の
+        # `ISOLATED_PROFILE_HOTKEY_*`）。実プロファイルの既定 Alt+Q と違うので、普段使いの Snotra と並走しても登録が衝突しない（#1306）。
         [string]$HotkeyModifier = 'Alt',
-        [string]$HotkeyKey = 'Q',
+        [string]$HotkeyKey = 'F12',
         [int]$WindowWidth = 600,
         # $false で `results_view.rs` の `request_icons_for_results` が即 return し、
         # icon worker も `SHGetFileInfoW` も走らなくなる。**runner では `SHGetFileInfoW` が
@@ -421,6 +423,24 @@ function Resolve-SnotraCargoExecutable {
         [string]$Profile = 'debug'
     )
 
+    Join-Path (Resolve-SnotraCargoTargetDirectory -RepositoryRoot $RepositoryRoot) "$Profile/snotra.exe"
+}
+
+<#
+.SYNOPSIS
+`cargo metadata` の `target_directory`（`CARGO_TARGET_DIR` に追随する）を返す。
+
+.DESCRIPTION
+導出の作法の正本は `Resolve-SnotraCargoExecutable` の doc である。このリポジトリのビルド成果物が
+どこに在るかを知る経路はここ 1 つにする（`Resolve-SnotraExistingProcess -BuildRoot` も使う・#1306）。
+#>
+function Resolve-SnotraCargoTargetDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RepositoryRoot
+    )
+
     $manifestPath = Join-Path $RepositoryRoot 'Cargo.toml'
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         throw "Cargo workspace の manifest がありません: $manifestPath"
@@ -450,7 +470,7 @@ function Resolve-SnotraCargoExecutable {
         throw 'cargo metadata に target_directory がありません。'
     }
 
-    Join-Path ([string]$metadata.target_directory) "$Profile/snotra.exe"
+    [string]$metadata.target_directory
 }
 
 <#
@@ -545,10 +565,32 @@ function Resolve-SnotraExistingProcess {
     param(
         [ValidateSet('Stop', 'Reject')]
         [string]$Policy,
-        [string]$ProcessName = 'snotra'
+        [string]$ProcessName = 'snotra',
+        # 指定すると、実行ファイルがこのディレクトリの配下にあるプロセスだけを対象にする（#1306）。
+        # 検証用プロファイル（分離プロファイル）の起動を邪魔するのは、同じプロファイルの残留だけで、
+        # それはこのリポジトリのビルド成果物から起動されている。普段使いの Snotra（インストール先の exe）は
+        # 単一インスタンスが別なので、落としも拒みもしない。exe 1 本で絞らないのは、debug / release・
+        # `-ExePath` で exe が変わっても、別ビルドの残留を拾うためである（拾い漏れると後発が
+        # single-instance で黙って終わる・#872 と同型）。`-ExePath` にリポジトリ外の exe を渡すと、
+        # その残留は拾えない。
+        [string]$BuildRoot = ''
     )
 
     $existing = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
+    if (-not [string]::IsNullOrEmpty($BuildRoot)) {
+        $root = [System.IO.Path]::GetFullPath($BuildRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        $existing = @($existing | Where-Object {
+                # `.Path` は権限の無いプロセスで例外を投げうる（`SnotraSmoke.Tests.ps1` の実機配管の
+                # `AfterAll` と同じ扱い）。
+                $path = try { $_.Path } catch { $null }
+                if ([string]::IsNullOrEmpty($path)) {
+                    # 権限で読めないプロセスは候補に残す。黙って外すと、読めない残留が後発を沈黙させる。
+                    Write-Warning "pid=$($_.Id) の実行ファイルを読めません。ビルド成果物の残留として扱います。"
+                    return $true
+                }
+                [System.IO.Path]::GetFullPath($path).StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)
+            })
+    }
     if ($existing.Count -eq 0) { return }
 
     if ($Policy -eq 'Reject') {
@@ -923,15 +965,21 @@ function Wait-SnotraWindow {
     # **ウィンドウが現れていても一度も見ないまま**「現れませんでした」と落ちる。
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
-        $handle = [SnotraSmokeInterop.Native]::FindWindowW([NullString]::Value, $Title)
-        $ownerMatches = $true
-        if ($handle -ne [IntPtr]::Zero -and $null -ne $Process) {
-            [uint32]$ownerPid = 0
-            [void][SnotraSmokeInterop.Native]::GetWindowThreadProcessId($handle, [ref]$ownerPid)
-            $ownerMatches = ($ownerPid -eq $Process.Id)
-        }
-        if ($handle -ne [IntPtr]::Zero -and $ownerMatches -and [SnotraSmokeInterop.Native]::IsWindowVisible($handle)) {
-            return $handle
+        # 同じタイトルの窓を順に辿り、`-Process` の窓を探す。**最初の 1 窓で止めない**——普段使いの
+        # Snotra と並走すると（分離プロファイル・#1306）、同じタイトルの普段使いの Snotra の窓が先に見つかる。
+        $handle = [IntPtr]::Zero
+        while ($true) {
+            $handle = [SnotraSmokeInterop.Native]::FindWindowExW([IntPtr]::Zero, $handle, [NullString]::Value, $Title)
+            if ($handle -eq [IntPtr]::Zero) { break }
+            $ownerMatches = $true
+            if ($null -ne $Process) {
+                [uint32]$ownerPid = 0
+                [void][SnotraSmokeInterop.Native]::GetWindowThreadProcessId($handle, [ref]$ownerPid)
+                $ownerMatches = ($ownerPid -eq $Process.Id)
+            }
+            if ($ownerMatches -and [SnotraSmokeInterop.Native]::IsWindowVisible($handle)) {
+                return $handle
+            }
         }
         if ($null -ne $Process -and $Process.HasExited) {
             throw "本体が終了しました（exit=$($Process.ExitCode)）。ウィンドウ '$Title' を観測できません。"
@@ -1070,6 +1118,7 @@ Export-ModuleMember -Function @(
     'Invoke-SnotraEnvironment'
     'Start-SnotraProcess'
     'Resolve-SnotraCargoExecutable'
+    'Resolve-SnotraCargoTargetDirectory'
     'Get-SnotraRecordedExePath'
     'Resolve-SnotraExistingProcess'
     'Stop-SnotraProcessAndWait'

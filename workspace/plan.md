@@ -127,6 +127,10 @@ ADR 化済みで、規約から外しても知識が残るもの（指すだけ�
 - [x] `.claude/rules/comments.md` の各行の説明が真かを確かめ、偽なら直す
 - [x] `npm run governance:check` が green
 
+### 検証とレビューの記録
+
+- [x] ラウンド 1: 2127bef7 / verify:tree E・F green / 指摘 Medium 5・Low 6（Low 10 は意図した変更の記録で対応なし、ほかは直した）/ 変異 5 本のうち生き残り 1（中身の削除。機構の外として既知）
+
 ## 未確定（実装前に潰す）
 
 - [x] どの経緯が ADR に無いか — 規約の `#NNN` を `git grep` で ADR と突き合わせた（2026-11-07）。結果は「ADR に移すもの」

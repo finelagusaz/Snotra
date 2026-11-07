@@ -64,7 +64,9 @@ psm1 の中で「正本はここである」と宣言している箇所（`New-S
 - [x] トークン列の差が無い（`workspace/tokens-after.txt` と比べる）
 - [x] 外部の指し元を 1 件ずつ開き、指す内容が書き換え後のコメントに残っていることを確かめる
 - [x] `npm run governance:check`
-- [ ] `npm run test:powershell`
+- [x] `npm run test:powershell`
+- [x] ラウンド 1（9af04b94）: ツール green（C・E・F）。委譲の指摘 Medium 1（検知器が行継続を畳み、backtick の削除を見逃す）・Low 4。変異 9 件中、元の検知器で生き残り 1（backtick 削除）。検知器は LineContinuation を畳まない形に直し、Low 4 件もコメントを直した
+- [ ] ラウンド 2（修正後の sha）: ツールと委譲を回し直す
 
 ## 不変条件と異常系
 

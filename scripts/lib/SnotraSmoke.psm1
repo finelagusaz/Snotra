@@ -210,7 +210,7 @@ function Get-SnotraWindowDpi {
 # **検証用プロファイルに config.toml を置く共通の理由は、ここが正本である**（呼び出し側は固有の
 # 理由だけを書く）。ファイルが無いと `Config::load` が first-run と判定し、`Config::default()` の
 # 探索パスのシード（`default_scan_paths`）が、実マシンに在る既定パスを索引しうる。中身が空でも
-# parse は通る（セクションもキーも既定へ落ちる・#824）。骨格を書くのは、seed の意図を読めるようにするためである。
+# parse は通る（セクションもキーも既定値になる・#824）。骨格を書くのは、seed の意図を読めるようにするためである。
 function New-SnotraVerificationProfile {
     [CmdletBinding()]
     param(
@@ -365,9 +365,10 @@ function Start-SnotraProcess {
     if ($PSBoundParameters.ContainsKey('StandardOutputPath')) { $startParameters.RedirectStandardOutput = $StandardOutputPath }
     # **debug ビルドのコンソールウィンドウを隠す**（#872）。debug はコンソールサブシステムで
     # （`main.rs` の `windows_subsystem` は release だけに掛かる）、stdio をリダイレクトして起動すると
-    # `ConsoleWindowClass` のウィンドウが作られる。このウィンドウが前面を奪うと、
-    # `Set-SnotraForegroundWindow` が本体を前面にできず、注入した打鍵の宛先が定まらない。
-    # release にはこのウィンドウが無い。ローカルの既定は debug なので（#1292）、`Hidden` で隠す。
+    # `ConsoleWindowClass` のウィンドウが、実行ファイルのフルパスを題名にして作られる。このウィンドウが
+    # 前面を奪うと、`Set-SnotraForegroundWindow` が本体を前面にできず、注入した打鍵の宛先が定まらない。
+    # release にはこのウィンドウが無い。ローカルの既定は debug なので（#1292）、`Hidden` で隠して
+    # 前面を奪わせない。
     #
     # `Hidden` は隠すだけで、ウィンドウは visible=False のまま残る（実測）。ウィンドウを列挙する
     # 検査を足すなら、列挙に混じることに注意する。作らせない `ProcessStartInfo.CreateNoWindow` は、
@@ -504,7 +505,7 @@ function Get-SnotraRecordedExePath {
 生きているうちに後発を起動すると、後発は先発へ通知して即終了する（機序の正本は
 `scripts/smoke-egui.ps1` のコメント・#755/#801）。
 
-**throw しない。** `finally` から呼ばれるので、throw すると元の例外を覆い隠す。終了を確かめられ
+**throw しない。** `finally` からも呼ばれるので、throw すると元の例外を覆い隠す。終了を確かめられ
 なかったことは、戻り値 `$false` と警告で返す。赤にするのは呼び出し側である。
 
 **引数に型を付けない。** 単体検査は `Id` だけを持つ偽オブジェクトを渡す。`[System.Diagnostics.Process]`
@@ -695,7 +696,7 @@ trace は追記だけの記録なので、期限後に 1 度評価しても、�
 まま赤になる。
 
 読み取りの失敗（`ReadError`）は、成立の判定には使わない。ただし回数を数えて、必ず警告に載せる。
-黙ると、期限切れ・事象の未着・読み取り失敗を、後から区別できない（#872）。
+黙ると、期限をまたいだ停止・事象の未着・読み取り失敗を、後から区別できない（#872）。
 
 **`-AbortIfExited` はプロセスを型付きで受け取る。scriptblock では受け取らない。** この関数は
 module スコープで評価するので、呼び出し側の変数を読むにはクロージャが要る。しかし Pester の `It`

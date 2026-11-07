@@ -2781,10 +2781,10 @@ Parameter	-TimeoutMs
 Variable	$TimeoutMs
 Parameter	-PollMs
 Variable	$PollMs
-NL
+LC
 Parameter	-MinMatchCount
 Variable	$MinMatchCount
-NL
+LC
 Parameter	-Description
 StringExpandable	"trace ‚Ì $EventName"
 Parameter	-Predicate

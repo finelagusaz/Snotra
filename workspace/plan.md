@@ -38,19 +38,19 @@ psm1 の中で「正本はここである」と宣言している箇所（`New-S
 
 ### Phase 1 — 基準を取る
 
-- [ ] 比較スクリプトを scratchpad に書く。`[System.Management.Automation.Language.Parser]::ParseFile` のトークンから Comment を除き、連続する NewLine を 1 つに畳み、Kind と Text を出力する。`#Requires` の行は別に取り出して比べる（Comment トークンなので、畳んだ列には現れない）
-- [ ] 現行の psm1 から基準の列を `workspace/tokens-before.txt` へ書き出す
-- [ ] 検知器を試す。scratchpad の写しで、(a) コメント行の削除・2 行の統合 → 差なし、(b) throw の文言 1 文字の変更・実コード 1 行の削除・`#Requires` の版の変更 → 差あり、を確かめる
+- [x] 比較スクリプトを scratchpad に書く。`[System.Management.Automation.Language.Parser]::ParseFile` のトークンから Comment を除き、連続する NewLine を 1 つに畳み、Kind と Text を出力する。`#Requires` の行は別に取り出して比べる（Comment トークンなので、畳んだ列には現れない）
+- [x] 現行の psm1 から基準の列を `workspace/tokens-before.txt` へ書き出す
+- [x] 検知器を試す。scratchpad の写しで、(a) コメント行の削除・2 行の統合 → 差なし、(b) throw の文言 1 文字の変更・実コード 1 行の削除・`#Requires` の版の変更 → 差あり、を確かめる
 
 ### Phase 2 — 役割ごとに書き換える（refine-ja・技術文書モード）
 
 1 役割ずつ、refine-ja で書き換え案を作ってから当てる。各役割の後にトークン列を比べ、差が無いことを確かめ、`npm run governance:check` を回す。governance:check は `.psm1` のコメントを読み、コードスパンが 2 行にまたがると赤になる（3b 実測）。書き換えで折返しが変わると踏みうる。`<# #>` の閉じを巻き込む書き換えも、トークン列の差で止まる。
 
-- [ ] Win32 相互運用（`Initialize-SnotraNativeInterop`〜`Get-SnotraWindowDpi`）
-- [ ] プロファイル・env・起動（`New-SnotraVerificationProfile`〜`Start-SnotraProcess`）
-- [ ] 本体の解決・プロセス（`Resolve-SnotraCargoExecutable`〜`Resolve-SnotraExistingProcess`）
-- [ ] trace（`Read-SnotraTraceEvents`〜`Get-SnotraTraceEventCount`）
-- [ ] 注入・ウィンドウ・捕捉（`Send-SnotraKey`〜`Get-SnotraWindowCapture`）
+- [x] Win32 相互運用（`Initialize-SnotraNativeInterop`〜`Get-SnotraWindowDpi`）
+- [x] プロファイル・env・起動（`New-SnotraVerificationProfile`〜`Start-SnotraProcess`）
+- [x] 本体の解決・プロセス（`Resolve-SnotraCargoExecutable`〜`Resolve-SnotraExistingProcess`）
+- [x] trace（`Read-SnotraTraceEvents`〜`Get-SnotraTraceEventCount`）
+- [x] 注入・ウィンドウ・捕捉（`Send-SnotraKey`〜`Get-SnotraWindowCapture`）
 
 書き換えの基準（`docs/comment-guidelines.md`「第一原則」「短く保つ」「歴史メモの様式」から）:
 
@@ -61,9 +61,9 @@ psm1 の中で「正本はここである」と宣言している箇所（`New-S
 
 ### Phase 3 — 検証
 
-- [ ] トークン列の差が無い（`workspace/tokens-after.txt` と比べる）
-- [ ] 外部の指し元を 1 件ずつ開き、指す内容が書き換え後のコメントに残っていることを確かめる
-- [ ] `npm run governance:check`
+- [x] トークン列の差が無い（`workspace/tokens-after.txt` と比べる）
+- [x] 外部の指し元を 1 件ずつ開き、指す内容が書き換え後のコメントに残っていることを確かめる
+- [x] `npm run governance:check`
 - [ ] `npm run test:powershell`
 
 ## 不変条件と異常系

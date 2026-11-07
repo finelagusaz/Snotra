@@ -1,0 +1,106 @@
+# adversarial-1408: research.md の反証（測定は 2026-11-08・main 同内容・作業ツリー無変更）
+
+作業用スクリプトと出力: C:/Users/Eoh/AppData/Local/Temp/claude/68217c6d6914cc71/d1adcd02-f52c-4421-901c-c97d264fb2f7/scratchpad/
+  alt.mjs / alt.txt（別形の列挙）, wrap.mjs / wrap.txt（リンク形・折返し形・非コメント行）, uses.mjs / defs.mjs / uses.json（90 件の名前一致の検証）,
+  purp.mjs / weak.txt / near.txt（目的の語の分類の検証）, strip.mjs（stripRs の検証）, dt/（Rust の検知器の実験用の使い捨て repo）
+
+## 所見（各所見に「偽にする手順」）
+
+### F1（命題 1 を壊せた）抽出 RE は、同じ道案内をしている参照を大きく取りこぼす
+抽出 RE は `` `X` `` の直後に「の doc / の //! / の rustdoc / の ///」が来る 1 行の形だけを拾う。
+- **リンク形 `` [`X`] の doc ``（rustdoc の intra-doc link）: 63 行**。tsv にはその 63 行が 1 行も入っていない（wrap.mjs の linkMiss=63 / linkAll=63）。
+  うち強い語（理由・根拠・経緯・実測・正本・契約・不変条件・前提・保証）を含まないものが 29 行。
+  例: `snotra-core/src/indexer/cache.rs:702` `（[`LegacyUpgrade`] の doc）`、`search/path_store.rs:109` `[`NameArena`] の doc。`、`state.rs:102` `（機序は [`crate::egui_shell::read_config`] の doc）`、
+  `window_coordinator.rs:1204` `[`FrameGeom::bar_height_phys`] の doc が持つ。`
+  これらは cargo doc が「リンク先の存在」だけは照合する形で、「道案内の参照が消える」点は #1408 の主旨そのもの。
+  → 90 件の「語なし」と同じ尺度（強い語なし）で数えると、取りこぼしだけで 29 件あり、90 件の約 3 分の 1 に当たる。
+- **折返し形（行末が `` `X` の `` で次行頭が `doc` / `` `//!` ``、または行末が `` `X` `` で次行頭が `の doc`）: 22 行**（wrapA=10, wrapB=12）。
+  例: `src-tauri/src/egui_shell/view.rs:1709` 付近の `Harness::step` は拾われているが、`search/build.rs:347` `` `SearchEngine::any_name_has_path_sep` ``＋次行 `の doc）`、
+  `window_coordinator.rs:768` `[`read_window_borders`]`＋次行 `の doc）` は拾われていない。
+- 「詳細は／理由は `X`（doc の語なし）」形: 31 行（alt.txt「詳細は/が持つ(名指し)」）。これは `の doc` を名乗らないので、issue の形（`X` の doc）の外にあるのは妥当だが、
+  「理由は `X`」は「委ね」そのものであり、research の「形 2」と同じ道案内。範囲に入れないなら、入れない理由を research に書くべき。
+- 偽にする手順: `git grep -n -E '\[`[^`]+`\]\s*の\s*(doc|`?//[/!]`?|rustdoc)' -- '*.rs'` を実行して 0 件なら偽（実測 63 件）。
+  wrap.mjs を `node wrap.mjs <scratchpad>` で再実行して wrapA/wrapB が 0 なら偽（実測 10/12）。
+
+### F2（命題 2 を壊せた）「コードで使う」は名前の一致であり、実際には使っていない例がある
+`ref-purpose.mjs` は `\b<最後の識別子>\b` をコメントを除いた同一ファイルの全文へ当てるだけ。次の反例が実在する。
+- `src-tauri/src/egui_shell/window_coordinator.rs:356` `view.rs の `window_width` の doc`:
+  window_coordinator.rs の中の `window_width` は **config のフィールド** `appearance.window_width`（138・139 行）と `read_window_width` の別名 grep ヒットであって、
+  指されている `view.rs:146` の `fn window_width(&self)` は window_coordinator.rs から呼ばれていない（呼ぶのは `read_window_width(app)`）。
+  しかも指す側は「config が幅の正本である」という主張の根拠をその doc に委ねている。消すと、ジャンプ先も根拠も失う。
+- `src-tauri/src/egui_shell/view.rs:316` `ime::active_range_chars の doc`: view.rs の `active_range_chars` ヒット 2 件はテストモジュールの
+  `ImeEvent::Preedit { active_range_chars: Some(..) }` のフィールド名で、指されている `snotra-egui-runtime/src/ime.rs:18` の関数は **別 crate** であり view.rs は呼んでいない。
+  生産コードには名前が 0 件（uses.mjs の crossBlock）。
+- 名前が汎用で何にでも一致する: `proof.rs`（runtime.rs:33。`proof` はフィールド名）、`show`（results_window.rs:335）、`RowsSnapshot::rows`（最後が `rows`・ヒット 38 件）。
+  「`rows` の一致」は何も証明しない。
+- 90 件のうち 34 件は「指す側のファイルが X を定義しているだけ」（defs.mjs の selfDefines）。同じファイル内の定義と、呼び出しとは別（`//!` の参照では「コードが使う」自体が成り立たない）。
+  定義だけ（fn 定義 1 件のみ）のものが 4 件: `frame_stages.rs:7`・`results_window.rs:52`・`window_coordinator.rs:42`・`startup.rs:929`。
+- 逆向き（名前が一致しないのに実際には使っている）は 49 件を全部目で当たったが、見つからなかった。stripRs の誤爆も確かめた（strip.mjs: 行コメント先行／ブロック先行で
+  61 ファイルの結果が全件同一、判定が反転した行は 0 件）。
+- 偽にする手順: window_coordinator.rs の `window_width` の全ヒットを `grep -n -w window_width src-tauri/src/egui_shell/window_coordinator.rs` で見て、
+  `view.rs` の `window_width()` 呼び出しが 1 件でもあれば偽（実測: 呼び出しは 0 件・コメント 2 件とフィールド参照 2 件のみ）。
+
+### F3（命題 3 を壊せた・部分的）4 分類は網羅的ではなく、「消しても失うものが無い」にも例外がある
+- **文字列リテラルの中の参照が 4 件**（`snotra-core/src/indexer/cache/tests.rs:384, 451, 859, 910`）。コメントではなく `assert!` の失敗メッセージ。
+  4 分類のどれでもない（コメントではない）。消すのはコードの変更で、テストの失敗メッセージから「どの doc を読むか」が消える。CI のログから読む人はジャンプできない。
+  wrap.txt の nonComment では計 5 件（`search/tests/build.rs:381` を含む。こちらは目的の語あり）。
+- **語ありで除外された側に、道案内だけのものが混ざっている**（purp.mjs: 「コードで使う・語あり」67 件のうち強い語を持たないものが 14 件）。
+  `ため`・`#NNN`・`参照`・`にある`・`を見よ` といった弱い語でだけ「語あり」になっている。例: `visual.rs:123` は `#282828`（色コード）が「経緯 #NNN」に当たっているだけ、
+  `path_store.rs:264` `（`push_segment` の doc を見よ）`・`app.rs:696` `` `SettingsApp::new` の doc を見よ `` は、純粋な道案内なのに 90 件の外。
+  逆に、**語なし 90 件のうち 26 件は前後 2 行に強い語がある**（near.txt）。行ごとの分類は折返しで割れる。例: `window_coordinator.rs:36`（「分かれ方は `read_bar_anchor` の doc。」）は前後が理由の説明。
+  → 90 は「消してよい集合」でも「消すべき集合」でもなく、近似の近似である。計画で 1 件ずつ判定する前提を research に明記すべき。
+- **消すと隣の唯一の手がかりも落ちる行**: `src-tauri/src/indexing.rs:146` は同じ行に `` `PERFORMANCE.md`「採用: ...」 ``（正準形の見出し参照・測定値の出所）を持つ。
+  行ごと消すと、issue が「残す」と言う 1 か所の測定値への参照まで一緒に消える。`view.rs:1270` は同じ行に `ADR-main-window-clamp-on-pointer-release` の引用を持つ。
+- **doc の文言を括弧で逐語引用している行**（`view.rs:367, 2100` の「文字の上下に 7」・`frame_stages.rs:7`・`cache/tests.rs:936`・`cache.rs:365`）: 出所の括弧を消すと、引用が出所の無い鉤括弧になる。
+  `view.rs` の「文字の上下に 7」は `layout.rs:44` の doc では「文字の上／下に 7」と行をまたぎ、grep で逐語に当たらない。
+- **90 件中 45 の X（distinct 73 のうち）は 279 件全体でちょうど 1 回しか指されていない**。ただし「その 1 回を消すと、その doc に至る道が消える」とは限らない（指す側のコードが呼んでいれば LSP で飛べる）。
+  F2 の 2 件（window_width・active_range_chars）は、その飛べる前提が崩れている。
+- 偽にする手順: `sed -n 384p snotra-core/src/indexer/cache/tests.rs` 等で行頭が `"` なら文字列（実測: 4 件とも文字列）。
+
+### F4（命題 4 は概ね壊せなかった。ただし 3 点の但し書き）
+- 90 件の中に `` [`X`] `` リンクは 0 件（awk で 90 行を絞って確認）。正準形の見出し参照（`` `X.md`「…」 ``）は 90 件中 1 件（indexing.rs:146・F3 参照）。ADR 引用は 1 件（view.rs:1270）。
+  G-adr-citations は「引用が実在の ADR を指すか」だけで、「ADR が 1 回以上引かれるか」は見ない（孤児を赤にする検査は無い）。実測で確認。
+- **rustdoc の lint は `deny`**（`Cargo.toml` の `[workspace.lints.rustdoc]`: `broken_intra_doc_links`・`invalid_html_tags`）。参照を消すこと自体は赤にしないが、
+  書き換えの途中でコードスパンのバッククォートを落とすと赤になる（実験: `///` 1 行の中の `` `Option<Box<str>>` `` からバッククォートを外すと
+  `rustdoc -D rustdoc::invalid_html_tags` が `unclosed HTML tag` で失敗）。折返しの途中の括弧を消すとき（`G-folded-code-spans` の領分）に起こりうる。変更行が全部 `///` でも起こる。
+- **ソースを文字列として読むテストが 4 本ある**: `icon_textures.rs:427・433`（`include_str!("view.rs")` など）、`view.rs:1418`（`assert_read_once_in_this_file`・コメント込みで数える）、
+  `indexing.rs:321`（`start_index_build` の本体に `invalidate_icon_cache(` が含まれること。**説明コメントに綴りが残っても緑になる**と doc 自身が認めている）、
+  `activation/tests.rs`（ディレクトリを実行時に読む）。90 件の行はいずれも needle を含まないので今回は壊れない（`.controller.indexing()`・`read_visible_rows(` は生産コード 1 件のみ）。
+  ただし「コメントを減らす変更が絶対に何も壊さない」は保証されていない。cargo test（カテゴリ A）で拾える。
+- 偽にする手順: `view.rs` から `concat!` で割られた needle の綴り（`.controller.indexing()`）を含むコメントが 1 行でもあれば、現状でも赤のはず（今は緑）。
+  indexing.rs:146 の行を消して cargo test を実行し、緑なら「壊れない」が成り立つ（私は **実行していない**）。
+
+### F5（命題 5 を壊せた）`git diff -U0` の変更行が `//` で始まるだけでは「コメントだけの変更」を保証できない
+実験（scratchpad/dt/a.rs・rustc で実行）:
+- **`\` 継続の文字列の次行が `//` で始まる**:
+  ```
+  let s = "abc\
+      // x";        →  // y";
+  ```
+  変更行は `-        // x";` / `+        // y";` で両方とも `//` 始まり。実行結果は `abc// x` → `abc// y` に変わった（コードの変更）。検知器は通る。
+  （raw 文字列 45 件の本文には `//` 始まりの行が 0 件。通常文字列の継続行は私は **全件を字句解析していない**。リポジトリに実在するかは未測定 ⚠️）
+- 検知器が `+` の行だけを見る実装だと、コード行の純削除（`-` だけ・`+` 無し）を見逃す。`-` の行も見る必要がある。
+- 逆向き（偽陽性）: 行末コメント付きのコード行の編集（`let n = 1; // old` → `let n = 1;`）は両側とも `//` 始まりでないので弾かれる。ブロックコメントの途中の行（`*` 始まり・無印）も弾かれる。
+  安全側だが、偽陽性を握りつぶす運用になると検知器の信頼が落ちる。
+- `///` / `//!` は `#[doc]` になる。`#[doc(hidden)]` 付きの項目は rustdoc に出ないが、rustdoc の lint（上記）は走る。
+- 偽にする手順: dt/a.rs と同じ形（`\` 継続の次行を `//` で始める）をリポジトリで grep して 0 件なら実害は 0。手順は rawstr.mjs の strMultiHit の考え方だが、正規表現が粗く（3257 件の偽ヒット）使えなかった。**字句解析器が要る**（⚠️）。
+
+### F6（測定環境）走査元と行の取り方
+- 走査元 `allHeadingRefDocs` の `.rs` 系は `git ls-files '*.rs'` の 139 件と一致（snapshot の `headingRefSourceDocs` も 139）。走査元から落ちる `.rs` は無い。
+- `refScanLines` は `.rs` に対して **全行**（フェンスの外）を返す（`COMMENT_FAMILY` に `.rs` が無いため `linesOutsideFences` へ落ちる）。「コメント行」だけではない。
+  → 279 件のうち、コメントではない行（文字列リテラル）が 5 件含まれる（F3）。.rs のコード行に `//` を含む文字列があれば、stripRs は行末までを消す（私は **この形で名前を落とした例を探していない** ⚠️。strip.mjs は行コメント先行／ブロック先行の差だけを測った）。
+- `ref-purpose.mjs` が見ない行: `.md`・スクリプトのフェンス内（`.rs` の変更には無関係）。`.rs` のフェンスは `///` に続くので `^\s*```` に当たらず、フェンス内の参照も数えられる（lib.mjs の受容する残余に書いてある）。
+- PURPOSE の語の判定は物理行ごと（F3 参照）。`ため`・`#\d+`・`参照` が一般語・色コード・「〜を参照渡し」に当たる。
+
+## research.md の主張ごとの判定
+
+- 「抽出は `X` の doc / `//!` / `///` の形を governance:check と同じ走査元から拾う」（母集団 279 件・内訳 157/49/73・語なし 90/30/23）: 数字は tsv と一致（再計算して一致を確認）。ただし**母集団の定義がリンク形 63 行・折返し形 22 行を落としている** → 壊せた（F1）。
+- 「コードで使う」はファイル単位の名前の一致で、呼び出しの関係ではない（research 自身が断っている）: 断りの通りだが、**消してよいかの判定には使えない例が実在する**（window_width・active_range_chars）→ 壊せた（F2）。
+- 「90 件を全件目で読んだ・4 分類」: 4 分類のどれにも入らない文字列リテラルが 4 件ある・語の分類が近似で 14 件が弱い語で除外され 26 件が折返しで割れる → 壊せた（F3）。「引用を消しても読者が失うものは無い」は、window_width・indexing.rs:146・逐語引用の例で壊せた。
+- 「外部 doc は消さない」（egui・egui_kittest・epaint）: 3 件はすべて他者の crate（view.rs:308・1709・raster.rs:224）で、確認した。壊せなかった。
+- 「指されている doc は 147 ブロック・1,671 行／構造の断定は一意性の宣言が大半」: 見ていない（pointee-docs.mjs は再実行していない）。issue は 146 ブロック・平均 11.3 行、research は 147 ブロックで、基準日の違い（#1410 マージ前後）か判定の違いかは未確認 ⚠️。
+- 「参照を消しても機構は何も言わない（cargo doc・governance:check は減ったことを赤にしない）」: 90 件の範囲では壊せなかった（リンク 0 件・ADR 孤児検査なし・正準形 1 件）。ただし rustdoc の lint が `deny` であること、ソースを文字列で読むテストがあること（F4）は research に無い。
+- 「Rust のコメントだけの変更は `git diff -U0` の変更行が `//` で始まることで確かめられる」: 壊せた（F5。文字列継続・`-` 行・偽陽性の方向）。research は「文字列リテラルの中の `//` は別に見る」と断っているが、検知器が見逃す形の列挙は無い。
+- 「機構は `cargo doc`（intra-doc link）と `governance:check`（正準形の見出し参照・バッククォート内のパスと識別子）」: G-stale-identifiers の対象や G-references のバッククォート照合が `.rs` のコメントへ及ぶ範囲は **見ていない**（90 件はどれも消す側なので赤にならない前提で、実行していない）。
+- 「未解決 3: 『コードで使わない』49 件と `.md`・スクリプト 73 件を範囲に入れない」: 49 件の中に名前は違うが実際に使っているものが無いことを全件確認した → 壊せなかった。`.md`・スクリプト 73 件は見ていない。
+- 「ユーザー判断（範囲は参照の削減に絞る）」: 判断の記録なので反証の対象外。ただし F1 のリンク形 63 行を範囲に入れるかは、その判断が想定していたかどうか不明 ⚠️（ユーザーに返す価値がある）。

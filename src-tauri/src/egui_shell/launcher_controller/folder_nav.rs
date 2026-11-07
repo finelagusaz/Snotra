@@ -167,7 +167,7 @@ impl LauncherController {
                 self.state.navigate_folder(dir.clone())
             } else {
                 // #1079: 突入時点の未反映を frame へ控えさせる。**渡すのは `armed` だけである**
-                // ——合成は `SearchState` の内側が持つ（`enter_folder` の doc）。
+                // ——合成は `SearchState` の内側が持つ。
                 self.state
                     .enter_folder(dir.clone(), self.search_debounce.is_armed())
             };

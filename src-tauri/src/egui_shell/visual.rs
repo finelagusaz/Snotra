@@ -36,7 +36,7 @@ use crate::egui_shell::layout::{self, Metrics};
 /// まで」という本 PR 自身の制約に反する（レビュー Important 1）。
 static DEFAULT_VISUAL: LazyLock<VisualConfig> = LazyLock::new(VisualConfig::default);
 
-/// AppState 不在時に渡す既定 config（確保ゼロ・`DEFAULT_VISUAL` の doc 参照）。
+/// AppState 不在時に渡す既定 config（確保ゼロ）。
 pub(crate) fn default_visual() -> &'static VisualConfig {
     &DEFAULT_VISUAL
 }

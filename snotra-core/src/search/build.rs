@@ -236,8 +236,7 @@ impl SearchEngine {
 
         // ここから先の `lower_names` の `None` は「`entries[i].name` と同一」を意味する
         // （`SearchEngine::lower_names` の doc）。**`Measured` の時点では全要素が `Some` である**
-        // ——下の共有判定はその前提に乗っており、だから `Collapsed` を同じ入口へ流せない
-        // （`DerivedStrings` の doc）。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
+        // ——下の共有判定はその前提に乗っており、だから `Collapsed` を同じ入口へ流せない。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
         // 包んでも Vec 本体は動かない。
         //
         // **展開を `PathStore::build` より後に置くのは、フラグをその場で立てるためである。**

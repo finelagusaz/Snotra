@@ -331,8 +331,7 @@ fn measure_real_index_footprint() {
     // （足すと二重計上で残余が負に振れる）。分けて出すのは、読むバイト数と deserialize が
     // オンディスク形式の変更に対して**逆向きに振る舞う**ためである。
     //
-    // `cache_save` も分岐によっては同じ扱いが要る（`LoadOrScanStats::cache_save` の
-    // doc）。cache-miss 分岐では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 分岐で
+    // `cache_save` も分岐によっては同じ扱いが要る。cache-miss 分岐では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 分岐で
     // 旧版昇格が走った場合はここに入る save 時間が `cache_load` の内数**——足すと
     // 二重計上になり、残余が負へ振れる。cache-hit 分岐は
     // scan/sort が常に ZERO なのでそちらは無条件のままでよく、除外が要るのは

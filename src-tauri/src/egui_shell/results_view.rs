@@ -589,7 +589,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let Some(shared) = app_handle.try_state::<ResultsShared>() else {
             return;
         };
-        // 受け取りは行を複製しない（`RowsSnapshot::rows` の doc）。
+        // 受け取りは行を複製しない。
         let snapshot = shared.snapshot.lock().unwrap().clone();
         if snapshot.rows.is_empty() {
             // #632 の不変条件「再表示後に確実に一度 scroll し直す」の実ゲート。旧実装は main
@@ -853,8 +853,7 @@ mod tests {
         }
     }
 
-    /// results が毎フレーム snapshot を受け取る `clone` は、行を複製しない
-    /// （`RowsSnapshot::rows` の doc）。
+    /// results が毎フレーム snapshot を受け取る `clone` は、行を複製しない。
     ///
     /// 回帰テスト: 行を `Vec` で持っていた頃は、受け取りのたびに行数ぶんの `String` を
     /// 複製していた。型を戻すと 2 つの snapshot が別々のバッファを指し、これが落ちる。

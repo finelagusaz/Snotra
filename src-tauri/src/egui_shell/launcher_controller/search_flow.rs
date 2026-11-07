@@ -203,7 +203,7 @@ impl LauncherController {
                         "pending_seq": self.state.pending_seq(),
                         // "view" = Folder ビューへ遷移していた（#1039 のガード）。ガードは Tool も
                         //          弾くが、そちらは `enter_tool` が in-flight を失効させるため
-                        //          production では到達しない（`accept_worker_rows` の doc）。
+                        //          production では到達しない。
                         // "seq"  = 追い越された、または同期で差し替えて失効していた。
                         "reason": if was_current { "view" } else { "seq" },
                     }),

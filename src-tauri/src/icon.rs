@@ -187,7 +187,7 @@ fn icon_bin_file() -> Option<BinFile> {
 /// メモリ内 `IconCacheState` を `None` にし、`icons.bin` を削除する。
 /// 両方やらないと、ファイルだけ消してもメモリ内の古いアイコンが終了時の
 /// `save_if_dirty` で再永続化される。
-/// 両操作は**単一 lock 内で原子的に**行う（→ `invalidate_icon_cache_with` の doc、#522）。
+/// 両操作は**単一 lock 内で原子的に**行う（#522）。
 pub fn invalidate_icon_cache(icons: &IconCacheState) {
     invalidate_icon_cache_with(icons, icon_bin_file());
 }

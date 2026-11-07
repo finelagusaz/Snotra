@@ -236,7 +236,7 @@ impl InputState {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // **保持とイベント送出の両方を行う**（egui 0.36 で `RawInput::modifiers` が
-                // 消えた・`self.modifiers` の doc）。片方だけでは、各イベントに載る値か
+                // 消えた）。片方だけでは、各イベントに載る値か
                 // egui 側の `InputState::modifiers` のどちらかが更新されない。
                 self.modifiers = modifiers_from_tao(*modifiers);
                 self.raw

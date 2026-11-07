@@ -1,0 +1,173 @@
+file:line	形	判定	規則	理由
+snotra-core/src/binfmt.rs:224	`temp_dir` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/config/io.rs:4	[`Config::load_from_dir_reporting`] の rustdoc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/config/io/tests.rs:65	`temp_dir` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/config/location.rs:8	[`Config::config_dir_from`] の //! rustdoc [link] [folded]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/engine.rs:15	[`Engine::config_handle`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/folder.rs:207	`temp_dir` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/history.rs:90	`empty` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+snotra-core/src/history.rs:430	`temp_dir` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/index_tree.rs:20	[`NameArena`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/index_tree.rs:415	`from_parts` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+snotra-core/src/index_tree.rs:695	[`CHAIN_CAP`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/index_tree.rs:1218	`normalize_file_name_key_into` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/cache.rs:101	`LoadCacheResult::upgrade_save` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/cache.rs:137	[`IndexMaterial`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/cache.rs:166	[`NameArena`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/cache.rs:170	[`NameArena`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/cache.rs:180	[`crate::index_tree::IndexTree::from_parts`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/cache.rs:190	`crate::str_arena` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/indexer/cache.rs:218	`crate::str_arena` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/indexer/cache.rs:370	`LegacyUpgrade` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/indexer/cache.rs:445	`LoadCacheResult::upgrade_save` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/indexer/cache.rs:449	`LoadOrScanStats::cache_save` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/indexer/cache.rs:644	[`crate::indexer::columns::DerivedColumns::into_cached_masks`] の doc [link]	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/indexer/cache.rs:702	[`LegacyUpgrade`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/cache.rs:747	[`BuiltAt`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/cache.rs:759	`sort_entries_canonical` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/cache.rs:777	`LoadCacheResult::upgrade_save` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/indexer/cache.rs:867	`IndexTree::from_parts` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+snotra-core/src/indexer/cache.rs:998	`upgrade_legacy_cache_in` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/cache/tests.rs:353	`GOLDEN_V10` の /// doc [folded]	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/cache/tests.rs:735	`upgrade_legacy_cache_in` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/cache/tests.rs:736	`INDEX_LOCK_TEST_GUARD` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/indexer/cache/tests.rs:866	[`BuiltAt`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/cache/tests.rs:876	`upgrade_legacy_cache_in` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/cache/tests.rs:936	`LoadOrScanStats` の doc	残す	3	doc の文言の逐語引用か、doc の中身についての言明
+snotra-core/src/indexer/columns.rs:5	[`CachedMasks`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/columns.rs:87	`crate::str_arena` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/indexer/path_env.rs:5	[`reject_existing`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/path_env.rs:180	[`normalize_file_name_key_into`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/path_env.rs:196	`normalize_entry_key_into` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/indexer/path_env.rs:245	[`reject_existing`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/indexer/scan.rs:128	[`root_roles`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/query.rs:810	[`fold_latin`](super::fold_latin) の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search.rs:130	`crate::str_arena` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/search.rs:149	`index_tree` の `//!`	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/search.rs:472	`path_store` の `//!`	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/search/build.rs:238	`SearchEngine::lower_names` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/search/build.rs:240	`DerivedStrings` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/search/build.rs:250	[`DerivedStrings`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/build.rs:403	[`IndexMaterial`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/build.rs:419	`IndexTree::materialize` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+snotra-core/src/search/build.rs:550	[`wave1_from_tree`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/path_store.rs:109	[`NameArena`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/path_store.rs:157	[`crate::index_tree::NameArena::blob`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/path_store.rs:234	[`raw_path_into`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/path_store.rs:264	`push_segment` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/search/path_store.rs:312	[`Self::cmp_paths`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/path_store.rs:335	[`CompactEntry`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/scoring.rs:91	[`SearchEngine::score_one_entry`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/search/scoring.rs:249	`QueryPlan::substring_finder` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+snotra-core/src/search/tests/basic.rs:704	`real_index_entries` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/search/tests/build.rs:445	`extend_with_roots` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/search/tests/build.rs:502	`CachedMasks` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/search/tests/build.rs:506	`IndexTree::build` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+snotra-core/src/search/tests/build.rs:909	`real_index_entries` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/search/tests/performance.rs:215	`bench_new_migemo` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/src/str_arena.rs:329	[`OptionalStrArena::blob`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/str_arena.rs:470	`crate::indexer::LowerFileName` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/src/str_arena.rs:485	[`OptionalStrArena::blob`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-core/src/ui_types.rs:128	`IconSource` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/src/window_data.rs:106	`temp_dir` の doc	残す	3	精密事実・契約の正本の指名
+snotra-core/tests/memory_footprint.rs:334	`LoadOrScanStats::cache_save` の // doc [folded]	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-core/tests/path_query_cost.rs:210	`Engine::sorted_by_path` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+snotra-core/tests/path_query_cost.rs:510	`SearchEngine::recent_history` の doc	残す	3	精密事実・契約の正本の指名
+snotra-egui-runtime/src/input.rs:239	`self.modifiers` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+snotra-egui-runtime/src/windows_ime.rs:498	[`super::is_owned_ime_message`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-settings/src/app.rs:105	[`SECTION_TABLE`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+snotra-settings/src/app.rs:696	`SettingsApp::new` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/config_watcher.rs:187	`LoadOutcome` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/font_stack.rs:282	`font_definitions` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/launcher_controller/activation.rs:348	[`crate::state::AppState::read_config`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/launcher_controller/activation.rs:597	`SearchState::is_unsettled` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/launcher_controller/activation/tests.rs:142	[`sources`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/launcher_controller/folder_nav.rs:170	`enter_folder` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/launcher_controller/frame_stages.rs:7	`consume_external_pending` の doc	残す	3	doc の文言の逐語引用か、doc の中身についての言明
+src-tauri/src/egui_shell/launcher_controller/frame_stages.rs:13	`drain_launch` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/launcher_controller/frame_stages.rs:68	`BlurGrace::reset` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/launcher_controller/frame_stages.rs:135	`drain_folder` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/launcher_controller/search_flow.rs:44	[`crate::state::AppState::read_config`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/launcher_controller/search_flow.rs:206	`accept_worker_rows` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/layout.rs:118	`ResultsInputs::max_results` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/layout.rs:247	`MainScale` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/layout.rs:259	`MainScale` の doc	残す	3	doc の文言の逐語引用か、doc の中身についての言明
+src-tauri/src/egui_shell/layout.rs:414	`present_results` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/layout.rs:432	`results_window_height` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/layout.rs:435	`results_window_height` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/layout.rs:636	`icon_prefetch_range` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/layout.rs:847	`ResultsInputs::max_results` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/layout.rs:1256	`fit_middle_by_measure` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/lifecycle.rs:69	`BlurGrace` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/lifecycle.rs:103	`blur_grace_action` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/lifecycle.rs:217	`BlurGrace::reset` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/mod.rs:142	`window_coordinator::MainVisible` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/mod.rs:506	`on_event_loop` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/results_view.rs:592	`RowsSnapshot::rows` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/results_view.rs:857	`RowsSnapshot::rows` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/results_window.rs:52	`set_topmost` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/results_window.rs:85	`raw_show` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/results_window.rs:195	`raw_show` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/results_window.rs:265	`last_size` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/results_window.rs:266	`apply_native_background` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/results_window.rs:269	`last_size` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/results_window.rs:272	`layout::ResultsScale` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/results_window.rs:321	`show` の doc	残す	3	doc の文言の逐語引用か、doc の中身についての言明
+src-tauri/src/egui_shell/results_window.rs:335	`show` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/search_state.rs:183	[`SearchState::put_rows`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/search_state.rs:352	[`FolderFrame::unsettled_at_entry`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/search_state.rs:372	[`SearchState::enter_folder`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/search_state.rs:420	[`SearchState::enter_folder`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/search_state.rs:486	[`FolderFrame::unsettled_at_entry`] の /// doc [link] [folded]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/search_state.rs:638	[`crate::egui_shell::lifecycle::BlurGrace::reset`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/search_state.rs:673	[`SearchState::is_unsettled`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/search_state.rs:1174	`on_escape` の /// doc [folded]	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/view.rs:7	`read_pre_widget_input` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/view.rs:316	`ime::active_range_chars` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/view.rs:367	`Metrics::bar_inset` の doc	残す	3	doc の文言の逐語引用か、doc の中身についての言明
+src-tauri/src/egui_shell/view.rs:671	`read_pre_widget_input` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/view.rs:841	`TEXT_EDIT_HINT_H_MARGIN` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/view.rs:1146	`ResultsShared::publish` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/view.rs:1270	`clamp_main_into_work_area` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/view.rs:1281	`window_coordinator::check_show_bar_rect` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/view.rs:1626	`search_input_ui` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/egui_shell/view.rs:1865	`kittest_first_frame_requests_focus_before_text_edit` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/view.rs:1867	`search_input_ui` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/view.rs:2100	`Metrics::bar_inset` の doc	残す	3	doc の文言の逐語引用か、doc の中身についての言明
+src-tauri/src/egui_shell/visual.rs:39	`DEFAULT_VISUAL` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/visual.rs:123	`hex_or` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:36	`read_bar_anchor` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/window_coordinator.rs:42	`hide_egui_main` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/window_coordinator.rs:125	`read_metrics` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:133	`read_metrics` の /// doc [folded]	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:237	`AppState::read_config` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:356	`window_width` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:546	`read_placement_relative` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:618	`monitor::point_monitor_work_area` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:783	`egui_shell::read_config` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:868	[`layout::logical_to_phys`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/window_coordinator.rs:957	`monitor::point_monitor_work_area` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/egui_shell/window_coordinator.rs:995	[`ClampSample`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/window_coordinator.rs:1010	[`clamp_main_into_work_area`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/window_coordinator.rs:1204	[`FrameGeom::bar_height_phys`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/egui_shell/window_coordinator.rs:1332	`layout::MainScale` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/egui_shell/window_coordinator.rs:1335	`layout::results_top_y` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/window_coordinator.rs:1336	`read_window_borders` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/egui_shell/window_coordinator.rs:1462	`MainVisible` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/icon.rs:162	[`IconCache`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/icon.rs:190	`invalidate_icon_cache_with` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/indexing.rs:123	`IndexMaterial` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/indexing.rs:146	`rebuild_and_save` の doc	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/main.rs:164	`crate::startup` の `//!`	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/main.rs:207	`IndexMaterial` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/main.rs:287	`crate::startup` の `//!`	消す	1-5 すべて	道案内・出所の印。X はブロックのコードが使う
+src-tauri/src/main.rs:401	`crate::startup` の `//!`	残す	3	精密事実・契約の正本の指名
+src-tauri/src/platform/mod.rs:63	`crate::startup` の `//!`	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/platform/mod.rs:358	`crate::startup` の `//!`	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）
+src-tauri/src/startup.rs:440	`LoadOrScanStats::total` の doc	残す	3	精密事実・契約の正本の指名
+src-tauri/src/startup.rs:532	[`pre_main_elapsed`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/startup.rs:929	`failure_reasons_are_stable_and_unique` の doc	残す	1/2/3	ブロックのコードが X を使わない・外部・テストの宣言・比較（読んで判定）
+src-tauri/src/state.rs:17	[`Engine::config_handle`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/state.rs:53	[`Engine::config_handle`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/state.rs:102	[`crate::egui_shell::read_config`] の doc [link]	残す	3	doc コメントのリンク形（cargo doc が着地を確かめる名指し）
+src-tauri/src/state.rs:161	`Engine::config_handle` の doc	残す	範囲外	理由・帰結・経緯の所在の宣言（「〜は X の doc」型。計画の除外）

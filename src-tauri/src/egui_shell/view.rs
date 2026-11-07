@@ -1143,7 +1143,7 @@ impl EguiView for SearchWindowView {
         let show_results = !self.controller.state().results().is_empty() && !plain_hidden;
         // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results ウィンドウ(ResultsView)が担う。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
-        // 行は所有者の `Arc` を共有して渡す（`ResultsShared::publish` の doc・#1279）。
+        // 行は所有者の `Arc` を共有して渡す（#1279）。
         if let Some(shared) = app.try_state::<crate::egui_shell::ResultsShared>() {
             // 表示すべきでないフレームは空の行を発行する（rows 空 = results 非表示）。
             // `Arc::default()` は static を共有し、確保しない。

@@ -269,6 +269,7 @@ npm run verify                   # Rust + node 一括検証（cargo check --work
 npm run smoke:startup             # 起動時スモーク（trace 出力・検証用プロファイル・非 first-run の検証）
 npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定は debug 本体を導く・CI は release を明示）
 npm run bench:startup             # 起動の端から端までの内訳実測（区間ごとの min/p50/max・詳細: PERFORMANCE.md）
+pwsh -NoProfile -File scripts/occupy-hotkey.ps1 -DurationSeconds 120  # 検証用プロファイルの既定ホットキーを先に握り、本体の RegisterHotKey を実際に失敗させる（startup:failed の検算・#1009。用途の正本はスクリプトの .NOTES）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
 npm run measure:memory:stages     # メモリ実測（起動→表示→検索→hide の段階別・前景計測。実行中の snotra を kill する）
 npm run tauri build              # リリースビルド（NSIS バンドル。`prepare:sidecar` で binaries/ を用意してから）

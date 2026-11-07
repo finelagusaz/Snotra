@@ -838,7 +838,7 @@ impl EguiView for SearchWindowView {
             // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
             // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
             // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
-            // egui が hint を elide する内幅である（`TEXT_EDIT_HINT_H_MARGIN` の doc）。
+            // egui が hint を elide する内幅である。
             //
             // 測定は「候補を書式へ埋めた文字列の実幅」を返す形で注入する。**固定部
             //（日本語の接尾辞・英語の接頭辞 + 接尾辞）の幅を別に推定しなくて済む**のが

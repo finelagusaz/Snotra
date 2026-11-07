@@ -143,7 +143,7 @@ fn drain_index(app_handle: &AppHandle) {
         };
         let Some(inputs) = inputs else { break };
 
-        // **保存が返した派生データをそのまま索引の表現に使う。**捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」。
+        // **保存が返した派生データをそのまま索引の表現に使う**。捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」。
         let material = indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
 
         // **drain ループ自身はアイコンキャッシュに触らない。** 無効化は `start_index_build` が

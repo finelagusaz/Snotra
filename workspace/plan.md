@@ -66,7 +66,8 @@ psm1 の中で「正本はここである」と宣言している箇所（`New-S
 - [x] `npm run governance:check`
 - [x] `npm run test:powershell`
 - [x] ラウンド 1（9af04b94）: ツール green（C・E・F）。委譲の指摘 Medium 1（検知器が行継続を畳み、backtick の削除を見逃す）・Low 4。変異 9 件中、元の検知器で生き残り 1（backtick 削除）。検知器は LineContinuation を畳まない形に直し、Low 4 件もコメントを直した
-- [ ] ラウンド 2（修正後の sha）: ツールと委譲を回し直す
+- [x] ラウンド 2（0343ac6c）: ツール green（C・E・F）。委譲の指摘 0 件（L1〜L4 解消）。直した検知器で変異 9 件＋追加 1 件がすべて期待どおり、生き残り 0。⚠️ W3（tokens ファイルが cp932 で書かれ、U+2014 が化ける）は、主が UTF-8 で出し直して 996db798 版と一致を確認
+- [x] 却下した 2 案（モジュール分割・dot-source でのファイル分割）を `docs/adr/ADR-smoke-module-not-split.md` へ回収
 
 ## 不変条件と異常系
 

@@ -112,20 +112,20 @@ ADR 化済みで、規約から外しても知識が残るもの（指すだけ�
 
 ### フェーズ 1: ADR
 
-- [ ] `docs/adr/ADR-comment-guidelines-one-question.md` を書く（「ADR に移すもの」の全項目。H1 は `# ADR-comment-guidelines-one-question: …` の形にする。`G-adr-file-names` が H1 とファイル名の一致を見る）
+- [x] `docs/adr/ADR-comment-guidelines-one-question.md` を書く（「ADR に移すもの」の全項目。H1 は `# ADR-comment-guidelines-one-question: …` の形にする。`G-adr-file-names` が H1 とファイル名の一致を見る）
 
 ### フェーズ 2: 規約
 
-- [ ] `docs/comment-guidelines.md` を「新しい構成」のとおりに書き直す
-- [ ] 新本文の `#NNN` を含む行を 1 行ずつ読み、経緯の語りが無いことを確かめる
-- [ ] 「読むが触らない」の各行の中身が新本文に着地することを確かめる
-- [ ] `scripts/governance/checks/G-folded-heading-refs.mjs` 34 行目の括弧書きを `ADR-folded-code-span-detector` へ差し替える
+- [x] `docs/comment-guidelines.md` を「新しい構成」のとおりに書き直す
+- [x] 新本文の `#NNN` を含む行を 1 行ずつ読み、経緯の語りが無いことを確かめる
+- [x] 「読むが触らない」の各行の中身が新本文に着地することを確かめる
+- [x] `scripts/governance/checks/G-folded-heading-refs.mjs` 34 行目の括弧書きを `ADR-folded-code-span-detector` へ差し替える
 
 ### フェーズ 3: 周辺
 
-- [ ] `AGENTS.md:16`・`CONTRIBUTING.md:13`・`docs/development-principles.md:72` の記述が真かを確かめ、偽なら直す
-- [ ] `.claude/rules/comments.md` の各行の説明が真かを確かめ、偽なら直す
-- [ ] `npm run governance:check` が green
+- [x] `AGENTS.md:16`・`CONTRIBUTING.md:13`・`docs/development-principles.md:72` の記述が真かを確かめ、偽なら直す
+- [x] `.claude/rules/comments.md` の各行の説明が真かを確かめ、偽なら直す
+- [x] `npm run governance:check` が green
 
 ## 未確定（実装前に潰す）
 

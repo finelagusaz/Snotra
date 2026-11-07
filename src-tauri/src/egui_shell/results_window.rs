@@ -262,14 +262,14 @@ impl ResultsWindow {
     /// **lock は Win32 呼び出しの前に手放す。** `std::sync::Mutex` は再入不可であり、tao の
     /// `set_inner_size` は `set_window_flags` → `apply_diff` を経てウィンドウプロシージャに至りうる
     /// ——guard を握ったまま呼ぶ形は、将来その経路が再入したときにデッドロックする。
-    /// 手放すことによる TOCTOU は生じない（書き手は `last_size` の doc のとおり単一スレッド）。
-    /// `background` は**リサイズで露出する下地**へ適用する（`apply_native_background` の doc）。
+    /// 手放すことによる TOCTOU は生じない（書き手は単一スレッド）。
+    /// `background` は**リサイズで露出する下地**へ適用する。
     /// デルタガードの内側で撃つため、同値のフレームでは Win32 を呼ばない。
     pub(crate) fn set_size(&self, width: f64, height: f64, background: egui::Color32) {
-        // **scale はデルタガードより前に読む。** memo は論理値のままに保つ（`last_size` の doc）
+        // **scale はデルタガードより前に読む。** memo は論理値のままに保つ
         // ——物理へ移すと許容 0.5 の意味が scale で変わり、scale 2.0 では論理 0.25 の
         // ガードになる（撃つ頻度が意図せず上がる）。比較する単位と覚える単位を揃える。
-        // **読むウィンドウと型を同じ式で決める**（`layout::ResultsScale` の doc）——先に `f64` へ
+        // **読むウィンドウと型を同じ式で決める**——先に `f64` へ
         // 落として後から包む書き方にすると、包む場所が読む場所から離れて取り違えが戻る。
         let scale =
             crate::egui_shell::layout::ResultsScale::new(self.window.scale_factor().unwrap_or(1.0));

@@ -906,7 +906,7 @@ fn shared_lower_name_chain_collapses_both_links() {
 /// 一致しなければならない——ずれると `lower_name` はタイブレークの並びが、`lower_file_name` は
 /// `has_dot` クエリの拡張子マッチが**静かに**変わる（クラッシュせず、順位だけが動く）。
 /// 実インデックスが無ければ自動スキップする corpus であり、機構としての保証は上の合成
-/// fixture のほうが持つ（`real_index_entries` の doc）。
+/// fixture のほうが持つ。
 #[test]
 fn entry_view_shared_strings_match_derivation_over_real_index() {
     let Some(entries) = real_index_entries() else {

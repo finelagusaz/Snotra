@@ -331,8 +331,7 @@ fn measure_real_index_footprint() {
     // （足すと二重計上で残余が負に振れる）。分けて出すのは、読むバイト数と deserialize が
     // オンディスク形式の変更に対して**逆向きに振る舞う**ためである。
     //
-    // `cache_save` も分岐によっては同じ扱いが要る（`LoadOrScanStats::cache_save` の
-    // doc）。cache-miss 分岐では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 分岐で
+    // `cache_save` も分岐によっては同じ扱いが要る。cache-miss 分岐では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 分岐で
     // 旧版昇格が走った場合はここに入る save 時間が `cache_load` の内数**——足すと
     // 二重計上になり、残余が負へ振れる。cache-hit 分岐は
     // scan/sort が常に ZERO なのでそちらは無条件のままでよく、除外が要るのは
@@ -531,8 +530,8 @@ fn report_cache_bytes(n: usize) {
     let Some(b) = indexer::cache_byte_breakdown_in(&Config::config_dir().expect("config dir"))
     else {
         // **「どの版としても読めない」と書いてはならない。** この計測コードの適用範囲は製品の
-        // フォールバックチェーンより狭く、製品は読めるがここでは読めない古い版が在りうる
-        // （`cache_byte_breakdown_in` の doc）。版の一覧もここへ書き写さない——焼き込むと
+        // フォールバックチェーンより狭く、製品は読めるがここでは読めない古い版が在りうる。
+        // 版の一覧もここへ書き写さない——焼き込むと
         // 版を足したときにこの 1 行だけが古くなる。
         println!(
             "\n  --- index.bin の内訳: この計測コードが読める版では読めなかったためスキップ ---"

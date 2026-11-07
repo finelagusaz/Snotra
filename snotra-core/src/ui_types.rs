@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn icon_source_default_is_from_path() {
-        // 既定が `FromPath` であることは費用の話でもある（`IconSource` の doc）。
+        // 既定が `FromPath` であることは費用の話でもある。
         assert_eq!(IconSource::default(), IconSource::FromPath);
     }
 }

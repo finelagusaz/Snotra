@@ -367,7 +367,7 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     //
     // **`LegacyUpgrade::Skip` を渡す。** ここは開発者の実 `%APPDATA%\Snotra\index.bin` を
     // 読む corpus テストの入口であり（`search/tests/common.rs`）、`Write` にすると
-    // テストを走らせるだけで実データを書き換える（`LegacyUpgrade` の doc）。
+    // テストを走らせるだけで実データを書き換える。
     Some(
         load_cache(hash, LegacyUpgrade::Skip)?
             .material
@@ -442,11 +442,10 @@ fn load_or_scan_with_stats_in(
             cache_read: result.read,
             scan: Duration::ZERO,
             sort: Duration::ZERO,
-            // 昇格が走らなかった分岐は `None` ゆえ `ZERO`（`LoadCacheResult::upgrade_save` の doc）。
+            // 昇格が走らなかった分岐は `None` ゆえ `ZERO`。
             // **この値は計測用であって、昇格の有無の判定には使えない**——判定を負っているのは
             // 向こうの variant であり、こちらは時間を運ぶだけである（#1054 / #1063）。
-            // `cache_load` の内数——フェーズの和には足さない
-            // （`LoadOrScanStats::cache_save` の doc）。
+            // `cache_load` の内数——フェーズの和には足さない。
             cache_save: result.upgrade_save.unwrap_or(Duration::ZERO),
             total: total_started.elapsed(),
         };
@@ -641,7 +640,7 @@ fn save_cache_sorted_in(
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
     }
-    // **畳むのは書き終えた後である**（借用の順序・[`crate::indexer::columns::DerivedColumns::into_cached_masks`] の doc）。
+    // **畳むのは書き終えた後である**（借用の順序）。
     // `clone` は挟まない——上の `Cow::Borrowed` の借用は `bf.save` を最後に終わる（NLL）。
     derived.into_cached_masks()
 }
@@ -774,7 +773,7 @@ fn upgrade_legacy_cache_in(
     let (tree, masks) = with_index_write_lock(|| {
         save_cache_sorted_in(dir, entries, config_hash, BuiltAt::Carried(built_at))
     });
-    // **`Some` を作るのはこの 1 行だけである**（`LoadCacheResult::upgrade_save` の doc）。
+    // **`Some` を作るのはこの 1 行だけである。**
     // 昇格 save を通ったことは、時間の値ではなくこの variant が表す。
     let upgrade_save = Some(save_started.elapsed());
     LoadCacheResult {

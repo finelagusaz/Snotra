@@ -1329,7 +1329,7 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
         return;
     };
     // 算術は layout::results_top_y（純粋核・#752 C1）。Win32 の読みはここで 1 回だけ行う。
-    // **`main` から読んだ scale をその場で `MainScale` へ包む**（`layout::MainScale` の doc）
+    // **`main` から読んだ scale をその場で `MainScale` へ包む**
     // ——results ウィンドウの scale（`ResultsWindow::set_size` が読む）と型で分かれており、
     // 取り違えはコンパイルが通らない。
     // **不可視枠を両側から差し引く。** 理由と実測は `layout::results_top_y` の doc、

@@ -161,7 +161,7 @@ fn send_alt_key_up() {}
 
 fn main() {
     // **anchor はここである。** これより前（DLL ロード・CRT 初期化）は `pre_main` として
-    // 別に測る——測らないと、そこに住む遅延が計測区間の外へ落ちる（`crate::startup` の `//!`）。
+    // 別に測る——測らないと、そこに住む遅延が計測区間の外へ落ちる。
     startup::begin();
 
     let is_first_run = Config::is_first_run();
@@ -284,7 +284,7 @@ fn main() {
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
             // **setup ブロック唯一の早期 return である。** ここで抜けると
             // `RegisterInitialHotkey` は送られないので、終端を出さないとハーネスには
-            // 「タイムアウト」としか見えない（`crate::startup` の `//!`）。
+            // 「タイムアウト」としか見えない。
             let handles = match egui_shell::create(app, window_width as f64, &bg_color) {
                 Ok(h) => h,
                 Err(e) => {

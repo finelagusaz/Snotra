@@ -838,7 +838,7 @@ impl EguiView for SearchWindowView {
             // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
             // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
             // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
-            // egui が hint を elide する内幅である（`TEXT_EDIT_HINT_H_MARGIN` の doc）。
+            // egui が hint を elide する内幅である。
             //
             // 測定は「候補を書式へ埋めた文字列の実幅」を返す形で注入する。**固定部
             //（日本語の接尾辞・英語の接頭辞 + 接尾辞）の幅を別に推定しなくて済む**のが
@@ -1143,7 +1143,7 @@ impl EguiView for SearchWindowView {
         let show_results = !self.controller.state().results().is_empty() && !plain_hidden;
         // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results ウィンドウ(ResultsView)が担う。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
-        // 行は所有者の `Arc` を共有して渡す（`ResultsShared::publish` の doc・#1279）。
+        // 行は所有者の `Arc` を共有して渡す（#1279）。
         if let Some(shared) = app.try_state::<crate::egui_shell::ResultsShared>() {
             // 表示すべきでないフレームは空の行を発行する（rows 空 = results 非表示）。
             // `Arc::default()` は static を共有し、確保しない。

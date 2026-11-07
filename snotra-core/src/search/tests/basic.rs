@@ -701,7 +701,7 @@ fn utf32_haystack_matches_utf32_string_from() {
 
 /// 同じ一致を、実インデックスで照合器へ渡りうる全 haystack（`entry_view` が返す照合用の文字列）で
 /// 確かめる。実インデックスが無ければ自動スキップする corpus であり、機構としての保証は上の
-/// 合成のほうが持つ（`real_index_entries` の doc）。
+/// 合成のほうが持つ。
 #[test]
 fn utf32_haystack_matches_utf32_string_from_over_real_index() {
     let Some(entries) = super::common::real_index_entries() else {

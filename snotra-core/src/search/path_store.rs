@@ -261,7 +261,7 @@ impl PathStore {
             push_segment(buf, self.names.get(idx));
             push_segment(buf, &self.table[self.entries[idx].aux as usize]);
         }
-        // ASCII の小文字化はここで 1 回だけ当てる（`push_segment` の doc を見よ）。
+        // ASCII の小文字化はここで 1 回だけ当てる。
         buf.make_ascii_lowercase();
     }
 

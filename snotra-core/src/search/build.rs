@@ -236,8 +236,7 @@ impl SearchEngine {
 
         // ここから先の `lower_names` の `None` は「`entries[i].name` と同一」を意味する
         // （`SearchEngine::lower_names` の doc）。**`Measured` の時点では全要素が `Some` である**
-        // ——下の共有判定はその前提に乗っており、だから `Collapsed` を同じ入口へ流せない
-        // （`DerivedStrings` の doc）。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
+        // ——下の共有判定はその前提に乗っており、だから `Collapsed` を同じ入口へ流せない。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
         // 包んでも Vec 本体は動かない。
         //
         // **展開を `PathStore::build` より後に置くのは、フラグをその場で立てるためである。**
@@ -247,7 +246,7 @@ impl SearchEngine {
         // （`PathStore::build` は派生文字列を一切見ないので、遅らせる障害は無い）。
         // **どちらの分岐も、出口では同じ 2 本の列（`crate::str_arena`）になる。** 潰す判定を
         // 通すかどうかだけが違い、`Collapsed` は記録側が測った結果をそのまま表現として使う
-        // ——ここで測り直しても結果は変わらず、費用だけが掛かる（[`DerivedStrings`] の doc）。
+        // ——ここで測り直しても結果は変わらず、費用だけが掛かる。
         //
         // **`match` の中で分ける。** 外で `matches!` を取ると、variant を足したときに既定値へ
         // 黙って落ちる——「測らない」側に誤れば削減だけが減り、「測る」側に誤れば結果が

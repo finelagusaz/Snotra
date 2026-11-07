@@ -502,8 +502,7 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
     app.listen(crate::events::EGUI_HIDE_REQUESTED, move |_| {
         // emit 元は view の `update()` の中（イベントループスレッド）ゆえ、
-        // `on_event_loop` はインライン実行にフォールバックする——**今日と同じフレーム内順序が保たれる**
-        // （`proof.rs` の `on_event_loop` の doc）。
+        // `on_event_loop` はインライン実行にフォールバックする——**今日と同じフレーム内順序が保たれる。**
         snotra_egui_runtime::on_event_loop(&handle, hide_egui_main);
     });
 }

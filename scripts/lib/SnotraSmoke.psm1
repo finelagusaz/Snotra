@@ -56,8 +56,8 @@ public struct INPUT { public uint type; public INPUTUNION u; }
 }
 
 # WTSQuerySessionInformationW の引数（`WTSSessionInfoEx` = 25・`WTS_CURRENT_SESSION` = -1）と
-# `WTSINFOEX_LEVEL1_W.SessionFlags` の値。**Windows 7 では LOCK/UNLOCK の意味が逆**だが、
-# 本リポジトリの対象は Windows 10/11 ゆえ documented のまま扱う。
+# `WTSINFOEX_LEVEL1_W.SessionFlags` の値。Windows 7 では LOCK/UNLOCK の意味が逆になる。
+# 対象は Windows 10/11 なので、ドキュメントどおりに扱う。
 $script:WtsSessionInfoEx = 25
 $script:WtsCurrentSession = -1
 $script:WtsSessionStateLock = 0
@@ -68,12 +68,11 @@ $script:WtsSessionStateUnlock = 1
 `WTSINFOEXW` のバイト列から SessionFlags を読む純関数。
 
 .DESCRIPTION
-**構造体のオフセットを自前で仮定するため、同じバッファから読める SessionId で検算する。**
-`WTSINFOEXW` は `Level`(DWORD) の後に union が続き、union の中身（`WTSINFOEX_LEVEL1_W`）は
-`LARGE_INTEGER` を含むので 8 バイト境界へ揃う。ゆえに SessionId は 8、SessionState は 12、
-SessionFlags は 16 に来る。**この仮定が外れれば SessionId が呼び出し元のセッションと合わなくなる**
-ので、合わなければ「読めた」と言わずに落とす（誤ったオフセットから読んだ 0 が
-「ロック中」と読まれるのを防ぐ・fail-closed）。
+**オフセットを自前で仮定しているので、同じバッファの SessionId で検算する。**
+`WTSINFOEXW` は `Level`(DWORD) の後に union が続く。union の中身（`WTSINFOEX_LEVEL1_W`）は
+`LARGE_INTEGER` を含むので、8 バイト境界へ揃う。そのため SessionId は 8、SessionState は 12、
+SessionFlags は 16 に来る。仮定が外れると、SessionId が呼び出し元のセッションと合わなくなる。
+合わなければ throw する（誤ったオフセットから読んだ 0 を「ロック中」と読まないため）。
 #>
 function ConvertFrom-SnotraWtsInfoEx {
     [CmdletBinding()]
@@ -143,16 +142,16 @@ function Get-SnotraSessionLockState {
 画面がロックされていたら、何をすればよいかを名指しして止める。
 
 .DESCRIPTION
-**ロック中はウィンドウが Win32 の視点では生きたままである**（`IsWindowVisible` は真・矩形も妥当・
-DPI も正しい）ため、既存のガードはすべて通り、`CopyFromScreen` は**ロック画面の中身を持つ
-有効な Bitmap** を返す。判定側が落ちたとしてもメッセージは色や描画経路を指すので、読んだ人は
-レンダリングを疑い始める（#866 実測）。ここで名指しして止める。
+**ロック中も、ウィンドウは Win32 から見て生きたままである**（`IsWindowVisible` は真で、矩形も
+DPI も正しい）。そのため他のガードはすべて通り、`CopyFromScreen` はロック画面を写した有効な
+Bitmap を返す。判定が落ちても、メッセージは色や描画経路を指すので、読んだ人はレンダリングを
+疑う（#866 実測）。ここでロックを名指しして止める。
 
-**寄せる向きを 2 つに分ける。** 「ロック中と判定できた」は throw、「**判定できなかった**」は警告のみで
-続行する。この関数の仕事は*誤った結果*を防ぐことであり、状態を読めないホストで実行そのものを
-拒めば、情報を足さずにツールを失う。加えて `Get-SnotraWindowCapture` は Pester の Integration
-テスト経由で **CI（GitHub Actions の Windows runner）でも走る**——判定不能を throw にすると、
-runner の WTS の振る舞いが未知のまま CI を壊しうる。**ロックという確定した事実にだけ強く寄せる。**
+- ロック中と判定できた: throw する
+- 判定できなかった: 警告だけ出して続ける。この関数の役目は誤った結果を防ぐことで、状態を読めない
+  ホストで実行を拒んでも得るものが無い。`Get-SnotraWindowCapture` は Pester の Integration テスト
+  から CI（GitHub Actions の Windows runner）でも走るので、throw にすると、runner の WTS の振る舞い
+  しだいで CI が壊れうる
 #>
 function Assert-SnotraSessionUnlocked {
     [CmdletBinding()]
@@ -189,14 +188,13 @@ function Initialize-SnotraDpiAwareness {
 ウィンドウが載っているモニターの実効 DPI を返す（96 が 100%）。
 
 .DESCRIPTION
-**awareness を通さずに DPI を読むと 96 が返る。** DPI 非対応のプロセスには Win32 が仮想化した
-値を見せるためで、**エラーにならず「100% である」と読める値**が返る。2026-08-16 に実測した
-125% の機体では、`GetDeviceCaps(LOGPIXELSX)` が 96 を、`System.Windows.Forms.Screen` が
-物理 1920x1080 を 1536x864 と報告した——どちらも真っ当な見た目で、倍率を 1 段読み違えさせる。
-ゆえに `Initialize-SnotraDpiAwareness` を先に通す。
+**awareness を設定せずに DPI を読むと、エラーにならず 96（100%）が返る。** DPI 非対応の
+プロセスには、Win32 が仮想化した値を見せるためである。2026-08-16 に 125% の機体で実測すると、
+`GetDeviceCaps(LOGPIXELSX)` は 96 を、`System.Windows.Forms.Screen` は物理 1920x1080 を
+1536x864 と返した。そのため、先に `Initialize-SnotraDpiAwareness` を通す。
 
-**プライマリモニターではなくウィンドウの載るモニターを見る。** 本体は PER_MONITOR_AWARE_V2 で動くため、
-多画面ではウィンドウごとに倍率が違いうる。ピクセルを数える検査はウィンドウの倍率でしか意味を持たない。
+**プライマリモニターではなく、ウィンドウが載るモニターの DPI を返す。** 本体は PER_MONITOR_AWARE_V2
+で動くので、多画面ではウィンドウごとに倍率が違いうる。ピクセルを数える検査には、ウィンドウの倍率が要る。
 #>
 function Get-SnotraWindowDpi {
     [CmdletBinding()]
@@ -209,33 +207,31 @@ function Get-SnotraWindowDpi {
     [int][SnotraSmokeInterop.Native]::GetDpiForWindow($Handle)
 }
 
-# **検証プロファイルに config.toml を置く共通の理由はここが正本である**（3 本の呼び出し側は
-# 固有の理由だけを書く）。ファイルが無いと Config::load が first-run と判定し、
-# Config::default() の探索パスシード（default_scan_paths）が実マシンの既定パス（存在する
-# ものだけ）を索引しうる。#824 以降、中身が空でも parse 自体は通る——セクションもキーも
-# 既定へ落ちるため——ので、骨格を書くのは seed の意図を読めるようにするためである。
+# **検証用プロファイルに config.toml を置く共通の理由は、ここが正本である**（呼び出し側は固有の
+# 理由だけを書く）。ファイルが無いと `Config::load` が first-run と判定し、`Config::default()` の
+# 探索パスのシード（`default_scan_paths`）が、実マシンに在る既定パスを索引しうる。中身が空でも
+# parse は通る（セクションもキーも既定値になる・#824）。骨格を書くのは、seed の意図を読めるようにするためである。
 function New-SnotraVerificationProfile {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
         [string]$ProfileDir,
         [string]$AdditionalSections = '',
-        # `[general]` 内の追加キー（ヘッダ行なし）。TOML はテーブルの再定義を許さないため、
-        # `[general]` 自体はこの関数が唯一発行する——呼び出し側が `-AdditionalSections` に
-        # `[general]` を書くと、下の既定ブロックと衝突して parse が落ちる（下の guard が
-        # 名指しで止める）。
+        # `[general]` に足すキー（ヘッダ行は書かない）。TOML はテーブルの再定義を許さないので、
+        # `[general]` の見出しはこの関数だけが書く。`-AdditionalSections` に `[general]` を
+        # 書くと parse が落ちるため、下の guard が止める。
         [string]$GeneralSection = '',
         [string]$PathEntries = '',
-        # 既定は分離プロファイルの既定ホットキーと同じ Alt+F12（正本は `snotra-core/src/hotkey.rs` の
-        # `ISOLATED_PROFILE_HOTKEY_*`）。実プロファイルの既定 Alt+Q と違うので、普段使いの Snotra と並走しても登録が衝突しない（#1306）。
+        # 既定は分離プロファイルの既定ホットキー Alt+F12（正本は `snotra-core/src/hotkey.rs` の
+        # `ISOLATED_PROFILE_HOTKEY_*`）。実プロファイルの Alt+Q と違うので、普段使いの Snotra と
+        # 並走しても登録が衝突しない（#1306）。
         [string]$HotkeyModifier = 'Alt',
         [string]$HotkeyKey = 'F12',
         [int]$WindowWidth = 600,
-        # $false で `results_view.rs` の `request_icons_for_results` が即 return し、
-        # icon worker も `SHGetFileInfoW` も走らなくなる。**runner では `SHGetFileInfoW` が
-        # `exists:true` のパスに対して `ShellQueryFailed(1008)` を返し**、失敗は
-        # `IconFailure::is_transient` が true ゆえ恒久 latch されず再要求され続ける
-        # ——アイコンを判定に使わない検査では、この空回りが観測時間を押し広げるだけになる（#872）。
+        # アイコンを判定に使わない検査は $false を渡す。$false なら `results_view.rs` の
+        # `request_icons_for_results` がすぐ return し、icon worker も `SHGetFileInfoW` も走らない。
+        # CI の runner では `SHGetFileInfoW` が `ShellQueryFailed(1008)` を返し、一時的な失敗として
+        # 再要求され続けるので、観測時間が延びるだけになる（#872）。
         [bool]$ShowIcons = $true
     )
 
@@ -262,16 +258,12 @@ show_icons = $showIconsToml
 "@.Trim()
     )
 
-    # **`auto_update` は既定で無効化する。** `GeneralConfig.auto_update` の既定は Full
-    # （`snotra-core/src/config.rs` の `#[default]`）で、`[general]` を省略しても既定値が
-    # 適用されるため、検証用プロファイルは何もしなければ**起動のたびに実ネットワークの
-    # 更新チェックを走らせる**——実在の新版が見つかれば本物の toast が出て、
-    # `SNOTRA_EGUI_FAKE_UPDATE` が届いていなくても高さ断言が満たされてしまう（#755/#801 是正 E
-    # が閉じたはずの「env が届いていない」と「検査対象が出なかった」の混同が別経路で復活する）。
-    # 副作用として smoke がネットワークの状態に依存する（間欠的な赤の源）。
-    # **fake ハッチは disabled でも効いたままである**——`spawn_update_check`
-    # （`src-tauri/src/egui_shell/mod.rs`）のハッチは `auto_update` の判定より**前**で
-    # return するため、実チェックだけが消える。
+    # **`auto_update` は既定で無効にする。** 製品の既定は Full（`snotra-core/src/config.rs` の
+    # `#[default]`）なので、何もしなければ起動のたびに実ネットワークへ更新を問い合わせる。
+    # 実在の新版が見つかると本物の toast が出て、`SNOTRA_EGUI_FAKE_UPDATE` が届いていなくても
+    # 高さの断言が通ってしまう（#755/#801）。ネットワークの状態で smoke が赤くなる原因にもなる。
+    # disabled でも fake のハッチは効く。`spawn_update_check`（`src-tauri/src/egui_shell/mod.rs`）は
+    # `auto_update` を見る前にハッチで return するので、消えるのは実際の問い合わせだけである。
     $generalLines = @('auto_update = "disabled"')
     if (-not [string]::IsNullOrWhiteSpace($GeneralSection)) { $generalLines += $GeneralSection.Trim() }
     $parts += (@('[general]') + $generalLines) -join "`r`n"
@@ -344,11 +336,10 @@ function Start-SnotraProcess {
         [string]$StandardOutputPath,
         [switch]$NoNewWindow,
         [switch]$Trace,
-        # 呼び出し側が足す env（`SNOTRA_EGUI_FAKE_UPDATE` 等の視覚スモーク用ハッチ）。
-        # 名前の文字種の検証は `Invoke-SnotraEnvironment` が行う。**予約キー
-        # （`SNOTRA_CONFIG_DIR` / `SNOTRA_TRACE`）の重複はここで弾く**——弾かずに合流させると
-        # 後勝ちで `-ConfigDir` が無効化され、この関数が構造的に保証していた「seed した
-        # プロファイル以外を読まない」が黙って破れる（#755/#801 是正 C）。
+        # 呼び出し側が足す env（`SNOTRA_EGUI_FAKE_UPDATE` などの検査用ハッチ）。名前の文字種は
+        # `Invoke-SnotraEnvironment` が検証する。**予約キー（`SNOTRA_CONFIG_DIR` / `SNOTRA_TRACE`）は
+        # ここで弾く。** 合流させると後勝ちで `-ConfigDir` が上書きされ、seed したプロファイル以外を
+        # 読まないという保証が黙って破れる（#755/#801）。
         [hashtable]$ExtraVariables = @{}
     )
 
@@ -372,23 +363,19 @@ function Start-SnotraProcess {
     if ($PSBoundParameters.ContainsKey('ArgumentList')) { $startParameters.ArgumentList = $ArgumentList }
     if ($PSBoundParameters.ContainsKey('StandardErrorPath')) { $startParameters.RedirectStandardError = $StandardErrorPath }
     if ($PSBoundParameters.ContainsKey('StandardOutputPath')) { $startParameters.RedirectStandardOutput = $StandardOutputPath }
-    # **debug ビルドはコンソールウィンドウを連れてくる。それを見せない**（#872 の現れ方 1）。
-    # `main.rs` の `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` により
-    # debug はコンソールサブシステムであり、stdio をリダイレクトして起動すると
-    # `ConsoleWindowClass` のウィンドウが**実行ファイルのフルパスを題名にして**作られる。このウィンドウが
-    # 前面を奪うと、`Set-SnotraForegroundWindow` は本体のウィンドウを前面にできず、注入した打鍵の
-    # 宛先が定まらない——CI で実測した前面ウィンドウは
-    # `title='D:\a\Snotra\Snotra\target\debug\snotra.exe'` だった（run 1280 / 1299）。
-    # **CI の `smoke-egui`（release を明示して渡す）が同じキー注入をしながら一度も踏んでいない**のは、
-    # release にこのウィンドウが無いためである。ローカルの既定は debug なのでウィンドウが在り（#1292）、下の `Hidden` が隠す。
+    # **debug ビルドのコンソールウィンドウを隠す**（#872）。debug はコンソールサブシステムで
+    # （`main.rs` の `windows_subsystem` は release だけに掛かる）、stdio をリダイレクトして起動すると
+    # `ConsoleWindowClass` のウィンドウが、実行ファイルのフルパスを題名にして作られる。このウィンドウが
+    # 前面を奪うと、`Set-SnotraForegroundWindow` が本体を前面にできず、注入した打鍵の宛先が定まらない。
+    # release にはこのウィンドウが無い。ローカルの既定は debug なので（#1292）、`Hidden` で隠して
+    # 前面を奪わせない。
     #
-    # **`Hidden` は隠すだけで、ウィンドウは在る**（実測: `ConsoleWindowClass` が visible=False で残る）。
-    # 前面は奪わなくなるが、ウィンドウを列挙する種類の検査を足すときは母集団に混じる。作らせない形は
-    # `ProcessStartInfo.CreateNoWindow`（実測: ウィンドウ 0 個）だが、`Start-Process` が露出しておらず
-    # `PassThru` 相当・引数のクォート規則・リダイレクトの再導出が要る。この 1 件には見合わない。
+    # `Hidden` は隠すだけで、ウィンドウは visible=False のまま残る（実測）。ウィンドウを列挙する
+    # 検査を足すなら、列挙に混じることに注意する。作らせない `ProcessStartInfo.CreateNoWindow` は、
+    # `Start-Process` が出しておらず、自前で組み直す手間に見合わない。
     #
-    # `-WindowStyle` と `-NoNewWindow` は排他なので分ける。`-NoNewWindow` は子が呼び出し元の
-    # コンソールを使う＝新しいウィンドウを作らないため、こちらも競合相手を増やさない。
+    # `-WindowStyle` と `-NoNewWindow` は排他である。`-NoNewWindow` なら子は呼び出し元のコンソールを
+    # 使い、新しいウィンドウを作らない。
     if ($NoNewWindow) { $startParameters.NoNewWindow = $true } else { $startParameters.WindowStyle = 'Hidden' }
 
     Invoke-SnotraEnvironment -Variables $variables -ScriptBlock {
@@ -403,14 +390,14 @@ function Start-SnotraProcess {
 .DESCRIPTION
 **呼び出し側の作法の正本はここである**（#1179）。各スクリプトへ写しを置かない。
 
-- **既定値へ絶対パスを直書きしない。** worktree から既定のまま回すと別の作業コピーの本体を指し、
-  本体は実在するのでスクリプトは完走して緑になる——**失敗が緑と同じ見た目をする**。
-- **導出は `param()` の中に書けない。** 既定値の束縛は `Import-Module` より前に起きる（実測）ので、
-  既定は空リテラルにし、解決は import の後で行う。
-- **導出の起点はスクリプトが住むリポジトリ（`$PSScriptRoot` 起点）であって cwd ではない。**
-- **明示された `-ExePath` の意味は変えない**（相対パスは cwd 相対のまま）。導出するのは既定の分岐だけである。
-- 解決後は絶対形へ正規化して出力へ載せる——どのコピーを測ったかが読み手に見える形が、
-  `-Profile` の取り違え（release/debug）に対する唯一の観測でもある。
+- **既定値に絶対パスを直書きしない。** worktree から既定のまま回すと、別の作業コピーの本体を指す。
+  その本体も実在するので、スクリプトは完走して緑になり、失敗が緑と見分けられない。
+- **導出は `param()` の中に書けない。** 既定値の束縛は `Import-Module` より前に起きる（実測）。
+  既定は空リテラルにし、import の後で解決する。
+- **導出の起点は、スクリプトが在るリポジトリ（`$PSScriptRoot`）である。** cwd ではない。
+- **明示された `-ExePath` の意味は変えない**（相対パスは cwd 相対のまま）。導出するのは既定のときだけである。
+- 解決後は絶対形へ正規化して、出力へ載せる。どのコピーを測ったかが出力に見えることが、
+  `-Profile`（release/debug）の取り違えに気づく唯一の手がかりである。
 
 この作法は `scripts/lib/SnotraSmoke.Tests.ps1` のソース述語が守っている（適用範囲と死角はあちらの宣言が正本）。
 #>
@@ -431,8 +418,8 @@ function Resolve-SnotraCargoExecutable {
 `cargo metadata` の `target_directory`（`CARGO_TARGET_DIR` に追随する）を返す。
 
 .DESCRIPTION
-導出の作法の正本は `Resolve-SnotraCargoExecutable` の doc である。このリポジトリのビルド成果物が
-どこに在るかを知る経路はここ 1 つにする（`Resolve-SnotraExistingProcess -BuildRoot` も使う・#1306）。
+導出の作法の正本は `Resolve-SnotraCargoExecutable` の doc である。このリポジトリのビルド成果物の
+置き場を知る経路は、この関数 1 つにする（#1306）。
 #>
 function Resolve-SnotraCargoTargetDirectory {
     [CmdletBinding()]
@@ -446,10 +433,10 @@ function Resolve-SnotraCargoTargetDirectory {
         throw "Cargo workspace の manifest がありません: $manifestPath"
     }
 
-    # **cargo の cwd を対象リポジトリへ固定する**（#1179）。相対値の `CARGO_TARGET_DIR` は
-    # manifest ではなく **cargo プロセスの cwd** を起点に解決されるため、固定しないと
-    # 「worktree の本体を導いたつもりでメイン作業コピーの target を指す」形が残る（実測）。
-    # **manifest の存在検査より後に置く**——根が不在ならそちらが先に落ち、ここへ到達しない。
+    # **cargo の cwd を対象リポジトリへ固定する**（#1179）。相対値の `CARGO_TARGET_DIR` は、
+    # manifest ではなく cargo プロセスの cwd を起点に解決される。固定しないと、worktree の本体を
+    # 導いたつもりで、メインの作業コピーの target を指す（実測）。
+    # manifest の存在検査の後に置く（根が無ければ、そちらが先に落とす）。
     Push-Location -LiteralPath $RepositoryRoot
     try {
         $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath
@@ -483,12 +470,12 @@ function Resolve-SnotraCargoTargetDirectory {
 （ユーザー名・worktree の置き場）が公開される。
 
 - `RepositoryRoot` の下の絶対パスは、リポジトリ相対にして返す
-- それ以外（リポジトリの外の絶対パス・相対パス）は、渡された値をそのまま返す——明示された値であり、
-  導出が新しく生んだものではない
+- それ以外（リポジトリの外の絶対パス・相対パス）は、そのまま返す。呼び出し側が明示した値であり、
+  導出が生んだものではない
 - 空なら `$null` を返す（起動していないことの表し方は呼び出し側が決める）
 
-「下にある」の判定は `GetRelativePath` に任せる。**文字列の前方一致で判定しない**——`C:\repo2` は
-`C:\repo` に前方一致する。
+「下にある」かは `GetRelativePath` で判定する。**文字列の前方一致では判定しない**（`C:\repo2` は
+`C:\repo` に前方一致する）。
 #>
 function Get-SnotraRecordedExePath {
     [CmdletBinding()]
@@ -514,18 +501,15 @@ function Get-SnotraRecordedExePath {
 プロセスを停止し、**終了を待つ**（#872 単一インスタンス衝突）。
 
 .DESCRIPTION
-`Stop-Process -Force` は制御を即返す。`tauri_plugin_single_instance` が登録されているため、
-先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了する——`scripts/smoke-egui.ps1`
-が **#755/#801 是正 B** として同じ機序を既に解いており、**機序の正本はそちらのコメントである**。
+`Stop-Process -Force` は終了を待たずに返る。`tauri_plugin_single_instance` があるので、先発が
+生きているうちに後発を起動すると、後発は先発へ通知して即終了する（機序の正本は
+`scripts/smoke-egui.ps1` のコメント・#755/#801）。
 
-**throw しない。** 呼び出し点が `finally` を含み、`finally` からの throw は元の例外を覆い隠す
-（元の失敗こそが読みたいもの）。終了を確認できなかったことは戻り値と警告で表し、**赤にする
-責務は呼び出し側が持つ**——`SnotraSmoke.Tests.ps1` の `Describe '実機配管'` の `AfterAll` と、
-次の It の `Resolve-SnotraExistingProcess -Policy Reject` がその実体である。
+**throw しない。** `finally` からも呼ばれるので、throw すると元の例外を覆い隠す。終了を確かめられ
+なかったことは、戻り値 `$false` と警告で返す。赤にするのは呼び出し側である。
 
-**引数に型を付けない。** 既存の単体検査は `Id` だけを持つ偽オブジェクトで方針分岐を固定して
-おり、`[System.Diagnostics.Process]` を要求するとパラメータ束縛で落ちる（実測:
-`Cannot create object of type "System.Diagnostics.Process". "Id" is a ReadOnly property.`）。
+**引数に型を付けない。** 単体検査は `Id` だけを持つ偽オブジェクトを渡す。`[System.Diagnostics.Process]`
+を要求すると、`"Id" is a ReadOnly property.` でパラメータの束縛に落ちる（実測）。
 #>
 function Stop-SnotraProcessAndWait {
     [CmdletBinding()]
@@ -535,9 +519,8 @@ function Stop-SnotraProcessAndWait {
         [AllowNull()]
         $Process,
         [int]$TimeoutMs = 5000,
-        # `Stop-Process` 自体のエラーを黙らせる。**既定は黙らせない**——`Resolve-SnotraExistingProcess`
-        # の `Stop` 分岐は #853 以来 `-ErrorAction` を付けておらず、アクセス拒否を呼び出し側へ
-        # 上げていた。ヘルパへ畳むときにそのエラーチャネルを黙らせない。
+        # `Stop-Process` 自体のエラーを黙らせる。既定は黙らせず、アクセス拒否などを呼び出し側へ
+        # 上げる（#853）。
         [switch]$Quiet
     )
 
@@ -567,12 +550,11 @@ function Resolve-SnotraExistingProcess {
         [string]$Policy,
         [string]$ProcessName = 'snotra',
         # 指定すると、実行ファイルがこのディレクトリの配下にあるプロセスだけを対象にする（#1306）。
-        # 検証用プロファイル（分離プロファイル）の起動を邪魔するのは、同じプロファイルの残留だけで、
-        # それはこのリポジトリのビルド成果物から起動されている。普段使いの Snotra（インストール先の exe）は
-        # 単一インスタンスが別なので、落としも拒みもしない。exe 1 本で絞らないのは、debug / release・
-        # `-ExePath` で exe が変わっても、別ビルドの残留を拾うためである（拾い漏れると後発が
-        # single-instance で黙って終わる・#872 と同型）。`-ExePath` にリポジトリ外の exe を渡すと、
-        # その残留は拾えない。
+        # - 検証用プロファイルの起動を邪魔するのは、このリポジトリのビルド成果物から起動した残留だけである
+        # - 普段使いの Snotra（インストール先の exe）は単一インスタンスが別なので、落としも拒みもしない
+        # - exe 1 本で絞らないのは、debug / release や `-ExePath` が違う残留も拾うためである。拾い漏れると、
+        #   後発が single-instance で黙って終わる（#872）
+        # - `-ExePath` にリポジトリ外の exe を渡すと、その残留は拾えない
         [string]$BuildRoot = ''
     )
 
@@ -580,8 +562,7 @@ function Resolve-SnotraExistingProcess {
     if (-not [string]::IsNullOrEmpty($BuildRoot)) {
         $root = [System.IO.Path]::GetFullPath($BuildRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
         $existing = @($existing | Where-Object {
-                # `.Path` は権限の無いプロセスで例外を投げうる（`SnotraSmoke.Tests.ps1` の実機配管の
-                # `AfterAll` と同じ扱い）。
+                # `.Path` は権限の無いプロセスで例外を投げうる。
                 $path = try { $_.Path } catch { $null }
                 if ([string]::IsNullOrEmpty($path)) {
                     # 権限で読めないプロセスは候補に残す。黙って外すと、読めない残留が後発を沈黙させる。
@@ -598,10 +579,9 @@ function Resolve-SnotraExistingProcess {
     }
 
     foreach ($process in $existing) {
-        # **終了を待つ**（#872）。待たずに返すと、呼び出し側が直後に起動する本体が
-        # single-instance で先発へ通知して即終了し、trace を 1 行も書かないまま待ちが
-        # 予算を使い切る。**`-Quiet` は付けない**——この分岐は #853 以来
-        # `Stop-Process` のエラーを呼び出し側へ上げており、そのチャネルを保つ。
+        # **終了を待つ**（#872）。待たずに返すと、直後に起動する本体が single-instance で即終了し、
+        # trace を 1 行も書かないまま待ちが時間切れになる。`-Quiet` は付けず、`Stop-Process` の
+        # エラーを呼び出し側へ上げる（#853）。
         [void](Stop-SnotraProcessAndWait -Process $process)
     }
 }
@@ -613,8 +593,8 @@ function Read-SnotraTraceEvents {
         [string]$Path
     )
 
-    # **読み実装は `Read-SnotraTraceSnapshot` の 1 つだけにする。** 以前はここが独自に
-    # Get-Content していたため、読み取り失敗の扱いが 2 か所にあり、片方だけが沈黙していた。
+    # **読む実装は `Read-SnotraTraceSnapshot` 1 つにする。** 2 つあると、読み取り失敗の扱いが
+    # 片方だけ変わる（実際に片方だけが失敗を黙っていた）。
     $snapshot = Read-SnotraTraceSnapshot -Path $Path
     if ($snapshot.ReadError) {
         Write-Warning "trace の読み取りに失敗しました（$Path）: $($snapshot.ReadError)"
@@ -627,10 +607,10 @@ function Read-SnotraTraceEvents {
 既に読み込んだ行から trace イベントを取り出す（parse の唯一の実装）。
 
 .DESCRIPTION
-`Read-SnotraTraceEvents` と `Read-SnotraTraceSnapshot` の**共通の parse 本体**である。
-スナップショットは「行数」と「parse 成功数」の差で捨てた行を数えるので、**両者が同じ 1 回の
-読み取りを見なければならない**——別々に読むと、稼働中のアプリが間に書き足した行で差が
-壊れる（parse 成功が行数を上回りうる・code-review M1）。
+`Read-SnotraTraceEvents` と `Read-SnotraTraceSnapshot` が共通に使う parse の本体である。
+スナップショットは、行数と parse 成功数の差で捨てた行を数える。そのため両者は同じ 1 回の
+読み取りを見なければならない。別々に読むと、稼働中のアプリが間に書き足した行で差が壊れる
+（parse 成功数が行数を上回りうる）。
 #>
 function ConvertFrom-SnotraTraceLine {
     [CmdletBinding()]
@@ -654,13 +634,12 @@ function ConvertFrom-SnotraTraceLine {
 trace ファイルを 1 度読み、判定器へ渡す形（イベント列と「捨てた行」の数）にして返す。
 
 .DESCRIPTION
-**「捨てた行」は `[trace]` で始まるのに `Read-SnotraTraceEvents` が返さなかった行だけを数える。**
-stderr には非 trace の診断行（`[index-load] ...` 等）が混じるため、素朴に「全行 − parse 成功」
-で数えると**正常な実行が毎回 degrade して検出器が無意味になる**（#757 で実測: 実ログ 25 行の
-うち 1 行が非 trace の診断行だった）。
+**「捨てた行」は、`[trace]` で始まるのに parse できなかった行だけを数える。** stderr には
+trace 以外の診断行（`[index-load] ...` など）が混じる。「全行 − parse 成功」で数えると、正常な
+実行が毎回 degrade になり、検出器が意味を失う（#757 実測）。
 
-この数え方は `Test-SnotraTraceInvariants -DroppedLineCount` の意味を決める判定規則であり、
-**呼び出し側に写しを置かない**——片方がドリフトすると片方の smoke だけが誤って degrade する。
+この数え方が `Test-SnotraTraceInvariants -DroppedLineCount` の意味を決める。呼び出し側に写しを
+置かない（ずれると、片方の smoke だけが誤って degrade になる）。
 #>
 function Read-SnotraTraceSnapshot {
     [CmdletBinding()]
@@ -674,16 +653,13 @@ function Read-SnotraTraceSnapshot {
     if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path)) {
         return @{ Available = $false; Lines = @(); Events = @(); TraceLines = 0; Dropped = 0; ReadError = $null }
     }
-    # **1 度だけ読む。** 行数と parse 成功数を別々の読み取りから取ると、稼働中のアプリが間に
-    # 書き足した行で差が壊れる（code-review M1）。**生行も返す**のは同じ理由で——presence の
-    # 表示と不変条件の判定が別時点のファイルを見ないようにするため。
+    # **1 度だけ読む**（理由は `ConvertFrom-SnotraTraceLine` の doc）。生の行も返すのは、
+    # presence の表示と不変条件の判定が、別の時点のファイルを見ないようにするためである。
     #
-    # **読み取りの失敗を空と同じ値へ潰さない**（#872）。`-ErrorAction SilentlyContinue` は
-    # 落ちた読みに対しても空を返すため、Available=true / Events 0 件 / Dropped 0 という
-    # **正常な空ログと見分けられない値**になり、稼働中のアプリを観測する経路で
-    # 「読めなかった」が「まだ出ていない」と区別できなくなる。読めなければ Available を false にする
-    # （`manual-smoke.ps1` の `Get-TraceVerdict` はこれを見て判定そのものを見送る）。
-    # **不在（ReadError=$null）と失敗（ReadError あり）は別の状態である。**
+    # **読み取りの失敗を、空のログと同じ値にしない**（#872）。`-ErrorAction SilentlyContinue` だと、
+    # 失敗しても正常な空ログ（Available=true・Events 0 件・Dropped 0）と同じ値が返り、
+    # 「読めなかった」と「まだ出ていない」を区別できない。読めなければ Available=false を返す。
+    # 不在（ReadError=$null）と失敗（ReadError あり）は別の状態である。
     try {
         $lines = @(Get-Content -LiteralPath $Path -ErrorAction Stop)
     } catch {
@@ -710,35 +686,27 @@ function Read-SnotraTraceSnapshot {
 trace に述語を満たす事象が現れるまで待つ（待ちループの唯一の実装）。
 
 .DESCRIPTION
-**待ちループの形は `Set-SnotraForegroundWindow` に揃える**——「評価 → 期限判定 → sleep」の順で、
-`while (now -lt deadline)` にしない。前者は**期限を跨いだ停止のあとでも必ず 1 度は評価する**が、
-後者は最後の sleep 中に停止が起きると、**既に成立していた条件を一度も見ないまま諦める**
-（#872 run 1306: 期待した事象は 39.354 に出ており期限は 42.57 以降だったのに観測されなかった）。
+**ループは「評価 → 期限判定 → sleep」の順にする**（`Set-SnotraForegroundWindow` と同じ形）。
+`while (now -lt deadline)` だと、最後の sleep 中にプロセスが止まったとき、既に成立していた条件を
+一度も見ないまま諦める（#872 で実測）。
 
-**trace ファイルは追記のみの過去の記録である。**ゆえに期限後の 1 度の評価が「待ち時間を
-こっそり延ばす」ことにはならない——事象が起きたか否かは時刻に依らず確定している。ただし
-**期限後に初めて見つかったことは停止の徴候である**ため、見つけても警告を出して記録に残す。
+trace は追記だけの記録なので、期限後に 1 度評価しても、待ち時間を延ばしたことにはならない。
+ただし、期限後に初めて見つかったのは停止の徴候なので、警告を出す。見つかったものを失敗には
+しない。予算は待つ上限であって応答時間の基準ではなく、失敗にすると遅い runner で、実装が正しい
+まま赤になる。
 
-**却下した案: 期限を跨いだら見つかっても失敗にする。**「予算内に応答したか」を測る検査なら
-正しいが、この検査が判定するのはキャレット位置であって応答時間ではない。予算は待つ辛抱の
-上限にすぎず、そこへ性能の意味を後付けすると、遅い runner で**実装が正しいまま赤になる**。
+読み取りの失敗（`ReadError`）は、成立の判定には使わない。ただし回数を数えて、必ず警告に載せる。
+黙ると、期限をまたいだ停止・事象の未着・読み取り失敗を、後から区別できない（#872）。
 
-読み取りの失敗（`ReadError`）は成立判定に影響させない——その周回が「まだ見えていない」のと
-同じ扱いになるのは避けられないが、**件数を数えて必ず報告する**。沈黙させると #872 の 3 つの
-機序（期限跨ぎ・未着・読み取り失敗）が事後に区別できない。
+**`-AbortIfExited` はプロセスを型付きで受け取る。scriptblock では受け取らない。** この関数は
+module スコープで評価するので、呼び出し側の変数を読むにはクロージャが要る。しかし Pester の `It`
+の中では、`.GetNewClosure()` が親スコープの変数をキャプチャしない（実測）。キャプチャし損ねても
+発火しないだけなので、本体が死んでも予算いっぱい待つ形が黙って入る。
 
-**諦める条件を scriptblock で受け取らない。** この関数は module スコープで評価するため、
-呼び出し側の変数を読むにはクロージャが要る。ところが `.GetNewClosure()` は Pester の `It` の中では
-**親スコープの変数をキャプチャしない**（実測: 予算 4000ms に対し中断せず 4031ms 待った）。キャプチャし
-損ねても**発火しないだけ**なので通った実行では観測されず、「本体が死んでも予算いっぱい待つ」
-という退化が黙って入る。プロセスを型付きで受け取れば、この間違いは書けなくなる。
-
-**presence ではなく件数の下限（`MinMatchCount`）で待つ。** 既定の 1 は従来どおり「1 件でも
-あれば成立」で、複数回同じイベント名を待つ呼び出し側（例: show → hide → show の 2 周目）が
-**1 周目の行に毎回一致して即座に戻る**事故を防ぐのはこの下限だけである（#755/#801 是正 A）。
-呼び出し側は行為（打鍵等）の**前**に `Get-SnotraTraceEventCount` で件数を数え、
-`件数 + 1` を渡すことで「これから起きる新しい 1 件」を待てる。マーカーを行為の前に打つ考え方は
-`SnotraTraceInvariants.psm1` の `Get-SnotraTraceMarker` と同じである。
+**`-MinMatchCount`（件数の下限）で待つ。** 同じイベント名を何度も待つ呼び出し側（例: show →
+hide → show の 2 周目）は、下限が無いと 1 周目の行に一致してすぐ戻る（#755/#801）。行為（打鍵
+など）の**前に** `Get-SnotraTraceEventCount` で数え、`件数 + 1` を渡すと、これから起きる 1 件を
+待てる。
 #>
 function Wait-SnotraTraceCondition {
     [CmdletBinding()]
@@ -753,7 +721,7 @@ function Wait-SnotraTraceCondition {
         # 与えると、このプロセスが終了した時点で期限を待たずに諦める（待っても変わらないため）。
         [System.Diagnostics.Process]$AbortIfExited,
         [string]$Description = 'trace の条件',
-        # 一致件数がこれ以上になるまで待つ。既定 1 は「presence」（従来の挙動）と同じ。
+        # 一致件数がこれ以上になるまで待つ。既定の 1 は「1 件でもあれば成立」である。
         [int]$MinMatchCount = 1
     )
 
@@ -790,8 +758,8 @@ function Wait-SnotraTraceCondition {
         Start-Sleep -Milliseconds $PollMs
     }
 
-    # **不成立の理由を区別できる形で残す。** 何も出さないと、期限切れ・事象未着・読み取り失敗が
-    # 呼び出し側からは同じ $null にしか見えない（#872 で 7 件目まで機序を割れなかった原因）。
+    # **成立しなかった理由を、区別できる形で残す。** 何も出さないと、期限切れ・事象の未着・
+    # 読み取り失敗が、呼び出し側からは同じ $null にしか見えない（#872）。
     $elapsed = [int]([DateTime]::UtcNow - $started).TotalMilliseconds
     $reason = if ($aborted) { "本体が終了（exit=$($AbortIfExited.ExitCode)）" } else { '予算切れ' }
     $seen = if ($null -ne $lastSnapshot -and $lastSnapshot.Available) {
@@ -815,14 +783,11 @@ function Wait-SnotraTraceEvent {
         [Parameter(Mandatory)]
         [int]$TimeoutMs,
         [int]$PollMs = 200,
-        # 同名イベントを周回のたびに待つ呼び出し側向け（#755/#801 是正 A）。行為の前に
-        # `Get-SnotraTraceEventCount` で数えた件数 + 1 を渡すと、既に出ている古い 1 件に
-        # 即一致して戻ることがなくなる。既定 1 は presence のままの従来の挙動。
+        # 同じイベントを何度も待つときに使う（意味は `Wait-SnotraTraceCondition` の doc）。
         [int]$MinMatchCount = 1
     )
 
-    # 待ちループの形（期限跨ぎ・読み取り失敗の扱い）は `Wait-SnotraTraceCondition` が単独で持つ。
-    # ここに写しを置くと、穴を塞ぐ変更が片方だけに入る（#872 では実際に 2 か所へ分かれていた）。
+    # 待ちループは `Wait-SnotraTraceCondition` だけが持つ。写しを置くと、直しが片方にしか入らない（#872）。
     return Wait-SnotraTraceCondition -Path $Path -TimeoutMs $TimeoutMs -PollMs $PollMs `
         -MinMatchCount $MinMatchCount `
         -Description "trace の $EventName" -Predicate { $_.event -eq $EventName }.GetNewClosure()
@@ -833,9 +798,8 @@ function Wait-SnotraTraceEvent {
 指定イベント名の現在の一致件数を数える（`Wait-SnotraTraceEvent -MinMatchCount` のマーカー用）。
 
 .DESCRIPTION
-**行為（打鍵等）の前に呼ぶこと。** 後に呼ぶと、行為が引き起こした 1 件が自分自身の
-ベースラインへ紛れ込み、`MinMatchCount = 件数 + 1` が実際には「もう 1 件」を要求してしまう
-（#755/#801 是正 A）。
+**行為（打鍵など）の前に呼ぶ。** 後に呼ぶと、行為が起こした 1 件が数に入り、
+`MinMatchCount = 件数 + 1` がさらにもう 1 件を待ってしまう（#755/#801）。
 #>
 function Get-SnotraTraceEventCount {
     [CmdletBinding()]
@@ -862,12 +826,11 @@ function Send-SnotraKey {
     $flags = if ($Up) { 0x2 } else { 0 }
     [SnotraSmokeInterop.Native]::keybd_event($VirtualKey, 0, $flags, [UIntPtr]::Zero)
     # **注入の時刻を残す**（`SNOTRA_EGUI_INPUT_TRACE` を立てた実行だけ・#872/#936）。
-    # `keybd_event` は戻り値が void で、注入の成否を返す経路が無い——ゆえにここで残せるのは
-    # 「呼んだ」ことだけである。それでも本体側の `SNOTRA_EGUI_INPUT rx_key` と突き合わせれば、
-    # 「注入 〜 アプリへの配送」という**どちらの側もログを持たなかった唯一の区間**が測れる。
-    # 時計は epoch ms で、本体の `ts_ms` と同じ土俵に載る。**`keybd_event` の打鍵の実装はこの
-    # 1 か所**なので、呼び出し側（smoke / Pester）に写しを置かずに打鍵の全注入点を覆える。
-    # 文字の注入（`Send-SnotraUnicodeText` / `Send-SnotraPostedChar`）は記録しない。
+    # `keybd_event` は void を返すので、残せるのは「呼んだ」ことだけである。本体側の
+    # `SNOTRA_EGUI_INPUT rx_key` と突き合わせると、注入からアプリへ届くまでの区間を測れる
+    # （時計は epoch ms で、本体の `ts_ms` と比べられる）。`keybd_event` で打鍵するのはこの関数
+    # だけなので、ここで記録すれば打鍵の注入をすべて拾える。文字の注入
+    # （`Send-SnotraUnicodeText` / `Send-SnotraPostedChar`）は記録しない。
     if ($env:SNOTRA_EGUI_INPUT_TRACE) {
         $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         $state = if ($Up) { 'up' } else { 'down' }
@@ -876,10 +839,11 @@ function Send-SnotraKey {
 }
 
 function Send-SnotraUnicodeText {
-    # `SendInput` の `KEYEVENTF_UNICODE` で文字を打つ（#1289）。前面ウィンドウには `VK_PACKET` の
-    # down/up と `WM_CHAR` が届く。**BMP 外の文字はサロゲートの 2 単位を別々の down/up で送る**
-    # ——受け手には「down・CHAR(high)・up・down・CHAR(low)・up」の順で届き、キーのメッセージを
-    # 跨いで連結しなければ入らない。打鍵（`keybd_event`）とは別の注入経路である。
+    # `SendInput` の `KEYEVENTF_UNICODE` で文字を打つ（#1289）。打鍵（`keybd_event`）とは別の
+    # 注入経路である。前面ウィンドウには `VK_PACKET` の down/up と `WM_CHAR` が届く。
+    # **BMP 外の文字は、サロゲートの 2 単位を別々の down/up で送る。** 受け手には
+    # 「down・CHAR(high)・up・down・CHAR(low)・up」の順で届くので、キーのメッセージをまたいで
+    # 連結しないと入力されない。
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -891,8 +855,8 @@ function Send-SnotraUnicodeText {
     $KEYEVENTF_KEYUP = 0x2
     $inputs = foreach ($unit in $Text.ToCharArray()) {
         foreach ($flags in @($KEYEVENTF_UNICODE, ($KEYEVENTF_UNICODE -bor $KEYEVENTF_KEYUP))) {
-            # **入れ子の構造体は下から組んで代入する**——`$ev.u.ki.wScan = …` は PowerShell では
-            # 値型のコピーへ書くだけで、元の `INPUT` に届かない（0 のまま送られる）。
+            # **入れ子の構造体は内側から組んで代入する。** PowerShell の `$ev.u.ki.wScan = …` は
+            # 値型のコピーに書くだけで、元の `INPUT` は 0 のまま送られる。
             $ki = New-Object SnotraSmokeInterop.Native+KEYBDINPUT
             $ki.wVk = 0
             $ki.wScan = [uint16][char]$unit
@@ -960,13 +924,11 @@ function Wait-SnotraWindow {
     )
 
     Initialize-SnotraNativeInterop
-    # 形は `Set-SnotraForegroundWindow` / `Wait-SnotraTraceCondition` に揃える（#872）——
-    # 「評価 → 期限判定 → sleep」。`while (now -lt deadline)` だと、最後の sleep を跨ぐ停止で
-    # **ウィンドウが現れていても一度も見ないまま**「現れませんでした」と落ちる。
+    # ループの順は「評価 → 期限判定 → sleep」（理由は `Wait-SnotraTraceCondition` の doc・#872）。
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     while ($true) {
-        # 同じタイトルの窓を順に辿り、`-Process` の窓を探す。**最初の 1 窓で止めない**——普段使いの
-        # Snotra と並走すると（分離プロファイル・#1306）、同じタイトルの普段使いの Snotra の窓が先に見つかる。
+        # 同じタイトルのウィンドウを順にたどり、`-Process` のものを探す。**最初の 1 つで止めない。**
+        # 普段使いの Snotra と並走すると、そちらのウィンドウが先に見つかりうる（#1306）。
         $handle = [IntPtr]::Zero
         while ($true) {
             $handle = [SnotraSmokeInterop.Native]::FindWindowExW([IntPtr]::Zero, $handle, [NullString]::Value, $Title)
@@ -998,8 +960,8 @@ function Get-SnotraForegroundWindow {
     return [SnotraSmokeInterop.Native]::GetForegroundWindow()
 }
 
-# 前面を握っているウィンドウを人が読める形にする。**失敗したときの一次証拠**（誰に打鍵が届いていたか）
-# はその場でしか採れないため、Set-SnotraForegroundWindow の警告へ載せる。
+# 前面のウィンドウを、人が読める形にする。前面化に失敗したとき、打鍵が誰に届いていたかは
+# その場でしか採れないので、`Set-SnotraForegroundWindow` の警告に載せる。
 function Get-SnotraForegroundWindowLabel {
     [CmdletBinding()]
     param()
@@ -1009,8 +971,8 @@ function Get-SnotraForegroundWindowLabel {
 
     $title = New-Object System.Text.StringBuilder 256
     [void][SnotraSmokeInterop.Native]::GetWindowTextW($handle, $title, $title.Capacity)
-    # **クラス名も出す**（#872）。題名だけでは、前面を握っていたのが本体のウィンドウなのか
-    # debug ビルドが連れてくるコンソールウィンドウ（`ConsoleWindowClass`）なのかを事後に確定できない。
+    # **クラス名も出す**（#872）。題名だけでは、本体のウィンドウか、debug ビルドのコンソール
+    # ウィンドウ（`ConsoleWindowClass`）かを後から見分けられない。
     $class = New-Object System.Text.StringBuilder 256
     [void][SnotraSmokeInterop.Native]::GetClassNameW($handle, $class, $class.Capacity)
     [uint32]$ownerPid = 0
@@ -1023,11 +985,11 @@ function Get-SnotraForegroundWindowLabel {
 ウィンドウを前面へ出し、**実際に前面になったか**を返す。
 
 .DESCRIPTION
-`SetForegroundWindow` の戻り値を答えにしない。前面ロックの規則により、**対象が既に前面でも
-FALSE が返る**（CI runner で実測・run #1280）。呼び出し側が知りたいのは「注入した打鍵の宛先が
-そのウィンドウに定まったか」であり、それを表すのは `GetForegroundWindow` との一致だけである。
-奪取が一度で通らない環境のために $TimeoutMs まで再試行し、諦めるときは前面を握っていたウィンドウを
-警告へ残す。
+`SetForegroundWindow` の戻り値では判定しない。前面ロックの規則により、対象が既に前面でも
+FALSE が返る（CI runner で実測）。呼び出し側が知りたいのは、注入した打鍵がそのウィンドウへ
+届くかであり、それを表すのは `GetForegroundWindow` との一致である。
+一度で前面にならない環境のために `$TimeoutMs` まで再試行する。諦めるときは、前面のウィンドウを
+警告に載せて `$false` を返す。
 #>
 function Set-SnotraForegroundWindow {
     [CmdletBinding()]
@@ -1039,8 +1001,8 @@ function Set-SnotraForegroundWindow {
     )
 
     Initialize-SnotraNativeInterop
-    # 前面ウィンドウが無い環境では GetForegroundWindow も Zero を返す。Zero 同士の一致を「前面化できた」
-    # と読むと打鍵の宛先が無いまま合格するので、比較の前に落とす（fail-closed）。
+    # 前面ウィンドウが無い環境では、`GetForegroundWindow` も Zero を返す。Zero 同士の一致を
+    # 「前面にできた」と読まないよう、比較の前に止める。
     if ($Handle -eq [IntPtr]::Zero) {
         throw '前面化するウィンドウのハンドルが Zero です。'
     }
@@ -1068,9 +1030,9 @@ function Get-SnotraWindowCapture {
     Initialize-SnotraDpiAwareness
     Add-Type -AssemblyName System.Drawing
 
-    # **可視判定より先に見る。** ロック中は IsWindowVisible も矩形も真っ当な値を返し、
-    # ここから下は最後まで成功して**中身だけが違う Bitmap** を返す（#866）。
-    # 判定不能を throw にしない理由は Assert-SnotraSessionUnlocked のコメント。
+    # **可視判定より先にロックを見る。** ロック中は IsWindowVisible も矩形も正常な値を返し、
+    # 以下は最後まで成功して、中身だけが違う Bitmap を返す（#866）。
+    # 判定できないときに throw しない理由は `Assert-SnotraSessionUnlocked` の doc にある。
     Assert-SnotraSessionUnlocked -Operation 'ウィンドウのキャプチャ'
 
     if (-not [SnotraSmokeInterop.Native]::IsWindowVisible($Handle)) {
@@ -1102,8 +1064,7 @@ function Get-SnotraWindowCapture {
         throw
     }
 
-    # Bitmap の Dispose は呼び出し側の責務。判定ロジックをモジュールへ持ち込まないため、
-    # 画像と矩形だけを返す。
+    # Bitmap の Dispose は呼び出し側が行う。判定はモジュールに持たせず、画像と矩形だけを返す。
     [pscustomobject]@{
         Bitmap = $bitmap
         Rect = $rect

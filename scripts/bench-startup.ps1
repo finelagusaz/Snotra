@@ -114,7 +114,7 @@ try {
     # **終了を待つ**（#872）。待たずに次を起動すると single-instance で即終了し、trace を
     # 1 行も書かないまま待ちが予算を使い切る。共有ヘルパーが待ちと警告を持つ
     # （`smoke-egui.ps1` / `smoke-startup.ps1` と同じ経路）。
-    # 実 config で測る既定の経路は、普段使いの Snotra と同じ単一インスタンスなので、名前で一致する普段使いの Snotra ごと落とす。
+    # 実 config で測る既定の経路は、普段使いの Snotra と同じ単一インスタンスなので、名前で一致するプロセスを普段使いの Snotra ごと落とす。
     # 検証用プロファイル（分離プロファイル）では、このリポジトリのビルド成果物の残留だけを落とす（#1306）。
     $existingParameters = @{ Policy = 'Stop' }
     if ($UseVerificationProfile) { $existingParameters.BuildRoot = Resolve-SnotraCargoTargetDirectory -RepositoryRoot $repoRoot }

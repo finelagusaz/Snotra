@@ -602,7 +602,7 @@ Describe 'Resolve-SnotraExistingProcess' {
             }
         }
 
-        It '配下の残留だけを落とし、普段使いの Snotra ・区切りの無い兄弟ディレクトリは落とさない' {
+        It '配下の残留だけを落とし、普段使いの Snotra・区切りの無い兄弟ディレクトリは落とさない' {
             $inside = New-FakeProcessAt -Id 1 -Path 'C:\repo\target\debug\snotra.exe'
             $otherBuild = New-FakeProcessAt -Id 2 -Path 'C:\Repo\TARGET\release\snotra.exe'
             $installed = New-FakeProcessAt -Id 3 -Path 'C:\toolbox\Snotra\snotra.exe'
@@ -890,13 +890,19 @@ auto_hide_on_focus_lost = false
             $registeredA = Wait-SnotraTraceCondition -Path $stderrA -TimeoutMs 30000 -PollMs 100 `
                 -AbortIfExited $procA -Description 'A の hotkey:registered' `
                 -Predicate { $_.event -eq 'hotkey:registered' }
+            $registeredA | Should -Not -BeNullOrEmpty -Because 'A は普段使いの Snotra へ転送されずに常駐する'
             $registeredA.data.key | Should -Be 'F11'
 
+            # B は壊れた config から復旧するので auto_update が既定（Full）に戻る。実リリースへの
+            # 更新チェックを走らせないよう、判定より前で return する視覚スモークのハッチを立てる
+            # （`New-SnotraVerificationProfile` が auto_update を disabled にする理由と同じ・#755/#801）。
             $procB = Start-SnotraProcess -ConfigDir $createdB.FullPath -Trace `
-                -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderrB
+                -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderrB `
+                -ExtraVariables @{ SNOTRA_EGUI_FAKE_UPDATE_FAILED = '1' }
             $registeredB = Wait-SnotraTraceCondition -Path $stderrB -TimeoutMs 30000 -PollMs 100 `
                 -AbortIfExited $procB -Description 'B の hotkey:registered（A へ転送されずに起動したか）' `
                 -Predicate { $_.event -eq 'hotkey:registered' }
+            $registeredB | Should -Not -BeNullOrEmpty -Because 'B は A へ転送されずに常駐する'
             $registeredB.data.ok | Should -BeTrue
             $registeredB.data.modifier | Should -Be 'Alt'
             $registeredB.data.key | Should -Be 'F12'
@@ -906,6 +912,7 @@ auto_hide_on_focus_lost = false
             $spelling = $createdA.FullPath.ToUpperInvariant().Replace('\', '/') + '/'
             $procC = Start-SnotraProcess -ConfigDir $spelling -FilePath $env:SNOTRA_PESTER_EXE
             $procC.WaitForExit(30000) | Should -BeTrue -Because '同じプロファイルの 2 本目は 1 本目へ転送して終わる'
+            $procC.ExitCode | Should -Be 0 -Because '転送による正常終了で、起動失敗ではない'
             $procA.HasExited | Should -BeFalse
             $procB.HasExited | Should -BeFalse
         } finally {

@@ -446,7 +446,7 @@ fn load_from_dir_first_run_saves_the_given_defaults() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// 既定値を返す兄弟の腕（parse 失敗・非 UTF-8）も、渡された既定値を使う。腕ごとに食い違うと、
+/// 既定値を返す初回起動以外の腕も、渡された既定値を使う。腕ごとに食い違うと、
 /// 壊れた config からの復旧のときだけ普段使いの Snotra と同じホットキーになる。
 #[test]
 fn load_from_dir_recovery_arms_use_the_given_defaults() {

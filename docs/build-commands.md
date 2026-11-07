@@ -186,7 +186,7 @@ $env:SNOTRA_CONFIG_DIR = "C:/tmp/snotra-profile"; cargo run -p snotra
 - 子プロセスの `snotra-settings` は env を継承するので、同じプロファイルを見る。`cargo run -p snotra-settings` で単独起動したときには効かない
 - **実プロファイル以外を指すと分離プロファイルになり、普段使いの Snotra と同時に動かせる。** 単一インスタンス・スタートアップ登録・既定ホットキーが普段使いの Snotra から分かれる（契約の正本は `SPEC.md` §13・#1306）。同じディレクトリを指す 2 回目の起動は、綴りが違っても 1 回目へ転送されて終わる
 - 分離プロファイルの初回起動は、ホットキーに `Alt+F12` を書く（実プロファイルの既定 `Alt+Q` と衝突しない）。ただし、不正なホットキーの自動修復・「初期設定に戻す」・インポート・`[hotkey]` の欠落では `Alt+Q` に戻る。普段使いの Snotra が `Alt+Q` を握っていれば、登録失敗の通知が出る
-- 自動更新は止まらない。`config.toml` を置かずに起動すると `auto_update` の既定で実リリースを確かめにいき、トーストから更新するとインストール先（普段使いの Snotra）を上書きしうる。検証では `auto_update = "disabled"` を書いた `config.toml` を先に置く（`New-SnotraVerificationProfile` の seed はそうしている）
+- 自動更新は止まらない。`config.toml` を置かずに起動すると `auto_update` の既定で実リリースを確かめにいき、トーストから更新するとインストール先の実行ファイル（普段使いの Snotra が動かしているもの）を上書きしうる。検証では `auto_update = "disabled"` を書いた `config.toml` を先に置く（`New-SnotraVerificationProfile` の seed はそうしている）
 
 #### updater トーストを出すための env ハッチ
 

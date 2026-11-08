@@ -303,7 +303,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
   - **待ち方**: 最初の trace を待ってから、観測時間 `WaitMs` を始める（`-FirstTraceTimeoutMs`・既定 12s）。固定待機だけだと、遅い側に振れた起動が丸ごと無音になる（同じ runner・同じバイナリで、最初の trace までが 0.6s〜8s 超とばらつき、5 回中 3 回が無音だった）。固定待機を一律に伸ばさないのは、速い起動まで毎回待つことになるためである
   - **成功時にも出す値**: サマリ表の `event_count`（検査が実際に何かを見たことを示す肯定的な報告）と、`first_trace_ms`（分散の原因が未解明なので、予算に触れる前に悪化を読めるようにする。`n/a` は予算内に 1 行も出なかったことを表す）
 - `scripts/smoke-egui.ps1` は、egui 経路の自動回帰の最低線である（#532 SU7・e2e/ 撤去後の後継）
-  - **流れ**: `SNOTRA_TRACE=1` で起動 → keybd_event で hotkey を注入 → `egui_show:done` を観測 → Escape → `egui_hide:done` を観測 → `msedgewebview2` のグローバルな増分が 0 であることを検証する
+  - **流れ**: `SNOTRA_TRACE=1` で起動し、keybd_event などで注入して、trace のイベントを観測する。起動は 2 回（既定のプロファイルと toast あり）である。検査の一覧と順序の正本は、同スクリプトの `# --- … ---` の見出し行である（ここに写すと、検査を足すたびに古くなる）
   - **注入する hotkey**: 起動時の `hotkey:registered` trace から導いた VK 列を、押下順に押し、解放まで含めて注入する（対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`）。`-HotkeyVks` を明示すると、trace より優先される（trace を出さない旧バイナリの検証など）
   - **プロファイル**: 検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す・#804）へ、最小の有効な TOML を常に seed する。実ユーザーの `%APPDATA%\Snotra` は、読みも書きもしない。退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である。seed を置く理由は、`scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile` のコメントが正本である
   - **肯定的な検査**: seed が読めたこと・first-run を踏んでいないこと・env が効いたこと（プロファイルに `*.bin` が生成されたこと）を、3 つとも確かめる。「観測できなかった」を合格と読ませないためである

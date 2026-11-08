@@ -148,7 +148,7 @@ function Get-LetterVk {
   return [byte][int][char]$u[0]
 }
 
-# --- 段取りのスクリプト内関数（どの検査も判定はここに持たせない）---
+# 段取りのスクリプト内関数（どの検査も判定はここに持たせない）。
 # モジュールへ寄せないのは、このスクリプトだけが使うからである（`ADR-smoke-egui-not-split`）。
 
 # 1 キーを打つ（down → HoldMs → up）。後ろの待ちは持たない——打鍵の後に何 ms 置くかは
@@ -173,7 +173,7 @@ function Invoke-AndWaitNextEvent {
     [Parameter(Mandatory)] [scriptblock]$Action
   )
   $base = Get-SnotraTraceEventCount -Path $Path -EventName $EventName
-  & $Action
+  $null = & $Action   # Action の出力を戻り値へ混ぜない
   return Wait-SnotraTraceEvent -Path $Path -EventName $EventName `
     -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($base + 1)
 }
@@ -748,6 +748,7 @@ try {
 # mutex 名も別になる（`snotra-core` の `Config::isolated_profile_key`）。それでも待つのは、両プロファイルが
 # 同じホットキー（Alt+F12）を登録するからである。`RegisterHotKey` は同じ組み合わせをシステムで
 # 1 つにしか許さないので、先発が生きていると後発の登録が失敗する（Win32 の仕様からの導き・未実測）。
+# 下の throw 文言は #1306 より前の理由のまま残してある（失敗文言はログの検索に使うので変えない）。
 #
 # **共有ヘルパ `Stop-SnotraProcessAndWait`（`lib/SnotraSmoke.psm1`・#872）と意図的に別である。**
 # あちらは `finally` から呼ぶため throw せず警告と戻り値で表す。ここは「シナリオ 2 を始めて

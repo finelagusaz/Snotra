@@ -396,7 +396,7 @@ function Invoke-SnotraTraceJudgement {
                 # ので coalescing と同じ結果になり、追い越しが起きない。それでも発火しないのは
                 # `Debouncer`（leading）がバースト中の再発火を抑えるのに対し実運用点の検索時間が
                 # debounce 幅と拮抗するためで、worker 側へ人工的な遅延を入れて初めて確実に追い越す。一般則は
-                # `docs/development-principles.md`「構造的設計原則と強制の階梯」。
+                # `docs/development-principles.md`「検査・検出器を置くときの作法」。
                 #
                 # **とくに `dispatch.invalidate()` の呼び忘れは検知しない。** 同期で行を差し替えた
                 # のに invalidate を忘れると pending が残り、worker の結果が届いたとき seq は一致

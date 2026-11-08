@@ -1,0 +1,67 @@
+本体: C:\workspace\Snotra\target\debug\snotra.exe
+Seeded verification profile: C:\workspace\Snotra\target\smoke-egui\profile\config.toml (scan: C:\Users\Eoh\AppData\Local\Temp\snotra_smoke_scan)
+Hotkey VKs (from trace): 18,123 (modifier=Alt key=F12)
+起動→hotkey:registered 観測: 234 ms（うち固定待機 0 ms・予算 25,000 ms）
+警告: trace の egui_show:done は予算 1ms を過ぎた評価で成立しました（8ms・1 周）。停止の徴候として記録します。
+警告: trace の egui_results:show は予算 1ms を過ぎた評価で成立しました（7ms・1 周）。停止の徴候として記録します。
+警告: パスクエリ 3 文字の入力 は予算 1ms を過ぎた評価で成立しました（14ms・1 周）。停止の徴候として記録します。
+警告: Ctrl+H 後の入力変化 は予算 1ms を過ぎた評価で成立しました（11ms・1 周）。停止の徴候として記録します。
+警告: trace の egui_hide:done は予算 1ms を過ぎた評価で成立しました（9ms・1 周）。停止の徴候として記録します。
+警告: trace の egui_results:hide は予算 1ms を過ぎた評価で成立しました（4ms・1 周）。停止の徴候として記録します。
+警告: trace の egui_show:done は予算 1ms を過ぎた評価で成立しました（8ms・1 周）。停止の徴候として記録します。
+警告: 押しっぱなしの Z の入力 が成立しませんでした（予算切れ・3ms・1 周・読み取り失敗 0 回・最後に見たもの: trace 行 97 / 事象 97 / 捨てた行 0）。
+警告: trace の egui_show:done は予算 1ms を過ぎた評価で成立しました（8ms・1 周）。停止の徴候として記録します。
+toast ありの show #1: DWM 602x88・payload height 86（バー 1 行 ≒ 43px）
+警告: trace の egui_hide:done は予算 1ms を過ぎた評価で成立しました（206ms・2 周）。停止の徴候として記録します。
+警告: trace の egui_show:done は予算 1ms を過ぎた評価で成立しました（7ms・1 周）。停止の徴候として記録します。
+toast ありの show #2: DWM 602x88・payload height 86（バー 1 行 ≒ 43px）
+プロファイルへの書き込みを確認: index.bin, window.bin（SNOTRA_CONFIG_DIR は効いています）
+
+egui smoke failed:
+ - held-key: holding Z produced no 0->1 egui_input:changed (Z never went down?)
+
+--- 失敗時の証拠（検査項目の不合格）---
+起動からの経過: 6,577 ms
+プロセス: 本スクリプトが既に終了させた後（生死は判定材料にならない）
+trace 行数: 101
+--- trace tail ---
+[trace] {"data":{"after_chars":3,"appended_at_end":true,"before_chars":2,"scope":"search"},"event":"egui_input:changed","seq":61,"ts_ms":1794149023966}
+[trace] {"data":{"interval_us":179975,"update_us":3864},"event":"egui_frame","seq":62,"ts_ms":1794149023970}
+[trace] {"data":{"dispatch_seq":7,"index_entries":1,"pending_seq":0,"since_dispatch_us":6371,"since_key_us":6375},"event":"egui_search:settled","seq":63,"ts_ms":1794149023976}
+[trace] {"data":{"interval_us":9992,"update_us":3117},"event":"egui_frame","seq":64,"ts_ms":1794149023979}
+[trace] {"data":{"interval_us":9077,"update_us":185},"event":"egui_frame","seq":65,"ts_ms":1794149023985}
+[trace] {"data":{"interval_us":36103,"update_us":367},"event":"egui_frame","seq":66,"ts_ms":1794149024021}
+[trace] {"data":{"dispatch_seq":8,"index_entries":1,"pending_seq":0,"since_dispatch_us":6919,"since_key_us":58535},"event":"egui_search:settled","seq":67,"ts_ms":1794149024028}
+[trace] {"data":{"interval_us":6973,"update_us":3534},"event":"egui_frame","seq":68,"ts_ms":1794149024031}
+[trace] {"data":{"interval_us":324532,"update_us":235},"event":"egui_frame","seq":69,"ts_ms":1794149024353}
+[trace] {"data":{"interval_us":6788,"update_us":204},"event":"egui_frame","seq":70,"ts_ms":1794149024359}
+[trace] {"data":{"interval_us":7213,"update_us":187},"event":"egui_frame","seq":71,"ts_ms":1794149024367}
+[trace] {"data":{"after_chars":2,"appended_at_end":false,"before_chars":3,"scope":"search"},"event":"egui_input:changed","seq":72,"ts_ms":1794149024413}
+[trace] {"data":{"interval_us":46049,"update_us":3269},"event":"egui_frame","seq":73,"ts_ms":1794149024416}
+[trace] {"data":{"dispatch_seq":9,"index_entries":1,"pending_seq":0,"since_dispatch_us":6107,"since_key_us":6110},"event":"egui_search:settled","seq":74,"ts_ms":1794149024422}
+[trace] {"data":{"interval_us":9167,"update_us":3240},"event":"egui_frame","seq":75,"ts_ms":1794149024425}
+[trace] {"data":{"interval_us":9170,"update_us":169},"event":"egui_frame","seq":76,"ts_ms":1794149024431}
+[trace] {"data":{"interval_us":35281,"update_us":220},"event":"egui_frame","seq":77,"ts_ms":1794149024466}
+[trace] {"data":{"dispatch_seq":10,"index_entries":1,"pending_seq":0,"since_dispatch_us":7045,"since_key_us":57644},"event":"egui_search:settled","seq":78,"ts_ms":1794149024473}
+[trace] {"data":{"interval_us":7073,"update_us":3744},"event":"egui_frame","seq":79,"ts_ms":1794149024477}
+[trace] {"data":{"interval_us":10383,"update_us":166},"event":"egui_frame","seq":80,"ts_ms":1794149024484}
+[trace] {"data":{"interval_us":6936,"update_us":154},"event":"egui_frame","seq":81,"ts_ms":1794149024491}
+[trace] {"data":{"interval_us":7164,"update_us":152},"event":"egui_frame","seq":82,"ts_ms":1794149024498}
+[trace] {"data":{"interval_us":40195,"update_us":222},"event":"egui_frame","seq":83,"ts_ms":1794149024538}
+[trace] {"data":{"interval_us":7070,"update_us":179},"event":"egui_frame","seq":84,"ts_ms":1794149024545}
+[trace] {"data":{"interval_us":7079,"update_us":188},"event":"egui_frame","seq":85,"ts_ms":1794149024552}
+[trace] {"data":{"interval_us":362035,"update_us":258},"event":"egui_frame","seq":86,"ts_ms":1794149024914}
+[trace] {"data":{"from":"hide_main"},"event":"egui_results:hide","seq":87,"ts_ms":1794149024937}
+[trace] {"data":{},"event":"egui_hide:done","seq":88,"ts_ms":1794149024952}
+[trace] {"data":{"interval_us":19680,"update_us":21820},"event":"egui_frame","seq":89,"ts_ms":1794149024955}
+[trace] {"data":{},"event":"hotkey:listener_enter","seq":90,"ts_ms":1794149026631}
+[trace] {"data":{"height":43.0,"ms":13.1673},"event":"egui_show:done","seq":91,"ts_ms":1794149026768}
+[trace] {"data":{"has_focus":true,"in_tool":false,"input_editable":true,"launching":false,"window_focused":true},"event":"egui_input:focus_state","seq":92,"ts_ms":1794149026772}
+[trace] {"data":{"interval_us":1837827,"update_us":5965},"event":"egui_frame","seq":93,"ts_ms":1794149026777}
+[trace] {"data":{"has_focus":true,"in_tool":false,"input_editable":true,"launching":false,"window_focused":true},"event":"egui_input:focus_state","seq":94,"ts_ms":1794149026785}
+[trace] {"data":{"interval_us":12885,"update_us":4003},"event":"egui_frame","seq":95,"ts_ms":1794149026788}
+[trace] {"data":{"has_focus":true,"in_tool":false,"input_editable":true,"launching":false,"window_focused":true},"event":"egui_input:focus_state","seq":96,"ts_ms":1794149026795}
+[trace] {"data":{"interval_us":10532,"update_us":2966},"event":"egui_frame","seq":97,"ts_ms":1794149026798}
+[trace] {"data":{"after_chars":1,"appended_at_end":true,"before_chars":0,"scope":"search"},"event":"egui_input:changed","seq":98,"ts_ms":1794149026828}
+[trace] {"data":{"has_focus":true,"in_tool":false,"input_editable":true,"launching":false,"window_focused":true},"event":"egui_input:focus_state","seq":99,"ts_ms":1794149026831}
+[trace] {"data":{"dispatch_seq":11,"index_entries":1,"pending_seq":0,"since_dispatch_us":2840,"since_key_us":2845},"event":"egui_search:settled","seq":100,"ts_ms":1794149026834}

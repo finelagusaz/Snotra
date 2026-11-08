@@ -19,7 +19,7 @@
 - AC3: 冒頭のコメントに、シナリオの構成・検査をまたいで受け渡す状態・順序の制約が書いてある。検査の一覧は写さない（正本は見出し行）
 - AC4: smoke-egui.ps1 と smoke-startup.ps1 のコメントに行番号での参照が残っていない（`grep -nE '\.(ps1|rs):[0-9]|[0-9]+〜[0-9]+ 行|[0-9]+-[0-9]+ 行' scripts/smoke-egui.ps1 scripts/smoke-startup.ps1` が 0 件）
 - AC5: 変更前後で、実機の通し実行が緑で、出力の検査結果の行（`Hotkey VKs`・`toast ありの show #1/#2` の DWM と payload height・`プロファイルへの書き込みを確認`・`egui smoke passed`）が一致する（DWM の値は DPI 由来なので同じ機械で比べる）
-- AC6: 文書化されたフォールトインジェクション 2 つ（`-ResultsQuery ''`・`-StartupWaitMs 0 -ObserveTimeoutMs 1`）が変更前と同じ理由で赤になる
+- AC6: 文書化されたフォールトインジェクション 2 つが変更前と同じ性質で赤になる。`-ResultsQuery ''` は起動前の同じ throw 文言、`-StartupWaitMs 0 -ObserveTimeoutMs 1` は赤と「失敗時の証拠」ブロックの出力（後者の赤の理由は main でも試行ごとにぶれるので、理由の一致は求めない・実装時に実測）
 - AC7: `docs/build-commands.md` の smoke-egui の「流れ」が、検査を列挙せずスクリプトの見出し行を正本として指す
 - AC8: 「分けない」決定とその却下理由が ADR に残っている
 
@@ -100,16 +100,16 @@ research の「検査 1〜10」の通し番号はコード・ADR・PR 本文へ�
 - [x] トークン列の差 0 と、識別子の集合差を確かめる — smoke-egui 3072/3072・smoke-startup 458/458 で差 0。集合差で落ちたのは置き換えた冒頭の流れの説明にあった `egui_hide:done` `egui_results:hide` だけ（コードには残る）。基準: 通し実行 緑・`-ResultsQuery ''` は起動前 throw・`-StartupWaitMs 0 -ObserveTimeoutMs 1` はシナリオ 2 の throw で赤（`workspace/baseline-*.txt`）
 
 ### Phase 3 — 段取りの関数化
-- [ ] `Send-KeyTap`・`Invoke-AndWaitNextEvent`・`Get-InputChangesSince`・`Format-InputChanges` を足す
-- [ ] 1 キー打鍵・増分の待ち・入力変化の読み取りの各箇所を置き換える
+- [x] `Send-KeyTap`・`Invoke-AndWaitNextEvent`・`Get-InputChangesSince`・`Format-InputChanges` を足す
+- [x] 1 キー打鍵・増分の待ち・入力変化の読み取りの各箇所を置き換える — 計画との差: 押しっぱなしの Z の 2 回目の down/up は `$zHeld` と組なので `Send-KeyTap` にせず残した（コメントで理由を示す）
 
 ### Phase 4 — 検証
-- [ ] 変更後の通し実行・フォールトインジェクション 2 つを実行し、AC5・AC6 を突き合わせる
-- [ ] run-pester と governance:check を実行する
+- [x] 変更後の通し実行・フォールトインジェクション 2 つを実行し、AC5・AC6 を突き合わせる — 通し実行 緑・AC5 の行は基準と一致（VK 18,123・DWM 602x88・payload 86 ×2・index.bin, window.bin・成功文言）。空クエリは同じ throw 文言（行番号だけ 95→100）。1ms 予算は変更後 3 回とも held-key の不合格、main の版は 2 回で throw と held-key に割れた（もともと競争）
+- [x] run-pester と governance:check を実行する — test:powershell 168 passed・governance:check 17 件 passed
 
 ### Phase 5 — 文書
-- [ ] `docs/build-commands.md` の「流れ」を見出し行の参照へ直す
-- [ ] `docs/adr/ADR-smoke-egui-not-split.md` を書く
+- [x] `docs/build-commands.md` の「流れ」を見出し行の参照へ直す
+- [x] `docs/adr/ADR-smoke-egui-not-split.md` を書く
 
 ## 未確定（実装前に潰す）
 

@@ -1,9 +1,0 @@
-本体: C:\workspace\Snotra\target\debug\snotra.exe
-Seeded verification profile: C:\workspace\Snotra\target\smoke-egui\profile\config.toml (scan: C:\Users\Eoh\AppData\Local\Temp\snotra_smoke_scan)
-Hotkey VKs (from trace): 18,123 (modifier=Alt key=F12)
-起動→hotkey:registered 観測: 4,043 ms（うち固定待機 4,000 ms・予算 25,000 ms）
-toast ありの show #1: DWM 602x88・payload height 86（バー 1 行 ≒ 43px）
-toast ありの show #2: DWM 602x88・payload height 86（バー 1 行 ≒ 43px）
-プロファイルへの書き込みを確認: index.bin, window.bin（SNOTRA_CONFIG_DIR は効いています）
-
-egui smoke passed (show/hide + results show/hide observed, Ctrl+H typed no character, key held across focus gain typed no character, SendInput Unicode and posted WM_CHAR each entered once, webview delta 0).

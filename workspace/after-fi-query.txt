@@ -1,8 +1,0 @@
-本体: C:\workspace\Snotra\package.json
-Exception: C:\workspace\Snotra\scripts\smoke-egui.ps1:100
-Line |
- 100 |    throw @"
-     |    ~~~~~~~~
-     | results window coverage would be SKIPPED: -ResultsQuery が空である。   profile:
-     | C:\workspace\Snotra\scripts\..\target\smoke-egui\profile 検証用プロファイルは常に seed されるので、既定（"z"）のままなら必ず results 検査が走る。
-     | 空文字を明示的に渡したのなら、それは**フォールトインジェクションの注入口**であり、 この throw が期待される結果である（docs/build-commands.md「スモーク運用メモ」）。

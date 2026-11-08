@@ -38,15 +38,18 @@ param(
   [int]$StartupObserveTimeoutMs = 25000
 )
 
-# egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3。
-# results ウィンドウの検証は #671/#673 サイクル PR A で追加）。
-# 起動 → keybd_event で hotkey 注入（既定は起動時の `hotkey:registered` trace から導出した VK 列。
-# 明示 -HotkeyVks 指定時のみそちらを使う） → trace `egui_show:done` 観測 →
-# （索引内容を制御できるとき）1 文字クエリを注入して `egui_results:show` 観測 → Escape 注入 →
-# `egui_hide:done`（+ results 検査時は `egui_results:hide`）観測 → msedgewebview2 の
-# グローバル増分 0 確認、で 1 シナリオ。
-# - hotkey の修飾に Alt を含む場合、Alt 解放を含めて送る（Alt 押下中は ShowAfterAltRelease で
-#   最大 350ms 遅延するため）。Alt を含まない hotkey（例 Ctrl+K）では無関係。
+# egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3）。
+#
+# 構成（検査の一覧と順序の正本は、各ブロックの `# --- … ---` の見出し行である）:
+# - シナリオ 1（既定のプロファイル）: 1 つのプロセスへ検査を順に当てる。各検査は、それより前の
+#   検査が残した状態を入力にする——`$failures` が 0 件のときだけ次へ進むゲート、`$vks` /
+#   `$resultsChecked` / `$pathTyped`、入力欄の中身、ウィンドウの可視性。
+# - シナリオ 2（toast あり）: 起動時に読む env が要るので、別のプロセスで起動する。不合格は
+#   同じ `$failures` へ積み、後段がまとめて集計する。
+# - 順序の制約（理由は各ブロックのコメントが持つ）: seed の健全性の検査は show の観測の後・results の
+#   検査より前。押しっぱなしの Z 以降の検査は、hide 後の trace 不変条件の判定より後。シナリオ 2 は
+#   シナリオ 1 のプロセスの終了を待ってから起動する。
+# - 段取り（起動・注入・trace の待ち）は `lib/SnotraSmoke.psm1` と、このスクリプト内の関数が持つ。
 # - 検証用プロファイル（#804）: SNOTRA_CONFIG_DIR で target/smoke-egui/profile を指し、そこへ
 #   最小の有効 TOML を**常に** seed する。**実ユーザーの %APPDATA%\Snotra は読みも書きもしない**
 #   ——退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である。
@@ -73,7 +76,9 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
 $ExePath = (Resolve-Path -LiteralPath $ExePath).Path   # 出力へ載せる形（理由は resolver の doc）
 Write-Host "本体: $ExePath"
 
-# 検証用プロファイル（#804）。**target/ の下に置く**（visual-check-colors.ps1:54-58 と同じ理由
+# === シナリオ 1: 既定のプロファイル ===
+
+# 検証用プロファイル（#804）。**target/ の下に置く**（`visual-check-colors.ps1` の `$profileDir` のコメントと同じ理由
 # ——cargo clean が掃くので新しい後始末機構を足さない。CARGO_TARGET_DIR を設定している環境では
 # cargo の掃除対象から外れるが、それは受容する残余である
 # ——ADR-config-dir-env-seam-rejected-alternatives.md §4）。
@@ -240,6 +245,7 @@ function Show-FailureEvidence {
 $failures = @()
 $resultsChecked = $false
 try {
+  # --- hotkey を注入して show を観測する ---
   # 起動完了（hotkey 登録含む）待ち。既定は hidden 起動（show_on_startup=false）。
   Start-Sleep -Milliseconds $StartupWaitMs
   if ($proc.HasExited) {
@@ -305,6 +311,7 @@ try {
     $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($vksLabel, $hotkeySource)"
   }
 
+  # --- seed の健全性と first-run の不発（#804）---
   # **seed 健全性と first-run の判定はここで行う**（#804）。
   #
   # **`Start-Sleep $StartupWaitMs` の直後では早すぎる**（実測）: `-RedirectStandardError` は
@@ -330,7 +337,7 @@ try {
   # 真でない**——duplicate instant command と invalid hotkey fallback は parse 成功後に出る。
   # この seed は instant_commands 無し・妥当な Alt+F12 ゆえどちらも踏まないが、
   # **seed を変えるときはこの前提を確かめること**。
-  # visual-check-colors.ps1:143-159 の Test-SeedHealth と同型だが、共有ヘルパーにはしない（#843）。
+  # `visual-check-colors.ps1` の `Test-SeedHealth` と同型だが、共有ヘルパーにはしない（#843）。
   $configDiag = @(Select-String -Path $errPath -SimpleMatch '[config] ')
   if ($configDiag.Count -gt 0) {
     throw ("seed した config が読めていません（results 検査の失敗ではありません）:`n" +
@@ -343,13 +350,14 @@ try {
   # **上の `[config] ` 検査ではこれを検出できない**——config.toml が「存在しない」分岐では読み込み
   # 失敗の eprintln が出ないからである（だから別の検査が要る）。
   # **失敗を表すイベント名の汎用パターンにも頼れない**——実際のイベント名は :not_found / :spawned /
-  # :already_running / :exited で（commands/window.rs:53,74,87,123）どれも :error で終わらない。
+  # :already_running / :exited で（`commands/window.rs`）どれも :error で終わらない。
   $firstRunEvents = @(Select-String -Path $errPath -SimpleMatch 'cmd:launch_settings_process:')
   if ($firstRunEvents.Count -gt 0) {
     throw ("first-run 経路を踏みました（seed が起動より前に置かれていない）:`n" +
       (($firstRunEvents | ForEach-Object { "  " + $_.Line }) -join "`n"))
   }
 
+  # --- results ウィンドウの表示（#671/#673）---
   # results ウィンドウの検証（#671/#673 サイクル PR A）。**#804 以降は常に走る**——検証用プロファイルを
   # 常に seed するので `$ResultsQuery` は起動前の guard で非空が保証されている。下の条件に
   # `IsNullOrEmpty` が残っているのは防御であって、skip の経路が生きているという意味ではない。
@@ -395,8 +403,8 @@ try {
   # 既存の 1 文字クエリ注入・Escape 注入と同じく $failures.Count -eq 0 でガードする——
   # ウィンドウが無い状態で注入すると、キューへ送った打鍵が前面の別アプリへ飛ぶ。
   if ($failures.Count -eq 0 -and $resultsChecked) {
-    # 先行の 1 文字クエリが入力欄に残っているため、消してから打鍵する（既存の再注入前と
-    # 同じ Backspace 作法・356〜362 行）。送らないと "c" が残ったまま "c:\" ではなく
+    # 先行の 1 文字クエリが入力欄に残っているため、消してから打鍵する（results 検査の再注入前と
+    # 同じ Backspace の作法）。送らないと "c" が残ったまま "c:\" ではなく
     # "cc:\" 相当になり、全件走査の経路（has_path_sep）に正しく入らない。
     Send-SnotraKey -VirtualKey $VK_BACK
     Start-Sleep -Milliseconds 50
@@ -468,12 +476,14 @@ try {
     }
   }
 
+  # --- WebView2 プロセスの増分 0 ---
   # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）
   $webviewAfter = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
   if ($webviewAfter -gt $webviewBefore) {
     $failures += "msedgewebview2 count increased: $webviewBefore -> $webviewAfter"
   }
 
+  # --- Escape で hide し、hide 後の trace 不変条件を判定する（#671 PR A′・#757）---
   if ($failures.Count -eq 0) {
     # Escape 注入（表示中の egui ウィンドウがフォーカスを持つ前提）
     Send-SnotraKey -VirtualKey $VK_ESCAPE
@@ -719,6 +729,10 @@ try {
 # `Stop-Process -Force` は終了を待たない。`tauri_plugin_single_instance` が登録されているため、
 # 先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了し——trace が 1 行も
 # 書かれないまま `hotkey:registered` の待ちが予算を使い切ってから throw する（間欠的な赤）。
+# **#1306 以後、2 つのシナリオの間ではこの転送は起きない**——プロファイルが別なので、単一インスタンスの
+# mutex 名も別になる（`snotra-core` の `Config::isolated_profile_key`）。それでも待つのは、両プロファイルが
+# 同じホットキー（Alt+F12）を登録するからである。`RegisterHotKey` は同じ組み合わせをシステムで
+# 1 つにしか許さないので、先発が生きていると後発の登録が失敗する（Win32 の仕様からの導き・未実測）。
 #
 # **共有ヘルパ `Stop-SnotraProcessAndWait`（`lib/SnotraSmoke.psm1`・#872）と意図的に別である。**
 # あちらは `finally` から呼ぶため throw せず警告と戻り値で表す。ここは「シナリオ 2 を始めて
@@ -730,7 +744,7 @@ if (-not $proc.WaitForExit($scenario1ExitWaitMs)) {
     "single-instance 転送によりシナリオ 2 が沈黙する恐れがあるため中断します。")
 }
 
-# ---- シナリオ 2: toast ありで 2 回目の show の高さが保たれるか（#755 / #801）----
+# === シナリオ 2: toast ありで 2 回目の show の高さが保たれるか（#755 / #801）===
 #
 # **既定プロファイル（toast なし）の高さ断言は両 issue を 1 件も検出しない**——toast も status も
 # 無い状態では main は常にバー高であり、そこは一度も壊れていない。検出するには「toast あり」かつ
@@ -796,7 +810,7 @@ function Test-SnotraNoTraceEventInWindow {
 # ここで使うと「起動からの経過」が数十秒ずれて手掛かりを誤らせる。
 $toastLaunchedAt = Get-Date
 # **高さ断言の不合格は throw ではなく `$failures` を通る**（下の round ループ）ため、
-# この scriptの`catch`（$toastErrPath を渡す）を経由せず、集計失敗ブロック（末尾）まで
+# このスクリプトの `catch`（$toastErrPath を渡す）を経由せず、集計失敗ブロック（末尾）まで
 # 静かに検出されない。集計失敗ブロックが証拠を出すログをシナリオ 2 のものへ切り替えられるよう、
 # ここで発生源を憶えておく（code-review 指摘）。
 $scenario2Failed = $false
@@ -912,10 +926,13 @@ try {
   if (-not $toastProc.HasExited) { Stop-Process -Id $toastProc.Id -Force }
 }
 
+# === 後段: env 到達の確認と、両シナリオの集計 ===
+
+# --- 検証用プロファイルへの書き込み（env が届いたこと・#804）---
 # **env が効いたことの肯定的証拠**（#804・不変条件 1）。効いていなければ本体は実 config を読み、
 # 実プロファイルへ書くので、ここには seed した config.toml しか残らない。「env が届いていない」と
 # 「検査対象が出なかった」を切り分けるのはこの 1 行である
-# （visual-check-colors.ps1:292-304 と同型。実測で出るのは index.bin で、索引 0 件でも書かれる）。
+# （`visual-check-colors.ps1` の `$generated` の判定と同型。実測で出るのは index.bin で、索引 0 件でも書かれる）。
 $generated = @(Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue)
 if ($generated.Count -eq 0) {
   $failures += "SNOTRA_CONFIG_DIR が効いていない: 検証用プロファイルに *.bin が 1 件も生成されていません ($profileFull)"

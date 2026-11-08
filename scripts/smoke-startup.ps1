@@ -44,7 +44,7 @@ $failures = @()
 
 # 検証用プロファイル（#804）。**実ユーザーの %APPDATA%\Snotra は読みも書きもしない**——
 # 5 起動が実 config を作る/汚すことが #804 の元凶だった。target/ の下に置くのは
-# visual-check-colors.ps1:54-58 と同じ理由（cargo clean が掃くので新しい後始末機構を足さない。
+# `visual-check-colors.ps1` の `$profileDir` のコメントと同じ理由（cargo clean が掃くので新しい後始末機構を足さない。
 # CARGO_TARGET_DIR 環境で掃除対象から外れるのは受容する残余
 # ——ADR-config-dir-env-seam-rejected-alternatives.md §4）。
 $profileDir = Join-Path $PSScriptRoot '..\target\smoke-startup\profile'
@@ -136,7 +136,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # **first-run 経路を踏んでいないことを肯定的に検査する**（#804・不変条件 6）。seed を起動より
   # 前に置いているので踏まないはずだが、イベント名の汎用的な失敗分類には頼らない
   # ——実際のイベント名は :not_found / :spawned / :already_running / :exited で
-  # （commands/window.rs:53,74,87,123）どれも :error で終わらない。
+  # （`commands/window.rs`）どれも :error で終わらない。
   # CI（Smoke workflow）は snotra だけをビルドするので :not_found に留まり **false green のまま通る**が、
   # release.yml は snotra-settings.exe を同じ target/release/ へ置くため、**そこでだけ設定 GUI が
   # 実際に spawn されて 5 起動ぶん残る**（Get-Process snotra は完全一致ゆえ snotra-settings を
@@ -161,7 +161,7 @@ for ($run = 1; $run -le $Iterations; $run++) {
 # **env が効いたことの肯定的証拠**（#804・不変条件 1）。効いていなければ本体は実 config を読み、
 # 実プロファイルへ書くので、ここには seed した config.toml しか残らない。
 # **ループ後に 1 回だけ検査する**——各回で見ると、index.bin が書かれる前に Stop-Process -Force
-# された回が false red になる（visual-check-colors.ps1:292-304 の実測は単発起動のものである）。
+# された回が false red になる（`visual-check-colors.ps1` の `$generated` の判定の実測は単発起動のものである）。
 $generated = @(Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue)
 if ($generated.Count -eq 0) {
   $failures += "SNOTRA_CONFIG_DIR が効いていない: 検証用プロファイルに *.bin が 1 件も生成されていません ($profileFull)"

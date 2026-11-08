@@ -89,15 +89,15 @@ research の「検査 1〜10」の通し番号はコード・ADR・PR 本文へ�
 ## 作業項目
 
 ### Phase 1 — 基準
-- [ ] debug 本体をビルドし、変更前の通し実行とフォールトインジェクション 2 つの出力を `workspace/` に保存する
+- [x] debug 本体をビルドし、変更前の通し実行とフォールトインジェクション 2 つの出力を `workspace/` に保存する
 
 ### Phase 2 — 境目（コメントだけ・コードのトークンは変えない）
-- [ ] シナリオと検査の見出し行をそろえる
-- [ ] 冒頭コメントを構成・受け渡す状態・順序の制約へ書き換える
-- [ ] smoke-egui.ps1 の行番号参照 5 件と smoke-startup.ps1 の 2 件を記号名へ直し、AC4 の grep が 0 件であることを確かめる
-- [ ] シナリオ 1 の終了待ちのコメントへ、2 シナリオのプロファイルは別なので単一インスタンスの mutex は分かれていること（#1306・`isolated_profile_key`）と、残る共有資源がホットキー（両プロファイルとも Alt+F12）であることを書き足す。単一インスタンスの機序の説明は残す
-- [ ] シナリオ 2 のコメントの誤字「この scriptの`catch`」を直す
-- [ ] トークン列の差 0 と、識別子の集合差を確かめる
+- [x] シナリオと検査の見出し行をそろえる
+- [x] 冒頭コメントを構成・受け渡す状態・順序の制約へ書き換える
+- [x] smoke-egui.ps1 の行番号参照 5 件と smoke-startup.ps1 の 3 件（実装中に 139 行の `commands/window.rs` を追加で発見）を記号名へ直し、AC4 の grep が 0 件であることを確かめる
+- [x] シナリオ 1 の終了待ちのコメントへ、2 シナリオのプロファイルは別なので単一インスタンスの mutex は分かれていること（#1306・`isolated_profile_key`）と、残る共有資源がホットキー（両プロファイルとも Alt+F12）であることを書き足す。単一インスタンスの機序の説明は残す
+- [x] シナリオ 2 のコメントの誤字「この scriptの`catch`」を直す
+- [x] トークン列の差 0 と、識別子の集合差を確かめる — smoke-egui 3072/3072・smoke-startup 458/458 で差 0。集合差で落ちたのは置き換えた冒頭の流れの説明にあった `egui_hide:done` `egui_results:hide` だけ（コードには残る）。基準: 通し実行 緑・`-ResultsQuery ''` は起動前 throw・`-StartupWaitMs 0 -ObserveTimeoutMs 1` はシナリオ 2 の throw で赤（`workspace/baseline-*.txt`）
 
 ### Phase 3 — 段取りの関数化
 - [ ] `Send-KeyTap`・`Invoke-AndWaitNextEvent`・`Get-InputChangesSince`・`Format-InputChanges` を足す

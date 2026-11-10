@@ -63,11 +63,11 @@
 
 ファイル群は重ならない。並列に回すなら `isolation: worktree` で、マージは下の順に行う（衝突しない前提を台帳の生成時に確かめる: コメント間の逐語引用が群をまたがないこと）。
 
-- [ ] 群 A: `view.rs`
-- [ ] 群 B: `window_coordinator.rs`
-- [ ] 群 C: `mod.rs`・`layout.rs`・`results_view.rs`
-- [ ] 群 D: `search_state.rs`・`lifecycle.rs`・`visual.rs`・`notify.rs`・`icon_textures.rs`・`strings.rs`・`font_stack.rs`・`search_dispatch.rs`・`search_worker.rs`
-- [ ] 群 E: `launcher_controller.rs`・`launcher_controller/**`
+- [x] 群 A: `view.rs`
+- [x] 群 B: `window_coordinator.rs`
+- [x] 群 C: `mod.rs`・`layout.rs`・`results_view.rs`
+- [x] 群 D: `search_state.rs`・`lifecycle.rs`・`visual.rs`・`notify.rs`・`icon_textures.rs`・`strings.rs`・`font_stack.rs`・`search_dispatch.rs`・`search_worker.rs`
+- [x] 群 E: `launcher_controller.rs`・`launcher_controller/**`
 
 委譲へ渡すもの: 本計画の「分類規則」と Phase 1 の追補・`docs/comment-guidelines.md`・台帳のパス・受け入れ条件 2〜5・「群ごとに比較器が緑になったらコミット」・「書き直した文ごとに根拠欄を埋める」・逐語引用の相手が群の外にあれば変えずに範囲外メモへ書くこと。
 

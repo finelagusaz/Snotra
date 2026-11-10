@@ -837,8 +837,8 @@ try {
   $hk2 = Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'hotkey:registered' -TimeoutMs $StartupObserveTimeoutMs
   if ($null -eq $hk2) { throw 'シナリオ 2: hotkey:registered を観測できませんでした' }
   # **登録の成否と VK 列を、既定のプロファイル側と同じく確かめる**（#1413）。見ずに進むと、登録の
-  # 失敗は後の `egui_show:done` の待ちが切れる形で現れ、症状が原因から離れる。登録が失敗しうる経路は
-  # 上の終了待ちのコメントにある。ほかのプロセスが同じ組み合わせを握っていても失敗する（#1413 で実測）。
+  # 失敗は後の `egui_show:done` の待ちが切れる形で現れ、症状が原因から離れる。登録が失敗しうる経路と、
+  # どれを実測したかは、上の終了待ちのコメントにある。
   if (-not $hk2.data.ok) {
     throw "シナリオ 2: アプリ内でホットキーの登録に失敗しました（modifier=$($hk2.data.modifier) key=$($hk2.data.key)）"
   }

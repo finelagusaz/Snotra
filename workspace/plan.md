@@ -73,21 +73,21 @@
 
 ### Phase 3 — 横断
 
-- [ ] コメント間の逐語引用（`「…」` が別コメントの語句を指すもの）を egui_shell 全体で数え、引用元と引用先が食い違っていないかを直す
-- [ ] 自分の変更が偽にした外の記述を直す（範囲外に置けない・`.claude/rules/governance-docs.md`「条項を足す・消す・移すとき」）: `docs/architecture.md:239`「含意が壊れた経緯は同 doc」（群 D が `is_unsettled` の doc から経緯を落とした）。ほかの群の範囲外メモからも同じ形を拾う
-- [ ] 受け入れ条件 2 の正規表現を変更後のツリーに当て、残りがすべて台帳で「残す」であることを確かめる
-- [ ] `docs/adr/ADR-egui-shell-comment-history-scope.md` を書く: 残した形と理由・却下した確かめ方・受容する残余（式の取りこぼし・`smoke-egui.ps1` は別 issue）
-- [ ] `smoke-egui.ps1` の経緯コメントの follow-up issue を起票する（#1413・#1414 の後に着手、と本文に書く）
+- [x] コメント間の逐語引用（`「…」` が別コメントの語句を指すもの）を egui_shell 全体で数え、引用元と引用先が食い違っていないかを直す — `workspace/tools/quotes.mjs`（基準では引用先があり今は無い引用を出す）で 2 件。notify.rs の「1 文字目で案内が…」は view.rs に行をまたいで残る（コードスパンではない）・results_window.rs の「フラグ = false・ウィンドウ = 可視」は自立した語句で引用ではない。直すもの 0。基準から食い違っていた `hide_egui_main` 内の「2 経路ある」は範囲外（ADR の残余）
+- [x] 自分の変更が偽にした外の記述を直す: `docs/architecture.md` の「含意が壊れた経緯は同 doc」→「経緯は #1038」。ほかに外から egui_shell の doc の経緯を指す参照（`git grep '経緯は'`）は、着地先に経緯が残っていた（`font_definitions`・`read_pre_widget_input`・`clamp_main_into_work_area` の doc と ADR）
+- [x] 受け入れ条件 2 の正規表現を変更後のツリーに当て、残りがすべて台帳で「残す」であることを確かめる — 残り 9 行: 文字列リテラル 2（コード）・「旧・段」5（欠番の説明）・`src-tauri/CLAUDE.md` 見出しの逐語引用 1・「PR CI」の誤検出 1
+- [x] `docs/adr/ADR-egui-shell-comment-history-scope.md` を書く
+- [x] `smoke-egui.ps1` の経緯コメントの follow-up issue を起票する — #1422
 
 ### Phase 4 — 逆向きの監査（委譲・1 体・独立）
 
-- [ ] 差分で消えた・変わった各コメントが守っていた不変条件を、変更後のどこかが今も言っているかを 1 件ずつ確かめる。元の主張に無い新しい主張が無いかも見る。出力先は `workspace/audit-1409.txt`。確信の持てない所見（⚠️）も含める
+- [ ] 差分で消えた・変わった各コメントが守っていた不変条件を、変更後のどこかが今も言っているかを 1 件ずつ確かめる。元の主張に無い新しい主張が無いかも見る。出力先は委譲先 worktree の `.delegate/audit-1409.txt`（`/implement`「3b. 委譲へ渡すもの」の 1 体に兼ねさせる。同スキルは起動してよい委譲を 1 体に限るため）。確信の持てない所見（⚠️）も含める
 
 ### Phase 5 — 検証
 
-- [ ] 比較器: 23 ファイルすべて基準 sha と一致
-- [ ] `needles.mjs`: 全ファイルで出現数が基準 sha と一致
-- [ ] 追加行のバッククォート数が偶数（`git diff main -U0 -- src-tauri/src/egui_shell | grep '^+[^+]'` の各行）・コードスパンが行をまたがない
+- [x] 比較器: 23 ファイルすべて基準 sha と一致
+- [x] `needles.mjs`: 全ファイルで出現数が基準 sha と一致
+- [x] 追加行のバッククォート数が偶数（`git diff main -U0 -- src-tauri/src/egui_shell | grep '^+[^+]'` の各行）・コードスパンが行をまたがない
 - [ ] `npm run verify:tree`（A・F）
 
 ## 不変条件と異常系

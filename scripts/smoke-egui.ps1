@@ -19,12 +19,12 @@ param(
   # フォールトインジェクションの注入口である（docs/build-commands.md）。
   [string]$ResultsQuery = "z"
   ,
-  # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#690）。
+  # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#693）。
   # **観測時間を延ばす前に遅延を測るため**の予算であって、合否には影響しない（失敗は失敗のまま）。
   # 0 を渡すと事後観測を行わない。
   [int]$PostMortemWaitMs = 30000
   ,
-  # `hotkey:registered`（起動後**最初**の観測）専用の予算（#690）。
+  # `hotkey:registered`（起動後**最初**の観測）専用の予算（#693）。
   # ここだけ cold start を含む。CI で「起動後 12,000ms 経っても trace 0 行」を 3 回実測した
   # （プロセスは生存＝クラッシュではない）一方、成功時は起動から 0.6s で出ている。
   # **この二極の原因は未解明**であり、この予算は原因究明までの緩和にすぎない。
@@ -214,13 +214,13 @@ $proc = Start-SnotraProcess -ConfigDir $profileFull -Trace -FilePath $ExePath `
   -StandardErrorPath $errPath -StandardOutputPath $outPath
 $launchedAt = Get-Date
 
-# 失敗時の証拠出力（#690）。
+# 失敗時の証拠出力（#693）。
 #
 # **失敗チャネルは 2 本ある**——`throw`（前提が崩れて続行不能）と `$failures` への
 # 蓄積（検査項目の不合格）。両チャネルの証拠をこの 1 関数へ合流させる。`throw` の経路は
 # `finally`（プロセス kill だけ）を通るので、ここを通さなければ手掛かりを残さない。
 # CI で `hotkey:registered` 未観測が出たとき、証拠の無いログには seed から例外までの 18 秒の
-# 空白しか無く、「アプリが遅れた」のか「起動せず死んだ」のかを**区別できなかった**（#690）。
+# 空白しか無く、「アプリが遅れた」のか「起動せず死んだ」のかを**区別できなかった**。
 #
 # プロセスの生死を先に出すのが要点である: trace 0 行のとき「観測できなかった」と
 # 「イベントが出なかった」は別物で、前者ならプロセス状態が切り分ける。
@@ -355,7 +355,7 @@ try {
       throw "hotkey registration failed in the app (modifier=$($hk.modifier) key=$($hk.key)) — smoke cannot proceed"
     }
     $vks = @($hk.vks | ForEach-Object { [byte][int]$_ })
-    # **成功時にもレイテンシを出す**（#690 follow-up）。予算を広げただけだと、アプリの起動が
+    # **成功時にもレイテンシを出す**（#693）。予算を広げただけだと、アプリの起動が
     # 遅くなっても予算内に収まる限り緑のままで**気づけない**。数字を毎回出せば、退行は
     # 予算に触れる前に人が読める（`event_count` を成功時に出すのと同じ考え方）。
     $startupMs = ((Get-Date) - $launchedAt).TotalMilliseconds
@@ -540,7 +540,8 @@ try {
   }
 
   # --- WebView2 プロセスの増分 0 ---
-  # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after で測る）
+  # WebView2 の UI 経路は撤去済みであり（#532）、表示で WebView2 プロセスが増えていないこと
+  # （グローバル before/after で測る）
   $webviewAfter = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
   if ($webviewAfter -gt $webviewBefore) {
     $failures += "msedgewebview2 count increased: $webviewBefore -> $webviewAfter"
@@ -705,7 +706,7 @@ try {
 
   # --- 打鍵を伴わない文字が subclass から 1 回ずつ入ること（#1289）---------------
   # キーボード由来の入力は `windows_ime.rs` の subclass が Win32 メッセージから作る。ここで打つのは
-  # `keybd_event` の打鍵とは別の 2 経路である。
+  # `keybd_event` の打鍵とは別の 2 経路で、どちらも subclass が拾わなければ入らない。
   #   (a) `SendInput` の `KEYEVENTF_UNICODE`: 非 ASCII（あ）と BMP 外（😀）を 1 文字ずつ。😀 は
   #       「down・CHAR(high)・up・down・CHAR(low)・up」で届くので、subclass がキーのメッセージを
   #       跨いでサロゲートを連結しなければ入らない（`keyboard.rs` の `on_char`）
@@ -803,7 +804,7 @@ $toastProfileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile-toast'
 $toastProfile = New-SnotraVerificationProfile -ProfileDir $toastProfileDir -ShowIcons $false `
   -AdditionalSections "[visual]`r`nfont_size = 15`r`nbar_padding = 28"
 $expectedBarLogical = 15 + 28   # layout::Metrics::from_config: bar_height = font_size + bar_padding
-# **bar + toast/status の 2 行分**（#904 の期待値。toast 行は bar と同じメトリクスで積まれる
+# **bar + toast/status の 2 行分**の期待値（#904。toast 行は bar と同じメトリクスで積まれる
 # 前提——この前提が崩れたら両方の期待値を一緒に見直すこと）。
 $expectedShowHeightLogical = $expectedBarLogical * 2
 $toastErrPath = Join-Path $toastProfileDir 'stderr.log'

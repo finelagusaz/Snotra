@@ -353,7 +353,7 @@ pub(crate) fn create(
         window_coordinator::native_brush_color(visual::background_color(background_color_hex));
     let window = tauri::Window::builder(app, "main")
         .title("Snotra")
-        .inner_size(window_width, 52.0) // 保存幅を尊重（#532）。高さは初期値。実高は show 時に Metrics で再設定(#646)
+        .inner_size(window_width, 52.0) // 保存幅を尊重（#532）。高さは初期値。実高は show 経路と view.rs のフレームが設定する(#646)
         .decorations(false)
         .resizable(false)
         .skip_taskbar(true)

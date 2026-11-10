@@ -57,7 +57,7 @@
 | 調査・測定のための一時的な足場（script・workflow・env フック・製品コード内の計装）を新設/撤去 | `docs/development-principles.md`「観測と計装」の「一時的な足場は、撤去までを新設の時点で決める」 |
 | セーフティネット（hook・CI・`.githooks/`・`.claude/settings.json`・rules・skills・規範）を新設/変更 | `.claude/rules/safety-nets.md` を読む（規範文書を編集するときは自動で読み込まれないので、手で読む）。機構を足す前に「壊れたとき緑のまま推移するか」を問う。推移しないなら、機構を置かない |
 | 機構・層・ファイル群を撤去する | 削除したファイル名と、その層の語彙を `git grep` で数え、「在る前提で書いている」出現を直す。識別子の残りが 0 件であることを根拠にしない（散文の語彙は識別子の検索に出てこない）。作法は `docs/development-principles.md`「撤去（消す変更）の作法」にある |
-| ガバナンス文書（`*.md`・rules・skills・workflow）・`.rs` コメントの見出し参照を変更 | `npm run governance:check` を実行する（PR では CI が毎回実行する） |
+| ガバナンス文書（`*.md`・rules・skills・workflow）を変更 | `npm run governance:check` を実行する（PR では CI が毎回実行する） |
 | 文書に事実の写しを増やす変更 | 正本を 1 か所に決め、他の場所からはそこを参照する。写しを直すときは、PR 本文も数える対象に入れる（squash で main の履歴になる） |
 | ファイル（`.rs`）を追加/削除 | 責務を `//!` に書き、その crate の `CLAUDE.md` のモジュール構成へ足す／消す（`governance:check` が照合する） |
 | 機能削除・trace イベント名／hotkey 登録・表示経路の変更 | `scripts/smoke-egui.ps1` と `docs/build-commands.md` の smoke の前提が壊れないかを確かめる |

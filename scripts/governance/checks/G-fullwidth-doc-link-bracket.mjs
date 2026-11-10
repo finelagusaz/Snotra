@@ -1,11 +1,11 @@
 //! G-fullwidth-doc-link-bracket — intra-doc link の角括弧が半角と全角で混在した形（#1172）。
-import { finding, linesOfComments, headingRefSourceDocs } from "../lib.mjs";
+import { finding } from "../lib.mjs";
 
 export const id = "G-fullwidth-doc-link-bracket";
 
 /** @param {object} snapshot  @param {object} ctx buildChecks が組む共有母集団（record を使う） */
 export function run(snapshot, ctx) {
-  return scanFullwidthDocLinkBrackets(snapshot, headingRefSourceDocs(snapshot)).findings;
+  return scanFullwidthDocLinkBrackets(snapshot, rustSources(snapshot)).findings;
 }
 
 // ---------------------------------------------------------------------------
@@ -21,10 +21,8 @@ export function run(snapshot, ctx) {
 // `///` `//!`」の行（着地を検査する ○）。表が「○」と示した面で黙るのが害であり、× の 2 行
 // （`#[cfg(test)]` の中・`//` インライン）は規範上の保証が最初から無いので、この検査が赤にする理由も無い。
 //
-// **母集団は `.rs` の doc 行（`///` / `//!`）だけである。** `headingRefSourceDocs`（`.rs` 全件）を受け、
-// `linesOfComments(text, file, "js")` でコメント行を取り、行頭の `///` / `//!` へ絞る。
-// **`trimStart()` は必須である**——`linesOfComments` は判定にだけ trim 済みの行を使い、返すのは
-// インデント込みの raw なので、無いと `impl` ブロック内の doc（実ツリーの大半）を全滅で見逃す
+// **母集団は `.rs` の doc 行（`///` / `//!`）だけである。** `.rs` 全件の各行のうち、行頭の `///` / `//!` へ絞る。
+// **`trimStart()` は必須である**——無いと `impl` ブロック内の doc（実ツリーの大半）を全滅で見逃す
 // （2026-09-02 実測。隣のテストのインデント済み fixture がこの欠落を赤にする）。
 // `.md` / `.mjs` / `.ps1` は見ない——intra-doc link の概念が無く、「表の ○ が嘘になる」構造も無い。
 //
@@ -49,19 +47,20 @@ export function run(snapshot, ctx) {
 //     この検査自身の findings と `checked` で行うこと（`git grep` は追跡ファイルしか見ない）
 //
 // **宣言する死角——赤になる側のもの（沈黙しないので人が解く）:**
-//   - **rustdoc コードフェンスの内側の混在形**。`linesOfComments` はフェンスをマスクしない。今日 0 件
+//   - **rustdoc コードフェンスの内側の混在形**。フェンスをマスクしない。今日 0 件
 //   - **散文の括弧書きで意図的に混ぜた形**（`（…［…］…）` の内側に半角 `[` が同居する等）。今日 0 件。
 //     出たら全角対にするか `` ` `` で包む
 //
 // **`checked` は角括弧の対の総数**（正しい対も混在も数える）。0 なら「1 つも見ていない」を指す（#497）。
 // ---------------------------------------------------------------------------
 
-// **`matchAll` からだけ使う。** `g` 付きの定数を `test` / `exec` と共有すると `lastIndex` が持ち越される
-// （`lib.mjs` の `HEADING_REF` と同じ注意）。
+// **`matchAll` からだけ使う。** `g` 付きの定数を `test` / `exec` と共有すると `lastIndex` が持ち越される。
 /** 混在した対: 開き半角＋閉じ全角、または開き全角＋閉じ半角。内側に角括弧を含まない */
 const MIXED = /\[[^\[\]［］\n]*］|［[^\[\]［］\n]*\]/g;
 /** 証跡用: 何らかの角括弧の対（半角・全角の 4 通り） */
 const ANY_PAIR = /[\[［][^\[\]［］\n]*[\]］]/g;
+
+const rustSources = (snapshot) => snapshot.files.filter((f) => f.endsWith(".rs"));
 
 // `////`（4 本以上）は Rust では doc ではなく通常のコメントなので外す（委譲レビュー L1・2026-09-02）
 const isDocLine = (line) => {
@@ -80,8 +79,9 @@ export function scanFullwidthDocLinkBrackets(snapshot, docs) {
       findings.push(finding(doc, 1, "対象文書が読めない（G-fullwidth-doc-link-bracket 母集団の欠落）"));
       continue;
     }
-    for (const [lineNo, line] of linesOfComments(text, doc, "js")) {
+    for (const [i, line] of text.split("\n").entries()) {
       if (!isDocLine(line)) continue;
+      const lineNo = i + 1;
       checked += [...line.matchAll(ANY_PAIR)].length;
       for (const m of line.matchAll(MIXED)) {
         findings.push(

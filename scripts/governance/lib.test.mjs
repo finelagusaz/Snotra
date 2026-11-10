@@ -6,16 +6,10 @@ import { snap } from "./test-helpers.mjs";
 import {
   gitIgnoredPaths,
   makeSnapshot,
-  headingRefSourceDocs,
-  headingRefCommentDocs,
-  headingRefDocs,
   governanceDocs,
   sectionOf,
   linesOutsideFences,
-  linesOfComments,
 } from "./lib.mjs";
-import { scanHeadingRefs, checkHeadingRefs } from "./checks/G-heading-refs.mjs";
-import { checkNearHeadingRefs } from "./checks/G-near-heading-refs.mjs";
 import { checkReferences } from "./checks/G-references.mjs";
 import { checkAdrCitations, adrCitationDocs } from "./checks/G-adr-citations.mjs";
 import { runAll } from "../governance-check.mjs";
@@ -39,178 +33,10 @@ describe("gitIgnoredPaths（存在に依らずパス名で判定する・#1088�
   });
 });
 
-describe("G-heading-refs / G-near-heading-refs のソースの系統（`.rs`・#925）", () => {
-  // 守りたい対象 = `.rs` のコメントに書かれた正準形が、参照先の改題・移動・削除で沈黙すること。
-  // 種はすべて合成スナップショットへ蒔く（ライブの検査もリポジトリのファイルも弱めない・
-  // `.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」）。
-  const TARGET = "## Git/GitHub 運用\n\n本文\n";
-  const rs = (src) => snap({ "CLAUDE.md": TARGET, "src/a.rs": src });
-  const scanRs = (src) => scanHeadingRefs(rs(src), ["src/a.rs"]);
-
-  it("種 1: `.rs` の正準形が着地しなければ finding（赤）。対照: 着地すれば緑で照合件数が 1 進む", () => {
-    const rot = scanRs('/// 詳細は `CLAUDE.md`「Git 運用」を見よ\nfn f() {}\n');
-    expect(rot.findings).toHaveLength(1);
-    expect(rot.findings[0].message).toContain("見出し参照が着地しない");
-    const ok = scanRs('/// 詳細は `CLAUDE.md`「Git/GitHub 運用」を見よ\nfn f() {}\n');
-    expect(ok.findings).toEqual([]);
-    expect(ok.checked).toBe(1);
-  });
-
-  it("種 2: `.rs` の参照対象が解決できなければ finding（パスごと消えた場合）", () => {
-    const f = scanRs('/// `docs/gone.md`「節」\nfn f() {}\n').findings;
-    expect(f).toHaveLength(1);
-    expect(f[0].message).toContain("見出し参照の対象が解決できない");
-  });
-
-  it("種 3: `#[cfg(test)]` の内側のコメントも見る（テストコードを母集団から外さない）", () => {
-    // #925 が実際に見つけた陳腐化 1 件は `snotra-settings/src/tabs/visual.rs` の `#[cfg(test)]` の
-    // 内側にあった。走査元へ `#[cfg(test)]` 以降を落とす変換を入れると、この it が落ちる
-    // ——テストコードを母集団から外さないのは意図である
-    const src = 'fn f() {}\n\n#[cfg(test)]\nmod tests {\n    // 根拠は `CLAUDE.md`「Git 運用」\n    #[test]\n    fn t() {}\n}\n';
-    const f = scanRs(src).findings;
-    expect(f).toHaveLength(1);
-    expect(f[0].message).toContain("見出し参照が着地しない");
-  });
-
-  it("種 4: G-near-heading-refs も `.rs` を見る（実リポジトリには生きた事例が無く、ここでしか示せない）", () => {
-    const f = checkNearHeadingRefs(rs('/// 詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\nfn f() {}\n'), ["src/a.rs"]);
-    expect(f).toHaveLength(1);
-    expect(f[0].message).toContain("`CLAUDE.md`「Git/GitHub 運用」と書く");
-  });
-
-  it("種 5: `.rs` の母集団が 0 件なら runAll が明示 fail（md が非空でも鳴る）", () => {
-    const { findings } = runAll(snap({ "CLAUDE.md": TARGET }));
-    expect(findings.some((f) => f.message.includes("対象ソース（.rs）が 0 件"))).toBe(true);
-  });
-
-  it("種 6: md の母集団が 0 件なら runAll が明示 fail（`.rs` が非空でも鳴る）", () => {
-    // 種 5 と別の it にする——1 本に束ねると、片方の系統が埋めた長さで他方の消滅が隠れる形を
-    // テスト側で再現してしまう（`runAll` のコメントが `staleDocs` / `staleGuides` で名指しした失敗）
-    const { findings } = runAll(snap({ "src/a.rs": "fn f() {}\n" }));
-    expect(findings.some((f) => f.message.includes("対象 md が 0 件"))).toBe(true);
-  });
-
-  it("種 7: 判定対象外の不混入（`.rs` の系統は他の拡張子を拾わない）", () => {
-    const s = snap({
-      "src/a.rs": "",
-      "src/b.ts": "",
-      "scripts/c.mjs": "",
-      "scripts/d.ps1": "",
-      "Cargo.toml": "",
-      "CLAUDE.md": "",
-    });
-    expect(headingRefSourceDocs(s)).toEqual(["src/a.rs"]);
-  });
-
-  it("種 8: 配線カナリア（G-heading-refs） — runAll 経由で `.rs` の陳腐化が findings に出る", () => {
-    const { findings } = runAll(rs('/// `CLAUDE.md`「Git 運用」\nfn f() {}\n'));
-    expect(findings.some((f) => f.file === "src/a.rs" && f.message.includes("見出し参照が着地しない"))).toBe(true);
-  });
-
-  it("種 9: 配線カナリア（G-near-heading-refs） — 近傍形も runAll 経由で `.rs` から出る", () => {
-    // **系統ごとに 1 本ずつ要る。** 種 8 だけでは `scanNearHeadingRefs` の引数を md の系統へ戻す変異が
-    // 検出されない（種 4 はリテラル母集団で呼ぶので buildChecks を通らず、実リポジトリの `.rs` 近傍参照は
-    // 0 件なので dogfood も evidence も動かない）。G-stale-identifiers が配線 describe を 2 本置いたのと同じ形
-    const { findings } = runAll(rs('/// 詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\nfn f() {}\n'));
-    expect(findings.some((f) => f.file === "src/a.rs" && f.message.includes("正準形でない"))).toBe(true);
-  });
-});
-
-describe("G-heading-refs / G-near-heading-refs のスクリプトの系統（コメント行・#1138）", () => {
-  // 守りたい対象 = スクリプトのコメントに書かれた正準形が、参照先の改題で沈黙すること。
-  // #1137 で `/implement` を改番したとき `.md` の 3 件は名指しされ、`scripts/race-boundaries.mjs`
-  // の 1 件だけが沈黙した。種はすべて合成スナップショットへ蒔く。
-  const TARGET = "## Git/GitHub 運用\n\n本文\n";
-  const src = (p, text) => snap({ "CLAUDE.md": TARGET, [p]: text });
-  const scan = (p, text) => scanHeadingRefs(src(p, text), [p]);
-
-  it("種 1: `.mjs` のコメントの正準形が着地しなければ finding（赤）。対照: 着地すれば緑", () => {
-    const rot = scan("scripts/a.mjs", '// 詳細は `CLAUDE.md`「Git 運用」\n');
-    expect(rot.findings).toHaveLength(1);
-    expect(rot.findings[0].message).toContain("見出し参照が着地しない");
-    const ok = scan("scripts/a.mjs", '// 詳細は `CLAUDE.md`「Git/GitHub 運用」\n');
-    expect(ok.findings).toEqual([]);
-    expect(ok.checked).toBe(1);
-  });
-
-  it("種 2: 文字列リテラルの中の同じ参照は見ない（負の fixture を偽陽性にしない契約の実体）", () => {
-    // **これが「`*.test.mjs` を外す」の代わりに置いた意味のマッピングである。**拡張子で外すと
-    // `*.Tests.ps1` のような別の綴りが検出されず、fixture を持たないテストのコメントまで落ちる。
-    // この it が落ちたら、母集団の定義が拡張子のマッピングへ戻った合図
-    const s = scan("scripts/a.test.mjs", 'const doc = "`CLAUDE.md`「Git 運用」";\n');
-    expect(s.findings).toEqual([]);
-    expect(s.checked).toBe(0);
-  });
-
-  it("種 3: ブロックコメント（`/* */`）の中も見る——継続行は行頭に `//` を持たない", () => {
-    const f = scan("scripts/a.mjs", '/**\n * 詳細は `CLAUDE.md`「Git 運用」\n */\n').findings;
-    expect(f).toHaveLength(1);
-    expect(f[0].line).toBe(2);
-  });
-
-  it("種 4: PowerShell は `#` と `<# #>` の両方を見る（`.ps1` の実参照は help ブロックにも在る）", () => {
-    const hash = scan("scripts/a.ps1", '# 詳細は `CLAUDE.md`「Git 運用」\n').findings;
-    expect(hash).toHaveLength(1);
-    const block = scan("scripts/a.ps1", '<#\n.SYNOPSIS\n詳細は `CLAUDE.md`「Git 運用」\n#>\n').findings;
-    expect(block).toHaveLength(1);
-    expect(block[0].line).toBe(3);
-  });
-
-  it("種 5: G-near-heading-refs もスクリプトのコメントを見る", () => {
-    const f = checkNearHeadingRefs(src("scripts/a.mjs", '// 詳細は `CLAUDE.md` の「Git/GitHub 運用」\n'), ["scripts/a.mjs"]);
-    expect(f).toHaveLength(1);
-    expect(f[0].message).toContain("`CLAUDE.md`「Git/GitHub 運用」と書く");
-  });
-
-  it("種 6: スクリプトの母集団が 0 件なら runAll が明示 fail（md と `.rs` が非空でも鳴る）", () => {
-    // 系統ごとに 1 本ずつ要る（種 5 / 種 6 が `.rs` と md について置いたのと同型）
-    const { findings } = runAll(snap({ "CLAUDE.md": TARGET, "src/a.rs": "fn f() {}\n" }));
-    expect(findings.some((f) => f.message.includes("対象スクリプト"))).toBe(true);
-  });
-
-  it("種 7: 判定対象外の不混入（母集団はコメント記法を持つ拡張子だけ）", () => {
-    const s = snap({
-      "scripts/a.mjs": "",
-      "scripts/b.ps1": "",
-      "scripts/lib/c.psm1": "",
-      ".github/workflows/d.yml": "",
-      "Cargo.toml": "",
-      "src/e.rs": "",
-      "CLAUDE.md": "",
-      "package-lock.json": "",
-      "docs/f.png": "",
-    });
-    expect(headingRefCommentDocs(s).sort()).toEqual([
-      ".github/workflows/d.yml",
-      "Cargo.toml",
-      "scripts/a.mjs",
-      "scripts/b.ps1",
-      "scripts/lib/c.psm1",
-    ]);
-  });
-
-  it("種 8: 配線カナリア — runAll 経由でスクリプトのコメントの陳腐化が findings に出る", () => {
-    const { findings } = runAll(src("scripts/a.mjs", '// `CLAUDE.md`「Git 運用」\n'));
-    expect(findings.some((f) => f.file === "scripts/a.mjs" && f.message.includes("見出し参照が着地しない"))).toBe(true);
-  });
-
-  it("linesOfComments: コメント記法を持たない対象は契約違反として throw する", () => {
-    expect(() => linesOfComments("x\n", "docs/a.md")).toThrow(/コメント記法を持たない/);
-  });
-});
-
 describe("凍結された歴史（ADR-adr-frozen-history）— 精度の辺は畳み、実在の辺は残す", () => {
   // 守りたい契約: ADR 本文**から**外への参照（精度の辺）は照合しない。
   // 生きた層 → ADR と ADR → ADR の短縮引用・生きた層 → ADR 見出し（実在の辺）は照合し続ける。
   // 種はどれも「稼働中のガードを弱めず、合成スナップショットへ蒔く」（.claude/rules/safety-nets.md）。
-
-  it("種 1: ADR 内の古くなった正準参照は見ない（緑）。対照: 同じ参照が生きた文書なら赤", () => {
-    const rotten = "`docs/gone.md`「消えた節」\n";
-    const adr = snap({ "docs/adr/ADR-a.md": `# ADR-a: x\n${rotten}` });
-    expect(checkHeadingRefs(adr, headingRefDocs(adr))).toEqual([]);
-    const live = snap({ "docs/x.md": rotten });
-    expect(checkHeadingRefs(live, headingRefDocs(live))).toHaveLength(1);
-  });
 
   it("種 2: ADR 内の実在しないパス参照は見ない（緑）。対照: 生きた文書なら赤", () => {
     const rotten = "`docs/gone-path.md` を見よ\n";
@@ -225,14 +51,6 @@ describe("凍結された歴史（ADR-adr-frozen-history）— 精度の辺は�
     const f = checkAdrCitations(s, adrCitationDocs(s, governanceDocs(s)));
     expect(f).toHaveLength(1);
     expect(f[0].message).toContain("ADR-gone");
-  });
-
-  it("種 5: 生きた文書から ADR 見出しへの正準参照は凍結後も照合される（走査元の除外は参照先解決を絞らない）", () => {
-    const adr = "# ADR-a: x\n## 却下 6: 別案\n";
-    const ok = snap({ "docs/x.md": "`docs/adr/ADR-a.md`「却下 6」\n", "docs/adr/ADR-a.md": adr });
-    expect(checkHeadingRefs(ok, headingRefDocs(ok))).toEqual([]);
-    const rot = snap({ "docs/x.md": "`docs/adr/ADR-a.md`「消えた見出し」\n", "docs/adr/ADR-a.md": adr });
-    expect(checkHeadingRefs(rot, headingRefDocs(rot))).toHaveLength(1);
   });
 
   it("母集団カナリア: adrCitationDocs は docs/adr/ を明示的に含む（governanceDocs の除外に連動して落ちない）", () => {

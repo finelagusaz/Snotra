@@ -37,10 +37,6 @@ import {
   finding,
   gitIgnoredPaths,
   governanceDocs,
-  allHeadingRefDocs,
-  headingRefCommentDocs,
-  headingRefDocs,
-  headingRefSourceDocs,
   staleIdentifierDocs,
   staleIdentifierGuideDocs,
   staleIdentifierTargets,
@@ -62,23 +58,14 @@ export { makeSnapshot, governanceDocs };
  *  確定させるため、並行する 2 本の PR が同じ値を見る（`.claude/rules/governance-docs.md`「ガバナンス文書の参照と命名のルール」の「序数で他を指してはならない」）。 */
 export function buildChecks(snapshot, sink = {}) {
   const docs = governanceDocs(snapshot);
-  const refDocs = headingRefDocs(snapshot);
-  const refSourceDocs = headingRefSourceDocs(snapshot);
-  const refCommentDocs = headingRefCommentDocs(snapshot);
-  // 3 つの系統は検査へ渡すときだけ束ねる。母集団としては別々に持つ——`runAll` の 0 件検知が
-  // 系統ごとに 1 本ずつ要るためである（束ねた長さは他の系統の消滅を隠す）。
-  const allRefDocs = allHeadingRefDocs(snapshot);
   const staleDocs = staleIdentifierDocs(snapshot);
   const staleGuides = staleIdentifierGuideDocs(snapshot);
   const staleTargets = staleIdentifierTargets(snapshot);
   sink.docs = docs;
-  sink.refDocs = refDocs;
-  sink.refSourceDocs = refSourceDocs;
-  sink.refCommentDocs = refCommentDocs;
   sink.staleDocs = staleDocs;
   sink.staleGuides = staleGuides;
   sink.staleTargets = staleTargets;
-  const ctx = { docs, allRefDocs, staleTargets, gitIgnoredPaths };
+  const ctx = { docs, staleTargets, gitIgnoredPaths };
   return CHECK_MODULES.map((m) => ({ id: m.id, run: () => m.run(snapshot, ctx) }));
 }
 
@@ -87,11 +74,6 @@ export function runAll(snapshot) {
   const checks = buildChecks(snapshot, ctx);
   const findings = [];
   if (ctx.docs.length === 0) findings.push(finding(".", 1, "ガバナンス文書が 0 件（母集団の欠落）"));
-  if (ctx.refDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象 md が 0 件（母集団の欠落）"));
-  // 系統ごとに 1 本ずつ要る（`staleDocs` / `staleGuides` と同型）——束ねると md 側の長さが
-  // `.rs` の消滅を埋め、Rust コメントの見出し参照が誰にも見られないまま緑になる
-  if (ctx.refSourceDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象ソース（.rs）が 0 件（母集団の欠落）"));
-  if (ctx.refCommentDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象スクリプト（コメント記法を持つファイル）が 0 件（母集団の欠落）"));
   // `staleTargets` ではなく `staleDocs` を見る——`STALE_EXTRA_DOCS` が常に長さを埋めるため、
   // targets 側で判定すると `.claude/**` が 1 枚残らず消えてもこの検知が沈黙する。
   // **グロブ由来の母集団ごとに 1 本ずつ要る**——束ねると片方が埋めた長さで他方の消滅が隠れる。

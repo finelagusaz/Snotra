@@ -18,8 +18,7 @@
 | 述語 | predicate | 検査で、対象が条件に当たるかどうかを決める判定 |
 | 照合 | verification | 写しや参照を、正本と突き合わせて確かめること |
 | 分離プロファイル | isolated profile | `SNOTRA_CONFIG_DIR` が実プロファイル（`%APPDATA%\Snotra`）以外を指す起動。単一インスタンス・スタートアップ登録・既定ホットキーが普段使いの Snotra から分かれる（`SPEC.md` §13）。スクリプトが作る検証用プロファイルは、その一種である |
-| 正準形 | canonical form | 文書の節を指す決まった書き方。`` `<対象>`「<見出し>」 `` の形で、`governance:check` が照合する |
-| 着地 | resolve | 正準形の参照が、実在する見出しに当たること |
+| 着地 | resolve | 参照（intra-doc link など）が、実在する対象に当たること |
 | 規範（規範文書） | norm | 作業の決まりを書いた文書。ルート `CLAUDE.md`・`AGENTS.md`・`.claude/rules/`・`.claude/skills/` |
 | セーフティネット | safety net | 誤りを止める仕組みの総称。hook・CI・`.githooks/`・`.claude/settings.json`・規範。対象の正本は `AGENTS.md`「条件別チェック（トリガー → 参照先）」 |
 | 常時ロード | always loaded | 毎セッション文脈に入ること。ルート `CLAUDE.md` と `AGENTS.md` が当たる。`.claude/rules/` は、編集するファイルのパスに応じて読み込まれる |

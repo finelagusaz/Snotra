@@ -1,5 +1,5 @@
 //! テーマ（config `[visual]` のうち**色・font・padding** + `appearance.show_icons`）の
-//! 1 フレーム分の読み取り値と、その純粋な導出（#673 spec 決定 4）。
+//! 1 フレーム分の読み取り値と、その純粋な導出（#673・#802）。
 //!
 //! **`[visual]` 全体ではない。`window_gap` は含まない**——results ウィンドウの配置
 //! （`window_coordinator::position_results_below_main`）は main の `update()` と `Moved` リスナーの
@@ -7,20 +7,19 @@
 //! 1 フレーム内で別 lock から読まれうる（`window_gap` と `font_size` を同時に変更した
 //! 1 フレームだけ新 gap × 旧行高になりうるが、次フレームで自然に直る cosmetic）。
 //!
-//! **なぜ束ねるか**: 従来は 1 フレームの中でテーマ色（文字色・font_size）と `read_metrics`
-//! （font_size・padding）が別々に lock を取っていた。その間に `config_watcher` の
-//! `apply_config_change` が挟まると、**新しい font_size を旧い行高で描く 1 フレーム**が生じる。
+//! **なぜ束ねるか**: 1 フレームの中でテーマ色（文字色・font_size）と `read_metrics`
+//! （font_size・padding）を別々の lock で読むと、その間に `config_watcher` の
+//! `apply_config_change` が挟まり、**新しい font_size を旧い行高で描く 1 フレーム**が生じる。
 //! 次フレームで自然に直る cosmetic なウィンドウだが、同じ値を 2 度読む構造そのものがウィンドウの原因である。
 //!
 //! **保持しないこと**: `VisualSnapshot` の寿命は 1 フレームである。`self.` へ持つと config 変更が
-//! 反映されなくなる（毎フレーム live-read 方針・#576 / #646 決定 2）。
+//! 反映されなくなる（毎フレーム live-read 方針・#576 / #646）。
 //!
-//! **色のパーサは 1 本である**（spec 決定 4 で統合）: `egui::Color32::from_hex`（`#RGB` / `#RGBA` /
+//! **色のパーサは 1 本である**（#802）: `egui::Color32::from_hex`（`#RGB` / `#RGBA` /
 //! `#RRGGBB` / `#RRGGBBAA` を受理）。tao のネイティブ背景ブラシへの変換は
 //! `window_coordinator::native_brush_color` が持つ——**ウィンドウの関心であってテーマ導出の関心ではない**
 //! ため、消費者がフレームの外にあるものはここに置かない。
-//! 旧 `config_watcher::parse_hex_color`（`#RRGGBB` 厳格）と 2 本立てだった頃は、`#FFF` を書くと
-//! 描画色だけが白になり下地は既定色へ落ちていた（#680 の 1）。統合で消えたのはこの非対称である。
+//! パーサを 2 本にすると、受理する形の差（`#FFF` など）で描画色と下地が食い違う（#680）。
 
 use std::sync::LazyLock;
 
@@ -33,7 +32,7 @@ use crate::egui_shell::layout::{self, Metrics};
 /// `VisualConfig::default()` は色 5 本 + font_family の `String` を毎回ヒープ確保する。
 /// `visual_snapshot` は engine の guard 内で呼ばれるため、呼び出しごとに作ると
 /// **mutex を握ったまま毎フレーム 6 本確保する**——「guard 内は parse と算術と `&str` 比較
-/// まで」という本 PR 自身の制約に反する（レビュー Important 1）。
+/// まで」という制約（#673）に反する。
 static DEFAULT_VISUAL: LazyLock<VisualConfig> = LazyLock::new(VisualConfig::default);
 
 /// AppState 不在時に渡す既定 config（確保ゼロ）。
@@ -41,8 +40,7 @@ pub(crate) fn default_visual() -> &'static VisualConfig {
     &DEFAULT_VISUAL
 }
 
-/// 1 結果行の描画テーマ。main のバー行・toast 行も同じ型を使う（#646 PR2 で results 側に
-/// あったものを #673 で純粋核へ移設）。
+/// 1 結果行の描画テーマ。main のバー行・toast 行も同じ型を使う（#673）。
 pub(crate) struct RowTheme {
     pub name_color: egui::Color32,
     pub path_color: egui::Color32,
@@ -60,11 +58,11 @@ pub(crate) struct RowTheme {
 }
 
 /// 1 フレーム分のテーマ値。main と results の要求の**和集合**である（ウィンドウごとの projection に
-/// 分けない——分けると導出式が再び 2 箇所になる・spec 決定 4）。
+/// 分けない——分けると導出式が再び 2 箇所になる・#802）。
 pub(crate) struct VisualSnapshot {
     /// **両ウィンドウ**の背景（softbuffer の clear color）と、その下地であるネイティブブラシ。
     /// **main 専用ではない**——results も `set_clear_color` に使い、`DriveResultsInputs` を経て
-    /// results ウィンドウのブラシにもなる。`panel_fill` を指す値ではない（決定 2 でその代入は撤去した）。
+    /// results ウィンドウのブラシにもなる。`panel_fill` を指す値ではない（この crate は `panel_fill` を書かない・#802）。
     pub background: egui::Color32,
     /// TextEdit / overlay 背景（main のみ使用）。
     pub input_bg: egui::Color32,
@@ -142,9 +140,9 @@ mod tests {
         VisualConfig::default()
     }
 
-    /// **本 PR が存在する理由の不変条件**（spec 決定 4 の効果）: 1 つの snapshot の中で、
+    /// **この型が束ねる理由の不変条件**（#673）: 1 つの snapshot の中で、
     /// 行高（metrics）と文字サイズ（row）が**同じ font_size** から導かれる。別々に lock を
-    /// 取っていた頃は、間に config 適用が挟まると新 font を旧行高で描く 1 フレームが生じえた。
+    /// 取ると、間に config 適用が挟まって新 font を旧行高で描く 1 フレームが生じうる。
     #[test]
     fn metrics_and_row_sizes_derive_from_the_same_font_size() {
         let mut v = cfg();
@@ -159,8 +157,7 @@ mod tests {
     }
 
     /// 妥当な hex は期待どおりの色になり、parse 失敗は既定色へ落ちる（既定リテラルの
-    /// 再手打ちを持たない）。**`view.rs` の `hex_color_parses_and_falls_back` の後継**——
-    /// 変換が view から純粋核へ移ったため、証明する命題ごとここへ移した（#673）。
+    /// 再手打ちを持たない・#673）。
     #[test]
     fn hex_parses_valid_and_falls_back_to_config_default() {
         let mut v = cfg();
@@ -204,9 +201,8 @@ mod tests {
         );
     }
 
-    /// 背景色の parse は **1 本**（`Color32::from_hex`）になり、`#RGB` も通る（#680 の 1）。
-    /// 旧 `config_watcher::parse_hex_color` は `#RRGGBB` 厳格で、`#FFF` を書くと下地だけ
-    /// 既定色へ落ちていた——その非対称がここで消える。
+    /// 背景色の parse は **1 本**（`Color32::from_hex`）で、`#RGB` も通る（#680）。
+    /// `#FFF` で下地だけ既定色へ落ちる非対称を作らない。
     #[test]
     fn background_color_accepts_short_hex_and_falls_back_to_config_default() {
         assert_eq!(background_color("#FFF"), egui::Color32::WHITE);
@@ -215,7 +211,6 @@ mod tests {
             egui::Color32::from_rgb(0x4A, 0x2B, 0x5C)
         );
         assert_eq!(background_color("#ffffff"), egui::Color32::WHITE);
-        // 旧 `config_watcher::parse_hex_color` の 5 テストが固定していた命題（撤去に伴い移設）:
         // 不正形はいずれも既定色へ落ちる。**リテラルを再手打ちせず既定から導く**。
         let fallback = egui::Color32::from_hex(&VisualConfig::default().background_color).unwrap();
         for bad in ["282828", "#28282", "#gggggg", "", "#", "not-a-color"] {

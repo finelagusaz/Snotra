@@ -1,4 +1,4 @@
-//! Alt+Q ホットキー分岐・blur 判定の純粋な決定核（Win32 非依存）。SU1 spike で実証済み・#532 SU2。
+//! Alt+Q ホットキー分岐・blur 判定の純粋な決定核（Win32 非依存・#532）。
 
 use std::time::{Duration, Instant};
 
@@ -9,7 +9,7 @@ pub(crate) enum HotkeyPlan {
     ShowNow,
 }
 
-/// Alt+Q 押下時の分岐（意味論は #532 SU7 で撤去した旧 UI 経路から引き継いだ）。表示中かつ hotkey_toggle=true なら
+/// Alt+Q 押下時の分岐（意味論は撤去した旧 UI 経路から引き継いだ・#532）。表示中かつ hotkey_toggle=true なら
 /// 即 hide。それ以外（非表示、または表示中でも hotkey_toggle=false ＝ 既に見えているウィンドウを
 /// 再フォーカス/再配置）は show 側へ回り、Alt が押されている限り解放を待ってから show する。
 pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool) -> HotkeyPlan {
@@ -22,15 +22,14 @@ pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool)
     }
 }
 
-/// blur（focus 喪失）から hide 判定までの猶予（#532 SU2）。
+/// blur（focus 喪失）から hide 判定までの猶予（#532）。
 /// **予約と判定の両方がこの値を使う**——片方だけ変えると「予約は 100ms 後・判定は別の閾値」
 /// という静かな不整合になる。
 const BLUR_GRACE: Duration = Duration::from_millis(100);
 
 /// blur 猶予のこのフレームでの処置（#711・契約③）。
 ///
-/// **`#[must_use]` は関数ではなく型に付けてある**（#934 で `BlurGrace::observe` のメソッド段から
-/// 移した）——危ういのは「この値を落とすこと」であって特定の関数ではないため、自由関数
+/// **`#[must_use]` は関数ではなく型に付けてある**（#934）——危ういのは「この値を落とすこと」であって特定の関数ではないため、自由関数
 /// `blur_grace_action` も同じ強制を受ける。配置の規約と受容残余の正本は
 /// `src-tauri/CLAUDE.md`「処置を返す純粋核の強制」。
 #[must_use = "driver が処置を実行しないと hide 要求・repaint 再予約が黙って消える（#745・#934）"]
@@ -89,8 +88,8 @@ fn blur_grace_action(elapsed: Duration, auto_hide: bool) -> BlurAction {
 ///
 /// **ガードは `auto_hide_on_focus_lost` 1 つだけである**（`SPEC.md` §8.6 の
 /// `SearchVisible --> Standby: focus_lost [auto_hide_on_focus_lost]` と一対一）。
-/// かつて第 4 項 `!settings_running`（設定サイドカー存命中は hide しない）が在ったが、
-/// **SPEC に根拠を持たず egui 移行時に記録なく入った逸脱**であり #746 で撤去した。
+/// 第 4 項 `!settings_running`（設定サイドカー存命中は hide しない）を足さない——
+/// **SPEC に根拠が無い**（#746）。
 /// SPEC が設定サイドカーについて定めるのは `alwaysOnTop` の一時解除だけである（§8.5）。
 fn blur_should_hide(focused: bool, grace_elapsed: bool, auto_hide: bool) -> bool {
     !focused && grace_elapsed && auto_hide
@@ -103,11 +102,9 @@ fn blur_should_hide(focused: bool, grace_elapsed: bool, auto_hide: bool) -> bool
 /// `blur_grace_action` の doc が警告する underflow を、構造で消したと称して持ち込む。
 ///
 /// **フレーム内の入口は `reset`（段 3）と `observe`（段 16–17）の 2 つだけである。**
-/// かつては 2 フィールド（`was_focused` / `unfocus_at`）に分解されており、「前フレームの
-/// focus を畳む」段 34 と「focus が戻ったら片方だけ消す」段 14 が独立していた。**#745 は
-/// その分解が原因ではない**（SU2 の設計 spec は初日から reset-on-show を要求しており、
-/// 実装がそれを落とした）が、1 フィールドにすると `reset` が 1 行になり、
-/// 「両方消したか」という問い自体が消える。
+/// 段 14・34 は欠番である——2 フィールド表現で独立していた 2 段を、#745 でここ（段 16–17）へ
+/// 合流させた（`ADR-blur-grace-single-field-state-machine`）。1 フィールドなので `reset` が
+/// 1 行で済み、「両方消したか」という問い自体が生じない。
 ///
 /// **`Idle` は武装を解かない。** `auto_hide` が off の間に猶予が明けても `Blurred` のまま
 /// 留まり、後から `auto_hide` が有効化されれば（`config-applied` wake で）hide できる。
@@ -121,7 +118,7 @@ fn blur_should_hide(focused: bool, grace_elapsed: bool, auto_hide: bool) -> bool
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum BlurGrace {
     /// show 直後。**まだ一度も focus を得ていない**——この状態からは武装しない。
-    /// `Hide` を返した直後もここへ戻る（旧 2 フィールド表現の `(false, None)` に対応）。
+    /// `Hide` を返した直後もここへ戻る。
     /// **初期状態でもある**——`reset()` と `LauncherController::new` の両方がここへ寄る。
     #[default]
     NeverFocused,
@@ -152,7 +149,7 @@ impl BlurGrace {
     /// 値渡しである**（実行中 config の毎フレーム live-read・#576）——遅延評価やキャッシュを
     /// 選ばなかった理由は `ADR-blur-grace-single-field-state-machine`。
     ///
-    /// **`#[must_use]` はここではなく `BlurAction` の型宣言に在る**（#934 で移した）。
+    /// **`#[must_use]` はここではなく `BlurAction` の型宣言に在る**（#934）。
     pub(crate) fn observe(&mut self, focused: bool, now: Instant, auto_hide: bool) -> BlurAction {
         if focused {
             *self = Self::Focused;
@@ -296,7 +293,7 @@ mod tests {
         );
     }
 
-    /// `Hide` を返した後は `NeverFocused` へ戻る（旧 2 フィールド表現の `(false, None)` に対応）。
+    /// `Hide` を返した後は `NeverFocused` へ戻る。
     #[test]
     fn blur_grace_hide_returns_to_never_focused() {
         let t = t0();

@@ -1,4 +1,4 @@
-//! 通知 primitive の純粋核（#532 SU5）。一時レーン（検索バー overlay・launchNotice parity の
+//! 通知 primitive の純粋核（#532）。一時レーン（検索バー overlay・launchNotice parity の
 //! 単一スロット上書き + 自動クリア）と、updater 持続レーン（toast 行の状態機械）を egui/Win32
 //! 非依存で持つ。時刻は driver（launcher_controller）が単調 `Duration`（基準 Instant からの経過）で注入する
 //! （layout.rs Debouncer と同じ流儀）。`UpdaterUi<U>` の payload generic はテスト容易性のため:
@@ -19,10 +19,9 @@ pub const NOTICE_HOTKEY: Duration = Duration::from_millis(5000);
 /// status 行の優先ラダー（WebView2 SearchWindow.tsx の Switch 先頭一致 parity）。
 /// `indexing` は「indexing 中かつ Results ビュー」を呼び出し側で評価して渡す。
 ///
-/// **クエリの空/非空では分岐しない**（#700）。旧実装は空クエリのとき `None` を返して
-/// TextEdit の `hint_text` に描かせていた（二重描画回避・spec 追補 1）が、status 行が
-/// 入力欄と別の場所になった（#700 発見 C）ことで「1 文字目で案内が入力欄から下の行へ飛ぶ」
-/// 動きになった。**描画面を 1 つに畳む**のが是正であり、hint 側の indexing 分岐を落とす。
+/// **クエリの空/非空では分岐しない**（#700）。status 行は入力欄と別の場所にあるので、
+/// 空クエリのとき `None` を返して TextEdit の `hint_text` に描かせると、「1 文字目で案内が
+/// 入力欄から下の行へ飛ぶ」。**描画面を 1 つに畳み**、hint 側に indexing の分岐を置かない。
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum OverlayKind {
     Indexing,
@@ -125,7 +124,7 @@ pub enum UpdaterPhase<U> {
     // version は toast() が Installing 局面で表示しない（update_installing は汎用文言・
     // 消費経路なし）ため保持しない。Available→Installing 遷移時に破棄する。
     Installing,
-    // `message` は失敗理由を toast に併記するために持つ（#654）。#648(C) で一度「描画に
+    // `message` は失敗理由を toast に併記するために持つ（#654）。#648 で一度「描画に
     // 使われない dead payload」として型から落としたが、描画側が消費するようになったので
     // 戻した——**「描かないなら型に持たない」という当時の判断は今も正しい**。ゆえに消費側
     // （`toast()` と view の描画）は `..` で受けず**フィールドを明示束縛する**こと。`..` は
@@ -160,7 +159,7 @@ pub enum ToastKind {
 }
 
 /// updater toast の状態機械。dismiss/install の競合は本型のメソッド内で原子的に解決する
-/// （呼び出し側は Mutex で包む・spec 決定「Available → Installing は mutex 内で原子遷移」）。
+/// （呼び出し側は Mutex で包む・Available → Installing は mutex 内で原子遷移する・#532）。
 pub struct UpdaterUi<U> {
     pub phase: UpdaterPhase<U>,
     pub dismissed: bool,
@@ -374,7 +373,7 @@ mod tests {
     #[test]
     fn overlay_kind_priority_ladder() {
         use super::OverlayKind::*;
-        // 優先順 indexing > launching > notice（WebView2 Switch 先頭一致 parity・SU5 確立の不変）
+        // 優先順 indexing > launching > notice（WebView2 Switch 先頭一致 parity・#532）
         assert_eq!(overlay_kind(true, true, true), Some(Indexing));
         assert_eq!(overlay_kind(false, true, true), Some(Launching));
         assert_eq!(overlay_kind(false, false, true), Some(Notice));
@@ -383,17 +382,16 @@ mod tests {
 
     /// #700: indexing 案内はクエリの空/非空に依らず status 行が描く。
     ///
-    /// 旧実装は空クエリのとき `None` を返し、TextEdit の `hint_text` に描かせていた
-    /// （二重描画回避・spec 追補 1）。status 行が入力欄と別の場所になった（#700 発見 C）
-    /// ことで、この分岐は「1 文字目で案内が入力欄から下の行へ飛ぶ」動きとして可視化された
-    /// ——**描画面が 2 つある**ことが原因ゆえ、hint 側の indexing 分岐を落として 1 つにする。
+    /// 空クエリのとき `None` を返して TextEdit の `hint_text` に描かせると、status 行が入力欄と
+    /// 別の場所にあるため、「1 文字目で案内が入力欄から下の行へ飛ぶ」。**描画面が 2 つある**
+    /// ことが原因ゆえ、hint 側に indexing 分岐を置かず 1 つにする。
     #[test]
     fn indexing_overlay_does_not_depend_on_query_emptiness() {
         use super::OverlayKind::*;
         assert_eq!(overlay_kind(true, false, false), Some(Indexing));
     }
 
-    /// #654: 失敗理由が phase から toast へ運ばれる。**#648(C) が payload を落として
+    /// #654: 失敗理由が phase から toast へ運ばれる。**#648 が payload を落として
     /// 断線させた当の経路**であり、再び dead payload に戻ったらここが落ちる。
     #[test]
     #[allow(clippy::field_reassign_with_default)] // 他のテストと同じ verbatim 形を保つ

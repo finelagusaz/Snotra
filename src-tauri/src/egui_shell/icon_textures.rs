@@ -1,14 +1,13 @@
-//! egui メインウィンドウのアイコン・テクスチャ層（#532 SU4）。IconCache（PNG 永続層）とは別に、
+//! egui メインウィンドウのアイコン・テクスチャ層（#532）。IconCache（PNG 永続層）とは別に、
 //! path→TextureHandle をセッション内で保持する。純粋核（PNG→ColorImage decode・可視集合 retain・
 //! 抽出要否述語）をここに置き、worker spawn / load_texture の driver は results_view.rs が持つ
-//! （#646 PR2 で view.rs から移管——テクスチャは egui Context〔= ウィンドウの renderer〕従属のため）。
+//! （テクスチャは egui Context〔= ウィンドウの renderer〕従属のため・#646）。
 
 use snotra_core::ui_types::SearchResult;
 use std::collections::{HashMap, HashSet};
 
 /// worker → driver のメッセージ。token は載せない——アイコンの staleness はアイコンキー付けで
-/// 構造的に無害（遅延到着 texture は現行行のキーでしか引かれない・SU4 決定 2）。
-/// driver（view.rs の worker spawn / load_texture）が消費する（#532 SU4 Task 5）。
+/// 構造的に無害（遅延到着 texture は現行行のキーでしか引かれない・#532）。
 pub(crate) enum IconMsg {
     Loaded(String, egui::ColorImage),
     /// 取得できなかった。**第 2 引数は「再試行してよいか」**（#692）——一過性の失敗
@@ -18,8 +17,7 @@ pub(crate) enum IconMsg {
 }
 
 /// 自前エンコードの RGBA8 PNG（icon.rs bgra_to_png）を ColorImage へ decode する。
-/// 想定外の色種別/深度は None（自前エンコードは常に RGBA8）。driver（view.rs）が消費する
-/// （#532 SU4 Task 5）。
+/// 想定外の色種別/深度は None（自前エンコードは常に RGBA8）。
 pub(crate) fn png_to_color_image(png: &[u8]) -> Option<egui::ColorImage> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));
     let mut reader = decoder.read_info().ok()?;
@@ -55,7 +53,7 @@ pub(crate) const ICON_MAX_ATTEMPTS: u8 = 3;
 ///
 /// 値型 `V` でジェネリック化してあるのは呼び出し側の型（`egui::TextureHandle`）に依存
 /// させないため——ctx 無しに生成できない TextureHandle を使わずとも、判定はキー集合と
-/// 回数の演算のみで完結する（#532 SU4 Task 5）。
+/// 回数の演算のみで完結する（#532）。
 pub(crate) fn needs_extraction<V>(
     path: &str,
     have: &HashMap<String, V>,
@@ -64,9 +62,8 @@ pub(crate) fn needs_extraction<V>(
     !have.contains_key(path) && attempts.get(path).copied().unwrap_or(0) < ICON_MAX_ATTEMPTS
 }
 
-/// 可視集合に無い path の値を drop（メモリを可視集合に頭打ち・SU4 決定 A メモリ境界）。
+/// 可視集合に無い path の値を drop（メモリを可視集合に頭打ち・#532）。
 /// `needs_extraction` 同様に値型 `V` でジェネリック化（呼び出し側は `egui::TextureHandle`）。
-/// driver（view.rs）が消費する（#532 SU4 Task 5）。
 pub(crate) fn retain_visible<V>(textures: &mut HashMap<String, V>, visible: &HashSet<String>) {
     textures.retain(|k, _| visible.contains(k));
 }
@@ -402,8 +399,8 @@ mod tests {
     /// **この検査が `view.rs` にも `results_view.rs` にも住めない理由**（移設してはならない）:
     /// 探す綴りは assert 自身の文字列リテラルとして**この検査のソースに書かれている**。検査を
     /// 被検査ファイルへ置くと `include_str!` の母集団に needle が混入し、**本物のゲートを消しても
-    /// 自分自身のリテラルが見つかって緑のまま通る**——永久に落ちない不動点になる。#1133 の
-    /// Phase 0a で、実際に `results_view.rs` へ置いた版が変異 7（ゲートの削除）では検出されなかった。
+    /// 自分自身のリテラルが見つかって緑のまま通る**——永久に落ちない不動点になる。#1133 で、
+    /// 実際に `results_view.rs` へ置いた版がゲートの削除の変異では検出されなかった。
     /// **両方のファイルから独立した第三の場所に置くことが、この検査の成立条件である。**
     ///
     /// **これが落ちたとき失うもの**: instant 行のアイコンを出さない仕様（`SPEC.md` §3.4 / §19.5）を

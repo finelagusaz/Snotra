@@ -27,7 +27,7 @@
 //! 閉じているのも同じ理由）。
 //!
 //! **style を経由する 3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）と
-//! 背景色は、いまはどちらも同じフレームに届く**（#751 で揃えた・経路は別のまま）。背景色は
+//! 背景色は、どちらも同じフレームに届く**（#751・経路は別）。背景色は
 //! `frame.set_clear_color` が `run_ui` → `paint` の順序に乗るため（#802）、3 値は
 //! `ui.visuals_mut()` が root `Ui` の style を copy-on-write するためである。**`ctx.set_visuals`
 //! へ戻すとこの対称が壊れる**——root `Ui` は pass 冒頭で `ctx.global_style()` を `Arc` snapshot
@@ -632,7 +632,7 @@ impl EguiView for SearchWindowView {
         // 到達フレームは揃っている。
         frame.set_clear_color(visual.background);
 
-        // §11: 入力欄/選択色は config テーマから取る（ハードコード撤廃）。**適用はここに無い**
+        // §11: 入力欄/選択色は config テーマから取る（色リテラルを書かない）。**適用はここに無い**
         // ——3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）は
         // `search_input_ui` の入口が `ui.visuals_mut()` で適用する（#949。
         // 機序と順序不変条件の正本はその doc）。**唯一の消費者はその関数が描く `TextEdit` である**
@@ -681,7 +681,7 @@ impl EguiView for SearchWindowView {
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
         //
         // **hint は indexing で差し替えない**（#700）。「構築中かつ空クエリなら hint を
-        // 案内文へ差し替える」形にすると、非空クエリでは status 行が案内を担うので、「1 文字目で
+        // 案内文へ差し替える」形のように空/非空で描画面を分けると、「1 文字目で
         // 案内が入力欄から下の行へ飛ぶ」動きになる（実機で観測）。案内の描画面は status 行に
         // 一本化し、hint は本来のプレースホルダに保つ——**同じ情報に描画面を 2 つ持たない**。
         // **ここから下（TextEdit 構築まで）の検索状態の読みを、この位置より前へ寄せてはならない**
@@ -694,11 +694,11 @@ impl EguiView for SearchWindowView {
         // 手続きで行う**: 選んだ位置から TextEdit 構築までの間に `self.controller.` の
         // `&mut` メソッド呼び出しが 1 本も無いことを grep で列挙して確かめる（現在位置では空）。
         //
-        // **禁じているのは前寄せだけである**（#870）。hint の**書式化**は下の closure 内へ
-        // 移してあるが、それは読んだ値を後ろで使うだけで、読み取り点は動いていない
+        // **禁じているのは前寄せだけである**（#870）。hint の**書式化**は下の closure 内で
+        // 行うが、それは読んだ値を後ろで使うだけで、読み取り点はこの位置にある
         // ——遷移前のディレクトリを描く経路は生まれない。
         //
-        // **#870 以降、この不変条件のうち folder 現在地の分は借用が構造的に守る**——`HintPlan`
+        // **この不変条件のうち folder 現在地の分は借用が構造的に守る**（#870）——`HintPlan`
         // が `folder_current_dir()` の `&str` を closure まで持つため、間に
         // `&mut self.controller` を挟むとコンパイルが通らない（ライフタイムは enum の型に
         // 載るので、実行時にどの分岐を取るかに依らず領域が生きる）。**grep 検算がなお要るのは
@@ -917,8 +917,8 @@ impl EguiView for SearchWindowView {
         // `finish_index_build()` が 2 つの読みの間に割り込み、status 行を描いたフレームが
         // バー高だけの `set_size` を撃つ（案内が切り取られる）。
         //
-        // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
-        // 適用範囲が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
+        // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（適用範囲は
+        // status 行に限らない・#1077）。**配り先は数えない**——数えれば足すたびにこの行が
         // 古くなる。正本は `indexing_raw` の参照そのもの（`launcher_controller/activation/tests.rs` の
         // `activation_uses_frame_values_not_live_reads` が、起動側で読み直しが
         // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
@@ -1831,11 +1831,12 @@ mod tests {
     ///
     /// **上のテストとの分担**（消さないこと）: あちらが測るのは **egui の伝播**であって、製品関数の
     /// どこで適用しているかは縛らない。こちらは `search_input_ui` を**実コードのまま** 1 pass
-    /// 走らせ、`hint` クロージャが受け取る子 `Ui` の値を突き合わせる。**新テストが落ちたとき、
+    /// 走らせ、`hint` クロージャが受け取る子 `Ui` の値を突き合わせる。**こちらが落ちたとき、
     /// 上のテストが緑なら原因は製品コード側だと切り分けられる**——併存はその対照のためである。
     ///
-    /// 「子 `Ui` の生成より前で適用する」順序不変条件（#751）は、コンパイラもユニットテストも
-    /// `check:colors` も smoke も検出しない。この検査がその**検知手段である**（#949）。
+    /// 「子 `Ui` の生成より前で適用する」順序不変条件（#751）は、この検査のほかには
+    /// コンパイラも他のユニットテストも `check:colors` も smoke も検出しない。この検査がその
+    /// **検知手段である**（#949）。
     ///
     /// **`Harness` ではなく素の `run_ui` を使う。** 初回 pass であることが症状の成立条件そのもの
     /// であり、`egui_kittest::Harness` は構築の時点で既に 1 フレーム走らせる

@@ -118,7 +118,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 ## Config のフィールドと既定値
 
-config のフィールドには到達性の検出器が無い（`docs/development-principles.md`「config の値は到達性の検出器を持たない」）。
+config のフィールドには到達性の検出器が無い（`docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」）。
 
 - **新しい config フィールドには、追加と同じ変更で消費者を与える。** 読まないなら、理由をフィールドの doc コメントに書く。機械検査は無い（#894）
 - **既定値のリテラルを写さない。** フォールバックの正本は、各セクションの `Default` 実装である（#680・#795）。ただし、読み元が違えば同じ数でも写しではない（`ADR-config-default-fallback-references`）

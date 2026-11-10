@@ -6,7 +6,7 @@
 //! で 1 枚に縛り、規範を `activation.rs` の `//!` が担っていた）。
 //!
 //! **母集団に入らないもの**——名指せないなら測っていない
-//! （`docs/development-principles.md`「列挙の完全性」）。**規則の側で読むこと**: 直下でない
+//! （`docs/development-principles.md`「漏れなく数える」）。**規則の側で読むこと**: 直下でない
 //! ものはすべて外である。**ディレクトリの外**（親モジュール `egui_shell/launcher_controller.rs`）
 //! も、**サブディレクトリの中**（`read_dir` は再帰しないので、このファイル自身を含む
 //! `activation/` の全部）も入らない。**規則で書くのは、`activation/` へ 1 枚足したときに
@@ -173,7 +173,7 @@ fn sources() -> Vec<(String, String)> {
 /// ある**: [`sources`] ならファイル集合、[`owners_of`] なら 1 ファイルの全文、[`method_body`]
 /// ならメソッド本体。狭まりの見られ方もそこから読む——[`method_body`] の水準は canary の
 /// assert が狭まりそのものを見るのに対し、[`sources`] の水準はアンカー保持ファイルが落ちる
-/// 場合だけが赤になる（`docs/development-principles.md`「検証の層と、層と層の隙間」）。
+/// 場合だけが赤になる（`docs/development-principles.md`「検証の手段と、見ていないもの」）。
 fn owners_of_all(sources: &[(String, String)], needle: &str) -> Vec<String> {
     sources
         .iter()
@@ -563,7 +563,7 @@ fn owners_of_drops_occurrences_without_an_indent_four_owner() {
 
 /// [`owners_of`] が改行コードに依存しないことを固定する（#1112）。
 ///
-/// [`method_body`] と同じ処方である（`docs/development-principles.md`「検証の層と、層と層の隙間」——切り出しの helper 自身を LF / CRLF 両方の fixture で測る。#1077 の CI 実害から
+/// [`method_body`] と同じ処方である（`docs/development-principles.md`「検証の手段と、見ていないもの」——切り出しの helper 自身を LF / CRLF 両方の fixture で測る。#1077 の CI 実害から
 /// 生えた条項で、あちらは終端の探索が CRLF の作業ツリーに一致せず母集団が壊れた）。
 ///
 /// **帰属先を完全一致で測るのが要点である**——`contains` で測ると、`src.lines()` を

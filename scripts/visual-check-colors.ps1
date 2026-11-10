@@ -6,7 +6,7 @@
 .DESCRIPTION
   config の既定色 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、
   **既定のまま起動しても「色が届いていない」欠陥は観測できない**
-  （`docs/development-principles.md`「config の値は到達性の検出器を持たない」）。
+  （`docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」）。
 
   本スクリプトは `SNOTRA_CONFIG_DIR`（#803）で**使い捨てのプロファイル**を指し、そこへ検証用の
   config を 1 枚書いて起動する。**ユーザーの実 config は読みも書きもしない**——退避も復元も

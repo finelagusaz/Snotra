@@ -317,7 +317,7 @@ pub fn expand_exec_args(
 /// （#1124 で検討して却下した）。理由は 3 つで、(1) あちらは `description` と副テキストを**両方**
 /// 出すのに対しこちらは優先で片方だけ、(2) 寄せるにはこの関数を `pub` にする必要があり、
 /// **lib crate の `pub` 項目に `dead_code` は出ない**ので到達性の検出器を 1 つ失う
-/// （`docs/development-principles.md`「config の値は到達性の検出器を持たない」の括弧書き）、
+/// （`docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」の括弧書き）、
 /// (3) あちらは移行を促す判定と 1 つの `match` に融合している。
 fn display_text(action: &InstantAction) -> String {
     match action {

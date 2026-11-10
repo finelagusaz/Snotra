@@ -6,7 +6,7 @@ BeforeAll {
     function Key([string]$Hex) { ConvertTo-SnotraColorKey -Hex $Hex }
 
     # 宣言 1 件。`Label` は失敗メッセージが色を**名指し**するために要る
-    # （`docs/development-principles.md`「構造的設計原則と強制の階梯」の「守りたい要素は名指しする」）。
+    # （`docs/development-principles.md`「規則を守らせる強さ」の原則 8「守りたい要素は名指しする」）。
     function Decl([string]$Label, [string]$Hex, [double]$Floor) {
         @{ Label = $Label; Key = (Key $Hex); Floor = $Floor }
     }

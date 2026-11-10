@@ -51,7 +51,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 ## 状態の二軸導出（`search_state.rs`）
 
-モードは `src-tauri/src/egui_shell/search_state.rs` の `ViewKind`（軸1: ビュースタック頂点）と `QueryIntent`（軸2: 入力の意味）の二軸で導く。原則は `docs/development-principles.md`「状態を散在フラグで表さない（単一の導出源に集約する）」にある。
+モードは `src-tauri/src/egui_shell/search_state.rs` の `ViewKind`（軸1: ビュースタック頂点）と `QueryIntent`（軸2: 入力の意味）の二軸で導く。原則は `docs/development-principles.md`「モードは 1 か所で導く」にある。
 
 - **オーバーレイ状態を軸に混ぜない。** 相互排他なモードは discriminated kind にし、どのモードにも重なりうる状態は独立フラグのまま分けておく
 - **仕様との一対一対応を保つ。** 導出源（`view_kind()` の射影順）は、`SPEC.md` の 8.6 状態遷移図と 18.5 状態モデルに対応させる。整合の検証は `/state-check`

@@ -31,7 +31,7 @@
 | 受容する残余 | accepted residual risk | 承知のうえで塞がずに残す欠点。残す理由とあわせて書く |
 | 実測 | measured | 推論ではなく、実機や実データで測って確かめたこと |
 | 適用範囲 | scope | 決まりや検査が当てはまる範囲 |
-| 足場 | scaffold | 調査や測定のための一時的なコード。作るときに、撤去する時期も決める（`docs/development-principles.md`「観測と計装」） |
+| 足場 | scaffold | 調査や測定のための一時的なコード。作るときに、撤去する時期も決める（`docs/development-principles.md`「観測するとき」） |
 | fail-closed／fail-open | — | 判定できないときに、止める側を選ぶ設計／通す側を選ぶ設計 |
 | 委譲先 | delegate | 作業を任せたサブエージェント |
 | 対称ペア | symmetric pair | show／hide のように、片方を変えたらもう片方も見直す組 |

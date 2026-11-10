@@ -45,6 +45,10 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
     - `launcher_controller/updater_toast.rs` — 更新 toast のボタン処置と install の spawn
     - `launcher_controller/activation/tests.rs` — `launcher_controller/` 直下の子を読むソーステキスト検査
 
+## プラットフォーム固有の設定
+
+- `tauri.conf.json` や platform 固有ファイルへ設定を足すときは、Windows で対応しているかを先に確かめる。非対応の設定はビルドエラーになる
+
 ## 状態の二軸導出（`search_state.rs`）
 
 モードは `src-tauri/src/egui_shell/search_state.rs` の `ViewKind`（軸1: ビュースタック頂点）と `QueryIntent`（軸2: 入力の意味）の二軸で導く。原則は `docs/development-principles.md`「状態を散在フラグで表さない（単一の導出源に集約する）」にある。

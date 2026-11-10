@@ -16,15 +16,15 @@ param(
   # zsnotrasmoke.exe に一致する（#804: 検証用プロファイルを**常に** seed するので、
   # 既定が空振りすることはない）。
   # **空文字を明示的に渡すと下の guard でアプリを起こさずに落ちる**——これが
-  # フォールトインジェクションの注入口である（旧 -RequireResults の後継・docs/build-commands.md）。
+  # フォールトインジェクションの注入口である（docs/build-commands.md）。
   [string]$ResultsQuery = "z"
   ,
-  # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#690 follow-up）。
+  # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#690）。
   # **観測時間を延ばす前に遅延を測るため**の予算であって、合否には影響しない（失敗は失敗のまま）。
   # 0 を渡すと事後観測を行わない。
   [int]$PostMortemWaitMs = 30000
   ,
-  # `hotkey:registered`（起動後**最初**の観測）専用の予算（#690 follow-up）。
+  # `hotkey:registered`（起動後**最初**の観測）専用の予算（#690）。
   # ここだけ cold start を含む。CI で「起動後 12,000ms 経っても trace 0 行」を 3 回実測した
   # （プロセスは生存＝クラッシュではない）一方、成功時は起動から 0.6s で出ている。
   # **この二極の原因は未解明**であり、この予算は原因究明までの緩和にすぎない。
@@ -38,7 +38,7 @@ param(
   [int]$StartupObserveTimeoutMs = 25000
 )
 
-# egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3）。
+# egui 経路の自動回帰 smoke（#532）。
 #
 # 構成（検査の一覧と順序の正本は、各ブロックの `# --- … ---` の見出し行である）:
 # - シナリオ 1（既定のプロファイル）: 1 つのプロセスへ検査を順に当てる。各検査は、それより前の
@@ -57,7 +57,7 @@ param(
 #   seed を起動より前に置くことで first-run 経路（snotra-settings --first-run の spawn が
 #   フォーカスを奪う）も踏まない——下の 3 判定（seed 健全性 / first-run 不発 / env 到達性）で
 #   それぞれを肯定的に検査する。
-# - WebView2/フロントエンドは #532 SU7 で撤去済みで、egui が唯一の UI 経路（env による経路選択は無い）。
+# - egui が唯一の UI 経路である（env による経路選択は無い・#532）。
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -85,7 +85,7 @@ Write-Host "本体: $ExePath"
 # パスの計算に副作用は無いので guard より前に置いてよい（下の throw が指し先を示せる）。
 $profileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile'
 
-# results の検証が skip されるなら、ここで落とす（#686 → #804 で**無条件の要求へ格上げ**）。
+# results の検証が skip されるなら、ここで落とす（results の検証は**無条件の要求**である・#804）。
 #
 # **skip へ至る経路のうち沈黙するのはこの 1 本だけである**——他は必ず exit≠0 で鳴る:
 # 実行ファイル不在 / `hotkey:registered` 未観測 / `egui_show:done` 未観測 / `egui_results:show`
@@ -93,9 +93,9 @@ $profileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile'
 # 黙って失敗する経路を塞げる。**アプリ起動前に判定が確定している**ので、この guard はプロセスを
 # 起こさずに落ちる（フォールトインジェクションが実機を触らずに済む）。
 #
-# **旧 -RequireResults の opt-in を撤去したのは、その前提が偽になったからである**——「ローカルでは
-# 索引を制御できないのが普通」を根拠に既定 skip にしていたが、検証用プロファイルを常に seed する
-# 以上、索引は常に制御下にある。**これは検出器の削除ではなく格上げである**（ローカルでも赤くなる）。
+# **results の検証を opt-in や既定 skip にしない。** 検証用プロファイルを常に seed する以上、索引は
+# ローカルでも常に制御下にあり、「ローカルでは索引を制御できない」は skip の理由にならない（ローカルでも
+# 赤くなる・#804）。
 if ([string]::IsNullOrEmpty($ResultsQuery)) {
   throw @"
 results window coverage would be SKIPPED: -ResultsQuery が空である。
@@ -198,10 +198,7 @@ function Format-InputChanges {
 }
 
 # 既存インスタンスは single-instance 転送で smoke を汚すため停止（smoke-startup.ps1 と同じ前提）。
-# **終了待ちは `Resolve-SnotraExistingProcess` が持つ**（#872）。かつてここに在った
-# `Start-Sleep -Milliseconds 300` は、待たない `Stop-Process -Force` に対する事実上の待ちで
-# あり（#853 以前からの逐語の持ち越し）、関数の内側に本物の待ちが入った今は説明のつかない
-# 固定遅延として残るだけなので消した。
+# **終了待ちは `Resolve-SnotraExistingProcess` が持つ**（#872）。ここに固定の待ちを足さない。
 # 落とすのはこのリポジトリのビルド成果物の残留だけで、普段使いの Snotra は落とさない（#1306）。
 # 検証用プロファイルは分離プロファイルなので、普段使いの Snotra とは単一インスタンスが別である。
 Resolve-SnotraExistingProcess -Policy Stop -BuildRoot (Resolve-SnotraCargoTargetDirectory -RepositoryRoot $repoRoot)
@@ -217,14 +214,13 @@ $proc = Start-SnotraProcess -ConfigDir $profileFull -Trace -FilePath $ExePath `
   -StandardErrorPath $errPath -StandardOutputPath $outPath
 $launchedAt = Get-Date
 
-# 失敗時の証拠出力（#690 の follow-up）。
+# 失敗時の証拠出力（#690）。
 #
 # **失敗チャネルは 2 本ある**——`throw`（前提が崩れて続行不能）と `$failures` への
-# 蓄積（検査項目の不合格）。証拠の出力は後者の中にしか無かったため、`throw` は
-# `finally`（プロセス kill だけ）を通って**何の手掛かりも残さずに**スクリプトを終えていた。
-# 実際 CI で `hotkey:registered` 未観測が出たとき、ログには seed から例外までの 18 秒の
-# 空白しか無く、「アプリが遅れた」のか「起動せず死んだ」のかを**区別できなかった**。
-# ゆえに両チャネルをこの 1 関数へ合流させる。
+# 蓄積（検査項目の不合格）。両チャネルの証拠をこの 1 関数へ合流させる。`throw` の経路は
+# `finally`（プロセス kill だけ）を通るので、ここを通さなければ手掛かりを残さない。
+# CI で `hotkey:registered` 未観測が出たとき、証拠の無いログには seed から例外までの 18 秒の
+# 空白しか無く、「アプリが遅れた」のか「起動せず死んだ」のかを**区別できなかった**（#690）。
 #
 # プロセスの生死を先に出すのが要点である: trace 0 行のとき「観測できなかった」と
 # 「イベントが出なかった」は別物で、前者ならプロセス状態が切り分ける。
@@ -339,7 +335,7 @@ try {
   # VK へ変換すると、core の意味 parser と platform の Win32 変換が PowerShell 側にも写り、
   # ドリフトする）。-HotkeyVks が明示指定されたときだけそちらを使う。
   # $hotkeySource / $vksLabel は「実際に注入する VK 列」を失敗メッセージへも一致させるための
-  # 単一の出所（#671 サイクル PR A レビュー指摘 2）。$HotkeyVks（既定値・未指定でも常に非空）を
+  # 単一の出所（#671）。$HotkeyVks（既定値・未指定でも常に非空）を
   # そのままメッセージへ出すと、trace 由来の VK で失敗したときに実際と異なる値を報告してしまう。
   if ($PSBoundParameters.ContainsKey('HotkeyVks')) {
     $hotkeySource = "explicit"
@@ -437,7 +433,7 @@ try {
   }
 
   # --- results ウィンドウの表示（#671/#673）---
-  # results ウィンドウの検証（#671/#673 サイクル PR A）。**#804 以降は常に走る**——検証用プロファイルを
+  # results ウィンドウの検証は**常に走る**（#804）——検証用プロファイルを
   # 常に seed するので `$ResultsQuery` は起動前の guard で非空が保証されている。下の条件に
   # `IsNullOrEmpty` が残っているのは防御であって、skip の経路が生きているという意味ではない。
   $resultsChecked = $false
@@ -544,13 +540,13 @@ try {
   }
 
   # --- WebView2 プロセスの増分 0 ---
-  # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）
+  # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after で測る）
   $webviewAfter = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
   if ($webviewAfter -gt $webviewBefore) {
     $failures += "msedgewebview2 count increased: $webviewBefore -> $webviewAfter"
   }
 
-  # --- Escape で hide し、hide 後の trace 不変条件を判定する（#671 PR A′・#757）---
+  # --- Escape で hide し、hide 後の trace 不変条件を判定する（#671・#757）---
   if ($failures.Count -eq 0) {
     # Escape 注入（表示中の egui ウィンドウがフォーカスを持つ前提）。シナリオ 1 で最初の hide なので
     # presence で待つ（増分の待ちにそろえない）。
@@ -560,21 +556,21 @@ try {
       $failures += "egui_hide:done not observed within ${ObserveTimeoutMs}ms after Escape"
     }
 
-    # main の hide は hide_egui_main が results も同時に隠す（#646 PR2 決定 6）。
+    # main の hide は hide_egui_main が results も同時に隠す（#646）。
     # show 側を検査したときだけ対で検査する（対称ペア・/symmetric-check）。
     if ($resultsChecked -and
         $null -eq (Wait-SnotraTraceEvent -Path $errPath -EventName "egui_results:hide" -TimeoutMs $ObserveTimeoutMs)) {
       $failures += "egui_results:hide not observed within ${ObserveTimeoutMs}ms after Escape"
     }
 
-    # #671 PR A′: hide 後に results だけが最前面に取り残されないこと（H1・orphan 検出）。
+    # hide 後に results だけが最前面に取り残されないこと（H1・orphan 検出・#671）。
     # **presence 検査ではこの事故では検出されない**——orphan でも egui_results:hide は出るため。
     # orphan は必ず「hide 以降の余分な egui_results:show」として現れる（main が hidden でも
     # repaint 要求は飛ぶ: config-applied / indexing-* / updater 完了の wake_main）。
     #
-    # **判定の正本は `lib/SnotraTraceInvariants.psm1` の H1 である**（#757）。以前はここに
-    # 生行の正規表現で書かれており、`manual-smoke.ps1` に同じ不変条件を足すと導出が 2 か所に
-    # なるので移した。オーケストレーション（静定待ち・ゲート・失敗文言）はここに残る。
+    # **判定の正本は `lib/SnotraTraceInvariants.psm1` の H1 である**（#757）。`manual-smoke.ps1` と
+    # 同じ導出を共有するので、判定をここに書かない。オーケストレーション（静定待ち・ゲート・失敗文言）は
+    # ここが持つ。
     # smoke の実行は最後まで hidden で終わるため hide 区間は閉じない——**違反は区間が閉じて
     # いなくても FAIL、無違反は SKIP** という H1 の非対称がこの経路を成立させている。
     if ($resultsChecked -and $failures.Count -eq 0) {
@@ -585,16 +581,15 @@ try {
       $dropped = $snapshot.Dropped
       $invariants = Test-SnotraTraceInvariants -Events $snapshot.Events -Sections @() -DroppedLineCount $dropped
 
-      # **H1 だけを読むと「判定できなかった」が「正常」と同じ値になる**（code-review C1）。
+      # **H1 だけを読むと「判定できなかった」が「正常」と同じ値になる**（#879）。
       # smoke は最後まで hidden で終わるため H1 の正常値は SKIP であり、trace 不在・判定器の
-      # 例外・イベント名のドリフトがすべて緑と見分けられなかった。3 つとも読み、さらに
+      # 例外・イベント名のドリフトがすべて緑と見分けられない。3 つとも読み、さらに
       # **判定器が実際に走った肯定的な証拠**を要求する。
       if ($invariants.JudgeFailed) {
         $reasons = @($invariants.Unjudgeable | ForEach-Object { $_.Reason })
         $failures += "trace invariant judge aborted: $($reasons -join '; ')"
       }
-      # 不変条件ごとに特殊分岐を置かない——H1 だけ別の文言にしていた理由は歴史的な英文の
-      # 保存だったが、その文字列を参照する箇所はリポジトリ内に無い。判定の詳細は判定器が持つ。
+      # 不変条件ごとに特殊分岐を置かない。判定の詳細は判定器が持つ。
       foreach ($invariant in (Get-SnotraTraceInvariantNames)) {
         if ($invariants.Overall[$invariant] -ne 'FAIL') { continue }
         $detail = @($invariants.Violations | Where-Object { $_.Invariant -eq $invariant })
@@ -608,8 +603,8 @@ try {
       if ($invariants.Observed.ResultsShow -eq 0) {
         $failures += "trace invariant judge saw 0 x egui_results:show although Wait-SnotraTraceEvent observed it; the detector did not actually run"
       }
-      # **捨てた行を failure にはしない**（#757 D6/D7）。旧判定は生行を見ていたので今日は無害に
-      # 済んでおり、ここで赤にすると不変条件と無関係な理由で CI が落ちる新しい経路を作る。
+      # **捨てた行を failure にはしない**（#757）。ここで赤にすると、不変条件と無関係な理由で
+      # CI が落ちる経路を作る。
       # 証拠としてだけ残す（H1 の PASS はモジュール側で SKIP へ落ちている）。
       if ($dropped -gt 0) {
         Write-Host "  [#757] parse できなかった trace 行が $dropped 件ある（H1 の PASS は SKIP へ落ちている）" -ForegroundColor Yellow
@@ -710,11 +705,11 @@ try {
 
   # --- 打鍵を伴わない文字が subclass から 1 回ずつ入ること（#1289）---------------
   # キーボード由来の入力は `windows_ime.rs` の subclass が Win32 メッセージから作る。ここで打つのは
-  # `keybd_event` の打鍵とは別の 2 経路で、どちらも tao の経路では入らなかった（または壊れていた）。
+  # `keybd_event` の打鍵とは別の 2 経路である。
   #   (a) `SendInput` の `KEYEVENTF_UNICODE`: 非 ASCII（あ）と BMP 外（😀）を 1 文字ずつ。😀 は
   #       「down・CHAR(high)・up・down・CHAR(low)・up」で届くので、subclass がキーのメッセージを
   #       跨いでサロゲートを連結しなければ入らない（`keyboard.rs` の `on_char`）
-  #   (b) `PostMessage(WM_CHAR)`: 直前のキー押下を持たない文字（#1269 の残余。tao は捨てていた）
+  #   (b) `PostMessage(WM_CHAR)`: 直前のキー押下を持たない文字（#1269）
   # 正常なら区間の変化はちょうど `[0->1, 1->2, 2->3]` である。**二重に入れば件数か文字数が合わず、
   # 入らなければ待ちが切れて赤になる。** IME の確定は CI の runner に IME が無いので打てない
   # （手打ちで確かめる・#1289 の決定）。
@@ -760,7 +755,7 @@ try {
   }
 } catch {
   # **`finally` より前に走る**ので、ここではまだプロセスが生きている＝生死を証拠にできる。
-  # 出したら握り潰さずに再送出する（exit code は従来どおり非 0 のまま）。
+  # 出したら握り潰さずに再送出する（exit code は非 0 のまま）。
   Show-FailureEvidence -Path $errPath -Proc $proc -Context "throw: $($_.Exception.Message)" `
     -LaunchedAt $launchedAt -PostMortemWaitMs $PostMortemWaitMs
   throw
@@ -771,7 +766,7 @@ try {
 }
 $scenario1FailureCount = $failures.Count
 
-# **シナリオ 2 の起動前に、シナリオ 1 のプロセスの終了を待つ**（#755/#801 是正 B）。
+# **シナリオ 2 の起動前に、シナリオ 1 のプロセスの終了を待つ**（#755/#801・#904）。
 # `Stop-Process -Force` は終了を待たない。`tauri_plugin_single_instance` が登録されているため、
 # 先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了し——trace が 1 行も
 # 書かれないまま `hotkey:registered` の待ちが予算を使い切ってから throw する（間欠的な赤）。
@@ -808,7 +803,7 @@ $toastProfileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile-toast'
 $toastProfile = New-SnotraVerificationProfile -ProfileDir $toastProfileDir -ShowIcons $false `
   -AdditionalSections "[visual]`r`nfont_size = 15`r`nbar_padding = 28"
 $expectedBarLogical = 15 + 28   # layout::Metrics::from_config: bar_height = font_size + bar_padding
-# **bar + toast/status の 2 行分**（是正 E の期待値。toast 行は bar と同じメトリクスで積まれる
+# **bar + toast/status の 2 行分**（#904 の期待値。toast 行は bar と同じメトリクスで積まれる
 # 前提——この前提が崩れたら両方の期待値を一緒に見直すこと）。
 $expectedShowHeightLogical = $expectedBarLogical * 2
 $toastErrPath = Join-Path $toastProfileDir 'stderr.log'
@@ -823,7 +818,7 @@ function Get-MainWindowDwmSize {
   [pscustomobject]@{ W = $r.Right - $r.Left; H = $r.Bottom - $r.Top }
 }
 
-# **可視区間に `-EventName` が現れないことを判定する（是正 D）。** 消費者は 2 つあり、どちらも
+# **可視区間に `-EventName` が現れないことを判定する（#904）。** 消費者は 2 つあり、どちらも
 # 「起きてはならないことが起きていないか」の形である
 # （形の正本は `src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない（#671 PR A′）」）:
 #
@@ -833,7 +828,7 @@ function Get-MainWindowDwmSize {
 #
 # **どちらも回復機構が外から見えなくする類の退行である**——過渡は表示直後の 1 フレーム
 # （約 16ms）で、`Wait-SnotraWindow`（PollMs 200）や 100ms 間隔のサンプリングでは観測できない
-# （旧 `min -ne max` 断言が原理的に無力だった理由）。**イベント名を引数へ出しているのは、
+# （間隔を置いて測る `min -ne max` の断言では、原理的に捉えられない）。**イベント名を引数へ出しているのは、
 # 2 つ目を足すときに区間の切り方を書き写さないためである。**
 #
 # **判定は presence（区間内に 1 件でも出たか）で行う。** `seq` は全 trace 事象を貫く単一の
@@ -860,7 +855,7 @@ $toastLaunchedAt = Get-Date
 # **高さ断言の不合格は throw ではなく `$failures` を通る**（下の round ループ）ため、
 # このスクリプトの `catch`（$toastErrPath を渡す）を経由せず、集計失敗ブロック（末尾）まで
 # 静かに検出されない。集計失敗ブロックが証拠を出すログをシナリオ 2 のものへ切り替えられるよう、
-# ここで発生源を憶えておく（code-review 指摘）。
+# ここで発生源を憶えておく（#904）。
 $scenario2Failed = $false
 $toastProc = Start-SnotraProcess -ConfigDir $toastProfile.FullPath -FilePath $ExePath -Trace `
   -StandardErrorPath $toastErrPath -ExtraVariables @{ SNOTRA_EGUI_FAKE_UPDATE = '1' }
@@ -877,7 +872,7 @@ try {
   if ($vks2.Count -lt 1) { throw 'シナリオ 2: hotkey:registered の VK 列が空です。注入するキーを決められません' }
 
   foreach ($round in 1..2) {
-    # **presence ではなく increment で待つ**（是正 A）。round 2 の待ちが round 1 の行へ
+    # **presence ではなく increment で待つ**（#904）。round 2 の待ちが round 1 の行へ
     # 即座に一致して戻ると、round 1 の hide が効かなかった場合でも round 2 は可視のままの
     # ウィンドウをトグルし、`Wait-SnotraWindow` は `IsWindowVisible` しか見ないので通ってしまい、
     # #755/#801 が現れる局面を一度も観測しないまま緑になる。打鍵の前に件数を数え、
@@ -889,7 +884,7 @@ try {
     }
     $hwnd2 = Wait-SnotraWindow -Title 'Snotra' -Process $toastProc -TimeoutMs 5000
 
-    # **`egui_show:done` の payload の height を断言する**（是正 E）。DWM 実測（下）だけでは、
+    # **`egui_show:done` の payload の height を断言する**（#904）。DWM 実測（下）だけでは、
     # サンプリング区間中 `AppState.indexing` が真なら toast が 1 つも無くても bar+status の
     # 2 行で同じ高さになり得るため、単独では「toast が実際に出たか」の証拠にならない。
     # この値は DWM のようにスクリーン矩形を後から読むのではなく、本体がその show で
@@ -901,9 +896,9 @@ try {
     }
 
     # **高さの実測（DWM 矩形）は 1 点で残す**——「`set_size` が OS へ実際に効いたか」を見る
-    # 別の観点であり、捨てない。#801 の 1 フレームの伸びの検出は上の payload 断言と下の
-    # `egui_main:height_mismatch` 不在断言が担うため、旧 1 秒サンプリング + `min -ne max` は
-    # 撤去した（#801 の過渡・約 16ms を 100ms 間隔のポーリングでは原理的に観測できなかった）。
+    # 別の観点であり、捨てない。#801 の 1 フレームの伸びの検出は、上の payload 断言と下の
+    # `egui_main:height_mismatch` 不在断言が担う。間隔を置いたサンプリング（`min -ne max`）を
+    # 戻さない——#801 の過渡（約 16ms）は 100ms 間隔のポーリングでは原理的に観測できない。
     Start-Sleep -Milliseconds 300
     $size2 = Get-MainWindowDwmSize -Handle $hwnd2
 
@@ -938,7 +933,7 @@ try {
     }
 
     # 区間は「この round の egui_show:done の後、次の egui_hide:done（最終 round は
-    # ここまでの観測）まで」（是正 D）。
+    # ここまでの観測）まで」（#904）。
     # **呼び出し側で `@()` に包む**——`Test-SnotraNoTraceEventInWindow` 内で `return @(...)` して
     # いても、関数境界を跨ぐと PowerShell は配列を要素ごとにパイプへ展開するため、一致 0 件の
     # とき `$mismatches` は空配列ではなく `$null` になる（`Set-StrictMode` 下で `.Count` が
@@ -954,8 +949,8 @@ try {
       $scenario2Failed = $true
     }
 
-    # **show の位置決めの退行（#878 の継ぎ目 2）はここでしか見えない。** show はバー矩形を
-    # OS へ書かずに導くようになったので、導出が壊れてもウィンドウの実サイズは 2 手目の `set_size` が
+    # **show の位置決めの退行（#878）はここでしか見えない。** show はバー矩形を
+    # OS へ書かずに導くので、導出が壊れてもウィンドウの実サイズは位置決めの後の `set_size` が
     # 決める（＝ DWM で測る幅・高さは正しいまま）し、位置のずれは可視中のクランプが次の
     # フレームで戻す。**発火しないことが正常である。**
     $rectMismatch = @(Test-SnotraNoTraceEventInWindow @seqArgs -EventName 'egui_main:bar_rect_mismatch')
@@ -998,7 +993,7 @@ if ($failures.Count -gt 0) {
   # ——$null を渡してその旨を明示する（誤った手掛かりを出さない）。
   # ここへ来る時点でプロセスは終了済みゆえ事後観測はしない（生存が前提の測定である）。
   #
-  # **シナリオ 2 の失敗も含むなら、その trace ログでも証拠を出す**（code-review 指摘）。
+  # **シナリオ 2 の失敗も含むなら、その trace ログでも証拠を出す**（#904）。
   # シナリオ 2 の高さ断言は throw ではなく $failures を通るため、シナリオ 2 自身の catch
   # （$toastErrPath を渡す）を経由せずここまで来る。ここで $errPath だけを見ると、
   # シナリオ 2 の失敗（本検出器が主眼とする経路）に対して無関係なシナリオ 1 のログを

@@ -1,4 +1,4 @@
-//! 更新 toast のボタン処置と install の spawn（#532 SU5・§20.4）。
+//! 更新 toast のボタン処置と install の spawn（#532・§20.4）。
 //!
 //! **toast の状態は managed state（[`crate::egui_shell::UpdaterUiState`]）が持ち、
 //! [`LauncherController`] は持たない**——ここに在るのはクリックを borrow の外で捌く遅延 dispatch
@@ -21,9 +21,9 @@ pub(in crate::egui_shell) enum ToastAction {
 }
 
 impl LauncherController {
-    /// toast ボタンの処理（#532 SU5）。install は Update を原子取得して async へ（Task 8）。
+    /// toast ボタンの処理（#532）。install は Update を原子取得して async へ。
     ///
-    /// **状態を変えたら `ctx.request_repaint()` する**（Task 10 実機スモークで発見・
+    /// **状態を変えたら `ctx.request_repaint()` する**（実機スモークで発見・
     /// `folder_nav.rs` の `spawn_folder_load` の egui_ctx wake（同 doc 参照）と同じ理由）:
     /// このランタイムはイベント駆動で、click を処理したこのフレームの描画は toast_action の
     /// 遅延 dispatch より前に完了している。ここで状態を変えても誰も次のフレームを起こさないため、
@@ -58,7 +58,7 @@ impl LauncherController {
     }
 
     /// install 実行（§20.4・spec B 節）。`download_and_install` は Windows では内部で
-    /// download → `on_before_exit`（=flush_persistent_state・Task 6 で builder に登録済み）→
+    /// download → `on_before_exit`（=flush_persistent_state・builder に登録してある）→
     /// installer 起動 → `std::process::exit(0)` し**復帰しない**（updater.rs:865）。
     /// Err 復帰時のみ InstallFailed へ遷移して toast をエラー表示にする（updaterError parity）。
     fn spawn_install(&self, update: Box<tauri_plugin_updater::Update>) {

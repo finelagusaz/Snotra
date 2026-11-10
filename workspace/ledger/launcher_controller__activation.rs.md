@@ -16,17 +16,20 @@
 | B10 | 291-291 | /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。 | 縮める | `・#532）` | | 同 doc の「SolidJS handleCommandQueryInput と同順」は旧フロントエンドとの parity（経緯ではなく仕様の出自として残した） |
 | B11 | 343-344 | /// **抽出が engine lock を経ないのは #1076 の移行による**（それ以前はここで `engine.lock()` を取っていた）—— | 書き直す | 「**抽出は engine lock を経ない**（#1076）——」以降は元のまま | 元の主張の現在形化 | |
 | B12 | 390-390 | /// Enter/クリックの単一 dispatch（§19.6/§4.8・#532 SU3 M3）。 | 縮める | `・#532）` | | |
-| B13 | 441-441 | // #1072 が塞いだのは同じ族の unsettled 側の切片だけだった。 | 書き直す | 「同じ族の unsettled 側は `on_enter` の flush 分岐が塞ぐ（#1072）」 | 直前の文が「`is_unsettled` が偽の Enter は `on_enter` の flush 分岐を通らず」と述べており、その分岐（`activation.rs:on_enter` の `should_flush_on_enter`）が unsettled 側を扱う | |
+| B13 | 441-441 | // #1072 が塞いだのは同じ族の unsettled 側の切片だけだった。 | 書き直す | 「同じ族の unsettled 側は `on_enter` の flush 分岐が塞ぐ（#1072）」 | 直前の文が「`is_unsettled` が偽の Enter は `on_enter` の flush 分岐を通らず」と述べており、その分岐（`activation.rs:on_enter` の `should_flush_on_enter`）が unsettled 側を扱う。#1072（28a6342a）は `search_dispatch.rs` に `is_unsettled` を新設し、`should_flush_on_enter` の第 3 引数へ渡す形にした（`git show` で確認） | |
 | B14 | 567-567 | /// [`crate::egui_shell::read_config`] へ移した）。 | 書き直す | 「**解決は config の読み（[`crate::egui_shell::read_config`]）の中で行う**（#1076）」 | 移設の記録（`engine.lock()` から移した）を落とした。intra-doc link は残した | |
 | B15 | 581-581 | /// フレームの IME 確定・paste が旧 state で起動されるのを防ぐ（不変条件 3）。 | 残す | | 誤検出（同じフレームの前の state） | 「不変条件 3」は設計 spec の番号を指す（範囲外） |
 | B16 | 597-597 | // …正本である**（#1038。`armed` だけを渡していた頃に開いていた隙もそこが記す。#1039 で `search_dispatch.rs` の自由関数から移設）。 | 縮める | `（#1038）` | 移設の記録と、正本側の経緯への案内を落とした | |
 | B17 | 617-617 | // …（`run_search_with` の Plain 早期 return が旧実装で担っていた処置である）。 | 消す（括弧のみ） | | 旧実装との対比で、今の制約は前半の文が運ぶ | |
 | X1 | 3 | //! **起動の入口をこのファイルへ集める規範は要らなくなった**（#1201）。 | 書き直す | 「…規範は要らない（#1201）」 | 変化の語りを現在形へ | |
-| X2 | 66 | /// 起動成功時に drain が行う UI 後処理の種別（M1/M3 の同期版と同じ末尾へ合流させる）。 | 消す（括弧のみ） | | B7 と同じ | ⚠️ 直下の variant の行末コメント「M1 activate parity」は残した（各 variant が真似る挙動の名指し） |
+| X2 | 66 | /// 起動成功時に drain が行う UI 後処理の種別（M1/M3 の同期版と同じ末尾へ合流させる）。 | 消す（括弧のみ） | | B7 と同じ | |
+| X6 | 69 | Normal,  // emit_hide のみ（M1 activate parity・クエリは次 show の reset で消える） | 消す（ラベルのみ） | 「emit_hide のみ（クエリは次 show の reset で消える）」 | M1 の同期 activate は今は無い（Phase 1 追補「消えた型・関数を指すなら消す」）。Tool / Instant の行の `execute_tool_selected` / `execute_instant_selected` は現存するので残した（2 つ目のコミット） | |
+| X7 | 77 | /// …per-launch なら不要——並行性レビューで確定）。 | 残す | | 判断の出自の一言（作業単位の番号ではない）。`frame_stages.rs` の「並行性レビュー High」は同じ括弧に #532 を足したので消したが、こちらは番号を持たず消すと出自が無くなる | ⚠️ 扱いが `frame_stages.rs` と揃っていない |
 | X3 | 89,93,471 | `#636 レビュー Finding A`・`#636 Finding A` | 縮める | `#636` | 作業単位の副ラベル | |
 | X4 | 137 | （#1039 で `SearchState` の内側へ入った） | 書き直す | 「（失効は `SearchState` の内側が行う・#1039）」 | `search_state.rs:SearchState::set_results` の doc が「in-flight を失効させる（`put_rows` が行う）」 | |
+| X5 | 310 | // indexing 中の Err（ERR_INDEXING_IN_PROGRESS）は trace のみ（spec M3 実装確定・ | 縮める | `（#532・` | `git log -S 'spec M3 実装確定'` 最古 → ebc59178（#637・SU3 M3＝#532）。`search_flow.rs` の同じラベルと揃えた（2 つ目のコミットで直した） | |
 
 ## 範囲外メモ
 
 - ⚠️ `/code-review #637 finding 0`・`finding 1`・`finding 6` は副ラベルだが、別の行が「finding 0 の規律」「finding 6 と同じ債務」とラベルで引いているので変えなかった（群 E の他ファイル・`search_flow.rs` にも同じ引用がある）
-- `spec C 節`・`spec C 節 不変条件 1/2`・`spec M3 実装確定` は設計 spec を指すだけの参照
+- `spec C 節`・`spec C 節 不変条件 1/2` は設計 spec を指すだけの参照

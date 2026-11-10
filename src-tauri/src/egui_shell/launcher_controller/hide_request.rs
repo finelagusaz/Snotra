@@ -22,7 +22,7 @@ use crate::egui_shell::EscapeOutcome;
 
 impl LauncherController {
     /// hide 要求を emit する。多重防止は共有 EguiShellState.hide_pending（show_egui_main が
-    /// クリア・codex #8）。view-local フラグだと hide 後 Focused(true) 非着信で永久 true 化し、
+    /// クリア・#532）。view-local フラグだと hide 後 Focused(true) 非着信で永久 true 化し、
     /// 以後の hide を抑止してしまう。
     pub(super) fn emit_hide(&self) {
         let already = self
@@ -39,11 +39,9 @@ impl LauncherController {
     /// auto_hide_on_focus_lost を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     ///
     /// **毎フレーム無条件に読むのは意図的である**（`ADR-blur-grace-single-field-state-machine` が
-    /// 遅延評価を却下して値渡しを採った）。**ただしその却下理由が置いた費用の前提は #1036 で
-    /// 変わった**——当時は `read_visual` と `lang()` も engine lock を取っていたので「1 回増える
-    /// だけ」と評価できたが、両者が [`crate::egui_shell::read_config`] へ移ったあとは**ここが
-    /// 毎フレーム engine lock を取る唯一の箇所**になっていた。#1076 で読み口だけを移し、
-    /// 毎フレーム無条件という決定はそのまま保っている。
+    /// 遅延評価を却下して値渡しを採った）。**毎フレーム読むので、読み口は engine lock を取らない
+    /// [`crate::egui_shell::read_config`] にする**（#1036・#1076）。同 ADR が却下理由に置いた費用の前提
+    /// （engine lock が 1 回増える）は、この読み口では当たらない。
     fn auto_hide_enabled(&self) -> bool {
         crate::egui_shell::read_config(
             &self.app_handle,
@@ -57,7 +55,7 @@ impl LauncherController {
     /// TextEdit id に残るキャレットを復元 query の末尾へ同期する（#840）。
     #[must_use = "キャレット同期の信号を落とすと、復元した query の末尾へキャレットが寄らない（#840）"]
     pub(in crate::egui_shell) fn on_escape_pressed(&mut self, ctx: &egui::Context) -> bool {
-        // Escape ラダー（folder 中は展開前状態へ復帰、top-level は hide 要求・#532 SU3 M2）。
+        // Escape ラダー（folder 中は展開前状態へ復帰、top-level は hide 要求・#532）。
         // TextEdit より前に ctx から拾うので入力欄に focus があっても届く。
         match self.state.on_escape() {
             EscapeOutcome::RestoredSearch => {

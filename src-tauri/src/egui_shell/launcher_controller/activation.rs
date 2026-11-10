@@ -66,7 +66,7 @@ enum LaunchWork {
 /// 起動成功時に drain が行う UI 後処理の種別。
 #[derive(Clone, Copy)]
 enum LaunchTag {
-    Normal,  // emit_hide のみ（M1 activate parity・クエリは次 show の reset で消える）
+    Normal,  // emit_hide のみ（クエリは次 show の reset で消える）
     Tool,    // clear_search + state.reset + emit_hide（execute_tool_selected parity）
     Instant, // clear_search + emit_hide（execute_instant_selected parity）
 }
@@ -305,7 +305,7 @@ impl LauncherController {
                 "History は execute_slash へ来ない（run_search が注入する）"
             ),
             SlashCmd::OpenSettings => {
-                // indexing 中の Err（ERR_INDEXING_IN_PROGRESS）は trace のみ（spec M3 実装確定・
+                // indexing 中の Err（ERR_INDEXING_IN_PROGRESS）は trace のみ（#532・
                 // クエリクリア後は検索バーの indexing hint が可視＝degraded な理由提示）。
                 if let Err(e) = crate::commands::open_settings(app.state(), app.clone()) {
                     crate::trace_main(

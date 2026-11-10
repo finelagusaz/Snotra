@@ -1,4 +1,4 @@
-//! 検索の発行（打鍵 → debounce → worker への要求）と、その結果の採り込み（#1004 PR 2）。
+//! 検索の発行（打鍵 → debounce → worker への要求）と、その結果の採り込み（#1004）。
 //!
 //! **行を差し替える点の主たる面はここである**——`run_search_with` の view_kind 分岐・
 //! `drain_search`・`clear_search` が `SearchState` の `set_results` / `accept_worker_rows` を呼ぶ。
@@ -37,7 +37,7 @@ impl LauncherController {
     /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     /// フィールドは `SearchConfig::instant_command_prefix`（既定は同 struct の `Default` 実装）。
     ///
-    /// **この読みは #1076 で `engine.lock()` から [`crate::egui_shell::read_config`] へ移した。**
+    /// **この読みは [`crate::egui_shell::read_config`] を通し、engine lock を取らない**（#1076）。
     /// 呼び出し点（`run_search` / 打鍵の changed エッジ / `on_enter`）はどれも毎フレームではないが、
     /// **どれも egui フレームの中にあり、ユーザーが待っている**——#1032 の規範が挙げる害は
     /// 「フレームが走査の完了まで返らない」ことであって頻度ではない（適用範囲の定義は
@@ -50,11 +50,11 @@ impl LauncherController {
         )
     }
 
-    /// view_kind 先の同期 dispatch（#532 SU3 M2）。folder は cache/error を同期フィルタ、
-    /// results は M1 の interp 分岐（plain 検索）。folder 打鍵が engine.search へ漏れない。
+    /// view_kind 先の同期 dispatch（#532）。folder は cache/error を同期フィルタ、
+    /// results は interp 分岐（plain 検索）。folder 打鍵が engine.search へ漏れない。
     /// prefix を内部で取得する薄いラッパー（trailing poll・folder drain 用）。changed エッジは
     /// 取得済み prefix を `run_search_with` へ渡し、毎打鍵の config の読みの回数を減らす
-    /// （/code-review #637 finding 9。当時は engine lock の回数だった・#1076 で読み口が移った）。
+    /// （/code-review #637 finding 9・#1076）。
     pub(super) fn run_search(&mut self) {
         let prefix = self.instant_prefix();
         self.run_search_with(&prefix);
@@ -111,11 +111,10 @@ impl LauncherController {
                         filter_name,
                         instant_query,
                     } => {
-                        // §19.5: 前方一致フィルタ。毎打鍵同期（30ms debounce 撤廃・spec M3 実装確定）。
+                        // §19.5: 前方一致フィルタ。毎打鍵同期（debounce しない・#532）。
                         // indexing を見ない（§19.7: instant はインデックス非依存ゆえ構築中でも使用可）。
                         // 絞り込みと表示規則は `snotra_core::instant::matching_results` が持つ純関数で、
-                        // ここは config の読みだけを担う（#1124 で `commands/instant.rs` から移した——
-                        // かつて IPC コマンドと共有していた相手は #532 SU7 で消滅していた）。
+                        // ここは config の読みだけを担う（#1124）。
                         //
                         // **fallback が空なのは、AppState 不在＝config 未ロードだからである**（#1124）。
                         // 既定の instant コマンドを返すと「たまたま既定と一致する利用者にだけ正しい」
@@ -260,7 +259,7 @@ impl LauncherController {
             self.state.set_query(buf);
             // `SPEC.md`「4.9 入力と選択」の実体（folder 側の対は `set_folder_filter` 内の
             // `selected = 0`）。
-            self.state.reset_selection(); // SolidJS parity: 毎打鍵 selected=0（M1 gap 是正）
+            self.state.reset_selection(); // SolidJS parity: 毎打鍵 selected=0（#532）
             // prefix はこの changed エッジで 1 回だけ取得し run_search_with へ渡す
             //（interp と合わせ config の毎打鍵多重読みを避ける・finding 9）。
             let prefix = self.instant_prefix();
@@ -273,7 +272,7 @@ impl LauncherController {
                     ctx.request_repaint_after(self.search_debounce.interval());
                 }
                 QueryIntent::Instant { .. } => {
-                    // 同期直フィルタ（30ms debounce 撤廃・spec M3 実装確定）。
+                    // 同期直フィルタ（debounce しない・#532）。
                     // plain 由来の armed trailing は掃除（cancelDebounce parity）。
                     self.search_debounce.cancel();
                     self.run_search_with(&prefix);

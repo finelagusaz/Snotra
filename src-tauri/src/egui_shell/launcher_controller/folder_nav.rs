@@ -1,4 +1,4 @@
-//! folder の突入・深掘り・折り返しと、列挙の別スレッドロード・その drain（#532 SU3 M2）。
+//! folder の突入・深掘り・折り返しと、列挙の別スレッドロード・その drain（#532）。
 //!
 //! **channel は view の寿命で共有し、staleness は世代 token で判定する**——per-nav に channel を
 //! 建てる形（起動側の `LaunchInFlight`）とは逆の選択であり、その非対称は意図である
@@ -22,7 +22,7 @@ use tauri::Manager;
 use super::LauncherController;
 use crate::egui_shell::{ViewKind, compute_parent_dir};
 
-/// ナビゲーションスレッド → driver のメッセージ（#532 SU3 M2）。token（= folder_gen）で
+/// ナビゲーションスレッド → driver のメッセージ（#532）。token（= folder_gen）で
 /// staleness 判定する（`SearchState::accept_folder_result`）。
 pub(super) enum FolderMsg {
     /// 列挙成功: (token, ctx, 全ソート済み full 集合)。driver がキャッシュし filter_sorted で絞る。
@@ -55,8 +55,8 @@ impl LauncherController {
     ///
     /// **per-nav `std::thread::spawn` は意図的な選択**（advisor 2026-07-23）: 単一 worker だと 1 つの
     /// hung `read_dir`（dead UNC）が後続の全フォルダロードを塞ぐ。per-nav spawn は hang を 1 スレッドに
-    /// 隔離し、正常な dir へのナビは動き続ける。dead UNC でのスレッドリークは best-effort として受容する
-    /// （M1 の event-loop 同期 `ShellExecuteW`-on-dead-UNC と同類のトレードオフ）。正常な dir の read_dir は
+    /// 隔離し、正常な dir へのナビは動き続ける。dead UNC でのスレッドリークは best-effort として受容する。
+    /// 正常な dir の read_dir は
     /// ミリ秒オーダーで完了するため高速 →/← でも実質的な pileup は起きない。共有 tokio blocking pool
     /// （`spawn_blocking`）は採らない——dead UNC が pool を飽和させ icon/index 等の他利用者を巻き込むため。
     ///
@@ -94,7 +94,7 @@ impl LauncherController {
         });
     }
 
-    /// 到着したナビ結果を採り込む（`poll_async` の段 12・#532 SU3 M2）。
+    /// 到着したナビ結果を採り込む（`poll_async` の段 12・#532）。
     ///
     /// **前後関係は両側とも他所にある**（前は `folder_gen` の bump、後ろは #699 の世代照合）
     /// ——内訳は親モジュールの `//!`「ここに無いもの」が正本である。**`poll_async` から切り出して
@@ -130,12 +130,12 @@ impl LauncherController {
     /// 段 18–20: ↑↓・→← の処置（`move_selection` / folder 展開）。**読み（↑↓ の
     /// `events.retain` 消費込み・→← の非破壊 `key_pressed`）は本メソッドの責務ではない**——
     /// `view.rs` の `read_pre_widget_input`（段 13）が先に読み切り、結果を `nav_down` /
-    /// `nav_up` / `right` / `left` の bool で受け取る（#666 段 3）。↑↓ を `events` から
-    /// 取り除く責務・#700 の経緯は `read_pre_widget_input` の doc を参照。呼び出し位置
-    /// （`view.rs` の TextEdit 構築＝段 21 より前）は本フェーズで動かしていない。
+    /// `nav_up` / `right` / `left` の bool で受け取る（#666）。↑↓ を `events` から
+    /// 取り除く責務・#700 の経緯は `read_pre_widget_input` の doc を参照。呼び出し位置は
+    /// `view.rs` の TextEdit 構築（段 21）より前である。
     ///
-    /// **別の順序制約が今も本メソッドの呼び出し位置を縛っている**（#700 とは無関係・本
-    /// diff 以前から不記載のまま存在）: `move_selection` は `view.rs` の RowsSnapshot
+    /// **本メソッドの呼び出し位置は別の順序制約にも縛られる**（#700 とは無関係）:
+    /// `move_selection` は `view.rs` の RowsSnapshot
     /// publish（`self.controller.state().selected()` を読み snapshot へ積む段・#699）より
     /// **前**に呼ばれている必要がある——選択直後のフレームで新しい選択値を results ウィンドウへ
     /// 配るためで、現状 `update()` 内の呼び出し順序（本メソッド → snapshot publish）が
@@ -172,7 +172,7 @@ impl LauncherController {
                     .enter_folder(dir.clone(), self.search_debounce.is_armed())
             };
             // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
-            // （SolidJS enterFolderExpansion と同一サイト・#532 SU3 M2 Finding #1）。
+            // （SolidJS enterFolderExpansion と同一サイト・#532）。
             self.record_folder_expansion(&dir);
             self.folder_cache = None;
             self.folder_error = None;
@@ -184,7 +184,7 @@ impl LauncherController {
                 ViewKind::Tool => {} // §18.5 ←→無効
                 ViewKind::Folder => {
                     if let Some(parent) = self.state.parent_dir() {
-                        // ← の folder 折り返しは navigateFolderUp 相当・記録しない（Finding #1）。
+                        // ← の folder 折り返しは navigateFolderUp 相当・記録しない（#532）。
                         let tok = self.state.navigate_folder(parent.clone());
                         self.folder_cache = None;
                         self.folder_error = None;

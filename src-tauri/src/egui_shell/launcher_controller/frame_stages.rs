@@ -33,7 +33,7 @@ use super::LauncherController;
 
 impl LauncherController {
     /// 段 3: show 直後の resetForShow を消費し、**今フレームが reset フレームなら `true`**。
-    /// **返り値の破棄は `#[must_use]` が禁じる**（#934。それまでこの散文が唯一の歯止めだった）——
+    /// **返り値の破棄は `#[must_use]` が禁じる**（#934）——
     /// 同一フレームの `ResultsWindow::reset_size_guard()` は
     /// view 側に残る（#749 の位置不変条件・理由は `view.rs` の呼び出し点のコメント）ため、
     /// view が reset フレームを知る手段はこの返り値だけである。
@@ -51,15 +51,15 @@ impl LauncherController {
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
             self.search_debounce = Self::new_search_debounce();
-            // scroll gate（#632: 再表示後に確実に一度 scroll し直す）は results ウィンドウの
-            // ResultsView::update() 側（実ゲート）に移設済み——main はもう読み書きしない。
-            // icon パイプライン（icon_textures/icon_missing/icon_pending）も Task 5 で
-            // results ウィンドウへ移設済み——main はもう保持しない。hide 中の常駐テクスチャは
-            // results 側の retain_visible が空 rows で自然に全クリアする（Task 5 申し送り）。
-            // SU5: in-flight 起動と一時通知は show を跨がない（resetForShow の
-            // setLaunching(false) + clearLaunchNotice parity）。rx ごと drop するため
+            // scroll gate（#632: 再表示後に確実に一度 scroll し直す）の実ゲートは results
+            // ウィンドウの ResultsView::update() 側にあり、icon パイプライン
+            // （icon_textures/icon_missing/icon_pending）も results ウィンドウが持つ——main は
+            // どちらも読み書きしない。hide 中の常駐テクスチャは results 側の retain_visible が
+            // 空 rows で自然に全クリアする。
+            // in-flight 起動と一時通知は show を跨がない（resetForShow の
+            // setLaunching(false) + clearLaunchNotice parity・#532）。rx ごと drop するため
             // hide 中に完了した遅着結果もここで自然消滅する（stale Ok が再 show ウィンドウを
-            // hide で撃つ事故の backstop・並行性レビュー High）。updater toast は触らない。
+            // hide で撃つ事故の backstop）。updater toast は触らない。
             self.launching = None;
             self.notice.clear();
             // #745: blur 猶予も hide を跨がない。**これを消すと、猶予 armed のまま別経路で
@@ -77,7 +77,7 @@ impl LauncherController {
     /// **2 段を 1 メソッドに束ねているのは連続する塊だからであって、両者に関係があるからでは
     /// ない**——順序の理由はそれぞれの本文のコメントが持つ。
     pub(in crate::egui_shell) fn consume_external_pending(&mut self, ctx: &egui::Context) {
-        // #633: index build 完了の世代検知 → 現クエリで再検索（runRefresh parity・SU6 spec 決定 3）。
+        // #633: index build 完了の世代検知 → 現クエリで再検索（runRefresh parity・#532）。
         // reset_pending 消費の後に置く（show 直後は reset 済み空クエリの no-op になるだけ）。
         // folder 中は fs 由来 cache の再フィルタ、tool 中は no-op——run_search が view_kind で分岐済み。
         // 順序不変条件: このブロックが後段の indexing() 読み（run_search 内・show_results ゲート）
@@ -92,11 +92,11 @@ impl LauncherController {
             }
         }
 
-        // hotkey 登録失敗の pending 消費（SU6 spec 追補 2 + #652）。reset_pending 消費より後
+        // hotkey 登録失敗の pending 消費（#532・#652）。reset_pending 消費より後
         //（順序不変条件——reset の notice.clear() がこの set を消さないため）。整形はここで
         // lang() live-read: config-applied wake のフレームは update_config 後なので言語同時
         // 変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
-        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・SU6 spec 追補 2）。
+        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・#532）。
         if let Some(sh) = self
             .app_handle
             .try_state::<crate::egui_shell::EguiShellState>()

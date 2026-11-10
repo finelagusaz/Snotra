@@ -1,10 +1,9 @@
-//! 結果リストウィンドウ（"results"）の egui view（#646 PR2）。main（SearchWindowView）が発行する
+//! 結果リストウィンドウ（"results"）の egui view（#646）。main（SearchWindowView）が発行する
 //! RowsSnapshot を描くだけの従属 view——検索状態の所有者は main のまま（一方向データフロー・
-//! spec 決定 5）。クリックは ResultsShared.clicked へ積んで main を wake する（遅延 dispatch）。
+//! #646）。クリックは ResultsShared.clicked へ積んで main を wake する（遅延 dispatch）。
 //! ウィンドウの可視性・サイズ・位置の driver は main 側（hidden ウィンドウは update() が走らないため）。
 //! hide は外部（`hide_egui_main` / main の `drive_results_window`）が所有する。runtime に
-//! view 側から hide する API は無い（`RuntimeFrame::hide_window` は #671 サイクル PR A で削除。
-//! 対称の `close_window` も #660 の `snotra-egui-mvp` 撤去に伴い削除）。
+//! view 側から hide する API は無い（#671・#660）。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -16,7 +15,7 @@ use crate::commands::IconOutcome;
 use crate::egui_shell::icon_textures::ICON_MAX_ATTEMPTS;
 use crate::egui_shell::{IconMsg, RowTheme, retain_visible};
 
-/// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
+/// main が毎フレーム発行する描画用スナップショット（#646）。
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct RowsSnapshot {
     /// 描画する行。**空 = results ウィンドウは非表示**（別途 `show` フラグは持たない・/simplify）——
@@ -31,12 +30,11 @@ pub(crate) struct RowsSnapshot {
     /// （[`ResultsShared::publish`]・#1279）。
     pub rows: std::sync::Arc<[snotra_core::ui_types::SearchResult]>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
     pub selected: usize,
-    /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632 reviewer Important 3
-    /// の後継・Fix 3）。`selected` の値だけでは「打鍵で結果が丸ごと変わったが selected は
+    /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632・#646）。`selected` の値だけでは「打鍵で結果が丸ごと変わったが selected は
     /// 偶然 0 のまま」を検出できないため、この世代番号で ResultsView の scroll gate を
     /// 独立にリセットする。Default=0（PartialEq 比較にも自然に入る）。
     pub generation: u64,
-    /// main の `search_debounce` が**予約を持っていない**かどうか（= 非 armed）。旧実装（Task 5 移設前）の `!self.search_debounce.is_armed()`（[`crate::egui_shell::layout::Debouncer::is_armed`] の**否定**）ゲート（連打中は icon worker を積まない・perf 最適化）の後継——`ResultsView` は `search_debounce` を持てないため、main が代わりに live 値を snapshot に載せて運ぶ（#532 SU4 の系譜・controller fix 依頼）。Default=false（PartialEq 比較にも自然に入る。armed → 非 armed の遷移だけで snapshot 差分が生まれ wake が 1 回走るのは「打鍵停止後にアイコン要求を起こす」という意図どおりの信号）。
+    /// main の `search_debounce` が**予約を持っていない**かどうか（= 非 armed。[`crate::egui_shell::layout::Debouncer::is_armed`] の**否定**）。連打中は icon worker を積まない perf 最適化のゲートで、`ResultsView` は `search_debounce` を持てないため、main が代わりに live 値を snapshot に載せて運ぶ（#532・#646）。Default=false（PartialEq 比較にも自然に入る。armed → 非 armed の遷移だけで snapshot 差分が生まれ wake が 1 回走るのは「打鍵停止後にアイコン要求を起こす」という意図どおりの信号）。
     ///
     /// **「打鍵が止まった」より広い**（#1074）——`armed` は [`crate::egui_shell::layout::Debouncer::cancel`] でも下りるため、Enter の flush 経路を通った直後もここは真になる。名前が言うのは**debounce が予約を持っていないこと**であって、ユーザーが打鍵を止めたことではない。
     ///
@@ -95,9 +93,6 @@ pub(crate) struct ResultsShared {
     /// **reset-on-show 用の専用クリアは置かない**——`SearchState::reset` が世代を進めるため、
     /// hide を跨いだ stale クリックは同じ照合で失効する。専用クリアを足すと「クリアする経路」と
     /// 「世代で弾く経路」の 2 本立てになり、どちらが正本か読めなくなる。
-    ///
-    /// `snapshot` は世代を運び `clicked` は運ばない、という非対称は**見落としであった**
-    /// （#699 備考が「意図的か見落としかコードから読めない」と問うていた点の結論）。
     clicked: std::sync::Mutex<Option<(u64, usize)>>,
 }
 
@@ -161,16 +156,16 @@ impl ResultsShared {
 pub(crate) struct ResultsView {
     app_handle: tauri::AppHandle,
     /// font_family hot-reload 用（main の applied_font_family と同型・ctx がウィンドウごとに独立
-    /// なため複製必須 — plan-review rev-egui の指摘）。
+    /// なため複製必須・#646）。
     applied_font_family: String,
-    /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632・Task 4）。
+    /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632）。
     last_scrolled_selected: Option<usize>,
-    /// 直近に観測した snapshot の世代番号（#632 reviewer Important 3 の後継・Fix 3）。
+    /// 直近に観測した snapshot の世代番号（#632・#646）。
     /// `RowsSnapshot.generation` との差分で「結果集合が総入れ替えされた」を検出し、
     /// `selected` の値が変わらない場合でも scroll gate を強制リセットする。
     last_generation: u64,
-    /// path→TextureHandle（セッション内保持。可視集合に頭打ち・#532 SU4。Task 5 で view.rs から
-    /// 本 view へ移設——TextureHandle はウィンドウの Context 従属のため、行描画と同じウィンドウに置く）。
+    /// path→TextureHandle（セッション内保持。可視集合に頭打ち・#532。TextureHandle はウィンドウの
+    /// Context 従属のため、行描画と同じウィンドウに置く・#646）。
     icon_textures: HashMap<String, egui::TextureHandle>,
     /// path→抽出の失敗回数（#692）。**「失敗したか」ではなく「何回失敗したか」を持つ**
     /// ——一過性の失敗（シェルのアイコンキャッシュがコールドな場合など）を 1 度で恒久的な欠落として
@@ -181,7 +176,7 @@ pub(crate) struct ResultsView {
     /// wanted 収集から除外し、同一 settle に対する repaint 毎の重複 spawn を防ぐ（thread pileup
     /// 対策）。drain 時（Loaded/Missing）に remove する。show=false 時の明示 clear は行わない
     /// ——retain_visible が空 rows で textures/missing を自然に刈るのに合わせ、pending も次の
-    /// request_icons_for_results 呼び出し（wanted 収集）で自然に収束する（Task 5 申し送り）。
+    /// request_icons_for_results 呼び出し（wanted 収集）で自然に収束する（#646）。
     icon_pending: HashSet<String>,
     icon_tx: Sender<IconMsg>,
     icon_rx: Receiver<IconMsg>,
@@ -203,14 +198,14 @@ impl ResultsView {
         }
     }
 
-    /// 渡された行の未取得アイコンを worker に積む（[`RowsSnapshot::input_idle`] 相当）。**`rows` は結果全件ではなく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側がそのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight（icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。Task 5 で view.rs から移設し、入力を `self.state.results()` から `snapshot.rows` へ変更した（本 view は snapshot を描くだけで検索状態を持たないため）。
+    /// 渡された行の未取得アイコンを worker に積む（[`RowsSnapshot::input_idle`] 相当）。**`rows` は結果全件ではなく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側がそのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight（icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
     fn request_icons_for_results(
         &mut self,
         rows: &[SearchResult],
         show_icons: bool,
         ctx: &egui::Context,
     ) {
-        // #673 spec 決定 4: **ここで config を読み直さない。** 呼び出し側（update()）が
+        // **ここで config を読み直さない**（#673）。 呼び出し側（update()）が
         // フレーム冒頭で読んだ値を渡す——同一フレーム内で 2 度読むと、間に config_watcher の
         // 適用が挟まったとき「アイコンを積むかどうか」と「アイコン枠を描くかどうか」が
         // 食い違う（枠は描いたのに抽出は走らない、の 1 フレーム）。
@@ -235,10 +230,10 @@ impl ResultsView {
         self.spawn_icon_load(wanted, ctx.clone());
     }
 
-    /// 現結果集合の未取得アイコンを別スレッドで抽出し IconMsg を channel へ送る（SU4）。folder の
+    /// 現結果集合の未取得アイコンを別スレッドで抽出し IconMsg を channel へ送る（#532）。folder の
     /// per-nav thread パターン踏襲。token は載せない（staleness はアイコンキーで無害）。
-    /// show_icons=false 時は呼ばない（呼び出し側でガード）。Task 5 で view.rs から移設
-    /// （worker の wake は clone した results の ctx の `request_repaint()`・形は不変）。
+    /// show_icons=false 時は呼ばない（呼び出し側でガード）。worker の wake は clone した results の
+    /// ctx の `request_repaint()` である（#646）。
     fn spawn_icon_load(&self, paths: Vec<String>, egui_ctx: egui::Context) {
         if paths.is_empty() {
             return;
@@ -283,7 +278,7 @@ impl ResultsView {
 }
 
 /// 行スクロールの指示（#714）。世代交代（結果集合の総入れ替え）は前のリストの位置を
-/// 持ち越さず瞬時に選択行へ、選択移動（世代不変・↑↓）は従来のアニメーションで寄せる。
+/// 持ち越さず瞬時に選択行へ、選択移動（世代不変・↑↓）はアニメーションで寄せる。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RowScroll {
     None,
@@ -293,8 +288,8 @@ pub(crate) enum RowScroll {
 
 /// scroll gate（#632・選択変化時のみ）と世代検知（#714）から行スクロールの指示を導く純粋核。
 /// 「先頭へ」ではなく「選択行へ」が正しい目標である——`on_escape` の folder/tool 復帰と
-/// index 再構築後の再検索は selected≠0 のまま世代を進める（offset=0 直置き案を却下した理由。
-/// plan-review 2026-07-26）。
+/// index 再構築後の再検索は selected≠0 のまま世代を進める（offset=0 直置き案を採らない理由・
+/// #714）。
 fn scroll_directive(selected: bool, do_scroll: bool, generation_changed: bool) -> RowScroll {
     if !(selected && do_scroll) {
         RowScroll::None
@@ -311,11 +306,11 @@ fn row_hover_target(hovered: bool, is_error: bool) -> bool {
 
 /// 1 行を描画。scroll の指示に従い選択行へ寄せる（gate は呼び出し側 `scroll_directive`・#632/#714）。
 /// 返り値:
-/// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
-/// as-built でも到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数
+/// single_clicked。ダブルクリックは扱わない（§4.8 の double-click=選択は到達不能ゆえ落とす。
+/// 単クリック=起動のみ・#532）。self を借りない関連関数
 /// （借用衝突回避）。色/サイズは呼び出し側が都度導出する `RowTheme` から取る。
-/// 2 行表示(#646 決定 9): 上段名前・下段パス。行高は Metrics::row_height(呼び出し側注入)。
-/// `show_icons=false` はアイコン slot 自体を畳む（skip でなくレイアウト変更・#532 SU4 Task 6）
+/// 2 行表示(#646): 上段名前・下段パス。行高は Metrics::row_height(呼び出し側注入)。
+/// `show_icons=false` はアイコン slot 自体を畳む（skip でなくレイアウト変更・#532）
 /// ——テキストが左端 8px 寄せになり、slot 分の空白が残らない。
 /// `reset_hover_animation` は結果集合の世代交代フレームだけ true。固定した行 ID の進捗を
 /// 現在のポインタ状態へスナップし、古いホバーを別の行へ引き継がない（#724）。
@@ -344,14 +339,14 @@ pub(crate) fn draw_result_row(
             RowScroll::None => {}
             RowScroll::Animated => {
                 // 選択変化時のみ（#632）。None=可視化に必要な最小限だけ（WebView2 の
-                // block:"nearest" parity・Center だと中央維持で早期スクロール・#532 SU6.5）
+                // block:"nearest" parity・Center だと中央維持で早期スクロール・#532）
                 response.scroll_to_me(None);
             }
             RowScroll::Instant => {
                 // 世代交代フレーム（#714）: 別のリストへの切り替えに前のリストの
                 // スクロール位置は持ち越さない。アニメーション経路（0.1〜0.3s の連続描画）を
                 // 通さず、次の repaint で offset を中間フレームなしに target へ置く。
-                // 受容する残余（plan-review 2026-07-26）: (a) ↑↓ 直後の in-flight
+                // 受容する残余（#714）: (a) ↑↓ 直後の in-flight
                 // アニメーション中に世代が来ると target 置換までの残り時間が食い込みうる
                 // （目標位置は正しい）。(b) 内容同一の reindex 再検索でも世代は進むため
                 // 「アニメーション付きで選択行へ戻る」が「瞬時に戻る」へ変わる（頻度稀・目標は同じ）。
@@ -406,14 +401,13 @@ pub(crate) fn draw_result_row(
                 );
             }
             // 通常の欠落のみ placeholder。エラー行（is_error＝フォルダ列挙失敗行等）には
-            // アイコン形の装飾を描かない（エラーメッセージに不要・whole-branch review Minor）。
+            // アイコン形の装飾を描かない（エラーメッセージに不要・#532）。
             None if !result.is_error => draw_icon_fallback(ui, rect, result, theme),
             None => {}
         }
     }
-    // 2 行表示(#646 決定 9): 上段 = 名前(全幅・末尾省略)、下段 = パス(全幅・左寄せ・
-    // 幅超過時のみ中間省略)。#632 の「name 60% 制限 + path 右寄せ + 実測幅の重なり回避」は
-    // 2 行化で name と path が幅を取り合わなくなったため廃止。
+    // 2 行表示(#646): 上段 = 名前(全幅・末尾省略)、下段 = パス(全幅・左寄せ・
+    // 幅超過時のみ中間省略)。name と path は別の行なので幅を取り合わない。
     let text_x = rect.left() + slot;
     let avail = (rect.right() - 8.0 - text_x).max(0.0);
     let mut name_job = egui::text::LayoutJob::single_section(
@@ -451,7 +445,7 @@ pub(crate) fn draw_result_row(
         .layout_no_wrap(path_str, path_font, theme.path_color);
     // 鏡像ケース(folder 列挙エラー行・snotra-core/src/folder.rs の error_result は
     // name 空・path 非空): 上段を空白にせず path 1 行を縦中央に単独描画
-    //(上の path 空分岐と対称・plan-review scout-egui 指摘)。
+    //(上の path 空分岐と対称・#646)。
     if result.name.is_empty() {
         ui.painter().galley(
             egui::pos2(text_x, rect.center().y - path_galley.size().y / 2.0),
@@ -536,9 +530,7 @@ pub(crate) fn results_list_ui(
 }
 
 /// アイコン欠落時の fallback（drawn placeholder）。§3.4 は 📁📄 を規定するが softbuffer +
-/// 単一 TTF で色 emoji が描けない懸念があるため単色プレースホルダにする（視覚スモークは
-/// Task 7 に集約・コントローラ決定）。Task 7 の視覚スモークで jp_font が 📁📄 を描けると
-/// 確認できたら emoji へ upgrade を検討する。
+/// 単一 TTF で色 emoji が描けない懸念があるため単色プレースホルダにする（#532）。
 fn draw_icon_fallback(ui: &egui::Ui, rect: egui::Rect, result: &SearchResult, theme: &RowTheme) {
     let center = egui::pos2(rect.left() + 14.0, rect.center().y);
     let r = egui::Rect::from_center_size(center, egui::vec2(14.0, 14.0));
@@ -552,7 +544,7 @@ fn draw_icon_fallback(ui: &egui::Ui, rect: egui::Rect, result: &SearchResult, th
 
 /// path を avail_px におよそ収める中間省略（`C:\a\...\app.exe`）。`per_char_px` は呼び出し側が
 /// 実 galley（`Painter::layout_no_wrap`）から実測した平均文字幅を渡す（固定係数 size*0.55 は
-/// Latin 想定で CJK グリフ（~1.0-1.8×）を過小評価し under-truncate する・reviewer Important 2）。
+/// Latin 想定で CJK グリフ（~1.0-1.8×）を過小評価し under-truncate する・#532）。
 /// release は panic=abort ゆえ、`max_chars < MIN_MIDDLE_KEEP` ガードと空文字境界で範囲外
 /// アクセスを避ける（どちらも `truncate_middle_chars` 側が持つ）。
 ///
@@ -571,21 +563,18 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let font_family = crate::egui_shell::font_stack::font_family_from_config(&self.app_handle);
         crate::egui_shell::font_stack::configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
-        // 外部 wake 用の ctx 登録はここに無い（#671 PR D・main の setup と同じ理由）。
+        // 外部 wake 用の ctx 登録はここに無い（#671・main の setup と同じ理由）。
     }
 
     fn update(&mut self, ui: &mut egui::Ui, frame: &mut snotra_egui_runtime::RuntimeFrame) {
-        // テーマ値は 1 フレーム 1 読み（#673 spec 決定 4）。**早期 return より前**で取る——
-        // 背景（clear color）は rows が空でも塗られるからである。旧実装はここが空 rows の
-        // early return より後にあり「描かないフレームで lock を取らない」ことを理由にしていたが、
-        // clear color を view が決めるようになって「空 rows でも描く」へ変わった。
+        // テーマ値は 1 フレーム 1 読み（#673）。**早期 return より前**で取る——
+        // 背景（clear color）は rows が空でも塗られるからである。
         let visual = crate::egui_shell::read_visual(&self.app_handle, &self.applied_font_family);
         frame.set_clear_color(visual.background);
 
         // app_handle を clone してから State を取る: `shared` の借用を `self.app_handle`
         // （＝self 全体）ではなくこのローカル変数に結び付け、後段の `self.request_icons_for_results`
-        // （&mut self）呼び出しと `shared` の同時生存を両立させる（Task 5 で挿入した icon
-        // パイプライン呼び出しが E0502 を起こしたための整理）。
+        // （&mut self）呼び出しと `shared` の同時生存を両立させる（`self.app_handle` から取ると E0502）。
         let app_handle = self.app_handle.clone();
         let Some(shared) = app_handle.try_state::<ResultsShared>() else {
             return;
@@ -593,9 +582,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 受け取りは行を複製しない。
         let snapshot = shared.snapshot.lock().unwrap().clone();
         if snapshot.rows.is_empty() {
-            // #632 の不変条件「再表示後に確実に一度 scroll し直す」の実ゲート。旧実装は main
-            // 側の resetForShow（reset_pending 消費）でこの gate を直接クリアしていたが、
-            // 移設後は本 view が gate の唯一の所有者ゆえここでリセットする——hide/非表示の
+            // #632 の不変条件「再表示後に確実に一度 scroll し直す」の実ゲート。本 view が
+            // gate の唯一の所有者ゆえここでリセットする（#646）——hide/非表示の
             // たびに戻し、次に見えるフレームで選択行への scroll_to_me を再度発火させる。
             self.last_scrolled_selected = None;
             return; // ウィンドウは main が hide 済みのはず(backstop で何も描かない)
@@ -611,9 +599,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let show_icons = visual.show_icons;
         // アイコン drain（token 無し・アイコンキーで適用）。到着したら load_texture して map へ。
         // load_texture は egui context 必須ゆえ、ここ（results の update()・自ウィンドウ ctx）でのみ呼ぶ
-        // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。Task 5 で
-        // main（view.rs）から本 view へ移設: TextureHandle はウィンドウの Context 従属のため、行描画と
-        // 同じウィンドウに置く。
+        // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。
+        // TextureHandle はウィンドウの Context 従属のため、行描画と同じウィンドウに置く（#646）。
         let icon_ctx = ui.ctx().clone();
         let mut icon_arrived = false;
         while let Ok(msg) = self.icon_rx.try_recv() {
@@ -640,7 +627,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         if icon_arrived {
             icon_ctx.request_repaint();
         }
-        // #632 reviewer Important 3 の後継（Fix 3）: 結果集合が総入れ替えされた
+        // #632・#646: 結果集合が総入れ替えされた
         // （`SearchState::rows_generation` が進んだ）フレームは、selected の値が変わらなくても scroll gate を
         // 強制リセットする——selected のみの比較では「打鍵で結果が丸ごと変わったが selected は
         // 偶然 0 のまま」を検出できず、選択行への scroll_to_me が発火しないままになるため。
@@ -671,13 +658,11 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             self.last_scrolled_selected = Some(snapshot.selected);
         }
         // アイコン: 可視集合（このフレームで実際に描画した rows）に頭打ちして drop（メモリ境界・
-        // SU4 決定 A）。Task 5 で main（view.rs）から本 view へ移設。この一連の処理は
-        // update() 冒頭の早期 return（rows 空 = 非表示）を通過したフレーム、すなわち results
-        // 可視中にしか走らない——旧実装（main 側）は show_results の真偽に関係なく毎フレーム
-        // 走っていた（隠れていても先読み）。reindexing 明けの再表示でアイコンが一瞬
-        // placeholder → 追いつく体感になりうるが、クラッシュ・不整合ではなく hidden 中の
-        // update 停止（SU5 要石）と整合する自然な帰結として受容する（plan-review rev-egui
-        // 指摘・受容）。
+        // #532）。この一連の処理は update() 冒頭の早期 return（rows 空 = 非表示）を通過した
+        // フレーム、すなわち results 可視中にしか走らない（隠れている間は先読みしない）。
+        // reindexing 明けの再表示でアイコンが一瞬 placeholder → 追いつく体感になりうるが、
+        // クラッシュ・不整合ではなく hidden 中の update 停止（#532）と整合する自然な帰結として
+        // 受容する（#646）。
         //
         // **世代交代フレームだけで足りる**（毎フレームやらない）。世代内で 3 つの map/set に
         // 入る path は先読み範囲 ⊆ `snapshot.rows` ゆえ必ず `visible` に含まれ、retain は
@@ -685,8 +670,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // `rows_generation` が必ず進む——`search_state.rs` の `rows_generation` の doc が
         // 「`self.results` へ代入・`clear` するメソッドは、必ずここを進める」と定めており、
         // 代入・`clear` の 6 箇所すべてで成立している（逆向きに数え上げて確認済み）。
-        // 毎フレームやっていた頃は、可視集合の構築だけで結果件数ぶんの `String` 確保を
-        // 払っていた（`result_limit` は既定 200・設定次第で 1000）。
+        // 毎フレームやると、可視集合の構築だけで結果件数ぶんの `String` 確保を
+        // 払う（`result_limit` は既定 200・設定次第で 1000）。
         if generation_changed {
             let visible = crate::egui_shell::visible_icon_keys(&snapshot.rows);
             retain_visible(&mut self.icon_textures, &visible);
@@ -696,13 +681,13 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             // 扱いのまま `needs_extraction` を検出されずに通れず、その行のアイコンは戻らない。
             self.icon_pending.retain(|p| visible.contains(p));
         }
-        // snapshot.input_idle は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
-        // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
-        // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。
+        // snapshot.input_idle は連打中は icon worker を積まない perf 最適化のゲートである（#532）。
+        // main の search_debounce は ResultsView から参照できないため、live 値を snapshot 経由で
+        // 運ぶ（#646）。
         if snapshot.input_idle {
             // **抽出だけを viewport 範囲へ絞る**（描画・テクスチャ保持は全件のまま）。
             // `snapshot.rows` は可視行数ではなく `effective_result_limit`（既定 200）ゆえ、
-            // 絞る前は画面に出る 8 個のために 200 回シェルへ問い合わせていた
+            // 絞らなければ画面に出る 8 個のために 200 回シェルへ問い合わせる
             // （実測 105ms／settle。内訳と却下した代替は `layout::icon_prefetch_range` の doc）。
             //
             // **範囲は「この描画の結果として次に見えることになる行」である**——`state` の offset は
@@ -726,7 +711,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             );
             self.request_icons_for_results(&snapshot.rows[range], show_icons, &icon_ctx);
         }
-        // クリック逆流(決定 5): 共有スロットへ積み、main を起こして起動処理させる。
+        // クリック逆流(#646): 共有スロットへ積み、main を起こして起動処理させる。
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。
         if let Some(i) = clicked {
             // 世代は**このフレームで実際に描いた** snapshot のものを添える（#699）。
@@ -751,9 +736,8 @@ mod tests {
     // ---- 行ピッチとウィンドウ高の対（kittest・実コードをヘッドレスで走らせる）----------------
     //
     // **ここが `layout.rs` の式と実際の描画を結ぶ唯一の点である。** あちらのユニットテストは
-    // 「式が式であること」しか測れず（行間の余白は egui 側にあって見えない）、描画側には
-    // これまで検査が無かった。#646 PR2 から続いた「設定した件数がウィンドウに収まらない」欠陥は、
-    // どちらの検査からも見えない場所に居たためレビューと CI で検出されずにいる。
+    // 「式が式であること」しか測れない（行間の余白は egui 側にあって見えない）。「設定した件数が
+    // ウィンドウに収まらない」欠陥は、どちらの検査からも見えないこの隙間に居た（#945）。
 
     fn theme_for_test(row_font: f32) -> RowTheme {
         RowTheme {
@@ -943,13 +927,11 @@ mod tests {
     /// **`layout::results_window_height` が返す高さと、egui が実際に積む高さが厳密に一致する。**
     /// 式（`layout.rs`）と描画（egui）を直に突き合わせる——一方だけを変えれば落ちる。
     ///
-    /// **`row_height` を設定 UI の全域（`font_size` 8..=48）で回す。** ここを 1 つの値で
-    /// 固定していたことが、この検査の盲点だった——34.92 は丸めが**下**へ向かう側の値で、
-    /// 上へ向かう 13/41 の font_size（12・26〜37）を見逃させていた。3 種の故障注入で
-    /// 発火を確かめておきながら、実装に生きていた 4 つ目の破れに対しては盲目だったのである。
+    /// **`row_height` を設定 UI の全域（`font_size` 8..=48）で回す。1 つの値に固定しない**——
+    /// 34.92 は丸めが**下**へ向かう側の値で、上へ向かう 13/41 の font_size（12・26〜37）を
+    /// 見逃す（#945）。
     ///
-    /// **等式で測れるのは `results_window_height` が丸めてから掛けるようになったからである**
-    /// （案 3）。以前は余りが出るため挟み込みでしか書けなかった。
+    /// **等式で測れるのは `results_window_height` が丸めてから掛けるからである**（#945）。
     #[test]
     fn kittest_rows_exactly_fill_the_window_height() {
         use crate::egui_shell::layout::Metrics;
@@ -991,9 +973,9 @@ mod tests {
             "行が高くなったのにウィンドウへ収まった＝上の 2 検査は何も縛っていない\
              （描画 {drawn} / ウィンドウ {window}）"
         );
-        // 超過は「1 行あたり 3.0 が N 行」の規模になる。**両辺とも丸めを通る**——案 3 で
-        // `results_window_height` も掛ける前に `round_ui` するようになったため、差は
-        // 丸め済みどうしの引き算で表せる（案 3 より前はウィンドウ側だけが生の値だった）。
+        // 超過は「1 行あたり 3.0 が N 行」の規模になる。**両辺とも丸めを通る**——
+        // `results_window_height` も掛ける前に `round_ui` するので、差は
+        // 丸め済みどうしの引き算で表せる（#945）。
         let expected = ((row_height + 3.0).round_ui() - row_height.round_ui()) * n as f32;
         assert!(
             (overflow - expected).abs() < 1e-3,
@@ -1068,8 +1050,7 @@ mod tests {
     #[test]
     fn truncate_middle_shortens_long_path() {
         // 第3引数は per_char_px（実測 galley 幅から呼び出し側が導出する平均文字幅）。
-        // size*0.55 概算値だった旧シグネチャの名残で 11.0 を使うが、意味は「1 文字の
-        // 実測幅」に変わった（#632 reviewer Important 2）。
+        // 11.0 の意味は「1 文字の実測幅」である（#632）。
         let long = r"C:\Users\Eoh\AppData\Local\Programs\app\bin\tool.exe";
         let out = truncate_middle(long, 100.0, 11.0);
         assert!(out.chars().count() < long.chars().count(), "省略される");
@@ -1077,7 +1058,7 @@ mod tests {
         // 短い文字列・極小幅は原文（max_chars<4 ガード）。
         assert_eq!(truncate_middle("a.exe", 1.0, 11.0), "a.exe");
         assert_eq!(truncate_middle("short", 1000.0, 11.0), "short");
-        // 空文字列は範囲外アクセスなく原文（空文字）を返す（reviewer Minor）。
+        // 空文字列は範囲外アクセスなく原文（空文字）を返す（#532）。
         assert_eq!(truncate_middle("", 50.0, 11.0), "");
     }
 }

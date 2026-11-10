@@ -86,13 +86,15 @@
 - ラウンド 1（アンカー f040e0ee）: verify:tree green（A・E・F、warnings なし）。監査: 失われた不変条件 0・High 1（訳語「自己計数」）・Medium 2（view.rs の `last_set_*` 注記の番号 #532→#646・#751 の記録を全称否定へ変えていた）・Low 6。変異 6 本のうち 3 検知器に見えないもの 1（`///`→`//` の帰属。docattach で HEAD の帰属変化 0 を確認）。対処: High・Medium と Low のうち 4 件（撤去したシンボル名の復元・「引っ込める」→「隠し直す」・`window_coordinator.rs` の順序制約の番号 #671→#646・focus 回復の速さの主張の復元・`mod.rs` の `create` の doc の実高の設定点）を直した。ラベルが 2 つの番号に割れた件（「reviewer Important 2」「SU6 spec 決定 3」）は、基準の文脈によるもので誤りではないため直していない
 - ラウンド 2（アンカー 4b5c7851）: verify:tree green（A・E・F）。ラウンド 1 の指摘はすべて解消。新規 Low 2（focus 段落の「同じフレーム」の曖昧さ・`mod.rs` の `inner_size` 行末コメントが doc と食い違う）。変異 3 本すべて検知（生き残り 0）。対処: 2 件とも直した
 - ラウンド 3（アンカー 44d3e709）: verify:tree green（A・E・F）。ラウンド 2 の 2 件は解消。新規 Low 1（「その次フレーム」が「さらに次」とも読める・ラウンド 2 の案そのもの）。変異 2 本すべて検知。対処: 「そのフレームの widget が持つ」へ直した（コメント 1 語のみ。比較器・needle・fmt で確認し、verify:tree を回し直す）
+- ラウンド 4（アンカー 4e853066）: verify:tree green（A・E・F）。指摘 0・⚠️ 0。変異 1 本検知（生き残り 0）。収束
+- 仕上げ: 監査で得た否定の知識（短いラベルのパス付き `-S` は別レビューの同名ラベルを当てる）を ADR の「番号の引き方」へ足した
 
 ### Phase 5 — 検証
 
 - [x] 比較器: 23 ファイルすべて基準 sha と一致
 - [x] `needles.mjs`: 全ファイルで出現数が基準 sha と一致
 - [x] 追加行のバッククォート数が偶数（`git diff main -U0 -- src-tauri/src/egui_shell | grep '^+[^+]'` の各行）・コードスパンが行をまたがない
-- [ ] `npm run verify:tree`（A・F）
+- [x] `npm run verify:tree`（A・F）
 
 ## 不変条件と異常系
 

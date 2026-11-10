@@ -2,7 +2,7 @@
 //!
 //! **`SearchState::rows_generation` とは別の量である**——世代は「行が差し替わったか」、ここの seq は「どの要求か」を指す。統合しない。**両方を同じ場所で進めるのは [`crate::egui_shell::search_state::SearchState`] の private な行差し替え点である**（#1039。この型はその内側に住む private フィールドであり、外から名前で届かない）。
 //!
-//! **PR 1（同期）と PR 2（worker）で同じ型を使う**——計測コードが改修の前後で同じ区間を測ることが受け入れの条件である（#1000 の「同じ器を当てられること」）。
+//! **実装を替えても同じ型を使う**——計測コードが改修の前後で同じ区間を測ることが受け入れの条件である（#1000 の「同じ器を当てられること」）。
 
 use std::time::{Duration, Instant};
 
@@ -53,10 +53,10 @@ impl SearchDispatch {
 
     /// in-flight を失効させる。
     ///
-    /// 「同期で行を差し替える出所は必ずここを通す」は spec §4.5
-    /// （`docs/superpowers/specs/2026-08-10-search-worker-design.md`）が置いた**規約**だったが、
-    /// #1039 で [`crate::egui_shell::search_state::SearchState`] の**行の差し替えと同じ private
-    /// メソッドの内側**へ入れたことで機構になった——`results` は private で、そこへ代入する経路が
+    /// 「同期で行を差し替える出所は必ずここを通す」（spec §4.5・
+    /// `docs/superpowers/specs/2026-08-10-search-worker-design.md`）は、規約ではなく**機構**が守る
+    /// （#1039）。呼び出しは [`crate::egui_shell::search_state::SearchState`] の**行の差し替えと同じ private
+    /// メソッドの内側**にあり、`results` は private で、そこへ代入する経路が
     /// その 1 メソッドしか無いため、**差し替えを書いて失効を書き忘れる形が表現できない**。
     ///
     /// **機構が保証するのはその向きだけである。** このメソッドは `egui_shell` の内側から見えるので、
@@ -138,7 +138,7 @@ mod tests {
         let mut d = SearchDispatch::default();
         // `c:\u` を打って worker が走り出した
         let in_flight = d.issue(base, base);
-        // クエリを空にした → 行を差し替える側（#1039 以降は `SearchState::put_rows`）が撃つ
+        // クエリを空にした → 行を差し替える側（`SearchState::put_rows`・#1039）が撃つ
         d.invalidate();
         // worker の結果が遅れて届く
         assert!(

@@ -1,10 +1,10 @@
-//! egui 経路の UI 文言テーブル（#532 SU5）。**このテーブル自身が文言の正本である**——移行元
-//! だった `ui/src/lib/i18n.ts` は SU7 のフロント撤去で消滅したため、突き合わせるべき外部の
+//! egui 経路の UI 文言テーブル（#532）。**このテーブル自身が文言の正本である**——移行元
+//! だった `ui/src/lib/i18n.ts` はフロント撤去（#532）で消滅したため、突き合わせるべき外部の
 //! parity 元はもう無い。**文言を足す・直すときは計画書・レビュー引用の文字列を写さず、実物の
-//! ソースを開いて codepoint 単位で確認する**（SU5「…」vs「...」・SU6 En 末尾ピリオドの差は
+//! ソースを開いて codepoint 単位で確認する**（「…」vs「...」・En 末尾ピリオドの差は
 //! 実物突合だけが捕捉した）。言語は呼び出しごとに引数で受ける——launcher_controller の `lang()` が
-//! config `general.language` を毎フレーム live-read するため、config-applied wake（SU6）で
-//! 言語切替が次フレームから反映される（起動時一回読みではない・#648(B) で旧記述を是正）。
+//! config `general.language` を毎フレーム live-read するため、config-applied wake で
+//! 言語切替が次フレームから反映される（起動時一回読みではない・#648）。
 //! snotra-core は「UI 表示文字列を持たない」規約のため、文言はこの crate（UI 層）に置く。
 //!
 //! **この表の文言は描画面ごとに 3 系統へ分かれる。** 関数名では見分けられないので、足すとき・
@@ -87,7 +87,7 @@ pub fn launch_failed(l: Language, detail: &str) -> String {
     }
 }
 
-/// timeout＝「結果不明」の意味論（spec 決定 8）。WebView2 の文言が既にこの意味を持つ。
+/// timeout＝「結果不明」の意味論（#532）。WebView2 の文言が既にこの意味を持つ。
 pub fn launch_timeout(l: Language, detail: &str) -> String {
     match l {
         Language::Ja => format!("起動に時間がかかっています{detail}"),
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn timeout_wording_is_indeterminate_not_failure() {
-        // spec 決定 8: timeout は「失敗」でなく「結果不明」。文言に「失敗」を含めない。
+        // #532: timeout は「失敗」でなく「結果不明」。文言に「失敗」を含めない。
         assert!(!launch_timeout(Language::Ja, "").contains("失敗"));
         assert!(
             !launch_timeout(Language::En, "")

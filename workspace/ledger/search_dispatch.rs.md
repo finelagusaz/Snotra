@@ -4,6 +4,7 @@
 
 | ID | 行 | 候補行（原文） | 分類 | 処置後の文（要旨） | 根拠（コードの位置・#NNN） | 範囲外メモ |
 |---|---|---|---|---|---|---|
-| B1 | 57-59 | /// （`docs/superpowers/specs/2026-08-10-search-worker-design.md`）が置いた**規約**だったが、 ⏎ /// #1039 で [`crate::egui_shell::search_state::SearchState`] の**行の差し替えと同じ private ⏎ /// メソッドの内側**へ入れたことで機構になった——`results` は private で、そこへ代入する経路が | | | | |
-| B2 | 71-71 | /// 現在 in-flight の seq（無ければ 0）。判定器が「失効した結果を採っていないか」を読む材料である。 | | | | |
-| B3 | 141-141 | // クエリを空にした → 行を差し替える側（#1039 以降は `SearchState::put_rows`）が撃つ | | | | |
+| B1 | 57-59 | /// （`docs/superpowers/specs/2026-08-10-search-worker-design.md`）が置いた**規約**だったが、 ⏎ /// #1039 で [`crate::egui_shell::search_state::SearchState`] の**行の差し替えと同じ private ⏎ /// メソッドの内側**へ入れたことで機構になった——`results` は private で、そこへ代入する経路が | 書き直す | 「同期で行を差し替える出所は必ずここを通す」（spec §4.5・パス）は、規約ではなく機構が守る（#1039）。呼び出しは `SearchState` の行の差し替えと同じ private メソッドの内側にあり…（以下は元のまま） | `search_state.rs:SearchState::put_rows` が `self.results = rows` と `self.dispatch.invalidate()` を同じメソッドで行う（grep で確認）。「規約だったが #1039 で機構になった」の変化の語りだけを現在形へ | 続く段落の「`rg` の production ヒットは 1 件だけで…`#[cfg(test)]` に 2 件」は呼び出し元の数え上げ（「書かないもの」）。経緯ではないので直さない |
+| B2 | 71-71 | /// 現在 in-flight の seq（無ければ 0）。判定器が「失効した結果を採っていないか」を読む材料である。 | 残す |  | 誤検出（「現在 in-flight の」は経緯ではない） |  |
+| B3 | 141-141 | // クエリを空にした → 行を差し替える側（#1039 以降は `SearchState::put_rows`）が撃つ | 縮める | `（`SearchState::put_rows`・#1039）` | 「#1039 以降は」の時期の語りだけを落とす。`put_rows` は `search_state.rs` に在る |  |
+| X1 | 5 | `//!` 「PR 1（同期）と PR 2（worker）で同じ型を使う」 | 書き直す | 「**実装を替えても同じ型を使う**——計測コードが改修の前後で同じ区間を測ることが受け入れの条件である（#1000 の…）」 | `PR 1`/`PR 2` は #1004 の作業単位名（`git log -S 'PR 1（同期）'` → 925ef3ad・#1030）。制約（改修の前後で同じ区間を測る）は元の文のまま |  |

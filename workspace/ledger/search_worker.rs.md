@@ -4,4 +4,4 @@
 
 | ID | 行 | 候補行（原文） | 分類 | 処置後の文（要旨） | 根拠（コードの位置・#NNN） | 範囲外メモ |
 |---|---|---|---|---|---|---|
-| B1 | 5-5 | //! **`egui::Context` を持たない**——長寿命 worker が Context clone を握ると `RepaintScheduler` の Arc がウィンドウの `Destroyed` を越えて生き、停止を妨げる（#671 PR D）。起床は `wake_main` を使う。 | | | | |
+| B1 | 5-5 | //! **`egui::Context` を持たない**——長寿命 worker が Context clone を握ると `RepaintScheduler` の Arc がウィンドウの `Destroyed` を越えて生き、停止を妨げる（#671 PR D）。起床は `wake_main` を使う。 | 縮める | `（#671）` | `PR D` は #671 の副ラベル（対応表） |  |

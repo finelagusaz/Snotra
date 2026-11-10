@@ -293,6 +293,35 @@ function Show-FailureEvidence {
 
 $failures = @()
 $resultsChecked = $false
+$scenario1Finished = $false
+
+# **throw で終わるときも、それまでに積まれた `$failures` を出す**（#1414）。`$failures` は末尾の集計
+# ブロックでしか出力されないので、後から throw が起きると（シナリオ 1 の終了待ち・シナリオ 2 の
+# 前提崩れなど）、先に壊れていた検査の文言が出力に 1 行も残らない。throw 経路はスクリプトの scope
+# まで処理されずに上がってくるので、ここで 1 か所に受ける。`break` で元の例外をそのまま送り出す。
+#
+# 証拠は、シナリオ 1 を終えた後の throw でだけ `$errPath` について出す。シナリオ 1 の中の throw では、
+# シナリオ 1 の catch が同じ証拠を既に出している（2 経路の証拠を `Show-FailureEvidence` へ寄せた
+# 形は変えない）。
+#
+# **trap は置いた位置によらず scope 全体に効く。** `$failures` を作る前の throw（実行ファイルの不在
+# など）でも走るので、変数の有無を確かめてから読む（StrictMode の下で未定義を読むと、trap 自身の
+# 例外が元の例外を覆い隠す）。
+trap {
+  $pending = Get-Variable -Name failures -ValueOnly -ErrorAction Ignore
+  if ($null -ne $pending -and $pending.Count -gt 0) {
+    Write-Host ""
+    Write-Host "egui smoke failed（throw の前に積まれていた不合格）:" -ForegroundColor Red
+    foreach ($f in $pending) {
+      Write-Host " - $f" -ForegroundColor Red
+    }
+    if (Get-Variable -Name scenario1Finished -ValueOnly -ErrorAction Ignore) {
+      Show-FailureEvidence -Path $errPath -Proc $null -Context "検査項目の不合格（throw の前・シナリオ 1）" -LaunchedAt $launchedAt
+    }
+  }
+  break
+}
+
 try {
   # --- hotkey を注入して show を観測する ---
   # 起動完了（hotkey 登録含む）待ち。既定は hidden 起動（show_on_startup=false）。
@@ -739,6 +768,7 @@ try {
     Stop-Process -Id $proc.Id -Force
   }
 }
+$scenario1Finished = $true
 
 # **シナリオ 2 の起動前に、シナリオ 1 のプロセスの終了を待つ**（#755/#801 是正 B）。
 # `Stop-Process -Force` は終了を待たない。`tauri_plugin_single_instance` が登録されているため、

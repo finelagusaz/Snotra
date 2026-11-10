@@ -6,7 +6,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 各ファイルの責務は `//!`（module doc）が正本。本節はファイルの索引である（#562）。
 
-- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録
+- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録。業務ロジックを増やさない
 - `state.rs` — Tauri managed state `AppState`
 - `icon.rs` — アイコンのオンデマンド抽出とキャッシュ永続化
 - `indexing.rs` — バックグラウンドインデックス構築
@@ -44,6 +44,13 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
     - `launcher_controller/frame_stages.rs` — フレーム毎の消費と回収
     - `launcher_controller/updater_toast.rs` — 更新 toast のボタン処置と install の spawn
     - `launcher_controller/activation/tests.rs` — `launcher_controller/` 直下の子を読むソーステキスト検査
+
+## 状態の二軸導出（`search_state.rs`）
+
+モードは `src-tauri/src/egui_shell/search_state.rs` の `ViewKind`（軸1: ビュースタック頂点）と `QueryIntent`（軸2: 入力の意味）の二軸で導く。原則は `docs/development-principles.md`「状態を散在フラグで表さない（単一の導出源に集約する）」にある。
+
+- **オーバーレイ状態を軸に混ぜない。** 相互排他なモードは discriminated kind にし、どのモードにも重なりうる状態は独立フラグのまま分けておく
+- **仕様との一対一対応を保つ。** 仕様側に優先順位・状態遷移が記されているなら、実装の導出源がそれと対応するようにする（`SPEC.md` §8.6 状態図・§18.5 優先度 ↔ `view_kind()` の射影順）。整合検証は `/state-check`
 
 ## 処置を返す純粋核の強制（#934）
 

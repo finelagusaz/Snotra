@@ -1,6 +1,6 @@
 //! egui メインウィンドウの main ウィンドウ 1 フレーム（入力の読みと描画・OS ウィンドウへの適用）。
 //! 検索セッションの状態と遷移は `launcher_controller`（`LauncherController`。責務詳細は
-//! そちらの `//!`）が持つ（#666 段 3。依存は一方向——`launcher_controller` はこの型を
+//! そちらの `//!`）が持つ（#666。依存は一方向——`launcher_controller` はこの型を
 //! 見ない）。
 //!
 //! **入力変換は pre/post の 2 段である**（`read_pre_widget_input` / `read_post_widget_input`）。
@@ -9,32 +9,32 @@
 //! **反映境界は 5 つ（`ui.visuals_mut()` / `ctx.set_visuals` / `ctx.set_fonts` /
 //! `frame.set_clear_color` / `window.set_background_color`）あり、1 つの名前に畳んでいない**
 //! ——このうち本ファイルが直接呼ぶのは `ui.visuals_mut()` と `frame.set_clear_color` の 2 つ。
-//! **前者の呼び出し点は `search_input_ui` の入口 1 か所である**（#949 で `update()` から移設。
+//! **前者の呼び出し点は `search_input_ui` の入口 1 か所である**（#949。
 //! 順序不変条件と、それを縛る検査はその関数の doc が正本）。
 //! `window.set_background_color` は**リサイズ時に間接呼び出し**である
 //! （`window_coordinator::apply_native_background` 経由）。フォント登録は
 //! `font_stack::configure_japanese_font` の**呼び出し点** 2 箇所（`setup` と `update` の
 //! font_family 差分の分岐）として持つ。**`ctx.set_fonts` 自体の呼び出しは `font_stack.rs` に
-//! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。**`ctx.set_visuals` は
-//! `src-tauri/src/` の全域 grep で 0 件である**（#751 で撤去・現在の pass に届かないため。
-//! #900 以降は `src-tauri/clippy.toml` の `disallowed-methods` が機構で禁じる）。
+//! あり本ファイルには無い**（#666）。**`ctx.set_visuals` は
+//! `src-tauri/src/` の全域 grep で 0 件である**（現在の pass に届かないため・#751。
+//! `src-tauri/clippy.toml` の `disallowed-methods` が機構で禁じる・#900）。
 //!
 //! **この crate では `panel_fill` / `window_fill` を書かない**——main ウィンドウには読む egui コンテナ
-//! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、誰も読まない書き込みだった
-//! （spec 決定 2 で撤去）。**揃えるために書き足さないこと**——ただし
+//! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、書いても誰も読まない
+//! （#802）。**揃えるために書き足さないこと**——ただし
 //! **`snotra-settings` には当てはまらない**（あちらは `CentralPanel` を使うので実消費者が在り、
 //! `ctx.set_visuals` こそが正しい API である。`src-tauri/clippy.toml` の禁止が crate スコープに
 //! 閉じているのも同じ理由）。
 //!
 //! **style を経由する 3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）と
-//! 背景色は、いまはどちらも同じフレームに届く**（#751 で揃えた・経路は別のまま）。背景色は
-//! `frame.set_clear_color` が `run_ui` → `paint` の順序に乗るため（spec 決定 1）、3 値は
+//! 背景色は、どちらも同じフレームに届く**（#751・経路は別）。背景色は
+//! `frame.set_clear_color` が `run_ui` → `paint` の順序に乗るため（#802）、3 値は
 //! `ui.visuals_mut()` が root `Ui` の style を copy-on-write するためである。**`ctx.set_visuals`
 //! へ戻すとこの対称が壊れる**——root `Ui` は pass 冒頭で `ctx.global_style()` を `Arc` snapshot
 //! するので、そこへの書き込みは次の pass からしか効かない。
 //!
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
-//! `//!`・#666 段 3 タスク 1）。
+//! `//!`・#666）。
 
 use std::time::Instant;
 
@@ -90,35 +90,35 @@ enum HintPlan<'a> {
 
 pub(crate) struct SearchWindowView {
     /// 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者
-    /// （#666 段 3）。**依存は一方向である**——`launcher_controller` からこの型は見えない。
+    /// （#666）。**依存は一方向である**——`launcher_controller` からこの型は見えない。
     /// `AppHandle` もこちらが単独所有し、view は毎フレーム冒頭で 1 回 clone して使う。
     controller: LauncherController,
-    /// SU6 spec 決定 2: 適用済み font_family。config 値と毎フレーム比較し差分で再ロード。
+    /// 適用済み font_family（#532）。config 値と毎フレーム比較し差分で再ロード。
     /// **解決の成否に依らず config 値へ無条件更新する**——未解決名（typo・未インストール）で
-    /// 毎フレーム load_system_fonts（数十 ms）が走る perf cliff を避ける（並行性レビュー）。
+    /// 毎フレーム load_system_fonts（数十 ms）が走る perf cliff を避ける。
     applied_font_family: String,
     /// 直近に適用した下地の色。**`ResultsWindow::last_background` の main 版**（理由はそちらの doc）。
     ///
-    /// **撤去した `applied_background_hex` とは別物である**——あちらは「config の hex と比較して
-    /// 変化を検出する」エッジ検出で、hidden 中の変化に居合わせられず取りこぼした。これは
+    /// **「config の hex と比較して変化を検出する」エッジ検出にしない**——それは hidden 中の
+    /// 変化に居合わせられず取りこぼす（#802）。これは
     /// 「実際に Win32 へ撃った色」の memo であり、いつ比較しても差分が正しく出る。
     ///
     /// **リサイズ経路だけが持つ**: show 経路（`show_egui_main`）は状態を持たない関数で、頻度も
     /// ホットキーのトグル程度ゆえ無条件で撃つ。打鍵ごとに走るのはこちらだけである。
     applied_background: Option<egui::Color32>,
-    /// SU6 spec 決定 2: 直近 set_size の幅。main（本 view）が両ウィンドウ（main・results）の唯一の
-    /// size writer に一意化されている（幅は config live-read・#646 PR2 決定 6）。
+    /// 直近 set_size の幅（#532）。main（本 view）が両ウィンドウ（main・results）の唯一の
+    /// size writer に一意化されている（幅は config live-read・#646）。
     last_set_width: f64,
     last_set_height: f64,
     /// 起動直後の数フレームだけ「入力欄が打鍵を受け取れる状態か」を残すための残数
     /// （#872/#936）。**打ち切りを持つのは費用のためではなく意味のため**——知りたいのは
     /// 最初のフレームであって、定常状態ではない。
     focus_state_traces_left: u8,
-    // results ウィンドウのサイズデルタガードは `ResultsWindow` が持つ（#749 で移設）。**`last_set_*`
-    // （main 用）を流用してはならない**という当時の不変条件（Important 1）は、memo が別の型に
-    // 分かれたことで構造的に保たれる——同一フレーム内で main のブロックが先に
+    // results ウィンドウのサイズデルタガードは `ResultsWindow` が持つ（#749）。**`last_set_*`
+    // （main 用）を流用してはならない**（#646）——同一フレーム内で main のブロックが先に
     // `last_set_width` を更新するため、共有すると results が幅の live-reload に追従しなくなる。
-    /// フレーム所要と間隔の計測コード（#1004 PR 1）。`SNOTRA_TRACE` 無効時も進めてよい（`Instant` 差だけ）。
+    // memo が別の型にあるので、この不変条件は構造で保たれる。
+    /// フレーム所要と間隔の計測コード（#1004）。`SNOTRA_TRACE` 無効時も進めてよい（`Instant` 差だけ）。
     frame_timer: crate::egui_shell::FrameTimer,
 }
 
@@ -135,12 +135,12 @@ impl SearchWindowView {
         }
     }
 
-    /// ウィンドウ論理幅は config live-read（SU6 spec 決定 2）。**main（本 view）が両ウィンドウ（main・
-    /// results）の唯一の size writer に一意化されている**（#646 PR2 決定 6: results への幅適用は
+    /// ウィンドウ論理幅は config live-read（#532）。**main（本 view）が両ウィンドウ（main・
+    /// results）の唯一の size writer に一意化されている**（#646: results への幅適用は
     /// `drive_results_window` 経由で main が担い、results 自身は書かない）。
-    /// 旧実装の inner_size() 読みは「幅を維持」だったが、config_watcher（notify スレッド）の幅
-    /// set_size と 2 次元 read-modify-write で潰し合う race の片翼だった——config を正本にすれば
-    /// cross-thread writer 自体が消える（初版 spec の watcher flag 分岐案は却下・並行性レビュー）。
+    /// inner_size() を読んで「幅を維持」する形にしない——別スレッドの幅 set_size と
+    /// 2 次元 read-modify-write で潰し合う race の片翼になる。config を正本にすれば
+    /// cross-thread writer 自体が要らない。
     /// **その cross-thread writer は現在いない**——`config_watcher` は幅を適用せず、
     /// config-applied wake で本 view に読み直させるだけである（`config_watcher.rs` の当該コメント）。
     fn window_width(&self) -> f64 {
@@ -245,9 +245,9 @@ pub(crate) struct SearchInputParams {
 ///
 /// **この関数の内容は 4 つの順序そのものである。** テーマ 3 値の適用（#751/#949）・キャレットの
 /// 末尾同期（#840）・focus の要求（#872/#936）は、いずれも後ろへ動かすと同じフレームに効かない
-///（前者は子 `Ui` の生成より、後 2 者は `TextEdit` の構築より前でなければならない）。#938 が
-/// 入れた単体検査は egui の意味論だけを縛り、`update()` の並びが後ろへ戻っても通る受容残余を
-/// 持っていた——**この関数を丸ごと走らせる検査でその残余が閉じる。**
+///（前者は子 `Ui` の生成より、後 2 者は `TextEdit` の構築より前でなければならない）。egui の
+/// 意味論だけを縛る単体検査（#938）は、`update()` の並びが後ろへ戻っても通る受容残余を
+/// 持つ——**この関数を丸ごと走らせる検査がその残余を閉じる。**
 ///
 /// **どの順序をどの検査が縛るかは分かれている**（ここが本 doc の正本）:
 /// - テーマ 3 値 → `search_input_ui_applies_theme_values_to_child_ui_in_the_first_pass`
@@ -261,13 +261,12 @@ pub(crate) struct SearchInputParams {
 /// はそこで `ctx.global_style()` を `Arc<Style>` として掴む（`ui.rs:108-136`）。ゆえに
 /// `ctx.set_visuals` は**現在の pass に届かない**——色だけを変えた config 適用フレームは
 /// 「次のフレームが来る保証の無い状況」（設定 UI で色を編集中）と一致するため、入力欄だけが
-/// 旧色で取り残された。`ui.visuals_mut()` は copy-on-write でこの `Ui` と**以後に作られる子 Ui**
+/// 前の色で取り残される。`ui.visuals_mut()` は copy-on-write でこの `Ui` と**以後に作られる子 Ui**
 ///（`ui.rs:236` の `Arc::clone`）に効くので、同じフレームに届く。`Context` 経由の書き込みは
 /// `src-tauri/clippy.toml` の `disallowed-methods` が禁じる（#900）。
 ///
-/// **この位置は `update()` にあった**（#751）——規範だけで守られ、破っても検知されなかった。
-/// #949 で 3 値の唯一の消費者（下の `TextEdit`）を描くこの関数へ吸収し、位置を関数の入口に
-/// 固定した。**検査が守るのは「この関数の中」だけである**——`update()` 側でこの関数の呼び出し
+/// **適用位置は、3 値の唯一の消費者（下の `TextEdit`）を描くこの関数の入口に固定する**（#949）
+/// ——`update()` の中に置くと規範だけで守られ、破っても検知されない（#751）。**検査が守るのは「この関数の中」だけである**——`update()` 側でこの関数の呼び出し
 /// より前に visuals を読むウィジェットを足す退行は、検査から**原理的に見えない**（受容する残余・
 /// 却下した代替案とあわせて `ADR-visuals-order-detector-at-choke-point`）。
 ///
@@ -288,12 +287,11 @@ pub(crate) fn search_input_ui(
     // **子 `Ui` を作る前に適用する**（上の doc の順序）。`Frame::show` より後ろへ動かすと、
     // 子は生成時に親の style を `Arc::clone` 済みで、この書き込みは届かない（実測）。
     //
-    // **この書き込みは呼び出し元の `ui` に残る**（`&mut` ゆえ関数を出ても戻らない）。移設前の適用は
-    // この呼び出しより前（`update()` 前半・`frame.set_clear_color` の直後）に在ったので、
-    // **呼び出しより後ろの範囲は変わっていない**——**前の区間は失った**（上の doc と
+    // **この書き込みは呼び出し元の `ui` に残る**（`&mut` ゆえ関数を出ても戻らない）。
+    // **呼び出しより後ろは 3 値が適用済み**で、**前の区間は未適用**である（上の doc と
     // `ADR-visuals-order-detector-at-choke-point`）。`search_input_ui` より後の status 行・toast は
-    // raw painter へ色を明示渡しするため 3 値を読まない。`ui.scope()` で閉じないのは、その
-    // **後方の**同値性を保つためである。
+    // raw painter へ色を明示渡しするため 3 値を読まない。`ui.scope()` で閉じないのは、
+    // **呼び出しより後ろ**を適用済みのまま保つためである（#949）。
     let visuals = ui.visuals_mut();
     visuals.extreme_bg_color = input_visuals.input_bg;
     visuals.selection.bg_fill = input_visuals.selection;
@@ -333,17 +331,17 @@ pub(crate) fn search_input_ui(
             // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
             // 構築の**後**に要求すると、そのフレームに載っていた文字はフォーカスの無い widget の
             // 横で検出されずに捨てられる。**プロセス起動後の最初のフレームがまさにその形
-            // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
+            // である**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
             // `Memory` に残るので初回だけ）。ウィンドウは可視・前面・focus 済みで「打てるはず」に
-            // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
-            // ——これが #872 の間欠失敗の正体である。
+            // 見えるのに、打った文字が消える（#872 の間欠失敗。消える区間はローカルで 50ms・
+            // CI runner で 1.4〜19 秒と実測）。
             //
             // **直前の `move_text_cursor_to_end`（#840）が構築前に置かれているのと同じ理由**
             // であり、同一フレームの文字イベントに効かせるには構築前でなければならない。
             //
             // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に
             // 足す）にすると、reset-on-show 直後は `NeverFocused` なのにウィンドウは focus を持ちうる
-            // ため、show 直後に打鍵できなくなる（SU2 が入れた当の挙動が消える）。条件は
+            // ため、show 直後に打鍵できなくなる（#532 が入れた当の挙動が消える）。条件は
             // `interactive` と同じ `input_editable` を読む（同変数の doc）。
             if params.window_focused
                 && params.input_editable
@@ -358,13 +356,13 @@ pub(crate) fn search_input_ui(
                     .id(params.input_id)
                     // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
                     // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
-                    // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
-                    // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
+                    // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は通す・
+                    // #532。↑↓は空リストゆえ自然 no-op）。
                     .interactive(params.input_editable)
                     // **文字を欄の縦中央へ置く。** egui の `TextEdit` は `Align2::LEFT_TOP` を
                     // 既定に持ち、`add_sized` が欄を `field_height` へ引き伸ばしても galley は
                     // 上端に留まる——余りが全部下へ落ち、既定 config で上 2px / 下 10px の偏りに
-                    // なっていた（`Metrics::bar_inset` の doc が宣言する「文字の上下に 7」が
+                    // なる（実測。`Metrics::bar_inset` の doc が宣言する「文字の上下に 7」が
                     // そこで破れる）。**hint・キャレット・IME 帯もこの 1 行で一緒に動く**
                     //（いずれも galley の位置を起点に描かれるため）——理由と実測は
                     // `input_text_sits_vertically_centered_for_both_body_and_hint`。
@@ -378,7 +376,7 @@ pub(crate) fn search_input_ui(
                     // 中間濃度も生まれない——0.5px ずらす実験は**向きが反転しただけ**だった（実測）。
                     // 消すには 0.25px ずらすか欄高を font 連動で ±1 する必要があり、どちらも
                     // 幅いっぱいの枠線を半端な位置へ動かす。**細い線の端 1px より枠線 1px の方が
-                    // 目立つ**ため採らない。修正前の偏りは 8px だった。
+                    // 目立つ**ため採らない。
                     .align(egui::Align2::LEFT_CENTER)
                     .margin(SEARCH_INPUT_MARGIN)
                     .font(params.font.clone())
@@ -456,7 +454,7 @@ fn read_pre_widget_input(ctx: &egui::Context) -> PreWidgetInput {
 
 /// pre-widget 入力の読み取り値（段 13）。`nav_down`/`nav_up`/`right`/`left` は
 /// `on_nav_keys` の処置（`move_selection` / folder 展開）へそのまま渡す——**処置は
-/// 1 つもここへ移していない**（#666 段 3）。
+/// ここに持たない**（#666）。
 struct PreWidgetInput {
     focused: bool,
     escape: bool,
@@ -469,7 +467,7 @@ struct PreWidgetInput {
 /// post-widget 入力（TextEdit 構築後・段 22 の `changed()` 処理より後で読む値）。Enter/Shift
 /// の判定は **`response.changed()` の後**でなければならない——先に読むと同一フレームの
 /// 入力確定（貼り付け・IME 確定）と Enter が同時に入ったとき、旧 state の interp/選択で
-/// 起動してしまう（codex 発見 4・spec M3 実装確定）。`read_pre_widget_input` とは逆に
+/// 起動してしまう（#532）。`read_pre_widget_input` とは逆に
 /// TextEdit の描画結果に依存するため、1 段にまとめられない。
 fn read_post_widget_input(ctx: &egui::Context) -> PostWidgetInput {
     let (enter, shift) = ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.modifiers.shift));
@@ -490,7 +488,7 @@ struct PostWidgetInput {
 /// 渡す。main ウィンドウはまさにその形（背景 = `Sense::drag()` の `max_rect`・入力欄 =
 /// `Sense::click_and_drag()`）ゆえ、バー帯の余白 `Metrics::bar_inset`（既定 7.0）のうち
 /// **内側 5px が入力欄に食われ**、入力欄以外の全域をドラッグして移動可能という
-/// `SPEC.md`「8.2 ウィンドウ位置」の定めが、外側 2px まで痩せていた（実測: 余白 7px のうち
+/// `SPEC.md`「8.2 ウィンドウ位置」の定めが、既定のままでは外側 2px まで痩せる（実測: 余白 7px のうち
 /// 掴めるのは 2px、残りは I ビーム + クリックで入力欄が focus）。
 ///
 /// **書き込み先は global style でなければならない。** ヒットテストが読むのは `Context` の
@@ -526,7 +524,7 @@ fn apply_exact_hit_test_style(context: &egui::Context) {
 
 impl EguiView for SearchWindowView {
     fn setup(&mut self, context: &egui::Context) {
-        // `AppHandle` は controller が単独所有する（不変条件 13）。ここで 1 回 clone して
+        // `AppHandle` は controller が単独所有する（#666）。ここで 1 回 clone して
         // ローカルへ置く——`update()` 冒頭と同じ理由（`tauri::State<'_, T>` の借用元問題）。
         let app = self.controller.app().clone();
         // 当たり判定を描画矩形に一致させる（理由と適用範囲は関数 doc）。**`update()` へ移してはならない**
@@ -535,24 +533,24 @@ impl EguiView for SearchWindowView {
         let font_family = super::font_stack::font_family_from_config(&app);
         super::font_stack::configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
-        // 外部 wake 用の ctx 登録はここに無い（#671 PR D）——wake handle は `attach` が
+        // 外部 wake 用の ctx 登録はここに無い（#671）——wake handle は `attach` が
         // 返し、`create()` から `EguiShellState` へ直接渡る。**この setup が
-        // `EguiShellState` を読まなくなったことが、その manage を `create()` の後へ
-        // 移せる根拠である**（spec 決定 8）。
+        // `EguiShellState` を読まないことが、その manage を `create()` の後に
+        // 置ける根拠である**。
     }
 
     fn update(&mut self, ui: &mut egui::Ui, frame: &mut RuntimeFrame) {
-        // managed state を引く `AppHandle` は controller が単独所有する（不変条件 13）。
+        // managed state を引く `AppHandle` は controller が単独所有する（#666）。
         // **ここで 1 回だけ clone してローカルに置き、以降の `try_state` はすべてこれから引く**
         // ——`tauri::State<'_, T>` は借用元（= `self.controller`、ひいては `self`）に紐付くため、
         // `self.controller.app()` の戻り値を保持したまま `&mut` の遷移メソッドを呼ぶと E0502 に
-        // なる。先例は `results_view.rs` の同型のローカル（Task 5 で実際に踏んだ）。
+        // なる。先例は `results_view.rs` の同型のローカル。
         let app = self.controller.app().clone();
 
         let frame_started = Instant::now();
         let frame_interval = self.frame_timer.begin(frame_started);
 
-        // #646 PR2 決定 10: 入力欄以外の全域を掴んでドラッグ移動。背景 interact を先に
+        // 入力欄以外の全域を掴んでドラッグ移動（#646）。背景 interact を先に
         // 登録し、後続ウィジェット(TextEdit・toast ボタン)はヒットテストで勝つ(egui は
         // 後着が上位)。start_dragging は runtime の frame コマンド経由(配管済み)。
         let drag_resp = ui.interact(
@@ -565,19 +563,19 @@ impl EguiView for SearchWindowView {
         }
 
         // テーマ値（色・font・Metrics・show_icons）は 1 フレーム 1 読みで読み切る
-        //(#673 spec 決定 4)。live-read 契約はフレーム間の話で不変——**`self.` へ保持しないこと**。
+        //(#673)。live-read 契約はフレーム間の話で不変——**`self.` へ保持しないこと**。
         // 導出は純粋核 visual::visual_snapshot、行高の正本は layout::Metrics::from_config。
         // **ここで読むのは値だけである**——**適用**は別の位置に散る: 3 値は `search_input_ui` の
-        // 入口（#949 で `update()` から移設）、font は `configure_japanese_font`、背景色は
+        // 入口（#949）、font は `configure_japanese_font`、背景色は
         // `frame.set_clear_color`。ネイティブ背景ブラシだけは**フレーム冒頭に無い**——show 直前
         //（`update()` の外）と、サイズを変えたときの `applied_background` 分岐（`update()` の末尾・
-        // spec 決定 3）の 2 か所である。理由の正本は下の「ここに無い」の段落。
+        // #802）の 2 か所である。理由の正本は下の「ここに無い」の段落。
         let visual = crate::egui_shell::read_visual(&app, &self.applied_font_family);
         let metrics = &visual.metrics;
 
         // show 直後の resetForShow の消費（検索セッション側のクリアは controller が行う）。
         // **真偽をローカルへ残す**——このフレームが「show 直後の最初のフレーム」であることは、
-        // 不変条件検出器（レビュー是正 4・下の height 計算点）が突き合わせの発火条件に使う。
+        // 不変条件検出器（#904・下の height 計算点）が突き合わせの発火条件に使う。
         let was_reset_frame = self.controller.consume_reset_pending();
         if was_reset_frame {
             // **show ごとに観測の予算を張り直す**（#872/#936）。egui の widget focus は
@@ -586,17 +584,17 @@ impl EguiView for SearchWindowView {
             // 脆弱なウィンドウはプロセス起動時に限られ、後者なら Alt+Q のたびに開く。
             // ここが「show 直後の最初のフレーム」の唯一の判定点である。
             self.focus_state_traces_left = 5;
-            // results ウィンドウの **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6・memo 自体は
-            // #749 で `ResultsWindow` へ移設）。これは冗長な set_size を避ける性能上のガードで
-            // あり、可視性のような correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。
+            // results ウィンドウの **サイズ**デルタガードを初期値へ戻す（#646。memo は
+            // `ResultsWindow` が持つ・#749）。これは冗長な set_size を避ける性能上のガードで
+            // あり、可視性のような correctness のフラグではない（意図的な分割・#671）。
             // 0 へ戻すことで再 show 後に必ず 1 度は現行 metrics で set_size させる。
             // 可視フラグはここに無い——`ResultsWindow` が所有し、hide_egui_main と
-            // drive_results_window の 2 経路が同じ型を通るため後始末が要らない（PR A′）。
+            // drive_results_window の 2 経路が同じ型を通るため後始末が要らない（#671）。
             //
             // **呼び出し点をここに保つ**（#749）: この reset は同一フレームの
             // `drive_results_window`（update 末尾）より**前**でなければならない。show 経路
-            // （`show_egui_main`）は証人型（`EventLoopProof`）の導入で同じイベントループ
-            // スレッドに閉じたが、**フレームの中ではない**——そちらへ移すと「同一フレーム」
+            // （`show_egui_main`）は証人型（`EventLoopProof`）で同じイベントループ
+            // スレッドに閉じているが、**フレームの中ではない**——そちらへ移すと「同一フレーム」
             // というこの前提が消える。
             //
             // **この位置を要求する理由は #749 だけではない**（#745）: 同じ
@@ -628,22 +626,22 @@ impl EguiView for SearchWindowView {
         // どちらも reset_pending 消費の後でなければならない（順序の理由は controller 側の本文）。
         self.controller.consume_external_pending(&ctx);
 
-        // 背景色は **style を経由しない**（spec 決定 1）。`render()` が `run_ui` → `paint` の順に
+        // 背景色は **style を経由しない**（#802）。`render()` が `run_ui` → `paint` の順に
         // 進むため、ここで決めた色は同じフレームの `buffer.fill` に届く。**style を経由する 3 値も
-        // #751 以降は同じフレームに届く**（`ui.visuals_mut()` へ移したため）——経路は別のままだが、
-        // 到達フレームの非対称はもう無い。
+        // 同じフレームに届く**（`ui.visuals_mut()` で適用するため・#751）——経路は別だが、
+        // 到達フレームは揃っている。
         frame.set_clear_color(visual.background);
 
-        // §11: 入力欄/選択色は config テーマから取る（ハードコード撤廃）。**適用はここに無い**
+        // §11: 入力欄/選択色は config テーマから取る（色リテラルを書かない）。**適用はここに無い**
         // ——3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）は
-        // `search_input_ui` の入口が `ui.visuals_mut()` で適用する（#949 で `update()` から移設。
+        // `search_input_ui` の入口が `ui.visuals_mut()` で適用する（#949。
         // 機序と順序不変条件の正本はその doc）。**唯一の消費者はその関数が描く `TextEdit` である**
         // ——この view の egui ウィジェットは他に無く、status 行と toast は raw painter へ色を
         // 明示渡しする。results ウィンドウは別 Context ゆえ影響外。
-        // font_family のエッジ検出も同一の読みで取る（SU6 spec 決定 2・読み 1 回/フレーム）。
+        // font_family のエッジ検出も同一の読みで取る（#532・読み 1 回/フレーム）。
         // 値はフレーム冒頭の `visual` から取る（#673）。
 
-        // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
+        // font_family hot-reload（#532・WebView2 の --font-family CSS 変数即時反映 parity）。
         // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
         if let Some(name) = &visual.font_family_changed {
             self.applied_font_family = name.clone();
@@ -651,12 +649,12 @@ impl EguiView for SearchWindowView {
             ctx.request_repaint(); // set_fonts は次フレーム適用——欠くと新フォントが 1 イベント遅れる
         }
 
-        // ネイティブ背景ブラシの追従はここに無い（spec 決定 3 で撤去）——エッジ検出は変化の
+        // ネイティブ背景ブラシの追従はここに無い（#802）——エッジ検出は変化の
         // 瞬間に居合わせることを要求するが、hidden 中は update() が走らないため居合わせられない。
-        // 適用点は show 直前（`show_egui_main` / `ResultsWindow::show`）とサイズ変更時へ移した。
+        // 適用点は show 直前（`show_egui_main` / `ResultsWindow::show`）とサイズ変更時である。
 
         // 非同期の到着物の回収（起動結果 → 通知期限 → folder 列挙）。**reset_pending 消費の後**
-        // に置くこと（spec C 節 不変条件 2）。3 者が同一フレームで走ることも不変条件である。
+        // に置くこと（#532）。3 者が同一フレームで走ることも不変条件である。
         self.controller.poll_async(&ctx);
 
         let pre = read_pre_widget_input(&ctx);
@@ -682,11 +680,10 @@ impl EguiView for SearchWindowView {
 
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
         //
-        // **hint は indexing で差し替えない**（#700）。かつては「構築中かつ空クエリなら hint を
-        // 案内文へ差し替える」形で、非空クエリのときだけ別の描画面（重ね描き overlay）が担って
-        // いた。#700 発見 C で overlay を status 行へ移した結果、この 2 面構成が「1 文字目で案内が
-        // 入力欄から下の行へ飛ぶ」動きとして可視化された（実機で観測）。案内の描画面は status 行に
-        // 一本化し、hint は本来のプレースホルダへ戻す——**同じ情報に描画面を 2 つ持たない**。
+        // **hint は indexing で差し替えない**（#700）。「構築中かつ空クエリなら hint を
+        // 案内文へ差し替える」形のように空/非空で描画面を分けると、「1 文字目で
+        // 案内が入力欄から下の行へ飛ぶ」動きになる（実機で観測）。案内の描画面は status 行に
+        // 一本化し、hint は本来のプレースホルダに保つ——**同じ情報に描画面を 2 つ持たない**。
         // **ここから下（TextEdit 構築まで）の検索状態の読みを、この位置より前へ寄せてはならない**
         // （#836）。`update()` の冒頭からここまでには `&mut self.controller` を取る呼び出しが
         // 挟まっており、そのいくつかは `view_kind()` と folder の現在地を書き換える。前寄せすると
@@ -697,11 +694,11 @@ impl EguiView for SearchWindowView {
         // 手続きで行う**: 選んだ位置から TextEdit 構築までの間に `self.controller.` の
         // `&mut` メソッド呼び出しが 1 本も無いことを grep で列挙して確かめる（現在位置では空）。
         //
-        // **禁じているのは前寄せだけである**（#870）。hint の**書式化**は下の closure 内へ
-        // 移してあるが、それは読んだ値を後ろで使うだけで、読み取り点は動いていない
+        // **禁じているのは前寄せだけである**（#870）。hint の**書式化**は下の closure 内で
+        // 行うが、それは読んだ値を後ろで使うだけで、読み取り点はこの位置にある
         // ——遷移前のディレクトリを描く経路は生まれない。
         //
-        // **#870 以降、この不変条件のうち folder 現在地の分は借用が構造的に守る**——`HintPlan`
+        // **この不変条件のうち folder 現在地の分は借用が構造的に守る**（#870）——`HintPlan`
         // が `folder_current_dir()` の `&str` を closure まで持つため、間に
         // `&mut self.controller` を挟むとコンパイルが通らない（ライフタイムは enum の型に
         // 載るので、実行時にどの分岐を取るかに依らず領域が生きる）。**grep 検算がなお要るのは
@@ -709,12 +706,11 @@ impl EguiView for SearchWindowView {
         // 読みのほうである**——そちらは借用が残らないので、間に `&mut` を書けてしまう。
         let in_tool = self.controller.state().view_kind() == ViewKind::Tool;
         let in_folder = self.controller.state().view_kind() == ViewKind::Folder;
-        // 入力欄が編集可能か（§18.5 ツール選択中・spec 決定 3/4 の launching 中は無効）。
-        // **`interactive` と再フォーカスの両方がこの 1 つを読む**（#700 state-check 発見 B）。
-        // 以前は `interactive` が 2 項・再フォーカスが `in_tool` の 1 項で、launching 中は
-        // 「非対話ゆえ focus を持てない widget へ毎フレーム `request_focus()` を撃つ」状態だった。
+        // 入力欄が編集可能か（§18.5 ツール選択中・launching 中は無効・#532）。
+        // **`interactive` と再フォーカスの両方がこの 1 つを読む**（#700）。
         // 同じ「入力欄を無効化する条件」が 2 箇所で別々に書かれると、片方だけ足した条件が
-        // 黙って食い違う——束ねることで構造的に消す。
+        // 黙って食い違う（例: 非対話ゆえ focus を持てない widget へ毎フレーム `request_focus()` を
+        // 撃つ）——束ねることで構造的に消す。
         let input_editable = !in_tool && !self.controller.is_launching();
         let l = self.controller.lang();
         // **フォルダ展開中の現在地は「案内」ではなくプレースホルダである**（#836・SPEC §6.7）。
@@ -723,9 +719,9 @@ impl EguiView for SearchWindowView {
         // 「いま入力するとどこが絞り込まれるか」という**入力欄本来の説明**である。現在地の
         // 描画面はこの hint ただ 1 つで、status 行にも results ウィンドウにも出さない。
         //
-        // **`indexing_hint()` は名前に反して status 行の文言である**（#700 で移設された際に
-        // 関数名だけが残った）。`hint` で grep してここへ辿り着いた編集者が、現在地を
-        // `overlay_kind` のラダーへ配線しないこと——それは却下した代替案 B であり、排他ラダー
+        // **`indexing_hint()` は名前に反して status 行の文言である**（#700）。`hint` で grep して
+        // ここへ辿り着いた編集者が、現在地を `overlay_kind` のラダーへ配線しないこと——それは
+        // 却下した案（`ADR-folder-location-display-surface` 却下 1）であり、排他ラダー
         // ゆえ indexing 中に現在地が黙って消える（#700 が是正した失敗様態そのもの）。
         //
         // **ここで決めるのは「どれを出すか」だけである**（#870）。書式化と、フォルダ現在地の
@@ -760,7 +756,7 @@ impl EguiView for SearchWindowView {
         let mut buf = if in_tool {
             // §18.5: 対象の**ファイル名部分のみ**を表示——SolidJS inputValue は targetPath を
             // 区切りで split した末尾を返す（SearchWindow.tsx:255-267）。フルパスではない
-            //（plan-review scout-parity 指摘で是正）。
+            //（#532）。
             self.controller
                 .state()
                 .tool_frame()
@@ -777,22 +773,21 @@ impl EguiView for SearchWindowView {
         } else {
             self.controller.state().query().to_string()
         };
-        // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させる。
-        // #646 決定 2: バー高は `font_size + bar_padding`（Metrics）。
-        // SU6.5 決定 3 の 52px 据え置きは WebView2 parity 制約下の判断で、SU7 の WebView2 撤去
-        // により失効した。極端な font_size でバーからはみ出す挙動は変わらず残る。
+        // §11（#643）: 入力欄フォントを config `font_size` へ追従させる。
+        // バー高は `font_size + bar_padding`（Metrics・#646）。
+        // 極端な font_size でバーからはみ出す挙動は残る。
         //
         // **入力欄は 2 つの文字列を持ち、色の受け取り機構が別である**（#654）:
         // - 入力テキスト本体 → `.text_color()`。egui は `self.text_color` を最優先で見る
         //   （builder.rs `text_color.or_else(override_text_color).unwrap_or(widgets.inactive)`）。
-        //   **これを欠くと config を見ずに egui 既定 gray(180) へ落ちる**——#643 は hint だけを
-        //   直したため、既定設定のまま入力文字が結果行の表示名より暗い状態が残っていた
+        //   **これを欠くと config を見ずに egui 既定 gray(180) へ落ちる**——既定設定のまま
+        //   入力文字が結果行の表示名より暗くなる
         // - hint → **`Visuals::weak_text_color` だけが効く**。egui 0.35 の TextEdit は
         //   `hint_text.map_texts(|t| t.color(visuals.weak_text_color()))` で**無条件に上書き**し、
         //   egui 自身が "users won't be able to override it" と注記している。ゆえに
-        //   `RichText::color()` は届かない（#643 の指定は dead だった）。適用は
-        //   `search_input_ui` の入口（`ui.visuals_mut()`・#949 で `update()` から移設。
-        //   #751 以前は `ctx.set_visuals` で、同じフレームに届かなかった）
+        //   `RichText::color()` は届かない（#643）。適用は
+        //   `search_input_ui` の入口（`ui.visuals_mut()`・#949。
+        //   `ctx.set_visuals` では同じフレームに届かない・#751）
         //
         // **どちらも「色リテラルを書かない」だけでは守れない**（#654 で 2 様態とも実在した。
         // SPEC §11 は「指定したつもりで届かない経路」とだけ述べ、機序は本コメントを正本に
@@ -800,10 +795,10 @@ impl EguiView for SearchWindowView {
         let bar_theme = &visual.row;
         let bar_font = egui::FontId::proportional(bar_theme.name_size);
         // 入力欄はバー帯の内側に四辺一様の余白（`Metrics::bar_inset`）を残して置く
-        //（#646 PR2・実機目視で追加）。egui の既定配置では上と左が詰まり余りが下だけに
-        // 溜まっていた。Frame の inner_margin で四辺の枠を作り、中身の高さを
+        //（#646）。egui の既定配置では上と左が詰まり余りが下だけに
+        // 溜まる。Frame の inner_margin で四辺の枠を作り、中身の高さを
         // `bar_height - 2*inset` に固定することで帯をちょうど埋める（ウィンドウ高は bar_height
-        // ゆえ、下に取り残しも溢れも出ない）。余白部はドラッグ掴み領域になる（決定 10）。
+        // ゆえ、下に取り残しも溢れも出ない）。余白部はドラッグ掴み領域になる。
         let inset = metrics.bar_inset as f32;
         let field_height = (metrics.bar_height as f32 - 2.0 * inset).max(1.0);
         let input_id = ui.make_persistent_id("search_input");
@@ -820,11 +815,11 @@ impl EguiView for SearchWindowView {
             font: bar_font.clone(),
             text_color: bar_theme.name_color,
         };
-        // **テーマ 3 値の適用点はこの下——`search_input_ui` の入口である**（#949 で移設）。
+        // **テーマ 3 値の適用点はこの下——`search_input_ui` の入口である**（#949）。
         // **ここより前で新しいウィジェット・子 `Ui` を作るなら、visuals を読まないことを
         // 確かめるか、その `Ui` へ自分で visuals を渡すこと。** `update()` の冒頭からここまでは
-        // 3 値が未適用の区間であり、適用が `update()` の前半に在った #751 当時より**広い**。
-        // **この区間の退行を検出する自動検査は無い**——移設で入った検査は `search_input_ui` を
+        // 3 値が未適用の区間である。
+        // **この区間の退行を検出する自動検査は無い**——#949 の検査は `search_input_ui` を
         // 単独で駆動するので、ここには届かない。残るのは**カテゴリ D の非既定色目視**だけである
         //（受容する残余・`ADR-visuals-order-detector-at-choke-point`）。現時点でこの区間に visuals を読む描画は
         // 無い: `ui.interact` は `create_widget` を呼ぶが（`ui.rs:906` → `:920`）ヒットテストの
@@ -880,17 +875,17 @@ impl EguiView for SearchWindowView {
         if response.changed() {
             self.controller.on_input_changed(buf, in_folder, &ctx);
         }
-        // **かつてここに「ウィンドウに focus があるのに入力欄が持たないなら移す」があった**（#872/#936
-        // で TextEdit の構築前へ移設）。ここに置くと、そのフレームに載っていた文字は既に
-        // 捨てられた後であり、効くのは次のフレームからだった。**移設は挙動を 1 フレーム
-        // 早めるだけで、回復の速さは変わらない**——このフレームでフォーカスを失った場合（Escape 等）、
-        // 旧: このフレームの末尾で要求 → 次フレームの widget が持つ / 新: 次フレームの構築前に
-        // 要求 → 同じ widget が持つ、で一致する。**2 か所で要求しない**（#700 と同じ理由）。
+        // **「ウィンドウに focus があるのに入力欄が持たないなら移す」はここに置かない**
+        // （`search_input_ui` の中・TextEdit の構築前にある・#872/#936）。ここに置くと、そのフレームに
+        // 載っていた文字は既に捨てられた後であり、効くのは次のフレームからになる。構築前に置いても、
+        // このフレームでフォーカスを失った場合（Escape 等）の回復の速さは変わらない——次フレームの
+        // 構築前に要求し、そのフレームの widget が持つ（ここで末尾に要求した場合と同じフレーム）。
+        // **2 か所で要求しない**（#700 と同じ理由）。
         // **show ごとに最初の数フレームだけ、入力欄が打鍵を受け取れる状態だったかを残す**
         // （#872/#936）。**`response.has_focus()` は widget が走った時点の値**なので、
-        // 「そのフレームの文字イベントを受け取れたか」をそのまま言う——上の移設が効いていれば
-        // 最初のフレームから真であり、**この行は移設の回帰検出器になる**（偽に戻れば、
-        // 起動直後の打鍵が再び捨てられている）。
+        // 「そのフレームの文字イベントを受け取れたか」をそのまま言う——focus の要求が構築前に
+        // あれば最初のフレームから真であり、**この行はその位置の回帰検出器になる**（偽なら、
+        // 起動直後の打鍵が捨てられている）。
         //
         // **`input_editable` を併記する**——両者は同じ無反応を作るため、片方だけを見ると
         // 当たっていなくても説明が通ってしまう（実測でこちらは初回から真と判った）。
@@ -908,25 +903,24 @@ impl EguiView for SearchWindowView {
             );
         }
 
-        // status 行（#532 SU5 の一時 overlay・#700 で位置を変更）: 「起動中…」/ 失敗・結果不明通知/
-        // indexing 案内を**検索バーの直下に独立した行として**描く。かつてはこれを TextEdit の
-        // rect への重ね描きで賄っていた（#700 で撤回・下のブロック参照）。
+        // status 行（#532・#700）: 「起動中…」/ 失敗・結果不明通知/
+        // indexing 案内を**検索バーの直下に独立した行として**描く（TextEdit の rect へ重ね描き
+        // しない理由は下のブロック）。
         // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
         //
         // **クエリの空/非空では切り替えない**（#700）。「空クエリのときは hint が描く」という
-        // 2 面構成は撤回済みであり、`notify::overlay_kind` は空/非空を入力に取らない
+        // 2 面構成は取らず、`notify::overlay_kind` は空/非空を入力に取らない
         // （`indexing_overlay_does_not_depend_on_query_emptiness` が固定）。**`indexing_hint()` は
         // 名前に反してこの status 行の文言であって、TextEdit の hint_text へは一度も渡らない**
         // （上の hint 構築部を参照）。
         // 4 入力を 1 度だけ読み、`overlay_kind`（文言の導出）と `status_row_present`（行の
-        // 有無・下）の両方へ**同じローカル**を渡す（レビュー是正 2）。`indexing` はスレッドを
+        // 有無・下）の両方へ**同じローカル**を渡す（#904）。`indexing` はスレッドを
         // またぐ `AtomicBool` のため、独立に 2 回読むと index build スレッドの
         // `finish_index_build()` が 2 つの読みの間に割り込み、status 行を描いたフレームが
-        // バー高だけの `set_size` を撃つ（案内が切り取られる）——この diff の前は
-        // `has_status = overlay_text.is_some()` で一致が構造的に保証されていた。
+        // バー高だけの `set_size` を撃つ（案内が切り取られる）。
         //
-        // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（#1077 で
-        // 適用範囲が status 行の外まで広がった）。**配り先は数えない**——数えれば足すたびにこの行が
+        // **`indexing_raw` はこのフレームで `indexing` を読む唯一の点である**（適用範囲は
+        // status 行に限らない・#1077）。**配り先は数えない**——数えれば足すたびにこの行が
         // 古くなる。正本は `indexing_raw` の参照そのもの（`launcher_controller/activation/tests.rs` の
         // `activation_uses_frame_values_not_live_reads` が、起動側で読み直しが
         // 復活しないことを固定する）。**唯一でないものが 1 つある**: `run_search_with` の
@@ -964,16 +958,14 @@ impl EguiView for SearchWindowView {
             Some(crate::egui_shell::OverlayKind::Notice) => notice_now,
             None => None,
         };
-        // #700 発見 C: **入力欄に重ねず、バー直下の独立した行へ描く。** 以前は
-        // `response.rect` を不透明に塗り潰していたため、入力欄は編集可能なまま
-        // 「打った文字が見えない」状態になり、実際に「検索ワードを編集できない」と
-        // 報告された。launching 中は入力欄が非対話（`input_editable`）で整合していたが、
-        // indexing（数分に及びうる）と notice（数秒）は編集可能なまま覆われていた。
-        // 行の高さは toast と同じ `metrics.toast_height`（= bar_height・#646 決定 2）で、
+        // **入力欄に重ねず、バー直下の独立した行へ描く**（#700）。`response.rect` を不透明に
+        // 塗り潰すと、indexing（数分に及びうる）と notice（数秒）の間は入力欄が編集可能なまま
+        // 「打った文字が見えない」状態になる（「検索ワードを編集できない」と報告された）。
+        // 行の高さは toast と同じ `metrics.toast_height`（= bar_height・#646）で、
         // ウィンドウ高は `main_window_height` の `status_height` が積む。
         // **`overlay_text.is_some()` と同値である**（上で 1 度だけ読んだ同じ 4 入力を
         // 同じローカルとして `overlay_kind` / 本関数の両方へ通すため——読み直した入力では
-        // ない・レビュー是正 2）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**
+        // ない・#904）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**
         // からである（`window_coordinator::show_egui_main`）。共有の実体の正本は
         // `window_coordinator.rs` の `//!`（#755 / #801）。
         let has_status = crate::egui_shell::status_row_present(
@@ -989,8 +981,7 @@ impl EguiView for SearchWindowView {
                 egui::Sense::hover(),
             );
             // 色はフレーム冒頭の `visual` から（#673）。**ここは style を読まない**——config の値を
-            // painter へ直接渡すので、3 値の適用との前後関係に意味は無い（監査 #4。#751 で適用先が
-            // ctx から ui へ、#949 で `update()` から `search_input_ui` へ移った後も無関係のまま）。
+            // painter へ直接渡すので、3 値の適用との前後関係に意味は無い（#751・#949）。
             ui.painter().rect_filled(rect, 4.0, visual.input_bg);
             ui.painter().text(
                 egui::pos2(rect.left() + 8.0, rect.center().y),
@@ -1001,8 +992,8 @@ impl EguiView for SearchWindowView {
             );
         }
 
-        // updater toast（§20.3・#532 SU5）: 検索バー直下の toast_height（= bar_height・#646 決定 2）行・モード非依存
-        //（folder/tool/instant 中も表示・状態機械レビュー項 1）。
+        // updater toast（§20.3・#532）: 検索バー直下の toast_height（= bar_height・#646）行・モード非依存
+        //（folder/tool/instant 中も表示）。
         let toast_row = app
             .try_state::<crate::egui_shell::UpdaterUiState>()
             .and_then(|st| st.0.lock().unwrap().toast());
@@ -1029,15 +1020,13 @@ impl EguiView for SearchWindowView {
                     crate::egui_shell::ui_strings::update_failed(l, message)
                 }
             };
-            // メッセージとボタンは**同じ行の中央**に揃える（#700 実機指摘）。旧実装は
-            // メッセージを行の 25%・ボタンを 75% に置く 2 行構成（WebView2 UpdateToast の
-            // 縦積み parity）だったが、行高は toast_height（= bar_height・既定 43px）しか
-            // 無く、2 行ぶんの間隔が取れずに「左上のテキストと右下のボタン」という
-            // ちぐはぐな配置になっていた。
+            // メッセージとボタンは**同じ行の中央**に揃える（#700）。行高は
+            // toast_height（= bar_height・既定 43px）しか無く、2 行に積むと間隔が取れずに
+            // 「左上のテキストと右下のボタン」というちぐはぐな配置になる。
             //
             // **ボタンを先に描く**——右寄せの `cursor_x` がボタン群の左端を返すので、
-            // それをメッセージの clip 境界に使える。1 行に寄せたことで、行が別だった
-            // ときには起きなかった「長いメッセージがボタンへ潜り込む」衝突が生じうる
+            // それをメッセージの clip 境界に使える。1 行に置くので、
+            // 「長いメッセージがボタンへ潜り込む」衝突が生じうる
             // （ボタンは stroke だけで塗り潰さないため、下のテキストが透けて重なる）。
             let mut cursor_x = rect.right() - 8.0;
             let btn_y = rect.center().y;
@@ -1072,8 +1061,8 @@ impl EguiView for SearchWindowView {
             // ことを読者へ伝えるため——クリップは文字の途中でぶつ切りにし、切れたことを示さない。
             // `…` は epaint の既定（`TextWrapping` の `overflow_character`）が付ける。
             //
-            // **3 variant 共通の描画点である**: Available / Installing の溢れ表現も同時に
-            // 省略へ変わる（既定幅では両者 117px 以下で可用幅 532px に収まるため見た目は不変）。
+            // **3 variant 共通の描画点である**: Available / Installing の溢れも
+            // 省略で表す（既定幅では両者 117px 以下で可用幅 532px に収まる）。
             // 「Failed だけ省略」は分岐を足さないと書けず、その分岐に価値が無い。
             let text_x = rect.left() + 8.0;
             let avail = ((cursor_x + 8.0) - text_x).max(0.0);
@@ -1086,9 +1075,9 @@ impl EguiView for SearchWindowView {
                 },
             );
             job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
-            // `single_section` の既定は `break_on_newline: true` だが、置換前の
-            // `painter().text()` が使う `simple_singleline` は false。`max_rows: 1` と組むと、
-            // 改行を含む失敗理由が**幅と無関係に**そこで切れて `…` になる。挙動を保つため戻す。
+            // `single_section` の既定は `break_on_newline: true` だが、`max_rows: 1` と組むと、
+            // 改行を含む失敗理由が**幅と無関係に**そこで切れて `…` になる。ゆえに
+            // `painter().text()` が使う `simple_singleline` と同じ false にする。
             job.break_on_newline = false;
             let galley = ui.painter().layout_job(job);
             ui.painter().galley(
@@ -1107,7 +1096,7 @@ impl EguiView for SearchWindowView {
         // trailing debounce の poll と再 arm（armed の間は毎フレーム残余を要求し直す）。
         self.controller.poll_search_debounce(&ctx);
 
-        // Enter: 選択項目を起動/実行（Shift は §18.3 のツール選択入場・後置 dispatch は M3 のまま）。
+        // Enter: 選択項目を起動/実行（Shift は §18.3 のツール選択入場・後置 dispatch・#532）。
         // TextEdit の changed 処理より後で読む理由は `read_post_widget_input` の doc 参照。
         let post = read_post_widget_input(&ctx);
         if post.enter {
@@ -1118,15 +1107,15 @@ impl EguiView for SearchWindowView {
         }
 
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
-        // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
+        // （instant/folder/tool carve-out・#532）。データと選択は保持——クリアしない
         // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
-        // 案内は status 行が担い（#700 で一本化・空/非空で切り替えない）、show_results=false
-        // では results ウィンドウが hide される（main は bar(+toast)固定高で伸縮しない・#646 PR2 決定 6）。
-        // 連言③は**1 フレーム 1 回だけ**読む（#752 F2）。`indexing` は `AtomicBool` の live-read で
+        // 案内は status 行が担い（#700・空/非空で切り替えない）、show_results=false
+        // では results ウィンドウが hide される（main は bar(+toast)固定高で伸縮しない・#646）。
+        // 連言③は**1 フレーム 1 回だけ**読む（#752）。`indexing` は `AtomicBool` の live-read で
         // 同一フレーム内でも変わりうるため、pre/post で 2 回読むと連言③がフレーム内で食い違う。
         // ここで得た値を snapshot 用と `drive_results_window` の両方へ配る。
         //
-        // **`indexing` は上の `indexing_raw` を使う**（#1077 でここの読み直しを止めた）。同じ値が
+        // **`indexing` は上の `indexing_raw` を使い、ここで読み直さない**（#1077）。同じ値が
         // status 行・この表示ゲート・`on_enter` の起動判定とクリック逆流へ配られ、
         // 「画面には出ていないが Enter は起動する」の類が構築できなくなる。**凍結してよいのは
         // `indexing` だけである**——`view_kind` と `instant_rows_query` はここで読むのが正しい
@@ -1139,9 +1128,9 @@ impl EguiView for SearchWindowView {
             indexing_raw,
         );
         // snapshot publish 用は**クリック逆流の消費より前**の値である（#699: publish → 消費の順序）。
-        // 一方 `drive_results_window` は件数を消費**後**に読む——この非対称が #752 F2 の要点。
+        // 一方 `drive_results_window` は件数を消費**後**に読む——この非対称が #752 の要点。
         let show_results = !self.controller.state().results().is_empty() && !plain_hidden;
-        // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results ウィンドウ(ResultsView)が担う。
+        // 結果は snapshot として発行し、描画は results ウィンドウ(ResultsView)が担う（#646）。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
         // 行は所有者の `Arc` を共有して渡す（#1279）。
         if let Some(shared) = app.try_state::<crate::egui_shell::ResultsShared>() {
@@ -1154,9 +1143,8 @@ impl EguiView for SearchWindowView {
                 &hidden
             };
             let selected = self.controller.state().selected();
-            // 旧 view.rs の icon request ゲート `!self.search_debounce.is_armed()`（連打中は
-            // icon worker を積まない・perf 最適化）の後継。ResultsView は search_debounce を
-            // 持てないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix・controller 依頼）。
+            // icon request ゲート（連打中は icon worker を積まない・perf 最適化）の入力。
+            // ResultsView は search_debounce を持てないため、live 値を snapshot 経由で運ぶ（#646）。
             let input_idle = !self.controller.is_search_armed();
             if shared.publish(
                 rows,
@@ -1166,7 +1154,7 @@ impl EguiView for SearchWindowView {
             ) {
                 crate::egui_shell::wake_results(&app);
             }
-            // クリック逆流の消費(決定 5): 起動ロジックは main の一箇所に保つ。
+            // クリック逆流の消費（#646）: 起動ロジックは main の一箇所に保つ。
             // **この消費が snapshot publish の後にある順序は不変条件である**（#699）。
             // 照合に使う世代は、そのフレームで行を差し替えうる全ハンドラ——Escape・
             // index 世代検知・folder drain・launch 完了——より**後**の値でなければ、
@@ -1193,15 +1181,15 @@ impl EguiView for SearchWindowView {
             }
         }
 
-        // #646 PR2 決定 6: main は bar(+status/toast)のみで結果件数には伸縮しない。結果ウィンドウの可視性・サイズ・位置も
+        // main は bar(+status/toast)のみで結果件数には伸縮しない（#646）。結果ウィンドウの可視性・サイズ・位置も
         // ここ(毎フレーム走る main)が駆動する——hidden ウィンドウは update() が走らず自分では
-        // show できない(SU5 要石)。位置 → サイズ → show の順(main の show と同じ制約)。
+        // show できない(#532)。位置 → サイズ → show の順(main の show と同じ制約)。
         let height = crate::egui_shell::layout::main_window_height(
             metrics.bar_height,
             has_status.then_some(metrics.toast_height),
             has_toast.then_some(metrics.toast_height),
         );
-        // 不変条件検出器（レビュー是正 4）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
+        // 不変条件検出器（#904）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
         // 行の出没と 1 対 1 で対応する。行が変わっていないのに高さが変わったら欠陥である。
         // 行が変わったなら通知が届いた——正常」。reset-on-show の memo リセット（fail-safe）は
         // show 側の導出が退行しても最初のフレームで動的高さ算出が直すため、外から観測する
@@ -1252,8 +1240,8 @@ impl EguiView for SearchWindowView {
             self.last_set_width = width;
             if let Some(window) = app.get_window("main") {
                 let _ = window.set_size(tauri::LogicalSize::new(width, height));
-                // **リサイズでも下地が露出する**（SU6 spec 決定 2 の codex 反証。show の一瞬だけ
-                // ではない）。ゆえに show 直前（spec 決定 3）に加えてここでも合わせる。
+                // **リサイズでも下地が露出する**（#532。show の一瞬だけ
+                // ではない）。ゆえに show 直前（#802）に加えてここでも合わせる。
                 // **色が変わったときだけ撃つ**——サイズのデルタガードの内側ではあるが、それは
                 // 件数変化のたび＝ほぼ打鍵ごとに開く。同じ色を撃ち直しても得るものは無く、
                 // `InvalidateRect(erase=true)` + `UpdateWindow` の代価だけがかかる。
@@ -1297,7 +1285,7 @@ impl EguiView for SearchWindowView {
             crate::egui_shell::check_show_bar_rect(&app, metrics.bar_height);
         }
         // **`result_count` はここで読む**（#749）——`take_clicked_for`（クリック逆流の消費・
-        // 上のブロック）より**後**でなければならない（#752 F2 / ADR-results-presentation-two-stage）。この式を
+        // 上のブロック）より**後**でなければならない（#752 / ADR-results-presentation-two-stage）。この式を
         // `plain_hidden` の算出（`show_results` の直前）へ動かすと、行クリック起動フレームで
         // 古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
         crate::egui_shell::drive_results_window(
@@ -1336,7 +1324,7 @@ mod tests {
     ///
     /// `AppState.indexing` は `AtomicBool` の live-read で、同一フレーム内でも index build
     /// スレッドが値を変えうる。独立に 2 回読むと、status 行・表示ゲート・起動判定のうち
-    /// **どの 2 つかが同じフレームで食い違う**——#752 F2 が status 行とウィンドウ高について踏み、
+    /// **どの 2 つかが同じフレームで食い違う**——#752 が status 行とウィンドウ高について踏み、
     /// #1077 が表示ゲートと Enter の起動判定について踏んだ。どちらも「片方だけ古い値で
     /// 描く／判断する」形で、**挙動テストは通り抜ける**（行は正しく出る）。
     ///
@@ -1362,8 +1350,8 @@ mod tests {
     /// 1 つの名前へ束ねると、名前と実体がずれる。
     ///
     /// **こちらは唯一性が構造でも支えられている**——`window_coordinator::drive_results_window`
-    /// の内側にあった直読み（`max_results(app)`）を撤去し、`read_visible_rows` の呼び出し点を
-    /// このファイルの 1 か所にした。ゆえにこの検査が塞ぐのは「**view.rs の中で**もう 1 回読む」
+    /// は `max_results(app)` を直読みせず、`read_visible_rows` の呼び出し点は
+    /// このファイルの 1 か所である。ゆえにこの検査が塞ぐのは「**view.rs の中で**もう 1 回読む」
     /// 形だけであり、他モジュールに読みが復活する形は母集団の外である（`fn max_results` の doc が
     /// 呼び出し点の唯一性を規範として持つ）。
     #[test]
@@ -1381,13 +1369,13 @@ mod tests {
     /// **母集団を切り出さないのが要点である**（#1112）。`assert_eq!(reads, 1)` は
     /// 「≧ 1」と「≦ 1」の連言であり、後半は否定形——**禁止語の不在を測る形**である。
     /// 否定形の検査は母集団が本体を取りこぼすと**緑のまま沈黙する**（canary は「母集団が
-    /// 空でない」しか塞がず、「途中で切れる」を塞がない）。かつてはここが
-    /// `split_once("#[cfg(test)]")` で production 側を切り出しており、その切れ目が前へ
-    /// 動けば 2 回目の読みが母集団の外へ落ちて黙って通った。ファイル全体を数えれば
+    /// 空でない」しか塞がず、「途中で切れる」を塞がない）。ここで
+    /// `split_once("#[cfg(test)]")` のように production 側を切り出すと、その切れ目が前へ
+    /// 動けば 2 回目の読みが母集団の外へ落ちて黙って通る。ファイル全体を数えれば
     /// 切り詰めが起こりえない。
     ///
-    /// **切り出していた理由は呼び出し側で解いた**——検査は `needle` のリテラルを自分の
-    /// ソースへ書くため、ファイル全体を数えると自分を勘定に入れて必ず 2 になっていた。
+    /// **検査が自分のリテラルまで数えてしまう問題は、呼び出し側で解く**——検査が `needle` のリテラルを自分の
+    /// ソースへ書けば、ファイル全体を数えると自分を勘定に入れて必ず 2 になる。
     /// 呼び出し側が `concat!` でリテラルを割って組み立てるので、綴りはこのファイルに
     /// 逐語で現れず、production の 1 回だけが数えられる。
     ///
@@ -1397,14 +1385,14 @@ mod tests {
     /// どちらもこの関数へ直に渡す。ゆえに「綴りが現れない」ことを保つ責任は同じ画面の
     /// 中に閉じている。
     ///
-    /// **`assert_eq!(reads, 1)` の 2 側で失敗方向が違う**（#1112 のレビューで適用範囲を訂正した）:
+    /// **`assert_eq!(reads, 1)` の 2 側で失敗方向が違う**（#1112）:
     ///
     /// - **≦ 1 側**（読みが増える）は安全側である。doc コメント等に綴りが現れれば過剰計数で
     ///   **赤**になる（沈黙しない）
     /// - **≧ 1 側**（production の読みが消える）は**この検査だけでは担保されない**。母集団が
     ///   ファイル全体なので、production 0 と、このファイルのどこか（doc コメント・`concat!` を
-    ///   解いたリテラル）に現れた綴り 1 件が釣り合えば緑が成立する。切り出していた頃は
-    ///   production 側だけを数えたので、この釣り合いは起こりえなかった——**ここは新設計が
+    ///   解いたリテラル）に現れた綴り 1 件が釣り合えば緑が成立する。production 側だけを
+    ///   数えればこの釣り合いは起こりえない——**ここはファイル全体を数える設計が
     ///   引き受けた交換である**。**その組み合わせは 2026-08-17 時点では成立しない**:
     ///   production は各 1 件で、呼び出し側は `concat!` で割ってある
     ///
@@ -1557,14 +1545,6 @@ mod tests {
         );
     }
 
-    // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の
-    // `hex_parses_valid_and_falls_back_to_config_default` へ移した（hex→Color32 の変換が
-    // view から純粋核へ移ったため）。**証明していた命題は 2 つとも移設先で保たれている**
-    // ——妥当な hex が期待どおりの色になること、不正文字列が fallback へ落ちること。
-    //
-    // font_definitions_* 4 件・font_covers_cjk_* 3 件は #666 段 3 タスク 1 で
-    // `font_stack::tests` へ移した（フォント解決の実体が `font_stack` へ移設されたため）。
-
     // CCursor は文字単位であり、UTF-8 のバイト長を渡すと非 ASCII クエリで末尾を越える。
     #[test]
     fn restored_search_cursor_uses_character_count() {
@@ -1613,17 +1593,16 @@ mod tests {
     /// 回帰テスト: #872/#936。**focus の要求が `TextEdit` の構築より後だと、そのフレームに
     /// 載っていた文字は捨てられる。**
     ///
-    /// `update()` はかつて widget を追加した**後**に `response.request_focus()` を撃っており、
-    /// プロセス起動後の最初のフレーム（`has_focus=false`）に届いた文字が丸ごと消えていた。
-    /// ローカルではそのウィンドウが 50ms しか開かないが、CI runner では 1.4〜19 秒開き、#872 の
-    /// 間欠失敗（失敗率 12.5%・7 か月）の正体がこれだった。
+    /// 構築の**後**に要求すると、プロセス起動後の最初のフレーム（`has_focus=false`）に届いた
+    /// 文字が丸ごと消える。#872 の間欠失敗（失敗率 12.5%・7 か月）はこれだった（消える区間の
+    /// 実測は `search_input_ui` の focus 要求のコメント）。
     ///
     /// **両方の並びを 1 フレームずつ走らせて差まで測る**——「構築前なら入る」だけでは、
-    /// 後ろに戻したときに落ちる保証にならない（当時の並びが本当に落とすことを固定する）。
+    /// 後ろに戻したときに落ちる保証にならない（構築後に要求する並びが本当に落とすことを固定する）。
     ///
     /// ⚠️ **これが縛るのは egui の意味論であって `update()` の並びではない。** 本体側の
-    /// 呼び出し位置が後ろへ戻っても、このテストは通る。**この受容残余は #872 で閉じた**——
-    /// 経緯と、どの検査が何を縛るかは `search_input_ui` の doc が正本。
+    /// 呼び出し位置が後ろへ戻っても、このテストは通る。**この受容残余は `search_input_ui` を
+    /// 丸ごと走らせる検査が閉じる**（#872）——どの検査が何を縛るかは `search_input_ui` の doc が正本。
     #[test]
     fn focus_requested_before_text_edit_applies_same_frame_input() {
         // 文字の届き方は本体と同じ経路にする——runtime は WM_CHAR / IME 確定を
@@ -1646,7 +1625,7 @@ mod tests {
             "構築前に focus を要求すれば、同じフレームの文字が入る"
         );
 
-        // かつての並び: 構築より後に要求する。
+        // 対照の並び: 構築より後に要求する。
         let after = egui::Context::default();
         let after_id = egui::Id::unique("focus_after_widget");
         let mut after_text = String::new();
@@ -1804,9 +1783,9 @@ mod tests {
     /// egui 0.35.0 の `Context::run_ui` は user callback より**前**に root `Ui` を作り
     /// （`context.rs:780-807`）、`Ui::new` はそこで `ctx.global_style()` を `Arc<Style>` として
     /// 掴む（`ui.rs:108-136`）。ゆえに callback 内の `ctx.set_visuals` は現在の pass に届かず、
-    /// 色だけを変えた config 適用フレームで入力欄だけが旧色で残った。`ui.visuals_mut()` は
+    /// 色だけを変えた config 適用フレームで入力欄だけが前の色で残る。`ui.visuals_mut()` は
     /// copy-on-write でこの `Ui` と以後の子 Ui（`ui.rs:236` の `Arc::clone`）に効く——
-    /// `update()` の適用がそちらを使う理由である。
+    /// `search_input_ui` の適用がそちらを使う理由である。
     ///
     /// **`ctx.set_visuals` が届かないことを固定する対のテストは意図的に置かない。** それは
     /// egui の現在の制限を固定する主張であり、上流が直した日に緑のビルドが赤くなる。
@@ -1833,7 +1812,7 @@ mod tests {
             visuals.selection.bg_fill = selection;
             visuals.weak_text_color = Some(hint);
 
-            // TextEdit が置かれるのと同じ形の子 Ui（`update()` の `egui::Frame::new().show`）。
+            // TextEdit が置かれるのと同じ形の子 Ui（`search_input_ui` の `egui::Frame::new().show`）。
             // 読む側も TextEdit と同じ getter を使う——`text_edit_bg_color()` は
             // `text_edit_bg_color.unwrap_or(extreme_bg_color)`、`weak_text_color()` は
             // `Option` を解決する（`style.rs:1135-1148`）。生フィールドを見ると、TextEdit が
@@ -1854,11 +1833,12 @@ mod tests {
     ///
     /// **上のテストとの分担**（消さないこと）: あちらが測るのは **egui の伝播**であって、製品関数の
     /// どこで適用しているかは縛らない。こちらは `search_input_ui` を**実コードのまま** 1 pass
-    /// 走らせ、`hint` クロージャが受け取る子 `Ui` の値を突き合わせる。**新テストが落ちたとき、
+    /// 走らせ、`hint` クロージャが受け取る子 `Ui` の値を突き合わせる。**こちらが落ちたとき、
     /// 上のテストが緑なら原因は製品コード側だと切り分けられる**——併存はその対照のためである。
     ///
-    /// #751 が「コンパイラもユニットテストも `check:colors` も smoke も検出しない受容残余」と
-    /// 記録した順序不変条件は、#949 の移設とこの検査で**検知手段を持つ**。
+    /// 「子 `Ui` の生成より前で適用する」順序不変条件は、#751 が「コンパイラもユニットテストも
+    /// `check:colors` も smoke も検出しない受容残余」と記録した。この検査がその
+    /// **検知手段である**（#949）。
     ///
     /// **`Harness` ではなく素の `run_ui` を使う。** 初回 pass であることが症状の成立条件そのもの
     /// であり、`egui_kittest::Harness` は構築の時点で既に 1 フレーム走らせる
@@ -1975,7 +1955,7 @@ mod tests {
     /// 余白の実点で測る。
     ///
     /// egui 既定の `interaction.interact_radius = 5.0` は入力欄の当たりを矩形の外 5px へ広げ、
-    /// 余白 7px のうち内側 5px を食っていた（掴めるのは外側 2px だけ・実測）。
+    /// 余白 7px のうち内側 5px を食う（掴めるのは外側 2px だけ・実測）。
     /// `apply_exact_hit_test_style` はそれを 0 にして判定を描画矩形へ一致させる。
     ///
     /// **対照（未適用）を同じ検査に置く**——適用の有無で結果が変わらなければ、この検査は
@@ -2095,9 +2075,9 @@ mod tests {
     ///
     /// egui 0.35 の `TextEdit` は `Align2::LEFT_TOP` を既定に持つため（`builder.rs` の
     /// `TextEdit::default`）、`add_sized` が欄を `field_height` へ引き伸ばしても galley は上端に
-    /// 留まり、余りが全部下へ落ちる。既定 config での修正前の実測は**上 2px / 下 10px** で、
-    /// 上余りは `TextEdit` 既定 `Margin::symmetric(4, 2)` の top ちょうどだった——
-    /// `Metrics::bar_inset` の doc が宣言する「文字の上下に 7」の設計意図がそこで破れていた。
+    /// 留まり、余りが全部下へ落ちる。縦中央へ寄せない場合、既定 config での実測は**上 2px / 下 10px**
+    /// で、上余りは `Margin::symmetric(4, 2)` の top ちょうどである——
+    /// `Metrics::bar_inset` の doc が宣言する「文字の上下に 7」の設計意図がそこで破れる。
     ///
     /// **font_size を 2 通り測る。** 中央は `field_height` と galley 高の差から導かれるので、
     /// 固定 px を足す実装（`TextEdit::margin` の非対称化）へ差し替わると片方の font で落ちる

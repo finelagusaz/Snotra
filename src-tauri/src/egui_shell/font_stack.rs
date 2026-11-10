@@ -4,7 +4,7 @@
 //! [`JP_FONT_BYTES`] は `OnceLock`（**set-once・never-clear**）を厳守する: [`jp_font_bytes`]
 //! が返す参照は `transmute` で `'static` 化しており、その健全性はこの不変条件だけを根拠に
 //! 成り立つ。再 set・クリアの経路を足してはならない。
-//! フォント登録の分岐は次のとおり（#532 SU4 の形に #689 が 1 つの分岐を足した）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**分岐を列挙するのは、この index 0 の不変条件が分岐ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
+//! フォント登録の分岐は次のとおり（#532・#689）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**分岐を列挙するのは、この index 0 の不変条件が分岐ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
 //!
 //! **index 0 を破ると Latin と CJK が混在する行のベースラインがずれる**（2 フォントで積むとずれること自体は
 //! `snotra-settings/CLAUDE.md` の #399）。softbuffer の `fill_mesh` はカバレッジ AA を持たず、2 フォント間の
@@ -180,8 +180,8 @@ fn jp_font_bytes() -> Option<&'static [u8]> {
 
 pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str) {
     // **user を先に解決し、カバー判定が済むまで jp_font のファイルを読まない**（順序が要点）。
-    // 旧実装は無条件に jp を読んでから user を解決していたため、CJK をカバーするフォントでも
-    // 13.26 MiB が常駐した。ここを逆にすることが削減の実体である。
+    // jp を先に読むと、CJK をカバーするフォントでも 13.26 MiB が常駐する。
+    // この順序が削減の実体である。
     let user = resolve_font_family(font_family);
     let need_jp = match &user {
         Some((bytes, face_index)) => !font_covers_cjk(bytes, *face_index),
@@ -189,7 +189,7 @@ pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str
     };
     let jp = if need_jp { jp_font_bytes() } else { None };
     if jp.is_none() && user.is_none() {
-        // 積むフォントが 1 つも無い。egui 既定のままにする（旧実装と同じ挙動）。
+        // 積むフォントが 1 つも無い。egui 既定のままにする。
         return;
     }
     context.set_fonts(font_definitions(jp, user));
@@ -197,8 +197,7 @@ pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str
 
 /// `AppState` から現在の config font_family を読む。`AppState` が未 manage（起動極初期）
 /// なら既定の font_family（正本は `visual::default_visual()`）へ落ちる。`view.rs` の `setup` と
-/// `results_view.rs` の `setup` が同一の 4 行を持っていた重複をここへ寄せる
-/// （#666 段 3 タスク 1・dry-check）。
+/// `results_view.rs` の `setup` が共有する読みであり、それぞれへ手書きしない（#666）。
 ///
 /// **既定値のリテラルをここへ再手打ちしない**（#795）——`"Segoe UI"` を書くと `config.rs` の
 /// `default_font_family()` と乖離しうる 2 つ目の表現になる。

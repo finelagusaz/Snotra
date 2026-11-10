@@ -1,4 +1,4 @@
-//! egui 検索ウィンドウの純粋状態核（#532 SU3）。query/選択/結果と 2 軸モード導出・遷移を
+//! egui 検索ウィンドウの純粋状態核（#532）。query/選択/結果と 2 軸モード導出・遷移を
 //! egui/Win32 非依存で持ち、driver（launcher_controller）から駆動される。ユニットテスト対象。
 
 use std::sync::Arc;
@@ -9,8 +9,7 @@ use snotra_core::ui_types::{IconSource, SearchResult};
 
 use crate::egui_shell::search_dispatch::{SearchDispatch, Settled};
 
-/// 軸1: モーダルビュースタック頂点の種類。Results/Folder/Tool の 3 段ラダー（Folder は M2 で
-/// 到達可能化・#532 SU3 M2、Tool は SU3.5 で到達可能化・#532 SU3.5）。
+/// 軸1: モーダルビュースタック頂点の種類。Results/Folder/Tool の 3 段ラダー（#532）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewKind {
     Results,
@@ -75,7 +74,7 @@ pub fn folder_load_pending(
     view_kind == ViewKind::Folder && !has_folder_cache && !has_folder_error
 }
 
-/// フォルダ展開モードの退避/復元単位（`Option<FolderFrame>`・#532 SU3 M2）。深掘りは push でなく
+/// フォルダ展開モードの退避/復元単位（`Option<FolderFrame>`・#532）。深掘りは push でなく
 /// current_dir 書き換え。フォルダ内フィルタは frame でなく SearchState.folder_filter が持つ。
 #[derive(Debug, Clone)]
 pub struct FolderFrame {
@@ -103,13 +102,13 @@ pub struct FolderFrame {
     pub unsettled_at_entry: bool,
 }
 
-/// ツール選択モードの退避/復元単位（#532 SU3.5・SolidJS ToolSelectionFrame parity）。
+/// ツール選択モードの退避/復元単位（#532・SolidJS ToolSelectionFrame parity）。
 /// tool は folder の上に積まれうる（§18.5 直交）が、tool-on-tool は Option ゆえ表現不能。
 /// restore_query を持たない——tool 中は入力無効（§18.5）で query 不変ゆえ復元不要
 /// （SolidJS popView の tool 段も query を復元しない）。launch_query は起動 API へ渡す
 /// 元クエリで復元には使わない（SolidJS #538 の launchQuery / restoreQuery 型分離）。
 /// target_path/target_is_folder/tools/launch_query は driver（launcher_controller）が
-/// tool_frame() 越しに読む（`shift_activate` / `execute_tool_selected`・#532 SU3.5 Task 3）。
+/// tool_frame() 越しに読む（`shift_activate` / `execute_tool_selected`・#532）。
 #[derive(Debug, Clone)]
 pub struct ToolFrame {
     pub restore_results: Arc<[SearchResult]>,
@@ -122,7 +121,7 @@ pub struct ToolFrame {
 }
 
 /// Escape ラダーの分岐（driver が side-effect を実行）。tool 段・folder 段・top-level の
-/// 3 段ラダー（instant/command 解除段は M3 で確定済み・prefix hot-change は別軸）。
+/// 3 段ラダー（prefix hot-change は別軸）。
 ///
 /// **`#[must_use]` は関数ではなく型に付けてある**（#934）——危ういのは「この値を落とすこと」で
 /// あって特定の関数ではないため、`EscapeOutcome` を返す将来の関数も覆う。配置の規約と受容残余の
@@ -141,7 +140,7 @@ pub enum EscapeOutcome {
 
 /// slash コマンドのマッピング（§15.2）。History(`/r`) だけは結果注入型（履歴を表示して留まる）で、
 /// driver が run_search の Command 分岐へ振る。他 3 つは fire-once の副作用型。
-/// driver（launcher_controller）が消費する（#532 SU3 M3 Task 2）。
+/// driver（launcher_controller）が消費する（#532）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashCmd {
     History,
@@ -152,7 +151,7 @@ pub enum SlashCmd {
 
 /// trim 後の完全一致で slash コマンドを引く（§15.3 即実行の判定・commands.ts findCommand parity・
 /// 大文字小文字は区別する）。部分入力・引数付きは None（候補表示なし・§15.3）。
-/// driver（launcher_controller）が消費する（#532 SU3 M3 Task 2）。
+/// driver（launcher_controller）が消費する（#532）。
 pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
     match query.trim() {
         "/r" => Some(SlashCmd::History),
@@ -163,8 +162,8 @@ pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
     }
 }
 
-/// 検索ウィンドウの純粋状態。results 軸に加え folder 軸（folder / folder_filter / folder_gen・
-/// M2 で追加・#532 SU3 M2）と tool 軸（tool・SU3.5 で追加・#532 SU3.5）を持つ。
+/// 検索ウィンドウの純粋状態。results 軸に加え folder 軸（folder / folder_filter / folder_gen）と
+/// tool 軸（tool）を持つ（#532）。
 pub struct SearchState {
     query: String,
     /// `Arc` で持つのは、snapshot の発行が行を複製せずに共有するためである（#1279）——
@@ -175,8 +174,7 @@ pub struct SearchState {
     folder_filter: String,
     folder_gen: u64,
     tool: Option<ToolFrame>,
-    /// `results` が総入れ替えされるたびに進む世代（#699。旧 `view.rs` の
-    /// `snapshot_generation` をここへ移した）。
+    /// `results` が総入れ替えされるたびに進む世代（#699）。
     ///
     /// **ここを進めるのは [`SearchState::put_rows`] だけであり、そこが in-flight の失効も同時に行う**
     /// （#1039）。収束の適用範囲と、`enter_tool` の `std::mem::take` がなぜその外にあってよいかは
@@ -266,7 +264,7 @@ impl SearchState {
     ///
     /// **同じ出来事に対する 2 つの義務をここへ合流させたのが #1039 である**——同期で行を差し替えた
     /// 以上、飛んでいる worker の結果は必ず古い。呼び出し側が [`SearchDispatch::invalidate`] を
-    /// 書く規約だった頃は 11 箇所の手書きと 3 箇所の漏れがあった。
+    /// 書く規約では漏れる（実測は `ADR-row-replacement-choke-point`）。
     ///
     /// **ここで `view_kind()` を読んではならない**——読ませると経路ごとに意味が変わる。呼ぶ側は
     /// 既に自分がどの遷移の途中かを知っている（`enter_tool` は `self.tool` を `Some` にした後で
@@ -300,7 +298,7 @@ impl SearchState {
     }
 
     /// 選択を先頭へ戻す。driver が打鍵（changed エッジ）ごとに呼ぶ（SolidJS の毎打鍵
-    /// setSelected(0) parity・#532 SU3 M3）。
+    /// setSelected(0) parity・#532）。
     pub fn reset_selection(&mut self) {
         self.selected = 0;
     }
@@ -409,7 +407,7 @@ impl SearchState {
     }
 
     /// driver は token を `enter_folder`/`navigate_folder` の戻り値から直接得るため、独立した
-    /// getter としては未消費（#532 SU3 M2 Task 3）。
+    /// getter としては未消費（#532）。
     #[allow(dead_code)]
     pub fn folder_gen(&self) -> u64 {
         self.folder_gen
@@ -427,7 +425,7 @@ impl SearchState {
     /// ツール選択へ突入（§18.4: 結果リストをツール一覧で置換）。現在ビュー（Results/Folder
     /// どちらでも）の表示状態を frame へ退避する。tools ≥ 2 の判定は driver 側
     /// （§18.3: ≤1 は通常 Enter と同一のため、そもそも呼ばれない）。driver からは
-    /// `shift_activate` が呼ぶ（#532 SU3.5 Task 3）。
+    /// `shift_activate` が呼ぶ（#532）。
     pub fn enter_tool(
         &mut self,
         target_path: String,
@@ -460,7 +458,7 @@ impl SearchState {
         self.put_rows(rows, 0);
     }
 
-    /// driver（`shift_activate` / `execute_tool_selected`）が読む（#532 SU3.5 Task 3）。
+    /// driver（`shift_activate` / `execute_tool_selected`）が読む（#532）。
     pub fn tool_frame(&self) -> Option<&ToolFrame> {
         self.tool.as_ref()
     }
@@ -474,7 +472,7 @@ impl SearchState {
         self.selected = 0;
     }
 
-    /// Escape ラダー（M2）: folder 中は展開前状態へ復帰、top-level は Hide。
+    /// Escape ラダー: folder 中は展開前状態へ復帰、top-level は Hide。
     /// folder 離脱時は folder_gen を進めて遅延到着した旧ナビ結果を無効化する。
     ///
     /// **folder 分岐は復帰させた行の未反映を [`SearchState::restored_rows_stale`] へ立て直す**（#1079）。
@@ -486,10 +484,8 @@ impl SearchState {
     /// 戻す（**なぜ突入時が唯一の常に有効な観測点なのかは [`FolderFrame::unsettled_at_entry`] の
     /// doc が正本**）。
     ///
-    /// **worker の結果が folder 中に届くことはこの並びの要件ではない。** #1079 の issue 本文と、
-    /// #1039 当時のこの doc は [`SearchState::accept_worker_rows`] の view ガードが捨てる段を並びへ
-    /// 含めていたが、`invalidate` は届いたかを見ずに pending を落とすので**遅着の有無によらず成立する**
-    /// （2026-08-14 に検知器で実測）。当時「稀」を受容の根拠の一つに置けたのは、この過剰仕様のためである。
+    /// **worker の結果が folder 中に届くことはこの並びの要件ではない。** `invalidate` は届いたかを
+    /// 見ずに pending を落とすので、**遅着の有無によらず成立する**（2026-08-14 に検知器で実測・#1079）。
     ///
     /// **却下した修正案は 2 つある。** どちらも controller 側に処置を置くもので、
     /// **2026-08-14 時点で** `launcher_controller.rs` には `#[cfg(test)]` が 1 つも無く（`tests/` も
@@ -500,12 +496,11 @@ impl SearchState {
     /// 今も成り立つかは、(A)/(B) を再検討するときに測り直すこと（挙動そのものを測る席が
     /// できたわけではない点は不変である）。
     /// **#1079 の issue 本文が (A) の費用として書く「Escape のたびに同期 `engine.search` をフレームへ
-    /// 乗せる」は現在のコードに当たらない**——`run_search_with` の Plain 分岐は #1004 の worker 化以降
-    /// **同期 `engine.search` を含まない**（`search_tx.send` か、空クエリ・`indexing()`・送信失敗での
+    /// 乗せる」は現在のコードに当たらない**——`run_search_with` の Plain 分岐は
+    /// **同期 `engine.search` を含まない**（#1004。`search_tx.send` か、空クエリ・`indexing()`・送信失敗での
     /// `set_results` のいずれかである）。同期 `engine.search` が残るのは `on_enter` の flush だけである。
-    /// 実際の費用は Plain 分岐が `indexing()` 中に復帰行を空にすることであって、doc が名指して
-    /// いたものではない。**`run_search` 入口の `instant_prefix` が `engine.lock()` を取ることも
-    /// 費用に数えていたが、#1076 でその読みが `read_config` へ移り消えた。**
+    /// 実際の費用は Plain 分岐が `indexing()` 中に復帰行を空にすることであって、issue 本文が
+    /// 名指したものではない。
     pub fn on_escape(&mut self) -> EscapeOutcome {
         if let Some(t) = self.tool.take() {
             // query は復元しない（tool 中は入力無効で不変・ToolFrame doc 参照）
@@ -544,8 +539,7 @@ impl SearchState {
         self.folder_gen += 1;
         self.tool = None;
         // 空行への総入れ替え（#699）——hide を跨いだ stale クリックはこれで失効する。
-        // hide を跨いだ in-flight もここで失効する（#1039。以前は呼び出し側の
-        // `consume_reset_pending` が別に撃っていた）。
+        // hide を跨いだ in-flight もここで失効する（#1039）。
         // `Arc::default()` は空の行を static で共有し、確保しない（`Vec::new().into()` は確保する）。
         self.put_rows(Arc::default(), 0);
     }
@@ -599,12 +593,11 @@ impl SearchState {
         self.dispatch.pending_seq()
     }
 
-    /// **最終クエリの結果がまだ行へ反映されていないか**（#1038。#1039 で `search_dispatch.rs` の
-    /// 自由関数からここへ移設）。[`should_flush_on_enter`] の第 3 引数がこれである。
+    /// **最終クエリの結果がまだ行へ反映されていないか**（#1038・#1039）。
+    /// [`should_flush_on_enter`] の第 3 引数がこれである。
     ///
-    /// **`armed` だけでは足りない。** 同期実装の頃は `armed == false` が「反映済み」を含意して
-    /// いたが、worker 化（#1004）で trailing 発火の直後は必ず「`armed == false` かつ in-flight
-    /// あり」になり、含意が壊れた。
+    /// **`armed` だけでは足りない。** trailing 発火の直後は必ず「`armed == false` かつ in-flight
+    /// あり」になるので、`armed == false` は「反映済み」を含意しない（#1004）。
     ///
     /// **`armed` を残すのは、最新クエリの要求がまだ出ていない間を覆うためである。**
     /// `pending_seq == 0` だが未反映、という状態はバースト継続中に直前の seq が `accept` 済みの
@@ -622,7 +615,7 @@ impl SearchState {
     /// [`crate::egui_shell::launcher_controller::LauncherController`] のフィールドであり、純粋核の
     /// この型からは見えない。**ゆえにこの合成は機構ではなく規約のままである**——正しい `armed` を
     /// 渡すのは呼び出し側の責務で、型が構造的に所有しているのは in-flight の側（`pending_seq`）だけ
-    /// である。#1039 が規約から機構へ移したのも in-flight の失効に限る。
+    /// である。機構が守るのも in-flight の失効に限る（#1039）。
     ///
     /// **armed が下りる経路はメソッドだけではない。**
     /// [`crate::egui_shell::launcher_controller::LauncherController::consume_reset_pending`] は show の
@@ -670,7 +663,7 @@ pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
 
 /// Enter 時の flush 要否（#631 flush-on-Enter・SolidJS flushPendingRefresh 同型）。
 ///
-/// **`unsettled` は「最終クエリの結果がまだ行へ反映されていないか」である**（#1038）。その中身と経緯は [`SearchState::is_unsettled`] の doc が正本である（#1039 で `search_dispatch.rs` の自由関数から移設）。
+/// **`unsettled` は「最終クエリの結果がまだ行へ反映されていないか」である**（#1038）。その中身は [`SearchState::is_unsettled`] の doc が正本である（#1039）。
 ///
 /// unsettled になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel + 同期で行を差し替え済み＝[`SearchState::put_rows`] が in-flight を失効させている）だが、将来の経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
 pub fn should_flush_on_enter(view_kind: ViewKind, is_plain: bool, unsettled: bool) -> bool {
@@ -726,11 +719,11 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
     Some(parent)
 }
 
-/// §4.7 表示ゲート（#633・SU6 spec 決定 3）: 再インデックス中は plain 結果のみ隠す。
+/// §4.7 表示ゲート（#633）: 再インデックス中は plain 結果のみ隠す。
 /// SolidJS `shouldShowResults`（search.ts: `interpKind()==="instant" || !indexing()`）の鏡写しで、
 /// instant/folder/tool は表示継続、データと選択は保持する（クリアしない・選択リセットしない）。
 /// `instant_rows` は表示中行の来歴 snapshot（`instant_rows_query.is_some()`）——live interp でなく
-/// 来歴で判定するのは prefix hot-change の stale 行対策（#637 finding 0）と同じ理由。
+/// 来歴で判定するのは prefix hot-change の stale 行対策（#637）と同じ理由。
 ///
 /// **表示だけでなく起動もこの述語で決める**（#1077）。`view.rs` の表示ゲート（`present_results` の
 /// 連言③）と、`launcher_controller` の `activate_or_execute` / `shift_activate` の起動ガードが
@@ -741,10 +734,9 @@ pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: b
     indexing && matches!(view_kind, ViewKind::Results) && !instant_rows
 }
 
-/// #633 世代トリガ（SU6 spec 決定 3）: index build 完了で bump される世代が last-seen と
+/// #633 世代トリガ: index build 完了で bump される世代が last-seen と
 /// 異なれば再検索。bool エッジ検出と違い、started/complete の repaint が 1 フレームに合流して
 /// パルスが見えなくても累積カウンタは差分が残るため取りこぼさない。
-/// driver（launcher_controller）は Task 4 で再検索トリガに組み込む（#532 SU6 Task 1）。
 pub fn needs_index_refresh(last_seen: u64, current: u64) -> bool {
     last_seen != current
 }
@@ -888,7 +880,7 @@ mod tests {
         assert_eq!(s.rows_generation(), g0 + 1);
     }
 
-    /// #699 で当初の計画が落としていた経路（issue 本文も挙げていない）。
+    /// 回帰テスト: `set_results` を通らない経路でも世代が進む（#699）。
     #[test]
     fn rows_generation_advances_on_enter_tool() {
         let mut s = SearchState::new();
@@ -1032,7 +1024,7 @@ mod tests {
         assert_eq!(names(&s), before, "展開前の行が上書きされていないこと");
     }
 
-    /// view 種別ガード（#1039 決定 3）。`enter_folder` は行を差し替えないので `put_rows` を
+    /// view 種別ガード（#1039）。`enter_folder` は行を差し替えないので `put_rows` を
     /// 通らない——**失効させるのは採り込み側のガードである**。
     #[test]
     fn late_worker_rows_are_dropped_in_folder_view() {
@@ -1119,8 +1111,7 @@ mod tests {
         assert_eq!(s.rows_generation(), g + 1, "採り込みも行の差し替えである");
     }
 
-    /// 移設（`search_dispatch.rs` → ここ・#1039）。真理値表 4 件 + `should_flush_on_enter`
-    /// との合成を固定する。**`armed` の disjunct を落とす変異でここが落ちる**（#1038 の明示要求）。
+    /// 真理値表 4 件 + `should_flush_on_enter` との合成を固定する。**`armed` の disjunct を落とす変異でここが落ちる**（#1038 の明示要求）。
     #[test]
     fn unsettled_covers_in_flight_after_trailing_fired() {
         let base = Instant::now();
@@ -1149,7 +1140,7 @@ mod tests {
         ));
     }
 
-    /// 移設（`unsettled_is_grounded_on_real_dispatch`・#1039）。sentinel（0 = in-flight なし）を
+    /// sentinel（0 = in-flight なし）を
     /// リテラルで書かず状態遷移から作る——判定の入力が出力側へすり替わる不動点化を避けるため、
     /// `armed` は false 固定で渡す。
     #[test]
@@ -1323,9 +1314,9 @@ mod tests {
         );
     }
 
-    /// 計時 trace（`egui_search:settled` の `since_key_us` / `since_dispatch_us`）の材料が
-    /// 移設で変わっていないこと。`search_dispatch.rs` の `accepts_only_the_latest_seq` と
-    /// 同じ値を返す（**移設は計測コードを壊してはならない**）。
+    /// 計時 trace（`egui_search:settled` の `since_key_us` / `since_dispatch_us`）の材料が、
+    /// `SearchState` 越しに呼んでも `search_dispatch.rs` の `accepts_only_the_latest_seq` と
+    /// 同じ値を返すこと（**計測の区間を変えない**・#1039）。
     #[test]
     fn settled_timing_survives_the_move() {
         let base = Instant::now();
@@ -1715,7 +1706,7 @@ mod tests {
     #[test]
     fn reset_selection_returns_to_top() {
         // SolidJS parity: 毎打鍵 setSelected(0)（handlePlainQueryInput / instant fetch / slash とも）。
-        // M1 は set_results の clamp のみで、打鍵後も旧 selected が残っていた（M3 で是正）。
+        // 回帰テスト: set_results の clamp だけでは、打鍵後も前の selected が残る（#532）。
         let mut s = SearchState::new();
         s.set_results(vec![res("a"), res("b"), res("c")]);
         s.move_selection(2);
@@ -1901,7 +1892,7 @@ mod tests {
     fn needs_index_refresh_only_on_generation_change() {
         assert!(!needs_index_refresh(0, 0));
         assert!(needs_index_refresh(0, 1));
-        // 複数回 bump がまとまっても 1 回の比較で拾う（repaint 合流パルス耐性・spec 決定 3）
+        // 複数回 bump がまとまっても 1 回の比較で拾う（repaint 合流パルス耐性・#633）
         assert!(needs_index_refresh(3, 7));
     }
 }

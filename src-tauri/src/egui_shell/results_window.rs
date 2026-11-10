@@ -1,13 +1,12 @@
-//! results ウィンドウの所有型（#671 spec 決定 2）。
+//! results ウィンドウの所有型（#671）。
 //!
 //! 生 Win32 の 3 点セット（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）と可視フラグ、
-//! および直近に適用したサイズ（#749 で `view.rs` から移設）を 1 つの型が同時に所有する。
+//! および直近に適用したサイズ（#749）を 1 つの型が同時に所有する。
 //! **可視フラグとサイズ memo は概念が別である**——前者は correctness、後者は冗長な Win32
-//! 呼び出しを避ける性能上のガードで、誤ってもウィンドウは消えない（#671 spec 決定 2 の意図的な分割）。#646 PR2 では 3 関数が自由関数で、可視フラグは
-//! `SearchWindowView` 側の view-local な bool であり、片方の hide 経路（`drive_results_window`）
-//! だけが更新し、もう片方（`hide_egui_main`）は更新しない非対称があった。reset-on-show が
-//! 後始末することで閉じていたが、**ウィンドウとフラグを同じ物として持てば 2 経路が同じ
-//! オブジェクトを通る**ため、この非対称は構造的に消える。
+//! 呼び出しを避ける性能上のガードで、誤ってもウィンドウは消えない（意図的な分割・#671）。
+//! **ウィンドウとフラグを同じ物として持つので、hide を撃つ `drive_results_window` と
+//! `hide_egui_main` は同じオブジェクトを通る。** 片方の経路だけがフラグを更新し、
+//! reset-on-show の後始末に頼る非対称は、この形では書けない。
 //!
 //! **得られないもの**: `Manager` から results の生ハンドルを引いて `.hide()` を呼ぶ書き方は
 //! 依然コンパイルが通り、実行時に黙って no-op する（tao の `WindowFlags::VISIBLE` が raw show
@@ -19,16 +18,14 @@
 //! 塞ぐのは show 述語側のゲート（`layout::present_results` の連言① `main_visible`）である。
 //! 本型は「誰が raw 操作を撃つか」を一点に集めるのであって、「撃ってよい状況か」は判定しない。
 //!
-//! **かつては事後検査（`layout::must_retract_results`）と、main が消える向きの hide を
-//! 無条件にする理由の型（`layout::HideReason::MainGone`）も要った**——可視性を変える操作が
-//! 複数スレッドから呼べた頃は、ゲートの読みと raw 操作の間に別スレッドの hide が割り込み、
-//! 「フラグ = false・ウィンドウ = 可視」の食い違いが残りえたためである。**#880 サイクル段 2 で
-//! 可視性を変える 5 関数が証人型（`EventLoopProof`）によりイベントループスレッドへ閉じ、
-//! その並びが構築不能になったため、同段で撤去した。**事後検査や「フラグを無視して撃つ hide」を足し戻さない
-//! ——要るのは「フラグ = false・ウィンドウ = 可視」を作れるときだけである（経緯は `ADR-results-gate-single-point`・
+//! **事後検査（食い違いを後から隠し直す検査。撤去した `layout::must_retract_results`）や、
+//! 「フラグを無視して撃つ hide」（その理由の型だった `layout::HideReason::MainGone` も撤去した）を置かない。**
+//! 可視性を変える 5 関数は証人型（`EventLoopProof`）によりイベントループスレッドへ閉じており、
+//! ゲートの読みと raw 操作の間に別スレッドの hide が割り込む並びは構築できない（#880）。
+//! それらが要るのは「フラグ = false・ウィンドウ = 可視」を作れるときだけである（経緯は `ADR-results-gate-single-point`・
 //! 閉じ込めの適用範囲は `window_coordinator::hide_egui_main` の doc）。
 //!
-//! **1 つのウィンドウの show / hide / topmost は全部 tao か全部 raw にそろえる**（#646 PR2）——
+//! **1 つのウィンドウの show / hide / topmost は全部 tao か全部 raw にそろえる**（#646）——
 //! `apply_diff` はフラグ差分ゼロなら早期 return し、`VISIBLE` を持たないウィンドウには `SW_HIDE` を
 //! 副作用で撃つので、混在すると「`hide()` が何もしない」と「`set_always_on_top` でウィンドウが消える」が
 //! 同時に生まれる。main = tao（tauri の `show` / `hide` / `set_always_on_top`）、results = raw（本型）。
@@ -52,11 +49,10 @@ pub(crate) struct ResultsWindow {
     /// から来る）は `set_topmost` の doc が言うとおり可視フラグを変えない。`Ordering` は
     /// 同居する `main_visible` / `hotkey_generation` に合わせ `SeqCst`。
     visible: AtomicBool,
-    /// 直近 `set_size` の (幅, 高さ)（論理 px・#749 で `view.rs` の `last_results_width` /
-    /// `last_results_height` から移設）。**`visible` とは概念が別**——冗長な Win32 呼び出しを
+    /// 直近 `set_size` の (幅, 高さ)（論理 px・#749）。**`visible` とは概念が別**——冗長な Win32 呼び出しを
     /// 避ける性能上のガードであり、correctness のフラグではない。
     ///
-    /// **物理指定へ移った後も論理のまま保つ**（案 3）。`size_delta_exceeds` の許容 0.5 は
+    /// **ウィンドウへは物理で指定するが、memo は論理のまま保つ**（#945）。`size_delta_exceeds` の許容 0.5 は
     /// 論理 px を想定した値であり、物理で覚えると同じ 0.5 が scale 2.0 では論理 0.25 を
     /// 意味してガードが実質狭まる。**覚える単位と比べる単位を揃える**のが要点で、
     /// 物理への変換は比較を済ませた後に行う。
@@ -73,8 +69,8 @@ pub(crate) struct ResultsWindow {
     /// （tao は無条件に `InvalidateRect(erase=true)` + `UpdateWindow` を撃つ）。同じ色を撃ち直すと
     /// クライアント領域全体の消去を毎回誘発するだけで、得るものが無い。
     ///
-    /// **決定 3 の論拠を壊さない**: 「hidden 中は `update()` が走らず変化の瞬間に居合わせられない」
-    /// が要求するのは「変化後の**最初の**呼び出しで撃つ」ことであって、変化していない呼び出しでも
+    /// **hidden 中に変わった色も取りこぼさない**（#802）: hidden 中は `update()` が走らず変化の瞬間に
+    /// 居合わせられないので、要るのは「変化後の**最初の**呼び出しで撃つ」ことであって、変化していない呼び出しでも
     /// 撃つことではない。hidden 中に色が変わっても、次の show / リサイズでこの比較が差分を検出する。
     last_background: Mutex<Option<egui::Color32>>,
     /// TOPMOST で**あるべきか**（設定サイドカー存命中だけ false・`set_topmost` が書く）。
@@ -92,7 +88,7 @@ impl ResultsWindow {
     /// ウィンドウハンドルを取り込む。**`create()` が `.visible(false)` で生成した直後に呼ぶ**前提で
     /// 初期値は false（builder の宣言と一致させる。`mod.rs` の `create` を参照）。
     /// `last_size` の初期値 `(0.0, 0.0)` は「まだ一度も適用していない」を表し、最初の
-    /// `set_size` が必ず撃たれるようにする（旧 `SearchWindowView::new` と同値）。
+    /// `set_size` が必ず撃たれるようにする。
     pub(crate) fn new(window: tauri::Window) -> Self {
         Self {
             window,
@@ -106,11 +102,11 @@ impl ResultsWindow {
         }
     }
 
-    /// results ウィンドウを**フォーカスを奪わずに**表示する（#646 PR2・実機スモークで発見）。
+    /// results ウィンドウを**フォーカスを奪わずに**表示する（#646・実機スモークで発見）。
     /// 既に可視なら raw 操作を撃たず `false` を返す。**表示へ遷移したときだけ `true`**。
     ///
-    /// 戻り値は呼び出し側の trace 用である（trace を本型の内側に置かない理由は
-    /// spec 決定 7——`egui_results:show` は `drive_results_window` が 1 回だけ出す）。
+    /// 戻り値は呼び出し側の trace 用である。trace を本型の内側に置かない——
+    /// `egui_results:show` は `drive_results_window` が 1 回だけ出す（#671）。
     ///
     /// `tauri::Window::show()` は tao の `set_visible(true)` を経て `ShowWindow(hwnd, SW_SHOW)` を
     /// 呼ぶが、`SW_SHOW` は**プログラム的にウィンドウを活性化する**。`focusable(false)` が付ける
@@ -148,7 +144,7 @@ impl ResultsWindow {
 
     /// 下地を config 色へ合わせる（本体は `window_coordinator::apply_native_background`——
     /// main と同じ経路を通す理由はそちらの doc）。**リサイズでも下地が露出する**ため
-    /// show 遷移時とサイズ変更時の両方で撃つ（SU6 spec 決定 2 の codex 反証）。
+    /// show 遷移時とサイズ変更時の両方で撃つ（#532）。
     ///
     /// **private である**: 呼ぶのは `show` / `set_size` という遷移判定・デルタガードの内側だけで、
     /// 外から撃てると「ガードの内側でだけ撃つ」不変条件が型の外で破れる。`ResultsWindow` は
@@ -185,7 +181,7 @@ impl ResultsWindow {
         true
     }
 
-    /// results ウィンドウの TOPMOST を切り替える（設定サイドカー起動中の一時解除・#646 PR2）。
+    /// results ウィンドウの TOPMOST を切り替える（設定サイドカー起動中の一時解除・#646）。
     /// `set_always_on_top` は tao のフラグ差分適用を通り、`VISIBLE` を false と信じている
     /// results ウィンドウに対しては `SW_HIDE` を副作用で撃ってしまう。`SWP_NOACTIVATE` 付きの
     /// `SetWindowPos` で Z オーダーだけを動かす。**可視フラグは変えない**——Z 順の変更は
@@ -236,7 +232,7 @@ impl ResultsWindow {
     /// `layout::results_height_phys` が担い、ここはその結果を適用するだけである
     /// （`ceil` をウィンドウの型へ持ち込むとユニットテストが届かなくなる）。
     ///
-    /// **このウィンドウの `scale_factor()` を読み、その場で `ResultsScale` へ包む。** #835 のクランプ撤去で「results ウィンドウの scale を読む箇所」は一度消え、`layout::results_top_y` の doc は「同型の値が 1 種類になったので取り違えは構造的に起こらない」と記していた。案 3 で読みは戻ったが、**残余としては戻していない**——`MainScale` / `ResultsScale` に型で分かれており、取り違えはコンパイルが通らない（実測: 双方向で `expected ResultsScale, found MainScale` / その逆）。**読むウィンドウと型は同じ式で決めること**——先に `f64` へ落として後から包む書き方にすると、包む場所が読む場所から離れて取り違えが戻る。
+    /// **このウィンドウの `scale_factor()` を読み、その場で `ResultsScale` へ包む。** `MainScale` / `ResultsScale` は型で分かれており、2 つのウィンドウの scale の取り違えはコンパイルが通らない（実測: 双方向で `expected ResultsScale, found MainScale` / その逆）。**読むウィンドウと型は同じ式で決めること**——先に `f64` へ落として後から包む書き方にすると、包む場所が読む場所から離れて取り違えが戻る。
     ///
     /// **幅も高さも `layout::results_size_phys` の 1 つの口を通す。** 幅は `round`（行の描画に
     /// 影響しないので足りる。`ceil` にすると幅だけが 1px ずつ育つ）、高さは `ceil`。
@@ -253,7 +249,7 @@ impl ResultsWindow {
     /// **判定基準は「apply_diff を通るか」ではなく「フラグ差分が生じるか」である。**
     /// 差分を生む操作（`set_resizable` 等）は `apply_diff` 末尾の
     /// `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し、results ウィンドウを消す
-    /// （`set_always_on_top` が #646 PR2 でウィンドウを消したのと同一機構）。
+    /// （`set_always_on_top` が results ウィンドウを消すのと同一機構・#646）。
     ///
     /// **デルタガードを内蔵する**（#749）——同値のフレームでは Win32 を撃たない。判定式の
     /// 正本は `layout::size_delta_exceeds`（純粋核・ユニットテスト対象）で、ここに手書きしない。
@@ -288,23 +284,18 @@ impl ResultsWindow {
         self.apply_native_background(background);
     }
 
-    /// サイズ memo を「まだ適用していない」へ戻す（#749・旧 `view.rs` の reset-on-show 2 行）。
+    /// サイズ memo を「まだ適用していない」へ戻す（#749）。
     ///
     /// 再 show 後に必ず一度は現行 metrics で `set_size` させるためのもので、**呼ぶのは view の
     /// reset-on-show（`reset_pending` の消費）である**。呼び出し点をそこに保つのは順序の
     /// ためである——同一フレームの `drive_results_window` より**前**でなければ、再 show 後の
     /// 1 フレーム目が旧 metrics のサイズで描かれる。`show_egui_main` へ移すと、この
-    /// 「**同一フレーム**」の前提が消える——あちらは証人型（`EventLoopProof`）の導入で
-    /// 同じイベントループスレッドに閉じたが、**フレームの中ではない**（`update()` の外から
+    /// 「**同一フレーム**」の前提が消える——あちらは証人型（`EventLoopProof`）で
+    /// 同じイベントループスレッドに閉じているが、**フレームの中ではない**（`update()` の外から
     /// 走る）。呼び出し点はここに保つ。
     pub(crate) fn reset_size_guard(&self) {
         *self.last_size.lock().unwrap() = (0.0, 0.0);
     }
-
-    // 物理 ↔ 論理の換算係数（`scale_factor`・#675）は #835 のクランプ撤去で消えた。
-    // **このウィンドウの scale を crate 側で読む必要が無くなったためである**——`set_size` へ渡すのは
-    // 論理 px であり、tao の `set_inner_size` がこのウィンドウの `scale_factor()` で物理へ戻す。
-    // 読んでいたのは「作業領域の残り（物理）を論理へ換算する」ためだけだった。
 
     /// 物理座標で位置を設定する（`set_size` と同じ理由で tao 経由）。
     pub(crate) fn set_position(&self, x: i32, y: i32) {

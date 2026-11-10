@@ -1,8 +1,8 @@
-//! ウィンドウの可視性・位置・サイズ・wake を駆動する 1 つの責務（#749 段 1）。
+//! ウィンドウの可視性・位置・サイズ・wake を駆動する 1 つの責務（#749）。
 //!
 //! 「撃つ主体」を集めた場所であって、「撃ってよいか」の判定は持たない——可視性の述語は
 //! `layout::present_results`（純粋核・#752）、results の raw 操作の所有点は
-//! `results_window::ResultsWindow`（#671 PR A′）である。
+//! `results_window::ResultsWindow`（#671）である。
 //!
 //! **例外的にフレームへ閉じた値型を持つ**: [`FrameIndexing`]（#1077）と [`FrameVisibleRows`]
 //! （#1106）。読む関数（`read_indexing` / `read_visible_rows`）がここに在り、その返り値型を
@@ -16,7 +16,7 @@
 //!
 //! **z-order の決定は本モジュールに無い**——main は `commands/window.rs` が `set_always_on_top` を
 //! 直接叩き、results は `ResultsWindow` が持つ（tao の差分適用が results を消すため層が違う・
-//! #646 PR2）。TOPMOST の一時解除と復帰は設定サイドカーの起動・監視から来る。**ただし
+//! #646）。TOPMOST の一時解除と復帰は設定サイドカーの起動・監視から来る。**ただし
 //! `drive_results_window` が呼ぶ `ResultsWindow::show` は Z 順を撃ちうる**——Windows では表示の
 //! たびに最前面の帯へ撃ち直すためで、撃つかどうかの判断は `ResultsWindow` の中に閉じている
 //! （`raw_show` の doc）。
@@ -85,13 +85,13 @@ impl MainVisible {
     }
 }
 
-/// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
+/// 実行中 config から Metrics を導出する(#646)。毎フレーム/毎 show の live-read で
 /// キャッシュしない。
 ///
 /// **呼び出し元は `show_egui_main` だけである**（#749 で実測）。view は `read_visual` →
 /// `visual::visual_snapshot` 経由で同じ `layout::Metrics::from_config` に到達するため、
 /// **導出式とフォールバックの単一点は `Metrics::from_config` であって本関数ではない**
-/// (/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
+/// (#646: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離した)。
 /// 本関数が `read_visual` と別に在るのは、show 経路が高さだけを要り色 parse を払わないため
 /// （`mod.rs` の `read_visual` の doc と対）。
 /// AppState 不在(setup 完了前の理論経路のみ)は `visual::default_visual()` から導出——
@@ -124,11 +124,9 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
 /// **読みと落とし先を独立実装に分けない**——同じことを 2 箇所でやって乖離した実績が
 /// このファイルにある（`read_metrics` の doc が記録する 52.0/43.0）。
 ///
-/// **幅について OS の現在サイズは読まない**（#824 の 1）。show 経路は以前 `inner_size()` を読み、
-/// 失敗するとリテラル 600 へ落ちていた——`window_width = 900` のユーザーでウィンドウが縮む欠陥である。
-/// 読み元ごと config へ寄せたのは、落とし先を直すだけでは hide を跨いだ設定変更が残るためで、
-/// hidden 中は `update()` が走らず `inner_size()` が旧幅を返す（show 直後に幅がスナップする）。
-/// これは `view.rs` が幅の `inner_size()` 読みを撤去したときと同じ判断である。
+/// **幅について OS の現在サイズは読まない**（#824）。読みの落とし先を直すだけでは足りない——
+/// hidden 中は `update()` が走らず `inner_size()` が旧幅を返すので、hide を跨いだ設定変更が
+/// show 直後の幅のスナップとして残る。`view.rs` の `window_width` も同じ理由でこの実装を通る。
 ///
 /// AppState 不在は setup 完了前の理論経路のみ（`.manage` は `.setup` より前・`read_metrics` の
 /// doc と同じ）。既定へ落ちるのはそのときだけである。
@@ -144,12 +142,12 @@ pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
 ///
 /// **フィールドが private なので、このモジュールの外ではこの型を構築できない。** ゆえに
 /// 「別の `bool` を `indexing` のつもりで渡す」書き方が**コンパイルを通らない**。素の `bool` で
-/// 配っていた頃は、受け取る側の
+/// 配ると、受け取る側の
 /// [`crate::egui_shell::launcher_controller::LauncherController::on_enter`] が
-/// `shift_held: bool` を先に取るため、2 引数を入れ替えてもコンパイルもテストも通った
+/// `shift_held: bool` を先に取るため、2 引数を入れ替えてもコンパイルもテストも通る
 /// （この型にはテスト席が無く、取り違えを区別できる観測が無い）。**newtype を被せるだけでは
 /// 閉じない**——タプル構築子が公開されていれば呼び出し点で任意の `bool` を包めるので、
-/// `/symmetric-check` の Step 2c が言う「起点が同型なら型は守っていない」のままだった。
+/// `/symmetric-check` の Step 2c が言う「起点が同型なら型は守っていない」のままになる。
 ///
 /// **フレームに閉じた値である。** `AppState.indexing` は `AtomicBool` の live-read で同一
 /// フレーム内でも変わりうるため、`view.rs` の `update()` は 1 回だけ読み、この型のまま
@@ -167,7 +165,7 @@ impl FrameIndexing {
 
 /// index 構築中か（show 経路が status 行の有無を導くために読む）。正本は `AppState.indexing`。
 /// 毎フレーム側は `launcher_controller::LauncherController::indexing` がこの実装へ委譲する
-/// （両者がバイト単位で同一実装を独立に持っていた重複の解消・レビュー是正 3）。
+/// （同じ実装を 2 か所に持たない・#904）。
 ///
 /// **[`FrameIndexing`] の値は必ずこの関数の返り値に由来する**（#1077）——型がその証拠を担う。
 pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
@@ -192,7 +190,7 @@ fn read_toast_present(app: &tauri::AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-/// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
+/// `Color32` を tao のネイティブ背景ブラシ色へ（#802）。
 ///
 /// **ブラシ側の alpha は 255 に固定する**——softbuffer の clear color が `0x00RRGGBB` で alpha を
 /// 持てず、下地と定常の背景が食い違うと show の一瞬だけ色が変わって見えるためである。両者は
@@ -214,8 +212,8 @@ pub(crate) fn native_brush_color(color: egui::Color32) -> tauri::window::Color {
 ///
 /// **両ウィンドウが同じ本体を通る。** main（`show_egui_main` とリサイズ）と results
 /// （`ResultsWindow` が委譲する）で別実装にすると、一手増えたときに片方だけ直る——そして
-/// 乖離の症状は「main と results で下地の色が食い違う」で、**この変更が消したはずのバグと同型**に
-/// なる。文書の相互参照ではなくコードで結ぶ。
+/// 乖離の症状は「main と results で下地の色が食い違う」で、**本関数が防ぐ不具合と同型**に
+/// なる（#802）。文書の相互参照ではなくコードで結ぶ。
 ///
 /// **撃つのは下地が露出しうる経路のうち show 遷移時とサイズ変更時である**（全経路ではない——
 /// DPI 変化に伴う物理リサイズは論理サイズが不変ゆえ `size_delta_exceeds` を通らず、撃たれない。
@@ -229,10 +227,10 @@ pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color
 ///
 /// **`read_visual` と統合しない**: こちらは show 経路（**フレーム外**——同じイベントループ
 /// スレッドではあるが `update()` の中ではない）の
-/// 読みで、**1 フレーム 1 読みの規律（#673 決定 4）が掛かる面には居ない**——同じ関数内の
+/// 読みで、**1 フレーム 1 読みの規律（#673）が掛かる面には居ない**——同じ関数内の
 /// `read_metrics` や `follow_cursor_monitor` / `ime_off_on_show` の読みと同じ層である。
 ///
-/// **その層は #1076 で `engine.lock()` を持たなくなった。** show はフレームの外だが、
+/// **その層は `engine.lock()` を持たない**（#1076）。show はフレームの外だが、
 /// **ウィンドウが出るまでを止める**——検索 worker が `engine.search` で `Mutex<Engine>` を握っている
 /// 間に hotkey が来ると、そこで待つのは表示そのものである（`AppState::read_config` の doc）。
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
@@ -254,19 +252,16 @@ pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
 /// are applied and clamped to the target work area. If no saved position exists,
 /// the window is centered on the target monitor.
 ///
-/// Moved here from `main.rs` alongside its counterpart `read_placement_relative` (#749):
+/// Lives in the same module as its counterpart `read_placement_relative` (#749):
 /// keeping save and restore in separate modules would falsify the claim that placement is
 /// owned by one responsibility. `show_egui_main` is the only caller.
 ///
-/// **クランプの材料は引数で受け取る**（#878）——以前は `main.outer_size()` を読み戻しており、
-/// 呼び出し側は「位置計算へ高さを伝える」ためだけにウィンドウを `set_size(幅, バー高)` で畳んでいた。
-/// **畳むことに目的は無く、値を渡す手段が OS のウィンドウしか無かったことの帰結だった**
-/// （#878 の継ぎ目 2・`ADR-show-path-derives-bar-rect`）。
+/// **クランプの材料は引数で受け取る**——`main.outer_size()` を読み戻さない。読み戻す形では、
+/// 呼び出し側が「位置計算へ高さを伝える」ためだけにウィンドウを `set_size(幅, バー高)` で畳むことになる
+/// （#878・`ADR-show-path-derives-bar-rect`）。
 #[cfg(windows)]
 fn position_on_target_monitor(
     app_handle: &tauri::AppHandle,
-    // &Window に一般化して egui 経路と共有（#532 SU2）。両経路とも同一の "main" ウィンドウ
-    // （get_window/get_webview_window は同じ内部 Window を指す・manager/window.rs:106）。
     main: &tauri::Window,
     // 材料は `derive_bar_rect_phys` が導く——クランプ経路（`clamp_main_into_work_area`）と
     // **同じ合成**を通ることが、両者の基準が一致することの担保である（#877 と同型）。
@@ -274,7 +269,7 @@ fn position_on_target_monitor(
 ) {
     use snotra_core::window_data;
 
-    // show のたびに読み直す（#1076 で engine lock から read_config へ・read_background と同じ層）。
+    // show のたびに読み直す（engine lock を経ない・#1076・read_background と同じ層）。
     let follow_cursor = super::read_config(
         app_handle,
         |c| c.general.follow_cursor_monitor,
@@ -311,9 +306,8 @@ fn position_on_target_monitor(
     )));
 }
 
-/// egui 経路の show。共有するのは position_on_target_monitor のみ。全 hide は外部化ゆえ
-/// runtime.visible は false にならず、show は Focused(true) に依存せず確実に描ける（codex #4）。
-/// show 列は WebView2 の show_and_focus_main を egui 用に自前複製（WebView2 本体を触らないため）。
+/// egui 経路の show。全 hide は外部化ゆえ
+/// runtime.visible は false にならず、show は Focused(true) に依存せず確実に描ける（#532）。
 ///
 /// **`_el` はイベントループスレッド上であることの証人である**（`EventLoopProof`）。可視性を
 /// **変える**操作を単一スレッドへ閉じるため、別スレッドからの呼び出しをコンパイル不能にする。
@@ -329,36 +323,35 @@ pub(crate) fn show_egui_main(
         crate::trace_main("egui_show:no_window", serde_json::json!({}));
         return;
     };
-    // show のたびに view の emit dedup をリセット（Focused(true) 非依存・codex #8）。
+    // show のたびに view の emit dedup をリセット（Focused(true) 非依存・#532）。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 位置 → サイズ → show の順（旧 WebView2 経路から引き継いだ順序制約）。
+    // 位置 → サイズ → show の順（順序制約・#646）。
     // **位置とサイズは別々の高さで決まる**: 位置は**バー高**、サイズは**実高**（status / toast 込み）。
     // 実高で位置を決めると、作業領域の下端付近では常にその分だけウィンドウが上へ押し戻される——毎フレーム
     // 経路（`view.rs`）は `set_size` しか呼ばないため、toast が消えてウィンドウが縮んでも位置は戻らず、
     // 次の hide が `read_placement_relative` でそのずれた位置を永続化する。**バーの位置は
     // ユーザーが決め、行の出没では動かさない**（人間裁定・2026-08-04）の帰結である。
-    // **かつてこの非対称は「ウィンドウを 2 回 set_size する」形で表現されていた**（1 手目にバー高へ畳み、
-    // `position_on_target_monitor` がそれを `outer_size()` で読み戻す）。**#878 で材料を引数へ移した**
-    // ため、畳む必要は消えて `set_size` は 1 回になった——順序制約だけが残る。
+    // 位置決めはバー高を引数で受け取るので、そのためにウィンドウをバー高へ畳まない。`set_size` は
+    // 実高への 1 回だけであり、上の順序制約だけが掛かる（#878）。
     // `egui_show:done` の trace payload（下）が読む「show が適用した高さ」の受け皿。
     // 非 windows ビルドは本関数がサイズ/位置を一切設定しないため常に `None` のまま残る。
     #[cfg(not(windows))]
     let applied_height: Option<f64> = None;
     #[cfg(windows)]
     let applied_height: Option<f64> = {
-        // 幅も config から当てる（#824 の 1）。**OS の現在サイズは読まない**——hidden 中は
+        // 幅も config から当てる（#824）。**OS の現在サイズは読まない**——hidden 中は
         // update() が走らないので、hide を跨いで幅設定が変わると `inner_size()` は旧幅を返す。
         // それで show すると最初のフレームが新幅へ書き直して幅がスナップする（このブロック
         // 冒頭が高さについて断っている視覚スナップと同型）。config が幅の正本であることは
         // `view.rs` の `window_width` の doc が記録するとおりで、OS を経由する
-        // read-modify-write を作らないのが元々の設計である。
+        // read-modify-write を作らない。
         let width = read_window_width(app);
-        // 畳む先は「そのフレームで実際に描かれる高さ」である(#755 / #801)。かつては
-        // バー高固定で、最初のフレームが status / toast の分だけ書き直していた——その
-        // 食い違いが、伸びる(#801)か固着する(#755)かのどちらかとして必ず現れた。
+        // 畳む先は「そのフレームで実際に描かれる高さ」である(#755 / #801)。畳む高さと
+        // 最初のフレームが描く高さ（status / toast の分）が食い違うと、その食い違いは
+        // 伸びる(#801)か固着する(#755)かのどちらかとして必ず現れる。
         // **両者は 1 回の show では排他であり、同じ食い違いの 2 分岐である**。
         let m = read_metrics(app);
         let indexing_now = read_indexing(app);
@@ -371,7 +364,7 @@ pub(crate) fn show_egui_main(
         // （`launcher_controller` の同関数 doc「hidden 中の失敗は次 show のこの消費で
         // 表示される」）。ここでは常に `false` を渡すため、その場合 1 フレームだけ高さが
         // 実際より低く畳まれるが、`view.rs` の reset-on-show が memo を 0 へ戻しているので
-        // 同じフレームの動的高さ算出が直す（固着はしない・修正前より悪化もしない）。
+        // 同じフレームの動的高さ算出が直す（固着はしない）。
         // 前提が変わったら `status_row_present` の呼び出し点を grep すればここへ来る。
         let status = crate::egui_shell::status_row_present(
             indexing_now.get(),
@@ -384,10 +377,9 @@ pub(crate) fn show_egui_main(
             status.then_some(m.toast_height),
             toast_now.then_some(m.toast_height),
         );
-        // 位置決めの材料は**導出して引数で渡す**（#878）。かつてはここで
-        // `set_size(width, m.bar_height)` を撃ち、`position_on_target_monitor` が
-        // `outer_size()` で読み戻していた——**畳むこと自体に目的は無く、値を渡す手段が
-        // OS のウィンドウしか無かった**（継ぎ目 2）。導出できなければ位置決めをしない（取得失敗時に
+        // 位置決めの材料は**導出して引数で渡す**（#878）——ここで `set_size(width, m.bar_height)`
+        // を撃って `position_on_target_monitor` に `outer_size()` で読み戻させない。
+        // 導出できなければ位置決めをしない（取得失敗時に
         // 何もしない側を選ぶのは、クランプ経路と同じ寄せ方である）。
         let derived_bar = derive_bar_rect_phys(&window, width, m.bar_height);
         if let Some(bar) = &derived_bar {
@@ -407,7 +399,7 @@ pub(crate) fn show_egui_main(
         // （tao `util::set_inner_size_physical`）、ここで位置は動かない。
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
 
-        // 不変条件検出器（レビュー是正 4）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
+        // 不変条件検出器（#904）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
         // 行の出没と 1 対 1 で対応する」。ここで読んだ生の入力と適用した高さを残し、`view.rs` の
         // reset-on-show 消費フレームが「行は変わっていないのに高さが変わった」を突き合わせる。
         // **述語へ渡したリテラル（上の `launching`/`has_notice` の `false`）ではなく、読んだ値
@@ -422,34 +414,34 @@ pub(crate) fn show_egui_main(
         Some(height)
     };
     // 下地（softbuffer が present するまでの一瞬に見える）を config の背景色へ合わせる。
-    // **show のたびに無条件で撃つ**（spec 決定 3）——エッジ検出は「変化の瞬間に居合わせる」
+    // **show のたびに無条件で撃つ**（#802）——エッジ検出は「変化の瞬間に居合わせる」
     // ことを要求するが、hidden 中は update() が走らないため居合わせられない。同値の再設定は
     // 安価であり、show は頻繁な操作でもない。
     apply_native_background(&window, read_background(app));
     let _ = window.show();
-    // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
-    // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
+    // main_visible は show() の後に立てる（「順序不変」制約）。
+    // show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.main_visible.set(true);
     }
     let _ = window.set_focus();
-    // **かつてここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちが在った。
-    // イベントループへ移した時点で恒久的に no-op になったため撤去した**（#880 サイクル段 2）。
+    // **ここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちを置かない。
+    // イベントループ上では恒久的に no-op である**（#880）。
     //
     // 機構: `SendMessage` 系は、宛先ウィンドウが**呼び出しスレッド自身の所有**であるときウィンドウプロシージャを
     // サブルーチンとして直接呼んで即座に戻る——キューを 1 通も排出せず、タイムアウトも意味を
     // 持たない。main ウィンドウは setup（イベントループスレッド）で生成され、`show_egui_main` は証人型に
     // より同スレッドでしか呼べないので、**宛先は常に自スレッド所有**である。`WM_NULL` は tao の
     // wndproc が扱わず（0.35.3 実測・0.37.1 もハンドラ皆無）`DefWindowProcW` が 0 を返すだけなので、
-    // 撤去は**構造的に挙動を変えない**。
+    // 置いても**構造的に挙動を変えない**。
     //
-    // 失われた保証: 旧経路（hotkey は platform スレッド上で `show_egui_main` を走らせていた）では
-    // これは**スレッド間** `SendMessage` であり、「イベントループがメッセージ取得点へ到達した」
-    // ことを待てた。**活性化の完了まで待てていたとは考えにくい**——`WM_NULL` は自分が投げた 1 通に
+    // 待てないもの: **スレッド間** `SendMessage` なら「イベントループがメッセージ取得点へ到達した」
+    // ことを待てるが、この経路は同スレッドなのでそれを持たない。**スレッド間でも活性化の完了まで
+    // 待てるとは考えにくい**——`WM_NULL` は自分が投げた 1 通に
     // 過ぎず、それが処理されたことは他のメッセージの処理を含意しないためである。
     // （`WM_ACTIVATE` 自身もシステムが**送る** sent メッセージなので、「sent は posted より先に
     // 処理される」という一般則ではこれを**確定できない**。Win32 の一般則からの導出であって
-    // **この経路では測っていない**。）ゆえに失われたのはおそらく「ポンプが 1 度回った」ことだけ
+    // **この経路では測っていない**。）ゆえに持たないのはおそらく「ポンプが 1 度回った」ことだけ
     // だが、**それも含めて未実測である**。
     //
     // **導出し直せない。** 待つ対象は**自分のキュー**であり、自スレッドのキューが進むのを
@@ -457,7 +449,7 @@ pub(crate) fn show_egui_main(
     // 禁じられている（`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。`on_event_loop` でも
     // 遅延できない——イベントループスレッドから呼ぶとインライン実行にフォールバックする。
     // **この構造では表現不能である**というのが結論であり、下 2 つの順序依存は現在
-    // 「`set_focus()` を呼んだ後」でしかない（**未実測**——実機での確認は次段のカテゴリ C/D）。
+    // 「`set_focus()` を呼んだ後」でしかない（**未実測**）。
     //
     // 残留 Alt 解除: focus 確定後かつ物理 Alt 解放後のみ（#558）。
     // **`send_alt_key_up` は内部で 5ms スリープし、その根拠は失効している**——いまイベント
@@ -468,16 +460,15 @@ pub(crate) fn show_egui_main(
     if !crate::is_alt_pressed() {
         crate::send_alt_key_up();
     }
-    // §12: 表示時 IME オフ（設定有効時・復元なし・SU6 spec 決定 4）。ime_off_on_show は実行中
+    // §12: 表示時 IME オフ（設定有効時・復元なし・#532）。ime_off_on_show は実行中
     // config から都度読み（キャッシュしない・#576 同型——config_watcher の hot-reload が diff/event
-    // 追加なしに届く）。**`set_focus()` より後に置く**——前だと IME オフが対象ウィンドウに効かない
-    // （WebView2 apply_ime_control doc の警告条件）。**旧記述「focus 同期（SendMessageTimeoutW）
-    // より後」は、その同期待ちが no-op 化して撤去された今は意味を持たない**（上のコメント）。
-    // ここが依存できるのは `set_focus()` の呼び出し順だけである。
+    // 追加なしに届く）。**`set_focus()` より後に置く**——前だと IME オフが対象ウィンドウに効かない。
+    // フォーカス同期待ちはここに無いので（上のコメント）、ここが依存できるのは
+    // `set_focus()` の呼び出し順だけである。
     //
     // なお `TurnOffIme` は **platform スレッドへの channel 送信**であり、`ImmSetOpenStatus` は
-    // そちらで非同期に走る——順序として制御できるのは**送信の位置**までで、実行の時刻ではない
-    // （これは本変更の前からそうである）。Win32 は PlatformBridge 経由（rule）。
+    // そちらで非同期に走る——順序として制御できるのは**送信の位置**までで、実行の時刻ではない。
+    // Win32 は PlatformBridge 経由（rule）。
     // TurnOffIme は生 HWND(usize) を取るためウィンドウ型非依存で &Window 一般化は不要。
     #[cfg(windows)]
     {
@@ -500,32 +491,32 @@ pub(crate) fn show_egui_main(
     }
     crate::trace_main(
         "egui_show:done",
-        // height: show の時点で toast/status 行が予算されたかの肯定的証拠（レビュー是正 4）。
+        // height: show の時点で toast/status 行が予算されたかの肯定的証拠（#904）。
         // `None`（非 windows ビルド）は json では `null` になる。
         serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0, "height": applied_height }),
     );
 }
 
-/// egui 経路の hide。**main の** hide の唯一の副作用所有点（codex #7）——位置保存・
+/// egui 経路の hide。**main の** hide の唯一の副作用所有点（#532）——位置保存・
 /// main_visible=false・working set trim はここにしか無い。**世代 bump（hotkey_generation）
 /// だけは 2 箇所ある**——ここは「保留中の alt 解放待ち show を無効化する」ため、
 /// hotkey listener（main.rs）は「押下ごとに採番する」ため（用途が別）。
 /// **results の hide はここを通らない経路がある**（同モジュールの `drive_results_window`）
-/// ため、両ウィンドウを合わせた合流点ではない（#646 PR2 以降・全称主張の訂正は #671 サイクル PR A）。
-/// 外部 window.hide() のみで runtime.visible を false にしない（空白ウィンドウ回避・codex #4）。
+/// ため、両ウィンドウを合わせた合流点ではない（#646 / #671）。
+/// 外部 window.hide() のみで runtime.visible を false にしない（空白ウィンドウ回避・#532）。
 ///
 /// **main を隠す経路はこの関数を通す。** 可視性を変える関数の閉じ込めは表現不能化ではない——`Manager` から
 /// main のハンドルを引いた `.hide()` / `.show()` は任意のスレッドからコンパイルが通り、results と違って
 /// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。そのとき `EguiShellState.main_visible` は
 /// 更新されず、results が既に可視なら最前面に取り残される——main が hidden の間は `RedrawRequested` が
-/// 届かず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 PR A′ で実機発見）。
-/// results が新たに出ることは無い（同じ理由）。#880 サイクル段 2 時点で、main に対する `.hide()` は
+/// 届かず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 で実機発見）。
+/// results が新たに出ることは無い（同じ理由）。#880 の時点で、main に対する `.hide()` は
 /// この関数の中の 1 か所だけであり、受容する残余である。
 ///
 /// **`el` はイベントループスレッド上であることの証人である**（理由は `show_egui_main` の doc）。
 /// こちらは `_` を付けない——`ResultsWindow::hide` へそのまま渡すためである。
 ///
-/// **本体をイベントループ上へ移したことの帰結**: この関数の実行中はメッセージポンプが停止する
+/// **本体がイベントループ上で走ることの帰結**: この関数の実行中はメッセージポンプが停止する
 /// （`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。ゆえに重い処理・ディスク I/O を
 /// 臨界区間（`main_visible` の store と 2 枚の `ShowWindow` が不可分であるべき区間）に
 /// 置いてはならない。placement の**書き込み**と working set の trim は末尾へ出してある。
@@ -535,7 +526,7 @@ pub(crate) fn show_egui_main(
 /// （**受容する残余**・詳細は当該箇所のコメント）。臨界区間から外したことで守られるのは
 /// 「可視性の 3 操作が不可分であること」であって、ポンプの応答性ではない。
 pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::EventLoopProof) {
-    // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、spawn 済み show
+    // 保留中の alt 解放待ち show を無効化（#532）: 世代を bump し、spawn 済み show
     // スレッドの gen 一致チェックを外す。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.hotkey_generation.fetch_add(1, Ordering::SeqCst);
@@ -544,7 +535,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // ディスク I/O はポンプを止めた区間に置かない。
     // バー高は保存の**基準モニターを決めるため**に要る（#738。理由は
     // `read_placement_relative` の doc）。`read_metrics` は読みをクロージャ内で取り切って
-    // 返すため、ここで保持は残らない（#1036 までは engine lock だった）。
+    // 返すため、ここで保持は残らない（#1036）。
     let bar_height = read_metrics(app).bar_height;
     let placement = app
         .get_window("main")
@@ -552,26 +543,26 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     if let Some(window) = app.get_window("main") {
         let _ = window.hide();
     }
-    // main_visible は **results.hide() より前**に落とす（#671 PR A′ レビュー Important 1）。
+    // main_visible は **results.hide() より前**に落とす（#671）。
     // これは `drive_results_window` の show ゲート（layout::present_results）が読む値である。
     // **証人型（`EventLoopProof`）を引数に要求する 5 関数はイベントループスレッドへ閉じているため**、
-    // 「results.hide() 済み・main_visible=true」の隙間へ割り込むフレームはもはや構築できない
+    // 「results.hide() 済み・main_visible=true」の隙間へ割り込むフレームは構築できない
     // ——この順序を保つのは、show 側の「show() の後に true を立てる」（順序不変制約）との
     // 対称のためである。どちらも「main が可視でない期間に visible=true と読ませない」向きに
     // 寄せている。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.main_visible.set(false);
     }
-    // #646 PR2: 従属ウィンドウも同時に隠す（決定 6）。show 側は main の update() が snapshot の
+    // 従属ウィンドウも同時に隠す（#646）。show 側は main の update() が snapshot の
     // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
     // （対称は main update 内の show）。同モジュールの `drive_results_window` は update **内**
     // で動く対の経路であり、直前の doc comment が言う「results の hide は 2 経路ある」は
     // この 2 つ（update 外＝ここ／update 内＝drive_results_window）を指す——矛盾ではない。
     if let Some(results) = app.try_state::<ResultsWindow>() {
         // 戻り値（遷移したか）を無視するのは意図的である——ここの trace は**要求レベル**で
-        // あり、既に隠れていても出す（spec 決定 7・PR A の smoke は presence のみを assert）。
+        // あり、既に隠れていても出す（#671。smoke は presence のみを assert する）。
         results.hide(el);
-        // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり
+        // 呼び出し側に置く（#671）。results の hide は 2 経路あり
         // （ここと同モジュールの drive_results_window）、trace は要求レベルゆえ
         // 既に隠れていても出る——smoke は presence のみを assert する。
         crate::trace_main(
@@ -585,7 +576,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     //
     // **「臨界区間の外」は「イベントループの外」ではない——受容する残余である。** 下の 2 つは
     // 依然この関数の中、すなわちイベントループスレッド上で走り、その間メッセージポンプは
-    // 止まる（本タスク以前は platform スレッド上でありループを塞がなかった）。ポンプ進行を
+    // 止まる（#880）。ポンプ進行を
     // 要する操作ではないのでデッドロックはせず、ウィンドウを隠した**後**なので視覚的なジャンクにも
     // ならない。実測はしていない（ディスク書き込み + Toolhelp スナップショット + プロセスツリー
     // BFS の合計）。**別スレッドへ出すか受容するかは後段の判断に残す。**
@@ -593,7 +584,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
         snotra_core::window_data::save_search_placement(p);
     }
     // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
-    // #532 SU6.5）。results 単独 hide（drive_results_window）では main が可視のままゆえ trim しないのが正しい。
+    // #532）。results 単独 hide（drive_results_window）では main が可視のままゆえ trim しないのが正しい。
     // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ）から直呼び可
     // （`working_set.rs` の `//!`）。trim されたページは show 時に OS が透過
     // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
@@ -610,7 +601,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
 /// `hide_egui_main` の中でポンプが止まる。`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。
 /// 読みは hide **より前**でなければ意味を持たないので、こちらだけが臨界区間に残る。
 ///
-/// 算出は旧 WebView2 の save_relative_placement と同じ（#532 SU7 で唯一の保存経路）。
+/// main の保存位置を導く読みはここ 1 つである（#532）。
 ///
 /// **基準モニターは `read_bar_anchor` が導く**（#738）——クランプと同じ 1 つの関数を通すことで
 /// 「保存の原点」と「戻す先」が食い違わないようにしてある。ウィンドウ全体の矩形から引くと、保存座標の
@@ -637,27 +628,23 @@ pub(crate) fn read_placement_relative(
     }
 }
 
-/// 可視中の main ウィンドウを起こす（#671 PR D。旧実装＝ウィンドウごとの Context clone を登録するスロットの後継）。
+/// 可視中の main ウィンドウを起こす（#671）。
 ///
 /// hidden 中は実効的な no-op である——抑止は wake 経路ではなく **tao/OS 層**にある
 /// （2026-07-26 実測・#697: worker は `RequestRedraw` を送信するが、hidden なウィンドウには
-/// `RedrawRequested` が配送されない。spec §7 残余 2 は errata で解消済み）。旧実装
-/// （Context の clone に `request_repaint()`）と同じ経路（`RepaintScheduler` → proxy →
-/// `RequestRedraw`）を通るため、この性質は変わらない。
-///
-/// **`try_state` が返す `Option` は残る**（Tauri managed state の性質）。消えたのは
-/// 「Context が登録済みか」という 2 段目の Option である。
+/// `RedrawRequested` が配送されない）。この wake も同じ経路（`RepaintScheduler` → proxy →
+/// `RequestRedraw`）を通るため、この性質を持つ。
 pub(crate) fn wake_main(app: &tauri::AppHandle) {
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.main_waker.wake();
     }
 }
 
-/// results ウィンドウを起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。呼び出しは
+/// results ウィンドウを起こす(#646)。snapshot 更新・config 変更を反映させる wake。呼び出しは
 /// main の update() 内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
 /// と `drive_results_window`（可視時・毎フレーム・level-triggered。**削ると壊れる理由は
-/// 呼び出し点のコメントを参照**——決定 5・#697）。hidden 中の results は
-/// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
+/// 呼び出し点のコメントを参照**——#673・#697）。hidden 中の results は
+/// 描かれないため事前 wake は無意味。クリック逆流の results→main は
 /// `wake_main` を使う。
 ///
 /// **`wake_main` と 1 関数に束ねない**——ウィンドウを引数で選ぶ形は、呼び出し側の「どちらのウィンドウを
@@ -692,8 +679,7 @@ struct BarAnchor {
 ///
 /// **ウィンドウの矩形から読んでよいのは、コードが持っていない量だけである**——非クライアント分と
 /// scale がそれで、位置はユーザーが動かす。**コード自身が直前に書いた content 寸法を、
-/// 渡す手段が無いという理由で読み戻してはならない**（#878 の裁定則。`show_egui_main` は
-/// かつて「位置決めへ高さを伝える」ためだけにウィンドウを畳んでいた）。
+/// 渡す手段が無いという理由で読み戻してはならない**（#878 の裁定則）。
 ///
 /// **Win32 の読みはここ 1 回である。** 消費者は 2 つ——[`read_bar_anchor`]（クランプと hide
 /// 保存）と [`derive_bar_rect_phys`]（show の位置決め）。**非クライアント分の合成を
@@ -710,10 +696,9 @@ struct FrameGeom {
     /// 非クライアント分の高さ（`outer` − `inner`）。**「将来の保険」ではなく今すでに効いている**
     /// ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
     /// 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
-    /// **生成直後の値が正しいのは tao 0.37.2 以降である**——0.37.1 は生成時の `WM_NCCALCSIZE`
-    /// （`wparam == 0`）を `DefWindowProcW` へ回してキャプション分を引き、`egui_shell::create` が
-    /// `SWP_FRAMECHANGED` で枠を計算し直させていた（#1266。0.37.2 の修正で不要になり撤去）。
-    /// tao がこの扱いを失うと初回 show のバー矩形が 30 px 大きくなり、smoke の toast シナリオで
+    /// **生成直後の値が正しいのは tao 0.37.2 以降である**（#1266）——0.37.1 は生成時の
+    /// `WM_NCCALCSIZE`（`wparam == 0`）を `DefWindowProcW` へ回してキャプション分を引く。
+    /// tao が 0.37.2 の扱いを失うと初回 show のバー矩形が 30 px 大きくなり、smoke の toast シナリオで
     /// `egui_main:bar_rect_mismatch` が出る（0.37.1 で実測）。
     inset_h: i32,
     scale: layout::MainScale,
@@ -782,7 +767,7 @@ pub(super) struct WindowBorders {
 /// ドラッグ中に**両者が別の位置を指して差が狂う**。ゆえに「同じ値の一貫性が要る読み」
 /// （`egui_shell::read_config` の doc）には当たらない。
 ///
-/// **読めなければ 0 を返す**——補正なし＝この関数を入れる前と同じ配置である。
+/// **読めなければ 0 を返す**——不可視枠を補正しない配置になる。
 #[cfg(windows)]
 pub(super) fn read_window_borders(window: &tauri::Window) -> WindowBorders {
     use windows::Win32::Foundation::{HWND, RECT};
@@ -822,12 +807,12 @@ pub(super) fn read_window_borders(_window: &tauri::Window) -> WindowBorders {
 /// クランプと hide 保存の材料を 1 回の読みで揃える。
 ///
 /// **この経路は外形空間で動く**（`GetWindowRect` 系）。ゆえに可視バーは作業領域の端から
-/// 不可視枠の厚みぶん内側に留まる。**results の隙間を可視空間へ移した変更は、ここへ及んでいない
+/// 不可視枠の厚みぶん内側に留まる。**results の隙間は可視空間で測るが、この経路は外形空間のままである
 /// ——見落としではなく未裁定である**: 「可視バーが端に接するべきか」を判断した記録はどこにも無く、
 /// DWM の影が外形の内側に描かれる以上、端に余白が残るのは Windows 一般の作法でもある。
 ///
-/// **移すなら [`derive_bar_rect_phys`] と同時でなければならない**（同じ物理バー高が 2 通りに
-/// 導出される状態が復活する）。さらに [`read_placement_relative`] が `window.bin` へ保存する値の
+/// **移すなら [`derive_bar_rect_phys`] と同時でなければならない**（片方だけ移すと、同じ物理バー高が
+/// 2 通りに導出される）。さらに [`read_placement_relative`] が `window.bin` へ保存する値の
 /// 意味が黙って変わり、既存プロファイルの復元位置が一斉にずれてそのまま再永続化される
 /// ——#755 / #801 が起こした事故と同じ形なので、`/persistence-check` が要る。
 #[cfg(windows)]
@@ -848,10 +833,8 @@ fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor>
 
 /// show がこれから当てるバー矩形の**物理**サイズ（#878）。
 ///
-/// **`position_on_target_monitor` はこれを引数で受け取る。** かつては呼び出し側が
-/// `set_size(幅, バー高)` でウィンドウを物理的に畳み、あちらが `outer_size()` で**読み戻して**いた
-/// ——`set_size` の目的は「値を渡すこと」だけで、畳むこと自体には意味が無かった
-/// （`ADR-show-path-derives-drawn-height` 却下 2 の反転・#878）。
+/// **`position_on_target_monitor` はこれを引数で受け取る**——値を渡すためにウィンドウを
+/// `set_size(幅, バー高)` で物理的に畳み、`outer_size()` で読み戻させない（#878）。
 #[cfg(windows)]
 #[derive(Clone, Copy)]
 struct BarRectPhys {
@@ -861,10 +844,9 @@ struct BarRectPhys {
 
 /// [`BarRectPhys`] の唯一の構築点——型がその証拠を担う（`FrameVisibleRows` と同じ形）。
 ///
-/// **クランプ経路（[`read_bar_anchor`]）と同じ材料・同じ合成を通る**。以前は show 側が
-/// OS の読み戻しで、クランプ側が `bar_rect_height_phys` + 非クライアント分で、**同じ物理
-/// バー高が 2 通りに導出されていた**（`ADR-main-window-clamp-on-pointer-release`
-/// 「残っている代価」）。導出が 1 つになったので、上流の丸め規則への依存も
+/// **クランプ経路（[`read_bar_anchor`]）と同じ材料・同じ合成を通る**——**同じ物理
+/// バー高を 2 通りに導出しない**（#878・`ADR-main-window-clamp-on-pointer-release`
+/// 「残っている代価」）。導出が 1 つなので、上流の丸め規則への依存も
 /// [`layout::logical_to_phys`] の doc 1 か所に集まる。
 #[cfg(windows)]
 fn derive_bar_rect_phys(
@@ -1044,7 +1026,7 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 /// **この述語は「size ループでは真にならない」ことを保証しない。**
 ///
 /// 取得に失敗したら **`false`（＝モーダルループ中ではない）にする。** クランプ側から見ると
-/// 「働きすぎる」側であり、これは差し替え前の挙動に近い。逆にするとクランプが黙って死ぬ
+/// 「働きすぎる」側である。逆にするとクランプが黙って死ぬ
 /// ——`ADR-main-window-clamp-on-pointer-release` 却下 5 が「検知手段が無い」と記録した形に
 /// 戻ってしまう（いまは `egui_main:clamp` の系列が検知手段である）。
 #[cfg(windows)]
@@ -1086,7 +1068,7 @@ pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64)
         return;
     };
     // 算術は `WorkArea::clamp`（ユニットテスト 7 件が固定する既存の純粋核）。**新しい算術を
-    // 書かない**——show 経路と同じ導出を通すことが本修正の要点である（#877 と同型）。
+    // 書かない**——show 経路と同じ導出を通す（#877 と同型）。
     let (nx, ny) = a.work_area.clamp(
         a.pos.x,
         a.pos.y,
@@ -1171,12 +1153,12 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 
 /// 不変条件検出器（#878）: **show が導いたバー矩形は、フレームが測るバー矩形と一致する。**
 ///
-/// show は OS へ書かずに矩形を導くようになった（[`derive_bar_rect_phys`]）ので、**この PR が
-/// 持ち込む退行は「導出の誤り」である**——非クライアント分の落とし、scale の取り違え、
+/// show は OS へ書かずに矩形を導く（[`derive_bar_rect_phys`]）ので、**検出する退行は
+/// 「導出の誤り」である**——非クライアント分の落とし、scale の取り違え、
 /// 丸め規則の食い違い。ここはその導出を**毎回の show で実データに当てて検算する**。
 ///
 /// **外から測る検査ではこの退行が見えない。** show の矩形が誤っていても、ウィンドウの実サイズは
-/// 2 手目の `set_size` が決めるので DWM で測る幅・高さは正しいままであり、位置のずれも
+/// 位置決めの後の `set_size` が決めるので DWM で測る幅・高さは正しいままであり、位置のずれも
 /// 可視中のクランプが次のフレームで戻す（`egui_main:height_mismatch` と同じ「安全機構が
 /// 外部の検出器を無力化する」形。理由の正本は
 /// `.claude/rules/safety-nets.md`「検出器のカバー範囲は、欠落のパターンごとに検算する」）。
@@ -1206,8 +1188,8 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 /// **ゆえに残余を数え上げない。** 沈黙するのは「show 側とフレーム側が同じ値を見る」経路
 /// すべてであり、config 変更・DPI 変更がウィンドウに挟まる場合（`egui_main:height_mismatch` に既に
 /// 在る同種の残余）はその一例にすぎない。**scale もこのウィンドウが今いるモニターのものであって、
-/// show がこれから置く先のモニターのものではない**（旧経路も同じで退行ではないが、
-/// 両者の DPI が違う配置ではどちらの軸も現実を測れない）。
+/// show がこれから置く先のモニターのものではない**（両者の DPI が違う配置では
+/// どちらの軸も現実を測れない）。
 #[cfg(windows)]
 pub(crate) fn check_show_bar_rect(app: &tauri::AppHandle, bar_height: f64) {
     let Some(sh) = app.try_state::<EguiShellState>() else {
@@ -1248,18 +1230,17 @@ pub(crate) fn check_show_bar_rect(app: &tauri::AppHandle, bar_height: f64) {
 #[cfg(not(windows))]
 pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 
-/// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
+/// results を main の直下 + window_gap に配置する(#646)。呼び出し元は
 /// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
 /// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
 /// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
 /// サイズ側のガードとは対称でない。理由は `ResultsWindow::set_size` の doc)。
-/// 上端の算出式の正本は `layout::results_top_y`（純粋核・#752 C1）で、**Win32 を読んで
+/// 上端の算出式の正本は `layout::results_top_y`（純粋核・#752）で、**Win32 を読んで
 /// それを適用する場所はここだけ**である。呼び出し側で再計算すると `outer_position` /
 /// `outer_size` / `window_gap` の 2 度読みになり、フレーム内で値が食い違いうる
 /// （`AGENTS.md`「条件別チェック」の「重複した読み」）。
 ///
-/// **上端 y を返さない。** #675 のクランプが唯一の消費者だったため、#835 の撤去で返す先が
-/// 無くなった。**`Option` は型に `#[must_use]` を持たないので、返し続けても警告は出ない**
+/// **上端 y を返さない**（#835）。**`Option` は型に `#[must_use]` を持たないので、返しても警告は出ない**
 /// ——消費者のいない戻り値は、次の読者に「何に使うのか」を探させる。
 ///
 /// # ここが `main.outer_size()` を読み戻すのは正当である（#878）
@@ -1269,12 +1250,8 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// 正当である**——ここがその唯一の例外である（`Moved` リスナーは egui のフレームの外で走る）。
 /// `outer_position()` はそもそもユーザーが動かした位置＝コードが持っていない量である。
 ///
-/// **「main の直近の書き込み高さを共有 atomic へ残して渡す」案は却下した**（理由の詳細は
-/// `ADR-show-path-derives-bar-rect`）: (1) `outer_position()` はどのみち読むので Win32 の
-/// 呼び出しは減らない、(2) 物理 outer 高を残すには書き込み点で非クライアント分を読む必要が
-/// あり、読み戻しが移動するだけである、(3) 書き手が 2 人（show と毎フレーム）の memo を
-/// フレーム跨ぎで持つ形は #878 の継ぎ目 1 そのもので、results 側には補正フレームの
-/// 相当物が無い。
+/// **「main の直近の書き込み高さを共有 atomic へ残して渡す」案は却下した**（理由は
+/// `ADR-show-path-derives-bar-rect`）。
 ///
 /// # 補正するのは縦だけである
 ///
@@ -1328,7 +1305,7 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     ) else {
         return;
     };
-    // 算術は layout::results_top_y（純粋核・#752 C1）。Win32 の読みはここで 1 回だけ行う。
+    // 算術は layout::results_top_y（純粋核・#752）。Win32 の読みはここで 1 回だけ行う。
     // **`main` から読んだ scale をその場で `MainScale` へ包む**
     // ——results ウィンドウの scale（`ResultsWindow::set_size` が読む）と型で分かれており、
     // 取り違えはコンパイルが通らない。
@@ -1376,10 +1353,9 @@ pub(super) fn read_visible_rows(app: &tauri::AppHandle) -> FrameVisibleRows {
 /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は `Option<usize>` のため
 /// effective_visible_rows() で既定補完する（config.rs:327）。
 ///
-/// **呼び出し点は `read_visible_rows` ただ 1 つである**（#1106 で `drive_results_window` の
-/// 内側からの直読みを撤去した）。#749 は「読み点の制約を持たない」ことを理由にここで読んで
-/// いたが、**起動側のゲートが同じ値を見るようになった時点で制約が生まれた**——読みが 2 つ
-/// あると、同一フレームで表示は隠し起動は通す並びが構築できる。
+/// **呼び出し点は `read_visible_rows` ただ 1 つである**（#1106）。**起動側のゲートが表示と
+/// 同じ値を見るので、読み点の制約がある**——読みが 2 つあると、同一フレームで表示は隠し
+/// 起動は通す並びが構築できる。
 fn max_results(app: &tauri::AppHandle) -> u32 {
     super::read_config(
         app,
@@ -1398,15 +1374,15 @@ fn read_main_visible(app: &tauri::AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-/// `drive_results_window` の 1 フレーム分の入力（#749 段 1）。
+/// `drive_results_window` の 1 フレーム分の入力（#749）。
 ///
-/// **`result_count` の読み点は呼び出し側の責務である**（#752 F2 / ADR-results-presentation-two-stage）。同一フレーム内で
+/// **`result_count` の読み点は呼び出し側の責務である**（#752 / ADR-results-presentation-two-stage）。同一フレーム内で
 /// `plain_hidden` はクリック逆流の消費**前**、`result_count` は消費**後**に読む。
 /// **この構造体を作る式を `plain_hidden` の算出の隣へ動かしてはならない**——行クリック起動
 /// フレームで古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
 ///
 /// `width` と `row_height` と `visible_rows` は**それぞれ別種の制約**を持つ（混同しないこと）。
-/// `row_height` はフレーム冒頭の `VisualSnapshot` 由来でなければならず（#673 決定 4: テーマ値は
+/// `row_height` はフレーム冒頭の `VisualSnapshot` 由来でなければならず（#673: テーマ値は
 /// 1 フレーム 1 回）、`width` は view が main へ適用するのと**同一フレームの同一値**でなければ
 /// ならない（両ウィンドウの唯一の size writer が main である前提）。ゆえに内側で読み直さない。
 ///
@@ -1423,21 +1399,19 @@ pub(crate) struct DriveResultsInputs {
     pub(crate) visible_rows: FrameVisibleRows,
     /// results の下地（ネイティブ背景ブラシ）に使う背景色。**フレーム冒頭の `VisualSnapshot`
     /// 由来でなければならない**——ここで別に読むと `row_height` と別の lock になり、同じ
-    /// フレームで新旧が混ざる（#673 決定 4・`row_height` と同じ理由）。
+    /// フレームで新旧が混ざる（#673・`row_height` と同じ理由）。
     pub(crate) background: egui::Color32,
 }
 
-/// results ウィンドウの可視性・サイズ・位置を main から駆動する(#646 PR2 決定 6)。
+/// results ウィンドウの可視性・サイズ・位置を main から駆動する(#646)。
 /// 位置 = main の直下 + window_gap(従属)。デルタガードで無変化フレームは no-op。
-/// show は focusable(false) ウィンドウゆえフォーカスを奪わない(決定 4)。
+/// show は focusable(false) ウィンドウゆえフォーカスを奪わない(#646)。
 ///
-/// **hidden ウィンドウは `update()` が走らないため自分では show できない**(SU5 要石)——毎フレーム走る
+/// **hidden ウィンドウは `update()` が走らないため自分では show できない**(#532)——毎フレーム走る
 /// main 側からのみ駆動できる。呼び出し元は `SearchWindowView::update()` の末尾 1 か所である。
 ///
 /// **`el` はイベントループスレッド上であることの証人である**（理由は `show_egui_main` の doc）。
 /// 呼び出し元はフレームの中なので `RuntimeFrame::event_loop()` から得る。
-/// `drive_results_window` の区間別の所要（#1032 の調査足場）。
-///
 pub(crate) fn drive_results_window(
     app: &tauri::AppHandle,
     el: &snotra_egui_runtime::EventLoopProof,
@@ -1447,12 +1421,12 @@ pub(crate) fn drive_results_window(
         return;
     };
     // 連言②の材料（件数）は**クリック逆流の消費後**に読む。③ `plain_hidden` は消費**前**に
-    // 読んだ値を受け取る（#752 F2）。**この非対称は意図である**——読み点を揃えて前へ寄せる
+    // 読んだ値を受け取る（#752）。**この非対称は意図である**——読み点を揃えて前へ寄せる
     // と、行クリック起動フレームで古い行が 1 フレーム描かれる（`cargo test` では落ちない）。
-    // **どちらも呼び出し側が読む**（#749 で driver が view から出たため、読み点は
-    // `DriveResultsInputs` を組み立てる式の位置が決める）。
+    // **どちらも呼び出し側が読む**（driver は view の外にあるので、読み点は
+    // `DriveResultsInputs` を組み立てる式の位置が決める・#749）。
     let count = i.result_count;
-    // main が hidden の間は results を出さない（#671 PR A′ レビュー Important 1）。
+    // main が hidden の間は results を出さない（#671）。
     // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
     // **この読みより前に store が済んでいたフレーム**はここで hide 側の判定になる。判定式と
     // 根拠は layout::present_results（純粋核・ユニットテスト対象）。
@@ -1471,9 +1445,9 @@ pub(crate) fn drive_results_window(
         row_height: i.row_height,
     }) {
         layout::ResultsPresentation::Hidden => {
-            // 可視フラグは ResultsWindow が持つ（#671 PR A′ spec 決定 2）。hide() は遷移した
+            // 可視フラグは ResultsWindow が持つ（#671）。hide() は遷移した
             // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。
-            // trace を型の内側でなく呼び出し側に置く理由は spec 決定 7。
+            // trace は型の内側でなく呼び出し側に置く（#671）。
             if results.hide(el) {
                 crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
             }
@@ -1483,23 +1457,23 @@ pub(crate) fn drive_results_window(
     };
     // 位置: main の見える下端 + gap(物理座標。式の正本は layout::results_top_y)。無ガードの
     // 単一点(position_results_below_main)へ委譲——Moved リスナーと共用する
-    // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
+    // ため、デルタガードはヘルパー側に持たない(#646)。
     position_results_below_main(app);
-    // 高さは `present_results` が導いた値をそのまま渡す。**作業領域の下端によるクランプは
-    // #835 で撤去した**——ウィンドウの大きさは表示位置で変わらず、収まらない分は画面外へはみ出す
+    // 高さは `present_results` が導いた値をそのまま渡す。**作業領域の下端ではクランプしない**
+    // （#835）——ウィンドウの大きさは表示位置で変わらず、収まらない分は画面外へはみ出す
     // （`layout::results_window_height` の doc・`ADR-results-fixed-height`）。
     //
-    // デルタガードは `ResultsWindow::set_size` が内蔵する（#749 で移設）。**照合対象が
+    // デルタガードは `ResultsWindow::set_size` が内蔵する（#749）。**照合対象が
     // `set_size` の実引数と同じであること**——素の値を覚えると、毎フレーム撃つか必要な
-    // 再サイズを撃たないかのどちらかになる——は、memo を撃つ側の内側へ入れたことで
+    // 再サイズを撃たないかのどちらかになる——は、memo が撃つ側の内側にあることで
     // 構造的に保たれる（渡した値がそのまま memo になる）。
     results.set_size(i.width, desired_height, i.background);
-    // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
-    // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
+    // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646）。
+    // 置き場の理由は上の hide 側コメントと同じ（#671）。
     if results.show(el, i.background) {
         crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
     }
-    // 決定 5（#673 spec・#697）: この無条件 wake を edge 化してはならない。results は
+    // この無条件 wake を edge 化してはならない（#673・#697）。results は
     // config 系イベントを一切 listen せず（register_config_wake_listeners は wake_main のみ）、
     // visual-only の config 変更では RowsSnapshot が不変ゆえ snapshot 差分 wake も発火しない。
     // results が新しい色・フォント・行高を描くことを**保証する**唯一の経路がこの
@@ -1512,7 +1486,7 @@ mod tests {
     use super::*;
 
     /// ネイティブブラシは alpha を 255 へ固定する。softbuffer の clear color が alpha を
-    /// 持てないため、**下地と定常の背景が食い違わないよう不透明側へ揃える**（spec 決定 4）。
+    /// 持てないため、**下地と定常の背景が食い違わないよう不透明側へ揃える**（#802）。
     /// hex から入る側の premultiply は `visual.rs` の
     /// `background_color_premultiplies_alpha_rather_than_ignoring_it` が測る（そちらが正本）。
     #[test]

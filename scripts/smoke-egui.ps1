@@ -835,7 +835,14 @@ $toastProc = Start-SnotraProcess -ConfigDir $toastProfile.FullPath -FilePath $Ex
 try {
   $hk2 = Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'hotkey:registered' -TimeoutMs $StartupObserveTimeoutMs
   if ($null -eq $hk2) { throw 'シナリオ 2: hotkey:registered を観測できませんでした' }
+  # **登録の成否と VK 一覧を、既定のプロファイル側と同じく確かめる**（#1413）。見ずに進むと、登録の
+  # 失敗は後の `egui_show:done` の待ち切れとして現れ、症状が原因から離れる。両シナリオは同じ
+  # ホットキーを登録するので、シナリオ 1 のプロセスが残っていれば後発の登録は失敗しうる。
+  if (-not $hk2.data.ok) {
+    throw "シナリオ 2: アプリ内でホットキーの登録に失敗しました（modifier=$($hk2.data.modifier) key=$($hk2.data.key)）"
+  }
   $vks2 = @($hk2.data.vks | ForEach-Object { [byte][int]$_ })
+  if ($vks2.Count -lt 1) { throw 'シナリオ 2: hotkey:registered の VK 一覧が空です。注入するキーを決められません' }
 
   foreach ($round in 1..2) {
     # **presence ではなく increment で待つ**（是正 A）。round 2 の待ちが round 1 の行へ

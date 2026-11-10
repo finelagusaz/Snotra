@@ -116,7 +116,7 @@ npm run check:colors '--' -Interactive    # 判定せず起動し、目視項目
 ```
 
 - **CI では走らない。** GUI を要するので、`ci.yml` にも `smoke.yml` にも入っておらず、明示的に起動したときだけ動く（エージェントも起動できる。画面がロックされているときを除く）。そのため、`[visual]` の色に効く変更は、CI が緑でも未検証である
-- **既定色での確認は、この検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するので、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」）
+- **既定色での確認は、この検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するので、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」）
 - **自動判定するのは、各ウィンドウが「見せねばならない」と宣言した色である**（#953）。main は背景と入力欄の背景、results は背景を宣言する
   - 判定は「ウィンドウ全体の最頻色が期待色か」ではない。その前提（背景はウィンドウで最も広い色）は、main ウィンドウでは偽である。入力欄の塗りが背景より広く（実測 37.6% > 33.3%）、旧来の判定では、main はどんな背景色を指定しても赤だった
   - 下限の占有率は、宣言ごとに持つ（main 15% / results 50%・実測に対して 1.5〜2.5 倍の余裕）。「最頻である」は「下限以上」を含意するが、逆は成り立たない。一律の小さな下限にすると、results の検出力が落ちる
@@ -226,7 +226,7 @@ npm run governance:check    # 必須: ガバナンス文書の決定的検査（
 - ローカルでこのコマンドを実行するか、PR CI の `governance-check` job（skip-ci の対象外・常時実行）に委ねる
 - 検査の実体は、`scripts/governance-check.mjs`（facade）と、`scripts/governance/checks/` 配下の各ファイルである
   - **検査の一覧は、`checks/` ディレクトリの走査が SSOT である**（`scripts/governance/registry.mjs`）。ファイルを置けばそのまま検査になり、範囲を手で書く面が無い。旧来はファイル冒頭のコメント見出しへ範囲を手で書いていたので、黙って古くなった（「G-module-index〜G-config-reachability」と書いたまま、実際は G-check-skill-enumeration まで増えていた・#812。per-check への分割（#1088）が、範囲の手書きそのものを消した）
-  - 関連する判断の在りか: 面積 ratchet の文字数指標は `docs/adr/ADR-area-metric-characters.md`、config フィールドの到達性は `docs/development-principles.md`「config の値は到達性の検出器を持たない」
+  - 関連する判断の在りか: 面積 ratchet の文字数指標は `docs/adr/ADR-area-metric-characters.md`、config フィールドの到達性は `docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」
   - 意味の判断（責務の妥当性・npm ラッパーの等価性・メモリの整合）は、`/health-check` に残る
 
 ## Windows/macOS/Linux で実行可能

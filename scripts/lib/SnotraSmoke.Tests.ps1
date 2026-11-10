@@ -927,7 +927,7 @@ auto_hide_on_focus_lost = false
     # 検出点を置かないと Pester 実行全体から生きた snotra.exe が漏れても誰も見ない
     # ——**`Write-Warning` は `run-pester.ps1` の合否（`FailedCount`）に一切影響しない**。
     # `AfterAll` からの throw は It の例外を覆い隠さないため、ここが正しい層である
-    # （`docs/development-principles.md`「構造的設計原則と強制の階梯」の一段上げ）。
+    # （規則を守らせる強さを 1 段上げた形。`docs/development-principles.md`「規則を守らせる強さ」）。
     AfterAll {
         # **検査が起動した本体だけに絞る。** `Get-Process -Name 'snotra'` はグローバルで、
         # 開発者が普段使いで起動している実インスタンスも掴む。絞らないと (1) それを予告なく

@@ -74,6 +74,7 @@
 ### Phase 3 — 横断
 
 - [ ] コメント間の逐語引用（`「…」` が別コメントの語句を指すもの）を egui_shell 全体で数え、引用元と引用先が食い違っていないかを直す
+- [ ] 自分の変更が偽にした外の記述を直す（範囲外に置けない・`.claude/rules/governance-docs.md`「条項を足す・消す・移すとき」）: `docs/architecture.md:239`「含意が壊れた経緯は同 doc」（群 D が `is_unsettled` の doc から経緯を落とした）。ほかの群の範囲外メモからも同じ形を拾う
 - [ ] 受け入れ条件 2 の正規表現を変更後のツリーに当て、残りがすべて台帳で「残す」であることを確かめる
 - [ ] `docs/adr/ADR-egui-shell-comment-history-scope.md` を書く: 残した形と理由・却下した確かめ方・受容する残余（式の取りこぼし・`smoke-egui.ps1` は別 issue）
 - [ ] `smoke-egui.ps1` の経緯コメントの follow-up issue を起票する（#1413・#1414 の後に着手、と本文に書く）

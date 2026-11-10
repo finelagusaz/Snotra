@@ -143,7 +143,7 @@ impl ResultsWindow {
 
     /// 下地を config 色へ合わせる（本体は `window_coordinator::apply_native_background`——
     /// main と同じ経路を通す理由はそちらの doc）。**リサイズでも下地が露出する**ため
-    /// show 遷移時とサイズ変更時の両方で撃つ（#802）。
+    /// show 遷移時とサイズ変更時の両方で撃つ（#532）。
     ///
     /// **private である**: 呼ぶのは `show` / `set_size` という遷移判定・デルタガードの内側だけで、
     /// 外から撃てると「ガードの内側でだけ撃つ」不変条件が型の外で破れる。`ResultsWindow` は

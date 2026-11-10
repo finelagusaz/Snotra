@@ -33,7 +33,7 @@ describe("G-fullwidth-doc-link-bracket checkFullwidthDocLinkBrackets（intra-doc
     });
 
     it("インデントされた `///`（impl ブロック内の doc）でも見る", () => {
-      // `linesOfComments` は trim 前の raw を返す。呼び出し側が trimStart しないと
+      // 行は trim 前の raw のまま判定へ渡る。trimStart しないと
       // 実ツリーの大半を占めるこの形を全滅で見逃す（敵対的調査 2026-09-02 が壊した点）
       const src = "impl X {\n    /// 合成は [`FrameGeom::bar_height_phys`］ が持つ\n    fn f() {}\n}\n";
       const f = run(src);

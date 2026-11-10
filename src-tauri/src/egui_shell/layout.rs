@@ -1,19 +1,19 @@
-//! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出・
+//! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532）。ウィンドウ高さ算出・
 //! results ウィンドウの可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・バー矩形）・
 //! 検索 debounce の判定・**表示幅に合わせたテキストの中間省略**（`truncate_middle_chars` /
 //! `fit_middle_by_measure`・#870）を Win32 非依存で持つ。ユニットテスト対象。
 //!
 //! **`egui` へ問うのは行高の丸め規則ただ 1 つである**（`GuiRounding`・`results_window_height`）。
-//! かつては egui にも依存しない旨を謳っていたが、それは「egui が行をどう積むか」を
-//! **写して持つ**ことでしか成り立たず、実際に 1/32 の丸めを写し忘れてウィンドウと中身がずれた。
+//! egui に依存しない形は「egui が行をどう積むか」を**写して持つ**ことでしか成り立たず、
+//! 実際に 1/32 の丸めを写し忘れてウィンドウと中身がずれた（#945）。
 //! 規則は写さず SSOT へ問う（`AGENTS.md`「検証の作法」の「照合は SSOT に対して行う」）。
 
 use egui::emath::GuiRounding as _;
 use std::time::{Duration, Instant};
 
-/// path 行のフォントサイズ(#646 決定 9)。view.rs `RowTheme::path_size` と同係数——
+/// path 行のフォントサイズ(#646)。view.rs `RowTheme::path_size` と同係数——
 /// 正本はここ(layout の Metrics が同じ値で行高を積算するため。二重定義は行高と描画の
-/// 不一致バグになる)。driver(view.rs)から Task 3・4 で配線済み。
+/// 不一致バグになる)。
 pub fn path_size(font_size: u32) -> f64 {
     (font_size as f64 * 0.78).max(9.0)
 }
@@ -23,22 +23,22 @@ pub fn path_size(font_size: u32) -> f64 {
 ///
 /// **係数がパス行（0.78）と違うのは意図である。** パスは行の副次情報だが、status 行と
 /// トーストは**その行の主メッセージ**であり、読ませる必要がある。0.87 は既定
-/// `font_size = 15` で 13.05px となり、固定値だった 13px と実質同じ見た目を保つ——
-/// この変更は「連動するようになった」だけで、既定設定の利用者の見た目は変えない。
+/// `font_size = 15` で 13.05px となり、13px と実質同じ見た目になる——既定設定の利用者の
+/// 見た目を 13px 固定のときから変えない値である（#672）。
 pub fn status_size(font_size: u32) -> f64 {
     (font_size as f64 * 0.87).max(11.0)
 }
 
-/// 行高・バー高・toast 高の算出値(#646 決定 2)。config `visual` から毎フレーム導出し
-/// キャッシュしない(font_size と同じ live-read 方針)。driver からの消費は Task 3・4 で配線済み。
+/// 行高・バー高・toast 高の算出値(#646)。config `visual` から毎フレーム導出し
+/// キャッシュしない(font_size と同じ live-read 方針)。
 pub struct Metrics {
-    /// font_size + bar_padding。既定(15+28)=43、font 24 で現行 52 を再現。
+    /// font_size + bar_padding。既定(15+28)=43、font 24 で 52 を再現。
     pub bar_height: f64,
-    /// 2 行表示(決定 9)の積算: font_size + path_size + row_padding + 行間 4。下限 24。
+    /// 2 行表示(#646)の積算: font_size + path_size + row_padding + 行間 4。下限 24。
     pub row_height: f64,
     /// bar_height と同値(§20.3 の toast 行)。
     pub toast_height: f64,
-    /// バー帯の内側に取る**四辺一様**の余白(#646 PR2・実機目視で追加)。入力欄はこの余白の
+    /// バー帯の内側に取る**四辺一様**の余白(#646・実機目視で追加)。入力欄はこの余白の
     /// 内側いっぱい(高さ `bar_height - 2*bar_inset`)を占めるため、上下左右の見た目の枠が
     /// 等しくなる。`bar_padding / 4` は「font_size に対する入力欄の内部余白」も同値に保つ
     /// 導出(既定 28/4=7 のとき font 15 で欄高 29・font 24 で欄高 38——どちらも文字の上下に 7)。
@@ -66,10 +66,8 @@ impl Metrics {
 /// 「ウィンドウが手元にある場所」へ閉じることが要点で、生成子は `window_coordinator::main_scale`
 /// （main のハンドルから読む）だけである。
 ///
-/// **なぜ要るか**: #835 のクランプ撤去で results ウィンドウの scale を読む箇所が一度消え、
-/// 「同型の値が 1 種類になったので取り違えは構造的に起こらない」と書けた時期があった。
-/// 物理 px への切り上げ（`results_height_phys`）でその読みが戻り、同型の `f64` が 2 種類
-/// 並ぶ状態が再来したため、**doc の申し合わせではなく型で分ける**。
+/// **なぜ要るか**: 物理 px への切り上げ（`results_height_phys`）のために results ウィンドウの
+/// scale も読むので、同型の `f64` が 2 種類並ぶ。**doc の申し合わせではなく型で分ける**（#945）。
 /// マルチモニターで main と results が別 DPI に跨れば、両者は実際に異なる値になる。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MainScale(f64);
@@ -95,11 +93,11 @@ impl ResultsScale {
     }
 }
 
-/// main ウィンドウの高さ(#646 PR2 決定 6)。bar(+status/toast)のみで結果に伸縮しない。
+/// main ウィンドウの高さ(#646)。bar(+status/toast)のみで結果に伸縮しない。
 ///
 /// `status_height`: indexing 案内・起動中・一時通知の行(#700)。**入力欄に重ねず独立した行を
 /// 占める**——重ね描きは「編集できるのに文字が見えない」状態を作り、実際に編集不能と報告された
-/// (#700 発見 C)。`toast_height`: updater toast の行(§20.3)。
+/// (#700)。`toast_height`: updater toast の行(§20.3)。
 ///
 /// 両者は独立に積む。同時成立時にどちらかを畳むと、畳んだ側の情報が黙って消える。
 pub fn main_window_height(
@@ -111,16 +109,15 @@ pub fn main_window_height(
 }
 
 /// 結果ウィンドウの高さ（#835）。**`max_results` 分の固定高**。**件数を入力に持たない**
-/// ——候補が少なくてもウィンドウは縮まない（#646 PR2 決定 7 の実件数フィットを覆した。理由は
+/// ——候補が少なくてもウィンドウは縮まない（実件数フィットを採らない理由は
 /// `ADR-results-fixed-height`）。
 ///
 /// **`0.0` は「hide せよ」の契約値である。** 返すのは `max_results == 0` のときだけで
 /// （`config.toml` の手編集でのみ到達する・`ResultsInputs::max_results` の doc）、
 /// `present_results` はこれを連言④の偽として読む。**0 を作ってはならないし、消しても
-/// ならない**——この契約は #675 のクランプの doc が持っていたが、#835 でクランプごと
-/// 撤去したため、ここが正本である。
+/// ならない**——この契約の正本はここである（#835）。
 ///
-/// **作業領域の下端で抑えない**（#835 で #675 を撤去）。収まらない分は画面外へはみ出す。
+/// **作業領域の下端で抑えない**（#835）。収まらない分は画面外へはみ出す。
 /// ウィンドウの大きさが表示位置で変わらないことを優先した人間裁定であり、その帰結（最下端では
 /// 1 行も見えないことがある）は `SPEC.md` §4.5 が受容すると明示している。
 ///
@@ -132,11 +129,10 @@ pub fn main_window_height(
 ///
 /// **余りを持たない（丸め済み行高の整数倍ちょうど）。** これが成り立つのは `results_view` が
 /// `item_spacing.y = 0` を敷いて**行ピッチを行高に一致させている**からであり、両者は対である
-/// （片方だけ変えると最終行が切れるか、`max_results + 1` 行目の頭が覗く）。かつてあった
-/// `+ 8.0` は 1 ウィンドウ時代の `HeightParams.results_padding`——結果リスト領域の**内側**の余白——を
-/// #646 PR2 がウィンドウ高へそのまま持ち込んだものだが、ウィンドウを分けた時点で「ウィンドウの高さ = `ScrollArea` の
-/// 高さ」になり、`ScrollArea` は与えられた高さいっぱいに行を積むため**余白としては一度も
-/// 機能していなかった**（実際には `max_results + 1` 行目の頭 8px が覗く場所になっていた）。
+/// （片方だけ変えると最終行が切れるか、`max_results + 1` 行目の頭が覗く）。**ウィンドウ高へ
+/// 余白の定数を足さない**——「ウィンドウの高さ = `ScrollArea` の高さ」であり、`ScrollArea` は
+/// 与えられた高さいっぱいに行を積むので、足した分は余白にならず `max_results + 1` 行目の頭が
+/// 覗く場所になる（#945）。
 ///
 /// **これは論理 px であり、これだけでは足りない。** 物理 px へ落とす段で切り捨てが起きると
 /// 最終行が再び切れる——変換は `results_height_phys` が担う（同関数の doc）。
@@ -182,15 +178,15 @@ const ICON_PREFETCH_SCREENS: usize = 1;
 /// **これは「描く行」ではない。** 行の描画は `results_list_ui` が `snapshot.rows` 全件に
 /// 対して行い（仮想化しない——`show_rows` にすると描画されない行の `scroll_to_me` が
 /// 発火せず、世代交代フレームで選択行へ戻れなくなる）、テクスチャの保持も全件のままである
-/// （SU4 決定 A のメモリ境界は 16x16 テクスチャ数百 KB の話で、そこは支配項ではない）。
+/// （テクスチャのメモリ境界〔#532〕は 16x16 テクスチャ数百 KB の話で、そこは支配項ではない）。
 /// **絞るのは抽出だけである。**
 ///
 /// **理由は測ってある**（2026-08-06・release・`icon::tests::icon_pipeline_cost_probe`・
 /// 既定 scan paths の 133 件）: `SHGetFileInfoW` → GDI の区間が 1 件あたり p50 **3048us** を
 /// 占め、PNG encode（114us）・decode（12us）は合計しても 0.5% に届かない。133 件を rayon 並列で
 /// 一括抽出した実時間は **87.8ms**。`snapshot.rows` は `visible_rows`（既定 8）ではなく
-/// `effective_result_limit`（既定 **200**・設定次第で 1000）ゆえ、絞る前は 1 回の settle が
-/// この規模を丸ごと払っていた——画面に出る 8 個のために全件シェルへ問い合わせていたことになる。
+/// `effective_result_limit`（既定 **200**・設定次第で 1000）ゆえ、絞らなければ 1 回の settle が
+/// この規模を丸ごと払う——画面に出る 8 個のために全件シェルへ問い合わせることになる。
 /// **支配項は呼び出し回数であり、呼び出し 1 回の中身ではない。**
 ///
 pub fn icon_prefetch_range(
@@ -227,7 +223,7 @@ pub fn icon_prefetch_range(
     start..end
 }
 
-/// results ウィンドウの**物理**高さ（案 3）。論理高を**切り上げて**物理 px にする。
+/// results ウィンドウの**物理**高さ（#945）。論理高を**切り上げて**物理 px にする。
 ///
 /// **`round` ではなく `ceil` である。** ウィンドウの物理高は整数 px、論理高は連続量であり、
 /// `round` は半分の確率で下へ丸められて最終行を削る。実測では font_size 8..48 × 件数 1..50 ×
@@ -291,27 +287,22 @@ pub struct InvisibleBorders {
     pub results_top: i32,
 }
 
-/// results ウィンドウの上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
-/// の算術部（#749 で `mod.rs` から移設）。
+/// results ウィンドウの上端の**物理** y（#752）。`window_coordinator::position_results_below_main`
+/// の算術部（#749）。
 ///
 /// **隙間は見えるものどうしの間隔である**（`SPEC.md`「11. ビジュアル」の
 /// 「`window_gap`（既定 4px・`[visual]` の config キー・live-read）だけ離して配置し」）。ゆえに `main_y + main_height_phys` が指す外形の下端を
-/// そのまま基準にせず、[`InvisibleBorders`] の分を両側から差し引く。差し引かなかった頃は
-/// 見た目の隙間が DPI 125% で 13 物理 px あり、意図した 5 物理 px の 2 倍を超えていた。
+/// そのまま基準にせず、[`InvisibleBorders`] の分を両側から差し引く。差し引かないと、
+/// 見た目の隙間は DPI 125% で 13 物理 px になり、意図した 5 物理 px の 2 倍を超える（実測・#1208）。
 ///
 /// **算出と適用（`set_position`）を分けるために出したのではない**——ここへ出すのは**式を
-/// テスト可能にするため**であり、`mod.rs` 側は Win32 を 1 回だけ読んでこの式を呼ぶ薄い
+/// テスト可能にするため**であり、`window_coordinator` 側は Win32 を 1 回だけ読んでこの式を呼ぶ薄い
 /// ラッパーのままである。消費者は 2 つ（毎フレームの drive と `Moved` リスナー）で、
 /// どちらも同じラッパーを通る。
 ///
-/// `main_scale` は **main ウィンドウの** scale である。**#835 より前は results ウィンドウの scale を取る
-/// `available_below` と同型で並んでおり、取り違えの検出器が無いことを受容していた**——
-/// クランプの撤去で **results ウィンドウの** scale を読む箇所が一度は消え、同型の値が 1 種類に
-/// なったので取り違えは構造的に起こらない、と書けた時期があった。
-///
-/// **案 3 でその読みは戻った。** `ResultsWindow::set_size` が高さを物理 px で指定するために
-/// **results ウィンドウの** scale を読む（同関数の doc）。**ただし残余としては戻っていない**——
-/// 両者は `MainScale` / `ResultsScale` に分かれており、**取り違えはコンパイルが通らない**
+/// `main_scale` は **main ウィンドウの** scale である。`ResultsWindow::set_size` は高さを物理 px で
+/// 指定するために **results ウィンドウの** scale を読む（同関数の doc）が、
+/// 両者は `MainScale` / `ResultsScale` に分かれており、**取り違えはコンパイルが通らない**（#945）
 /// （実測: 双方向で `expected MainScale, found ResultsScale` / その逆）。ここが要求するのは
 /// **main の** scale である。**マルチモニターで main と results が別 DPI のモニターに跨るとき、
 /// 両者は実際に異なる値になる**——型で分けたのはその状況で黙って誤らないためである。
@@ -335,9 +326,8 @@ pub fn results_top_y(
 /// 同じ観測形の 1 px スナップ）。
 ///
 /// **上流への依存はこの doc 1 か所に集約してある。** `dpi` が銀行家丸めへ変われば、直すのは
-/// ここだけである——以前は show 経路（OS の読み戻し）とフレーム経路（自前の `.round()`）で
-/// **同じ物理バー高が 2 通りに導出されており**、一致は偶然に依っていた
-/// （`ADR-main-window-clamp-on-pointer-release`「残っている代価」が記録した状態）。
+/// ここだけである——**同じ物理バー高を 2 通りに導出すると**、一致は偶然に依る（#878・
+/// `ADR-main-window-clamp-on-pointer-release`「残っている代価」）。
 ///
 /// **[`results_top_y`] の gap 換算は式が逐語で同じだが、ここへ束ねていない**（`/dry-check`
 /// で「維持」と判定・#878）。あちらはウィンドウの矩形と一致する必要が無く、**上流が丸め規則を
@@ -360,9 +350,6 @@ pub fn logical_to_phys(logical: f64, main_scale: MainScale) -> i32 {
 /// show 経路（`derive_bar_rect_phys`）が同じ形で足す（#878）。
 ///
 /// **丸め規則は [`logical_to_phys`] が持つ**——上流（`dpi` crate）への依存の説明はあちらにある。
-/// **かつてここに在った「show 経路との一致は偶然である」という断りは、show 経路が
-/// `outer_size()` の読み戻しをやめた時点で不要になった**（#878。以前は同じ物理バー高が
-/// 2 通りに導出されていた）。
 pub fn bar_rect_height_phys(bar_height_logical: f64, main_scale: MainScale) -> i32 {
     logical_to_phys(bar_height_logical, main_scale)
 }
@@ -383,11 +370,10 @@ pub fn bar_rect_center(x: i32, y: i32, width_phys: u32, bar_outer_height_phys: i
 /// ためのデルタガードである。
 ///
 /// **correctness のフラグではない**——results の可視性は `ResultsWindow` の `visible` が持つ
-/// （#671 spec 決定 2 の意図的な分割）。ここが誤って `false` を返してもウィンドウが消えることはなく、
+/// （意図的な分割・#671）。ここが誤って `false` を返してもウィンドウが消えることはなく、
 /// 直近に適用したサイズのまま残るだけである。
 ///
-/// 許容 `0.5` は論理 px の丸め差を吸収する値で、#646 PR2 から手書きされていた式をそのまま
-/// 移した。引数は `(幅, 高さ)`——`set_size(width, height)` の引数順と揃える。
+/// 許容 `0.5` は論理 px の丸め差を吸収する値である（#646・#749）。引数は `(幅, 高さ)`——`set_size(width, height)` の引数順と揃える。
 ///
 /// 消費者は 2 つある（**状態は共有しない。式だけを共有する**）: `ResultsWindow::set_size`
 /// （memo はウィンドウの所有型が持つ）と `view.rs` の main ウィンドウガード（memo は view が持つ——main の高さの
@@ -400,12 +386,11 @@ pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
 }
 
 /// SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言を、**生の入力から**受け取る
-/// （#752 C2）。
+/// （#752）。
 ///
-/// **融合した bool を受け取らない。** 旧 `results_should_show` は連言②「結果が空でない」と
-/// ③「通常結果を隠していない」を `show_results` という 1 つの bool へ潰した 3 引数であり、
-/// テストが「0 件だから隠れた」と「carve-out だから隠れた」を**区別できなかった**。
-/// それを解くことが #752 の実質である。
+/// **融合した bool を受け取らない。** 連言②「結果が空でない」と③「通常結果を隠していない」を
+/// 1 つの bool へ潰すと、テストが「0 件だから隠れた」と「carve-out だから隠れた」を
+/// **区別できない**（#752）。
 #[derive(Debug, Clone, Copy)]
 pub struct ResultsInputs {
     /// 連言①: main が可視か（`EguiShellState.main_visible`）。
@@ -428,8 +413,8 @@ pub struct ResultsInputs {
     pub row_height: f64,
 }
 
-/// results ウィンドウの見せ方の決定（#752 C2）。**driver はこの高さをそのまま `set_size` へ渡す**
-/// ——作業領域による調整は #835 で撤去した（`results_window_height` の doc）。
+/// results ウィンドウの見せ方の決定（#752）。**driver はこの高さをそのまま `set_size` へ渡す**
+/// ——作業領域では調整しない（#835・`results_window_height` の doc）。
 ///
 /// `{ visible: bool, height: f64 }` の struct にはしない。`visible: true, height: 0.0` という
 /// 不正状態が構築でき、「高さ 0 は hide」という契約（`results_window_height` の doc）と
@@ -440,9 +425,9 @@ pub enum ResultsPresentation {
     Visible { desired_height: f64 },
 }
 
-/// 4 連言を導く（#752 C2）。判定式の正本はここ 1 か所である。
+/// 4 連言を導く（#752）。判定式の正本はここ 1 か所である。
 ///
-/// **`main_visible` を条件に含めるのが要石である**（#671 PR A′）。main を hide しても
+/// **`main_visible` を条件に含めるのが要石である**（#671）。main を hide しても
 /// `state.results()` は消えない（reset は show 側の `reset_pending` 消費でしか起きない）ため、
 /// 結果は hidden 中も残る。hidden 中に main の update() が 1 フレームでも走ると
 /// （`config-applied` / `indexing-*` / updater 完了の `wake_main` 自体は main の可視性を
@@ -454,20 +439,20 @@ pub enum ResultsPresentation {
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///
-/// **読み点の非対称は呼び出し側の責務である**（#752 F2）。同一フレーム内で、③ `plain_hidden`
+/// **読み点の非対称は呼び出し側の責務である**（#752）。同一フレーム内で、③ `plain_hidden`
 /// はクリック逆流の消費**前**に、②の材料 `result_count` は消費**後**に読む。間に挟まる
 /// `start_launch` が `set_results(Vec::new())` を撃つため、行クリック起動フレームでは②が
 /// false になってウィンドウが隠れる。**読み点を前へ寄せてはならない**——起動直後に古い行が 1 フレーム
 /// 描かれる。`cargo test` では落ちない種類の回帰である。
 /// **`plain_results_hidden` を前後で 2 回読んでもならない**——`indexing` は `AtomicBool` の
-/// live-read で、同一フレーム内でも値が変わりうる。**その `indexing` については構造が担うように
-/// なった**（#1077）: `view.rs` が 1 フレーム 1 回だけ読み、
+/// live-read で、同一フレーム内でも値が変わりうる。**その `indexing` については構造が担う**
+/// （#1077）: `view.rs` が 1 フレーム 1 回だけ読み、
 /// [`crate::egui_shell::FrameIndexing`] として配る。**この型は `window_coordinator` の外では
 /// 構築できない**ので、別の値から作った `indexing` を渡す経路はコンパイルが通らない。
 /// **残り 2 入力（`view_kind` / `instant_rows`）は依然として規範である**——それらは
 /// `on_enter` の前後で正当に変わるため凍結できず、読み点を動かさないことでしか守れない。
 ///
-/// **②と④は #835 で完全に独立した。** 高さが件数を入力に持たなくなったため、「0 件だから
+/// **②と④は完全に独立している**（#835）。高さが件数を入力に持たないため、「0 件だから
 /// 高さ 0、ゆえに hide」という代行は成り立たない——②は `result_count > 0` として連言に
 /// 直接現れる。④が偽になるのは `max_results == 0` のときだけである（`ADR-results-fixed-height`）。
 pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
@@ -479,7 +464,7 @@ pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
     }
 }
 
-/// フレームの開始時刻を 1 つだけ持ち、前フレームからの間隔を返す（#1004 PR 1）。
+/// フレームの開始時刻を 1 つだけ持ち、前フレームからの間隔を返す（#1004）。
 /// **間隔は合否ではなく内訳である**——判定に使うのはフレームの所要時間の側で、このランタイムはイベント駆動ゆえ健全でも間隔は debounce 幅・打鍵間隔まで開く（`docs/superpowers/specs/2026-08-10-search-worker-design.md` の §3.3 が正本）。
 #[derive(Default)]
 pub struct FrameTimer {
@@ -494,7 +479,7 @@ impl FrameTimer {
     }
 }
 
-/// 打鍵 debounce（決定7）。時刻は driver が注入する（純粋・テスト可能）。
+/// 打鍵 debounce（#532）。時刻は driver が注入する（純粋・テスト可能）。
 /// - on_input: 入力フレーム。leading（バースト先頭）なら true を返し、以後 armed。
 /// - poll: 各フレーム。armed かつ elapsed>=interval で trailing 発火し disarm。
 pub struct Debouncer {
@@ -517,7 +502,7 @@ impl Debouncer {
     }
 
     /// armed のまま（trailing 未発火）か。呼び出し側が repaint deadline の再要求要否を
-    /// 判定するために使う（coalescing 対策・#532 SU3 M1 レビュー）。
+    /// 判定するために使う（coalescing 対策・#532）。
     pub fn is_armed(&self) -> bool {
         self.armed
     }
@@ -541,7 +526,7 @@ impl Debouncer {
         false
     }
 
-    /// armed を解除し予約済み trailing を取り消す（SolidJS cancelDebounce parity・#532 SU3 M3）。
+    /// armed を解除し予約済み trailing を取り消す（#532）。
     /// instant/command モード突入時に driver が呼ぶ——モード外で予約された検索が
     /// モード中に遅延発火する経路を塞ぐ（run_search は再導出ゆえ実害は無いが無駄撃ちを消す）。
     pub fn cancel(&mut self) {
@@ -593,8 +578,7 @@ pub fn truncate_middle_chars(s: &str, max_chars: usize) -> String {
 /// 溢れれば egui の末尾省略が leaf を削る＝ #870 の症状へ戻る。
 ///
 /// **唯一の例外**は 1 件も収まらないときで、`MIN_MIDDLE_KEEP` 字版（`best` の初期値・実測を
-/// 通っていない）を返す。これ以上短くできないためで、以降は egui 側の末尾省略に委ねる
-/// ＝現行と同じ見え方へ退化するだけである。この carve-out は
+/// 通っていない）を返す。これ以上短くできないためで、以降は egui 側の末尾省略に委ねる。この carve-out は
 /// `fit_middle_narrow_avail_falls_back_to_min_keep` が予算超過ごと固定している。
 ///
 /// 測定回数は `1 + ceil(log2(n))`（128 字で 8 回）。egui の galley キャッシュにより
@@ -679,7 +663,7 @@ mod tests {
     /// 「文字サイズに固定値を書かない」）。固定値へ戻す変更はここで落ちる。
     #[test]
     fn aux_text_sizes_scale_with_font_size() {
-        // 既定 font_size=15 で従来の固定値 13px と実質同じ（この変更は見た目を変えない）。
+        // 既定 font_size=15 で 13px と実質同じ（既定設定の見た目を変えない）。
         assert!(
             (status_size(15) - 13.05).abs() < 0.01,
             "既定で 13px 相当を保つ"
@@ -735,7 +719,7 @@ mod tests {
         assert!(d.on_input());
     }
 
-    /// #646 決定 2: bar_padding=28 は font 24 で現行 52px をピクセル再現する(後方互換の要)。
+    /// #646: bar_padding=28 は font 24 で 52px をピクセル再現する(後方互換の要)。
     #[test]
     fn metrics_bar_reproduces_current_at_font24() {
         let m = Metrics::from_config(24, 6, 28);
@@ -743,7 +727,7 @@ mod tests {
         assert_eq!(m.toast_height, 52.0);
     }
 
-    /// #646 決定 2・9: row_height は 2 行積算(name 行 + path 行 + 行間 4 + row_padding)。
+    /// #646: row_height は 2 行積算(name 行 + path 行 + 行間 4 + row_padding)。
     #[test]
     fn metrics_row_is_two_line_sum() {
         let m = Metrics::from_config(15, 6, 28);
@@ -774,7 +758,7 @@ mod tests {
         }
     }
 
-    /// #646 決定 2: 下限 24(アイコン 16px + 余白)。8 + 9 + 0 + 4 = 21 → 24 へ床上げ。
+    /// #646: 下限 24(アイコン 16px + 余白)。8 + 9 + 0 + 4 = 21 → 24 へ床上げ。
     #[test]
     fn metrics_row_floor_is_24() {
         assert_eq!(Metrics::from_config(8, 0, 28).row_height, 24.0);
@@ -787,19 +771,19 @@ mod tests {
         assert!((path_size(15) - 11.7).abs() < 1e-9);
     }
 
-    /// #646 PR2: バー内の一様余白。入力欄は帯の内側いっぱい（bar_height - 2*inset）を占める。
+    /// #646: バー内の一様余白。入力欄は帯の内側いっぱい（bar_height - 2*inset）を占める。
     #[test]
     fn bar_inset_leaves_symmetric_room_for_field() {
         let m = Metrics::from_config(15, 6, 28);
         assert_eq!(m.bar_inset, 7.0);
         assert_eq!(m.bar_height - 2.0 * m.bar_inset, 29.0); // 文字 15 + 上下 7 ずつ
-        // font 24（旧 52px バー）でも内部余白は同値に保たれる
+        // font 24（52px バー）でも内部余白は同値に保たれる
         let big = Metrics::from_config(24, 6, 28);
         assert_eq!(big.bar_inset, 7.0);
         assert_eq!(big.bar_height - 2.0 * big.bar_inset, 38.0);
     }
 
-    /// #646 PR2 決定 6: main ウィンドウは bar(+status/toast)のみで、結果による伸縮をしない。
+    /// #646: main ウィンドウは bar(+status/toast)のみで、結果による伸縮をしない。
     /// #700: status 行（indexing 案内・一時通知）は入力欄を覆わず独立した行を占める。
     #[test]
     fn main_height_is_bar_plus_optional_status_and_toast() {
@@ -812,7 +796,7 @@ mod tests {
     }
 
     /// #835: 結果ウィンドウは **`max_results` 分の固定高**。**件数では変わらない**
-    /// （#646 PR2 決定 7 の実件数フィットを覆した・`ADR-results-fixed-height`）。
+    /// （実件数フィットを採らない・`ADR-results-fixed-height`）。
     ///
     /// **`row_height` の整数倍ちょうどであること**（余りを持たないこと）も測る——`results_view`
     /// が `item_spacing.y = 0` で行ピッチを `row_height` に揃えているため、余りは余白ではなく
@@ -826,7 +810,7 @@ mod tests {
         assert_eq!(results_window_height(1, row), row);
         // 余りゼロ（行ピッチ = 丸め済み行高との対）。**割る相手は素の値ではなく丸め済みの
         // 行高である**——egui は 34.92 の行を 34.90625 で積むので、素の値で割ると整数に
-        // ならない。ここを素の値で書くと、案 3 の要（掛ける前に丸める）が測れなくなる。
+        // ならない。ここを素の値で書くと、`results_window_height` の要（掛ける前に丸める）が測れなくなる。
         let drawn = f64::from((34.92_f32).round_ui());
         for &n in &[1u32, 5, 8, 20, 50] {
             let rows = results_window_height(n, 34.92) / drawn;
@@ -849,7 +833,7 @@ mod tests {
         assert_eq!(results_window_height(0, row), 0.0);
     }
 
-    /// 案 3: 物理 px は**切り上げ**る。`round` だと半分の確率で下へ丸められて最終行を削る。
+    /// #945: 物理 px は**切り上げ**る。`round` だと半分の確率で下へ丸められて最終行を削る。
     ///
     /// **全域で切れが 0 になることを測る**——font_size 8..48 × 件数 1..50 × scale（標準の
     /// 25% 刻みに加え、Windows のカスタムスケーリングで到達する 1.1 / 1.37 も）。`ceil` を
@@ -959,20 +943,18 @@ mod tests {
         }
     }
 
-    /// #752 AC1: SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言の真理値表。
+    /// #752: SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言の真理値表。
     ///
     /// 連言は ①`main_visible` ②結果が空でない ③通常結果を隠していない ④ウィンドウ高さ > 0。
-    /// **②と③を区別できることが #752 の眼目である**——旧 `results_should_show` は両者を
-    /// `show_results` へ潰しており、「0 件で隠れた」と「carve-out で隠れた」を固定できなかった。
+    /// **②と③を区別できることがこの表の眼目である**（#752）——両者を 1 つの bool へ潰すと、
+    /// 「0 件で隠れた」と「carve-out で隠れた」を固定できない。
     ///
     /// ④を偽にできる唯一の入力は `max_results = 0`（到達可能・`ResultsInputs::max_results`
     /// の doc）。
     ///
-    /// **#835 で 16 行すべてが到達可能になった。** かつて「②false ∧ ④true」の 4 行は生の
-    /// 入力から構成できず（高さが件数にフィットしたため `result_count = 0` なら高さも 0 に
-    /// なった）、構成不能である事実を記述に留めていた。固定高化で④は `max_results` だけで
-    /// 決まるため、`result_count = 0 ∧ max_results > 0` がその 4 行を埋める——**②と④が
-    /// 完全に独立したので、測る側にも 4 行足した**（`ADR-results-fixed-height`）。
+    /// **16 行すべてが到達可能である**（#835）。④は `max_results` だけで決まるため、
+    /// `result_count = 0 ∧ max_results > 0` が「②false ∧ ④true」の 4 行を埋める——**②と④が
+    /// 完全に独立しているので、測る側もその 4 行を持つ**（`ADR-results-fixed-height`）。
     #[test]
     fn present_results_truth_table_distinguishes_all_four_conjuncts() {
         use ResultsPresentation::{Hidden, Visible};
@@ -1007,7 +989,7 @@ mod tests {
     ///
     /// **上の真理値表は「可視か否か」を測るもので、高さの不変は測っていない**——真理値表の
     /// 可視行は 1 つだけなので、そこが `h` と一致することは「ある件数で正しい」しか言わない。
-    /// #835 の受け入れ条件 1（件数によらず一定）はここが担う。
+    /// 件数によらず一定であること（#835）はここが担う。
     #[test]
     fn present_results_height_does_not_move_with_result_count() {
         let h = 8.0 * 37.0;
@@ -1020,10 +1002,9 @@ mod tests {
         }
     }
 
-    /// #671 PR A′: main が hidden の間は、結果が残っていても results を出さない。
-    /// これを落とすと「main は隠れたまま results だけが最前面に残る」（レビュー Important 1）。
+    /// #671: main が hidden の間は、結果が残っていても results を出さない。
+    /// これを落とすと「main は隠れたまま results だけが最前面に残る」。
     ///
-    /// **命題は `results_should_show` 時代から不変**（#752 C2 で `present_results` へ移設）。
     /// 上の真理値表にも同じ行があるが、**この命題は名前で追跡する価値がある**ため独立に残す
     /// ——表から 1 行落ちても、名前付きのこれが落ちる。
     #[test]
@@ -1039,14 +1020,12 @@ mod tests {
         ));
     }
 
-    // #752 AC4 の等価グリッド（旧 `results_should_show` をテストローカルのクロージャで再現し
-    // 直積で突き合わせる）は #835 で削除した。**固定していた命題は「#752 の移設が挙動を
-    // 変えなかったこと」であり、#835 は意図してその挙動を変えた**——対照を新仕様へ書き直せば
-    // 実装と同じ式を 2 度書くだけのトートロジーになる（#697「トートロジーテスト削除」）。
-    // 直積が担っていた網羅性は上の真理値表（16 行・全行が到達可能）が、高さの不変は
-    // `present_results_height_does_not_move_with_result_count` が引き取っている。
+    // `present_results` と同じ式をテストローカルに書いて直積で突き合わせる等価グリッドは
+    // 置かない——実装と同じ式を 2 度書くだけのトートロジーになる（#697「トートロジーテスト削除」・
+    // #835）。網羅性は上の真理値表（16 行・全行が到達可能）が、高さの不変は
+    // `present_results_height_does_not_move_with_result_count` が担う。
 
-    /// #752 C1: 上端 = main の下端 + gap（論理 → 物理へ換算して四捨五入）。
+    /// #752: 上端 = main の下端 + gap（論理 → 物理へ換算して四捨五入）。
     ///
     /// **`.round()` の境界を通す入力を必ず含める。** `gap × scale` が整数になる組み合わせ
     /// （gap ∈ {0,4,16} × scale ∈ {1.0,1.5,2.0} など）だけでは、丸めを**一度も検査しない**
@@ -1140,7 +1119,7 @@ mod tests {
 
     const DEEP_BASE: &str = "C:\\tmp\\snotra836\\snotra836-entry\\very-long-directory-name-for-truncation\\second-level-also-long\\third-level-segment";
 
-    /// 受け入れ条件 4: 収まるパスは 1 文字も変えない（現行の見え方を変えない）。
+    /// #870: 収まるパスは 1 文字も変えない。
     #[test]
     fn fit_middle_leaves_short_dir_untouched() {
         assert_eq!(
@@ -1152,7 +1131,7 @@ mod tests {
         assert_eq!(fit_middle_by_measure("", 0.0, fake_measure), "");
     }
 
-    /// 受け入れ条件 2: 省略しても先頭（ドライブ）と末尾（leaf）の両方が残る。
+    /// #870: 省略しても先頭（ドライブ）と末尾（leaf）の両方が残る。
     /// egui 既定の**末尾**省略では leaf が消える——#870 の症状そのもの。
     #[test]
     fn fit_middle_keeps_head_and_tail() {

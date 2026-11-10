@@ -212,8 +212,8 @@ pub(crate) fn native_brush_color(color: egui::Color32) -> tauri::window::Color {
 ///
 /// **両ウィンドウが同じ本体を通る。** main（`show_egui_main` とリサイズ）と results
 /// （`ResultsWindow` が委譲する）で別実装にすると、一手増えたときに片方だけ直る——そして
-/// 乖離の症状は「main と results で下地の色が食い違う」で、**この変更が消したはずのバグと同型**に
-/// なる。文書の相互参照ではなくコードで結ぶ。
+/// 乖離の症状は「main と results で下地の色が食い違う」で、**本関数が防ぐ不具合と同型**に
+/// なる（#802）。文書の相互参照ではなくコードで結ぶ。
 ///
 /// **撃つのは下地が露出しうる経路のうち show 遷移時とサイズ変更時である**（全経路ではない——
 /// DPI 変化に伴う物理リサイズは論理サイズが不変ゆえ `size_delta_exceeds` を通らず、撃たれない。
@@ -230,7 +230,7 @@ pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color
 /// 読みで、**1 フレーム 1 読みの規律（#673）が掛かる面には居ない**——同じ関数内の
 /// `read_metrics` や `follow_cursor_monitor` / `ime_off_on_show` の読みと同じ層である。
 ///
-/// **その層は #1076 で `engine.lock()` を持たなくなった。** show はフレームの外だが、
+/// **その層は `engine.lock()` を持たない**（#1076）。show はフレームの外だが、
 /// **ウィンドウが出るまでを止める**——検索 worker が `engine.search` で `Mutex<Engine>` を握っている
 /// 間に hotkey が来ると、そこで待つのは表示そのものである（`AppState::read_config` の doc）。
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
@@ -269,7 +269,7 @@ fn position_on_target_monitor(
 ) {
     use snotra_core::window_data;
 
-    // show のたびに読み直す（#1076 で engine lock から read_config へ・read_background と同じ層）。
+    // show のたびに読み直す（engine lock を経ない・#1076・read_background と同じ層）。
     let follow_cursor = super::read_config(
         app_handle,
         |c| c.general.follow_cursor_monitor,
@@ -364,7 +364,7 @@ pub(crate) fn show_egui_main(
         // （`launcher_controller` の同関数 doc「hidden 中の失敗は次 show のこの消費で
         // 表示される」）。ここでは常に `false` を渡すため、その場合 1 フレームだけ高さが
         // 実際より低く畳まれるが、`view.rs` の reset-on-show が memo を 0 へ戻しているので
-        // 同じフレームの動的高さ算出が直す（固着はしない・修正前より悪化もしない）。
+        // 同じフレームの動的高さ算出が直す（固着はしない）。
         // 前提が変わったら `status_row_present` の呼び出し点を grep すればここへ来る。
         let status = crate::egui_shell::status_row_present(
             indexing_now.get(),
@@ -419,7 +419,8 @@ pub(crate) fn show_egui_main(
     // 安価であり、show は頻繁な操作でもない。
     apply_native_background(&window, read_background(app));
     let _ = window.show();
-    // main_visible は show() の後に立てる（「順序不変」制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
+    // main_visible は show() の後に立てる（「順序不変」制約）。
+    // show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.main_visible.set(true);
     }
@@ -600,7 +601,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
 /// `hide_egui_main` の中でポンプが止まる。`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。
 /// 読みは hide **より前**でなければ意味を持たないので、こちらだけが臨界区間に残る。
 ///
-/// main の位置を保存する経路はここ 1 つである（#532）。
+/// main の保存位置を導く読みはここ 1 つである（#532）。
 ///
 /// **基準モニターは `read_bar_anchor` が導く**（#738）——クランプと同じ 1 つの関数を通すことで
 /// 「保存の原点」と「戻す先」が食い違わないようにしてある。ウィンドウ全体の矩形から引くと、保存座標の
@@ -633,8 +634,6 @@ pub(crate) fn read_placement_relative(
 /// （2026-07-26 実測・#697: worker は `RequestRedraw` を送信するが、hidden なウィンドウには
 /// `RedrawRequested` が配送されない）。この wake も同じ経路（`RepaintScheduler` → proxy →
 /// `RequestRedraw`）を通るため、この性質を持つ。
-///
-/// **`try_state` が返す `Option` は残る**（Tauri managed state の性質）。
 pub(crate) fn wake_main(app: &tauri::AppHandle) {
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.main_waker.wake();
@@ -699,7 +698,7 @@ struct FrameGeom {
     /// 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
     /// **生成直後の値が正しいのは tao 0.37.2 以降である**（#1266）——0.37.1 は生成時の
     /// `WM_NCCALCSIZE`（`wparam == 0`）を `DefWindowProcW` へ回してキャプション分を引く。
-    /// tao がこの扱いを失うと初回 show のバー矩形が 30 px 大きくなり、smoke の toast シナリオで
+    /// tao が 0.37.2 の扱いを失うと初回 show のバー矩形が 30 px 大きくなり、smoke の toast シナリオで
     /// `egui_main:bar_rect_mismatch` が出る（0.37.1 で実測）。
     inset_h: i32,
     scale: layout::MainScale,
@@ -1154,7 +1153,7 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 
 /// 不変条件検出器（#878）: **show が導いたバー矩形は、フレームが測るバー矩形と一致する。**
 ///
-/// show は OS へ書かずに矩形を導く（[`derive_bar_rect_phys`]）ので、**守る退行は
+/// show は OS へ書かずに矩形を導く（[`derive_bar_rect_phys`]）ので、**検出する退行は
 /// 「導出の誤り」である**——非クライアント分の落とし、scale の取り違え、
 /// 丸め規則の食い違い。ここはその導出を**毎回の show で実データに当てて検算する**。
 ///
@@ -1448,7 +1447,7 @@ pub(crate) fn drive_results_window(
         layout::ResultsPresentation::Hidden => {
             // 可視フラグは ResultsWindow が持つ（#671）。hide() は遷移した
             // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。
-            // trace は型の内側でなく呼び出し側に置く（#671。理由は `hide_egui_main` の同じ trace のコメント）。
+            // trace は型の内側でなく呼び出し側に置く（#671）。
             if results.hide(el) {
                 crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
             }

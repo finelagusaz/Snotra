@@ -378,7 +378,7 @@ export function staleIdentifierDocs(snapshot) {
  *  **もう存在しない案**を書く場所）。**基準は「日付を持つか」ではなく「もう成り立たないことを書く場所か」である**
  *  ——`docs/design/` は `status: Agreed` で `docs/architecture.md` が現在形で指す先ゆえ含める。
  *  `docs/adr/` の除外は #893 当時この検査だけの非対称だったが、`ADR-adr-frozen-history` で
- *  全検査（G-references / G-heading-refs 等の走査元）へ揃った。
+ *  全検査（G-references 等の走査元）へ揃った。
  *  **静的リテラルと違い空になっても自分では鳴れない**ので `runAll` が 0 件検知を持つ */
 export function staleIdentifierGuideDocs(snapshot) {
   return snapshot.files.filter(

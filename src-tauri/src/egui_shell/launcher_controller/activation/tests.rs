@@ -16,9 +16,8 @@
 //! `#[cfg(test)]` 配下ゆえ rustdoc がコンパイルせず、**壊れた intra-doc link を植えても
 //! `cargo doc --document-private-items` は exit 0・診断 0 行である**（#1201 で実測）。
 //! `.claude/rules/comments.md` は doc を触ったら `cargo doc` を走らせよと言うが、**ここでは
-//! それが緑でも何も測っていない**。一方 `npm run governance:check` は、**見出し参照
-//! （`docs/…`「…」の形）と ADR の短縮引用を見る**（素のパス参照は見ない——2026-08-27 に
-//! 対照で実測）。**「これだけ」と読まないこと**——見る側の母集団はあちらが持つ。
+//! それが緑でも何も測っていない**。一方 `npm run governance:check` は、**ADR の短縮引用を
+//! 見る**（素のパス参照は見ない——2026-08-27 に対照で実測）。**「これだけ」と読まないこと**——見る側の母集団はあちらが持つ。
 //!
 //! **切り出しの helper はこの 1 か所に閉じる**（`docs/adr/ADR-source-text-probe-helper-locality.md`）
 //! ——存在形が使う [`method_body`] と否定形が使う [`owners_of`] を並べて持つのは、極性が違えば

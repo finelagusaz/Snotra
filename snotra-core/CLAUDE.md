@@ -23,6 +23,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 - **UI 表示文字列を持たない。** エラーは `is_error: true` や専用の error 型で返し、文言は UI 層（`src-tauri/src/egui_shell/strings.rs`・`snotra-settings/src/i18n.rs`）が組み立てる。理由は UI 非依存であること（Win32 非依存ではない）
 - **テストから実 `%APPDATA%\Snotra` に触れない。** 読む側: fixture に `HistoryStore::load()` を使わない（空は `HistoryStore::empty()`、内容は `HistoryStore::load_in` へ注入。食い違いは CI では緑のまま開発機でだけ出る・#963）。書く側: `Config::config_dir()` を内部で解決する製品の入口を通るテストへ記録を足すと、テストは緑のまま実ファイルを書く。dir を注入する入口（`load_cache_in` / `save_cache_sorted_in` の形）へ寄せ、`SNOTRA_CONFIG_DIR` で迂回しない（プロセス大域ゆえ並列の他テストを動かす）。検算はフルテスト前後で実ファイルが変わらないことを測る。`tests/` の `#[ignore]` 計測コードだけは `load()` でよい
+- **定数で分岐する実装では、fixture がその定数を跨いでいるかを測る。** 到達しているかだけでは足りない——塊の大きさ・バッファ長・閾値で分かれる実装は、跨がない fixture では片側が一度も走らない（#1056 は `KANA_CHUNK = 4096` に対し fixture が数件で、塊併合の順序保存も底上げも検証されないまま「A/B 突き合わせが検出する」と 4 か所へ書いていた）。**「到達していない」と「到達したが分岐を見ていない」は、塊が 1 つでも効く対照の変異が赤くなるかで切り分ける。** 跨ぐ fixture を置いたら、**定数はテストから参照させて値を写さない**——写すと定数を増やした日にテストが黙って適用範囲を失う
 - `#[cfg(windows)]` のテストは `#[cfg(windows)]` で囲むか `if let Some(..) =` でスキップする。`assert!(value.is_some())` のような環境前提のアサーションを書かない
 
 ## 実装前チェック（必須）
@@ -114,6 +115,14 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 ## エントリ名の導出ルール
 
 `indexer/scan.rs` はファイルを `file_stem()`（拡張子なし）、フォルダを `file_name()` で名付ける。`folder.rs` のフォルダ内列挙は拡張子付きの `file_name()`（展開時は拡張子が手がかりになるため）。この導出は共通関数へ括り出さない（各処理に隣接しており束ねる消費者が無い・#997。別モジュールに消費者が生じたら再検討）。
+
+## Config のフィールドと既定値
+
+config のフィールドには到達性の検出器が無い（`docs/development-principles.md`「config の値は到達性の検出器を持たない」）。
+
+- **新しい config フィールドには、追加と同じ変更で消費者を与える**（作ることと使うことは別判断）。読まないなら理由をフィールドの doc コメントへ書く。機械検査（旧 G-config-reachability）は捕捉 0 件のまま検査側の表だけが古くなったため #894 で廃止した——**この規範だけが頼りである**
+- **既定値のリテラルを写さない。** フォールバックの正本は各セクションの `Default` 実装であり、`.unwrap_or(600.0)` のような再手打ちは今日たまたま一致しているだけである（#680 / #795）。**ただし「同じ数」と「同じ概念」は別である**——読み元が違えば写しではなく、参照へ寄せると存在しない結合を主張することになる（`docs/adr/ADR-config-default-fallback-references.md`）
+- **`Default` 実装自身も既定関数を呼ぶ形に揃える。** serde は「セクション欠落 → `Section::default()`」と「キー欠落 → `#[serde(default = "default_X")]`」の 2 経路を持ち、食い違うと**同じ既定が TOML の書き方によって変わる**（`snotra-core/src/config/tests.rs` の `empty_section_deserializes_to_default_*` が一致を固定する）
 
 ## Config のデシリアライズ経路
 

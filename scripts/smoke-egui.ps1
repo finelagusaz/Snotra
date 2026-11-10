@@ -747,7 +747,8 @@ try {
 # **#1306 以後、2 つのシナリオの間ではこの転送は起きない**——プロファイルが別なので、単一インスタンスの
 # mutex 名も別になる（`snotra-core` の `Config::isolated_profile_key`）。それでも待つのは、両プロファイルが
 # 同じホットキー（Alt+F12）を登録するからである。`RegisterHotKey` は同じ組み合わせをシステムで
-# 1 つにしか許さないので、先発が生きていると後発の登録が失敗する（Win32 の仕様からの導き・未実測）。
+# 1 つにしか許さないので、先発が生きていると後発の登録が失敗する（Win32 の仕様からの導き。シナリオ 1 が
+# 残る形は未実測で、ほかのプロセスが同じ組み合わせを握る形は #1413 で実測した）。
 # 下の throw 文言は #1306 より前の理由のまま残してある（失敗文言はログの検索に使うので変えない）。
 #
 # **共有ヘルパ `Stop-SnotraProcessAndWait`（`lib/SnotraSmoke.psm1`・#872）と意図的に別である。**
@@ -835,7 +836,14 @@ $toastProc = Start-SnotraProcess -ConfigDir $toastProfile.FullPath -FilePath $Ex
 try {
   $hk2 = Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'hotkey:registered' -TimeoutMs $StartupObserveTimeoutMs
   if ($null -eq $hk2) { throw 'シナリオ 2: hotkey:registered を観測できませんでした' }
+  # **登録の成否と VK 列を、既定のプロファイル側と同じく確かめる**（#1413）。見ずに進むと、登録の
+  # 失敗は後の `egui_show:done` の待ちが切れる形で現れ、症状が原因から離れる。登録が失敗しうる経路と、
+  # どれを実測したかは、上の終了待ちのコメントにある。
+  if (-not $hk2.data.ok) {
+    throw "シナリオ 2: アプリ内でホットキーの登録に失敗しました（modifier=$($hk2.data.modifier) key=$($hk2.data.key)）"
+  }
   $vks2 = @($hk2.data.vks | ForEach-Object { [byte][int]$_ })
+  if ($vks2.Count -lt 1) { throw 'シナリオ 2: hotkey:registered の VK 列が空です。注入するキーを決められません' }
 
   foreach ($round in 1..2) {
     # **presence ではなく increment で待つ**（是正 A）。round 2 の待ちが round 1 の行へ

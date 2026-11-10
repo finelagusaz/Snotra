@@ -1,4 +1,4 @@
-//! 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（#666 段 3）。
+//! 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（#666）。
 //! クエリ/結果/選択・folder ナビ（async ロード + staleness）・tool 選択・instant/slash・起動
 //! dispatch と in-flight 回収・一時通知の期限を単独で持ち、`view.rs` からは遷移メソッドと
 //! 読み口（`&self`）としてだけ届く。**依存は一方向である**——ここから `view` を参照しない。
@@ -8,7 +8,7 @@
 //! - **フレームを所有しない。** `update()` の文の実行順序を決めるのは `view.rs` であり、ここに
 //!   あるのは呼ばれる側の遷移である。`egui::Context` もフィールドに持たず毎回引数で受け取る
 //!   （Context の clone は repaint callback ごと複製し、その `RepaintScheduler` の `Arc` がウィンドウの
-//!   `Destroyed` を越えて worker の停止・join を止める・#671 PR D）
+//!   `Destroyed` を越えて worker の停止・join を止める・#671）
 //! - **7 番目の外部イベント消費（`take_clicked_for`）はここに無い**（#699）。行クリックの逆流は
 //!   `view.rs` が snapshot publish の**後**に消費し、照合を通った index だけが
 //!   `activate_or_execute` としてここへ届く
@@ -67,16 +67,15 @@ pub(super) use updater_toast::ToastAction;
 pub(super) struct LauncherController {
     app_handle: tauri::AppHandle,
     /// blur 猶予の状態機械（#745）。**hide を跨いだ持ち越しは `consume_reset_pending` の
-    /// `reset()` が塞ぐ**——旧 2 フィールド（`was_focused` / `unfocus_at`）はこの型へ畳んだ。
+    /// `reset()` が塞ぐ**。
     blur_grace: crate::egui_shell::BlurGrace,
     state: SearchState,
     search_debounce: Debouncer,
     last_input_at: Instant,
-    // query フィールドは SearchState.query へ移譲（削除）。
-    // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
+    // emit dedup は共有 EguiShellState.hide_pending（show がクリア・#532）。view-local には持たない。
     folder_tx: Sender<FolderMsg>,
     folder_rx: Receiver<FolderMsg>,
-    /// ナビゲーションでロードした (ctx, 全ソート済み) キャッシュ。打鍵フィルタの源（#532 SU3 M2）。
+    /// ナビゲーションでロードした (ctx, 全ソート済み) キャッシュ。打鍵フィルタの源（#532）。
     folder_cache: Option<(FolderListContext, Vec<SearchResult>)>,
     /// 列挙失敗時の単一エラー行（filter を無視して表示）。
     folder_error: Option<Vec<SearchResult>>,
@@ -87,7 +86,7 @@ pub(super) struct LauncherController {
     instant_rows_query: Option<String>,
     /// in-flight 起動（single-flight の実体: Some の間は新規起動 dispatch を拒否）。
     launching: Option<LaunchInFlight>,
-    /// #633: index build 完了世代の last-seen（AppState.index_generation と比較・SU6 spec 決定 3）。
+    /// #633: index build 完了世代の last-seen（AppState.index_generation と比較・#532）。
     /// 差分で現クエリを再検索（SolidJS `indexing-complete`→runRefresh parity）。bool エッジ検出で
     /// ないのは started/complete の repaint が 1 フレームに合流するとパルスが見えないため。
     last_seen_index_generation: u64,
@@ -95,9 +94,9 @@ pub(super) struct LauncherController {
     notice: crate::egui_shell::NoticeSlot,
     /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
     notice_base: Instant,
-    /// Plain 検索の要求を worker へ送る送信端（#1004 PR 2）。
+    /// Plain 検索の要求を worker へ送る送信端（#1004）。
     search_tx: Sender<crate::egui_shell::SearchRequest>,
-    /// worker からの結果受信端。`drain_search` が毎フレーム吸い出す（#1004 PR 2）。
+    /// worker からの結果受信端。`drain_search` が毎フレーム吸い出す（#1004）。
     search_rx: Receiver<crate::egui_shell::SearchMsg>,
 }
 
@@ -129,7 +128,7 @@ impl LauncherController {
     ///
     /// **ウィンドウの長さ（interval）の正本はここである**——[`crate::egui_shell::search_state`] の
     /// `is_unsettled` の doc が「`LauncherController` が `Debouncer::new` へ渡す値」と名指して
-    /// いる先がこの関数である。分割で 2 か所がファイルをまたいだため、値を綴る点を 1 つに戻した。
+    /// いる先がこの関数である。2 か所は別のファイルにあるので、値を綴る点をここ 1 つに保つ（#1200）。
     /// 第 2 引数は `leading`（バースト先頭で即発火するか）であって `armed` ではない——
     /// [`crate::egui_shell::Debouncer::new`] は常に `armed: false` で建てる。
     fn new_search_debounce() -> Debouncer {
@@ -178,8 +177,7 @@ impl LauncherController {
     }
 
     /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。実装は
-    /// `window_coordinator::read_indexing` へ委譲する——show 経路とバイト単位で同一の
-    /// 独立実装を持っていた重複の解消（レビュー是正 3）。
+    /// `window_coordinator::read_indexing` へ委譲する——show 経路と同じ 1 つの実装を通る（#904）。
     ///
     /// **返すのは [`FrameIndexing`] であって `bool` ではない**（#1077）——「実際に読んだ」
     /// 証拠を型で運び、別の `bool` を `indexing` のつもりで渡す書き方を構築不能にする。
@@ -191,7 +189,7 @@ impl LauncherController {
     }
 
     /// UI 文言の言語（config general.language・起動時一回でなく都度読み——読み 1 回/フレームの
-    /// 既存ヘルパー群と同型。SU6 の hot-reload 拡張時もこの読み口のまま動く）。
+    /// 既存ヘルパー群と同型。hot-reload した値もこの読み口のまま読む・#532）。
     pub(super) fn lang(&self) -> snotra_core::config::Language {
         crate::egui_shell::read_config(
             &self.app_handle,

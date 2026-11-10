@@ -1,6 +1,6 @@
-//! 起動の入口と、そこから走る dispatch・in-flight 回収・slash の即実行（#631 / #666 段 3）。
+//! 起動の入口と、そこから走る dispatch・in-flight 回収・slash の即実行（#631 / #666）。
 //!
-//! **起動の入口をこのファイルへ集める規範は要らなくなった**（#1201）。`activation/tests.rs` の
+//! **起動の入口をこのファイルへ集める規範は要らない**（#1201）。`activation/tests.rs` の
 //! ソーステキスト検査は `launcher_controller/` 直下の子 `*.rs` を母集団に取るので、**入口が
 //! どの子モジュールに在っても検査は生き続ける**（移設して測った——移すだけなら 3 本とも緑、
 //! 移した先でゲートを落とすと赤。同じ移設を変更前の版へ当てると赤だった）。**どの入口が対象かの
@@ -38,7 +38,7 @@ use crate::egui_shell::{
 };
 
 /// 起動 worker への仕事（#631・spec C 節）。worker スレッドが実行し、成功時の履歴記録も
-/// worker 側で行う（spec 決定 5: WebView2 が backend 側で UI 可視性と無関係に記録する parity。
+/// worker 側で行う（#532: WebView2 が backend 側で UI 可視性と無関係に記録する parity。
 /// hide 中に完了した起動の記録消失 gap を閉じる）。Instant は記録しない（IPC 経路 parity）。
 enum LaunchWork {
     /// 通常起動（§4.8）。tools 先頭があれば launch_with_tool_core、無ければ launch_item_core。
@@ -63,7 +63,7 @@ enum LaunchWork {
     },
 }
 
-/// 起動成功時に drain が行う UI 後処理の種別（M1/M3 の同期版と同じ末尾へ合流させる）。
+/// 起動成功時に drain が行う UI 後処理の種別。
 #[derive(Clone, Copy)]
 enum LaunchTag {
     Normal,  // emit_hide のみ（M1 activate parity・クエリは次 show の reset で消える）
@@ -86,11 +86,11 @@ impl LauncherController {
     /// 実起動（ShellExecuteW）と成功時の履歴記録は `start_launch` の worker スレッド側で行う
     /// （§4.3/§5 の query_count 加点・全起動経路の共通末尾は `finish_launch` へ合流）。
     /// エラー行（is_error）／フォルダロード中（cache・error 未着で results が stale）は起動しない。
-    /// Enter とシングルクリックの単一チョークポイント（#636 レビュー Finding A）。
+    /// Enter とシングルクリックの単一チョークポイント（#636）。
     fn activate(&mut self, index: usize, ctx: &egui::Context) {
         // フォルダ展開直後、列挙結果も失敗行も未着のウィンドウでは results が展開前ビューの残存物ゆえ、
         // 誤項目の起動を止める（dead/slow UNC でロードが滞留すると Enter/クリックが前ビューの
-        // 項目を起動しうる・#636 レビュー Finding A）。判定核は search_state の純粋述語。
+        // 項目を起動しうる・#636）。判定核は search_state の純粋述語。
         if folder_load_pending(
             self.state.view_kind(),
             self.folder_cache.is_some(),
@@ -121,8 +121,8 @@ impl LauncherController {
 
     /// 起動を per-launch worker スレッドへ投げる（#631・spec C 節）。single-flight:
     /// in-flight 中は拒否（WebView2 activationLane parity・二重起動防止）。突入時に results を
-    /// クリアする（withLaunchLifecycle の await 前 clearResults parity・spec 決定 7）——
-    /// launching 中は results ウィンドウが hide される（結果 0 件→snapshot.show=false・#646 PR2 決定 6）・
+    /// クリアする（withLaunchLifecycle の await 前 clearResults parity・#532）——
+    /// launching 中は results ウィンドウが hide される（結果 0 件→snapshot.show=false・#646）・
     /// ↑↓/クリックは空リストゆえ自然に inert。クエリは保持。
     fn start_launch(&mut self, work: LaunchWork, tag: LaunchTag, ctx: &egui::Context) {
         if self.launching.is_some() {
@@ -134,7 +134,7 @@ impl LauncherController {
             rx,
             tag,
         });
-        // 突入時のクリアが in-flight も失効させる——しないと launching 中に worker の遅着結果が届き、隠れているはずの results ウィンドウが drain_search 経由で生え直す（#1039 で `SearchState` の内側へ入った）。
+        // 突入時のクリアが in-flight も失効させる——しないと launching 中に worker の遅着結果が届き、隠れているはずの results ウィンドウが drain_search 経由で生え直す（失効は `SearchState` の内側が行う・#1039）。
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
         let app = self.app_handle.clone();
@@ -182,7 +182,7 @@ impl LauncherController {
                     (o, None) // instant は履歴を記録しない（IPC 経路 parity）
                 }
             };
-            // 履歴記録は worker 側（spec 決定 5）。timeout で drain が破棄済みでも記録は行われる
+            // 履歴記録は worker 側（#532）。timeout で drain が破棄済みでも記録は行われる
             // ＝「実際に起動したのに履歴が無い」ウィンドウを Normal/Tool では作らない。
             if matches!(outcome.status, LaunchStatus::Ok)
                 && let Some((path, query)) = record
@@ -193,16 +193,14 @@ impl LauncherController {
             let _ = tx.send(outcome); // 遅着（rx drop 済み）は Err で自然消滅（不変条件 1）
             egui_ctx.request_repaint(); // イベント駆動 runtime を起こす（folder/icon と同理由）
         });
-        // 状態を変えたら起こす（#648 A）。旧実装は「results クリア → 高さ collapse →
-        // set_size → Resized → repaint」の暗黙連鎖で初回 overlay と timeout 予約を成立させて
-        // いたが、#646 PR2 決定 6 で main 高さが bar(+toast)固定になり results クリアで main は
-        // 伸縮しなくなった（暗黙連鎖は消滅・results 側の repaint は snapshot 差分 wake が明示的に
-        // 担う）。ここは toast dismiss の同型バグ（SU5・e746826）と同じ規範で、この行単体を
-        // 自己完結させた明示 repaint として残す（暗黙連鎖に頼らない）。
+        // 状態を変えたら起こす（#648）。main の高さは bar(+toast) 固定で、results をクリアしても
+        // main は伸縮しない（#646）——初回 overlay と timeout 予約を成立させるフレームを、ほかの
+        // 何も起こさない（results 側の repaint は snapshot 差分 wake が担う）。toast dismiss の
+        // 同型バグ（#532）と同じ規範で、この行単体で自己完結させた明示 repaint にする。
         ctx.request_repaint();
     }
 
-    /// drain が回収した結果の UI 後処理（成功列は M1/M3 同期版と同じ末尾へ合流）。
+    /// drain が回収した結果の UI 後処理。
     fn finish_launch(&mut self, tag: LaunchTag, outcome: crate::commands::launch::LaunchResult) {
         use crate::commands::launch::LaunchStatus;
         crate::trace_main(
@@ -225,8 +223,8 @@ impl LauncherController {
             },
             LaunchStatus::Failed => {
                 // 失敗: hide しない・同期 run_search で結果を再取得（runRefresh parity）+ 一時通知。
-                // 旧 Timeout ステータスは IPC の run_launch_blocking 専用で #532 SU7 PR3 で消滅
-                // （drain 側の 4 秒 timeout は Empty 経路で扱う）。
+                // `LaunchStatus` は timeout を持たない（drain 側の 4 秒 timeout は Empty 経路で
+                // 扱う・#532）。
                 let detail = outcome
                     .message
                     .as_deref()
@@ -257,7 +255,7 @@ impl LauncherController {
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 let elapsed = inflight.started.elapsed();
                 if elapsed >= crate::egui_shell::LAUNCH_TIMEOUT {
-                    // 4 秒経過＝「結果不明」（spec 決定 8）。rx ごと破棄→遅着は自然消滅。
+                    // 4 秒経過＝「結果不明」（#532）。rx ごと破棄→遅着は自然消滅。
                     // 起動という副作用は取り消せない（abandoned spawn_blocking parity）。
                     self.launching = None;
                     let l = self.lang();
@@ -288,7 +286,7 @@ impl LauncherController {
         }
     }
 
-    /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。SolidJS handleCommandQueryInput と
+    /// slash コマンドを実行する（§15.3 即実行・#532）。SolidJS handleCommandQueryInput と
     /// 同順: クエリ/結果クリア（clearCommandModeState 相当）→ action。`/r`（History）は結果注入型で
     /// ここへ来ない（changed ハンドラが run_search へ振る）。失敗通知は建てない（trace のみ・#631 一本化）。
     pub(super) fn execute_slash(&mut self, cmd: SlashCmd) {
@@ -340,8 +338,7 @@ impl LauncherController {
     /// worker スレッド側（`execute_instant_action_core` の契約）。instant は履歴を記録しない
     /// （§19.6）。成功/失敗の後処理は `finish_launch` へ合流。
     ///
-    /// **抽出が engine lock を経ないのは #1076 の移行による**（それ以前はここで `engine.lock()`
-    /// を取っていた）——ここは egui フレームの中であり、検索 worker が `engine.search` で
+    /// **抽出は engine lock を経ない**（#1076）——ここは egui フレームの中であり、検索 worker が `engine.search` で
     /// `Mutex<Engine>` を握っている間フレームが返らなくなる。**分けている境界は錠の内外ではなく
     /// フレームの内外である**: config の読みは [`crate::egui_shell::read_config`] でフレームの中に
     /// 置き、Win32 clipboard と `ShellExecuteW` は worker へ出す（適用範囲は
@@ -387,7 +384,7 @@ impl LauncherController {
         );
     }
 
-    /// Enter/クリックの単一 dispatch（§19.6/§4.8・#532 SU3 M3）。判定は live config の prefix
+    /// Enter/クリックの単一 dispatch（§19.6/§4.8・#532）。判定は live config の prefix
     /// からの interp 再導出ではなく**表示行の来歴**（`instant_rows_query` snapshot）で行う——
     /// prefix の hot-change 後に stale instant 行（path=description/display）を activate() へ流し、
     /// 文字列をパスとして起動・履歴汚染するのを防ぐ（/code-review #637 finding 0）。行と来歴は
@@ -438,7 +435,7 @@ impl LauncherController {
         // results ウィンドウから消えるが**行データは保持される**（「データと選択は保持——クリアしない」）
         // ため、`is_unsettled` が偽（打鍵が落ち着いた状態）の Enter は `on_enter` の flush 分岐を
         // 通らず、**画面に 1 行も出ていないまま古い行を起動する**（2026-08-16 に実機再現）。
-        // #1072 が塞いだのは同じ族の unsettled 側の切片だけだった。
+        // 同じ族の unsettled 側は `on_enter` の flush 分岐が塞ぐ（#1072）。
         //
         // **判定は表示側と同じ述語を使う**——別式を書けば真実が 2 つになり、片方だけ変わる
         // 将来が生まれる。ゲートが真になるのは `Results ∧ !instant_rows` のときだけなので、
@@ -468,7 +465,7 @@ impl LauncherController {
 
     /// Shift+Enter（§18.3）: 選択行の tools ≥ 2 ならツール選択メニューへ、それ以外
     /// （≤1・instant 行・tool ビュー中）は通常 Enter と同一（hide も同様）。folder ロード
-    /// 未確定ウィンドウは activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
+    /// 未確定ウィンドウは activate と同じ理由で入場もしない（stale 行からの解決防止・#636）。
     fn shift_activate(
         &mut self,
         index: usize,
@@ -563,8 +560,8 @@ impl LauncherController {
     /// `resolve_all_openers` の `Path::is_dir` 再判定（fs touch・dead UNC で滞留しうる）を
     /// egui 経路では踏まない。
     ///
-    /// **解決は config の読みの中で行う**（#1076 で `engine.lock()` から
-    /// [`crate::egui_shell::read_config`] へ移した）。`find_matching_tools` は錠も I/O も取らない
+    /// **解決は config の読み（[`crate::egui_shell::read_config`]）の中で行う**（#1076）。
+    /// `find_matching_tools` は錠も I/O も取らない
     /// 純 CPU なので、[`crate::AppState::read_config`] が読みの中に許す範囲に収まる
     /// ——**その純粋性がこの形の前提である**（`snotra_core::opener` 側で fs に触れるように
     /// なったら、解決を読みの外へ出すこと）。
@@ -594,7 +591,7 @@ impl LauncherController {
         ctx: &egui::Context,
     ) {
         // #631 flush-on-Enter: 最終クエリの結果がまだ行へ反映されていない間の Enter は、leading 時点の結果や連打前のクエリの結果で起動しうる。未反映の plain クエリは cancel → 同期 engine.search で最終クエリの結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
-        // **何をもって「未反映」とするかは `SearchState::is_unsettled` の doc が正本である**（#1038。`armed` だけを渡していた頃に開いていた隙もそこが記す。#1039 で `search_dispatch.rs` の自由関数から移設）。
+        // **何をもって「未反映」とするかは `SearchState::is_unsettled` の doc が正本である**（#1038）。
         let prefix = self.instant_prefix();
         let is_plain = matches!(self.state.interp(&prefix), QueryIntent::Plain);
         if crate::egui_shell::should_flush_on_enter(
@@ -614,7 +611,7 @@ impl LauncherController {
                     engine.search(&query)
                 })
             };
-            // **どちらの分岐でも同期で行を差し替える**——空クエリ・indexing 中にクリアを落とすと、古い行が残ったまま直後の activate_or_execute がそれを起動する（`run_search_with` の Plain 早期 return が旧実装で担っていた処置である）。
+            // **どちらの分岐でも同期で行を差し替える**——空クエリ・indexing 中にクリアを落とすと、古い行が残ったまま直後の activate_or_execute がそれを起動する。
             self.state.set_results(searched.unwrap_or_default());
             // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
             // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。

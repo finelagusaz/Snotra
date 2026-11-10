@@ -328,7 +328,7 @@ pub(crate) struct EguiShellHandles {
 
 /// main ウィンドウの生成。EguiRuntime を install し webview 無しの "main" ウィンドウを生成して attach。setup 限定。
 /// **ウィンドウのプロパティを決めるのはここだけである**——`tauri.conf.json` の `app.windows` は空であり、
-/// 宣言によるウィンドウは 1 つも無い。ここが与える全プロパティ（52px 高は初期値で、実高は show 時に設定する・width は config の window_width・skipTaskbar・
+/// 宣言によるウィンドウは 1 つも無い。ここが与える全プロパティ（52px 高は初期値で、実高は show 経路と `view.rs` のフレームが設定する・width は config の window_width・skipTaskbar・
 /// alwaysOnTop・decorations:false・resizable:false・visible:false）がウィンドウの姿である（#532）。
 /// `background_color_hex`: config `visual.background_color`（`#RRGGBB`）。過渡/リサイズ下地を
 /// config の色にする（§11・#532）。

@@ -328,7 +328,7 @@ pub(crate) fn show_egui_main(
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 位置 → サイズ → show の順（順序制約・#671）。
+    // 位置 → サイズ → show の順（順序制約・#646）。
     // **位置とサイズは別々の高さで決まる**: 位置は**バー高**、サイズは**実高**（status / toast 込み）。
     // 実高で位置を決めると、作業領域の下端付近では常にその分だけウィンドウが上へ押し戻される——毎フレーム
     // 経路（`view.rs`）は `set_size` しか呼ばないため、toast が消えてウィンドウが縮んでも位置は戻らず、

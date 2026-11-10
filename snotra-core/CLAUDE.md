@@ -23,7 +23,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 - **UI 表示文字列を持たない。** エラーは `is_error: true` や専用の error 型で返し、文言は UI 層（`src-tauri/src/egui_shell/strings.rs`・`snotra-settings/src/i18n.rs`）が組み立てる。理由は UI 非依存であること（Win32 非依存ではない）
 - **テストから実 `%APPDATA%\Snotra` に触れない。** 読む側: fixture に `HistoryStore::load()` を使わない（空は `HistoryStore::empty()`、内容は `HistoryStore::load_in` へ注入。食い違いは CI では緑のまま開発機でだけ出る・#963）。書く側: `Config::config_dir()` を内部で解決する製品の入口を通るテストへ記録を足すと、テストは緑のまま実ファイルを書く。dir を注入する入口（`load_cache_in` / `save_cache_sorted_in` の形）へ寄せ、`SNOTRA_CONFIG_DIR` で迂回しない（プロセス大域ゆえ並列の他テストを動かす）。検算はフルテスト前後で実ファイルが変わらないことを測る。`tests/` の `#[ignore]` 計測コードだけは `load()` でよい
-- **定数（塊の大きさ・バッファ長・閾値）で分岐する実装では、fixture がその定数を跨ぐようにする。** 跨がない fixture では、片側の分岐が一度も走らない（#1056 の `KANA_CHUNK`）。テストは定数を参照し、値を写さない
+- **定数（塊の大きさ・バッファ長・閾値）で分岐する実装では、fixture がその定数を跨ぐようにする。** 跨がない fixture では、片側の分岐が一度も走らない（#1056 の `KANA_CHUNK`）。到達していないのか、到達したが分岐を見ていないのかは、塊が 1 つでも効く対照の変異が赤くなるかで切り分ける。テストは定数を参照し、値を写さない
 - `#[cfg(windows)]` のテストは `#[cfg(windows)]` で囲むか `if let Some(..) =` でスキップする。`assert!(value.is_some())` のような環境前提のアサーションを書かない
 
 ## 実装前チェック（必須）

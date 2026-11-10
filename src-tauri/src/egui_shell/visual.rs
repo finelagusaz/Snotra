@@ -1,5 +1,5 @@
 //! テーマ（config `[visual]` のうち**色・font・padding** + `appearance.show_icons`）の
-//! 1 フレーム分の読み取り値と、その純粋な導出（#673・#802）。
+//! 1 フレーム分の読み取り値と、その純粋な導出（#673）。
 //!
 //! **`[visual]` 全体ではない。`window_gap` は含まない**——results ウィンドウの配置
 //! （`window_coordinator::position_results_below_main`）は main の `update()` と `Moved` リスナーの
@@ -58,7 +58,7 @@ pub(crate) struct RowTheme {
 }
 
 /// 1 フレーム分のテーマ値。main と results の要求の**和集合**である（ウィンドウごとの projection に
-/// 分けない——分けると導出式が再び 2 箇所になる・#802）。
+/// 分けない——分けると導出式が再び 2 箇所になる・#673）。
 pub(crate) struct VisualSnapshot {
     /// **両ウィンドウ**の背景（softbuffer の clear color）と、その下地であるネイティブブラシ。
     /// **main 専用ではない**——results も `set_clear_color` に使い、`DriveResultsInputs` を経て

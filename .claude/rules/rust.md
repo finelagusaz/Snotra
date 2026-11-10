@@ -10,7 +10,7 @@ paths:
 
 4 crate の `.rs` を編集するときに読む。crate 固有の規則は各 crate の `CLAUDE.md` にある。
 
-- テストで検出器を作る・動かすときは、`.claude/rules/safety-nets.md`「検出器を置く・動かすとき」を読む（その rule は `.rs` の編集では配送されない）
+- テストで検出器を作る・動かすときは、`.claude/rules/safety-nets.md`「検出器を置く・動かすとき」を読む（その rule は `.rs` の編集では配送されない）。テストの doc に「X を検出する」と書くときは、`docs/comment-guidelines.md`「テストコードのコメント」も読む
 - `//!` の所在を書き換えるとき、規則を具体化するときは、`.claude/rules/governance-docs.md`「条項を足す・消す・移すとき」を読む
 - config の値を読むときは、既定値のリテラルを写さない（`snotra-core/CLAUDE.md`「Config のフィールドと既定値」）
 

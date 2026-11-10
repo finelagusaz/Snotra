@@ -47,7 +47,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 ## プラットフォーム固有の設定
 
-- `tauri.conf.json` や platform 固有ファイルへ設定を足すときは、Windows で対応しているかを先に確かめる。非対応の設定はビルドエラーになる
+- `tauri.conf.json` や platform 固有ファイルへ設定を足すときは、Windows で対応しているかを先に確かめる。非対応の設定はビルドエラーになることがある
 
 ## 状態の二軸導出（`search_state.rs`）
 

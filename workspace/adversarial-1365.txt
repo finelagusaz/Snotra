@@ -1,0 +1,87 @@
+反証結果: issue #1365 調査メモ (workspace/research.md)
+対象 HEAD: 8fa4fc60 (branch refactor/main-visible-live-read・コード変更なし)
+結論: 争点 1〜5 はいずれも壊せなかった。壊せたのは research.md の周辺 2 点 (文書の写しの取りこぼしと、修正の効果の書き方)。
+
+== 測定環境そのもの (「読んだ上流 ≠ 走る上流」) の検証 ==
+[壊せなかった] 版の一致
+  - Cargo.lock: tao 0.37.2 / tauri 2.12.5 / tauri-runtime-wry 2.12.3。ルート Cargo.toml が tauri-runtime-wry="=2.12.3" で固定。
+  - レジストリには tauri-runtime-wry 2.12.1 と tao 0.37.1 も並ぶ。読んだのは 2.12.3 / 0.37.2 で、ビルドされる版と一致。
+  - 偽にする手順: `grep -A2 'name = "tauri-runtime-wry"' Cargo.lock` が 2.12.3 以外を示す。
+  - 軽微: snotra-egui-runtime/src/proof.rs の doc は "2.12.1 の src/lib.rs:263-280" と書く。2.12.3 でも同じ位置・同じ分岐 (行 263-280 を実測)。内容は偽ではないが版が古い。
+[壊せなかった] ランタイムが Wry であること
+  - tauri は features=[] で default の "wry" が有効。`tauri::Builder::default()`、`runtime.install(app: &mut tauri::App<tauri::Wry>)`、`app.wry_plugin(...)` で確認。
+  - custom runtime ではない。egui ランタイムは Wry の Plugin として同じイベントループへ載る。
+  - 偽にする手順: Builder::default 以外のランタイム生成 (build_with / Runtime impl) を src-tauri で探す。0 件だった。
+[壊せなかった] main_thread_id = イベントループスレッド
+  - tauri-runtime-wry の `main_thread_id = current_thread().id()` は lib.rs:2760 の Wry::new 内で取られる。new_any_thread は未使用 (grep 0 件)。
+  - snotra-egui-runtime の thread は repaint.rs:146 の worker 1 本のみ。これは proxy に post するだけで is_visible は呼ばない。
+  - 偽にする手順: runtime.rs / repaint.rs に別スレッドで event loop を回す箇所を探す。無かった。
+[壊せなかった] #[cfg(windows)] の分岐
+  - send_user_message に cfg 分岐は無く、全 OS 共通。
+  - tao の is_visible は windows/util.rs:203 の IsWindowVisible 一本。
+  - handle_user_message の Window 枝は #[cfg(windows)] の focused_webview 取得だけで、IsVisible には無関係。
+
+== 争点 ==
+1. [壊せなかった] インライン IsWindowVisible
+   - lib.rs:263-280 の分岐、`window_getter!` → `getter!` (send_user_message → recv)、lib.rs:3285 `WindowMessage::IsVisible(tx) => tx.send(window.is_visible())` を実測。
+   - tauri::Window::is_visible (tauri-2.12.5/src/window/mod.rs:1674) は dispatcher.is_visible に直結。
+   - 窓が windows map に無い、または inner が None のときは tx が drop され、recv は Err を返す。ハングはしない。`unwrap_or(false)` で成立。
+   - 偽にする手順: イベントループ上で `is_visible()` を呼び、`current_thread().id() != main_thread_id` になる経路を作る。on_event_loop は run_on_main_thread で Task を post するので、Task はメインスレッドで実行される。
+   - 補足: hotkey 経由は別スレッドから Message::Task を post し、イベントループの UserEvent 処理で走る。その中の getter もインライン。
+2. [壊せなかった] hide()/show() が戻った時点で IsWindowVisible が確定する
+   - tao window.rs:128 の set_visible → thread_executor.execute_in_thread。event_loop.rs:518 で in_event_loop_thread() ならインライン実行。
+   - window_state.rs の set_window_flags は同期の apply_diff を呼ぶ。`!new.contains(VISIBLE)` なら無条件に ShowWindow(SW_HIDE)、`new.contains(VISIBLE)` なら末尾で無条件に SW_SHOW。diff が空でも走るので、tao のフラグが OS 状態とずれていても効く。
+   - 偽にする手順: window.hide() 直後に IsWindowVisible が true を返す実測。SW_HIDE は同期で、戻り時点で WS_VISIBLE は落ちている。
+   - 再入の検討: ShowWindow が同期で WndProc を呼んでも、tao の runner.send_event は should_buffer() で非 RedrawRequested イベントをバッファする。show()/hide() の最中にフレームや hotkey Task が割り込むことは無い。
+   - ⚠️ 弱点 (確度中): RedrawRequested だけはバッファされず call_event_handler へ直行する (runner.rs:208-214)。show_egui_main の window.show() の最中に、main 自身の RedrawRequested が同期で届くかは未確認。
+     - 届くなら、キャッシュなら false (set は show 後)・実状態なら true、という差が出る。ただし既存コードでも再入できるなら別の問題が出ているはず。
+     - 確かめるには、show 中の WM_PAINT 再入を trace で観測する (本調査では未実施)。
+3. [壊せなかった] main の可視性を変える経路は 2 か所だけ
+   - src-tauri/src と snotra-egui-runtime/src を `.show()/.hide()/set_visible/ShowWindow/SW_HIDE/SW_MINIMIZE/set_minimized/CloseRequested/on_window_event` で探した。
+   - main に効くのは show_egui_main の window.show() と hide_egui_main の window.hide() のみ。
+   - results_window.rs:340-370 の生 ShowWindow は results 用。main のハンドルは `ResultsWindow` に入らない。
+   - single-instance のコールバックは show_egui_main を呼ぶ。トレイは SetTrayVisible だけで、main を触らない。
+   - CloseRequested は egui の ViewportEvent::Close に変換されるだけで、直接の hide ではない。
+   - tao 内部: 最小化 (window_state.rs の SW_MINIMIZE) では WS_VISIBLE が残るので、IsWindowVisible は true のまま。キャッシュと同じ。Win+D、cloak、仮想デスクトップも IsWindowVisible は変わらない。
+   - tauri.conf.json の windows は [] で、main は mod.rs:354 で `.visible(false)` で生成。
+   - 偽にする手順: 上記 grep 以外の手段 (SetWindowPos の SWP_HIDEWINDOW、WM_SYSCOMMAND、DefWindowProc による X ボタン後の自動 hide) で main が不可視になる経路を見つける。見つからなかった。
+   - 限界: 外部プロセスが ShowWindow(main, SW_HIDE) すれば、キャッシュと実状態は食い違う。そのとき実状態の読みが正しい (これがこの変更の主張)。
+4. [壊せなかった] 読み手は 2 か所で、キャッシュの名前に依存するテスト・smoke は無い
+   - `main_visible|MainVisible` の全リポジトリ grep。コード側は main.rs の 314 (コメント) と 453 (読み)、mod.rs、layout.rs、results_window.rs、window_coordinator.rs のみ。
+   - 読み手: hotkey (main.rs:453、on_event_loop クロージャ内で el あり) と read_main_visible (window_coordinator.rs:1371、drive_results_window から呼ばれる)。drive_results_window は el を引数に持つ。
+   - snotra-core / snotra-egui-runtime / snotra-settings / .github / .claude / scripts/*.mjs・*.ps1 の文字列照合に、キャッシュ名は無い。
+   - scripts/smoke-egui.ps1 の main_visible 出現は 0 件。
+   - scripts/manual-smoke.ps1:91 の `inv` は説明文字列で、検査には使われない。
+   - テスト: window_coordinator.rs の tests には MainVisible 参照が無い。layout.rs のテスト (936 行付近) は ResultsInputs.main_visible の純粋入力で、残る。
+   - include_str! のソース検査は icon_textures.rs / view.rs / indexing.rs だけ。window_coordinator.rs・mod.rs・main.rs を読むものは無い。
+   - 偽にする手順: `git grep -n 'main_visible\|MainVisible' -- ':!docs'` に、上の列挙以外の出現があること。
+5. [壊せなかった] windows RefCell の二重借用 panic
+   - handle_user_message の Window 枝 (lib.rs:3215) は `windows.0.borrow()` を式の中で一時的に取り、必要な値を clone して返す。ガードは match の前に解放される。
+   - borrow_mut を持ったままユーザーコードを呼ぶ箇所は無い。RedrawRequested (4138) は draw_surface のみ。Destroyed (4257) は一時借用。on_close_requested 等は drop(windows_ref) の後に callback を呼ぶ。
+   - 毎フレーム main の getter を呼ぶ既存コードがある: view.rs:1241、window_coordinator.rs の 322/1064/1207/1292 の get_window("main") 群。
+   - 偽にする手順: プラグインの on_event が borrow_mut ガードを保持したまま呼ばれる経路を見つける。EventLoopIterationContext に渡るのは &WindowsStore (RefCell への参照) で、ガードではない。
+
+== research.md の他の主張 ==
+[壊せなかった] 前提の変化 (キャッシュは EguiShellState へ移動済み)・MainVisible の所在・show/hide の set 位置・~35ms が spec §9-3 にだけ残ること: 実測と一致。
+[壊せなかった] 「main は webview 無し」から WebView2 cold-call の動機が消えていること: mod.rs:354 は `Window::builder` で webview を作らない。調査メモは明記していないが、結論を補強する。
+[壊せた] 関連ファイル表の取りこぼし
+  - PERFORMANCE.md は 17 行目以外にも、3340 と 3348 に「Win32 IPC cold-call 最適化 (is_visible() → AtomicBool) 適用後の値」「最適化前の cold は 191ms…」がある。
+  - これは計測履歴 (歴史記述) として残すのが妥当で、直す対象は 17 行目の一般則のみ。ただし表に出していないため、直す範囲の判断材料が欠けている。
+  - SPEC.md は 555 の状態図と 596 の遷移ルール要約の 2 か所。表は「8.6 の状態図・遷移ルール要約」と書いていて、出現数は正しいが行は特定されていない。
+  - 偽にする手順: `git grep -n 'is_visible\|main_visible' PERFORMANCE.md SPEC.md`。
+[壊せた] 修正の効果の書き方
+  - issue 本文と research.md は「キャッシュが外部の hide を反映しない」ことを欠陥として扱う。
+  - しかし実状態の読みに替えても、main が hidden の間は drive_results_window (RedrawRequested 駆動) が走らない。
+  - 外部 hide で results が最前面に取り残される問題 (#671 実機発見、hide_egui_main の doc 参照) は、この変更では直らない。
+  - 直るのは hotkey のトグル判定が実状態を見ること。受容している残余の記述 (window_coordinator.rs:509-519) は書き換えが要る (「更新されず」の前提が消える一方、「拾い直すフレームが来ない」は残る)。
+  - 偽にする手順: 外部から main を SW_HIDE にして results が可視のまま残るか確かめる。
+[壊せなかった] 「直さない」とした ADR 2 本と spec: 凍結方針 (governance-docs.md) どおり。
+[壊せなかった] 順序不変条件の自動成立: 争点 2 のとおり。ただし ⚠️ の RedrawRequested 再入は未確定。
+[壊せなかった] 未解決の疑問 (Err の条件・毎フレーム所要): Err は recv 失敗、所要は IsWindowVisible 1 回とチャンネル生成のみ。未測定のままで妥当。
+
+== 確信の持てない所見 ==
+⚠️ show() の最中に main の RedrawRequested が同期で届くかは未確認 (争点 2 参照)。キャッシュ撤去で観測可能な差が出る唯一の候補。
+⚠️ 外部プロセスによる main の hide / show は、実状態の読みなら hotkey 判定に反映される。仕様上は望ましい向きだが、results の取り残しは別問題として残る。
+
+== 非破壊の確認 ==
+本調査はコードを変更していない。作成したのはこのファイルのみ。

@@ -105,7 +105,7 @@
 - [x] `scripts/manual-smoke.ps1` 項目 2 の `inv` を直す
 - [x] `docs/adr/ADR-main-visibility-live-read.md` を書く
 - [x] `git grep -n 'main_visible'`（`*.rs` 以外）で残りが凍結文書（ADR 2 本・`docs/superpowers/**`）と `PERFORMANCE.md` の計測履歴だけであることを確かめる
-- [ ] カテゴリ A・C・F を `verify:tree` で通す
+- [x] カテゴリ A・C・F を `verify:tree` で通す
 
 ## 未確定（実装前に潰す）
 
@@ -139,3 +139,4 @@
 
 - ラウンド 1: 7364587b / verify:tree green（A・C・E・F 14 コマンド）/ 指摘 Critical・High 0・Low 4（全件修正）/ 変異 5 件中 4 検知・生存 1（連言①のみ常に true——既知の残余・ADR の帰結に記載）
 - ラウンド 2: 8602240b / verify:tree green（A・C・E・F 14 コマンド）/ 指摘 Low 2（ADR 帰結の順序の言い回し・read_main_visible の読み手の名指し）→ 修正 / 変異注入なし（doc のみの差分）
+- ラウンド 3: 4435c3a6 / verify:tree green（A・E・F）/ 指摘 0（任意の Low ⚠️ 1——読み手の列挙。誤読防止を採り受容）/ 変異注入なし（doc のみ）

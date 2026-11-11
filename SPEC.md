@@ -552,7 +552,7 @@ stateDiagram-v2
   Standby --> SearchVisible: app_start [show_on_startup]
   Standby --> LauncherStopped: /q / exit-requested
   SearchVisible --> Standby: Escape [ツール選択中でない && フォルダ展開中でない]
-  SearchVisible --> Standby: hotkey-pressed [hotkey_toggle && main_visible]
+  SearchVisible --> Standby: hotkey-pressed [hotkey_toggle && メインウィンドウ表示中]
   SearchVisible --> Standby: focus_lost [auto_hide_on_focus_lost]
   SearchVisible --> LauncherStopped: /q / exit-requested
 
@@ -593,7 +593,7 @@ stateDiagram-v2
 - トレイ「設定」も `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。フォーカス移動の帰結は `/o` と同じ
 - `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
 - `SearchVisible -> Standby` の `Escape` は `ToolSelectionMode` でも `FolderExpansionMode` でもない場合のみ成立（`ToolSelectionMode` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`FolderExpansionMode` 中は `FolderExpansionMode -> NormalMode` を優先）
-- `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle && main_visible` が前提
+- `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle` が有効で、かつメインウィンドウが表示中であることが前提
 - `SearchVisible -> Standby` の focus_lost は `auto_hide_on_focus_lost` 有効時のみ成立
 - `/q` または `exit-requested` は `Standby` / `SearchVisible` のいずれからでも `LauncherStopped` へ遷移
 - `/o` 実行時に `indexing == true` の場合、設定オープンは no-op

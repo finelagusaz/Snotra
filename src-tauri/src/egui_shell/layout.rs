@@ -393,7 +393,7 @@ pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
 /// **区別できない**（#752）。
 #[derive(Debug, Clone, Copy)]
 pub struct ResultsInputs {
-    /// 連言①: main が可視か（`EguiShellState.main_visible`）。
+    /// 連言①: main が可視か（`window_coordinator::read_main_visible` が窓の実状態から読む）。
     pub main_visible: bool,
     /// 連言③: 通常結果を隠すか（`search_state::plain_results_hidden` の結果）。
     /// **クリック逆流の消費より前に読んだ値**を渡す（`present_results` の doc）。
@@ -433,9 +433,9 @@ pub enum ResultsPresentation {
 /// （`config-applied` / `indexing-*` / updater 完了の `wake_main` 自体は main の可視性を
 /// 見ない）、results だけが最前面に取り残される。
 ///
-/// **並行性は条件に入らない。** 証人型（`EventLoopProof`）を引数に要求する 5 関数はイベント
-/// ループスレッドへ閉じており、この判定と `ResultsWindow::show` のあいだに hide が割り込む
-/// 並びは**構築できない**。**閉じ込めの適用範囲の正本は `window_coordinator::hide_egui_main` の doc である**——5 関数の外側に何が残るかもそこ。
+/// **並行性は条件に入らない。** 可視性を変える関数はイベントループスレッドへ閉じており、
+/// この判定と `ResultsWindow::show` のあいだに hide が割り込む並びは**構築できない**。
+/// **閉じ込めの範囲と、その外側に残るものの正本は `window_coordinator::hide_egui_main` の doc である。**
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///

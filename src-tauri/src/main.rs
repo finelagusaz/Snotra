@@ -311,9 +311,8 @@ fn main() {
             //    走らない。**「setup はイベントループより前」ではない**——同じ 1 イベントの
             //    処理中である。
             // 2. **仮にフレームが走っても、この時点で pending なものは無い。**
-            //    reset_pending は `show_egui_main` が、main_visible は show と hide が、
-            //    pending_hotkey_failure は下の 2 つの listener が、hotkey_generation は hide と
-            //    hotkey listener が立てる——
+            //    reset_pending は `show_egui_main` が、pending_hotkey_failure は下の 2 つの
+            //    listener が、hotkey_generation は hide と hotkey listener が立てる——
             //    setter はすべてこの manage より後にしか動かない。
             app.manage(egui_shell::EguiShellState::new(&handles));
             // #671 PR A′: results ウィンドウの所有型を managed state へ。**listener 登録より前**に置く
@@ -448,10 +447,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
                 .as_ref()
                 .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
                 .unwrap_or(0);
-            let visible = shell
-                .as_ref()
-                .map(|sh| sh.main_visible.get())
-                .unwrap_or(false);
+            let visible = egui_shell::read_main_visible(app, el);
             // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
             // 短絡し、非表示＝show 経路（最も遅延に敏感）では読みそのものを省く。
             // 表示中でも hotkey_toggle=false なら hide せず show 側（再フォーカス/再配置）へ回る。

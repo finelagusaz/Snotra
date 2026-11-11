@@ -15,12 +15,12 @@
 //! 消す**ことであって、表現不能化ではない（spec §2.6 / §7-1）。
 //!
 //! **可視性の全体像はこの型だけでは閉じない。** main が hidden の間に results が出る事故を
-//! 塞ぐのは show 述語側のゲート（`layout::present_results` の連言① `main_visible`）である。
+//! 塞ぐのは show 述語側のゲート（`layout::present_results` の連言①「main が可視か」）である。
 //! 本型は「誰が raw 操作を撃つか」を一点に集めるのであって、「撃ってよい状況か」は判定しない。
 //!
 //! **事後検査（食い違いを後から隠し直す検査。撤去した `layout::must_retract_results`）や、
 //! 「フラグを無視して撃つ hide」（その理由の型だった `layout::HideReason::MainGone` も撤去した）を置かない。**
-//! 可視性を変える 5 関数は証人型（`EventLoopProof`）によりイベントループスレッドへ閉じており、
+//! 可視性を変える関数は証人型（`EventLoopProof`）によりイベントループスレッドへ閉じており、
 //! ゲートの読みと raw 操作の間に別スレッドの hide が割り込む並びは構築できない（#880）。
 //! それらが要るのは「フラグ = false・ウィンドウ = 可視」を作れるときだけである（経緯は `ADR-results-gate-single-point`・
 //! 閉じ込めの適用範囲は `window_coordinator::hide_egui_main` の doc）。
@@ -47,7 +47,7 @@ pub(crate) struct ResultsWindow {
     /// どちらも証人型（`EventLoopProof`）によりイベントループスレッドへ閉じている**——
     /// topmost 復帰（`commands/window.rs` の設定プロセス監視、spawn したポーリングスレッド
     /// から来る）は `set_topmost` の doc が言うとおり可視フラグを変えない。`Ordering` は
-    /// 同居する `main_visible` / `hotkey_generation` に合わせ `SeqCst`。
+    /// `EguiShellState` の `hotkey_generation` に合わせ `SeqCst`。
     visible: AtomicBool,
     /// 直近 `set_size` の (幅, 高さ)（論理 px・#749）。**`visible` とは概念が別**——冗長な Win32 呼び出しを
     /// 避ける性能上のガードであり、correctness のフラグではない。
@@ -121,19 +121,18 @@ impl ResultsWindow {
     ///
     /// **`_el` はイベントループスレッド上であることの証人である**（`EventLoopProof`）。この型は
     /// 証人を使わないが（`_` 始まり）、**シグネチャから外してはならない**——results の可視性を
-    /// 変える経路を単一スレッドへ閉じるための拘束である。証人型を引数に要求する 5 関数は
-    /// イベントループスレッドへ一意化されており、フラグとウィンドウの実状態が食い違う並びは構築できない
-    /// （適用範囲は `window_coordinator::hide_egui_main` の doc）。
+    /// 変える経路を単一スレッドへ閉じるための拘束である。可視性を変える関数はイベントループ
+    /// スレッドへ閉じているので、フラグとウィンドウの実状態が食い違う並びは構築できない
+    /// （閉じ込めの範囲は `window_coordinator::hide_egui_main` の doc）。
     pub(crate) fn show(
         &self,
         _el: &snotra_egui_runtime::EventLoopProof,
         background: egui::Color32,
     ) -> bool {
-        // 先に flag を swap して test-and-set を原子にする。**証人型（`EventLoopProof`）を
-        // 引数に要求する 5 関数はイベントループスレッドへ閉じている**ため、swap と `raw_show()`
-        // の間に他スレッドの `hide()` が挟まる並びは構築できない——フラグとウィンドウの実状態が食い違う
-        // 並びも同じ理由で構築できない。swap 自体は残す——「遷移したときだけ raw 操作を撃つ」
-        // 戻り値の契約がこれで決まるためである。
+        // 先に flag を swap して test-and-set を原子にする。**可視性を変える関数はイベントループ
+        // スレッドへ閉じている**（上の doc）ので、swap と `raw_show()` の間に他スレッドの `hide()` は
+        // 挟まらず、フラグとウィンドウの実状態も食い違わない。swap 自体は残す——「遷移したときだけ
+        // raw 操作を撃つ」戻り値の契約がこれで決まるためである。
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }

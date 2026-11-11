@@ -54,7 +54,7 @@ use tauri::Manager;
 use super::layout;
 use super::{EguiShellState, ResultsWindow};
 
-/// main ウィンドウが可視かを、窓の実状態から読む（#1365）。読み手は hotkey の判定（`main.rs`）と
+/// main ウィンドウが可視かを、窓の実状態から読む（#1365）。correctness に効く読み手は
 /// [`drive_results_window`]（`layout::present_results` の連言①）である。
 ///
 /// **写しを持たない。** イベントループスレッドからの `is_visible()` は tauri-runtime-wry の
@@ -531,9 +531,9 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     }
     // ここで main は既に不可視である（`hide()` はイベントループ上で同期に効く）。
     // `drive_results_window` の show ゲート（layout::present_results）は窓の実状態を読む
-    // （[`read_main_visible`]）ので、results の hide より前に「main 不可視」が成り立つ順序は
-    // この 2 文の並びだけで決まる。可視性を変える関数（いずれも証人型 `EventLoopProof` を
-    // 要求する）はイベントループスレッドへ閉じているため、2 文のあいだへ割り込むフレームは構築できない。
+    // （[`read_main_visible`]）。可視性を変える関数（いずれも証人型 `EventLoopProof` を要求する）は
+    // イベントループスレッドへ閉じているため、この関数の途中へ割り込むフレームは構築できない——
+    // **ゲートの正しさは main と results の hide の順序に依存しない**（並びは #671 からのもの）。
     //
     // 従属ウィンドウも同時に隠す（#646）。show 側は main の update() が snapshot の
     // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ

@@ -91,7 +91,7 @@
 - [x] `layout.rs` / `results_window.rs` の doc を直す
 - [x] 「証人型を引数に要求する 5 関数」の 5 か所を述語の形へ直す
 - [x] `git grep -n 'MainVisible\|main_visible'` を `*.rs` で数え、残りが `ResultsInputs.main_visible` とそのテスト・`present_results` の doc だけであることを確かめる
-- [ ] カテゴリ A を通す
+- [x] カテゴリ A を通す
 
 ### フェーズ 2 — 測定（一時的な足場）
 
@@ -134,3 +134,7 @@
 - 未検証: 毎フレームの `is_visible()` の所要（フェーズ 2 で測る）
 - 散文の全件列挙: 語 5 / 総件数 88 行 / ★未掲載 12（計画へ足した 0）——★の 12 件は凍結文書 8（`ADR-appstate-config-visibility`・`docs/superpowers/**` 7）と同名の別物 4（`snotra-core/src/folder.rs` と `src-tauri/gen/schemas/*.json` の `is_visible`）。「5 関数」は語に入れていなかったので sweep に出ず、Step 2b が拾った
 - 試行（#1300・高リスクのみ・独立レビュー 1 回ごとに 1 行）: 方式 Step 2b / 設計変更 0 / 主の見落とし 2
+
+## 検証ログ
+
+- ラウンド 1: 7364587b / verify:tree green（A・C・E・F 14 コマンド）/ 指摘 Critical・High 0・Low 4（全件修正）/ 変異 5 件中 4 検知・生存 1（連言①のみ常に true——既知の残余・ADR の帰結に記載）

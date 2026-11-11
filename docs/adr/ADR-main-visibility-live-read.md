@@ -4,7 +4,7 @@
 
 ## 文脈
 
-main ウィンドウが可視かのキャッシュ（`AtomicBool`）は #156（2026-03-07）で入った。WebView2 期、platform スレッド上の hotkey listener が `is_visible()` を呼ぶと、cold で 61ms / 39ms かかったためである（`PERFORMANCE.md`「ホットキー表示レイテンシ」）。#1364 でキャッシュは `EguiShellState` の `MainVisible` 型へ移り、書き口はモジュールの中に閉じた。それでも、キャッシュを保つための順序の規範（show の**後**に true を立てる・results の hide の**前**に false へ落とす）は残っていた。キャッシュは、`show_egui_main` / `hide_egui_main` 以外による可視性の変化を反映しない。
+main ウィンドウが可視かのキャッシュ（`AtomicBool`）は #156（2026-03-07）で入った。WebView2 期、platform スレッド上の hotkey listener が `is_visible()` を呼ぶと、cold で 61ms / 39ms かかったためである（`PERFORMANCE.md`「ホットキー表示レイテンシ」）。#1338（PR #1364）でキャッシュは `EguiShellState` の `MainVisible` 型へ移り、書き口はモジュールの中に閉じた。それでも、キャッシュを保つための順序の規範（show の**後**に true を立てる・results の hide の**前**に false へ落とす）は残っていた。キャッシュは、`show_egui_main` / `hide_egui_main` 以外による可視性の変化を反映しない。
 
 2026-08-02 の設計書（`docs/superpowers/specs/2026-08-02-results-visibility-single-thread-design.md` §9-3）は、キャッシュを廃止して実状態を真実源にする案を 2 つの理由で却下していた。
 
@@ -27,7 +27,7 @@ main ウィンドウが可視かのキャッシュ（`AtomicBool`）は #156（2
 ## 却下した代替案
 
 - **キャッシュを残す**: 却下。残っていたのは、写しを保つための 2 つの順序制約だけである。往復を避けるという存在理由は消えていた。写しは、Manager 経由の `.hide()` のように 2 関数を通らない変化を反映しない
-- **生の `IsWindowVisible` を直接呼ぶ**: 却下。`.claude/rules/src-tauri.md` の「Win32 を呼ぶ経路は `PlatformBridge` を通す」に当たり、従うと往復が生じる。tauri の getter がイベントループ上でインラインになるので、直接呼ぶ理由が無い
+- **生の `IsWindowVisible` を直接呼ぶ**: 却下。`.claude/rules/src-tauri.md` の「Win32 を呼ぶ経路は `PlatformBridge` を通す」に当たる。従うと往復が生じる——`PlatformBridge` は別スレッド（platform スレッド）の Win32 メッセージループへ channel でコマンドを送る（`src-tauri/src/platform/mod.rs`）。tauri の getter がイベントループ上でインラインになるので、直接呼ぶ理由が無い
 - **証人を取らない読みの関数**: 却下。別スレッドから呼べてしまえば、§9-3 の理由 1（往復）が戻る。証人を要求すれば、その呼び出しはコンパイルが通らない
 
 ## 旧 ADR との関係（凍結ゆえ直さず、ここへ書く）

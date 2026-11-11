@@ -433,9 +433,9 @@ pub enum ResultsPresentation {
 /// （`config-applied` / `indexing-*` / updater 完了の `wake_main` 自体は main の可視性を
 /// 見ない）、results だけが最前面に取り残される。
 ///
-/// **並行性は条件に入らない。** 可視性を変える関数（いずれも証人型 `EventLoopProof` を要求する）は
-/// イベントループスレッドへ閉じており、この判定と `ResultsWindow::show` のあいだに hide が割り込む
-/// 並びは**構築できない**。**閉じ込めの適用範囲の正本は `window_coordinator::hide_egui_main` の doc である**——閉じ込めの外側に何が残るかもそこ。
+/// **並行性は条件に入らない。** 可視性を変える関数はイベントループスレッドへ閉じており、
+/// この判定と `ResultsWindow::show` のあいだに hide が割り込む並びは**構築できない**。
+/// **閉じ込めの範囲と、その外側に残るものの正本は `window_coordinator::hide_egui_main` の doc である。**
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///

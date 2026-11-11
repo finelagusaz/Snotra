@@ -311,8 +311,8 @@ fn main() {
             //    走らない。**「setup はイベントループより前」ではない**——同じ 1 イベントの
             //    処理中である。
             // 2. **仮にフレームが走っても、この時点で pending なものは無い。**
-            //    reset_pending は `show_egui_main` が、pending_hotkey_failure は下の 2 つの listener が、hotkey_generation は hide と
-            //    hotkey listener が立てる——
+            //    reset_pending は `show_egui_main` が、pending_hotkey_failure は下の 2 つの
+            //    listener が、hotkey_generation は hide と hotkey listener が立てる——
             //    setter はすべてこの manage より後にしか動かない。
             app.manage(egui_shell::EguiShellState::new(&handles));
             // #671 PR A′: results ウィンドウの所有型を managed state へ。**listener 登録より前**に置く

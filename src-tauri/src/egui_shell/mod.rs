@@ -41,7 +41,7 @@ mod window_coordinator;
 // `window_coordinator::` で直に呼ぶ。
 pub(crate) use window_coordinator::{
     DriveResultsInputs, check_show_bar_rect, clamp_main_into_work_area, drive_results_window,
-    hide_egui_main, show_egui_main, wake_main, wake_results,
+    hide_egui_main, read_main_visible, show_egui_main, wake_main, wake_results,
 };
 
 // mod.rs（ウィンドウ生成・managed state）が消費する。snapshot の発行は view.rs が
@@ -137,8 +137,6 @@ pub(crate) enum HotkeyFailureKind {
 
 /// egui 経路の show/hide を跨ぐ共有状態（managed state）。
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（#532）。
-/// - main_visible: main ウィンドウが可視かのキャッシュ。書き手・順序・適用範囲は
-///   `window_coordinator::MainVisible` の doc。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（#532）。
 /// - reset_pending: show が立て、view が消費して state.reset()（#532）。
 /// - show_read_indexing / show_read_toast / show_applied_height_bits: 不変条件検出器
@@ -151,7 +149,6 @@ pub(crate) enum HotkeyFailureKind {
 ///   `window_coordinator::check_show_bar_rect`。
 pub(crate) struct EguiShellState {
     pub(crate) hotkey_generation: AtomicU64,
-    pub(crate) main_visible: window_coordinator::MainVisible,
     pub(crate) hide_pending: AtomicBool,
     pub(crate) reset_pending: AtomicBool,
     pub(crate) show_read_indexing: AtomicBool,
@@ -194,7 +191,6 @@ impl EguiShellState {
     pub(crate) fn new(handles: &EguiShellHandles) -> Self {
         Self {
             hotkey_generation: AtomicU64::new(0),
-            main_visible: window_coordinator::MainVisible::new(),
             hide_pending: AtomicBool::new(false),
             reset_pending: AtomicBool::new(false),
             show_read_indexing: AtomicBool::new(false),

@@ -14,7 +14,7 @@
    - `show` / `setSize` / `setPosition` などウィンドウ操作の不要呼び出し削減
    - OS 呼び出し待機を伴う処理（例: `launch_item`）は `timeout` を明示し、UI 側で `launching` と失敗通知を表示して「無反応」に見せない
    - 失敗通知の自動クリアは単一タイマーで管理し、再通知時は `clearTimeout` してから再設定する
-   - **Win32 IPC の cold-call を避ける**: Tauri のウィンドウ API（`is_visible()` / `show()` 等）は内部で Win32 IPC を使い、WebView2 への初回アクセスで数十ms のオーバーヘッドが発生する。ホットパス上で状態確認目的に使う場合は `AtomicBool` 等で Rust 側にキャッシュし、Win32 IPC をスキップする。冪等な操作（`show()` 等）は pre-check なしで直接呼ぶ
+   - **ウィンドウ API の読みはイベントループスレッドに置く**: Tauri のウィンドウ API（`is_visible()` 等の getter）は、別スレッドから呼ぶとイベントループへ post して返事を待つ往復になる。イベントループスレッドから呼べばその場で実行され、往復しない（「main の可視性の読み」節の実測）。状態確認のために写しをキャッシュするより、読みをイベントループ上へ移す。冪等な操作（`show()` 等）は pre-check なしで直接呼ぶ
 2. 重複処理を消す（低リスク・高効率）
    - 同一データの二重取得（例: アイコン batch 取得）を責務分離して一本化
    - 同一状態を複数イベントで配信しない。結果表示は `results-sync`（`generation` + `shouldShow`）の単一契約で同期する
@@ -3346,3 +3346,13 @@ Win32 IPC cold-call 最適化（`is_visible()` → `AtomicBool`）適用後の�
 | cold（トレースなし推定） | ~36ms | トレース I/O 分を差し引いた推定値 |
 
 最適化前の cold は 191ms だった（`is_visible()` pre-check 61ms + ギャップ 71ms + `is_visible_after_show` 39ms）。
+
+### main の可視性の読み（`window_coordinator::read_main_visible`、#1365、2026-11-11）
+
+上の `AtomicBool` キャッシュは #1365 で撤去し、イベントループ上で `Window::is_visible()` を読む形へ替えた。その読み 1 回の所要（hotkey の判定と、`drive_results_window` の毎フレームの読みの両方を含む）。
+
+- 出所: 機体 MSI MS-7E26 / 30.9 GB・tao 0.37.2 / tauri-runtime-wry 2.12.3・`npm run smoke:egui` 1 回の中の全読み（n=105）・読みの前後に置いた一時的な `Instant` の計装（コミットしていない）
+- 初回（cold・起動後最初の hotkey）: 45.6 µs
+- 全体: 中央値 9.5 µs / p95 22.0 µs / 最大 94.4 µs
+
+上の 61ms / 39ms は WebView2 期に別スレッドから呼んだときの値で、イベントループ上の読みは往復しない（`tauri-runtime-wry` の `send_user_message` がその場で実行する）。

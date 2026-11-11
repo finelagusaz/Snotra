@@ -83,28 +83,28 @@
 
 ### フェーズ 1 — コード
 
-- [ ] `window_coordinator.rs`: `MainVisible` を削除し、`read_main_visible(app, el)` を実状態の読みへ替える（doc 込み）
-- [ ] `window_coordinator.rs`: `show_egui_main` / `hide_egui_main` の store と関連コメント・doc を直す
-- [ ] `window_coordinator.rs`: `drive_results_window` の呼び出しとコメントを直す
-- [ ] `mod.rs`: `EguiShellState.main_visible` を削除し、`read_main_visible` を re-export する
-- [ ] `main.rs`: hotkey の読みを `egui_shell::read_main_visible(app, el)` へ替え、setup のコメントを直す
-- [ ] `layout.rs` / `results_window.rs` の doc を直す
-- [ ] 「証人型を引数に要求する 5 関数」の 5 か所を述語の形へ直す
-- [ ] `git grep -n 'MainVisible\|main_visible'` を `*.rs` で数え、残りが `ResultsInputs.main_visible` とそのテスト・`present_results` の doc だけであることを確かめる
+- [x] `window_coordinator.rs`: `MainVisible` を削除し、`read_main_visible(app, el)` を実状態の読みへ替える（doc 込み）
+- [x] `window_coordinator.rs`: `show_egui_main` / `hide_egui_main` の store と関連コメント・doc を直す
+- [x] `window_coordinator.rs`: `drive_results_window` の呼び出しとコメントを直す
+- [x] `mod.rs`: `EguiShellState.main_visible` を削除し、`read_main_visible` を re-export する
+- [x] `main.rs`: hotkey の読みを `egui_shell::read_main_visible(app, el)` へ替え、setup のコメントを直す
+- [x] `layout.rs` / `results_window.rs` の doc を直す
+- [x] 「証人型を引数に要求する 5 関数」の 5 か所を述語の形へ直す
+- [x] `git grep -n 'MainVisible\|main_visible'` を `*.rs` で数え、残りが `ResultsInputs.main_visible` とそのテスト・`present_results` の doc だけであることを確かめる
 - [ ] カテゴリ A を通す
 
 ### フェーズ 2 — 測定（一時的な足場）
 
-- [ ] `read_main_visible` の前後に `Instant` を置く一時コードで、hotkey 1 回目（cold）と以降（warm）、`drive_results_window` の毎フレームの所要を trace へ出し、ローカルの `smoke:egui` で採る。**足場はこのフェーズの中で撤去し、コミットに含めない**（撤去の確認: `git diff` に `Instant` の追加が無いこと）
-- [ ] 値を機体名（`$env:COMPUTERNAME`）・日付・版（tao 0.37.2）つきで `PERFORMANCE.md` へ記録する
+- [x] `read_main_visible` の前後に `Instant` を置く一時コードで、hotkey 1 回目（cold）と以降（warm）、`drive_results_window` の毎フレームの所要を trace へ出し、ローカルの `smoke:egui` で採る。**足場はこのフェーズの中で撤去し、コミットに含めない**（撤去の確認: `git diff` に `Instant` の追加が無いこと）
+- [x] 値を機体名（`$env:COMPUTERNAME`）・日付・版（tao 0.37.2）つきで `PERFORMANCE.md` へ記録する
 
 ### フェーズ 3 — 文書
 
-- [ ] `SPEC.md`「8.6」の状態図と遷移ルール要約の語を直す
-- [ ] `PERFORMANCE.md` 17 行目の一般則を直す
-- [ ] `scripts/manual-smoke.ps1` 項目 2 の `inv` を直す
-- [ ] `docs/adr/ADR-main-visibility-live-read.md` を書く
-- [ ] `git grep -n 'main_visible'`（`*.rs` 以外）で残りが凍結文書（ADR 2 本・`docs/superpowers/**`）と `PERFORMANCE.md` の計測履歴だけであることを確かめる
+- [x] `SPEC.md`「8.6」の状態図と遷移ルール要約の語を直す
+- [x] `PERFORMANCE.md` 17 行目の一般則を直す
+- [x] `scripts/manual-smoke.ps1` 項目 2 の `inv` を直す
+- [x] `docs/adr/ADR-main-visibility-live-read.md` を書く
+- [x] `git grep -n 'main_visible'`（`*.rs` 以外）で残りが凍結文書（ADR 2 本・`docs/superpowers/**`）と `PERFORMANCE.md` の計測履歴だけであることを確かめる
 - [ ] カテゴリ A・C・F を `verify:tree` で通す
 
 ## 未確定（実装前に潰す）

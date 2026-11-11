@@ -44,7 +44,7 @@
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
 //! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use snotra_core::config::{AppearanceConfig, GeneralConfig};
@@ -54,35 +54,26 @@ use tauri::Manager;
 use super::layout;
 use super::{EguiShellState, ResultsWindow};
 
-/// main ウィンドウが可視かのキャッシュ（`EguiShellState.main_visible`）。#156 で、別スレッドから
-/// `is_visible()` を読む往復を hotkey トグルの判定から外すために置いた（往復が消えた今の撤去の検討は
-/// #1365）。
+/// main ウィンドウが可視かを、窓の実状態から読む（#1365）。読み手は hotkey の判定（`main.rs`）と
+/// [`drive_results_window`]（`layout::present_results` の連言①）である。
 ///
-/// **書き手は [`show_egui_main`]（show の**後**に true）と [`hide_egui_main`]（`results.hide()` の
-/// **前**に false）である。**読み手のうち correctness に効くのは
-/// `layout::present_results` の連言①である（読む口は [`MainVisible::get`]）。
+/// **写しを持たない。** イベントループスレッドからの `is_visible()` は tauri-runtime-wry の
+/// `send_user_message` がその場で実行し、往復しない（tao の `IsWindowVisible` に落ちる）。
+/// main の `show()` / `hide()` も同じスレッドで同期に効くので、[`show_egui_main`] /
+/// [`hide_egui_main`] が返った時点で実状態は既に変わっている——「show の後に立てる」
+/// 「results の hide より前に落とす」といった写しの順序を守る必要が無い。
 ///
-/// **型で閉じたのは「このモジュールの外から書くこと」までである**（#1338）——`set` はモジュール
-/// private、中身の `AtomicBool` もフィールドが private なので、外から `set` を呼ぶと E0624、
-/// `.0.store` と綴ると E0616 で落ちる。**このフラグを更新せずに main を消す経路は型では閉じられない**
-/// （帰結と受容の理由は [`hide_egui_main`] の doc が正本）。
-pub(crate) struct MainVisible(AtomicBool);
-
-impl MainVisible {
-    /// 不可視で建てる（`pub(super)` ゆえ建てられるのは `egui_shell` の中だけである）。
-    pub(super) fn new() -> Self {
-        Self(AtomicBool::new(false))
-    }
-
-    /// main ウィンドウが可視かを読む（型の doc）。
-    pub(crate) fn get(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
-    }
-
-    /// main ウィンドウの可視性を記録する（書き手と順序の制約は型の doc）。
-    fn set(&self, visible: bool) {
-        self.0.store(visible, Ordering::SeqCst);
-    }
+/// **`_el` は往復を戻さないための証人である。** 別スレッドから呼ぶと proxy へ post して返事を
+/// 待つ往復になる（#156 がキャッシュで避けたもの）。
+///
+/// 窓が無い・読めないときは false（results を出さない・hotkey は show 側へ回る）。
+pub(crate) fn read_main_visible(
+    app: &tauri::AppHandle,
+    _el: &snotra_egui_runtime::EventLoopProof,
+) -> bool {
+    app.get_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
 }
 
 /// 実行中 config から Metrics を導出する(#646)。毎フレーム/毎 show の live-read で
@@ -419,11 +410,6 @@ pub(crate) fn show_egui_main(
     // 安価であり、show は頻繁な操作でもない。
     apply_native_background(&window, read_background(app));
     let _ = window.show();
-    // main_visible は show() の後に立てる（「順序不変」制約）。
-    // show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
-    if let Some(sh) = app.try_state::<EguiShellState>() {
-        sh.main_visible.set(true);
-    }
     let _ = window.set_focus();
     // **ここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちを置かない。
     // イベントループ上では恒久的に no-op である**（#880）。
@@ -498,7 +484,7 @@ pub(crate) fn show_egui_main(
 }
 
 /// egui 経路の hide。**main の** hide の唯一の副作用所有点（#532）——位置保存・
-/// main_visible=false・working set trim はここにしか無い。**世代 bump（hotkey_generation）
+/// working set trim はここにしか無い。**世代 bump（hotkey_generation）
 /// だけは 2 箇所ある**——ここは「保留中の alt 解放待ち show を無効化する」ため、
 /// hotkey listener（main.rs）は「押下ごとに採番する」ため（用途が別）。
 /// **results の hide はここを通らない経路がある**（同モジュールの `drive_results_window`）
@@ -507,9 +493,9 @@ pub(crate) fn show_egui_main(
 ///
 /// **main を隠す経路はこの関数を通す。** 可視性を変える関数の閉じ込めは表現不能化ではない——`Manager` から
 /// main のハンドルを引いた `.hide()` / `.show()` は任意のスレッドからコンパイルが通り、results と違って
-/// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。そのとき `EguiShellState.main_visible` は
-/// 更新されず、results が既に可視なら最前面に取り残される——main が hidden の間は `RedrawRequested` が
-/// 届かず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 で実機発見）。
+/// **実際に効く**（main は 3 操作すべて tao 経由ゆえ `VISIBLE` が正確）。可視性の読み（[`read_main_visible`]）は
+/// 窓の実状態なのでその変化を拾うが、results が既に可視なら最前面に取り残される——main が hidden の間は
+/// `RedrawRequested` が届かず `drive_results_window` が走らないので、拾い直すフレームが来ない（#671 で実機発見）。
 /// results が新たに出ることは無い（同じ理由）。#880 の時点で、main に対する `.hide()` は
 /// この関数の中の 1 か所だけであり、受容する残余である。
 ///
@@ -518,13 +504,13 @@ pub(crate) fn show_egui_main(
 ///
 /// **本体がイベントループ上で走ることの帰結**: この関数の実行中はメッセージポンプが停止する
 /// （`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。ゆえに重い処理・ディスク I/O を
-/// 臨界区間（`main_visible` の store と 2 枚の `ShowWindow` が不可分であるべき区間）に
+/// 臨界区間（main と results の 2 枚の `ShowWindow` が不可分であるべき区間）に
 /// 置いてはならない。placement の**書き込み**と working set の trim は末尾へ出してある。
 ///
 /// **ただし「臨界区間の外」は「イベントループの外」ではない。** 末尾へ出した 2 つも
 /// この関数の中＝イベントループスレッド上で走り、その間ポンプは止まったままである
 /// （**受容する残余**・詳細は当該箇所のコメント）。臨界区間から外したことで守られるのは
-/// 「可視性の 3 操作が不可分であること」であって、ポンプの応答性ではない。
+/// 「2 枚の hide が不可分であること」であって、ポンプの応答性ではない。
 pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::EventLoopProof) {
     // 保留中の alt 解放待ち show を無効化（#532）: 世代を bump し、spawn 済み show
     // スレッドの gen 一致チェックを外す。
@@ -543,16 +529,12 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     if let Some(window) = app.get_window("main") {
         let _ = window.hide();
     }
-    // main_visible は **results.hide() より前**に落とす（#671）。
-    // これは `drive_results_window` の show ゲート（layout::present_results）が読む値である。
-    // **証人型（`EventLoopProof`）を引数に要求する 5 関数はイベントループスレッドへ閉じているため**、
-    // 「results.hide() 済み・main_visible=true」の隙間へ割り込むフレームは構築できない
-    // ——この順序を保つのは、show 側の「show() の後に true を立てる」（順序不変制約）との
-    // 対称のためである。どちらも「main が可視でない期間に visible=true と読ませない」向きに
-    // 寄せている。
-    if let Some(sh) = app.try_state::<EguiShellState>() {
-        sh.main_visible.set(false);
-    }
+    // ここで main は既に不可視である（`hide()` はイベントループ上で同期に効く）。
+    // `drive_results_window` の show ゲート（layout::present_results）は窓の実状態を読む
+    // （[`read_main_visible`]）ので、results の hide より前に「main 不可視」が成り立つ順序は
+    // この 2 文の並びだけで決まる。可視性を変える関数（いずれも証人型 `EventLoopProof` を
+    // 要求する）はイベントループスレッドへ閉じているため、2 文のあいだへ割り込むフレームは構築できない。
+    //
     // 従属ウィンドウも同時に隠す（#646）。show 側は main の update() が snapshot の
     // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
     // （対称は main update 内の show）。同モジュールの `drive_results_window` は update **内**
@@ -1364,16 +1346,6 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
     )
 }
 
-/// [`MainVisible::get`] の live-read。`drive_results_window` が show の事前ゲート
-/// （`layout::present_results` の連言①）として 1 回読む。
-///
-/// `EguiShellState` 不在は false（results を出さない側を選ぶ）。
-fn read_main_visible(app: &tauri::AppHandle) -> bool {
-    app.try_state::<EguiShellState>()
-        .map(|sh| sh.main_visible.get())
-        .unwrap_or(false)
-}
-
 /// `drive_results_window` の 1 フレーム分の入力（#749）。
 ///
 /// **`result_count` の読み点は呼び出し側の責務である**（#752 / ADR-results-presentation-two-stage）。同一フレーム内で
@@ -1426,15 +1398,13 @@ pub(crate) fn drive_results_window(
     // **どちらも呼び出し側が読む**（driver は view の外にあるので、読み点は
     // `DriveResultsInputs` を組み立てる式の位置が決める・#749）。
     let count = i.result_count;
-    // main が hidden の間は results を出さない（#671）。
-    // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
-    // **この読みより前に store が済んでいたフレーム**はここで hide 側の判定になる。判定式と
-    // 根拠は layout::present_results（純粋核・ユニットテスト対象）。
-    // **証人型（`EventLoopProof`）を引数に要求する 5 関数はイベントループスレッドへ閉じている**
-    // ため、この読みと `results.show()` のあいだへ hide が割り込む並びは構築できない
-    // （読んだ後に store されるフレームを心配する必要が無い）。**ただし `main_visible` を
-    // 更新しない main の hide はこの閉じ込めの外にある**——`MainVisible` の doc を見よ。
-    let main_visible = read_main_visible(app);
+    // main が hidden の間は results を出さない（#671）。読むのは窓の実状態である
+    // （[`read_main_visible`]）。判定式と根拠は layout::present_results（純粋核・ユニットテスト対象）。
+    // 可視性を変える関数（いずれも証人型 `EventLoopProof` を要求する）はイベントループスレッドへ
+    // 閉じているため、この読みと `results.show()` のあいだへ hide が割り込む並びは構築できない。
+    // **ただし `Manager` から引いた main の `.hide()` はこの閉じ込めの外にある**——帰結は
+    // `hide_egui_main` の doc を見よ。
+    let main_visible = read_main_visible(app, el);
     let desired_height = match layout::present_results(layout::ResultsInputs {
         main_visible,
         plain_hidden: i.plain_hidden,

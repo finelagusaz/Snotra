@@ -88,7 +88,7 @@ $items = @(
      expect = "2 文字目が入力欄に入る。フォーカスが results ウィンドウへ移らない"
      trace = @("egui_show:done", "egui_results:show") }
   @{ id = 2; title = "hide で両ウィンドウが同時に消える"
-     inv = "#671 PR A′（main_visible=false は results.hide() の前）・#646 PR2（raw 3 操作）"
+     inv = "#671 PR A′（main の hide は results の hide より前）・#646 PR2（raw 3 操作）"
      steps = @("results が出ている状態にする", "ホットキーで隠す")
      expect = "main と results が同時に消える。**results だけが最前面に残らない**"
      trace = @("egui_hide:done", "egui_results:hide") }

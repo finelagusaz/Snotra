@@ -39,6 +39,6 @@ main ウィンドウが可視かのキャッシュ（`AtomicBool`）は #156（2
 
 ## 帰結
 
-- 写しの順序の規範（show の後に立てる・results の hide の前に落とす）は消えた。hide 側で「results の hide より前に main が不可視」が成り立つのは、`hide_egui_main` の中の文の並びだけによる
+- 写しの順序の規範（show の後に立てる・results の hide の前に落とす）は消えた。`hide_egui_main` の中で main を results より先に隠す並びは #671 からのもので、ゲートの正しさはそれに依存しない（同関数のコメント）
 - Manager 経由の `.hide()` で results が最前面に取り残される残余は、閉じていない。main が hidden の間は `RedrawRequested` が届かず、`drive_results_window` が走らないためである（`hide_egui_main` の doc）
 - hidden 中に稀に走るフレームで results を出さないこと（連言①の読みそのもの）には、自動検査が無い

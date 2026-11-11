@@ -54,8 +54,8 @@ use tauri::Manager;
 use super::layout;
 use super::{EguiShellState, ResultsWindow};
 
-/// main ウィンドウが可視かを、窓の実状態から読む（#1365）。correctness に効く読み手は
-/// [`drive_results_window`]（`layout::present_results` の連言①）である。
+/// main ウィンドウが可視かを、窓の実状態から読む（#1365）。読み手は hotkey のトグル判定と、
+/// results の取り残しを防ぐ [`drive_results_window`]（`layout::present_results` の連言①）である。
 ///
 /// **写しを持たない。** イベントループスレッドからの `is_visible()` は tauri-runtime-wry の
 /// `send_user_message` がその場で実行し、往復しない（tao の `IsWindowVisible` に落ちる）。

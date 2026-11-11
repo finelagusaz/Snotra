@@ -138,3 +138,4 @@
 ## 検証ログ
 
 - ラウンド 1: 7364587b / verify:tree green（A・C・E・F 14 コマンド）/ 指摘 Critical・High 0・Low 4（全件修正）/ 変異 5 件中 4 検知・生存 1（連言①のみ常に true——既知の残余・ADR の帰結に記載）
+- ラウンド 2: 8602240b / verify:tree green（A・C・E・F 14 コマンド）/ 指摘 Low 2（ADR 帰結の順序の言い回し・read_main_visible の読み手の名指し）→ 修正 / 変異注入なし（doc のみの差分）

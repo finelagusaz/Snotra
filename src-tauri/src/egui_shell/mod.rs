@@ -323,14 +323,13 @@ pub(crate) struct EguiShellHandles {
 }
 
 /// main ウィンドウのラベル。生成（[`create`]）と取得（[`main_window`]）はこの定数だけを通す。
-/// 値の正は `SPEC.md`「ウィンドウの名称と役割」。
+/// 値の正本は `SPEC.md`「ウィンドウの名称と役割」。
 pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 
 /// main ウィンドウを引く。egui の main は webview を持たないので、`get_webview_window` では取れず
-/// `get_window` で取る（SPEC §8.5）。
+/// `get_window` で取る。
 ///
-/// 証人（`EventLoopProof`）は要求しない。要求するのは、可視性を読む・変える関数の側である
-/// （`read_main_visible` / `show_egui_main` / `hide_egui_main`）。
+/// 証人（`EventLoopProof`）は要求しない。要求するのは、可視性を読む・変える関数の側である。
 pub(crate) fn main_window(app: &tauri::AppHandle) -> Option<tauri::Window> {
     app.get_window(MAIN_WINDOW_LABEL)
 }

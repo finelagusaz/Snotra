@@ -82,9 +82,11 @@
 ### Phase 2 — 検証
 
 - [x] 受け入れ条件 1〜4 を確かめる — 1: 0 件／2: `mod.rs:327` の定義 1 行／3: `hide_egui_main` の引きは 1 回／4: `git diff` で既存関数のシグネチャ行の変化なし（`fn` を含む差分は新設の `main_window` だけ）。主ツリーで clippy（snotra・all-targets）exit 0・`cargo test -p snotra` 318 passed・`cargo doc -p snotra` exit 0
-- [ ] カテゴリ A を実行する
-- [ ] カテゴリ C を実行し、Phase 0 の基準と比べる
-- [ ] 変異注入（委譲先）の結果を受け取る
+- [x] カテゴリ A を実行する
+- [x] カテゴリ C を実行し、Phase 0 の基準と比べる — 52545771 で smoke:egui exit 0（基準と同じく合格）
+- [x] 変異注入（委譲先）の結果を受け取る
+- ラウンド 1: 52545771 / verify:tree green（A・C・E・F。警告: node_modules が lock と食い違う＝vitest 5.0.5 vs 5.1.0 等。Rust の変更とは無関係）/ 指摘 Low 4 件（Critical・High 0）/ 生き残った変異 0（M1 None・M2 生成側だけ "mainx"・M3 `.hide()` 削除の 3 件とも smoke:egui 赤）
+- ラウンド 1 の対処: ヘルパー doc の「SPEC §8.5」（§8.5 は設定起動中の最前面解除の節で、get_window の根拠ではない）を外し、always_on_top の解除側コメントへ戻した／「値の正」→「値の正本」／証人を要求する関数の列挙をやめた／`commands/window.rs` 復元側の「egui は get_window」を削除。「証人」の用語集追加は見送り（本変更が導入した語ではない）
 
 ## 未確定（実装前に潰す）
 

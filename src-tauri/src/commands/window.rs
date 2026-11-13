@@ -93,8 +93,8 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     *guard = Some(child);
     drop(guard);
 
-    // Temporarily disable main window alwaysOnTop so snotra-settings can be focused
-    // （codex #3・SPEC §8.5）。results ウィンドウにも対称適用する（#646 PR2）——片方だけ解除すると
+    // Temporarily disable main window alwaysOnTop so snotra-settings can be focused.
+    // 設定起動中の最前面解除は SPEC §8.5（codex #3）。results ウィンドウにも対称適用する（#646 PR2）——片方だけ解除すると
     // 設定画面の上に結果カードが浮く（/symmetric-check 対象・plan-review 独立導出の指摘）。
     if let Some(main) = crate::egui_shell::main_window(app) {
         let _ = main.set_always_on_top(false);

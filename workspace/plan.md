@@ -86,7 +86,9 @@
 - [x] カテゴリ C を実行し、Phase 0 の基準と比べる — 52545771 で smoke:egui exit 0（基準と同じく合格）
 - [x] 変異注入（委譲先）の結果を受け取る
 - ラウンド 1: 52545771 / verify:tree green（A・C・E・F。警告: node_modules が lock と食い違う＝vitest 5.0.5 vs 5.1.0 等。Rust の変更とは無関係）/ 指摘 Low 4 件（Critical・High 0）/ 生き残った変異 0（M1 None・M2 生成側だけ "mainx"・M3 `.hide()` 削除の 3 件とも smoke:egui 赤）
-- ラウンド 1 の対処: ヘルパー doc の「SPEC §8.5」（§8.5 は設定起動中の最前面解除の節で、get_window の根拠ではない）を外し、always_on_top の解除側コメントへ戻した／「値の正」→「値の正本」／証人を要求する関数の列挙をやめた／`commands/window.rs` 復元側の「egui は get_window」を削除。「証人」の用語集追加は見送り（本変更が導入した語ではない）
+- ラウンド 1 の対処: ヘルパー doc の「SPEC §8.5」（§8.5「ウィンドウ生成とプロセス管理」が持つのは設定起動中の最前面解除の項で、get_window の根拠ではない）を外し、always_on_top の解除側コメントへ戻した／「値の正」→「値の正本」／証人を要求する関数の列挙をやめた／`commands/window.rs` 復元側の「egui は get_window」を削除。「証人」の用語集追加は当初見送り→ラウンド 2 で委譲先の反論（code-reviewer.md は差分が新しく書いた語を対象にする）を採り、追加
+- ラウンド 2: 387fc201 / verify:tree green（A・C・E・F、14 コマンドすべて exit 0）/ 指摘 Low 2 件（Critical・High 0）+ 用語集見送りへの反論 / 変異注入なし（コード変更なし）
+- ラウンド 2 の対処: `commands/window.rs` 解除側コメントの英文末尾へ日本語の括弧を継いだ混在を、日本語の 1 文に分けた／本行の §8.5 の言い方を節名つきへ直した／`docs/glossary.md` に「証人・証人型」を追加
 
 ## 未確定（実装前に潰す）
 

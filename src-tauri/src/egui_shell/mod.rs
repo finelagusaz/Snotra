@@ -322,7 +322,20 @@ pub(crate) struct EguiShellHandles {
     pub(crate) results_waker: snotra_egui_runtime::WindowWaker,
 }
 
-/// main ウィンドウの生成。EguiRuntime を install し webview 無しの "main" ウィンドウを生成して attach。setup 限定。
+/// main ウィンドウのラベル。生成（[`create`]）と取得（[`main_window`]）はこの定数だけを通す。
+/// 値の正は `SPEC.md`「ウィンドウの名称と役割」。
+pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
+
+/// main ウィンドウを引く。egui の main は webview を持たないので、`get_webview_window` では取れず
+/// `get_window` で取る（SPEC §8.5）。
+///
+/// 証人（`EventLoopProof`）は要求しない。要求するのは、可視性を読む・変える関数の側である
+/// （`read_main_visible` / `show_egui_main` / `hide_egui_main`）。
+pub(crate) fn main_window(app: &tauri::AppHandle) -> Option<tauri::Window> {
+    app.get_window(MAIN_WINDOW_LABEL)
+}
+
+/// main ウィンドウの生成。EguiRuntime を install し、webview 無しの [`MAIN_WINDOW_LABEL`] ウィンドウを生成して attach。setup 限定。
 /// **ウィンドウのプロパティを決めるのはここだけである**——`tauri.conf.json` の `app.windows` は空であり、
 /// 宣言によるウィンドウは 1 つも無い。ここが与える全プロパティ（52px 高は初期値で、実高は show 経路と `view.rs` のフレームが設定する・width は config の window_width・skipTaskbar・
 /// alwaysOnTop・decorations:false・resizable:false・visible:false）がウィンドウの姿である（#532）。
@@ -347,7 +360,7 @@ pub(crate) fn create(
     // `VisualConfig::default()` である——`#282828` のリテラルをここへ再手打ちしない（#802）。
     let bg_color =
         window_coordinator::native_brush_color(visual::background_color(background_color_hex));
-    let window = tauri::Window::builder(app, "main")
+    let window = tauri::Window::builder(app, MAIN_WINDOW_LABEL)
         .title("Snotra")
         .inner_size(window_width, 52.0) // 保存幅を尊重（#532）。高さは初期値。実高は show 経路と view.rs のフレームが設定する(#646)
         .decorations(false)

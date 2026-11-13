@@ -70,7 +70,7 @@ pub(crate) fn read_main_visible(
     app: &tauri::AppHandle,
     _el: &snotra_egui_runtime::EventLoopProof,
 ) -> bool {
-    app.get_window("main")
+    super::main_window(app)
         .and_then(|w| w.is_visible().ok())
         .unwrap_or(false)
 }
@@ -309,7 +309,7 @@ pub(crate) fn show_egui_main(
     _el: &snotra_egui_runtime::EventLoopProof,
     t0: Instant,
 ) {
-    let Some(window) = app.get_window("main") else {
+    let Some(window) = super::main_window(app) else {
         crate::trace_main("egui_show:no_window", serde_json::json!({}));
         return;
     };
@@ -522,10 +522,11 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // `read_placement_relative` の doc）。`read_metrics` は読みをクロージャ内で取り切って
     // 返すため、ここで保持は残らない（#1036）。
     let bar_height = read_metrics(app).bar_height;
-    let placement = app
-        .get_window("main")
-        .and_then(|w| read_placement_relative(&w, bar_height));
-    if let Some(window) = app.get_window("main") {
+    let main = super::main_window(app);
+    let placement = main
+        .as_ref()
+        .and_then(|w| read_placement_relative(w, bar_height));
+    if let Some(window) = main {
         let _ = window.hide();
     }
     // ここで main は既に不可視である（`hide()` はイベントループ上で同期に効く）。results の
@@ -1040,7 +1041,7 @@ fn main_in_modal_move_loop(_window: &tauri::Window) -> bool {
 /// 取得に失敗したら**クランプしない側を選ぶ**（`position_on_target_monitor` と同じ）。
 #[cfg(windows)]
 pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64) {
-    let Some(main) = app.get_window("main") else {
+    let Some(main) = super::main_window(app) else {
         return;
     };
     let Some(a) = read_bar_anchor(&main, bar_height) else {
@@ -1183,7 +1184,7 @@ pub(crate) fn check_show_bar_rect(app: &tauri::AppHandle, bar_height: f64) {
     if show_w == 0 || show_h == 0 {
         return;
     }
-    let Some(main) = app.get_window("main") else {
+    let Some(main) = super::main_window(app) else {
         return;
     };
     // **`read_bar_anchor` は通さない。** あちらは基準モニターまで引くので
@@ -1268,7 +1269,7 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// `inset_h`・バーのクランプ・hide の位置保存（#755 / #801）へ波及する。**その並びで失うのは
 /// 先頭行の上端 3 物理 px（同条件）であり、どちらの案もそれに釣り合わない。**
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
-    let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
+    let (Some(main), Some(results)) = (super::main_window(app), app.try_state::<ResultsWindow>())
     else {
         return;
     };

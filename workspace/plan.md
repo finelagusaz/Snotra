@@ -68,20 +68,20 @@
 
 ### Phase 0 — 基準
 
-- [ ] `cargo build -p snotra` → `npm run smoke:egui` の結果を記録する
-- [ ] 受け入れ条件 1・2 の grep を変更前に実行して件数を記録する（10 件 / 2 行）
+- [x] `cargo build -p snotra` → `npm run smoke:egui` の結果を記録する — 472e2a22 で exit 0（show/hide + results show/hide、toast ありの show 2 回とも DWM 752x110・payload height 86、`window.bin` の書き込みあり）
+- [x] 受け入れ条件 1・2 の grep を変更前に実行して件数を記録する — 472e2a22 で 10 件 / 12 行（12 = 取得 10 + builder 1 + `create` の doc 1。計画時の「2 行」は取得分を数え落としていた）
 
 ### Phase 1 — 定数・ヘルパーと移行
 
-- [ ] `mod.rs` に `MAIN_WINDOW_LABEL` と `main_window` を新設し、`create` の builder と doc を定数へ寄せる
-- [ ] `window_coordinator.rs` の 7 箇所を移行し、`hide_egui_main` を 1 回の引きにする
-- [ ] `view.rs` の 1 箇所を移行する
-- [ ] `commands/window.rs` の 2 箇所を移行し、取得手段のコメントをヘルパーの doc へ移す
-- [ ] LSP findReferences で `main_window` の呼び出し元が 10 箇所（`hide_egui_main` 1 回化後は 9 箇所）であることを確かめ、`/dry-check` を実行する
+- [x] `mod.rs` に `MAIN_WINDOW_LABEL` と `main_window` を新設し、`create` の builder と doc を定数へ寄せる
+- [x] `window_coordinator.rs` の 7 箇所を移行し、`hide_egui_main` を 1 回の引きにする
+- [x] `view.rs` の 1 箇所を移行する
+- [x] `commands/window.rs` の 2 箇所を移行し、取得手段のコメントをヘルパーの doc へ移す
+- [x] `main_window` の呼び出し元が 9 箇所であることを確かめ、`/dry-check` を実行する — LSP findReferences は 7 件しか返さなかった（`commands/window.rs:157` のスレッド内クロージャと `view.rs:1241` を落とした）。ヘルパーを一時改名した `cargo check -p snotra --all-targets` の E0425 で 9 件を列挙し、内容ハッシュで復元を確認。`/dry-check`: `get_window\(|get_webview_window\(|"main"` の全 `.rs` grep は定義と本体の 2 行だけ＝手書き重複なし
 
 ### Phase 2 — 検証
 
-- [ ] 受け入れ条件 1〜4 を確かめる
+- [x] 受け入れ条件 1〜4 を確かめる — 1: 0 件／2: `mod.rs:327` の定義 1 行／3: `hide_egui_main` の引きは 1 回／4: `git diff` で既存関数のシグネチャ行の変化なし（`fn` を含む差分は新設の `main_window` だけ）。主ツリーで clippy（snotra・all-targets）exit 0・`cargo test -p snotra` 318 passed・`cargo doc -p snotra` exit 0
 - [ ] カテゴリ A を実行する
 - [ ] カテゴリ C を実行し、Phase 0 の基準と比べる
 - [ ] 変異注入（委譲先）の結果を受け取る

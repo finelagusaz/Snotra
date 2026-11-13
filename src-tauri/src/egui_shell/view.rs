@@ -1238,7 +1238,7 @@ impl EguiView for SearchWindowView {
         ) {
             self.last_set_height = height;
             self.last_set_width = width;
-            if let Some(window) = app.get_window("main") {
+            if let Some(window) = crate::egui_shell::main_window(&app) {
                 let _ = window.set_size(tauri::LogicalSize::new(width, height));
                 // **リサイズでも下地が露出する**（#532。show の一瞬だけ
                 // ではない）。ゆえに show 直前（#802）に加えてここでも合わせる。

@@ -94,10 +94,9 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     drop(guard);
 
     // Temporarily disable main window alwaysOnTop so snotra-settings can be focused.
-    // egui ウィンドウは webview 無しゆえ get_webview_window では取れない。get_window で取る
-    // （codex #3・SPEC §8.5）。results ウィンドウにも対称適用する（#646 PR2）——片方だけ解除すると
+    // 設定起動中の最前面解除は SPEC §8.5（codex #3）。results ウィンドウにも対称適用する（#646 PR2）——片方だけ解除すると
     // 設定画面の上に結果カードが浮く（/symmetric-check 対象・plan-review 独立導出の指摘）。
-    if let Some(main) = app.get_window("main") {
+    if let Some(main) = crate::egui_shell::main_window(app) {
         let _ = main.set_always_on_top(false);
     }
     if let Some(results) = app.try_state::<crate::egui_shell::ResultsWindow>() {
@@ -143,7 +142,7 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
             }
         }
 
-        // Restore main window alwaysOnTop（egui は get_window・codex #3・SPEC §8.5）。
+        // Restore main window alwaysOnTop（codex #3・SPEC §8.5）。
         // results ウィンドウにも対称適用する（#646 PR2・上の解除と対）。
         //
         // **対称に書いてあるが、2 行の実行スレッドは違う**（#923 で実測）:
@@ -155,7 +154,7 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         // hidden な main へ `apply_diff` が `SW_HIDE` を漏らすのは毎回起きるが、逐次化ゆえ
         // 無害である。**無害なのは実測の範囲であって原理ではない**——どちらかを別経路へ
         // 移すなら測り直すこと。
-        if let Some(main) = handle_for_monitor.get_window("main") {
+        if let Some(main) = crate::egui_shell::main_window(&handle_for_monitor) {
             let _ = main.set_always_on_top(true);
         }
         if let Some(results) = handle_for_monitor.try_state::<crate::egui_shell::ResultsWindow>() {

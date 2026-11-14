@@ -286,7 +286,7 @@ const SHAPE_REMEDY = Object.freeze({
   pull:
     "非 FF の `git pull` はマージコミットを作り、main では `.githooks/pre-merge-commit` が拒否します。" +
     "`git pull --ff-only` を使ってください（**この判定はブランチを問わず発火します**。FF できないほど発散しているなら、" +
-    "feature ブランチでは `git fetch` してから `git rebase` を明示的に打ち、" +
+    "feature ブランチでは `git fetch` してから `git merge` を明示的に打ち（rebase は force-push が要るので使いません）、" +
     "main では `.githooks/` が rebase も非 FF merge も拒むので、想定外のコミットが local main に入っていないかを先に確認してください）。",
 });
 

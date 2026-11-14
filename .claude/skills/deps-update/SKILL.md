@@ -40,15 +40,11 @@ cargo / npm の依存関係を一括で更新する。ローカル検証 → PR 
 
 ## Step 3 — ローカル検証（最大5サイクル）
 
-`docs/build-commands.md` を SSOT として参照し、以下のカテゴリを実行する:
-
-- カテゴリ A（Rust ファイル）: 必須
-- カテゴリ B（TypeScript ファイル）: 必須
-- カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）: 依存更新が触れた場合のみ
+`docs/build-commands.md` を SSOT として、カテゴリ A（Rust ファイル）を回す。カテゴリ C（smoke を含む）は、ローカルでは回さない。
 
 カテゴリの中身の SSOT は `docs/build-commands.md`「変更後の検証チェックリスト」である。ここに写しを置かない（写しを持ったために SSOT と食い違った実例が #736 にある）。
 
-E2E・スモークテストはローカルで実行せず、`Smoke` workflow（`smoke.yml`）に任せる。依存更新は `Cargo.lock` / `package-lock.json`（+ manifest）を変える。これらは `smoke.yml` の paths に当たるので、smoke/E2E が自動で起動する（#145 Phase 3。ラベルの付与は要らない）。通常の PR CI（`ci.yml`）では smoke/E2E は走らない。検証コマンドの文字列は `docs/build-commands.md` を参照する（二重にメンテしないため、この SKILL には書かない）。Step 2 の `cargo update` / `npm update` は検証ではなく、本スキル固有の操作である。そのため SSOT の対象外である。
+smoke はローカルで実行せず、`Smoke` workflow（`smoke.yml`）に任せる。自動で回るものは、ローカルで重ねて回さない。依存更新は `Cargo.lock` / `package-lock.json`（+ manifest）を変える。これらは `smoke.yml` の paths に当たるので、smoke が自動で起動する（#145 Phase 3。ラベルの付与は要らない）。通常の PR CI（`ci.yml`）では smoke は走らない。検証コマンドの文字列は `docs/build-commands.md` を参照する（二重にメンテしないため、この SKILL には書かない）。Step 2 の `cargo update` / `npm update` は検証ではなく、本スキル固有の操作である。そのため SSOT の対象外である。
 
 検証が失敗した場合:
 
@@ -67,7 +63,7 @@ E2E・スモークテストはローカルで実行せず、`Smoke` workflow（`
 
 - このスキルで生じた変更（`Cargo.lock`・`package-lock.json`・修復した実コード等）だけをステージする
 - `chore(deps): ...` の conventional commit を作る。何を更新したかの短い要約を含める
-- コミットしてから `npm run verify:tree -- run --sha HEAD --categories A,C` を回し、green を確かめる。PR 前ゲート（`.claude/hooks/pre-bash.mjs`）は、ツールの要約が無いブランチの `gh pr create` を止める（#1299）
+- コミットしてから `npm run verify:tree -- run --sha HEAD --categories A` を回し、green を確かめる（C は渡さない。smoke は Step 5 で CI の結果を待つ）。PR 前ゲート（`.claude/hooks/pre-bash.mjs`）は、ツールの要約が無いブランチの `gh pr create` を止める（#1299）
 - push して、`gh pr create` で PR を作る
 - PR 本文に更新一覧を載せる。major bump は ⚠ で明示する
 

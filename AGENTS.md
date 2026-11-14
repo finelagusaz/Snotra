@@ -19,6 +19,10 @@
 - モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`）（書式: 行動形と、適用範囲の明示）
 - 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（書式は定めない）
 - 実装前チェック: `.claude/rules/`（書式: `A のときは B する。C が起きたため（#NNN 実測）`）
+- 性能の計測記録と受け入れ基準: `PERFORMANCE.md`（書式は同文書「この文書へ記録するときの規約」が定める）
+- check 系スキルの骨格: `docs/check-skill-skeleton-design.md`（書式は定めない）
+- レビューの観点: `.claude/agents/code-reviewer.md`（書式: 行動形）
+- 設計メモ（合意した設計と、導出の原文）: `docs/design/`（書式は定めない。書いた後は更新しない記録なので）
 - 意思決定記録（なぜ B を却下したか）: `docs/adr/ADR-<slug>.md`。否定の知識が生じた決定だけを記録し、連番を振らない（書式は定めない。書いた後は更新しない記録なので）
 - 運用ガイド・開発プロセス（常時ロード）: ルート `CLAUDE.md` と本ファイル（書式: トリガー → 行動／参照先）
 

@@ -7,6 +7,7 @@ paths:
   - ".github/workflows/**"
   - ".claude/rules/**"
   - ".claude/skills/**"
+  - ".claude/agents/**"
   - "scripts/**"
 ---
 

@@ -24,7 +24,6 @@
   "enabledPlugins": {
     "snotra-rust-lsp@snotra": true,
     "rust-analyzer-lsp@claude-plugins-official": false,
-    "codex@openai-codex": true,
-    "superpowers@claude-plugins-official": true
+    "codex@openai-codex": true
   }
 }

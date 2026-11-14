@@ -46,6 +46,7 @@ allowed-tools:
 
 計画なしの経路でだけ行う調査:
 
+- `RETROSPECTIVE.md` を読み、前回のサイクルで出たバグのパターンを確かめる
 - `SPEC.md` と関連する `CLAUDE.md` を読み、意図とアーキテクチャを理解する
 - `$ARGUMENTS` からエントリポイントと関連モジュールを特定する
 - 要求された機能と重複する既存コードを検索する
@@ -95,7 +96,7 @@ allowed-tools:
 
 ### 3b. 委譲へ渡すもの
 
-まずツールを回す: `npm run verify:tree -- run --sha <sha> --categories <該当カテゴリ>`。各カテゴリのコマンドは、ツールが `docs/build-commands.md`「変更後の検証チェックリスト」のフェンスから読む（コマンド文字列はこの SKILL に書かない）。
+まずツールを回す: `npm run verify:tree '--' run --sha <sha> --categories <該当カテゴリ>`。各カテゴリのコマンドは、ツールが `docs/build-commands.md`「変更後の検証チェックリスト」のフェンスから読む（コマンド文字列はこの SKILL に書かない）。
 
 - 該当するかの判定は、拡張子ではなく、変更が触れるコードパスの意味で行う（`.claude/rules/src-tauri.md`・#558）。カテゴリ C・D は、ファイルの種類ではなく、変更が何をするかで決まる。拡張子で対応づけると、一度も該当しない。C に当たる変更では、smoke を CI に任せず、ここでローカルに回す。修正のたびに、結果をその場で見るためである（修正のループを持たない `/deps-update` は、CI に任せる）。E と F はツールが常に回すので、渡さなくてよい。散文に条件が書かれた単発のコマンド（E の `scripts/lib/**` → `test:powershell` 等）は、`--also <npm script>` で足す
 - 完走まで分単位で掛かる。バックグラウンドで回し、完了の通知を待つ。C を要求するラウンドでは、ツールの完走を待ってから委譲を起動する。smoke は、Snotra が既に起動していると throw する（`scripts/lib/SnotraSmoke.psm1`）。そのため、worktree を分けても並走できない。それ以外のラウンドは並走してよい
@@ -139,8 +140,8 @@ allowed-tools:
 実装差分は、Step 3 で既にコミットされている。ここに残るのは、`workspace/` を畳む前の回収と、ツールの回し直しと、worktree の片づけと、その撤去コミットだけである。これらは、この順序で行う。PR 前ゲート（`.claude/hooks/pre-bash.mjs`）は、ツールの要約の sha から HEAD までに、`workspace/` の外の変更が無いことを照合する。その照合に例外は無い（#1299）。ADR の回収コミットは `workspace/` の外に載る。そのため、ツールの最後の実行より後に積むと、PR が止まる。
 
 - `workspace/` を削除する前に、否定の知識を ADR へ回収する（#593）。`plan.md`・委譲先の `.delegate/` の報告・本サイクルの検討に「代替案 B を検討して却下した」判断があれば、削除で失う前に `docs/adr/ADR-<slug>.md` を起こす。形式は `docs/adr/ADR-doc-minimization-cap-enforcement.md` に倣う。連番は振らない（slug はテーマが決まった時点で決める・#812）。起こすのは、否定の知識が生じたときだけである。自明な実装・一本道の選択では作らない。無ければ何もしない。ADR に書くのは、却下した代替案と、却下の理由である。採用案の再説明は書かない（採用案はコードと `SPEC.md` が持つ）。「やらないと決めた作業項目」は、代替案の却下ではない。そのため、同じ節の `workspace/` 削除条件が挙げる ADR / issue の 2 択のうち、issue 側へ送る
-- 最後の要約から `workspace/` の外が動いたら（ADR を起こした場合など）、ツールを回し直す: `npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ>`。worktree は warm なので、E と F だけなら数十秒で済む。green でなければ、Step 3 へ戻る
-- worktree を片づける: `npm run verify:tree -- remove --delegate-tree <align が出した worktree>`。これは、ツールの worktree と、委譲先の worktree（`.delegate/` だけが残るもの）と、そのブランチを消す。要約は残る（PR 前ゲートが読む。マージの後は `merge:pr` が消す）。委譲先の worktree は、`.delegate/` で意図的に dirty に保ってある。そのため、`npm run clean:worktrees` は `--force` なしでは拾わない。exit 1 で止まったら、出力を読む。`.delegate/` 以外の変更が残っていれば、中身を確かめる。「ロックされている」なら、委譲先がまだ動いている。停止を待って打ち直す（ロックは `--force` 1 回では外れない）。ディレクトリだけが残ったなら、`git worktree list` で他のセッションの `agent-*` が無いことを確かめる。それから、`npm run clean:worktrees -- --force` で消す（`--force` は dirty な worktree をすべて消す）
+- 最後の要約から `workspace/` の外が動いたら（ADR を起こした場合など）、ツールを回し直す: `npm run verify:tree '--' run --sha HEAD --categories <該当カテゴリ>`。worktree は warm なので、E と F だけなら数十秒で済む。green でなければ、Step 3 へ戻る
+- worktree を片づける: `npm run verify:tree '--' remove --delegate-tree <align が出した worktree>`。これは、ツールの worktree と、委譲先の worktree（`.delegate/` だけが残るもの）と、そのブランチを消す。要約は残る（PR 前ゲートが読む。マージの後は `merge:pr` が消す）。委譲先の worktree は、`.delegate/` で意図的に dirty に保ってある。そのため、`npm run clean:worktrees` は `--force` なしでは拾わない。exit 1 で止まったら、出力を読む。`.delegate/` 以外の変更が残っていれば、中身を確かめる。「ロックされている」なら、委譲先がまだ動いている。停止を待って打ち直す（ロックは `--force` 1 回では外れない）。ディレクトリだけが残ったなら、`git worktree list` で他のセッションの `agent-*` が無いことを確かめる。それから、`npm run clean:worktrees -- --force` で消す（`--force` は dirty な worktree をすべて消す）
 - `workspace/` ディレクトリが存在する場合は、`plan.md` の全項目が `- [x]` であることを確認してから削除し、ステージに含める（`/start-issue` の引き継ぎバッファは、実装の完了で役目を終える）。未チェックの項目が残っているなら、削除しない。完了させるか、やらないと決めた項目を計画から外し、理由を ADR か issue へ記録する。未チェックを残したまま削除すると、PR 前ゲート（PreToolUse hook）が計画を見られなくなる
 - 削除より先に、`plan.md` の最終状態をコミットする。未コミットの実行記録（測定値・変異注入のログ・レビュー対応）は、削除で失われる。git 履歴から戻せるのは、コミット済みの版だけである。Step 2・3a のとおり消し込みをフェーズのコミットへ含めていれば、ここで残るのは最後のラウンドの分だけで済む。`git rm -r workspace/` は、独立したコミットにする（squash マージで 1 つに畳まれるので、運用の手間は増えない）
 - `git rm` が `error: … has local modifications` で止まったら、それは保護であり、障害ではない。次を守る（#934・経緯は PR #958）:

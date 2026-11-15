@@ -34,11 +34,17 @@ const DOC = "docs/build-commands.md";
 const RUNNABLE = ["A", "C", "E", "F"];
 const ALWAYS = ["E", "F"];
 const DELEGATE_DIR = ".delegate";
+/**
+ * `--also` の npm script のうち、実バイナリを起動するものと、その前に打つビルド（`docs/build-commands.md` の C 節
+ * 「実バイナリを起動する検査の前に」）。ツールの worktree は cold か、前のラウンドの sha の本体を持つので、計画に
+ * ビルドが無ければ直前に足す（#1436）。字面は C のフェンスと揃える（重複の判定が字面で行われるため・テストが固定する）
+ */
+export const BUILD_BEFORE = { "test:powershell": "cargo build -p snotra" };
 
 class EnvError extends Error {}
 
-function git(cwd, args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+function git(cwd, args, { timeout } = {}) {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe", timeout }).trim();
 }
 
 const posix = (p) => p.split(path.sep).join("/").replaceAll("\\", "/");
@@ -99,23 +105,28 @@ function treePathFor(root, branch) {
 }
 
 /**
- * 本体の作業ツリーのルート。linked worktree からは要約の置き場（本体の `.claude/worktrees/`）を正しく導けないので
- * 拒む。マージのツール（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う
+ * 本体の作業ツリーのルート（`canon` 済み）。ツールの worktree・要約・ログの置き場はこの下にある。git の共通ディレクトリ
+ * （本体の `.git`）の親から導くので、どの worktree から呼んでも同じ値になる（#1436）。PR 前ゲート
+ * （`.claude/hooks/pre-bash.mjs`）とマージのツール（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う。
+ * `timeout` は hook が渡す（hook の上限を越えると非ブロッキング＝検出されなくなるため）
  */
-export function mainRoot(cwd) {
-  const root = git(cwd, ["rev-parse", "--show-toplevel"]);
-  if (git(root, ["rev-parse", "--git-dir"]) !== git(root, ["rev-parse", "--git-common-dir"])) {
-    throw new EnvError(`本体の作業ツリーから打つこと（ここは linked worktree: ${root}）`);
-  }
-  return root;
+export function mainRoot(cwd, { timeout } = {}) {
+  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { timeout });
+  if (path.basename(common) !== ".git") throw new EnvError(`git の共通ディレクトリから本体の作業ツリーを導けない: ${common}`);
+  return canon(path.dirname(common));
 }
 
-/** 本体の作業ツリーのルートと、現在のブランチから導いたツールの worktree のパス */
-function mainContext() {
-  const root = mainRoot(process.cwd());
-  const branch = git(root, ["branch", "--show-current"]);
-  if (branch === "") throw new EnvError("本体が detached HEAD——ツールの worktree の名前をブランチから決められない");
-  return { root, branch, tree: treePathFor(root, branch) };
+/**
+ * 置き場と照合の相手を分ける（#1436）。置き場（ツールの worktree・要約）は本体のルートの下に、照合の相手
+ * （ブランチ・未コミットの変更・HEAD）は呼び出し元の作業ツリーにする。harness の linked worktree で動く主の
+ * セッションからでも、本体のブランチと作業ツリーに触れずに回せる
+ */
+function callerContext() {
+  const caller = git(process.cwd(), ["rev-parse", "--show-toplevel"]);
+  const root = mainRoot(caller);
+  const branch = git(caller, ["branch", "--show-current"]);
+  if (branch === "") throw new EnvError(`detached HEAD（${posix(caller)}）——ツールの worktree の名前をブランチから決められない`);
+  return { root, caller, branch, tree: treePathFor(root, branch) };
 }
 
 /** `.delegate/` の外の変更（追跡ファイルの変更と未追跡ファイル）。`-z` で読む——既定の porcelain は
@@ -170,8 +181,8 @@ function dependencyWarnings(root, sha) {
 }
 
 function cmdRun(opts) {
-  const { root, branch, tree } = mainContext();
-  const sha = resolveSha(root, opts.sha);
+  const { root, caller, branch, tree } = callerContext();
+  const sha = resolveSha(caller, opts.sha);
 
   // ---- worktree を作る前に、回す物と前提をすべて確かめる（回す物が無いのに cold の worktree を残さない）
   const requested = (opts.categories ?? "").split(",").map((c) => c.trim()).filter(Boolean);
@@ -198,14 +209,19 @@ function cmdRun(opts) {
   const scripts = JSON.parse(git(root, ["show", `${sha}:package.json`])).scripts ?? {};
   for (const name of opts.also) {
     if (!(name in scripts)) throw new EnvError(`--also の npm script が package.json に無い: ${name}`);
+    const build = BUILD_BEFORE[name];
+    if (build && !seen.has(build)) {
+      seen.add(build);
+      plan.push({ category: "also", command: build });
+    }
     plan.push({ category: "also", command: `npm run ${name}` });
   }
 
-  // ---- 本体の前提（コミットし忘れた変更を、対象ゼロのまま緑で返さない）
-  const dirty = git(root, ["status", "--porcelain"]);
-  if (dirty !== "") throw new EnvError(`本体の作業ツリーに未コミットの変更がある——sha に入っていない:\n${dirty}`);
-  const head = git(root, ["rev-parse", "HEAD"]);
-  if (head !== sha) throw new EnvError(`sha が本体の HEAD でない（HEAD ${head} / sha ${sha}）`);
+  // ---- 呼び出し元の前提（コミットし忘れた変更を、対象ゼロのまま緑で返さない）
+  const dirty = git(caller, ["status", "--porcelain"]);
+  if (dirty !== "") throw new EnvError(`作業ツリー（${posix(caller)}）に未コミットの変更がある——sha に入っていない:\n${dirty}`);
+  const head = git(caller, ["rev-parse", "HEAD"]);
+  if (head !== sha) throw new EnvError(`sha が作業ツリー（${posix(caller)}）の HEAD でない（HEAD ${head} / sha ${sha}）`);
 
   // ---- worktree を作るか、再利用する
   git(root, ["worktree", "prune"]); // ディレクトリだけ消えた登録が add を阻まないように
@@ -345,7 +361,7 @@ export function discardBranchArtifacts(root, branch) {
 }
 
 function cmdRemove(opts) {
-  const { root, branch, tree } = mainContext();
+  const { root, caller, branch, tree } = callerContext();
   let ok = true;
   if (existsSync(tree)) ok = removeTree(root, tree) && ok;
   else console.log(`ツールの worktree は無い: ${posix(tree)}`);
@@ -365,7 +381,7 @@ function cmdRemove(opts) {
     const target = canon(opts.delegateTree);
     const entry = worktrees(root).find((w) => w.path === target);
     if (!entry) throw new EnvError(`登録された worktree でない: ${posix(target)}`);
-    if (target === canon(root) || target === canon(tree)) throw new EnvError(`委譲先の worktree でない: ${posix(target)}`);
+    if ([root, tree, caller].some((p) => target === canon(p))) throw new EnvError(`委譲先の worktree でない: ${posix(target)}`);
     const others = changesOutsideDelegate(target);
     if (others.length > 0) {
       console.error(`${DELEGATE_DIR}/ 以外の変更が残っている——消さない: ${posix(target)}\n${others.join("\n")}`);

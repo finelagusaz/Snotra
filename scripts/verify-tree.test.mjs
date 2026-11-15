@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discardBranchArtifacts, parseCategoryCommands, summaryPathFor } from "./verify-tree.mjs";
+import { BUILD_BEFORE, discardBranchArtifacts, mainRoot, parseCategoryCommands, summaryPathFor } from "./verify-tree.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "verify-tree.mjs");
@@ -26,7 +26,7 @@ function git(cwd, args) {
 }
 
 /** 本物と同じ見出しとフェンスの形を持つ検証チェックリスト。各ブロックは無害な node の 1 行 */
-function checklist({ e = 'node -e "process.exit(0)"', withCFence = true } = {}) {
+function checklist({ c = 'node -e "process.exit(0)"', e = 'node -e "process.exit(0)"', withCFence = true } = {}) {
   return [
     "## 変更後の検証チェックリスト",
     "",
@@ -42,7 +42,7 @@ function checklist({ e = 'node -e "process.exit(0)"', withCFence = true } = {}) 
     "",
     "### C. c",
     "",
-    ...(withCFence ? ["```bash", 'node -e "process.exit(0)"   # 必須: c', "```"] : ["散文だけ。"]),
+    ...(withCFence ? ["```bash", `${c}   # 必須: c`, "```"] : ["散文だけ。"]),
     "",
     "### D. d",
     "",
@@ -124,6 +124,12 @@ describe("parseCategoryCommands — 実際の docs/build-commands.md", () => {
   it("C は実バイナリの起動より前に本体をビルドする（docs/build-commands.md の C 節の前提）", () => {
     const c = parseCategoryCommands(doc, "C").commands;
     expect(c[0]).toBe("cargo build -p snotra");
+  });
+
+  it("--also で足すビルドは、C のフェンスと同じ字面である（字面が違うと重複を見分けられず 2 回建てる）", () => {
+    const c = parseCategoryCommands(doc, "C").commands;
+    expect(c.indexOf(BUILD_BEFORE["test:powershell"])).toBeLessThan(c.indexOf("npm run test:powershell"));
+    expect(c).toContain(BUILD_BEFORE["test:powershell"]);
   });
 });
 
@@ -215,7 +221,7 @@ describe("verify-tree run", () => {
     expect(existsSync(verifyTree(repo))).toBe(false);
   });
 
-  it("本体に未コミットの変更があれば exit 2（コミットし忘れた変更を緑で返さない）", { timeout: T }, () => {
+  it("作業ツリーに未コミットの変更があれば exit 2（コミットし忘れた変更を緑で返さない）", { timeout: T }, () => {
     const repo = initRepo();
     const sha = git(repo, ["rev-parse", "HEAD"]);
     writeFileSync(path.join(repo, "wip.txt"), "uncommitted\n");
@@ -223,11 +229,11 @@ describe("verify-tree run", () => {
     const r = runScript(repo, ["run", "--sha", sha]);
 
     expect(r.status, r.output).toBe(2);
-    expect(r.output).toContain("本体の作業ツリーに未コミットの変更がある");
+    expect(r.output).toContain("に未コミットの変更がある");
     expect(existsSync(verifyTree(repo))).toBe(false);
   });
 
-  it("sha が本体の HEAD でなければ exit 2", { timeout: T }, () => {
+  it("sha が作業ツリーの HEAD でなければ exit 2", { timeout: T }, () => {
     const repo = initRepo();
     const old = git(repo, ["rev-parse", "HEAD"]);
     commitFile(repo, "next.txt", "next\n");
@@ -235,7 +241,34 @@ describe("verify-tree run", () => {
     const r = runScript(repo, ["run", "--sha", old]);
 
     expect(r.status, r.output).toBe(2);
-    expect(r.output).toContain("sha が本体の HEAD でない");
+    expect(r.output).toContain("の HEAD でない");
+  });
+
+  it("--also test:powershell は、計画に本体のビルドが無ければその直前に足す（ツールの worktree は cold か前の sha の本体を持つ）", { timeout: T }, () => {
+    const repo = initRepo();
+    writeFileSync(path.join(repo, "package.json"), JSON.stringify({ scripts: { "test:powershell": 'node -e "0"' } }));
+    git(repo, ["add", "package.json"]);
+    git(repo, ["commit", "-m", "pester"]);
+
+    // fixture に Cargo.toml は無いので、ビルドの行は赤になる（cargo が無い環境でも赤）。見るのは順序である
+    const r = runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"]), "--also", "test:powershell"]);
+
+    expect(r.status, r.output).toBe(1);
+    const commands = summaryOf(repo).results.map((x) => x.command);
+    expect(commands.slice(-2)).toEqual([BUILD_BEFORE["test:powershell"], "npm run test:powershell"]);
+  });
+
+  it("計画にもう本体のビルドがあれば、--also test:powershell の前に重ねて足さない", { timeout: T }, () => {
+    const repo = initRepo({ c: BUILD_BEFORE["test:powershell"] });
+    writeFileSync(path.join(repo, "package.json"), JSON.stringify({ scripts: { "test:powershell": 'node -e "0"' } }));
+    git(repo, ["add", "package.json"]);
+    git(repo, ["commit", "-m", "pester"]);
+
+    runScript(repo, ["run", "--sha", git(repo, ["rev-parse", "HEAD"]), "--categories", "C", "--also", "test:powershell"]);
+
+    const commands = summaryOf(repo).results.map((x) => x.command);
+    expect(commands.filter((c) => c === BUILD_BEFORE["test:powershell"])).toHaveLength(1);
+    expect(commands.indexOf(BUILD_BEFORE["test:powershell"])).toBeLessThan(commands.indexOf("npm run test:powershell"));
   });
 
   it("2 ラウンド目は同じ worktree を新しい sha へ合わせて再利用する", { timeout: T }, () => {
@@ -338,6 +371,88 @@ describe("verify-tree run", () => {
 
     expect(r.status, r.output).toBe(0);
     expect(git(verifyTree(repo), ["rev-parse", "HEAD"])).toBe(sha);
+  });
+});
+
+describe("linked worktree の呼び出し元（harness の worktree で動く主のセッション・#1436）", () => {
+  /**
+   * 本体は main に居て、HEAD が呼び出し元と違い、未追跡のファイルで dirty である。呼び出し元は本体の
+   * `.claude/worktrees/` の下の linked worktree で feat/x を持つ。照合の相手を本体へ取り違える実装は、
+   * どれか（ブランチ・dirty・HEAD）で落ちる
+   */
+  function sessionRepo() {
+    const repo = initRepo();
+    git(repo, ["checkout", "-q", "main"]);
+    const caller = path.join(repo, ".claude", "worktrees", "session-wt");
+    git(repo, ["worktree", "add", "-q", caller, "feat/x"]);
+    const sha = commitFile(caller, "feature.txt", "feature\n");
+    writeFileSync(path.join(repo, "wip.txt"), "another session's work\n");
+    return { repo, caller, sha, mainHead: git(repo, ["rev-parse", "HEAD"]) };
+  }
+  const mainUntouched = ({ repo, mainHead }) => {
+    expect(git(repo, ["branch", "--show-current"])).toBe("main");
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(mainHead);
+    expect(existsSync(path.join(repo, "wip.txt"))).toBe(true);
+  };
+
+  it("mainRoot は、どの worktree から呼んでも本体のルートを返す", () => {
+    const s = sessionRepo();
+    expect(mainRoot(s.caller)).toBe(mainRoot(s.repo));
+    expect(existsSync(path.join(mainRoot(s.caller), "wip.txt"))).toBe(true);
+  });
+
+  it("run は呼び出し元の HEAD を検証し、ツールの worktree と要約を本体の下に置く。本体には触れない", { timeout: T }, () => {
+    const s = sessionRepo();
+
+    const r = runScript(s.caller, ["run", "--sha", s.sha]);
+
+    expect(r.status, r.output).toBe(0);
+    expect(git(verifyTree(s.repo), ["rev-parse", "HEAD"])).toBe(s.sha);
+    expect(summaryOf(s.repo).sha).toBe(s.sha);
+    expect(summaryOf(s.repo).branch).toBe("feat/x");
+    expect(existsSync(path.join(s.caller, ".claude", "worktrees"))).toBe(false);
+    mainUntouched(s);
+  });
+
+  it("sha が呼び出し元の HEAD でなければ（本体の HEAD でも）exit 2", { timeout: T }, () => {
+    const s = sessionRepo();
+
+    const r = runScript(s.caller, ["run", "--sha", s.mainHead]);
+
+    expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("の HEAD でない");
+  });
+
+  it("呼び出し元に未コミットの変更があれば exit 2", { timeout: T }, () => {
+    const s = sessionRepo();
+    writeFileSync(path.join(s.caller, "forgot.txt"), "uncommitted\n");
+
+    const r = runScript(s.caller, ["run", "--sha", s.sha]);
+
+    expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("forgot.txt");
+  });
+
+  it("remove は本体の下のツールの worktree を消し、要約を残す。本体には触れない", { timeout: T }, () => {
+    const s = sessionRepo();
+    expect(runScript(s.caller, ["run", "--sha", s.sha]).status).toBe(0);
+
+    const r = runScript(s.caller, ["remove"]);
+
+    expect(r.status, r.output).toBe(0);
+    expect(existsSync(verifyTree(s.repo))).toBe(false);
+    expect(typeof summaryOf(s.repo).removed_at).toBe("string");
+    mainUntouched(s);
+  });
+
+  it("remove --delegate-tree は、呼び出し元の worktree 自身を消さない", { timeout: T }, () => {
+    const s = sessionRepo();
+
+    const r = runScript(s.caller, ["remove", "--delegate-tree", s.caller]);
+
+    expect(r.status, r.output).toBe(2);
+    expect(r.output).toContain("委譲先の worktree でない");
+    expect(existsSync(s.caller)).toBe(true);
   });
 });
 

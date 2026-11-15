@@ -256,14 +256,14 @@ describe("run — 走らなかった（exit 2・マージしていない）", ()
     // 理由まで見る: マージ前の try の catch-all は、どの例外も 2 にする（#1319）
     expect(f.text()).toContain(reason);
   });
-  it("linked worktree から打たれたら（root を導けなければ）止める", () => {
+  it("本体のルートを導けなければ止める", () => {
     const f = fake();
     f.deps.mainRoot = () => {
-      throw new Error("本体の作業ツリーから打つこと");
+      throw new Error("git の共通ディレクトリから本体の作業ツリーを導けない");
     };
     expect(run(ARGS, "/repo", f.deps)).toBe(2);
     expect(f.calls).not.toContain("pr merge");
-    expect(f.text()).toContain("本体の作業ツリーから打つこと");
+    expect(f.text()).toContain("git の共通ディレクトリから本体の作業ツリーを導けない");
   });
 });
 

@@ -79,7 +79,7 @@
 
 ### Phase 3 — 検証
 
-- [ ] `npm run test:powershell` が全件緑
+- [x] `npm run test:powershell` が全件緑（e66900e2 で 196 passed / 0 failed / NotRun 0。ツールの外で、この worktree から `run-pester.ps1 -ExePath <本体の target/debug/snotra.exe>` で実行した暫定の結果。権威ある `verify:tree` は未実行）
 - [x] `docs/build-commands.md` の `-Only` の例が真であることを読んで確かめる
 
 ### ラウンド記録

@@ -77,8 +77,8 @@ fn drain_index_appends_start_before_the_scan() {
 
 ### Phase 1 — 検査の追加
 
-- [ ] 変異前の基準件数を記録する
-- [ ] `drain_index_appends_start_before_the_scan` を足し、素の実装で緑を確認する
+- [x] 変異前の基準件数を記録する — 339 passed / 4 ignored（f-1645812b の作業ツリー）
+- [x] `drain_index_appends_start_before_the_scan` を足し、素の実装で緑を確認する — 340 passed、`cargo fmt --check`・`clippy -p snotra --all-targets -D warnings` 無音
 
 ### Phase 2 — 発火の実測
 

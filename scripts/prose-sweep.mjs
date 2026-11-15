@@ -1,5 +1,5 @@
 // prose:sweep — `/plan-review`「Step 1 — plan.md の読み込み」の「変更で偽になる散文」の母集団を、切り詰めずに全件出す（#1300）。
-// 出力仕様（面の分類・0 件の明示・★未掲載）の SSOT は本ファイルであり、読み方は `/plan-review` が持つ。
+// 出力仕様（面の分類・0 件の明示・★未掲載・☆行未掲載）の SSOT は本ファイルであり、読み方は `/plan-review` が持つ。
 // shebang を置かない — CI の Windows checkout（autocrlf=true）で CRLF 化された shebang 行は
 // vitest の transform を SyntaxError で落とす（PR #592 で実測。起動は常に `node scripts/...` 経由）。
 //
@@ -20,7 +20,8 @@ import fs from "node:fs";
 
 export const USAGE = `使い方: npm run prose:sweep -- [--plan <plan.md>] <語>...
   <語>    識別子と、その変更を指す概念ラベル（固定文字列・大文字小文字を区別）
-  --plan  ヒットのあったファイルのうち、パスがこの計画に現れないものへ ★未掲載 を付ける
+  --plan  ヒットのあったファイルのうち、パスがこの計画に現れないものへ ★未掲載 を付ける。
+          計画が path:N で別の行を名指したファイルでは、名指されていない行へ ☆ を付ける
   --      以降はフラグに見えても語として扱う`;
 
 export class UsageError extends Error {}
@@ -65,7 +66,7 @@ export function parseGrepZ(stdout) {
   return hits;
 }
 
-/** 面の一覧（出力順）。凍結された歴史（ADR・superpowers）は書き換えない前提の読者向けに分けるだけで、落とさない。 */
+/** 面の一覧（出力順）。凍結された歴史（ADR・superpowers）は書き換えない前提の読者向けに分けて ★・☆ の判定から外すが、行は落とさない。 */
 export const SURFACES = ["常時ロード規範", "skills・rules・hooks", "生きた文書", "凍結された歴史", "コード"];
 
 export function surfaceOf(file) {
@@ -79,9 +80,28 @@ export function surfaceOf(file) {
 /** パスが計画の**どこかに**現れるか（変更ファイル一覧に限らない——「触らない」と名指したファイルも掲載に数える。
  *  ★未掲載が意味するのは「計画が一度も名指していない」である）。前後をパス境界で区切る——素の部分一致だと
  *  ルート `CLAUDE.md` が `snotra-core/CLAUDE.md`（`\` 区切りでも）の部分文字列として偽の掲載になる（#1300 の plan-review）。 */
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const PATH_HEAD = "(^|[^A-Za-z0-9_./\\\\-])";
+
 export function isListedInPlan(file, planText) {
-  const esc = file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^A-Za-z0-9_./\\\\-])${esc}(?![A-Za-z0-9_/\\\\-])`, "m").test(planText);
+  return new RegExp(`${PATH_HEAD}${escapeRe(file)}(?![A-Za-z0-9_/\\\\-])`, "m").test(planText);
+}
+
+/** 計画が `path:N`・`path:N-M`・`path:N〜M` の形で名指した、そのファイルの行番号の集合。計画は行を
+ *  `window_coordinator.rs:530` のように短く書くので、パスは `/` 境界での後方一致も受ける（#1336 の計画で実測）。
+ *  同じ basename の別ファイルの行も名指しに数えるが、これは ☆ を減らす向きにしか働かない。
+ *  `:N` だけの略記は、どのファイルの行かを決められないので数えない。 */
+export function namedLinesInPlan(file, planText) {
+  const segs = file.split("/");
+  const suffixes = segs.map((_, i) => escapeRe(segs.slice(i).join("/")));
+  const re = new RegExp(`${PATH_HEAD}(?:${suffixes.join("|")}):(\\d+)(?:[-〜~–](\\d+))?`, "gm");
+  const lines = new Set();
+  for (const m of planText.matchAll(re)) {
+    const a = Number(m[2]);
+    const b = m[3] ? Number(m[3]) : a;
+    for (let n = a; n <= b; n++) lines.add(n);
+  }
+  return lines;
 }
 
 /** `git grep` の母集団の引数（語を除く）。見出し行もここから作る——写しを置くと引数だけが変わる。
@@ -118,13 +138,22 @@ export function buildReport({ terms, hitsByTerm, planText = null, planPath = nul
     byFile.get(h.file).push(h);
   }
   const files = [...byFile.keys()].sort();
-  const listed = (f) => planText == null || isListedInPlan(f, planText);
+  // 凍結された歴史は書き換えない前提なので、★・☆ の判定の対象にしない（行は印字する）
+  const judged = (f) => planText != null && surfaceOf(f) !== "凍結された歴史";
+  const listed = (f) => !judged(f) || isListedInPlan(f, planText);
   const unlisted = files.filter((f) => !listed(f)).length;
+  // ☆: 計画が同じファイルの別の行を名指しているのに、この行は名指していない（#1300 の数え直しで、
+  // 網羅漏れの多くは掲載済みファイルの中の行の取りこぼしだった）。行を名指さないファイルには付けない
+  const named = new Map(files.filter((f) => judged(f) && listed(f)).map((f) => [f, namedLinesInPlan(f, planText)]));
+  const unnamedAt = (h) => (named.get(h.file)?.size ?? 0) > 0 && !named.get(h.file).has(h.line);
+  const unnamed = [...byKey.values()].filter(unnamedAt).length;
 
   const out = [];
   out.push(
     `prose:sweep — 語 ${terms.length} / 総件数 ${byKey.size} 行 / ファイル ${files.length} / ` +
-      (planText == null ? "★未掲載 —（--plan なし）" : `★未掲載 ${unlisted}（--plan ${planPath ?? ""}）`),
+      (planText == null
+        ? "★未掲載 —（--plan なし）"
+        : `★未掲載 ${unlisted} / ☆行未掲載 ${unnamed}（--plan ${planPath ?? ""}・凍結された歴史は判定外）`),
   );
   out.push(`母集団: git grep ${GREP_FLAGS.join(" ")} -- ${GREP_PATHSPEC.join(" ")}（.gitignore 尊重・行の種類で落とさない）`);
   out.push("", "## 語ごとの件数");
@@ -140,11 +169,11 @@ export function buildReport({ terms, hitsByTerm, planText = null, planPath = nul
       const hs = byFile.get(f).sort((a, b) => a.line - b.line);
       out.push(`### ${f}（${hs.length} 行）${listed(f) ? "" : " ★未掲載"}`);
       for (const h of hs) {
-        out.push(`${h.line}${terms.length > 1 ? ` [${h.terms.join(", ")}]` : ""}: ${h.text}`);
+        out.push(`${h.line}${terms.length > 1 ? ` [${h.terms.join(", ")}]` : ""}: ${h.text}${unnamedAt(h) ? " ☆" : ""}`);
       }
     }
   }
-  return { text: out.join("\n"), total: byKey.size, unlisted };
+  return { text: out.join("\n"), total: byKey.size, unlisted, unnamed };
 }
 
 function main() {

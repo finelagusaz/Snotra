@@ -16,6 +16,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `trace.rs` — `SNOTRA_TRACE` 環境変数ゲートの構造化トレースログ
 - `heap_trace.rs` — Rust ヒープ常駐の計装（`heap-trace` feature でのみ有効）
 - `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計測コード
+- `scan_log.rs` — 索引の構築ごとの所要を `scan-log.jsonl` へ残す記録
 - `monitor.rs` — マルチモニター対応の Win32 ヘルパー
 - `working_set.rs` — 非表示アイドル時のプロセスツリー working set 回収
 - `commands/` — egui view・トレイが共有する core 関数群（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）
@@ -73,6 +74,7 @@ runtime はイベント駆動（`RedrawRequested` 待ち）であり、誰かが
 - **hidden 中は `update()` が走らない**（機序は `wake_main` の doc）。時限処理の `request_repaint_after` は可視中しか効かないので、hide を跨ぐ in-flight 状態は reset-on-show の backstop（クリア）とセットで設計する
 - **期限を待つ状態（armed）は、条件が成立するか解除されるまで毎フレーム残余を再要求する**（#711）——`request_repaint_after(d)` はフレームの到来を約束しない（`snotra-egui-runtime/CLAUDE.md`「不変条件」）。1 回きりの予約に頼ると、hide や再検索が次の無関係な入力まで止まったままになる
 - **再要求してよいのは「時間経過で解消する不成立」だけである**——フォーカス・設定値・他プロセスの生死のように時計と無関係な条件で再要求すると `request_repaint_after(ZERO)` の永久スピンになる。それらの変化は変えた側が wake する
+  - **例外: 可視中に worker が書く値を固定間隔で読み直すポーリング**（索引構築の進捗・#1041。`notify.rs` の `SCAN_PROGRESS_REPAINT`）。間隔は残余ではなく固定で `ZERO` にせず、条件が続く限り毎フレーム再要求し、止まる条件を表示の条件（構築中案内を出すフレーム）に結びつける。値を wake のイベントで運ぶ形にはしない
 
 ## main ウィンドウへ egui コンテナを足すときは visuals を自分で渡す
 

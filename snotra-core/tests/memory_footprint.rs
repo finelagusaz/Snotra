@@ -457,8 +457,9 @@ fn measure_real_index_footprint() {
 
 /// 索引を建て直す契機（初回構築・`/s`・設定変更）が踏む `scan_all` 区間を測る。
 ///
-/// **この関数が測る区間は `scan_all` だけである。** 再構築経路の残り（`sort` / `save`）は
-/// cache-miss の起動で `LoadOrScanStats` が測る。
+/// **この関数が測る区間は `scan_all` だけである。** 再構築経路の残り（`sort` / `save`）の
+/// 壁時計は、再構築のたびに `scan-log.jsonl` が残す（`SPEC.md` §13.4）。cache-miss の起動では
+/// `LoadOrScanStats` も測る。
 ///
 /// **`LoadOrScanStats` をここの代理に使ってはならない。** あれはロード経路
 /// （`load_or_scan_with_stats`）の計測であり、しかも分岐ごとに片方しか埋まらない——cache-hit 分岐は
@@ -485,7 +486,11 @@ fn report_scan_all_cost(config: &Config) {
     reset_peak();
     let t0 = snap();
     let start = std::time::Instant::now();
-    let scanned = indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
+    let scanned = indexer::scan_all(
+        &config.paths.scan,
+        config.search.show_hidden_system,
+        &AtomicUsize::new(0),
+    );
     let ms = start.elapsed().as_secs_f64() * 1000.0;
     let t1 = snap();
 
@@ -514,8 +519,8 @@ fn report_scan_all_cost(config: &Config) {
         println!("    …ほか {} 件", dups.len() - 20);
     }
     println!(
-        "  ※ この区間は scan_all のみ。再構築経路の sort / save は cache-miss の起動で \
-         LoadOrScanStats が測る"
+        "  ※ この区間は scan_all のみ。再構築経路の sort / save の壁時計は scan-log.jsonl \
+         （cache-miss の起動では LoadOrScanStats も）が測る"
     );
 }
 

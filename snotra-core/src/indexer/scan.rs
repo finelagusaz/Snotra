@@ -7,6 +7,7 @@
 use std::fs::Metadata;
 use std::os::windows::fs::MetadataExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
 use crate::config::ScanPath;
@@ -122,7 +123,18 @@ impl Dedup {
     }
 }
 
-pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
+/// 全根を走査し、登録するエントリを返す。
+///
+/// **`dirs` には `read_dir` に成功したディレクトリの数を足していく**（根も 1 つと数える）。
+/// 進捗の単位が登録件数ではなくフォルダ数なのは、登録 0 件で全体を走査する根が実在するから
+/// である（`extensions` が空で `include_folders` が偽の根。所要の大半をそこが占めても件数は
+/// 動かない）。読み手は走査と並行して別スレッドから読むので、加算は 1 ディレクトリにつき
+/// `Relaxed` の 1 回だけにする（単調に増えるだけで、ほかの値との順序を運ばない）。
+pub fn scan_all(
+    scan_paths: &[ScanPath],
+    show_hidden_system: bool,
+    dirs: &AtomicUsize,
+) -> Vec<AppEntry> {
     let mut entries = Vec::new();
     let roles = root_roles(scan_paths);
     // **どの根も集合に触れないなら建てない**（根拠は [`root_roles`] の doc）。
@@ -146,6 +158,7 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
             show_hidden_system,
             &mut entries,
             &mut dedup,
+            dirs,
         );
     }
 
@@ -160,10 +173,12 @@ fn scan_directory_with_extensions(
     show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
     dedup: &mut Dedup,
+    dirs: &AtomicUsize,
 ) {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
         return;
     };
+    dirs.fetch_add(1, Ordering::Relaxed);
 
     for entry in read_dir.flatten() {
         let path = entry.path();
@@ -200,6 +215,7 @@ fn scan_directory_with_extensions(
                 show_hidden_system,
                 entries,
                 dedup,
+                dirs,
             );
         } else {
             let ext = path.extension().and_then(|e| e.to_str());

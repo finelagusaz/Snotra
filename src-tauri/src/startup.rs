@@ -512,11 +512,12 @@ impl Timeline {
     }
 }
 
-/// ミリ秒表示への変換。**丸めはこの 1 か所だけで起きる。**
+/// ミリ秒表示への変換。**丸めはこの 1 か所だけで起きる**——この計測コードと、索引の構築の記録
+/// （[`crate::scan_log`]）の 2 つが共有する（切り捨ての規約を写さない）。
 ///
 /// `Duration::as_millis` を使わず除算を書いてあるのは、**除数を変異させて検知器が
 /// 落ちることを測れるようにする**ためである（`to_ms_truncates_toward_zero`）。
-fn to_ms(d: Duration) -> u64 {
+pub(crate) fn to_ms(d: Duration) -> u64 {
     (d.as_nanos() / 1_000_000) as u64
 }
 

@@ -3,14 +3,18 @@
 //! `start_index_build` は stale マーク → CAS → spawn の順で、drain ループ（現在 config の
 //! `IndexInputs` snapshot → ロック外で再構築 → swap + re-diff）を stale が消えるまで回す。
 //! ビルド本体は `catch_unwind` で包み、panic 時の flag 固着（永久「構築中」）を防ぐ。
+//! drain の各反復は所要を `scan-log.jsonl` へ記録し（[`crate::scan_log`]）、走査したフォルダ数を
+//! status 行の進捗として `AppState` に置く。
 
 use std::sync::Mutex;
+use std::time::Instant;
 
 use snotra_core::engine::{IndexInputs, PrebuiltIndex};
 use snotra_core::indexer;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::platform::{PlatformBridge, PlatformCommand};
+use crate::scan_log;
 use crate::state::AppState;
 
 /// インデックスビルドを開始（または kick）する。ビルドスレッドを起動したら `true`、
@@ -134,6 +138,10 @@ pub(crate) fn build_index_from_material(
 /// begin（現在 config の `IndexInputs` スナップショット）→ ロック外で重い構築 → complete（O(1) スワップ + re-diff）。
 /// ビルド中に config が変わっていれば complete が stale を残し、次の begin が再び snapshot を返して再ビルドする。
 /// 各反復で engine ロックを保持するのは snapshot 取得とスワップの一瞬だけ（ロック最小化を維持）。
+///
+/// **1 反復ごとに `scan-log.jsonl` へ 2 行を書く**（走査の前に `start`、差し替えの後に `end`。
+/// 形式と「構築の入力にしない」理由は [`scan_log`] の `//!`）。あわせて status 行の進捗
+/// （[`AppState::begin_scan_progress`]）を反復の先頭で置く。
 fn drain_index(app_handle: &AppHandle) {
     loop {
         let inputs = {
@@ -143,8 +151,35 @@ fn drain_index(app_handle: &AppHandle) {
         };
         let Some(inputs) = inputs else { break };
 
+        // **記録（`scan-log.jsonl`）は構築の振る舞いを決めない**（`scan_log` の `//!`）。ここで
+        // 記録から読むのは進捗表示の分母だけで、その値は `begin_scan_progress` にしか渡らない。
+        // 保存先は反復ごとに 1 回だけ引き、`start` と `end` で同じ値を使う（引けなければどちらも
+        // 書かない）。
+        let log = snotra_core::config::Config::config_dir().map(|dir| {
+            let sid = scan_log::new_sid();
+            let scan_id = scan_log::scan_id(indexer::scan_identity_hash(
+                &inputs.scan,
+                inputs.show_hidden_system,
+            ));
+            let expected = scan_log::begin_in(
+                &dir,
+                scan_log::now_ts_ms(),
+                &sid,
+                &scan_id,
+                inputs.scan.len(),
+            );
+            (dir, sid, scan_id, expected)
+        });
+        let state = app_handle.state::<AppState>();
+        state.begin_scan_progress(log.as_ref().and_then(|(.., expected)| *expected));
+        let total_started = Instant::now();
+
         // **保存が返した派生データをそのまま索引の表現に使う**。捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」。
-        let material = indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
+        let (material, stats) = indexer::rebuild_and_save(
+            &inputs.scan,
+            inputs.show_hidden_system,
+            state.scan_dirs_counter(),
+        );
 
         // **drain ループ自身はアイコンキャッシュに触らない。** 無効化は `start_index_build` が
         // ビルド要求を受理した瞬間に 1 回だけ撃つ（このループの外）。索引照合の剪定は #996 で
@@ -154,14 +189,30 @@ fn drain_index(app_handle: &AppHandle) {
 
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。
+        let build_started = Instant::now();
         let new_index = build_index_from_material(material, &inputs);
-        {
-            let state = app_handle.state::<AppState>();
-            state
-                .engine
-                .lock()
-                .unwrap()
-                .complete_index_drain(new_index, &inputs);
+        let build_took = build_started.elapsed();
+        state
+            .engine
+            .lock()
+            .unwrap()
+            .complete_index_drain(new_index, &inputs);
+        let total = total_started.elapsed();
+
+        if let Some((dir, sid, scan_id, _)) = &log {
+            // **名前付きのフィールドで組む**——`scanned` と `dirs` は同じ型である。
+            let rec = scan_log::ScanRecord {
+                scan: stats.scan,
+                sort: stats.sort,
+                save: stats.save,
+                build: build_took,
+                scanned: stats.scanned,
+                dirs: stats.dirs,
+            };
+            scan_log::append_in(
+                dir,
+                &scan_log::end_line(scan_log::now_ts_ms(), sid, scan_id, &rec, total),
+            );
         }
     }
 }

@@ -50,7 +50,7 @@ use std::time::{Duration, Instant};
 use snotra_core::engine::FolderListContext;
 use snotra_core::ui_types::SearchResult;
 
-use crate::egui_shell::{Debouncer, FrameIndexing, SearchState};
+use crate::egui_shell::{Debouncer, FrameIndexing, FrameScanProgress, SearchState};
 
 use activation::LaunchInFlight;
 use folder_nav::FolderMsg;
@@ -186,6 +186,12 @@ impl LauncherController {
     /// そこは意図的に live-read を残してある。
     pub(super) fn indexing(&self) -> FrameIndexing {
         super::window_coordinator::read_indexing(&self.app_handle)
+    }
+
+    /// 構築中の進捗（status 行の文言用・#1041）。`indexing()` と同じく `window_coordinator` の
+    /// 読み口へ委譲する。**`view.rs` はこれを 1 フレーム 1 回だけ呼ぶ**。
+    pub(super) fn scan_progress(&self) -> FrameScanProgress {
+        super::window_coordinator::read_scan_progress(&self.app_handle)
     }
 
     /// UI 文言の言語（config general.language・起動時一回でなく都度読み——読み 1 回/フレームの

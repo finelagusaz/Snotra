@@ -3,6 +3,7 @@
 use super::*;
 use crate::indexer::test_support::temp_dir;
 use std::fs;
+use std::sync::atomic::AtomicUsize;
 
 /// 述語のテスト用に最小の `ScanPath` を作る。拡張子と `include_folders` は
 /// **判定に関与しない**（設計書 §2.2 の過剰近似）。
@@ -96,12 +97,58 @@ fn scan_all_dedups_when_roots_are_nested() {
             include_folders: false,
         },
     ];
-    let entries = scan_all(&scan, true);
+    let entries = scan_all(&scan, true, &AtomicUsize::new(0));
 
     assert_eq!(
         entries.len(),
         1,
         "入れ子の根で同じファイルが二度入っている（重複排除が効いていない）"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **`dirs` は `read_dir` に成功したディレクトリを根も含めて数え、登録件数とは独立である。**
+///
+/// 2 本目の根は `extensions` が空で `include_folders` が偽——登録は 0 件でも、走査したフォルダは
+/// 数える（実運用点の `C:\` の根がこの形で、進捗の単位をフォルダ数にした理由である）。
+/// 存在しない根は `read_dir` に失敗するので数えない。期待値は fixture のディレクトリの数え上げ
+/// である: 根 `a` とその下の `sub` / `sub\deep`（3）、根 `b` とその下の `c` / `c\d`（3）。
+#[test]
+fn scan_all_counts_every_directory_it_reads_even_when_it_registers_nothing() {
+    let dir = temp_dir("counts_dirs");
+    let a = dir.join("a");
+    let b = dir.join("b");
+    fs::create_dir_all(a.join("sub").join("deep")).expect("create a tree");
+    fs::create_dir_all(b.join("c").join("d")).expect("create b tree");
+    fs::write(a.join("sub").join("tool.exe"), b"x").expect("write fixture");
+    fs::write(b.join("c").join("ignored.exe"), b"x").expect("write fixture");
+
+    let scan = vec![
+        ScanPath {
+            path: a.to_string_lossy().into_owned(),
+            extensions: vec![".exe".to_string()],
+            include_folders: false,
+        },
+        ScanPath {
+            path: b.to_string_lossy().into_owned(),
+            extensions: vec![],
+            include_folders: false,
+        },
+        ScanPath {
+            path: dir.join("missing").to_string_lossy().into_owned(),
+            extensions: vec![".exe".to_string()],
+            include_folders: true,
+        },
+    ];
+    let dirs = AtomicUsize::new(0);
+    let entries = scan_all(&scan, true, &dirs);
+
+    assert_eq!(entries.len(), 1, "登録は根 a の tool.exe の 1 件だけのはず");
+    assert_eq!(
+        dirs.load(std::sync::atomic::Ordering::Relaxed),
+        6,
+        "読めたディレクトリの数（根を含む）と一致しない"
     );
 
     let _ = fs::remove_dir_all(&dir);
@@ -128,7 +175,7 @@ fn scan_all_dedups_when_the_child_root_comes_first() {
             include_folders: false,
         },
     ];
-    let entries = scan_all(&scan, true);
+    let entries = scan_all(&scan, true, &AtomicUsize::new(0));
 
     assert_eq!(
         entries.len(),
@@ -156,7 +203,15 @@ fn scan_with_extensions_filters_by_ext() {
         },
     };
     let exts = build_extension_list(&["exe".to_string(), "bat".to_string()]);
-    scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
+    scan_directory_with_extensions(
+        &dir,
+        &exts,
+        false,
+        true,
+        &mut entries,
+        &mut dedup,
+        &AtomicUsize::new(0),
+    );
 
     let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"app"));
@@ -183,7 +238,15 @@ fn scan_with_extensions_includes_folders() {
         },
     };
     let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut dedup);
+    scan_directory_with_extensions(
+        &dir,
+        &exts,
+        true,
+        true,
+        &mut entries,
+        &mut dedup,
+        &AtomicUsize::new(0),
+    );
 
     let folder_entries: Vec<&AppEntry> = entries.iter().filter(|e| e.is_folder).collect();
     assert_eq!(folder_entries.len(), 1);
@@ -213,7 +276,15 @@ fn scan_with_extensions_no_folders_when_disabled() {
         },
     };
     let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
+    scan_directory_with_extensions(
+        &dir,
+        &exts,
+        false,
+        true,
+        &mut entries,
+        &mut dedup,
+        &AtomicUsize::new(0),
+    );
 
     assert!(entries.iter().all(|e| !e.is_folder));
     assert_eq!(entries.len(), 1);
@@ -241,7 +312,15 @@ fn scan_keeps_same_name_different_paths() {
         },
     };
     let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
+    scan_directory_with_extensions(
+        &dir,
+        &exts,
+        false,
+        true,
+        &mut entries,
+        &mut dedup,
+        &AtomicUsize::new(0),
+    );
 
     let tools: Vec<&AppEntry> = entries.iter().filter(|e| e.name == "tool").collect();
     assert_eq!(tools.len(), 2);
@@ -264,7 +343,15 @@ fn scan_extensions_case_insensitive() {
         },
     };
     let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
+    scan_directory_with_extensions(
+        &dir,
+        &exts,
+        false,
+        true,
+        &mut entries,
+        &mut dedup,
+        &AtomicUsize::new(0),
+    );
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "app");
@@ -318,7 +405,7 @@ fn canonical_sort_orders_by_target_then_name_then_is_folder() {
 
 #[test]
 fn scan_all_empty_when_no_paths() {
-    let entries = scan_all(&[], false);
+    let entries = scan_all(&[], false, &AtomicUsize::new(0));
     assert!(
         entries.is_empty(),
         "scan_all with no paths should return empty"

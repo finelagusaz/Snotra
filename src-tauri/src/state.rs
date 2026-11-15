@@ -1,10 +1,11 @@
 //! Tauri の managed state（`AppState`）定義。
 //!
 //! `Mutex<Engine>`（検索・履歴・設定を統合した snotra-core facade）と `AtomicBool`
-//! （`indexing` / `index_build_started`）、および index build 完了ごとに
-//! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）を保持する。
+//! （`indexing` / `index_build_started`）、index build 完了ごとに
+//! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）、および構築中の
+//! 進捗（`scan_dirs` / `scan_expected`・#1041）を保持する。
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use snotra_core::config::Config;
@@ -41,6 +42,15 @@ pub struct AppState {
     /// last-seen と比較して再検索をトリガするアキュムレータ。panic/spawn 失敗経路の finish でも
     /// bump されるが、無変化 index への再検索は同一結果になるだけで無害（意図的に単純化）。
     pub index_generation: AtomicU64,
+    /// 構築中に走査したフォルダの数（status 行の進捗表示・#1041）。
+    ///
+    /// **書くのは [`AppState::begin_scan_progress`] / [`AppState::finish_index_build`] と、
+    /// [`AppState::scan_dirs_counter`] を受け取った `scan_all` の加算だけである**（`indexing` と
+    /// 同じく、書き手を限定するために private にしてある）。読む口は [`AppState::scan_progress`]。
+    scan_dirs: AtomicUsize,
+    /// 進捗表示の分母（前回の完走で走査したフォルダの数）。**0 は「無し」である**——0 フォルダの
+    /// 完走は分母として役に立たないので、無いのと同じに扱う。書き手は `scan_dirs` と同じ。
+    scan_expected: AtomicUsize,
 }
 
 impl AppState {
@@ -63,7 +73,34 @@ impl AppState {
             indexing: AtomicBool::new(initial_indexing),
             index_build_started: AtomicBool::new(false),
             index_generation: AtomicU64::new(0),
+            scan_dirs: AtomicUsize::new(0),
+            scan_expected: AtomicUsize::new(0),
         }
+    }
+
+    /// drain の 1 反復の先頭で進捗を置く。**`scan_dirs = 0` → `scan_expected` の順に書く**——
+    /// 逆順にすると、前の反復のフォルダ数と新しい分母の組が見えるウィンドウが広がる
+    /// （残るウィンドウは [`AppState::scan_progress`] の doc）。
+    pub(crate) fn begin_scan_progress(&self, expected: Option<usize>) {
+        self.scan_dirs.store(0, Ordering::SeqCst);
+        self.scan_expected
+            .store(expected.unwrap_or(0), Ordering::SeqCst);
+    }
+
+    /// `rebuild_and_save` へ渡すカウンタ。**加算するのは `scan_all` だけである**（`scan_dirs` の doc）。
+    pub(crate) fn scan_dirs_counter(&self) -> &AtomicUsize {
+        &self.scan_dirs
+    }
+
+    /// 進捗を読む: （走査したフォルダの数, 分母）。分母が 0 なら `None`。
+    ///
+    /// **2 つの atomic を別々に読む**ので、1 回の要求で 2 反復する構築の境目では「前の反復の
+    /// フォルダ数と新しい分母」の組が最大 1 フレーム見えうる（受容する。表示の誤りにとどまり、
+    /// 次のフレームで直る）。
+    pub(crate) fn scan_progress(&self) -> (usize, Option<usize>) {
+        let dirs = self.scan_dirs.load(Ordering::SeqCst);
+        let expected = self.scan_expected.load(Ordering::SeqCst);
+        (dirs, (expected > 0).then_some(expected))
     }
 
     /// config を読む（`engine` の `Mutex` を経ない）。**この crate で read guard を取る唯一の地点である。**
@@ -134,9 +171,14 @@ impl AppState {
 
     /// インデックスビルドの終了。`indexing` と `index_build_started` を両方 false に戻す。
     /// 正常完了経路と `thread::spawn` 失敗経路の両方から呼ぶ。
+    ///
+    /// **進捗（`scan_dirs` / `scan_expected`）もここで 0 に戻す**——次のビルドは既に 0 の状態から
+    /// 始まるので、前回の数は開始時に見えない。
     pub fn finish_index_build(&self) {
         self.indexing.store(false, Ordering::SeqCst);
         self.index_build_started.store(false, Ordering::SeqCst);
+        self.scan_dirs.store(0, Ordering::SeqCst);
+        self.scan_expected.store(0, Ordering::SeqCst);
         self.index_generation.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -263,6 +305,31 @@ mod tests {
         assert!(state.try_begin_index_build());
         state.finish_index_build();
         assert_eq!(state.index_generation.load(Ordering::SeqCst), g0 + 1);
+    }
+
+    /// #1041: 終了で進捗を戻す。戻さないと、次のビルドの開始時（`try_begin_index_build` から
+    /// drain の反復の先頭まで）に前回のフォルダ数と分母が見える。
+    #[test]
+    fn finish_index_build_resets_the_scan_progress() {
+        let state = test_state();
+        assert!(state.try_begin_index_build());
+        state.begin_scan_progress(Some(98));
+        state.scan_dirs_counter().fetch_add(41, Ordering::Relaxed);
+        assert_eq!(state.scan_progress(), (41, Some(98)));
+
+        state.finish_index_build();
+        assert_eq!(state.scan_progress(), (0, None));
+    }
+
+    /// 分母 0 は「無し」として読む。反復の先頭は前の反復のフォルダ数を 0 に戻す。
+    #[test]
+    fn scan_progress_reads_a_zero_denominator_as_none() {
+        let state = test_state();
+        state.begin_scan_progress(Some(0));
+        assert_eq!(state.scan_progress(), (0, None));
+        state.scan_dirs_counter().fetch_add(5, Ordering::Relaxed);
+        state.begin_scan_progress(None);
+        assert_eq!(state.scan_progress(), (0, None));
     }
 
     #[test]

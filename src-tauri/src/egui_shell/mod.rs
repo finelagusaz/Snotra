@@ -13,7 +13,7 @@ mod search_dispatch;
 mod search_state;
 mod search_worker;
 // launcher_controller が起動 worker の in-flight 追跡・一時通知で消費する（#532）。
-pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
+pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot, SCAN_PROGRESS_REPAINT};
 // NOTICE_HOTKEY は launcher_controller（hotkey 失敗通知の duration）が、OverlayKind /
 // overlay_kind は view.rs（status 行の優先ラダー）が消費する（#532・#666）。status_row_present は毎フレーム側（view.rs）と
 // show 経路（window_coordinator.rs）の両方が消費する（共有の実体の正本は
@@ -98,6 +98,8 @@ pub(crate) use window_coordinator::FrameIndexing;
 // 連言③（`plain_results_hidden`）と連言④（`layout::results_area_collapsed`）は独立した規則で、
 // **どちらか一方でも隠していれば起動しない**。
 pub(crate) use window_coordinator::FrameVisibleRows;
+// FrameScanProgress は status 行の文言だけが使う（#1041）。view.rs が 1 フレーム 1 回読む。
+pub(crate) use window_coordinator::FrameScanProgress;
 // launcher_controller が検索 debounce（leading + trailing）で消費する。
 pub(crate) use layout::Debouncer;
 // view.rs が `update()` のフレーム所要と間隔の計測コードとして消費する（#1004）。

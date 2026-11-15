@@ -928,6 +928,13 @@ impl EguiView for SearchWindowView {
         // 正しいので live のまま残してある。
         let indexing = self.controller.indexing();
         let indexing_raw = indexing.get();
+        // **構築中の進捗もこのフレームで 1 回だけ読む**（#1041・`scan_progress_is_read_exactly_once_per_frame`）。
+        // 使うのは status 行の文言だけで、行の有無と高さ（`status_row_present`）には渡さない。
+        // `indexing` とは別の atomic なので、2 つの読みの間に構築が終わりうる。終わりは
+        // `finish_index_build` が進捗を 0 に戻すので文言は従来の形へ落ちるが、フォルダ数と分母の
+        // 2 回の load の間に戻しが入ると、1 フレームだけ分母の無い「N フォルダ」が出うる（受容する。
+        // 表示の誤りにとどまり、次のフレームで直る）。
+        let scan_progress = self.controller.scan_progress();
         // **連言④（`SPEC.md`「4.5 最大列挙数」）の値もこのフレームで 1 回だけ読む**（#1106）。
         // `indexing` と理由は同じだが機構が違う——こちらは `AtomicBool` ではなく config の
         // live-read で、変わる契機は `config_watcher` の適用である。読みが 2 つあると
@@ -949,9 +956,19 @@ impl EguiView for SearchWindowView {
             launching_now,
             has_notice_now,
         ) {
-            Some(crate::egui_shell::OverlayKind::Indexing) => Some(
-                crate::egui_shell::ui_strings::indexing_hint(self.controller.lang()).to_string(),
-            ),
+            Some(crate::egui_shell::OverlayKind::Indexing) => {
+                // **構築中案内を出すフレームのあいだ、固定間隔で読み直しを予約する**（#1041）。
+                // これは「時間経過で解消する不成立」の再要求ではなく、worker が書く値の
+                // ポーリングである（`src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」の例外）。
+                // 予約はフレームの到来を約束しないので、案内を出す限り毎フレーム撃つ。止まるのは
+                // 案内を出さないフレームで、構築の終わりは `INDEXING_COMPLETE` の wake が起こす。
+                ui.ctx()
+                    .request_repaint_after(crate::egui_shell::SCAN_PROGRESS_REPAINT);
+                Some(crate::egui_shell::ui_strings::indexing_hint(
+                    self.controller.lang(),
+                    scan_progress,
+                ))
+            }
             Some(crate::egui_shell::OverlayKind::Launching) => {
                 Some(crate::egui_shell::ui_strings::launching(self.controller.lang()).to_string())
             }
@@ -1342,6 +1359,17 @@ mod tests {
             // [`assert_read_once_in_this_file`]）。
             concat!(".controller.", "indexing()"),
             "1 回だけ読み、FrameIndexing のまま配ること（#752 F2 / #1077）",
+        );
+    }
+
+    /// 構築中の進捗（#1041）をこのファイルが読むのは**フレームで 1 回だけ**である。上の
+    /// `indexing` の検査と別に置く——こちらは文言だけに効き、起動ゲートには配らない。
+    #[test]
+    fn scan_progress_is_read_exactly_once_per_frame() {
+        assert_read_once_in_this_file(
+            // 上と同じ理由で割る（#1112）。
+            concat!(".controller.", "scan_progress()"),
+            "1 回だけ読み、FrameScanProgress のまま status 行の文言へ渡すこと（#1041）",
         );
     }
 

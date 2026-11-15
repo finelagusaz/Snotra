@@ -9,7 +9,7 @@
 1. `src-tauri/src/indexing.rs` の `mod tests` に順序検査 `drain_index_appends_start_before_the_scan` が在り、素の実装で緑
 2. 順序を壊す変異 M1（research.md「実測」）で、**その検査が assert で**赤（コンパイルエラーではない）。既存の他テストは緑のまま（= 単独で検出する）
 3. 2 を **LF と CRLF の両方**の `indexing.rs` で実測し、素の実装の CRLF でも緑であること（CI の windows-latest は CRLF で checkout しうる）
-4. 行末コメントに綴りを残す変異 M2 でも赤（前処理が効いていることの実測）
+4. 行末コメントに綴りを残し、実際の呼び出しを綴り替えて後ろへ置く変異 M2B で赤、`//` 除去を外した対照（M2B-NOSTRIP）で緑（前処理が効いていることの実測。当初の M2 は除去なしでも「ちょうど 1 回」で赤になり判別力が無かった——ラウンド 1 の Medium-1）
 5. 母集団が見えているかを壊す変異 M3（アンカー `fn drain_index(` を改名する）で、helper の assert により赤
 6. CI（本 PR）で緑。CI の赤と連続 N 回は要求しない（ユーザー裁定・research.md「要求の裁定」）。その理由を PR 本文に書く
 
@@ -65,7 +65,9 @@ fn drain_index_appends_start_before_the_scan() {
 | 変異 | 内容 | 期待 |
 |---|---|---|
 | M1 | `let log = …config_dir().map(…begin_in…)` ブロックを `rebuild_and_save(…);` の直後へ移し、`begin_scan_progress(…)` を `begin_scan_progress(None)` にする（research.md の R0 と同じ形） | 新検査だけが assert で赤 |
-| M2 | M1 に加え、`rebuild_and_save` より前の行の行末に `// scan_log::begin_in(` を書き足す | 新検査が赤（行末コメント除去が効く） |
+| M2B | M1 の後ろへ移した呼び出しを `scan_log::begin_in  (` と綴り替え、`rebuild_and_save` より前の行末に `// scan_log::begin_in(` を書き足す | 新検査が赤。対照 M2B-NOSTRIP（テスト側の `//` 除去を外す）は緑 |
+| DUP | 前の呼び出しを残し、走査の後ろにもう 1 回足す | 「ちょうど 1 回」で赤 |
+| STR | 本体に文字列リテラルを 1 つ足す（例 `let _ = "x";`） | 前提の assert で赤 |
 | M3 | `fn drain_index(` を `fn drain_index_x(` に改名（呼び出し側も） | 新検査が helper の「見つからない」で赤 |
 | CRLF | 素の実装 + 検査、M1 + 検査を、それぞれ `indexing.rs` を CRLF 化して | 前者緑・後者赤 |
 
@@ -82,7 +84,10 @@ fn drain_index_appends_start_before_the_scan() {
 
 ### Phase 2 — 発火の実測
 
-- [ ] M1・M2・M3 を測り、結果（赤の理由を含む）を PR 本文用に記録する
+- [ ] M1・M2B・M3・DUP・STR を測り、結果（赤の理由を含む）を PR 本文用に記録する
+
+ラウンド記録:
+- R1 d1c1ea7c — verify:tree green（A/E/F・warnings 0）／指摘 High 2・Medium 1・Low 2・⚠️ 2／生き残った変異 0（M1・M2・M3・CRLF-1・DUP・M2B 赤、CRLF-0・M2B-NOSTRIP・BLOCK 緑）。対応: High-1（新テストの doc がアイコンキャッシュ検査の doc と `#[test]` の間に割り込んでいた）→ 位置を移した／High-2「真へ誤る」→ 言い換え／Medium-1 → M2 を M2B に差し替え／Low-1 → 文字列リテラル不在を assert にし、doc の受容残余から「文字列」を外した／Low-2（doc に `cfg` 無し）→ 例示なので据え置き
 - [ ] CRLF の素の実装と M1 を測る
 - [ ] 作業ツリーに変異が残っていないことを確かめる
 

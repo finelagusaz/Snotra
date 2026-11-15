@@ -208,7 +208,7 @@
 - [x] `report_scan_all_cost` の doc と `println!` の「sort / save の測り手」を `scan-log.jsonl` へ直す
 - [x] `RebuildStats` を新設し、`rebuild_and_save` を `scan_and_sort_timed` 経由にして `(IndexMaterial, RebuildStats)` を返す。`drain_index` を新しい返り値へ合わせる
 - [x] `scan_identity_hash` の doc を消費者に合わせて直す
-- [ ] `memory_footprint.rs` の `report_scan_all_cost` を変更前後で走らせ、確保回数を記録する
+- [x] `memory_footprint.rs` の `report_scan_all_cost` を変更前後で走らせ、確保回数を記録する
 
 ### Phase 2 — src-tauri: 記録
 
@@ -217,7 +217,7 @@
 - [x] `AppState` に `scan_dirs` / `scan_expected` と 4 つの口を足し、`finish_index_build` で戻す。テスト（`finish_index_build` が戻す・`scan_progress` が 0 を `None` として返す）を足す
 - [x] `startup::to_ms` を `pub(crate)` にする
 - [x] `drain_index` に剪定・分母の読み・進捗の初期化・`start` / `end` 行・`build_ms` の計測を結線する
-- [ ] 実機で完走と未完走の記録を確かめる（「実機での確認」の Phase 2 の末尾の 2 項目）
+- [x] 実機で完走と未完走の記録を確かめる（「実機での確認」の Phase 2 の末尾の 2 項目）
 
 ### Phase 3 — src-tauri: 進捗表示
 
@@ -232,8 +232,19 @@
 - [x] `docs/architecture.md`・`config/location.rs`・`docs/build-commands.md`（`SNOTRA_CONFIG_DIR` の節）の保存ファイルの列挙に `scan-log.jsonl` を足す
 - [x] `docs/build-commands.md` に読み方を足す
 - [x] `PERFORMANCE.md`「PATH マージ」の却下の根拠 1 の `rebuild_and_save` の返り値の記述を直す
-- [ ] 検証チェックリストのカテゴリ A・C・D・F を実行する
-- [ ] 実機で進捗表示と温度の違う標本を確かめ、Phase 2 の記録の確認とあわせて結果を PR 本文用に記録する
+- [x] 検証チェックリストのカテゴリ A・C・D・F を実行する
+- [x] 実機で進捗表示と温度の違う標本を確かめ、Phase 2 の記録の確認とあわせて結果を PR 本文用に記録する
+
+### 実行記録
+
+- 確保回数（`report_scan_all_cost`・release）: 変更前 origin/main 13,753,975（21,626 件）→ 変更後 13,820,783（22,908 件）。件数がファイルシステムの churn で 5.9% 動いた分を超えない（確保は +0.49%）。差分が足した走査の処理は `fetch_add` の 1 回だけで、確保を伴わない
+- 実機（実プロファイル・根 5 本・2026-11-15）:
+  - 完走: `start` / `end` の 1 対。1 回目 `scan_ms` 85,199・`dirs` 613,341・`scanned` 23,869（`dirs` と `scanned` が別の値）
+  - 温度の違う標本: 2 回目以降は `scan_ms` 27,295〜28,144（同じ `scan_id`）。フォルダあたり 139 µs（冷えた状態）と 45 µs（温まった状態）で、issue の 2.8 倍の変動が記録だけで読める
+  - 未完走: `/s` の 5 秒後に強制終了 → 最後の行は `start`（`expected` 613,341）だけ。再起動して `/s` → 新しい `start` の `expected` は 613,341（未完走の行を飛ばし、その前の完走の `dirs`）、続けて `end`
+  - 進捗表示: 「インデックス構築中... 81,704 / 約 613,341 フォルダ」→ 3 秒後「145,980 / 約 613,341 フォルダ」。完了後は案内が消えた。既定の幅に収まる。Folder ビューでの非表示は見ていない（`overlay_kind` への入力 `indexing_raw && is_results` は変えていない）
+- 検証ツール: `f24e9bc2` で A（fmt・check・clippy・4 crate の test・doc）/ C（build・npm test・test:powershell・smoke:startup・smoke:egui）/ E / F すべて green。D はツールが回すコマンドを持たず、上の実機のキャプチャで status 行の文言を見た
+- race-check（`--base origin/main`）: 境界 4 つ（`AppState` の進捗の atomic〔level-triggered・全ての終わり方で `finish_index_build` が戻す〕・`view.rs` の `request_repaint_after`・`drain_index` のファイル I/O・`new_sid` の連番）。すべて [安全]
 
 ## 未確定（実装前に潰す）
 

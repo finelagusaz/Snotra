@@ -289,7 +289,7 @@ Get-Content "$env:APPDATA/Snotra/scan-log.jsonl" -Tail 20   # start だけの行
 ```
 
 - `index.bin` の更新時刻で外から挟んだ標本と比べる区間は `scan_ms + sort_ms + save_ms` である（mtime は保存の完了を指す）。ユーザーの待ちには、さらに `build_ms` と `unattributed_ms` が加わる
-- `unattributed_ms` には、engine の錠と `INDEX_WRITE_LOCK` の取得待ち、索引の差し替えが入る
+- `unattributed_ms` には、engine のロックと `INDEX_WRITE_LOCK` の取得待ち、索引の差し替えが入る
 - 所要はファイルシステムのキャッシュの状態で大きく揺れるので、1 行で判断しない。同じ `scan_id`（走査対象）の行どうしで、`scan_ms / dirs` を比べる
 
 ## git blame と整形コミット

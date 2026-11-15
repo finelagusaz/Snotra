@@ -246,6 +246,8 @@
 - 検証ツール: `f24e9bc2` で A（fmt・check・clippy・4 crate の test・doc）/ C（build・npm test・test:powershell・smoke:startup・smoke:egui）/ E / F すべて green。D はツールが回すコマンドを持たず、上の実機のキャプチャで status 行の文言を見た
 - race-check（`--base origin/main`）: 境界 4 つ（`AppState` の進捗の atomic〔level-triggered・全ての終わり方で `finish_index_build` が戻す〕・`view.rs` の `request_repaint_after`・`drain_index` のファイル I/O・`new_sid` の連番）。すべて [安全]
 
+- 委譲レビュー ラウンド 1（アンカー 8b1d0885・`review-1041`）: Critical 0 / High 5（訳語: 「計器」「錠」「窓」「物体」「記録の語へ」）/ Medium 0 / Low 6 / ⚠️ 6。変異 16 件すべて検知（生存 0）。追加で測った 4 件（G1 再描画の予約・G2/G3 `scanned` と `dirs` の配線・G4 `prune_in` の `remove_file`）は生存——G2/G3 は実機の確認（`dirs` 613,341 ≠ `scanned` 23,869）が一度見ている。High 5 と Low L1〜L5 を直した。L6（G4 を縛るソーステキスト検査）は置かない: 正常系の挙動が同じで、検査が縛れるのは特定の綴りだけになり、守る経路は「`remove_file` の直後にプロセスが終わる」1 つで、消えるのは使い捨ての記録である
+
 ## 未確定（実装前に潰す）
 
 （なし）

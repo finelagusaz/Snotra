@@ -930,8 +930,10 @@ impl EguiView for SearchWindowView {
         let indexing_raw = indexing.get();
         // **構築中の進捗もこのフレームで 1 回だけ読む**（#1041・`scan_progress_is_read_exactly_once_per_frame`）。
         // 使うのは status 行の文言だけで、行の有無と高さ（`status_row_present`）には渡さない。
-        // `indexing` とは別の atomic なので、2 つの読みの間に構築が終わりうるが、終わりは
-        // `finish_index_build` が進捗を 0 に戻すので、文言が従来の形へ落ちるだけである。
+        // `indexing` とは別の atomic なので、2 つの読みの間に構築が終わりうる。終わりは
+        // `finish_index_build` が進捗を 0 に戻すので文言は従来の形へ落ちるが、フォルダ数と分母の
+        // 2 回の load の間に戻しが入ると、1 フレームだけ分母の無い「N フォルダ」が出うる（受容する。
+        // 表示の誤りにとどまり、次のフレームで直る）。
         let scan_progress = self.controller.scan_progress();
         // **連言④（`SPEC.md`「4.5 最大列挙数」）の値もこのフレームで 1 回だけ読む**（#1106）。
         // `indexing` と理由は同じだが機構が違う——こちらは `AtomicBool` ではなく config の

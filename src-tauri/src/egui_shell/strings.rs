@@ -66,7 +66,7 @@ pub fn folder_hint(l: Language, dir: &str) -> String {
 }
 
 /// 構築中の status 行（`SPEC.md` §3.3）。走査が始まったらフォルダ数を添え、分母があれば
-/// 「/ 約 N」を添える（分母を超えたら件数だけ）。
+/// 「/ 約 N」を添える（分母を超えたらフォルダ数だけ）。
 pub fn indexing_hint(l: Language, progress: crate::egui_shell::FrameScanProgress) -> String {
     let head = match l {
         Language::Ja => "インデックス構築中...",

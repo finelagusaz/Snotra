@@ -318,7 +318,7 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
 /// 分母を、いまと同じ走査対象で完走した記録の行に限るために照合する。`DefaultHasher::new()` は
 /// 固定キーなので、値はプロセスをまたいで安定する（`index.bin` の `config_hash` と同じ前提）。
 /// **`extensions` / `include_folders` を変えただけでも値は変わる**ので、分母は出なくなる
-/// （表示が件数だけへ落ちるだけで、無害である）。
+/// （表示がフォルダ数だけへ落ちるだけで、無害である）。
 /// **内部を丸ごと公開する代わりに、比較に要る計算だけをここへ閉じ込めてある。**
 pub fn scan_identity_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     compute_config_hash(scan, show_hidden_system)
@@ -390,7 +390,9 @@ struct Scanned {
 /// **保存する分岐と保存しない分岐（`Config::config_dir` が引けないとき）が同じここを通る。**
 /// 書き起こすと計測コードが 2 部出荷になり、片方だけが段を足したときに `scan` / `sort` の
 /// 意味が分岐ごとにずれる——**どちらの分岐を測ったのかは `LoadOrScanStats` の値からは
-/// 区別できない**ので、ずれても数字はもっともらしいまま残る。
+/// 区別できない**ので、ずれても数字はもっともらしいまま残る。**再構築の経路
+/// （[`rebuild_and_save`]）も同じ理由でここを通る**——`scan-log.jsonl` の `scan_ms` / `sort_ms` と
+/// 起動時の `LoadOrScanStats` の同名の区間が、同じ範囲を測る。
 ///
 /// **`INDEX_WRITE_LOCK` は取らない。** 走査は共有資源に触れないが、保存する分岐は
 /// 「走査から保存までを 1 回のロック取得で覆う」ことに依存している（→

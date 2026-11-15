@@ -1,8 +1,9 @@
 //! Tauri の managed state（`AppState`）定義。
 //!
 //! `Mutex<Engine>`（検索・履歴・設定を統合した snotra-core facade）と `AtomicBool`
-//! （`indexing` / `index_build_started`）、および index build 完了ごとに
-//! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）を保持する。
+//! （`indexing` / `index_build_started`）、index build 完了ごとに
+//! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）、および構築中の
+//! 進捗（`scan_dirs` / `scan_expected`・#1041）を保持する。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -78,8 +79,8 @@ impl AppState {
     }
 
     /// drain の 1 反復の先頭で進捗を置く。**`scan_dirs = 0` → `scan_expected` の順に書く**——
-    /// 逆順にすると、前の反復のフォルダ数と新しい分母の組が見える窓が広がる（残る窓は
-    /// [`AppState::scan_progress`] の doc）。
+    /// 逆順にすると、前の反復のフォルダ数と新しい分母の組が見えるウィンドウが広がる
+    /// （残るウィンドウは [`AppState::scan_progress`] の doc）。
     pub(crate) fn begin_scan_progress(&self, expected: Option<usize>) {
         self.scan_dirs.store(0, Ordering::SeqCst);
         self.scan_expected

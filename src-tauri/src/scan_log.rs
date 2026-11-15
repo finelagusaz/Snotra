@@ -4,11 +4,11 @@
 //! 測るためである——丸め境界のような fixture は注入でしか作れない（`startup.rs` の `Timeline` と
 //! 同じ理由）。
 //!
-//! # この物体は消えても壊れても書けなくてもよい
+//! # このファイルは消えても壊れても書けなくてもよい
 //!
 //! `index.bin` などと違い、**この記録が無くても索引の構築は変わらない**。ゆえに `binfmt` の版機構を
-//! 持たず、追記の JSONL で足りる。**構築の振る舞いの入力にしてはならない**——計器が構築を決める
-//! 部品に変わると、記録の欠損・破損が構築の誤りとして沈黙で現れる（撤去前の計器の設計
+//! 持たず、追記の JSONL で足りる。**構築の振る舞いの入力にしてはならない**——計測コードが構築を決める
+//! 部品に変わると、記録の欠損・破損が構築の誤りとして沈黙で現れる（撤去前の計測コードの設計
 //! `docs/superpowers/specs/2026-08-09-rescan-in-situ-instrument-design.md` §8.2 が却下した形）。
 //!
 //! **読むのは進捗表示の分母だけである**（[`begin_in`] が返す値）。表示は誤っても欠けても
@@ -49,9 +49,9 @@ pub(crate) struct ScanRecord {
 }
 
 /// 名前の付いていない残余。**恒等式 `total = scan + sort + save + build + unattributed` を閉じる
-/// ための項目である。** 錠の取得待ち（engine・`INDEX_WRITE_LOCK`）と swap がここに入る。
+/// ための項目である。** ロックの取得待ち（engine・`INDEX_WRITE_LOCK`）と swap がここに入る。
 ///
-/// **単調でない入力では 0 へ飽和する**（負にしない）。計器の算術で製品を落とさない。
+/// **単調でない入力では 0 へ飽和する**（負にしない）。計測の算術で製品を落とさない。
 pub(crate) fn unattributed(rec: &ScanRecord, total: Duration) -> Duration {
     let sum = rec.scan + rec.sort + rec.save + rec.build;
     total.saturating_sub(sum)
@@ -219,7 +219,8 @@ pub(crate) fn new_sid() -> String {
     format!("{}-{}-{seq}", std::process::id(), now_ts_ms())
 }
 
-/// 記録の時刻（エポックミリ秒）。`trace.rs` の `ts_ms` と同じ表現である。
+/// 記録の時刻（エポックミリ秒）。`trace.rs` の `ts_ms` と同じ単位にそろえてある（計算は
+/// 別に持つ。あちらは trace の行を組む関数の内側にあり、取り出す口が無い）。
 pub(crate) fn now_ts_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -227,7 +228,7 @@ pub(crate) fn now_ts_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// 走査対象の同一性（`indexer::scan_identity_hash`）を記録の語へ。16 桁の小文字 16 進。
+/// 走査対象の同一性（`indexer::scan_identity_hash`）を記録に書く形へ。16 桁の小文字 16 進。
 pub(crate) fn scan_id(hash: u64) -> String {
     format!("{hash:016x}")
 }

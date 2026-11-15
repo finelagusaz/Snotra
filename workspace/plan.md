@@ -86,6 +86,7 @@
 
 - R1 sha 23f3d3a9 / ツール: exit 2（未実行——linked worktree から打てず、本体の HEAD も sha でない）/ 指摘 Critical・High 0・Medium 1（M1）・Low 2 / 変異 10 本中 生存 2（(f) 生の `$Only` で絞り込み・(g) `ContainsKey` → `Count -gt 0`）。(g) の挙動差は `-Only @()` を明示したときだけで、`pwsh -File` の経路では作れない——受容する残余
 - R2 sha a0d89e42 / ツール: exit 2（未実行・同上）/ 指摘 Critical・High・Medium 0・Low 1（L3: doc の経緯の括弧書き → 削除）/ 変異 9 本中 生存 2（(f2)(f3) スクリプト側の 1 行の呼び出しを書き換える／消す）。param() の複製はスクリプト本体を通らないので検知できない。論理は 1 行の呼び出しまで縮み、消せば全項目が走って目に見える——受容する残余として PR 本文に書く
+- ツール（ユーザーの許可で本体へブランチを移して実行）: sha 17131c54 / green / categories_run E,F + also test:powershell（npm test 779・governance:check・Pester 196 すべて exit 0）。初回は本体の target に HEAD の exe が無く test:powershell が exit 1（環境）→ 本体で `cargo build -p snotra` し `CARGO_TARGET_DIR` で指して再実行
 
 ## 未確定（実装前に潰す）
 

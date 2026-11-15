@@ -7,7 +7,9 @@ param(
   # 記録の出力先。既定は `$env:TEMP` 配下（リポジトリを汚さない。PR へ貼るのは -PostToPr）。
   [string]$OutFile = "",
   # 実施する項目番号（省略時は全 13 項目）。例: -Only 2,5,10
-  [int[]]$Only = @(),
+  # `[int[]]` にしない——npm の経路で `2,5,10` が `2510` に化ける（#1429）。理由と変換の正本は
+  # `ConvertTo-SnotraSmokeItemIds` の doc
+  [string[]]$Only = @(),
   # 記録を PR コメントとして投稿する（`gh pr comment`）。番号省略時は、このスクリプトが住むコピーの
   # ブランチの PR（分離 HEAD などでブランチが取れなければ、投稿せずに -Pr を求めて止まる）。
   [switch]$PostToPr,
@@ -181,9 +183,10 @@ softbuffer はカバレッジ AA を持たないため、2 フォント間の分
 # 有効な id は `$items` から導く（件数をリテラルで書くと項目の増減で嘘になる）。
 $allIds = @($items | ForEach-Object { $_.id })
 
-if ($Only.Count -gt 0) {
-  $items = @($items | Where-Object { $Only -contains $_.id })
-  if ($items.Count -eq 0) { throw "-Only に一致する項目がありません（$($allIds -join ', ') のいずれかを指定してください）" }
+# 一致しない番号・読めない値は、項目の読み上げとアプリの起動より前に throw する（#1429）。
+if ($PSBoundParameters.ContainsKey('Only')) {
+  $onlyIds = ConvertTo-SnotraSmokeItemIds -Value $Only -ValidIds $allIds
+  $items = @($items | Where-Object { $onlyIds -contains $_.id })
 }
 
 # --- 出所の記録（何を検証したのか後から辿れるようにする） ---

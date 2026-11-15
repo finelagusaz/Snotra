@@ -63,20 +63,20 @@
 
 ### Phase 1 — Red
 
-- [ ] `SnotraSmoke.Tests.ps1` に `ConvertTo-SnotraSmokeItemIds` の表駆動テストを足す（受け入れ 1〜4・7）
-- [ ] `New-SnotraParamOnlyCopy` に `-Body` を足し、束縛の It（`'2,5,10'` / `'2 5 10'` / `'1,3'`）を足す
-- [ ] `npm run test:powershell` で、足したテストが期待どおり赤になることを確かめる
+- [x] `SnotraSmoke.Tests.ps1` に `ConvertTo-SnotraSmokeItemIds` の表駆動テストを足す（受け入れ 1〜4・7）
+- [x] `New-SnotraParamOnlyCopy` に `-Body` を足し、束縛の It（`'2,5,10'` / `'2 5 10'` / `'1,3'`）を足す
+- [x] `npm run test:powershell` で、足したテストが期待どおり赤になることを確かめる
 
 ### Phase 2 — Green
 
-- [ ] `SnotraSmoke.psm1` に `ConvertTo-SnotraSmokeItemIds` を足し、`Export-ModuleMember` に載せる
-- [ ] `manual-smoke.ps1` の `-Only` を `[string[]]` にし、絞り込みを変換後の int 列で行う
-- [ ] `manual-smoke.ps1` の param コメントと使い方コメントを直す
+- [x] `SnotraSmoke.psm1` に `ConvertTo-SnotraSmokeItemIds` を足し、`Export-ModuleMember` に載せる
+- [x] `manual-smoke.ps1` の `-Only` を `[string[]]` にし、絞り込みを変換後の int 列で行う
+- [x] `manual-smoke.ps1` の param コメントと使い方コメントを直す
 
 ### Phase 3 — 検証
 
 - [ ] `npm run test:powershell` が全件緑
-- [ ] `docs/build-commands.md` の `-Only` の例が真であることを読んで確かめる
+- [x] `docs/build-commands.md` の `-Only` の例が真であることを読んで確かめる
 
 ## 未確定（実装前に潰す）
 

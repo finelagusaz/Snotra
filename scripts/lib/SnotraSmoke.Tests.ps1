@@ -376,14 +376,14 @@ Describe 'npm script の入口は PositionalBinding = $false で位置引数を�
             return $ast.ParamBlock
         }
 
-        # 抜き出した属性と param() だけを持ち、本体は目印を出すだけの複製を作る。
+        # 抜き出した属性と param() だけを持ち、本体は目印（または `-Body`）だけの複製を作る。
         # `ParamBlockAst.Extent` は属性を含まない（実測）ので、属性を前に足す。
         function New-SnotraParamOnlyCopy {
-            param([string]$ScriptName)
+            param([string]$ScriptName, [string]$Body = "'BODY-RAN'")
             $paramBlock = Get-SnotraEntryParamBlock -ScriptName $ScriptName
             $attributes = @($paramBlock.Attributes | ForEach-Object { $_.Extent.Text })
             $copyPath = Join-Path $TestDrive "param-only-$ScriptName"
-            (@($attributes) + $paramBlock.Extent.Text + "'BODY-RAN'" + 'exit 0') -join "`n" |
+            (@($attributes) + $paramBlock.Extent.Text + $Body + 'exit 0') -join "`n" |
                 Set-Content -LiteralPath $copyPath -Encoding utf8
             return $copyPath
         }
@@ -425,6 +425,100 @@ Describe 'npm script の入口は PositionalBinding = $false で位置引数を�
 
         $exitCode | Should -Not -Be 0 -Because "位置引数で黙って先へ進まないこと（出力: $($output -join ' | ')）"
         $output | Should -Not -Contain 'BODY-RAN' -Because "束縛の段で止まり、本体へ進まないこと"
+    }
+
+    # **守る退行（#1429）**: `-Only` の束縛から id 列までを npm の経路（`pwsh -File`）で通す。純関数の
+    # Describe だけでは、param の型を `[int[]]` に戻しても緑のままになる——化けるのは束縛の段だからである
+    # （`'2,5,10'` → `2510`、`'1,3'` → 実在の項目 `13`）。argv は npm が渡す形そのもの: Bash からは
+    # カンマのまま、PowerShell からは npm.ps1 を経て空白区切りの 1 文字列で届く（2026-11-15 実測）。
+    It 'manual-smoke.ps1 の -Only は npm の経路で argv <Argv> を id 列 <Expected> として受ける（#1429）' -ForEach @(
+        @{ Argv = '2,5,10'; Expected = '2,5,10' }
+        @{ Argv = '2 5 10'; Expected = '2,5,10' }
+        @{ Argv = '1,3'; Expected = '1,3' }
+    ) {
+        $modulePath = (Join-Path $PSScriptRoot 'SnotraSmoke.psm1').Replace("'", "''")
+        $body = "Import-Module '$modulePath' -Force`n`$items = @(1..13 | ForEach-Object { @{ id = `$_ } })`n(Select-SnotraSmokeItems -Items `$items -Only `$Only | ForEach-Object { `$_.id }) -join ','"
+        $copyPath = New-SnotraParamOnlyCopy -ScriptName 'manual-smoke.ps1' -Body $body
+
+        $output = @(& pwsh -NoProfile -File $copyPath -Only $Argv 2>&1 | ForEach-Object { "$_" })
+
+        $LASTEXITCODE | Should -Be 0 -Because "束縛と変換が通ること（出力: $($output -join ' | ')）"
+        $output | Should -Be @($Expected)
+    }
+}
+
+Describe 'ConvertTo-SnotraSmokeItemIds（#1429 -Only の番号列）' {
+    It '<Value> を id 列 <Expected> に変換する' -ForEach @(
+        @{ Value = @('2,5,10'); Expected = '2,5,10' }
+        @{ Value = @('2 5 10'); Expected = '2,5,10' }
+        @{ Value = @('2', '5', '10'); Expected = '2,5,10' }
+        @{ Value = @('1,3'); Expected = '1,3' }
+        @{ Value = @('2,,5,'); Expected = '2,5' }
+        @{ Value = @(' 2 , 5 '); Expected = '2,5' }
+        @{ Value = @('5,2,5'); Expected = '5,2' }
+        @{ Value = @('02'); Expected = '2' }
+        @{ Value = @('13'); Expected = '13' }
+    ) {
+        $result = ConvertTo-SnotraSmokeItemIds -Value $Value -ValidIds (1..13)
+
+        $result.GetType().Name | Should -Be 'Int32[]' -Because '1 件でも配列で返すこと（呼び出し側は -contains で読む）'
+        ($result -join ',') | Should -Be $Expected
+    }
+
+    # **`[int]` キャストに検証を任せない**: `2.5`→2・`0x10`→16・`1e1`→10・`-1`→-1 を黙って通す（2026-11-15 実測）。
+    # `\d` は全角数字に当たるので使えない。理由ごとにメッセージまで見る（`.claude/rules/safety-nets.md`）。
+    It '<Value> は番号として読めないので throw する' -ForEach @(
+        @{ Value = '2.5' }
+        @{ Value = '0x10' }
+        @{ Value = '1e1' }
+        @{ Value = '-1' }
+        @{ Value = 'abc' }
+        @{ Value = '１' }
+    ) {
+        { ConvertTo-SnotraSmokeItemIds -Value @("2,$Value") -ValidIds (1..13) } |
+            Should -Throw -ExpectedMessage "*'$Value' は番号として読めません*"
+    }
+
+    It '桁あふれは throw する' {
+        { ConvertTo-SnotraSmokeItemIds -Value @('99999999999') -ValidIds (1..13) } |
+            Should -Throw -ExpectedMessage "*'99999999999' は大きすぎます*"
+    }
+
+    It '番号が 1 つも無い <Label> は throw する（全件実施と読まない）' -ForEach @(
+        @{ Label = '空文字'; Value = @('') }
+        @{ Label = '区切りだけ'; Value = @(', ') }
+        @{ Label = '空の配列'; Value = @() }
+    ) {
+        { ConvertTo-SnotraSmokeItemIds -Value $Value -ValidIds (1..13) } |
+            Should -Throw -ExpectedMessage '*番号が 1 つもありません*'
+    }
+
+    It '有効な id に無い番号が 1 つでもあれば、一致しない番号と有効な id を示して throw する' {
+        { ConvertTo-SnotraSmokeItemIds -Value @('2,99') -ValidIds (1..13) } |
+            Should -Throw -ExpectedMessage '*99 に一致する項目がありません*1, 2, 3*13*'
+    }
+}
+
+Describe 'Select-SnotraSmokeItems（#1429 -Only による項目の絞り込み）' {
+    BeforeAll {
+        $items = @(1..13 | ForEach-Object { @{ id = $_; title = "item $_" } })
+    }
+
+    It '<Only> で指定した項目だけを、項目の順に返す' -ForEach @(
+        @{ Only = @('2,5,10'); Expected = '2,5,10' }
+        @{ Only = @('2 5 10'); Expected = '2,5,10' }
+        @{ Only = @('10,2'); Expected = '2,10' }
+        @{ Only = @('13'); Expected = '13' }
+    ) {
+        $selected = Select-SnotraSmokeItems -Items $items -Only $Only
+
+        ($selected | ForEach-Object { $_.id }) -join ',' | Should -Be $Expected
+        $selected[0].title | Should -Be "item $(($Expected -split ',')[0])" -Because '項目そのもの（id 以外のキーを含む）を返すこと'
+    }
+
+    It '有効な id は項目から導く（項目に無い番号は throw）' {
+        { Select-SnotraSmokeItems -Items $items[0..2] -Only @('4') } |
+            Should -Throw -ExpectedMessage '*4 に一致する項目がありません*1, 2, 3*'
     }
 }
 

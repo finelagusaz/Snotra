@@ -498,6 +498,92 @@ function Get-SnotraRecordedExePath {
 
 <#
 .SYNOPSIS
+`manual-smoke.ps1 -Only` の値を、項目番号の列へ変換する（#1429）。
+
+.DESCRIPTION
+`-Only` は `[string[]]` で受け、ここで分割する。`[int[]]` で受けると、npm の経路で化ける
+（2026-11-15 実測）:
+
+- Bash → npm → `pwsh -File` は `2,5,10` を 1 つの文字列で渡し、`[int[]]` はそれを `2510` にする。
+  `1,3` は実在の項目 `13` になり、**別の項目が黙って走る**
+- PowerShell → npm.ps1 は `2,5,10` を空白区切りの 1 文字列 `"2 5 10"` で渡し、`[int[]]` は変換に失敗する
+
+そのため、各要素を `,` と空白で分割する。空のトークンは読み飛ばし、重複は最初の 1 つを残す。
+
+**トークンは `^[0-9]+$` で確かめてから数にする。** `[int]` キャストは `2.5`・`0x10`・`1e1`・`-1` を
+黙って数にする（実測）。`\d` は全角数字に当たるので使わない。
+
+次の場合は throw する。どれも、指定した項目が黙って走らない形である:
+
+- 番号が 1 つも無い（`''`・`','`）。全件実施とは読まない
+- 番号として読めないトークンがある、または `int` に収まらない
+- `ValidIds` に無い番号が 1 つでもある
+#>
+function ConvertTo-SnotraSmokeItemIds {
+    [CmdletBinding()]
+    [OutputType([int[]])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$Value,
+        [Parameter(Mandatory)]
+        [int[]]$ValidIds
+    )
+
+    $validList = $ValidIds -join ', '
+    $tokens = @($Value | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ -ne '' })
+    if ($tokens.Count -eq 0) {
+        throw "-Only に番号が 1 つもありません（$validList のいずれかを指定してください）"
+    }
+
+    $ids = [System.Collections.Generic.List[int]]::new()
+    foreach ($token in $tokens) {
+        if ($token -notmatch '^[0-9]+$') {
+            throw "-Only の '$token' は番号として読めません（$validList のいずれかを , か空白で区切って指定してください）"
+        }
+        $id = 0
+        if (-not [int]::TryParse($token, [ref]$id)) {
+            throw "-Only の '$token' は大きすぎます（$validList のいずれかを指定してください）"
+        }
+        if (-not $ids.Contains($id)) { $ids.Add($id) }
+    }
+
+    $unknown = @($ids | Where-Object { $ValidIds -notcontains $_ })
+    if ($unknown.Count -gt 0) {
+        throw "-Only の $($unknown -join ', ') に一致する項目がありません（$validList のいずれかを指定してください）"
+    }
+    return , $ids.ToArray()
+}
+
+<#
+.SYNOPSIS
+`manual-smoke.ps1` の項目から、`-Only` で指定された項目だけを残す（#1429）。
+
+.DESCRIPTION
+有効な id は `Items` から導く（件数をリテラルで書くと項目の増減で嘘になる）。`Only` の解釈と throw の
+条件は `ConvertTo-SnotraSmokeItemIds` が持つ。項目は `Items` の順に返す。
+
+**絞り込みをスクリプトの外へ出してあるのは、測るためである。** スクリプト側で `-Only` の文字列を
+そのまま `-contains` に渡すと、`'2,5,10'` はどの id にも一致せず、項目 0 件のまま黙って進む。
+#>
+function Select-SnotraSmokeItems {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable[]]$Items,
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$Only
+    )
+
+    $ids = ConvertTo-SnotraSmokeItemIds -Value $Only -ValidIds @($Items | ForEach-Object { $_.id })
+    return , @($Items | Where-Object { $ids -contains $_.id })
+}
+
+<#
+.SYNOPSIS
 プロセスを停止し、**終了を待つ**（#872 単一インスタンス衝突）。
 
 .DESCRIPTION
@@ -1081,6 +1167,8 @@ Export-ModuleMember -Function @(
     'Resolve-SnotraCargoExecutable'
     'Resolve-SnotraCargoTargetDirectory'
     'Get-SnotraRecordedExePath'
+    'ConvertTo-SnotraSmokeItemIds'
+    'Select-SnotraSmokeItems'
     'Resolve-SnotraExistingProcess'
     'Stop-SnotraProcessAndWait'
     'Read-SnotraTraceEvents'

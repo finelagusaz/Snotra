@@ -17,6 +17,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -313,11 +314,12 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
 /// `include_path_env` / `migemo_enabled` は含まない（それらは走査ではなく索引の**構築**を
 /// 左右する入力であり、`engine::IndexInputs` が別に持つ）。
 ///
-/// **呼び出し元（`src-tauri` の `apply_rescanned_index`）は #1001 で撤去済みで、
-/// この関数は現在どこからも呼ばれない**——背景再スキャンが返した材料について、
-/// それを走査した時点の対象と差し替え時点の現在 config が同じかをこの入口経由で照合して
-/// いた。**内部を丸ごと公開する代わりに、比較に要る計算だけをここへ閉じ込めてある**という
-/// 設計は、消費者が戻る日のために残す。
+/// **消費者は `src-tauri` の `scan_log`（`scan-log.jsonl` の `scan_id`）である**——進捗表示の
+/// 分母を、いまと同じ走査対象で完走した記録の行に限るために照合する。`DefaultHasher::new()` は
+/// 固定キーなので、値はプロセスをまたいで安定する（`index.bin` の `config_hash` と同じ前提）。
+/// **`extensions` / `include_folders` を変えただけでも値は変わる**ので、分母は出なくなる
+/// （表示が件数だけへ落ちるだけで、無害である）。
+/// **内部を丸ごと公開する代わりに、比較に要る計算だけをここへ閉じ込めてある。**
 pub fn scan_identity_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     compute_config_hash(scan, show_hidden_system)
 }
@@ -394,9 +396,9 @@ struct Scanned {
 /// 「走査から保存までを 1 回のロック取得で覆う」ことに依存している（→
 /// [`upgrade_legacy_cache_in`] だけがその例外である理由は `LoadCacheResult::upgrade_save`
 /// の doc）。ゆえにロックの範囲は呼び出し側が決める。
-fn scan_and_sort_timed(scan: &[ScanPath], show_hidden_system: bool) -> Scanned {
+fn scan_and_sort_timed(scan: &[ScanPath], show_hidden_system: bool, dirs: &AtomicUsize) -> Scanned {
     let scan_started = Instant::now();
-    let mut entries = scan_all(scan, show_hidden_system);
+    let mut entries = scan_all(scan, show_hidden_system, dirs);
     let scan_took = scan_started.elapsed();
 
     let sort_started = Instant::now();
@@ -466,7 +468,7 @@ fn load_or_scan_with_stats_in(
             entries,
             scan: scan_took,
             sort: sort_took,
-        } = scan_and_sort_timed(scan, show_hidden_system);
+        } = scan_and_sort_timed(scan, show_hidden_system, &AtomicUsize::new(0));
 
         let cache_save_started = Instant::now();
         // **保存が返すツリーと派生データをそのまま使う。** 走査結果を保存のために建て直させると、
@@ -527,7 +529,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
                 entries,
                 scan: scan_took,
                 sort: sort_took,
-            } = scan_and_sort_timed(scan, show_hidden_system);
+            } = scan_and_sort_timed(scan, show_hidden_system, &AtomicUsize::new(0));
 
             LoadOrScanResult {
                 material: IndexMaterial::from_tree(IndexTree::build(entries)),
@@ -653,15 +655,57 @@ fn save_cache_sorted_in(
 /// **派生データを持つかは [`IndexMaterial`] の内側の話である**（保存先が引けない分岐では計算しない）。**持たない場合を数え上げてはならない**——正本は `save_cache_sorted` の分岐である。
 ///
 /// PATH エントリをマージするなら [`IndexMaterial::extend_with_path_entries`] を通すこと。
-pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMaterial {
+///
+/// **区間を測って [`RebuildStats`] として返す。** 走査と整列は cache-miss の分岐と同じ
+/// `scan_and_sort_timed` を通る（区間の意味を経路ごとにずらさない）。`dirs` は走査が
+/// フォルダ数を足していくカウンタで、呼び出し側は走査中に別スレッドから読める（[`scan_all`]）。
+pub fn rebuild_and_save(
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+    dirs: &AtomicUsize,
+) -> (IndexMaterial, RebuildStats) {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 別の書き手との index.bin 同時書き込みを防ぐ。
     with_index_write_lock(|| {
-        let mut entries = scan_all(scan, show_hidden_system);
-        sort_entries_canonical(&mut entries);
+        // **shorthand を使わない**（`scan` は引数名と衝突する・#1178）。
+        let Scanned {
+            entries,
+            scan: scan_took,
+            sort: sort_took,
+        } = scan_and_sort_timed(scan, show_hidden_system, dirs);
+        let scanned = entries.len();
         let config_hash = compute_config_hash(scan, show_hidden_system);
-        save_cache_sorted(entries, config_hash)
+        let save_started = Instant::now();
+        let material = save_cache_sorted(entries, config_hash);
+        let save_took = save_started.elapsed();
+        let stats = RebuildStats {
+            scan: scan_took,
+            sort: sort_took,
+            save: save_took,
+            scanned,
+            dirs: dirs.load(Ordering::Relaxed),
+        };
+        (material, stats)
     })
+}
+
+/// [`rebuild_and_save`] の区間と数。**時計と数を運ぶだけで、どの分岐を通ったかの判定には使わない。**
+#[derive(Debug, Clone)]
+pub struct RebuildStats {
+    /// `scan_all` の区間。
+    pub scan: Duration,
+    /// `sort_entries_canonical` の区間。
+    pub sort: Duration,
+    /// `save_cache_sorted` の呼び出しの区間。**派生列の導出（`derive_columns`）を含む**——
+    /// cache-miss の分岐の `LoadOrScanStats::cache_save` と同じ区間である。**保存先が引けない
+    /// 分岐ではツリーを建てるだけの時間になる**が、その分岐は `rebuild_and_save` の外から
+    /// 観測できない（分岐の正本は `save_cache_sorted`）。`Option` にしないのはそのためである
+    /// ——`None` を作れる呼び出し点がここに無い。
+    pub save: Duration,
+    /// 登録したエントリの件数（PATH のマージ前）。
+    pub scanned: usize,
+    /// `read_dir` に成功したディレクトリの数（[`scan_all`]）。
+    pub dirs: usize,
 }
 
 /// キャッシュ読み込み結果。

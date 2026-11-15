@@ -9,6 +9,11 @@ use std::time::Duration;
 /// 起動 worker の応答待ち上限（§19.6 の 4 秒・WebView2 `run_launch_blocking` parity）。
 pub const LAUNCH_TIMEOUT: Duration = Duration::from_secs(4);
 
+/// 構築中の status 行の進捗（フォルダ数）を読み直す間隔（#1041）。**残余ではなく固定の間隔で、
+/// `ZERO` にしない**——worker が書く値のポーリングであり、`src-tauri/CLAUDE.md`「イベント駆動
+/// wake の不変条件」が例外として持つ形である。
+pub const SCAN_PROGRESS_REPAINT: Duration = Duration::from_millis(500);
+
 /// 起動失敗/結果不明の一時通知 duration（`launchNotice.ts` 既定 2400ms parity）。
 pub const NOTICE_LAUNCH: Duration = Duration::from_millis(2400);
 

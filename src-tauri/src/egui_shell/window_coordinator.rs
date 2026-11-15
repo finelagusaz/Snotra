@@ -166,6 +166,27 @@ pub(super) fn read_indexing(app: &tauri::AppHandle) -> FrameIndexing {
     )
 }
 
+/// 構築中の進捗（status 行の文言だけが使う・#1041）。**フレームで 1 回だけ読む**（`view.rs` の
+/// `scan_progress_is_read_exactly_once_per_frame`）。行の有無と高さには関わらないので、
+/// [`FrameIndexing`] には混ぜず、show 経路も読まない。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct FrameScanProgress {
+    /// 走査したフォルダの数。
+    pub(crate) dirs: usize,
+    /// 分母（前回の完走のフォルダ数）。無ければ `None`。
+    pub(crate) expected: Option<usize>,
+}
+
+/// 構築中の進捗を読む。正本は `AppState`（[`crate::AppState::scan_progress`]）。
+pub(super) fn read_scan_progress(app: &tauri::AppHandle) -> FrameScanProgress {
+    app.try_state::<crate::AppState>()
+        .map(|s| {
+            let (dirs, expected) = s.scan_progress();
+            FrameScanProgress { dirs, expected }
+        })
+        .unwrap_or_default()
+}
+
 /// updater toast の行が出るか（show 経路が高さを導くために読む）。正本は `UpdaterUiState`。
 /// **reset-on-show はこれを触らない**——ゆえに hide を跨いで残り、通常は show 後の最初の
 /// フレームでも同じ値になる（`launcher_controller` の reset 消費のコメントが明記している）。

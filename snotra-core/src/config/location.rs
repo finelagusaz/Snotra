@@ -4,7 +4,7 @@
 //! [`Config::isolated_profile_key`] が持つ。保存先と同じ env から導くので、ここに置く。
 //!
 //! **この crate で保存先を導く経路はここである**——`config.toml` / `history.bin` / `index.bin` /
-//! `icons.bin` / `window.bin` のすべてが [`Config::config_dir`] から派生する。env 上書きの契約
+//! `icons.bin` / `window.bin` / `scan-log.jsonl`（`src-tauri`）のすべてが [`Config::config_dir`] から派生する。env 上書きの契約
 //! （そのまま使う・空文字は未設定・展開も絶対化もしない）は [`Config::config_dir_from`] の
 //! rustdoc が正本である。**`dirs::config_dir()` を直接呼ぶ箇所はこの crate の他に無い**（#803）
 //! ——別経路で組むと `SNOTRA_CONFIG_DIR` が効かず「導出が 2 経路」の欠陥になる
@@ -41,7 +41,8 @@ impl Config {
     /// 既定は `dirs::config_dir()/Snotra`（Windows では `%APPDATA%\Snotra`）で、
     /// 環境変数 `SNOTRA_CONFIG_DIR` を設定するとその値が**そのまま**保存先になる。
     /// **この crate で保存先を導く経路はここ 1 つだけ**であり、`config.toml` /
-    /// `history.bin` / `index.bin` / `icons.bin` / `window.bin` のすべてがここから派生する。
+    /// `history.bin` / `index.bin` / `icons.bin` / `window.bin` / `scan-log.jsonl`（`src-tauri`）の
+    /// すべてがここから派生する。
     pub fn config_dir() -> Option<PathBuf> {
         Self::config_dir_from(std::env::var_os(ENV_CONFIG_DIR), dirs::config_dir())
     }

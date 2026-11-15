@@ -16,6 +16,7 @@ mod ime;
 mod indexing;
 mod monitor;
 mod platform;
+mod scan_log;
 mod startup;
 mod state;
 mod trace;

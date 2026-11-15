@@ -177,7 +177,7 @@ pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮ったウィ�
 
 #### 別プロファイルで起動するための env ハッチ（`SNOTRA_CONFIG_DIR`）
 
-保存先のディレクトリを差し替える（#803。契約の正本は `SPEC.md` §13 と `Config::config_dir` の rustdoc）。`config.toml` / `history.bin` / `index.bin` / `icons.bin` / `window.bin` のすべてがこの 1 点から導かれるので、検証が実ユーザーのデータに触れずに済む。
+保存先のディレクトリを差し替える（#803。契約の正本は `SPEC.md` §13 と `Config::config_dir` の rustdoc）。`config.toml` / `history.bin` / `index.bin` / `icons.bin` / `window.bin` / `scan-log.jsonl` のすべてがこの 1 点から導かれるので、検証が実ユーザーのデータに触れずに済む。
 
 ```powershell
 $env:SNOTRA_CONFIG_DIR = "C:/tmp/snotra-profile"; cargo run -p snotra
@@ -281,6 +281,16 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 `npm run bench:startup` は、release の本体を測る。先に `cargo build --release -p snotra` を打つこと。`cargo test` はテストターゲットしかビルドせず、古い本体が在ると、検査は成功したまま変更前の挙動を測る（#835 で 2 時間前のバイナリを測った）。出力は区間ごとの min / p50 / max で、最小値にまとめない。このハーネスが答える問いは、「起動が何 ms か」ではなく「分散がどの区間にあるか」だからである（詳細は PERFORMANCE.md）。
 
 `-ExePath` の既定を持つ起動ハーネスも、既定の本体を `test:powershell` と同じ形で導く（対象の正本は `scripts/lib/SnotraSmoke.Tests.ps1` の既定 ExePath の検査、debug か release かは各スクリプトの既定）。起点はスクリプトが置かれたリポジトリであって、cwd ではない。そのため、worktree から既定のまま回せば、worktree の本体を測る（#1179。以前は絶対パスが直書きされており、別の作業コピーを黙って測りながら緑を返していた）。測った本体の出し方は、`Resolve-SnotraCargoExecutable` の doc が正本である。別の本体を指すときだけ `-ExePath <path>` を渡す。明示した相対パスは、これらのハーネスでは（`test:powershell` と違い）cwd 相対のまま解釈される。
+
+索引の構築（`/s`・設定変更・初回構築）ごとの所要は、製品が `scan-log.jsonl`（`SPEC.md` §13.4）へ残す。テキストなので PowerShell で直接読む:
+
+```powershell
+Get-Content "$env:APPDATA/Snotra/scan-log.jsonl" -Tail 20   # start だけの行 = 完走しなかった構築
+```
+
+- `index.bin` の更新時刻で外から挟んだ標本と比べる区間は `scan_ms + sort_ms + save_ms` である（mtime は保存の完了を指す）。ユーザーの待ちには、さらに `build_ms` と `unattributed_ms` が加わる
+- `unattributed_ms` には、engine の錠と `INDEX_WRITE_LOCK` の取得待ち、索引の差し替えが入る
+- 所要はファイルシステムのキャッシュの状態で大きく揺れるので、1 行で判断しない。同じ `scan_id`（走査対象）の行どうしで、`scan_ms / dirs` を比べる
 
 ## git blame と整形コミット
 

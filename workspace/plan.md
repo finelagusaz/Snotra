@@ -203,35 +203,35 @@
 
 ### Phase 1 — core: 走査のフォルダ数と区間
 
-- [ ] `scan_all` / `scan_directory_with_extensions` に `dirs: &AtomicUsize` を足し、全呼び出し元（`icon.rs` を含む）を移す
-- [ ] `scan.rs` にフォルダ数を測るテストを足す
-- [ ] `report_scan_all_cost` の doc と `println!` の「sort / save の測り手」を `scan-log.jsonl` へ直す
-- [ ] `RebuildStats` を新設し、`rebuild_and_save` を `scan_and_sort_timed` 経由にして `(IndexMaterial, RebuildStats)` を返す。`drain_index` を新しい返り値へ合わせる
-- [ ] `scan_identity_hash` の doc を消費者に合わせて直す
+- [x] `scan_all` / `scan_directory_with_extensions` に `dirs: &AtomicUsize` を足し、全呼び出し元（`icon.rs` を含む）を移す
+- [x] `scan.rs` にフォルダ数を測るテストを足す
+- [x] `report_scan_all_cost` の doc と `println!` の「sort / save の測り手」を `scan-log.jsonl` へ直す
+- [x] `RebuildStats` を新設し、`rebuild_and_save` を `scan_and_sort_timed` 経由にして `(IndexMaterial, RebuildStats)` を返す。`drain_index` を新しい返り値へ合わせる
+- [x] `scan_identity_hash` の doc を消費者に合わせて直す
 - [ ] `memory_footprint.rs` の `report_scan_all_cost` を変更前後で走らせ、確保回数を記録する
 
 ### Phase 2 — src-tauri: 記録
 
-- [ ] `SPEC.md` §13.4 を新設する
-- [ ] `scan_log.rs` の純粋核・書き手・読み手・テストを書く
-- [ ] `AppState` に `scan_dirs` / `scan_expected` と 4 つの口を足し、`finish_index_build` で戻す。テスト（`finish_index_build` が戻す・`scan_progress` が 0 を `None` として返す）を足す
-- [ ] `startup::to_ms` を `pub(crate)` にする
-- [ ] `drain_index` に剪定・分母の読み・進捗の初期化・`start` / `end` 行・`build_ms` の計測を結線する
+- [x] `SPEC.md` §13.4 を新設する
+- [x] `scan_log.rs` の純粋核・書き手・読み手・テストを書く
+- [x] `AppState` に `scan_dirs` / `scan_expected` と 4 つの口を足し、`finish_index_build` で戻す。テスト（`finish_index_build` が戻す・`scan_progress` が 0 を `None` として返す）を足す
+- [x] `startup::to_ms` を `pub(crate)` にする
+- [x] `drain_index` に剪定・分母の読み・進捗の初期化・`start` / `end` 行・`build_ms` の計測を結線する
 - [ ] 実機で完走と未完走の記録を確かめる（「実機での確認」の Phase 2 の末尾の 2 項目）
 
 ### Phase 3 — src-tauri: 進捗表示
 
-- [ ] `SPEC.md` §3.3 にフォルダ数の表示を足す
-- [ ] `FrameScanProgress` / `read_scan_progress` / `LauncherController::scan_progress` を足す
-- [ ] `indexing_hint` をフォルダ数つきへ置き換え、テストを足す
-- [ ] `view.rs` で進捗を 1 回だけ読み、構築中案内の arm で再描画を予約する。`scan_progress_is_read_exactly_once_per_frame` を足す
+- [x] `SPEC.md` §3.3 にフォルダ数の表示を足す
+- [x] `FrameScanProgress` / `read_scan_progress` / `LauncherController::scan_progress` を足す
+- [x] `indexing_hint` をフォルダ数つきへ置き換え、テストを足す
+- [x] `view.rs` で進捗を 1 回だけ読み、構築中案内の arm で再描画を予約する。`scan_progress_is_read_exactly_once_per_frame` を足す
 
 ### Phase 4 — 文書と検証
 
-- [ ] `src-tauri/CLAUDE.md` のモジュール構成に `scan_log.rs` を足し、「イベント駆動 wake の不変条件」に進捗のポーリングの例外を足す
-- [ ] `docs/architecture.md`・`config/location.rs`・`docs/build-commands.md`（`SNOTRA_CONFIG_DIR` の節）の保存ファイルの列挙に `scan-log.jsonl` を足す
-- [ ] `docs/build-commands.md` に読み方を足す
-- [ ] `PERFORMANCE.md`「PATH マージ」の却下の根拠 1 の `rebuild_and_save` の返り値の記述を直す
+- [x] `src-tauri/CLAUDE.md` のモジュール構成に `scan_log.rs` を足し、「イベント駆動 wake の不変条件」に進捗のポーリングの例外を足す
+- [x] `docs/architecture.md`・`config/location.rs`・`docs/build-commands.md`（`SNOTRA_CONFIG_DIR` の節）の保存ファイルの列挙に `scan-log.jsonl` を足す
+- [x] `docs/build-commands.md` に読み方を足す
+- [x] `PERFORMANCE.md`「PATH マージ」の却下の根拠 1 の `rebuild_and_save` の返り値の記述を直す
 - [ ] 検証チェックリストのカテゴリ A・C・D・F を実行する
 - [ ] 実機で進捗表示と温度の違う標本を確かめ、Phase 2 の記録の確認とあわせて結果を PR 本文用に記録する
 

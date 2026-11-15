@@ -835,6 +835,7 @@ mod tests {
             Err(_) => snotra_core::indexer::scan_all(
                 &snotra_core::config::Config::default_scan_paths(),
                 false,
+                &std::sync::atomic::AtomicUsize::new(0),
             )
             .into_iter()
             .map(|e| e.target_path)

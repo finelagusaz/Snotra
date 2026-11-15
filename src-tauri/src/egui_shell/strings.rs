@@ -65,11 +65,36 @@ pub fn folder_hint(l: Language, dir: &str) -> String {
     }
 }
 
-pub fn indexing_hint(l: Language) -> &'static str {
-    match l {
+/// 構築中の status 行（`SPEC.md` §3.3）。走査が始まったらフォルダ数を添え、分母があれば
+/// 「/ 約 N」を添える（分母を超えたら件数だけ）。
+pub fn indexing_hint(l: Language, progress: crate::egui_shell::FrameScanProgress) -> String {
+    let head = match l {
         Language::Ja => "インデックス構築中...",
         Language::En => "Building index...",
+    };
+    if progress.dirs == 0 {
+        return head.to_string();
     }
+    let dirs = group_digits(progress.dirs);
+    match (progress.expected.filter(|m| progress.dirs <= *m), l) {
+        (Some(m), Language::Ja) => format!("{head} {dirs} / 約 {} フォルダ", group_digits(m)),
+        (Some(m), Language::En) => format!("{head} {dirs} / ~{} folders", group_digits(m)),
+        (None, Language::Ja) => format!("{head} {dirs} フォルダ"),
+        (None, Language::En) => format!("{head} {dirs} folders"),
+    }
+}
+
+/// 3 桁ごとに `,` で区切る（`1234567` → `1,234,567`）。
+fn group_digits(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 pub fn launching(l: Language) -> &'static str {
@@ -174,6 +199,44 @@ pub fn update_failed(l: Language, reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::egui_shell::FrameScanProgress;
+
+    fn progress(dirs: usize, expected: Option<usize>) -> FrameScanProgress {
+        FrameScanProgress { dirs, expected }
+    }
+
+    /// #1041: 3 分岐（走査前・分母あり〔境界 `dirs == m` を含む〕・分母なしか超過）と 3 桁区切り。
+    #[test]
+    fn indexing_hint_adds_the_folder_count_and_the_denominator() {
+        assert_eq!(
+            indexing_hint(Language::Ja, progress(0, Some(98_000))),
+            "インデックス構築中..."
+        );
+        assert_eq!(
+            indexing_hint(Language::En, progress(0, None)),
+            "Building index..."
+        );
+        assert_eq!(
+            indexing_hint(Language::Ja, progress(41_000, Some(98_000))),
+            "インデックス構築中... 41,000 / 約 98,000 フォルダ"
+        );
+        assert_eq!(
+            indexing_hint(Language::En, progress(98_000, Some(98_000))),
+            "Building index... 98,000 / ~98,000 folders"
+        );
+        assert_eq!(
+            indexing_hint(Language::Ja, progress(98_001, Some(98_000))),
+            "インデックス構築中... 98,001 フォルダ"
+        );
+        assert_eq!(
+            indexing_hint(Language::En, progress(1_234_567, None)),
+            "Building index... 1,234,567 folders"
+        );
+        assert_eq!(
+            indexing_hint(Language::Ja, progress(7, None)),
+            "インデックス構築中... 7 フォルダ"
+        );
+    }
 
     /// #654: 失敗理由の併記。**空理由でコロンだけが残らない**ことがこのテストの要点で、
     /// 区切りを `strings.rs` 側に置いた理由そのものである（呼び出し側で整形すると

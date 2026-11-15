@@ -558,6 +558,33 @@ function ConvertTo-SnotraSmokeItemIds {
 
 <#
 .SYNOPSIS
+`manual-smoke.ps1` の項目から、`-Only` で指定された項目だけを残す（#1429）。
+
+.DESCRIPTION
+有効な id は `Items` から導く（件数をリテラルで書くと項目の増減で嘘になる）。`Only` の解釈と throw の
+条件は `ConvertTo-SnotraSmokeItemIds` が持つ。項目は `Items` の順に返す。
+
+**絞り込みをスクリプトの外へ出してあるのは、測るためである。** スクリプト側で `-Only` の文字列を
+そのまま `-contains` に渡すと、`'2,5,10'` はどの id にも一致せず、項目 0 件のまま黙って進む
+（委譲レビューの変異注入で、スクリプト内の絞り込みを通る検査が無いと分かった）。
+#>
+function Select-SnotraSmokeItems {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable[]]$Items,
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$Only
+    )
+
+    $ids = ConvertTo-SnotraSmokeItemIds -Value $Only -ValidIds @($Items | ForEach-Object { $_.id })
+    return , @($Items | Where-Object { $ids -contains $_.id })
+}
+
+<#
+.SYNOPSIS
 プロセスを停止し、**終了を待つ**（#872 単一インスタンス衝突）。
 
 .DESCRIPTION
@@ -1142,6 +1169,7 @@ Export-ModuleMember -Function @(
     'Resolve-SnotraCargoTargetDirectory'
     'Get-SnotraRecordedExePath'
     'ConvertTo-SnotraSmokeItemIds'
+    'Select-SnotraSmokeItems'
     'Resolve-SnotraExistingProcess'
     'Stop-SnotraProcessAndWait'
     'Read-SnotraTraceEvents'

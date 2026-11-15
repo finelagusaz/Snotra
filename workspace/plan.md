@@ -71,12 +71,20 @@
 
 - [x] `SnotraSmoke.psm1` に `ConvertTo-SnotraSmokeItemIds` を足し、`Export-ModuleMember` に載せる
 - [x] `manual-smoke.ps1` の `-Only` を `[string[]]` にし、絞り込みを変換後の int 列で行う
-- [x] `manual-smoke.ps1` の param コメントと使い方コメントを直す
+- [x] `manual-smoke.ps1` の param コメントに理由を足す（使い方コメントは直した後も真なので変更不要と確かめた）
+
+### Phase 2b — 委譲レビュー対応（計画外・ラウンド 1 の M1）
+
+- [x] 絞り込みを純関数 `Select-SnotraSmokeItems`（`SnotraSmoke.psm1`）へ出し、`manual-smoke.ps1` から `$allIds` と生の `-contains` を消す。束縛の It を同関数経由にし、同関数の Describe を足す（スクリプト内の絞り込みで生の `$Only` を使う変異が緑で残ったため）
 
 ### Phase 3 — 検証
 
 - [ ] `npm run test:powershell` が全件緑
 - [x] `docs/build-commands.md` の `-Only` の例が真であることを読んで確かめる
+
+### ラウンド記録
+
+- R1 sha 23f3d3a9 / ツール: exit 2（未実行——linked worktree から打てず、本体の HEAD も sha でない）/ 指摘 Critical・High 0・Medium 1（M1）・Low 2 / 変異 10 本中 生存 2（(f) 生の `$Only` で絞り込み・(g) `ContainsKey` → `Count -gt 0`）。(g) の挙動差は `-Only @()` を明示したときだけで、`pwsh -File` の経路では作れない——受容する残余
 
 ## 未確定（実装前に潰す）
 

@@ -437,7 +437,7 @@ Describe 'npm script の入口は PositionalBinding = $false で位置引数を�
         @{ Argv = '1,3'; Expected = '1,3' }
     ) {
         $modulePath = (Join-Path $PSScriptRoot 'SnotraSmoke.psm1').Replace("'", "''")
-        $body = "Import-Module '$modulePath' -Force`n(ConvertTo-SnotraSmokeItemIds -Value `$Only -ValidIds (1..13)) -join ','"
+        $body = "Import-Module '$modulePath' -Force`n`$items = @(1..13 | ForEach-Object { @{ id = `$_ } })`n(Select-SnotraSmokeItems -Items `$items -Only `$Only | ForEach-Object { `$_.id }) -join ','"
         $copyPath = New-SnotraParamOnlyCopy -ScriptName 'manual-smoke.ps1' -Body $body
 
         $output = @(& pwsh -NoProfile -File $copyPath -Only $Argv 2>&1 | ForEach-Object { "$_" })
@@ -496,6 +496,29 @@ Describe 'ConvertTo-SnotraSmokeItemIds（#1429 -Only の番号列）' {
     It '有効な id に無い番号が 1 つでもあれば、一致しない番号と有効な id を示して throw する' {
         { ConvertTo-SnotraSmokeItemIds -Value @('2,99') -ValidIds (1..13) } |
             Should -Throw -ExpectedMessage '*99 に一致する項目がありません*1, 2, 3*13*'
+    }
+}
+
+Describe 'Select-SnotraSmokeItems（#1429 -Only による項目の絞り込み）' {
+    BeforeAll {
+        $items = @(1..13 | ForEach-Object { @{ id = $_; title = "item $_" } })
+    }
+
+    It '<Only> で指定した項目だけを、項目の順に返す' -ForEach @(
+        @{ Only = @('2,5,10'); Expected = '2,5,10' }
+        @{ Only = @('2 5 10'); Expected = '2,5,10' }
+        @{ Only = @('10,2'); Expected = '2,10' }
+        @{ Only = @('13'); Expected = '13' }
+    ) {
+        $selected = Select-SnotraSmokeItems -Items $items -Only $Only
+
+        ($selected | ForEach-Object { $_.id }) -join ',' | Should -Be $Expected
+        $selected[0].title | Should -Be "item $(($Expected -split ',')[0])" -Because '項目そのもの（id 以外のキーを含む）を返すこと'
+    }
+
+    It '有効な id は項目から導く（項目に無い番号は throw）' {
+        { Select-SnotraSmokeItems -Items $items[0..2] -Only @('4') } |
+            Should -Throw -ExpectedMessage '*4 に一致する項目がありません*1, 2, 3*'
     }
 }
 

@@ -180,13 +180,10 @@ softbuffer はカバレッジ AA を持たないため、2 フォント間の分
      trace = @("egui_launch_done") }
 )
 
-# 有効な id は `$items` から導く（件数をリテラルで書くと項目の増減で嘘になる）。
-$allIds = @($items | ForEach-Object { $_.id })
-
 # 一致しない番号・読めない値は、項目の読み上げとアプリの起動より前に throw する（#1429）。
+# 有効な id は `$items` から導く（`Select-SnotraSmokeItems` の doc）。
 if ($PSBoundParameters.ContainsKey('Only')) {
-  $onlyIds = ConvertTo-SnotraSmokeItemIds -Value $Only -ValidIds $allIds
-  $items = @($items | Where-Object { $onlyIds -contains $_.id })
+  $items = Select-SnotraSmokeItems -Items $items -Only $Only
 }
 
 # --- 出所の記録（何を検証したのか後から辿れるようにする） ---

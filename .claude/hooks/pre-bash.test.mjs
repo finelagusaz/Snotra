@@ -30,7 +30,7 @@ import {
   GIT_TIMEOUT_MS,
   VERIFY_GIT_TIMEOUT_MS,
 } from "./pre-bash.mjs";
-import { summaryPathFor } from "../../scripts/verify-tree.mjs";
+import { mainRoot, summaryPathFor } from "../../scripts/verify-tree.mjs";
 
 // CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。どちらでも
 // 落ちないよう、OS 依存のリテラルパスを書かず path.join / tmpdir から組み立てる。
@@ -410,7 +410,7 @@ describe("judgeSummary — 要約の中身の判定", () => {
 });
 
 describe("readVerifyState — 本物の git と要約ファイル", () => {
-  const read = (dir) => readVerifyState(dir, summaryPathFor);
+  const read = (dir) => readVerifyState(dir, { summaryPathFor, mainRoot });
 
   it("要約が HEAD を示せば ok", () => {
     expect(read(verifiedRepo())).toEqual({ ok: true });
@@ -507,6 +507,49 @@ describe("readVerifyState — 本物の git と要約ファイル", () => {
   });
   it("summaryPathFor が渡されなければ（hook がツールを読み込めなかった）止める", () => {
     expect(readVerifyState(verifiedRepo(), null).ok).toBe(false);
+  });
+  it("本体のルートを導けなければ、その理由を載せて止める", () => {
+    const r = readVerifyState(verifiedRepo(), {
+      summaryPathFor,
+      mainRoot: () => {
+        throw new Error("common dir boom");
+      },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("common dir boom");
+  });
+});
+
+describe("readVerifyState — linked worktree で動くセッション（#1436）", () => {
+  /**
+   * 本体は main に居て HEAD が違い、要約は本体の `.claude/worktrees/` にある。呼び出し元は本体の下の linked worktree で
+   * feat/x を持つ。要約を呼び出し元の下に探す実装と、HEAD を本体で解決する実装は、どちらかで落ちる
+   */
+  function sessionRepo() {
+    const repo = verifiedRepo();
+    git(repo, ["checkout", "-q", "main"]);
+    commit(repo, "main-only.txt", "m\n"); // 本体の HEAD を呼び出し元と食い違わせる（main → feat/x の diff に外のパスが出る）
+    const caller = path.join(repo, ".claude", "worktrees", "session-wt");
+    git(repo, ["worktree", "add", "-q", caller, "feat/x"]);
+    return { repo, caller };
+  }
+  const read = (dir) => readVerifyState(dir, { summaryPathFor, mainRoot });
+
+  it("本体に置かれた要約で、呼び出し元の HEAD を照合する", () => {
+    const { repo, caller } = sessionRepo();
+    expect(read(caller)).toEqual({ ok: true });
+    expect(git(repo, ["branch", "--show-current"])).toBe("main");
+  });
+  it("呼び出し元の作業ツリーの中のサブディレクトリからでも同じ", () => {
+    const { caller } = sessionRepo();
+    expect(read(path.join(caller, "src"))).toEqual({ ok: true });
+  });
+  it("呼び出し元で要約の sha のあとに外の変更を載せれば止める", () => {
+    const { caller } = sessionRepo();
+    commit(caller, "docs/late.md", "x\n");
+    const r = read(caller);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("docs/late.md");
   });
 });
 

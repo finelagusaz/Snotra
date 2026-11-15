@@ -229,7 +229,7 @@ export function run(argv, cwd, deps = realDeps) {
       return 1;
     }
   } catch (e) {
-    // EnvError 以外（verify-tree の linked worktree の拒否・JSON の破損など）も 2 にする。この try はマージより前だけを囲む
+    // EnvError 以外（verify-tree が本体のルートを導けない・JSON の破損など）も 2 にする。この try はマージより前だけを囲む
     deps.err(`merge-pr: マージしていない（#${opts.pr}）。${describe(e)}`);
     return 2;
   }

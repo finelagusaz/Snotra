@@ -9,6 +9,7 @@ import {
   parseGrepZ,
   surfaceOf,
   isListedInPlan,
+  namedLinesInPlan,
   runGrep,
   buildReport,
 } from "./prose-sweep.mjs";
@@ -96,6 +97,26 @@ describe("isListedInPlan", () => {
   });
 });
 
+describe("namedLinesInPlan", () => {
+  it("`path:N` と範囲（- と 〜）を行番号の集合にする", () => {
+    const plan = "`SPEC.md:767` と `SPEC.md:10-12`、SPEC.md:99〜100";
+    expect([...namedLinesInPlan("SPEC.md", plan)].sort((a, b) => a - b)).toEqual([10, 11, 12, 99, 100, 767]);
+  });
+  it("パス境界で照合する — サブディレクトリの CLAUDE.md:5 はルートの名指しにならない", () => {
+    expect(namedLinesInPlan("CLAUDE.md", "`snotra-core/CLAUDE.md:5`").size).toBe(0);
+    expect(namedLinesInPlan("a.md", "`a.mdx:3`").size).toBe(0);
+  });
+  it("短いパス（/ 境界での後方一致）も名指しに数える — 計画は行を短く書く", () => {
+    const f = "src-tauri/src/egui_shell/window_coordinator.rs";
+    expect([...namedLinesInPlan(f, "`window_coordinator.rs:530`")]).toEqual([530]);
+    expect([...namedLinesInPlan(f, "`egui_shell/window_coordinator.rs:7`")]).toEqual([7]);
+    expect(namedLinesInPlan(f, "`coordinator.rs:9`").size).toBe(0);
+  });
+  it("パスだけの掲載は行の名指しにならない", () => {
+    expect(namedLinesInPlan("SPEC.md", "`SPEC.md` を直す").size).toBe(0);
+  });
+});
+
 describe("runGrep", () => {
   const spawnReturning = (r) => () => r;
   it("status 1 は一致なし", () => {
@@ -146,6 +167,37 @@ describe("buildReport", () => {
     });
     expect(r.unlisted).toBe(1);
     expect(r.text).toMatch(/^### CLAUDE\.md.*★未掲載/m);
+  });
+  it("計画が同じファイルの別の行を名指していれば、名指していない行に ☆ が付く（#1336 の SPEC.md:627 型）", () => {
+    const r = buildReport({
+      terms: ["t"],
+      hitsByTerm: [[hit("SPEC.md", 627, "t"), hit("SPEC.md", 767, "t")]],
+      planText: "`SPEC.md:767` を直す",
+    });
+    expect(r.unnamed).toBe(1);
+    expect(r.text).toMatch(/^627: t ☆$/m);
+    expect(r.text).toMatch(/^767: t$/m);
+  });
+  it("行を名指していない掲載ファイルと、★未掲載のファイルには ☆ を付けない", () => {
+    const r = buildReport({
+      terms: ["t"],
+      hitsByTerm: [[hit("docs/x.md", 3, "t"), hit("AGENTS.md", 1, "t")]],
+      planText: "`docs/x.md` を書き直す。`docs/y.md:1`",
+    });
+    expect(r.unnamed).toBe(0);
+    expect(r.text).not.toMatch(/ ☆$/m);
+  });
+  it("凍結された歴史は印字するが、★ と ☆ の対象と件数から外す", () => {
+    const r = buildReport({
+      terms: ["t"],
+      hitsByTerm: [[hit("docs/adr/ADR-x.md", 2, "t"), hit("docs/superpowers/p.md", 4, "t"), hit("docs/adr/ADR-y.md", 9, "t")]],
+      planText: "`docs/adr/ADR-y.md:1`",
+    });
+    expect(r.unlisted).toBe(0);
+    expect(r.unnamed).toBe(0);
+    expect(r.text).toContain("ADR-x.md");
+    expect(r.text).toContain("9: t");
+    expect(r.text).not.toMatch(/ ★未掲載$| ☆$/m);
   });
   it("0 件の語も印字される", () => {
     const r = buildReport({ terms: ["a", "b"], hitsByTerm: [[hit("x.md", 1, "a")], []] });

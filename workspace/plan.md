@@ -68,7 +68,7 @@ fn drain_index_appends_start_before_the_scan() {
 | M2B | M1 の後ろへ移した呼び出しを `scan_log::begin_in  (` と綴り替え、`rebuild_and_save` より前の行末に `// scan_log::begin_in(` を書き足す | 新検査が赤。対照 M2B-NOSTRIP（テスト側の `//` 除去を外す）は緑 |
 | DUP | 前の呼び出しを残し、走査の後ろにもう 1 回足す | 「ちょうど 1 回」で赤 |
 | STR | 本体に文字列リテラルを 1 つ足す（例 `let _ = "x";`） | 前提の assert で赤 |
-| M3 | `fn drain_index(` を `fn drain_index_x(` に改名（呼び出し側も） | 新検査が helper の「見つからない」で赤 |
+| M3 | `fn drain_index(` を `fn drain_index_x(` に改名（呼び出し側も） | helper の assert で赤（実際に発火するのは「列 0 から始まっていない」——改名後はアンカーがテスト内の字下げされたリテラルに当たる） |
 | CRLF | 素の実装 + 検査、M1 + 検査を、それぞれ `indexing.rs` を CRLF 化して | 前者緑・後者赤 |
 
 赤の理由が assert かコンパイラかを毎回出力で確かめる。
@@ -84,12 +84,14 @@ fn drain_index_appends_start_before_the_scan() {
 
 ### Phase 2 — 発火の実測
 
-- [ ] M1・M2B・M3・DUP・STR を測り、結果（赤の理由を含む）を PR 本文用に記録する
+- [x] M1・M2B・M3・DUP・STR を測り、結果（赤の理由を含む）を PR 本文用に記録する — 委譲先 R2（7c2f954d）: M1 位置比較の assert／M2B「ちょうど 1 回」（対照 M2B-NOSTRIP 緑）／M3 helper の列 0 assert／DUP「ちょうど 1 回」／STR 前提の assert、すべて赤。BLOCK（受容残余）緑
+- [x] CRLF の素の実装と M1 を測る — CRLF-0 緑（340 passed）・CRLF-1 位置比較の assert で赤（R1・R2 とも）
+- [x] 作業ツリーに変異が残っていないことを確かめる — 委譲先が各回 `git hash-object` で照合（R1 e04ac8bb・R2 e3997c13 と一致）。主の作業ツリーには注入していない
 
 ラウンド記録:
-- R1 d1c1ea7c — verify:tree green（A/E/F・warnings 0）／指摘 High 2・Medium 1・Low 2・⚠️ 2／生き残った変異 0（M1・M2・M3・CRLF-1・DUP・M2B 赤、CRLF-0・M2B-NOSTRIP・BLOCK 緑）。対応: High-1（新テストの doc がアイコンキャッシュ検査の doc と `#[test]` の間に割り込んでいた）→ 位置を移した／High-2「真へ誤る」→ 言い換え／Medium-1 → M2 を M2B に差し替え／Low-1 → 文字列リテラル不在を assert にし、doc の受容残余から「文字列」を外した／Low-2（doc に `cfg` 無し）→ 例示なので据え置き
-- [ ] CRLF の素の実装と M1 を測る
-- [ ] 作業ツリーに変異が残っていないことを確かめる
+
+- R1 d1c1ea7c — verify:tree green（A/E/F・warnings 0）／指摘 High 2・Medium 1・Low 2・⚠️ 2／生き残った変異 0。対応: High-1（新テストの doc がアイコンキャッシュ検査の doc と `#[test]` の間に割り込んでいた）→ 位置を移した／High-2「真へ誤る」→ 言い換え／Medium-1 → M2 を M2B に差し替え／Low-1 → `"` 不在を assert にし、doc の受容残余から「文字列」を外した／Low-2（doc に `cfg` 無し）→ 例示なので据え置き
+- R2 7c2f954d — verify:tree green（A/E/F・10 本 exit 0・warnings 0）／R1 の指摘すべて解消・新規 Medium 1・Low 2・⚠️ 2（継続）／生き残った変異 0。対応: Medium-R2-1（コメント中の `"` で「文字列リテラル」と誤診断）→ assert メッセージとコメントを述語どおりに／Low-R2-1・2 → plan の M3 期待とリストの体裁を直した
 
 ### Phase 3 — 検証
 

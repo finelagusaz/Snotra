@@ -17,7 +17,8 @@
 
 - **`BUILD_BEFORE` は `docs/build-commands.md` の C 節の 1 行の写しである。** 字面が違うと重複を見分けられず 2 回建てるので、C のフェンスに同じ字面があることをテストが固定する。実バイナリを起動する npm script を `--also` で足す経路が増えたら、`BUILD_BEFORE` へも足す必要があり、それを見る検査は無い。
 - **委譲先が `align` の前に `run` を打つと、構造では止まらない。** 以前は linked worktree の拒否で止まっていた。委譲先はブランチ（`worktree-<名前>`）の上に居るので、そのブランチ名でツールの worktree を作る。委譲先へ渡す手順に `run` は無く、作られても `clean:worktrees` が `agent-` 接頭辞で拾う。
-- **PR 前ゲートの修正は、hook が読むファイルがこのブランチの版になるまで効かない。** settings の hook コマンドは `CLAUDE_PROJECT_DIR` の `pre-bash.mjs` を呼ぶ。harness の worktree のセッションでそれがどちらを指すかは、この変更では確かめていない。
+- **hook は本体の版で走る。** settings の hook コマンドは `CLAUDE_PROJECT_DIR` の `pre-bash.mjs` を呼び、harness の worktree のセッションでもそれは本体の版だった（#1436 の PR を作る `gh pr create` が、旧版の拒否文言で止まった）。PR 前ゲートの修正が効くのは、本体の作業ツリーがこの変更を持ってからである。hook を変える PR は、worktree のセッションからは自分の版のゲートで確かめられない。
+- **`merge:pr` は linked worktree から拒まれなくなったが、そこから打つ経路は実地で通していない。** `gh pr merge` に `--delete-branch` は渡さないので、呼び出し元が checkout しているブランチをツールが消す経路は無い。
 
 ---
 

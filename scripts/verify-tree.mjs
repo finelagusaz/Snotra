@@ -43,8 +43,8 @@ export const BUILD_BEFORE = { "test:powershell": "cargo build -p snotra" };
 
 class EnvError extends Error {}
 
-function git(cwd, args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+function git(cwd, args, { timeout } = {}) {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe", timeout }).trim();
 }
 
 const posix = (p) => p.split(path.sep).join("/").replaceAll("\\", "/");
@@ -107,10 +107,11 @@ function treePathFor(root, branch) {
 /**
  * 本体の作業ツリーのルート（`canon` 済み）。ツールの worktree・要約・ログの置き場はこの下にある。git の共通ディレクトリ
  * （本体の `.git`）の親から導くので、どの worktree から呼んでも同じ値になる（#1436）。PR 前ゲート
- * （`.claude/hooks/pre-bash.mjs`）とマージのツール（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う
+ * （`.claude/hooks/pre-bash.mjs`）とマージのツール（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う。
+ * `timeout` は hook が渡す（hook の上限を越えると非ブロッキング＝検出されなくなるため）
  */
-export function mainRoot(cwd) {
-  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+export function mainRoot(cwd, { timeout } = {}) {
+  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { timeout });
   if (path.basename(common) !== ".git") throw new EnvError(`git の共通ディレクトリから本体の作業ツリーを導けない: ${common}`);
   return canon(path.dirname(common));
 }

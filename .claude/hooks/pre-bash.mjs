@@ -433,8 +433,9 @@ export function readPlanState(cwd) {
 }
 
 /** 要約の照合で git を呼ぶときの上限。hook 全体の上限は 30 秒（`.claude/settings.json`）で、越えると
- *  非ブロッキングのエラー＝検出されなくなる。`readGitState`（2 本 × 10 秒）と合わせても収まるよう、2 本 × 4 秒にする */
-export const VERIFY_GIT_TIMEOUT_MS = 4_000;
+ *  非ブロッキングのエラー＝検出されなくなる。`readGitState`（2 本 × 10 秒）と合わせても収まるよう、3 本
+ *  （ブランチ・本体のルート・差分）× 3 秒にする（#1436 で本体のルートの 1 本が増えた） */
+export const VERIFY_GIT_TIMEOUT_MS = 3_000;
 
 const VERIFY_REMEDY =
   "変更をコミットしてから、その作業ツリーで `npm run verify:tree -- run --sha HEAD --categories <該当カテゴリ>` を回し、" +
@@ -485,7 +486,7 @@ export function readVerifyState(cwd, tool, importError = null) {
 
   let root;
   try {
-    root = tool.mainRoot(caller);
+    root = tool.mainRoot(caller, { timeout: VERIFY_GIT_TIMEOUT_MS });
   } catch (e) {
     return { ok: false, reason: `要約の置き場（本体の作業ツリー）を導けませんでした（${(e?.stderr ?? e?.message ?? String(e)).trim()}）` };
   }

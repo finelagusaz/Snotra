@@ -99,7 +99,7 @@ fn drain_index_appends_start_before_the_scan() {
 
 ### Phase 3 — 検証
 
-- [ ] カテゴリ A の該当コマンドを走らせる
+- [x] カテゴリ A の該当コマンドを走らせる — verify:tree（A/E/F）を R1〜R5 と ADR 追加後（c76f7960）で実行、すべて green・warnings 0
 
 ## 未確定（実装前に潰す）
 

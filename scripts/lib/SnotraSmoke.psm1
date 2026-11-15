@@ -565,8 +565,7 @@ function ConvertTo-SnotraSmokeItemIds {
 条件は `ConvertTo-SnotraSmokeItemIds` が持つ。項目は `Items` の順に返す。
 
 **絞り込みをスクリプトの外へ出してあるのは、測るためである。** スクリプト側で `-Only` の文字列を
-そのまま `-contains` に渡すと、`'2,5,10'` はどの id にも一致せず、項目 0 件のまま黙って進む
-（委譲レビューの変異注入で、スクリプト内の絞り込みを通る検査が無いと分かった）。
+そのまま `-contains` に渡すと、`'2,5,10'` はどの id にも一致せず、項目 0 件のまま黙って進む。
 #>
 function Select-SnotraSmokeItems {
     [CmdletBinding()]

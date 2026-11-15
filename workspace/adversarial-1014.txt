@@ -1,0 +1,51 @@
+adversarial-1014 反証結果（読みと grep のみ。cargo は走らせていない・作業ツリー無変更）
+
+[1] 「drain_index のテストは書けない」 -> 壊せた（部分的）
+ 根拠: tauri 2.12.5 の Cargo.toml:123 に `test = []` feature、lib.rs:1129 `#[cfg(any(test, feature = "test"))] pub mod test;`。
+   src-tauri/Cargo.toml は `tauri = { features = [] }`・dev-deps は egui_kittest のみ。ゆえに「features=["test"] の dev-dependency を足せば mock_app は使える」。research の「組めない」は偽。
+   ただし drain_index は `&AppHandle`（= AppHandle<Wry>・indexing.rs:14,145）で、mock_app は AppHandle<MockRuntime>。型が合わない:
+   `fn drain_index<R: Runtime>(&AppHandle<R>)` への一般化が要る（製品コードの変更）。state.rs:192-199 に test_state()（AppState::new）が既に在り、AppState の用意は難所でない。
+   poll 型はさらに SNOTRA_CONFIG_DIR（プロセス全体の env）を要し、並列テストと衝突する。これは本物の制約。
+ 偽にする手順: dev-dependency tauri features=["test"] を足し、drain_index を R: Runtime で一般化し、mock_app で呼ぶ。
+ 結論: 「ローカルでも組めない」は言い過ぎ。「製品コードの一般化＋dev-dep＋env 衝突対策が要り割に合わない」が正確。
+
+[2] 「既存スイートは M1 を素通し」 -> 壊せなかった
+ 根拠: grep begin_in / rebuild_and_save src-tauri/src: 呼ぶのは indexing.rs:164,178 だけ。scan_log のテストは begin_in 単体。scripts/・.github/ に scan-log 参照 0 件。snotra-core 側の言及は doc コメントのみ。
+ ⚠️ 弱点: 基準件数（変異前 339）は未測。M1 は begin_scan_progress(None) 差し替えを含む「コンパイルを通すための変異」で、自然な退行がこの形だけかは未確認（別形: begin_in を closure/if に包んで後ろで呼ぶ）。
+ 偽にする手順: M1 を当てて cargo test -p snotra を走らせ、落ちるテストを見つける。
+
+[3] 候補 A の偽緑経路 -> 壊せた（research は「限られる」と書くだけで列挙していない。以下は実在する）
+ 前提: 検査 =「// 始まりの行を除去 → 'scan_log::begin_in(' と 'indexer::rebuild_and_save(' が各 1 回 → 位置比較」。
+ 偽緑（順序が壊れているのに緑）:
+  a. 行末コメント: 実呼び出しを別名 import（`use scan_log::begin_in as b; b(..)`）にして走査の後ろへ置き、走査より前に `x(); // scan_log::begin_in(` を 1 つ残す。count=1・位置 OK で緑。
+  b. ブロックコメント `/* … */`（行頭が // でない行）や文字列リテラル（log メッセージ等）に綴りを置く。
+  c. クロージャ保持: 走査の前に `let f = || scan_log::begin_in(..);` を書き、走査の後で f() を呼ぶ（text 順は緑・実行順は逆）。research の Option::map 遅延と同じ穴。
+  d. 死んだコード: `if false { begin_in(..) }` / #[cfg(any())] で実質呼ばれない（順序ではなく不在だが start 行が無くなる）。
+  e. 呼び出しを helper へ移す（本体の綴り 0 回）は赤＝fail-safe。ただし正当な refactor でも赤（偽赤）。
+ 極性（ADR-predicate-polarity）: 「ちょうど 1 回」×位置比較は、母集団が広がる（次の関数まで）と rebuild_and_save が 2 回で赤、狭まる（途中切断）と一方が 0 回で赤、canary(begin_index_drain) が先頭側切断を拒む。広がり・狭まり双方で赤へ倒れる——この点は壊せなかった。残るのは母集団内の綴りの偽陽性（a〜d）で、母集団の幅の問題ではない。
+ ⚠️ 仕様の曖昧: 「// で始まる行を除く」が trim 前か後か。drain_index 内のコメントは 8 空白字下げ（indexing.rs:154-157,177,184-188）。trim しないと将来の字下げコメントが綴りを含んだとき偽赤、trim しても a・b は残る。research は決めていない。
+ 偽にする手順: a〜c を drain_index に当てて P を走らせ、緑のままか見る（未実行）。
+
+[4] 「環境差は改行コードだけ・flaky は構成上ありえない」 -> 半分壊せた
+ 壊せなかった: flaky そのもの（入力は include_str! 固定・I/O と時間なし）。top_level_fn_body は lines() 経由で CRLF 非依存、回帰テスト top_level_fn_body_is_line_ending_agnostic あり。
+ 壊せた: 「素の実装 + P を CRLF 化」が未測（research 自身が表に記載）。CI の windows-latest は autocrlf=true が既定で CRLF checkout になりうる（.gitattributes は .githooks のみ eol=lf 指定。helper doc は #1077 で CI が実際に落ちたと書く）。CI が実際に走る形は「CRLF で緑」で、R3 が測ったのは「CRLF で赤（変異あり）」だけ。素の実装が CRLF で偽赤になる可能性は未排除。測れば決着する。
+ 偽にする手順: indexing.rs を CRLF へ変換し、P 入りで cargo test -p snotra を走らせる。
+ 補足: 受け入れ (2)「CI 連続実行」の趣旨は CI 実走の確認なので、決定論だから自明、で代替できるかは Q2 の判断事項。
+
+[5] 「CI は main への push と main 向け PR でしか走らない」 -> 壊せなかった
+ 根拠: ci.yml:3-9 on: push(main)/pull_request(main) のみ・workflow_dispatch なし。cargo test -p snotra は windows-latest。
+ 補足: smoke.yml には workflow_dispatch があるが release build + smoke スクリプトで cargo test ではなく、この検査の CI 実走には使えない。main 向け PR は draft でも ci.yml が走る。
+ 偽にする手順: ci.yml の on: に workflow_dispatch / branches を足す。
+
+[6] 「B は drain_index の迂回経路を捕まえない」 -> 壊せなかった
+ 構成上正しい（切り出した関数だけを検査し、drain_index が別に begin_in を直接呼ぶ経路は見えない）。付記: B は AppHandle 抜きで書け、[1] の一般化より小さい。
+
+[測定環境の疑い]
+ - Config::config_dir()（snotra-core/src/config/location.rs:46-48）: SNOTRA_CONFIG_DIR が空でなければそのまま、なければ dirs::config_dir()/Snotra。None は env 無しかつ dirs 解決不能のときだけ。候補 A は文字列を読むだけで config_dir に依存しない（測る分岐と変更が触る分岐は一致）。
+   ただし drain_index の `log` は config_dir()==None のとき begin_in を呼ばない: 実走する poll 型を作るなら SNOTRA_CONFIG_DIR 設定が必須で、テストは一時 dir を指す必要がある。env 未設定で走らせると実ユーザーの %APPDATA%\Snotra\scan-log.jsonl を汚す危険がある。
+ - 実機 %APPDATA%\Snotra\scan-log.jsonl（9 行・読むだけ）: start 5・end 4。start のみの 1 行は sid 3908-…-3（直後に別 pid 17824 が start）。「start だけ=完走しなかった構築」「start が走査前」と矛盾しない（例: start ts 1794740180119 → end ts 1794740208407、scan_ms=28144）。
+   ⚠️ 実機の行は M1 前の製品が書いたもので、M1 後の挙動の観測ではない（傍証のみ）。
+
+[未解決の疑問への所見]
+ Q4: 壊せなかった（[3] のとおり「ちょうど 1 回」と canary が両方向を塞ぐ）。
+ Q5: 偽緑を生む経路は在る（[3]-a,b）。除去は行頭 // だけでは足りない。

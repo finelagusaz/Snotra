@@ -92,6 +92,7 @@ fn drain_index_appends_start_before_the_scan() {
 
 - R1 d1c1ea7c — verify:tree green（A/E/F・warnings 0）／指摘 High 2・Medium 1・Low 2・⚠️ 2／生き残った変異 0。対応: High-1（新テストの doc がアイコンキャッシュ検査の doc と `#[test]` の間に割り込んでいた）→ 位置を移した／High-2「真へ誤る」→ 言い換え／Medium-1 → M2 を M2B に差し替え／Low-1 → `"` 不在を assert にし、doc の受容残余から「文字列」を外した／Low-2（doc に `cfg` 無し）→ 例示なので据え置き
 - R2 7c2f954d — verify:tree green（A/E/F・10 本 exit 0・warnings 0）／R1 の指摘すべて解消・新規 Medium 1・Low 2・⚠️ 2（継続）／生き残った変異 0。対応: Medium-R2-1（コメント中の `"` で「文字列リテラル」と誤診断）→ assert メッセージとコメントを述語どおりに／Low-R2-1・2 → plan の M3 期待とリストの体裁を直した
+- R3 4f7385db — verify:tree green（A/E/F・10 本 exit 0・warnings 0）／R2 の指摘解消・新規 Medium 1（R3 で足したコメントの理由「除いた後ではリテラルが切れて見えなくなる」が偽——開きの `"` は `//` より前に残る。POSTSTRIP の対照で実測）・Low 1（括弧の例示が網羅でない→据え置き）・⚠️ 3／生き残った変異 0。対応: 偽の理由を消し、事実（除く前の本体で探す＝コメント中の引用符でも赤）だけを残した
 
 ### Phase 3 — 検証
 

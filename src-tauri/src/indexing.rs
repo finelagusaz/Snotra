@@ -342,6 +342,56 @@ mod tests {
         top_level_fn_body("pub fn target() {\n}\n", "pub fn target(", "marker(");
     }
 
+    /// 回帰テスト: `drain_index` は走査（`rebuild_and_save`）の**前**に `start` 行を書く
+    /// （`scan_log` の `//!`「2 行 1 組」が正本）。`start` を走査の後ろへ移すと、完走しなかった
+    /// 構築が記録に残らなくなる（#1014。振る舞いで測らない理由は
+    /// `ADR-scan-log-start-order-by-source-text`）。
+    ///
+    /// **縛るのはテキストの順序であって実行順ではない。** 各行の `//` 以降は落とすので、
+    /// コメントに残った綴りでは通らない。偶発的な並べ替え・本体の外への移設（綴りが 0 回になる）・
+    /// 重複は赤になる。通るのは、検査を欺く書き換えである。たとえば、ブロックコメントに綴りを
+    /// 残して実際の呼び出しを別名で後ろへ置く、走査の前に作ったクロージャを後で呼ぶ、到達しない
+    /// 分岐に置く、がそれに当たる。
+    ///
+    /// **綴りが「ちょうど 1 回」であることも assert する。** 位置の比較だけだと、母集団の先頭側に
+    /// 別の出現が紛れたとき、順序が壊れていても通る（`ADR-source-text-probe-predicate-polarity`）。
+    /// 母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ。
+    #[test]
+    fn drain_index_appends_start_before_the_scan() {
+        let body = top_level_fn_body(
+            include_str!("indexing.rs"),
+            "fn drain_index(",
+            "begin_index_drain(",
+        );
+        // 文字列リテラルの中の `//` を下の `//` 除去が誤って切らないよう、`"` そのものを禁じる。
+        // コメント中の引用符でも赤になる（誤検知は受け入れ、見逃しを避ける）。
+        assert!(
+            !body.contains('"'),
+            "drain_index の本体に `\"` が入った（文字列リテラル、またはコメント中の引用符）——\
+             下の `//` 除去の前提が崩れている"
+        );
+        let code = body
+            .lines()
+            .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let start = "scan_log::begin_in(";
+        let scan = "indexer::rebuild_and_save(";
+        for spelling in [start, scan] {
+            assert_eq!(
+                code.matches(spelling).count(),
+                1,
+                "drain_index のコード（コメントを除く）に {spelling} がちょうど 1 回現れない——\
+                 位置の比較が意味を持たない"
+            );
+        }
+        assert!(
+            code.find(start) < code.find(scan),
+            "drain_index が走査（{scan}）の後で start 行（{start}）を書いている——完走しなかった\
+             構築が記録に残らない（scan_log の //!「2 行 1 組」）"
+        );
+    }
+
     /// **アイコンキャッシュの無効化の担い手は現在ここ 1 つだけである。** 背景再スキャンの
     /// spawn と結果適用（`RescanOutcome::Changed` を契機とした無効化）は #1001 で
     /// 撤去済み。#996 が再構築時の索引照合剪定を撤去して以来、**メモリ内

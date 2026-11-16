@@ -607,8 +607,7 @@ impl SearchState {
     /// 送信失敗が行を同期で差し替えた（＝ [`SearchState::put_rows`] が in-flight を失効させた）後に
     /// 打鍵が armed だけ残した状態で生じる。**これらを名指すのは、「打鍵したフレームの一瞬」と
     /// 誤読されるのを防ぐためである**——どちらも複数フレームにわたって続き、解けるのは disarm
-    /// するか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval。trailing を
-    /// 撃つかどうかに依らない）、
+    /// するか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval）、
     /// `cancel` か行の差し替えが起きたときである。**打鍵が続く限り armed は立ったままなので、
     /// 持続はバーストの長さで決まる。**
     ///

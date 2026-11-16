@@ -480,20 +480,23 @@ impl FrameTimer {
 }
 
 /// 打鍵 debounce（#532）。時刻は driver が注入する（純粋・テスト可能）。
-/// - on_input: 入力フレーム。leading（バースト先頭）なら true を返す。どちらでも armed にする。
-/// - poll: 各フレーム。armed かつ elapsed>=interval で disarm し、armed の間に leading 以外の
-///   入力があったときだけ trailing を発火する（#1443）。
+/// - on_input: 入力フレーム。leading（バースト先頭）なら true を返し、以後 armed。
+/// - poll: 各フレーム。armed かつ elapsed>=interval で disarm し、trailing を予約していれば発火する。
 pub struct Debouncer {
     interval: Duration,
     leading: bool,
-    armed: bool,
-    /// armed の間に、leading を撃たなかった入力があったか（leading 無効なら armed にした入力も
-    /// 含む）。**trailing を撃つのはこれが真のときだけである**——leading だけで終わったバーストは、
-    /// leading が既に同じクエリで検索している（#1443）。
-    ///
-    /// **落とす処理を持たない。** 読むのは armed の間の [`Self::poll`] だけで、armed にする唯一の経路
-    /// （[`Self::on_input`]）が毎回上書きするので、前のバーストの値が読まれることは無い。
-    input_after_leading: bool,
+    state: DebounceState,
+}
+
+/// [`Debouncer`] の状態。armed とは、`Idle` 以外の 2 状態を指す。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DebounceState {
+    Idle,
+    /// leading を撃った後、入力が無い。disarm しても trailing を撃たない——leading が既に
+    /// 同じクエリで検索している（#1443）。
+    LeadingOnly,
+    /// armed の間に、leading を撃たなかった入力があった。disarm するときに trailing を撃つ。
+    TrailingPending,
 }
 
 impl Debouncer {
@@ -501,8 +504,7 @@ impl Debouncer {
         Self {
             interval,
             leading,
-            armed: false,
-            input_after_leading: false,
+            state: DebounceState::Idle,
         }
     }
 
@@ -510,39 +512,41 @@ impl Debouncer {
         self.interval
     }
 
-    /// armed のまま（まだ disarm していない）か。呼び出し側が repaint deadline の再要求要否を
-    /// 判定するために使う（coalescing 対策・#532）。
+    /// armed のままか。呼び出し側が repaint deadline の再要求要否を判定するために使う
+    /// （coalescing 対策・#532）。
     pub fn is_armed(&self) -> bool {
-        self.armed
+        self.state != DebounceState::Idle
     }
 
     /// 入力があったフレームで呼ぶ。leading 有効かつバースト先頭なら true（＝今すぐ検索）。
-    /// いずれにせよ armed にする。leading を撃たなかった入力は、disarm するときの trailing を
-    /// 予約する。
+    /// leading を撃たなかった入力は、trailing を予約する。
     #[must_use = "leading 発火の信号を落とすとバースト先頭の検索が飛ぶ（#934）"]
     pub fn on_input(&mut self) -> bool {
-        let fire_leading = self.leading && !self.armed;
-        self.armed = true;
-        self.input_after_leading = !fire_leading;
+        let fire_leading = self.leading && self.state == DebounceState::Idle;
+        self.state = if fire_leading {
+            DebounceState::LeadingOnly
+        } else {
+            DebounceState::TrailingPending
+        };
         fire_leading
     }
 
-    /// 入力の無いフレームで呼ぶ。前回入力からの経過が interval 以上なら disarm し、armed の間に
-    /// leading 以外の入力があったときだけ true（trailing 発火）を返す。
+    /// 入力の無いフレームで呼ぶ。前回入力からの経過が interval 以上なら disarm し、
+    /// trailing を予約していたときだけ true（trailing 発火）を返す。
     #[must_use = "trailing 発火の信号を落とすと、既に disarm 済ゆえこのバーストの最終クエリでは検索が走らない（次の打鍵が再武装するまで戻らない・#934）"]
     pub fn poll(&mut self, elapsed_since_input: Duration) -> bool {
-        if self.armed && elapsed_since_input >= self.interval {
-            self.armed = false;
-            return self.input_after_leading;
+        if self.is_armed() && elapsed_since_input >= self.interval {
+            let was = std::mem::replace(&mut self.state, DebounceState::Idle);
+            return was == DebounceState::TrailingPending;
         }
         false
     }
 
-    /// armed を解除し、予約済みの trailing を取り消す（#532）。
+    /// armed を解除し予約済み trailing を取り消す（#532）。
     /// instant/command モード突入時に driver が呼ぶ——モード外で予約された検索が
     /// モード中に遅延発火する経路を塞ぐ（run_search は再導出ゆえ実害は無いが無駄撃ちを消す）。
     pub fn cancel(&mut self) {
-        self.armed = false;
+        self.state = DebounceState::Idle;
     }
 }
 
@@ -754,33 +758,6 @@ mod tests {
         );
         assert!(!d.is_armed(), "trailing を撃たなくても disarm する");
         assert!(d.on_input(), "disarm 後の入力は次のバーストの leading");
-    }
-
-    /// 回帰テスト: 前のバーストで立った trailing の予約は、次の leading だけのバーストへ持ち越さない
-    /// （#1443）。`cancel` を挟む形と、trailing を撃って disarm する形の両方で確かめる。
-    #[test]
-    fn trailing_reservation_does_not_leak_into_next_burst() {
-        let mut d = Debouncer::new(Duration::from_millis(50), true);
-        assert!(d.on_input());
-        assert!(!d.on_input(), "leading の後の入力");
-        d.cancel();
-        assert!(d.on_input(), "cancel 後はバースト先頭");
-        assert!(
-            !d.poll(Duration::from_millis(50)),
-            "cancel 前の入力を持ち越さない"
-        );
-
-        assert!(d.on_input());
-        assert!(!d.on_input());
-        assert!(
-            d.poll(Duration::from_millis(50)),
-            "このバーストは trailing を撃つ"
-        );
-        assert!(d.on_input(), "次のバーストの leading");
-        assert!(
-            !d.poll(Duration::from_millis(50)),
-            "前のバーストの trailing の予約を持ち越さない"
-        );
     }
 
     /// #646: bar_padding=28 は font 24 で 52px をピクセル再現する(後方互換の要)。

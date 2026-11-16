@@ -293,12 +293,11 @@ impl LauncherController {
 
     /// 段 27: trailing debounce の poll と再 arm。
     pub(in crate::egui_shell) fn poll_search_debounce(&mut self, ctx: &egui::Context) {
-        // trailing debounce: 連打が収まって interval 経過したら最終クエリで検索し直す。leading だけで
-        // 終わったバーストでは撃たない——leading が既に同じクエリで検索している（#1443）。
+        // trailing debounce: 連打が収まって interval 経過したら最終クエリで検索し直す（撃つ条件は `poll` の doc）。
         if self.search_debounce.poll(self.last_input_at.elapsed()) {
             self.run_search();
         }
-        // armed のまま = まだ disarm していない。scheduler の coalescing で +interval の wake が
+        // armed の間は、scheduler の coalescing で +interval の wake が
         // 消されても deadline で確実に起きるよう毎フレーム残り時間を再要求する。
         if self.search_debounce.is_armed() {
             let remaining = self

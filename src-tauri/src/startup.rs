@@ -31,7 +31,7 @@
 //! 生成失敗のように、その arm 自体が実行されない経路が実在する。そこで終端を出さないと、
 //! ハーネスには「タイムアウト」としか見えず、**診断したい相手が読めなくなる**。
 //!
-//! 呼び出し点は `main.rs`（`setup_platform_thread` / `egui_shell::create` の早期 return /
+//! 呼び出し点は `main.rs`（`finish_platform_thread` / `egui_shell::create` の早期 return /
 //! `setup_hotkey_listener`）と `platform/mod.rs`（arm）に在り、**列挙は [`StartupFailure`]
 //! の variant が持つ**（数をここへ書くと、経路を足したときにこの行だけが古くなる）。
 //!

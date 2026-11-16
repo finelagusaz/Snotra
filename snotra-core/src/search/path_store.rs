@@ -141,7 +141,7 @@ pub(super) struct PathStore {
 
 /// [`PathStore::generation`] の採番元。1 から振り、0 は [`PathCursor::new`] の「どの索引も
 /// 見ていない」の印に取っておく（正しさは 0 を振っても変わらない——初期のカーソルは
-/// チェーンが空なので、世代が一致しても外れの経路で作り直す）。
+/// チェーンが空なので、世代が一致しても親が当たらず、根から作り直す）。
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 impl PathStore {

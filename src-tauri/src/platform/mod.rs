@@ -342,7 +342,8 @@ fn process_commands(
                 // 実機で RegisterHotKey を失敗させるには他アプリが同じキーを握っている必要が
                 // あり再現性が無いため、**登録は成功させたまま失敗イベントだけを流す**。
                 // ゆえにハッチ使用中もホットキーは動く（#652 の受け口検証用）。
-                let registered = hotkey::register(current_hotkey)
+                let registration = hotkey::register(current_hotkey);
+                let registered = registration.ok
                     && !crate::trace::env_flag("SNOTRA_FAKE_INITIAL_HOTKEY_FAILURE");
                 if !registered {
                     let hotkey_str = format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
@@ -356,11 +357,16 @@ fn process_commands(
                 // 起動の終端（成功側）。**ここが「押せばウィンドウが出る状態」の成立点である**
                 // ——listener は送信より前に登録され、ウィンドウは `egui_shell::create` で既に在る
                 // （根拠は `crate::startup` の `//!`）。失敗側の終端は `main.rs` にもある。
-                crate::startup::finish(if registered {
-                    Ok(())
-                } else {
-                    Err(crate::startup::StartupFailure::HotkeyRegistration)
-                });
+                // 時刻は `RegisterHotKey` が戻った直後の値を渡す——`hotkey:registered` の trace と
+                // 失敗の emit を区間へ入れない（#1454・`hotkey::Registration` の doc）。
+                crate::startup::finish_at(
+                    if registered {
+                        Ok(())
+                    } else {
+                        Err(crate::startup::StartupFailure::HotkeyRegistration)
+                    },
+                    registration.at,
+                );
             }
             PlatformCommand::ShowConfigRecoveryBalloon => {
                 // トレイ未生成（show_tray_icon=false 等）なら no-op。

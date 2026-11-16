@@ -191,7 +191,7 @@ impl LauncherController {
                     .enter_folder(dir.clone(), self.search_debounce.is_armed())
             };
             // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
-            // （SolidJS enterFolderExpansion と同一サイト・#532）。記録は列挙のスレッドで行う。
+            // （SolidJS enterFolderExpansion と同一サイト・#532・`Expansion::Record`）。
             self.folder_cache = None;
             self.folder_error = None;
             self.spawn_folder_load(tok, dir, Expansion::Record, ctx.clone());
@@ -223,7 +223,7 @@ impl LauncherController {
                         let tok = self
                             .state
                             .enter_folder(parent.clone(), self.search_debounce.is_armed());
-                        // ← from Results は enterFolderExpansion(parent) 相当・記録する。
+                        // ← from Results は enterFolderExpansion(parent) 相当・記録する（`Expansion::Record`）。
                         self.folder_cache = None;
                         self.folder_error = None;
                         self.spawn_folder_load(tok, parent, Expansion::Record, ctx.clone());

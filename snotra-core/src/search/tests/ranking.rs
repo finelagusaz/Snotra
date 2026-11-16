@@ -153,17 +153,19 @@ fn bitmask_filter_skips_non_matching_entries() {
 
 #[test]
 fn bitmask_filter_does_not_skip_accented_entries() {
-    // 照合の入口がアクセントを畳む（é→e）ので、Fuzzy はアクセント付きの名前にも当たる。
-    // ビットマスクフィルタがアクセント付きエントリを除外してはならない
-    let entries = vec![AppEntry {
-        name: "Café".to_string(),
-        target_path: "C:\\fake\\Café.lnk".to_string(),
-        is_folder: false,
-    }];
-    let mut engine = SearchEngine::new(entries);
-    let results = engine.search("cafe", 8, &empty_history(), SearchMode::Fuzzy);
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].name, "Café");
+    // 照合の入口がアクセントを畳む（é→e）ので、どのモードもアクセント付きの名前に当たる。
+    // ビットマスクフィルタ（全モードで通る・#1445）がアクセント付きエントリを除外してはならない
+    for mode in [SearchMode::Fuzzy, SearchMode::Substring, SearchMode::Prefix] {
+        let entries = vec![AppEntry {
+            name: "Café".to_string(),
+            target_path: "C:\\fake\\Café.lnk".to_string(),
+            is_folder: false,
+        }];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("cafe", 8, &empty_history(), mode);
+        assert_eq!(results.len(), 1, "{mode:?}");
+        assert_eq!(results[0].name, "Café");
+    }
 }
 
 // --- TopK 単体テスト（#602: top-k 更新規則の一元化） ---

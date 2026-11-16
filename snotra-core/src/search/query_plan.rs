@@ -1,12 +1,12 @@
 //! 検索クエリ計画（`QueryPlan` と `prepare_query_plan`）を search.rs から分離（#599）。
 //!
-//! 1 回の検索呼び出しについて、正規化クエリ・dot/path 判定・Fuzzy bitmask・migemo かな
+//! 1 回の検索呼び出しについて、正規化クエリ・dot/path 判定・bitmask・migemo かな
 //! クエリ・UTF-32 needle・パス照合クエリ・履歴キーを**純粋に**導出する（エントリ走査も
 //! 履歴更新も行わない自由関数）。正本は `crate::query` の正規化群であり、ここは検索固有の
 //! 組み立て責務のみを持つ。incremental 判定と前回状態の read/write は親 `search.rs` の
 //! `IncrementalCache`（`can_reuse` / `update`・#601）。
 //!
-//! **`has_path_sep` のクエリは Fuzzy ビットマスク pre-filter をスキップする**——パスマッチは
+//! **`has_path_sep` のクエリはビットマスク pre-filter をスキップする**——パスマッチは
 //! 正規化キーへの Substring であり、名前のビットマスクでは候補を絞れない。ゆえに全エントリの
 //! 走査が毎打鍵で走る唯一の経路になる（費用の計測コードは `tests/path_query_cost.rs`）。
 
@@ -43,7 +43,7 @@ pub(super) struct QueryPlan<'a> {
     /// **`¥` 入りクエリで name マッチだけが静かに消える**（#1057）。
     /// パスマッチの発火（`path_query`）は従来どおり `has_path_sep` が決める。
     pub(super) norm_query_has_path_sep: bool,
-    /// Fuzzy モードのビットマスク pre-filter 用クエリマスク（非 Fuzzy では 0）。
+    /// ビットマスク pre-filter 用のクエリマスク（全モードで計算する）。
     pub(super) query_mask: u64,
     /// migemo 用ひらがな変換クエリ（ASCII 残留や条件未達のとき `None`）。
     pub(super) kana_query: Option<String>,
@@ -84,12 +84,7 @@ pub(super) fn prepare_query_plan<'a>(
     }
 
     let has_dot = norm_query.contains('.');
-    // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
-    let query_mask = if mode == SearchMode::Fuzzy {
-        char_bitmask(&norm_query)
-    } else {
-        0
-    };
+    let query_mask = char_bitmask(&norm_query);
 
     // Migemo: ローマ字 ASCII クエリをひらがなに変換した kana_query を生成する。
     // kana に ASCII アルファベットが残留する場合（"dok" → "どk" 等）は None にする。

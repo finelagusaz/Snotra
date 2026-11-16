@@ -80,37 +80,38 @@ fn kana_search_matches_entry_with_fullwidth_space() {
 }
 
 #[test]
-fn fuzzy_kana_match_skips_latin_bitmask_prefilter() {
+fn kana_match_skips_latin_bitmask_prefilter_in_every_mode() {
     // "chatto" と "tyatto" は kana に正規化するとどちらも「ちゃっと」になる。
-    // 直接のラテン文字集合は異なるため、Fuzzy の bitmask pre-filter は
-    // kana_query がある経路を早期棄却してはならない。
-    let mut engine = SearchEngine::new(make_entries(&["tyatto"]));
-    let plan = prepare_query_plan("chatto", SearchMode::Fuzzy, &migemo_config())
-        .expect("非空クエリは QueryPlan を生成する");
-    let kana_query_mask = plan
-        .kana_query_mask
-        .expect("完全に kana へ変換できるクエリは kana mask を持つ");
+    // 直接のラテン文字集合は異なるため、bitmask pre-filter（全モードで通る・#1445）は
+    // kana_query がある経路を早期棄却してはならない（#523 の偽陰性と同じ形）。
+    for mode in [SearchMode::Fuzzy, SearchMode::Substring, SearchMode::Prefix] {
+        let mut engine = SearchEngine::new(make_entries(&["tyatto"]));
+        let plan = prepare_query_plan("chatto", mode, &migemo_config())
+            .expect("非空クエリは QueryPlan を生成する");
+        let kana_query_mask = plan
+            .kana_query_mask
+            .expect("完全に kana へ変換できるクエリは kana mask を持つ");
 
-    assert_ne!(
-        plan.query_mask & engine.char_masks[0],
-        plan.query_mask,
-        "tyatto はラテン文字 mask では chatto を満たさない"
-    );
-    assert_eq!(
-        kana_query_mask & engine.kana_char_masks[0],
-        kana_query_mask,
-        "kana mask は chatto と tyatto の共通 kana を通す"
-    );
-    let results = engine.search_with_options(
-        "chatto",
-        8,
-        &empty_history(),
-        SearchMode::Fuzzy,
-        migemo_config(),
-    );
+        assert_ne!(
+            plan.query_mask & engine.char_masks[0],
+            plan.query_mask,
+            "{mode:?}: tyatto はラテン文字 mask では chatto を満たさない"
+        );
+        assert_eq!(
+            kana_query_mask & engine.kana_char_masks[0],
+            kana_query_mask,
+            "{mode:?}: kana mask は chatto と tyatto の共通 kana を通す"
+        );
+        let results =
+            engine.search_with_options("chatto", 8, &empty_history(), mode, migemo_config());
 
-    assert_eq!(results.len(), 1, "kana 経由で tyatto がヒットするはず");
-    assert_eq!(results[0].name, "tyatto");
+        assert_eq!(
+            results.len(),
+            1,
+            "{mode:?}: kana 経由で tyatto がヒットするはず"
+        );
+        assert_eq!(results[0].name, "tyatto");
+    }
 }
 
 #[test]

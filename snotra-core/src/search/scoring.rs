@@ -409,15 +409,18 @@ impl SearchEngine {
         history: &HistoryStore,
         options: SearchOptions,
     ) -> Option<ScoredEntry<'a>> {
-        // Bitmask pre-filter: クエリ文字を含まないエントリを棄却する（Fuzzy のみ。
-        // Prefix/Substring は安価な str 操作で足り、bitmask のオーバーヘッドが見合わない）。
+        // Bitmask pre-filter: クエリ文字を含まないエントリを棄却する（全モード）。
+        // Prefix/Substring でも厳密である——接頭辞・部分文字列として一致するなら、クエリの
+        // 文字集合は名前の文字集合に含まれる（両辺が同じ正規化を通る）。Fuzzy 限定だった頃の
+        // 「str 操作が十分安い」は測られておらず、外すと Substring の全件走査が縮んだ（額は
+        // `PERFORMANCE.md`「採用: ビットマスクの事前フィルタを Substring / Prefix にも通す（#1445）」）。
         // name/file_name と kana のいずれのマッチ経路にも候補がない場合だけ棄却する。
         // kana は専用の損失あり mask を使う。衝突で余分な候補を通すことはあっても、
         // kana substring が成立する候補を棄却しない。
         // has_path_sep 時は従来どおりスキップ: パスだけでマッチするエントリが
         // name/file_name mask で落ちる問題を回避する。
         // **必ず関数先頭**（entry_view / UTF-32 変換より前）。
-        if mode == SearchMode::Fuzzy && !plan.has_path_sep {
+        if !plan.has_path_sep {
             let name_mask = self.char_masks[i];
             let fn_mask = self.file_name_char_masks[i];
             let latin_match = (plan.query_mask & name_mask) == plan.query_mask

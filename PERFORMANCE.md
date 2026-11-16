@@ -3103,6 +3103,33 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 - **照合器を `QueryPlan` の外で作って `score_one_entry` へ渡す**: 確保（検索 1 回に最大 3 回）は消える。しかし `score_one_entry` の引数が広がり、消える 3 回は確保の検知器（候補の数との差分で判定する）にも効かない
 - **`str::contains` を前段に置く**: 製品はスコアに一致の位置を要するので、`contains` だけでは済まない。前段に置けば、一致した候補を 2 度走査する
 
+### 採用: ビットマスクの事前フィルタを Substring / Prefix にも通す（#1445）
+
+`score_one_entry` の事前フィルタは Fuzzy だけで通っていた。理由は「Prefix/Substring は素の `str` 操作が十分安い」だったが、測られていなかった。全モードで通すように変えた。フィルタは Substring / Prefix でも厳密である（`score_one_entry` のコメントが論証を持つ）。kana の経路はラテン文字のマスクとは別の述語で通すので、従来どおり落ちない（検知器は `search/tests/migemo.rs` の `kana_match_skips_latin_bitmask_prefilter_in_every_mode`）。
+
+**測定条件**: 2026-11-17 / 機体 **HAL9000** / release / rustc 1.99.1
+
+- **計測コード**: `tests/match_cost.rs`（Prefix の掃引をこの変更で足した）。ウォームアップ 2 回のあと 30 標本の p50
+- **版**: A = `26b7a464` に計測コードの変更だけを足したもの、B = この変更。A → B → A → B の順に回した
+- **実 config**: `normal_mode = "substring"`・migemo 有効・`include_path_env = true`。実 `index.bin` は 23,672 件（PATH マージで +248 件）
+- **結果の同一性**: 全 108 行 × 4 回のダイジェストが一致した
+
+#### 壁時計（p50 の 2 回のレンジ・µs・抜粋）
+
+| 構成 | クエリ | A | B |
+|---|---|---|---|
+| 実 23,672 件・Substring | `code` | 99–131 | **69–74** |
+| 同 | `vis` | 57–57 | **32–36** |
+| 同 | `.exe` | 127–127 | **80–87** |
+| 同 | `c` | 312–341 | 279–325（重なる） |
+| 実 23,672 件・Prefix | `.exe` | 52–57 | **27–32** |
+| 合成 300,000 件・Substring | `code` | 1,236–1,446 | **913–916** |
+| 同 | `code.` | 699–752 | **240–256** |
+| 合成 300,000 件・Prefix | `code` | 348–366 | **185–202** |
+
+- **パスクエリ（`c:\` など）と Fuzzy は変わらない**。どちらもこの変更が触れない経路である。実の索引では一部の行で B が遅く出たが、合成 300,000 件の Fuzzy では逆に全行で B が速く出た。向きが揃わないので、回ごとの揺れと読む
+- **1 文字の `c` は効かない**。ほとんどの名前が `c` を含むので、フィルタがほぼ何も落とさない
+
 ## 試みたが機能しない手法
 
 - **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。**後日（#532 SU7）: この項目全体が WebView2 期のものであり、代替として指した `tauri::ipc::Response` にも現行構成の呼び出し点は無い**——アイコンの PNG は `commands::load_icon_pngs` がプロセス内で egui のテクスチャへ渡す。

@@ -13,7 +13,7 @@
 //!   版の A/B で突き合わせ、検索結果が 1 件も変わらないことを確かめる。**パスの原文は出さない**
 //!   ——実 `index.bin` は利用者の実ファイルパスを持つ（`docs/development-principles.md`「観測するとき」の「一時的な足場は、撤去までを新設の時点で決める」）
 //! - 実 `index.bin` は **PATH マージあり・なし**（PATH 由来のエントリは file name が name と
-//!   一致しない）× **Substring・Fuzzy**。`normal_mode` は実 config の値ではなく両方を掃く
+//!   一致しない）× **Substring・Prefix・Fuzzy**。`normal_mode` は実 config の値ではなく 3 つとも掃く
 //!   ——実運用点が Substring の機体でも、既定の Fuzzy の利用者に効くかを同じ表で見るため
 //! - 合成の索引は**フォルダとファイルが半々**で、フォルダには file name と name の共有フラグが
 //!   立つ。`search/tests/performance.rs` の `make_bench_entries` はファイルだけで構成され、フラグが
@@ -98,9 +98,13 @@ fn sample(engine: &mut Engine, query: &str) -> (usize, u64, u64, u64) {
     )
 }
 
-/// `engine` の `normal_mode` を Substring・Fuzzy の順に切り替えて `queries` を測り、1 行ずつ刷る。
+/// `engine` の `normal_mode` を Substring・Prefix・Fuzzy の順に切り替えて `queries` を測り、1 行ずつ刷る。
 fn report(engine: &mut Engine, base: &Config, label: &str, queries: &[&str]) {
-    for mode in [SearchModeConfig::Substring, SearchModeConfig::Fuzzy] {
+    for mode in [
+        SearchModeConfig::Substring,
+        SearchModeConfig::Prefix,
+        SearchModeConfig::Fuzzy,
+    ] {
         let mut config = base.clone();
         config.search.normal_mode = mode;
         engine.update_config(config);

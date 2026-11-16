@@ -366,9 +366,9 @@ impl TreeNodes for PathStore {
 
 /// 直前に組み立てた祖先のチェーンを持ち回るカーソル。
 ///
-/// **寿命は走査ではなくスレッドである**（[`with_cursor`] がスレッドローカルに置く）ので、
-/// 索引の差し替えをまたぐ。チェーンが有効なのは同じ索引の中だけであり、索引が替わったことは
-/// [`PathStore::generation`] で見分けて捨てる（#1442）。
+/// **寿命は走査ではなくスレッドである**（[`with_cursor`] がスレッドローカルに置く）。
+/// そのため、カーソルは索引の差し替えをまたいで残る。チェーンが有効なのは同じ索引の中だけ
+/// なので、索引が替わったら [`PathStore::generation`] の違いで見分け、チェーンを捨てる（#1442）。
 ///
 /// **索引はソート順に並んでいるので、隣り合うエントリは祖先をほぼ共有する。** 毎回根まで
 /// 辿って全部書き直すと、共有している部分を何度も書き直すことになる。チェーンを持ち回れば、
@@ -383,9 +383,9 @@ impl TreeNodes for PathStore {
 pub(super) struct PathCursor {
     buf: String,
     /// いま `buf` に載っているチェーン: `(index, その段まで書いた時点の buf の長さ)`。
-    /// 先頭が根で、末尾が直前に組み立てたエントリ。index はすべて `generation` の索引のもの。
+    /// 先頭が根で、末尾が直前に組み立てたエントリ。index はすべて、`generation` が示す索引に属する。
     stack: Vec<(u32, u32)>,
-    /// `stack` を組み立てた索引の [`PathStore::generation`]。0 はどの索引も見ていない。
+    /// `stack` を組み立てた索引の [`PathStore::generation`]。0 は、まだどの索引も見ていないことを表す。
     generation: u64,
 }
 
@@ -410,7 +410,7 @@ impl PathCursor {
     pub(super) fn normalized(&mut self, store: &PathStore, i: usize) -> &str {
         // 索引が替わっていたらチェーンを捨てる。**根の分岐より前に置く**（根の分岐も世代を
         // 記録する必要がある・`path_store_cursor_discards_chain_across_stores` の系列 2）。
-        // [`with_cursor`] ではなくここで見るのは、テストがこのメソッドを直接呼ぶからである。
+        // `with_cursor` ではなくここで見るのは、テストがこのメソッドを直接呼ぶからである。
         if self.generation != store.generation {
             self.buf.clear();
             self.stack.clear();
@@ -488,7 +488,8 @@ pub(super) fn with_cursor<R>(store: &PathStore, i: usize, f: impl FnOnce(&str) -
 thread_local! {
     /// 全件走査のカーソル。走査するスレッドごとに 1 本である（分割しない走査は呼び出し
     /// スレッドで、分割した走査は rayon の worker で走る）。走査は連続した index を順に舐めるので、
-    /// スレッドごとにチェーンがウォームアップされる。索引の差し替えをまたぐ扱いは [`PathCursor`] の doc。
+    /// スレッドごとにチェーンがウォームアップされる。索引の差し替えをまたぐときの扱いは、
+    /// [`PathCursor`] の doc にある。
     static CURSOR: std::cell::RefCell<PathCursor> =
         const { std::cell::RefCell::new(PathCursor::new()) };
 
@@ -574,7 +575,7 @@ impl PathStore {
             names,
             table: table.into_iter().map(String::into_boxed_str).collect(),
             sorted_prefix_len,
-            // 一意性だけが要り、他のメモリとの順序は要らない。
+            // 要るのは値の一意性だけで、他のメモリ操作との順序づけは要らない（ゆえに `Relaxed`）。
             generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }

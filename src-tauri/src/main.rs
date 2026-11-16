@@ -41,7 +41,7 @@ use crate::state::AppState;
 
 /// Alt の解放を見る間隔。Alt を離してから表示が始まるまでの遅れは、この間隔の 0〜1 倍である。
 /// 待つ間だけ動く専用のスレッド（`ShowAfterAltRelease`）なので、細かく見ても他を塞がない
-/// （#1446 で 10 → 1 ms）。`thread::sleep` の刻みが粗い環境では、この値より長く眠る。
+/// （#1446 で 10 → 1 ms。`thread::sleep` が実際に 1 ms で起きるかは確かめていない）。
 const ALT_RELEASE_POLL_MS: u64 = 1;
 const ALT_RELEASE_TIMEOUT_MS: u64 = 350;
 

@@ -772,27 +772,26 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 | 候補 | 実測されているもの | 見積もり | 注意 |
 |---|---|---:|---|
-| `path.is_dir()` をやめて `entry.metadata()` の属性語を読む | 判定の順序を替えた後は、拡張子が一致したエントリの数だけ syscall を払う | 未実測 | ⚠ `Path::is_dir()` はリンクを辿り `DirEntry::metadata()` は辿らない——reparse point / junction での挙動差は効率ではなく仕様の判断。順序の入れ替え（下の「採用: PATH の列挙で `is_dir()` を最後に置く（#1447）」）を先に入れた |
-| 拡張子照合の `to_ascii_lowercase()` を `eq_ignore_ascii_case` へ | **242 回の確保**（残る 2,066 の 12%） | µs 桁 | 壁時計では無視できる。挙げてあるのは受け入れ判定が確保回数だからで、額で採る話ではない |
+| `path.is_dir()` をやめて `entry.metadata()` の属性語を読む | 判定の順序を替えた後は、拡張子が一致したエントリの数だけ syscall を払う | 未実測 | ⚠ `Path::is_dir()` はリンクを辿り `DirEntry::metadata()` は辿らない——reparse point / junction での挙動差は効率ではなく仕様の判断。順序の入れ替え（下の「採用: PATH の列挙で `is_dir()` を最後に置く（#1447）」）を先に入れた。中間の形として、リパースポイントのときだけ `path.is_dir()` を呼び、それ以外は属性の `meta.is_dir()` を使えば、意味論を保ったまま syscall がリンクの数に減る（/simplify の指摘・未実測） |
 | 列挙をロードと重ねる | `enumerate_path_candidates` は `existing_entries` を引数に取らない（**構造的に独立**） | ≤9 ms | 直列である必然が無い。ディスク I/O を競合させるので重なりは目減りする——測るなら総起動時間で |
 
-**前提が消えて外した行**（#1447）: 「`reject_existing` の走査を rayon で並列化」は「走査は逐次で約 45 ms」を前提にしていたが、これは `&[AppEntry]` と `rfind` の頃の値で、行が名指す `full_buf` も今は無い。木ベースの事前フィルタ（`IndexTree::file_key_into`）が入った後の照合は 1 ms を切る（下の採用節）。「プレフィルタの `rfind(['\\', '/'])` をバイトの `rposition` へ」は、ホットループがもう `rfind` を呼ばない（呼ぶのは根のエントリだけ）。
+**前提が消えて外した行**（#1447）: 「`reject_existing` の走査を rayon で並列化」は「走査は逐次で約 45 ms」を前提にしていたが、これは `&[AppEntry]` と `rfind` の頃の値で、行が名指す `full_buf` も今は無い。木ベースの事前フィルタ（`IndexTree::file_key_into`）が入った後は、path_merge の区間全体が 12〜16 ms（min〜max・下の「起動の端から端まで（2026-08-09 計測・release・7 標本）」・312k 規模）であり、45 ms の前提は成り立たない。「プレフィルタの `rfind(['\\', '/'])` をバイトの `rposition` へ」は、ホットループがもう `rfind` を呼ばない（呼ぶのは根のエントリだけ）。
 
 ### 採用: PATH の列挙で `is_dir()` を最後に置く（#1447）
 
-`enumerate_path_candidates` は、`path.is_dir()`（`fs::metadata` を呼び、1 回ごとに syscall を払う）を拡張子の判定より**前に**、PATH 配下の全エントリへ払っていた。4 つの判定は副作用の無い連言なので、安い順（拡張子 → `entry.metadata()` の hidden → `is_dir()`）に並べ替えた。`is_dir()` の意味論（リンクを辿る）は保つ。あわせて `reject_existing` の `by_file_key` を `FxHashMap` へ替えた。返り値は変わらない（下の計測で件数一致、既存の検知器 5 本と、拡張子を持つディレクトリを足した検知器が通る）。
+`enumerate_path_candidates` は `path.is_dir()` を拡張子の判定より**前に**呼んでいたので、PATH 配下の全エントリで syscall（`fs::metadata`）を払っていた。4 つの判定は副作用の無い連言なので、安い順（拡張子 → `entry.metadata()` の hidden → `is_dir()`）に並べ替えた。`is_dir()` の意味論（リンクを辿る）は保つ。あわせて `reject_existing` の `by_file_key` を `FxHashMap` へ替え、拡張子の照合を `eq_ignore_ascii_case` にした（候補表にあった「`to_ascii_lowercase()` を `eq_ignore_ascii_case` へ」の行。エントリごとの確保が消える。下の表はこの行を入れる前に測った）。返り値は変わらない。下の計測で件数が一致し、既存の検知器 5 本と、拡張子を持つディレクトリを弾く検知器が通る。
 
 **測定条件**: 2026-11-17 / 機体 **HAL9000** / release / rustc 1.99.1 / 実 `index.bin` 23,672 件・PATH の追加 248 件
 
 - **計測コード**: 一時的な足場（`enumerate_path_candidates` と `reject_existing` を `Instant` で挟み、15 回の min / p50 / max を取るテスト）。測り終えて撤去した
-- **版**: A = `26b7a464`、B = この変更。A → B を 3 回交互に回した。1 回目の A は別の検証と重なったので外す
+- **版**: A = `26b7a464`、B = `0482d04e`（足場を除く）。A → B を 3 回交互に回した。1 回目の A は別の検証と重なったので外す
 
 | 区間（p50・µs） | A（2・3 回目） | B（1〜3 回目） |
 |---|---:|---:|
 | `enumerate_path_candidates` | 15,691–15,781 | **11,567–11,943** |
 | `reject_existing` | 669–673 | **547–558** |
 
-- 区間のほとんどは列挙（`read_dir` そのもの）に残る。`is_dir()` を外す形（表の 1 行目）でも、この残りは削れない
+- 残りの 11.6 ms のうち、`read_dir` と、拡張子の一致した 248 件に残る `is_dir()` の比は測っていない
 - `npm run bench:startup` の path_merge は測っていない（実行中の Snotra を落として起動し直すので、使用中の機体では回さなかった）
 
 **触らないと判断したもの**（額を測ったうえで）: `enumerate_path_candidates` の `key.clone()`

@@ -121,18 +121,15 @@ fn enumerate_path_candidates(path_list: &str, show_hidden_system: bool) -> Vec<P
             continue;
         };
         for entry in read_dir.flatten() {
-            // **4 つの判定は副作用の無い連言なので、順序は結果を変えない。** 安い順に並べる
-            // ——拡張子は文字列だけで決まり、`entry.metadata()` は列挙で得た情報の使い回しで
-            // syscall が無い（`docs/adr/ADR-mtime-differential-scan-ceiling.md`）。`is_dir()` は
-            // `fs::metadata` を呼び、1 回ごとに syscall を払うので最後に置く（額は `PERFORMANCE.md`
-            // 「採用: PATH の列挙で `is_dir()` を最後に置く（#1447）」）。`is_dir()` のままにしてリンクを辿る意味論は保つ。
+            // 判定は副作用の無い連言なので、安い順に並べる。`is_dir()` は 1 回ごとに syscall を
+            // 払うので最後に置く（リンクを辿る意味論は保つ。額は `PERFORMANCE.md`
+            // 「採用: PATH の列挙で `is_dir()` を最後に置く（#1447）」）。
             let path = entry.path();
-            let ext = path
+            let is_target_ext = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.to_ascii_lowercase());
-            let Some(ref ext) = ext else { continue };
-            if !path_exts.contains(&ext.as_str()) {
+                .is_some_and(|e| path_exts.iter().any(|p| e.eq_ignore_ascii_case(p)));
+            if !is_target_ext {
                 continue;
             }
             let Ok(meta) = entry.metadata() else {

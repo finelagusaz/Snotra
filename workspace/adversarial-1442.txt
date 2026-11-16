@@ -1,0 +1,69 @@
+adversarial-1442 反証結果（実測済み。scratch テストは削除し、git status は workspace/ のみ）
+
+== 争点ごとの宣言 ==
+
+[争点1] PathStore の入口は adopt だけ・構築後に変えない -> 壊せなかった
+  根拠: struct リテラルは path_store.rs:544（adopt）のみ。製品の呼び出しは search/build.rs:228 のみ。&mut self は mark_file_name_is_lower_name / shrink_to_fit / force_unsorted_for_test(cfg(test)) のみ。engine.rs:252 は SearchEngine ごと差し替え（新 PathStore）。フィールドは private。
+  偽にする手順: path_store.rs 内に entries/names/table を変える &mut メソッドか、IndexTree の extend 相当を adopt 後に呼ぶ経路を足す。現状は無い。
+  補足: 世代は adopt 1 か所で振れば足りる。PathStore::build(cfg(test)) も adopt 経由。
+
+[争点2] 持ち越すのは CURSOR だけ -> 壊せなかった（⚠️ 一部は読みのみ）
+  根拠: thread_local は CURSOR / CMP_BUFS / MATCHER / PATH_MATCH_BUF（snotra-core）と src-tauri window_coordinator.rs:1121 の LAST（トレース専用 Cell・索引と無関係）。snotra-egui-runtime に thread_local! は 0 件。
+  CMP_BUFS: raw_path_into が buf.clear() から書く（読んで確認）。PATH_MATCH_BUF: compose_for_path_match が使う直前に buf.clear()（読んで確認）。MATCHER: 毎回 haystack を clear/extend。
+  ⚠️ MATCHER の内部状態（nucleo Matcher の内部スクラッチ）が呼び出し間で結果に影響しないことは nucleo の契約に依拠。実行では確かめていない。
+  偽にする手順: 索引の添字や PathStore 由来の値を保持する thread_local / static を足す。git grep -n "thread_local|static .*Mutex|OnceLock" で再確認できる。
+
+[争点3] 影響経路は score_one_entry と recent_history の 2 つ、どちらも with_normalized_key -> with_cursor -> 壊せなかった
+  根拠: with_cursor の呼び出しは scoring.rs:141（with_normalized_key）だけ。with_normalized_key の呼び出しは scoring.rs:521 と search.rs:476 だけ。PathCursor の使用は他に無い（git grep）。
+  ただし research.md の記述に誤りが 2 点ある（下の「research.md への指摘」）。
+
+[争点4] const fn new と世代 0/1 の分離、アドレス識別は不可 -> 壊せなかった
+  根拠: PathCursor::new は const fn（path_store.rs:375）で thread_local の const { } 初期化に使用（:465）。世代フィールドを u64 0 で足せる。PathStore は adopt で fetch_add して 1 始まりにすれば初期カーソルは必ず不一致。history.rs:47 の NEXT_SAVE_SEQUENCE が 1 始まりの先例。
+  アドレス識別が不可なのは move（SearchEngine は値で持ち回る）と drop 後の再利用（ABA）で成立する推論。実測はしていない。
+  実装上の注意（所見）: 世代の照合は normalized の先頭（根の分岐より前）で行い、根の分岐でも cursor の世代を更新すること。根の分岐だけで更新すると、根に当たらず rposition が先に評価される経路で漏れる。
+  偽にする手順: Default/const 初期化できない型（String 以外の非 const 値）を世代に使う、または PathStore の世代採番を 0 から始める。
+
+[争点5] 同一インスタンスなら古いチェーンは有効 -> 壊せなかった
+  根拠: PathStore は Clone/Copy を derive も impl もしていない（grep 0 件）。構築後に親子・名前・table を変えるメソッドが無い（争点1）。チェーンは (index, buf 長) で、同一ストアなら index の祖先関係は不変。既存テスト path_store_cursor_matches_full_rebuild が順・逆順・乱順を 1 つのカーソルで跨いで通す（同一ストア内の順序乱れは安全）。
+  偽にする手順: PathStore に Clone を derive（同一世代・同内容なので正しいまま）／構築後に entries を書き換える API（今は無い）。
+  補足: SearchEngine が 2 つ同時に同じスレッドで交互に使われると、世代方式は毎回チェーンを捨てる（正しさは保つ・速度だけ落ちる）。製品に同時利用の経路は見当たらない（engine.rs の search_engine は 1 つ）。
+
+[争点6] issue の再現は現行で再現する -> 壊せなかった（再現した）。ただし条件に注意
+  実測（debug・Windows・bdf7f0ee 相当の作業ツリー）:
+  (a) 1 スレッド rayon プール + install で A(two) -> B(one)、履歴は C:\bbb\one.exe を 3 回 record_launch:
+      after A: ["C:\bbb\abc\one.exe", "C:\bbb\one.exe"]（ブースト消失）
+      fresh : ["C:\bbb\one.exe", "C:\bbb\abc\one.exe"]
+  (b) 単体: PathCursor で A の index 2 だけを組み立てた直後に B の index 2,3 を組み立てると
+      got c:\aaa\zzz\one.exe（want c:\bbb\abc\one.exe）、got c:\aaa\one.exe（want c:\bbb\one.exe）。
+  (c) 非 worker 呼び出し（install 無し・グローバルプール 16 本）で A -> B を 30 回: ブースト消失 30/30。対照（B だけ・A 無し）は 0/30。つまり、グローバルプールでは再現がむしろ決定的。
+  (d) recent_history: 1 スレッドでは再現しない（後述）。4 スレッド/8 スレッドプールで、A を検索した後の B の recent_history が 15 回中 4 回、直近 8 件のうち 1〜2 件を取りこぼした（fresh プールとの比較）。
+  履歴キーは record_launch が normalize_entry_key で保存する（history.rs:149）。get_global_stats_normalized("c:\bbb\one.exe") = (3, ..) を実測。スコアの履歴照合は同関数と同じ規則のキーで引く。
+
+== 測定環境への疑い（指示の観点）の結果 ==
+
+⚠️ [所見 M1・確度高] 「MIN_PAR_CANDIDATES 未満なら呼び出しスレッドで走る」は偽（research.md「影響を受ける製品の経路」）。
+  search.rs:380 は常に (0..n).into_par_iter().with_min_len(512) を通る。with_min_len は分割の下限であって逐次への切替ではない。呼び出しが非 worker（製品の UI/コマンドスレッド）なら、小さい索引でもジョブは rayon プールへ inject され、worker の CURSOR が使われる。呼び出しスレッド自身の CURSOR が使われるのは、呼び出し元が既に worker のとき（pool.install 内）だけ。上の (c) が根拠。
+  偽にする手順（この所見を）: 非 worker スレッドから search し、CURSOR を触ったスレッド ID を記録して呼び出しスレッドと一致することを示す。
+  帰結: どの worker が小さな検索を拾うかは非決定的なので、製品では「再現するときとしないとき」が出る。回帰テストは pool_of(1).install（worker を 1 本に固定）にしないと不安定になりうる。
+
+⚠️ [所見 M2・確度高] 再現は「プレフィルタが根を読まない」ことに依存する。
+  score_one_entry は score が None かつ path_query が無いと with_normalized_key を呼ばずに抜ける（scoring.rs:521 の手前）。issue の再現では query "one" が B の根/フォルダ（bbb, abc）を弾くので、worker の CURSOR は根でリセットされず、A の古いチェーンが残る。A を全件走査（フォルダも根も通る形）にすると、B の index 0（根）でチェーンが捨てられ再現しない（実測: 私の最初の単体テストは A の全件を通したため不一致 0 件になった）。回帰テストは「A で末端の葉だけを組み立て、B で根を通さずに葉を組み立てる」形にしないと、通ってしまい検出力が無い。
+  偽にする手順: 回帰テストの A 側を全件走査に替えても落ちるなら、この所見は偽。
+
+⚠️ [所見 M3・確度中] research.md「空クエリの recent_history … 差し替え直後に recent の一部が消える」は、1 スレッド（分割されない）では起きない。
+  recent_history は 0..n を走査し、index 0 は必ず親なし（parent < i）なので、最初の葉は根でチェーンを捨てる。影響を受けるのは「分割された 2 番目以降の葉」だけで、複数 worker のプールが要る（上の (d) で 4/15）。issue 本文の「1 スレッドのプール」再現は score_one_entry 経路のもので、recent_history には当たらない。回帰テストに recent_history を入れるなら複数スレッドで、非決定的になりうる。
+  偽にする手順: 1 スレッドプールで recent_history が取りこぼす例を作る（私は作れなかった）。
+
+⚠️ [所見 M4・確度中] has_path_sep のクエリ（path_query が Some）では、全候補が with_normalized_key を通るため、走査が index 0 の根から始まる葉ではチェーンが捨てられる。再現は葉の先頭が根でない場合（分割の 2 番目以降・incremental でない）に限る。パスクエリでの再現は未実測（⚠️）。
+  偽にする手順: 1 スレッドプールで has_path_sep のクエリ（"bbb\one"）を A -> B で走らせ、結果が fresh と一致するか見る（一致するはず）。
+
+== research.md への指摘 ==
+1. 上記 M1（呼び出しスレッドで走る）は偽。
+2. 上記 M3（recent_history の影響は複数 worker の分割時のみ）。
+3. 「path_store_cursor_matches_normalize_entry_key_over_real_index（#[ignore] 相当）」は不正確: #[ignore] は付いておらず（#[ignore] は 320・504・576 行の 3 本）、実 index が無ければ自動スキップする。
+4. 関連ファイルの行番号は正しい（build.rs:228, scoring.rs:521, search.rs:476, history.rs:47 を確認）。docs/architecture.md:281 は PathCursor の記述あり。
+5. 見落とし（所見）: 既存テストのコメント「カーソルの寿命 = 1 走査」（tests/path.rs:285）は、直す対象に挙がっているが、世代を入れた後は「カーソルの寿命 = スレッド」でも成り立つので、コメントの修正方向は「前提を直す」でなく「テストが毎回 new する理由を、スレッドの寿命を別テストで押さえている旨に直す」になる。⚠️ 確度低・好みの域。
+6. 未確認: 費用「キー 1 本あたり u64 比較 1 回で測れる差は出ない見込み」は research 自身が未測定と書いている。私も未測定。パスクエリ全件走査（PERFORMANCE.md が 1.6〜1.9 倍の退行を実測した領域）は感度が高いので、実測を要する。⚠️
+
+== 作業ツリー ==
+scratch テストは snotra-core/src/search/tests/path.rs へ一時追記し、git checkout -- で戻した。git status --short は ?? workspace/ のみ。

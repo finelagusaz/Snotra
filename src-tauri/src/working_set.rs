@@ -5,18 +5,15 @@
 //! 削るのは working set であって commit ではない。
 //!
 //! - **子孫は辿らない**（#1444）。Snotra から起動したアプリと、設定サイドカーが開いたブラウザ等も
-//!   子孫に入る。辿ると、それらが起動の最中と以後 hide のたびに working set を失う。
+//!   子孫に入る。辿ると、それらが起動の最中と、以後の hide のたびに working set を失う。
 //! - show 時は OS がページを透過的に re-fault するため、逆操作（untrim）は不要かつ存在しない。
-//! - イベントループから直に呼んでよい。`EmptyWorkingSet` はスレッドを問わず、設定サイドカーのロックも
-//!   待たない（取れなければ見送る）。
-//! - best-effort: `EmptyWorkingSet` の失敗と、設定サイドカーのロックが取れないときは黙って見送る
-//!   （失敗しても「メモリが減らない」だけで機能影響はない）。release は `panic = "abort"`
-//!   のため、ここでは panic させない（`unwrap`/`expect`/添字を使わない）。
+//! - イベントループから直に呼んでよい。`EmptyWorkingSet` はスレッドを問わず、この関数は設定サイドカーの
+//!   ロックを待たない（取れなければ見送る）。
+//! - best-effort: `EmptyWorkingSet` の失敗は黙って見送る（失敗しても「メモリが減らない」だけで
+//!   機能影響はない）。release は `panic = "abort"` のため、ここでは panic させない
+//!   （`unwrap`/`expect`/添字を使わない）。
 
 /// 自プロセスと設定サイドカーの working set をトリミングする（Windows）。
-///
-/// 全 Win32 呼び出しは best-effort。失敗時はメモリ削減を見送るだけで、
-/// ウィンドウの hide/show・状態遷移・IPC 契約には一切影響しない。
 #[cfg(windows)]
 pub(crate) fn trim_idle_working_set(app: &tauri::AppHandle) {
     use tauri::Manager;
@@ -44,9 +41,9 @@ pub(crate) fn trim_idle_working_set(app: &tauri::AppHandle) {
 
 /// `child` の working set をトリミングする。
 ///
-/// **`&Child` で受けるのは、ハンドルを `Child` が生きている間だけ使わせるためである。** `Child` は
-/// 別スレッドで drop されうるので、ロックの外へハンドルを持ち出すと閉じたハンドルを叩きうる。
-/// `Child` のハンドルは `CreateProcess` が返したものゆえ、必要な権限を持つ。
+/// **`&Child` で受けるのは、ハンドルを `Child` が生きている間だけ使わせるためである**（`Child` は
+/// 別スレッドで drop されうる）。`Child` のハンドルは `CreateProcess` が返したものなので、
+/// `EmptyWorkingSet` に要る権限を持つ。
 #[cfg(windows)]
 fn empty_child_working_set(child: &std::process::Child) {
     use std::os::windows::io::AsRawHandle;

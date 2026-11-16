@@ -43,7 +43,7 @@ pub(super) struct QueryPlan<'a> {
     /// **`¥` 入りクエリで name マッチだけが静かに消える**（#1057）。
     /// パスマッチの発火（`path_query`）は従来どおり `has_path_sep` が決める。
     pub(super) norm_query_has_path_sep: bool,
-    /// ビットマスク pre-filter 用のクエリマスク（全モードで計算する）。
+    /// ビットマスク pre-filter 用のクエリマスク。
     pub(super) query_mask: u64,
     /// migemo 用ひらがな変換クエリ（ASCII 残留や条件未達のとき `None`）。
     pub(super) kana_query: Option<String>,

@@ -3105,7 +3105,7 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 
 ### 採用: ビットマスクの事前フィルタを Substring / Prefix にも通す（#1445）
 
-`score_one_entry` の事前フィルタは Fuzzy だけで通っていた。理由は「Prefix/Substring は素の `str` 操作が十分安い」だったが、測られていなかった。全モードで通すように変えた。フィルタは Substring / Prefix でも厳密である（`score_one_entry` のコメントが論証を持つ）。kana の経路はラテン文字のマスクとは別の述語で通すので、従来どおり落ちない（検知器は `search/tests/migemo.rs` の `kana_match_skips_latin_bitmask_prefilter_in_every_mode`）。
+`score_one_entry` は事前フィルタを Fuzzy のときだけ通していた。理由は「Prefix/Substring は素の `str` 操作が十分安い」だったが、この見立ては測られていなかった。この変更で全モードに通す。フィルタは Substring / Prefix でも厳密である（`score_one_entry` のコメントが論証を持つ）。kana で一致する候補は、ラテン文字のマスクとは別の述語（`kana_char_masks`）で通すので、従来どおり落ちない（検知器は `search/tests/migemo.rs` の `kana_match_skips_latin_bitmask_prefilter_in_every_mode`）。
 
 **測定条件**: 2026-11-17 / 機体 **HAL9000** / release / rustc 1.99.1
 

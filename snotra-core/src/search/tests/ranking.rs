@@ -155,7 +155,7 @@ fn bitmask_filter_skips_non_matching_entries() {
 fn bitmask_filter_does_not_skip_accented_entries() {
     // 照合の入口がアクセントを畳む（é→e）ので、どのモードもアクセント付きの名前に当たる。
     // ビットマスクフィルタ（全モードで通る・#1445）がアクセント付きエントリを除外してはならない
-    for mode in [SearchMode::Fuzzy, SearchMode::Substring, SearchMode::Prefix] {
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
         let entries = vec![AppEntry {
             name: "Café".to_string(),
             target_path: "C:\\fake\\Café.lnk".to_string(),

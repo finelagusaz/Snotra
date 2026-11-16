@@ -84,7 +84,7 @@ fn kana_match_skips_latin_bitmask_prefilter_in_every_mode() {
     // "chatto" と "tyatto" は kana に正規化するとどちらも「ちゃっと」になる。
     // 直接のラテン文字集合は異なるため、bitmask pre-filter（全モードで通る・#1445）は
     // kana_query がある経路を早期棄却してはならない（#523 の偽陰性と同じ形）。
-    for mode in [SearchMode::Fuzzy, SearchMode::Substring, SearchMode::Prefix] {
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
         let mut engine = SearchEngine::new(make_entries(&["tyatto"]));
         let plan = prepare_query_plan("chatto", mode, &migemo_config())
             .expect("非空クエリは QueryPlan を生成する");

@@ -539,8 +539,10 @@ fn path_store_cursor_matches_normalize_entry_key_over_real_index() {
 
 /// 履歴照合の手前でキーの組み立てを省く判定（`HistoryLookup::may_hit`・#1450）が、履歴のある
 /// 候補を落とさない。同じ末尾セグメントを持つ兄弟を並べ、履歴の無い方は省かれても、ある方は
-/// ブーストが効いて順位が入れ替わることを、global（`record_launch`）と folder_expansion の
-/// 2 つの表で確かめる。記録は大文字小文字を変えて書く（照合は正規化キーで行う）。
+/// ブーストが効いて順位が入れ替わることを、global と folder_expansion の 2 つの表で確かめる。
+/// global は空クエリで記録する——`record_launch` は空でないクエリを query 表にも書くので、
+/// そうすると query 表のキーが global の漏れを隠す。記録は大文字小文字を変えて書く（照合は
+/// 正規化キーで行う）。
 #[test]
 fn history_boost_survives_history_tail_skip() {
     let mut entries = vec![
@@ -556,7 +558,7 @@ fn history_boost_survives_history_tail_skip() {
     }
 
     let mut launched = HistoryStore::empty();
-    launched.record_launch("c:\\B\\TOOL.EXE", "zzz");
+    launched.record_launch("c:\\B\\TOOL.EXE", "");
     let mut engine = SearchEngine::new(entries.clone());
     let results = engine.search("tool", 8, &launched, SearchMode::Substring);
     let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();

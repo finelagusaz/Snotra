@@ -142,7 +142,7 @@ pub(super) fn with_normalized_key<R>(paths: &PathStore, i: usize, f: impl FnOnce
     super::path_store::with_cursor(paths, i, f)
 }
 
-/// 検索 1 回ぶんの履歴の引き口。履歴そのものと、履歴が持つ正規化キーの末尾セグメント
+/// 検索 1 回ぶんの履歴の照合の入口。履歴そのものと、履歴が持つ正規化キーの末尾セグメント
 /// （[`key_tail`]）の集合を持つ。検索 1 回に 1 度だけ作る。
 ///
 /// **候補の正規化キーが履歴にあるなら、その末尾セグメントは集合にある。** 対偶として、
@@ -150,7 +150,7 @@ pub(super) fn with_normalized_key<R>(paths: &PathStore, i: usize, f: impl FnOnce
 /// どれにもキーは無く、照合はすべて 0 を返す。候補の側の末尾セグメントは
 /// [`PathStore::key_tail_into`] がフルパスを組み立てずに書く。それがカーソルの組み立てるキーの
 /// 末尾セグメントと一致することは、`search/tests/path.rs` の
-/// `key_tail_into_matches_cursor_key_tail_over_real_index` と、合成 fixture の同名のテストが守る。
+/// `key_tail_into_matches_cursor_key_tail_over_real_index` と、合成 fixture の `key_tail_into_matches_cursor_key_tail` が守る。
 ///
 /// 履歴は小さい（数十〜数百件）ので、組み立ては µs で済む。一方、名前で一致した候補ごとの
 /// キーの組み立ては 1 文字のクエリで全件近くに乗る（額は `PERFORMANCE.md`）。
@@ -560,9 +560,10 @@ impl SearchEngine {
         }
 
         // **名前で一致した候補のうち、履歴に当たりえないものはキーを組み立てない**（#1450）。
-        // キーの使い道は、ここから先ではパスマッチ（`score` が `None` のときだけ）と履歴照合
-        // だけである。末尾セグメントが履歴のどのキーとも違えば、3 つの照合はすべて 0 を返すので、
+        // 以降でキーを読むのは、パスマッチ（`score` が `None` のときだけ）と履歴照合だけである。
+        // 末尾セグメントが履歴のどのキーとも違えば、3 つの照合はすべて 0 を返すので、
         // 統計 0 で組み立てた結果と 1 バイトも変わらない（論証は [`HistoryLookup`] の doc）。
+        // **下でキーを読む処理を足すなら、この早期 return の条件も見直す。**
         if let Some(base_score) = score
             && !history.may_hit(&self.entries, i)
         {

@@ -328,8 +328,9 @@ impl HistoryStore {
             .unwrap_or(0)
     }
 
-    /// 3 つの表（global・query の内側・folder_expansion）が持つ正規化パスキーをすべて返す
-    /// （表をまたいで重複しうる）。照合の前に候補を絞る `search` の `HistoryTails` が使う。
+    /// 照合に使う表（global・query の内側・folder_expansion）が持つ正規化パスキーをすべて返す
+    /// （表をまたいで重複しうる）。**照合する表を足したら、ここにも足す**——漏れた表のキーは
+    /// 検索の事前判定で「履歴に無い」と扱われ、ブーストが黙って消える。
     pub(crate) fn path_keys(&self) -> impl Iterator<Item = &str> {
         self.data
             .global

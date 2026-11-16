@@ -130,17 +130,18 @@ pub(super) struct PathStore {
     /// 順序が変わる。測って持てば、破れた入力は遅い経路を通るだけになる。
     sorted_prefix_len: usize,
     /// 構築ごとに一意な世代（[`NEXT_GENERATION`] から振る・0 は振らない）。[`PathCursor`] は
-    /// これが変わったらチェーンを捨てる——カーソルはスレッド寿命で索引を跨ぐので、index の
+    /// これが変わったらチェーンを捨てる——カーソルはスレッド寿命で索引をまたぐので、index の
     /// 番号だけでは別の索引の同じ番号を見分けられない（#1442）。
     ///
     /// **アドレスで代用しない**——`SearchEngine` は move され、旧索引を解放した跡に新索引が
     /// 置かれうる（ABA）。**構築後に親子関係・名前・`table` を書き換える口を足すなら、そこで
-    /// 世代も進める**（今は無いので、構築時に 1 回振れば足りる。機械的な検知は無い）。
+    /// 世代も進める**（機械的な検知は無い）。
     generation: u64,
 }
 
-/// [`PathStore::generation`] の採番元。**1 から振る**——0 は [`PathCursor::new`] の「どの索引も
-/// 見ていない」に取ってあり、初期のカーソルが必ず不一致になる。
+/// [`PathStore::generation`] の採番元。1 から振り、0 は [`PathCursor::new`] の「どの索引も
+/// 見ていない」の印に取っておく（正しさは 0 を振っても変わらない——初期のカーソルは
+/// チェーンが空なので、世代が一致しても外れの経路で作り直す）。
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 impl PathStore {
@@ -369,7 +370,7 @@ impl TreeNodes for PathStore {
 /// 直前に組み立てた祖先のチェーンを持ち回るカーソル。
 ///
 /// **寿命は走査ではなくスレッドである**（[`with_cursor`] がスレッドローカルに置く）ので、
-/// 索引の差し替えを跨ぐ。チェーンが有効なのは同じ索引の中だけであり、索引が替わったことは
+/// 索引の差し替えをまたぐ。チェーンが有効なのは同じ索引の中だけであり、索引が替わったことは
 /// [`PathStore::generation`] で見分けて捨てる（#1442）。
 ///
 /// **索引はソート順に並んでいるので、隣り合うエントリは祖先をほぼ共有する。** 毎回根まで
@@ -378,7 +379,7 @@ impl TreeNodes for PathStore {
 ///
 /// 親がチェーンに載っているかの判定は `u32` の線形走査（高々 [`crate::index_tree::CHAIN_CAP`] 個・実測の深さは平均
 /// 6.05 段）であり、メモリを追いかけない。外れたときは根まで辿って作り直すので、
-/// **順序が乱れた入力でも、索引を跨いでも、結果は変わらない**（速さだけが落ちる）。
+/// **順序が乱れた入力でも、索引をまたいでも、結果は変わらない**（速さだけが落ちる）。
 ///
 /// 効く根拠は構築側と同じ性質である——`PathStore::build` で親解決の照合表を「直前の親の
 /// 使い回し」に替えたとき 152 → 23 ms になった。
@@ -408,7 +409,7 @@ impl PathCursor {
     /// での検証は `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild`（順・逆順・
     /// 乱順）、実 `index.bin` の全件での照合は同ファイルの
     /// `path_store_cursor_matches_normalize_entry_key_over_real_index`（**実インデックスが無ければ
-    /// 自動スキップ**）。索引を跨ぐ場合は `path_store_cursor_discards_chain_across_stores`。
+    /// 自動スキップ**）。索引をまたぐ場合は `path_store_cursor_discards_chain_across_stores`。
     pub(super) fn normalized(&mut self, store: &PathStore, i: usize) -> &str {
         // 索引が替わっていたらチェーンを捨てる。**根の分岐より前に置く**——根の分岐の中だけで
         // 世代を更新し損ねると、根を挟んで旧索引へ戻ったときに新索引の根へ書き足してしまう。
@@ -491,7 +492,7 @@ thread_local! {
     /// 全件走査のカーソル。走査するスレッドごとに 1 本である（分割しない走査は呼び出し
     /// スレッドで、分割した走査は rayon の worker で走る）。走査は連続した index を順に舐めるので、
     /// スレッドごとにチェーンがウォームアップされる。**寿命はスレッドの寿命**であり索引の差し替えを
-    /// 跨ぐ——跨いでも正しいのは [`PathStore::generation`] による。
+    /// またぐ——またいでも正しいのは [`PathStore::generation`] による。
     static CURSOR: std::cell::RefCell<PathCursor> =
         const { std::cell::RefCell::new(PathCursor::new()) };
 

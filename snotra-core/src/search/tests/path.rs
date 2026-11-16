@@ -271,7 +271,7 @@ fn path_store_cursor_matches_full_rebuild() {
     let mut full = String::new();
     for (label, order) in orders {
         // 3 通りの順序を独立に試すため、走査ごとにチェーンを空から始める。製品のカーソルは
-        // スレッド寿命で索引を跨ぐ——それは `path_store_cursor_discards_chain_across_stores` が固定する。
+        // スレッド寿命で索引をまたぐ——それは `path_store_cursor_discards_chain_across_stores` が固定する。
         let mut cursor = PathCursor::new();
         for i in order {
             store.normalized_into(&mut full, i);
@@ -288,7 +288,7 @@ fn path_store_cursor_matches_full_rebuild() {
     }
 }
 
-/// 索引の差し替えを跨ぐ fixture（#1442 の再現）。A と B は**同じ index に別の文字列**を持つ
+/// 索引の差し替えをまたぐ fixture（#1442 の再現）。A と B は**同じ index に別の文字列**を持つ
 /// ——同じ entries から 2 回建てると、誤ったチェーンでも出力が一致して何も検知しない。
 fn swap_fixture_a() -> Vec<AppEntry> {
     entries_from_paths(&[
@@ -328,8 +328,8 @@ fn entries_from_paths(paths: &[(&str, bool)]) -> Vec<AppEntry> {
     entries
 }
 
-/// **カーソルは索引を跨いで生きる**（製品では `CURSOR` がスレッド寿命である）。別の索引で
-/// 組み立てたチェーンを、同じ番号の親として流用してはならない（#1442）。
+/// 回帰テスト: **カーソルは索引をまたいで生きる**（製品では `CURSOR` がスレッド寿命である）。
+/// 別の索引で組み立てたチェーンを、同じ番号の親として流用してはならない（#1442）。
 ///
 /// 系列 1 は**葉から**始める——A を全件走査すると index 0（根）でチェーンが捨てられ、
 /// 流用が起きないまま通る。系列 2 は A → B の根 → A と往復し、根の分岐が索引の切り替わりを
@@ -368,13 +368,14 @@ fn path_store_cursor_discards_chain_across_stores() {
             assert_eq!(
                 cursor.normalized(store, i),
                 keys[i],
-                "{label}: {step} 手目（index {i}）が現物とずれた"
+                "{label}: {} 手目（index {i}）が現物とずれた",
+                step + 1
             );
         }
     }
 }
 
-/// 製品の形での再現（#1442）: 同じ worker で索引 A を検索した後に索引 B を検索しても、
+/// 回帰テスト: 製品の形での再現（#1442）。同じ worker で索引 A を検索した後に索引 B を検索しても、
 /// B の履歴ブーストが効く。
 ///
 /// **A と B は同じ `install` の中で走らせる**——`pool_of(1)` を 2 回呼ぶと別のスレッドになり、

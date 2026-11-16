@@ -158,9 +158,7 @@ fn trace_registration(config: &HotkeyConfig, vks: &[u32], ok: bool) {
 }
 
 /// 登録の結果と、`RegisterHotKey` が戻った時刻（設定を解釈できなかったときは、そう判定した時刻）。
-///
-/// **時刻は trace を書く前に取る**（#1454）——起動の終端（`startup::finish_at`）がこの時刻で
-/// hotkey_register の区間を閉じ、`hotkey:registered` の stderr 書き込みを区間へ入れない。
+/// 時刻は trace を書く前に取る（使い道は `startup::finish_at` の doc）。
 pub struct Registration {
     pub ok: bool,
     pub at: std::time::Instant,

@@ -357,8 +357,7 @@ fn process_commands(
                 // 起動の終端（成功側）。**ここが「押せばウィンドウが出る状態」の成立点である**
                 // ——listener は送信より前に登録され、ウィンドウは `egui_shell::create` で既に在る
                 // （根拠は `crate::startup` の `//!`）。失敗側の終端は `main.rs` にもある。
-                // 時刻は `RegisterHotKey` が戻った直後の値を渡す——`hotkey:registered` の trace と
-                // 失敗の emit を区間へ入れない（#1454・`hotkey::Registration` の doc）。
+                // 時刻は `RegisterHotKey` が戻った直後の値を渡す（#1454・`startup::finish_at` の doc）。
                 crate::startup::finish_at(
                     if registered {
                         Ok(())

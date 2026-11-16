@@ -571,7 +571,7 @@ pub(crate) fn finish(outcome: Result<(), StartupFailure>) {
 
 /// [`finish`] と同じだが、終端の時刻を呼び出し側が渡す。
 ///
-/// **ホットキー登録の成功側の終端はこれを使う**（#1454）。`RegisterHotKey` が戻った直後の時刻を
+/// **ホットキー登録の arm の終端はこれを使う**（#1454・成功も失敗も）。`RegisterHotKey` が戻った直後の時刻を
 /// 渡し、その後に書く `hotkey:registered` の trace（stderr への 1 行）を hotkey_register の
 /// 区間へ入れない。`bench:startup` は `SNOTRA_TRACE=1` で起動するので、入れると区間が
 /// stderr の受け手の速さで動く。

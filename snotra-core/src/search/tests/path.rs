@@ -341,14 +341,13 @@ fn path_store_cursor_discards_chain_across_stores() {
 
     let a_entries = swap_fixture_a();
     let b_entries = swap_fixture_b();
-    let a_keys: Vec<String> = a_entries
-        .iter()
-        .map(|e| normalize_entry_key(&e.target_path))
-        .collect();
-    let b_keys: Vec<String> = b_entries
-        .iter()
-        .map(|e| normalize_entry_key(&e.target_path))
-        .collect();
+    let keys_of = |entries: &[AppEntry]| -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| normalize_entry_key(&e.target_path))
+            .collect()
+    };
+    let (a_keys, b_keys) = (keys_of(&a_entries), keys_of(&b_entries));
     let a = PathStore::build(a_entries);
     let b = PathStore::build(b_entries);
 

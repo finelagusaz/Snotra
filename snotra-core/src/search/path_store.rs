@@ -47,7 +47,7 @@
 //! 捨てることになり、実運用点で `c:\` の p50 に 7,700〜8,900 µs 乗る（#1067・`PERFORMANCE.md`）。
 
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::AtomicU64;
 
 use super::footprint::{FootprintRow, boxed_strs, vec_body};
 use crate::index_tree::{
@@ -129,9 +129,8 @@ pub(super) struct PathStore {
     /// ——`SearchEngine::new` は任意順を受け取れるので、契約にすると破れたとき静かに
     /// 順序が変わる。測って持てば、破れた入力は遅い経路を通るだけになる。
     sorted_prefix_len: usize,
-    /// 構築ごとに一意な世代（[`NEXT_GENERATION`] から振る・0 は振らない）。[`PathCursor`] は
-    /// これが変わったらチェーンを捨てる——カーソルはスレッド寿命で索引をまたぐので、index の
-    /// 番号だけでは別の索引の同じ番号を見分けられない（#1442）。
+    /// 構築ごとに一意な世代（[`NEXT_GENERATION`] から振る）。[`PathCursor`] が索引の
+    /// 切り替わりを見分けるのに使う（理由は [`PathCursor`] の doc）。
     ///
     /// **アドレスで代用しない**——`SearchEngine` は move され、旧索引を解放した跡に新索引が
     /// 置かれうる（ABA）。**構築後に親子関係・名前・`table` を書き換える口を足すなら、そこで
@@ -139,9 +138,7 @@ pub(super) struct PathStore {
     generation: u64,
 }
 
-/// [`PathStore::generation`] の採番元。1 から振り、0 は [`PathCursor::new`] の「どの索引も
-/// 見ていない」の印に取っておく（正しさは 0 を振っても変わらない——初期のカーソルは
-/// チェーンが空なので、世代が一致しても親が当たらず、根から作り直す）。
+/// [`PathStore::generation`] の採番元。1 から振る（0 は [`PathCursor::new`] の初期値）。
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 impl PathStore {
@@ -411,8 +408,8 @@ impl PathCursor {
     /// `path_store_cursor_matches_normalize_entry_key_over_real_index`（**実インデックスが無ければ
     /// 自動スキップ**）。索引をまたぐ場合は `path_store_cursor_discards_chain_across_stores`。
     pub(super) fn normalized(&mut self, store: &PathStore, i: usize) -> &str {
-        // 索引が替わっていたらチェーンを捨てる。**根の分岐より前に置く**——根の分岐の中だけで
-        // 世代を更新し損ねると、根を挟んで旧索引へ戻ったときに新索引の根へ書き足してしまう。
+        // 索引が替わっていたらチェーンを捨てる。**根の分岐より前に置く**（根の分岐も世代を
+        // 記録する必要がある・`path_store_cursor_discards_chain_across_stores` の系列 2）。
         // [`with_cursor`] ではなくここで見るのは、テストがこのメソッドを直接呼ぶからである。
         if self.generation != store.generation {
             self.buf.clear();
@@ -491,8 +488,7 @@ pub(super) fn with_cursor<R>(store: &PathStore, i: usize, f: impl FnOnce(&str) -
 thread_local! {
     /// 全件走査のカーソル。走査するスレッドごとに 1 本である（分割しない走査は呼び出し
     /// スレッドで、分割した走査は rayon の worker で走る）。走査は連続した index を順に舐めるので、
-    /// スレッドごとにチェーンがウォームアップされる。**寿命はスレッドの寿命**であり索引の差し替えを
-    /// またぐ——またいでも正しいのは [`PathStore::generation`] による。
+    /// スレッドごとにチェーンがウォームアップされる。索引の差し替えをまたぐ扱いは [`PathCursor`] の doc。
     static CURSOR: std::cell::RefCell<PathCursor> =
         const { std::cell::RefCell::new(PathCursor::new()) };
 
@@ -579,7 +575,7 @@ impl PathStore {
             table: table.into_iter().map(String::into_boxed_str).collect(),
             sorted_prefix_len,
             // 一意性だけが要り、他のメモリとの順序は要らない。
-            generation: NEXT_GENERATION.fetch_add(1, AtomicOrdering::Relaxed),
+            generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 

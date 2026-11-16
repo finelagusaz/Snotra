@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-/// 採り込みが成立したときの経過。**打鍵起点と dispatch 起点の両方を持つ**——打鍵起点には 50 ms の trailing debounce 待ちが必ず入るため、片方では worker 往復の費用を読めない。
+/// 採り込みが成立したときの経過。**打鍵起点と dispatch 起点の両方を持つ**——trailing で発行した要求は、打鍵起点の経過に debounce の待ちを含む（leading で発行した要求は含まない・#1443）。片方だけでは worker 往復の費用を読めない。
 pub struct Settled {
     pub seq: u64,
     pub since_key: Duration,

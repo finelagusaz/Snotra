@@ -164,7 +164,7 @@ sequenceDiagram
     User->>View: キー入力（TextEdit changed）
     View->>State: interp(prefix) → QueryIntent
     alt Results / Plain（非空・非 indexing）
-        View->>View: Debouncer（leading 発火 + trailing 50ms を arm）
+        View->>View: Debouncer（leading 発火 + 50ms arm。arm 中に打鍵が続いたときだけ trailing）
         View->>State: issue_search(seq)
         View->>W: SearchRequest{seq, query}
         Note over View: この分岐自身は行を差し替えない<br/>（同じ update の後半の drain が前の要求を採ることはある）

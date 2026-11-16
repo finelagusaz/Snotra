@@ -168,8 +168,7 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();
     startup::mark(startup::Phase::ConfigLoad);
-    // フォントの解決（全システムフォントの走査）は config しか要らないので、ここで別スレッドに
-    // 始め、索引のロード以降と重ねる（#1452）。view の `setup` はキャッシュに当たるか、終わるのを待つ。
+    // フォントの解決を先読みし、索引のロード以降と重ねる（#1452・`font_stack::prefetch` の doc）。
     egui_shell::prefetch_fonts(config.visual.font_family.clone());
 
     let (mut material, initial_indexing) = if is_first_run {

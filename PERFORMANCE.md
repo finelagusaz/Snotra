@@ -3285,6 +3285,8 @@ windows_create の「フォント解決込み」の内訳を測った。フォ�
 
 windows_create（27〜33 ms）のうち 16〜23 ms がフォントである。フォントの解決は config しか要らないので、`main()` が config を読んだ直後に別スレッドで始め（`font_stack::prefetch`）、索引のロード（index_load・path_merge など）と重ねる。view の `setup` は、キャッシュに当たるか、解決が終わるのを錠で待つ。jp_font は 2 スレッドが同時に 13 MiB を読まないよう、錠で読み手を 1 つに絞った。
 
+- 先読みが効くのは起動だけである。実行中に font_family を変えると、従来どおり UI のスレッドで走査を払う（issue の候補 3「DirectWrite で family からファイルを引く」がその次の段）
+
 **起動の A/B（`npm run bench:startup` の windows_create と post_main）は測っていない**。bench は実行中の Snotra を落として起動し直すので、使用中の機体では回さなかった。
 
 ## 起動の端から端まで — #1023 を挟んだ同日 A/B（2026-08-10 計測・release・各 7 標本・実 config）

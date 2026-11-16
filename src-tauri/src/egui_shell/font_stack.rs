@@ -1,9 +1,8 @@
 //! フォント解決（config font_family → システムフォント検索）と `set_fonts` 登録。
 //! 消費者は `view.rs` と `results_view.rs` の両方（main/results は別 Context を持つため
 //! それぞれが自分の Context に対して呼ぶ）——ゆえにどちらにも属させず独立モジュールにする。
-//! [`JP_FONT_BYTES`] は `OnceLock`（**set-once・never-clear**）を厳守する: [`jp_font_bytes`]
-//! が返す参照は `transmute` で `'static` 化しており、その健全性はこの不変条件だけを根拠に
-//! 成り立つ。再 set・クリアの経路を足してはならない。
+//! フォントのバイト列は `Box::leak` で `'static` にし、[`JP_FONT`] と [`USER_FONTS`] に 1 度だけ
+//! 置く（**never-clear**。消すと、次の解決が同じバイト列をもう一度漏らす）。
 //! フォント登録の分岐は次のとおり（#532・#689）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**分岐を列挙するのは、この index 0 の不変条件が分岐ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
 //!
 //! **index 0 を破ると Latin と CJK が混在する行のベースラインがずれる**（2 フォントで積むとずれること自体は
@@ -15,9 +14,10 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
-/// [`jp_font_bytes`] の読み込みを 1 スレッドに絞る錠（#1452）。
-static JP_FONT_READ: Mutex<()> = Mutex::new(());
+/// 読み込んだ jp_font（[`jp_font_bytes`]）。**見つからなかったことはキャッシュしない**（`None` の
+/// ままにして、次の呼び出しで読み直す）。錠は読み込みの間も持つ——起動時の先読み（[`prefetch`]）と
+/// view の `setup` が重なっても、13 MiB を 2 度読まない（#1452）。
+static JP_FONT: Mutex<Option<&'static [u8]>> = Mutex::new(None);
 
 /// user_font が CJK をカバーするかを判定するプローブ文字。**全点に glyph が無ければカバーしているとみなさない**。
 ///
@@ -111,12 +111,9 @@ type ResolvedFont = (&'static [u8], u32);
 /// `Box::leak` を素で置くと 1 回の font_family 変更で 2 回漏れる——
 /// `configure_japanese_font` は main と results の 2 Context から別々に呼ばれるため。
 /// family 名をキーにして両者と再切替に 1 本の leak を共有させる（漏れはセッション中に
-/// 使われた **distinct family 数**で頭打ち）。`JP_FONT_BYTES` と同じく解放されない。
-///
-/// ただし never-clear を要求する理由は `JP_FONT_BYTES` とは別である。あちらは
-/// `transmute` による `'static` 化の**健全性**が OnceLock の不変性に依存する。こちらの
-/// `Box::leak` はそれ自体が `'static` を生むため、never-clear は leak の重複を避ける
-/// 一意性の要請であって memory safety の要請ではない。
+/// 使われた **distinct family 数**で頭打ち）。[`JP_FONT`] と同じく解放されない。
+/// never-clear は leak の重複を避ける一意性の要請であって、memory safety の要請ではない
+/// （`Box::leak` はそれ自体が `'static` を生む）。
 ///
 /// **失敗（None）はキャッシュしない。** するとフォントを後から導入して同じ名前に
 /// 戻したとき、解決できるのに拒み続ける。再解決のコストは `applied_font_family` ゲートに
@@ -156,38 +153,27 @@ fn resolve_font_family(name: &str) -> Option<(&'static [u8], u32)> {
 
 /// jp_font（CJK fallback）のバイト列を遅延ロードして `'static` 借用を返す。
 ///
-/// **`OnceLock` は set-once・never-clear を厳守する**——下の `transmute` による `'static`
-/// 化はその不変条件だけを根拠に健全である。再 set・クリアの経路を足してはならない。
 /// CJK をカバーするフォントを使う限りこの関数は呼ばれず、13.26 MiB は確保されない。
 fn jp_font_bytes() -> Option<&'static [u8]> {
-    let candidates = [
+    const CANDIDATES: [&str; 4] = [
         "C:/Windows/Fonts/YuGothM.ttc",
         "C:/Windows/Fonts/yugothic.ttf",
         "C:/Windows/Fonts/msgothic.ttc",
         "C:/Windows/Fonts/meiryo.ttc",
     ];
-    if JP_FONT_BYTES.get().is_none() {
-        // **読むのは 1 スレッドだけにする**——起動時の先読み（[`prefetch`]）と view の `setup` が
-        // 同時に来ると、13 MiB を 2 度読むことになる。見つからなかったことはキャッシュしない
-        // （`OnceLock::get_or_init` は失敗を表せないので、錠で囲む）。
-        let _reading = JP_FONT_READ.lock().unwrap_or_else(|e| e.into_inner());
-        if JP_FONT_BYTES.get().is_none() {
-            for path in candidates {
-                if let Ok(bytes) = std::fs::read(path) {
-                    let _ = JP_FONT_BYTES.set(bytes.into_boxed_slice());
-                    break;
-                }
-            }
-        }
+    // poison からは回復する（理由は `resolve_font_family` と同じ）。
+    let mut jp = JP_FONT.lock().unwrap_or_else(|e| e.into_inner());
+    if jp.is_none() {
+        *jp = CANDIDATES
+            .iter()
+            .find_map(|path| std::fs::read(path).ok())
+            .map(|bytes| &*Box::leak(bytes.into_boxed_slice()));
     }
-    // OnceLock の中身は以後不変ゆえ 'static として安全に借用できる。
-    JP_FONT_BYTES
-        .get()
-        .map(|bytes| unsafe { std::mem::transmute::<&[u8], &'static [u8]>(&**bytes) })
+    *jp
 }
 
 /// `font_family` から、積むフォントの組（jp_font, user_font）を解決する。結果は
-/// [`USER_FONTS`] と [`JP_FONT_BYTES`] にキャッシュされる。
+/// [`USER_FONTS`] と [`JP_FONT`] にキャッシュされる。
 fn resolve_stack(font_family: &str) -> (Option<&'static [u8]>, Option<ResolvedFont>) {
     // **user を先に解決し、カバー判定が済むまで jp_font のファイルを読まない**（順序が要点）。
     // jp を先に読むと、CJK をカバーするフォントでも 13.26 MiB が常駐する。

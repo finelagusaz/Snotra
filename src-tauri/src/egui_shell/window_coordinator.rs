@@ -579,8 +579,8 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // 依然この関数の中、すなわちイベントループスレッド上で走り、その間メッセージポンプは
     // 止まる（#880）。ポンプ進行を
     // 要する操作ではないのでデッドロックはせず、ウィンドウを隠した**後**なので視覚的なジャンクにも
-    // ならない。実測はしていない（ディスク書き込み + Toolhelp スナップショット + プロセスツリー
-    // BFS の合計）。**別スレッドへ出すか受容するかは後段の判断に残す。**
+    // ならない。実測はしていない（ディスク書き込み + `EmptyWorkingSet` 最大 2 回の合計）。
+    // **別スレッドへ出すか受容するかは後段の判断に残す。**
     if let Some(p) = placement {
         snotra_core::window_data::save_search_placement(p);
     }
@@ -588,9 +588,9 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // #532）。results 単独 hide（drive_results_window）では main が可視のままゆえ trim しないのが正しい。
     // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ）から直呼び可
     // （`working_set.rs` の `//!`）。trim されたページは show 時に OS が透過
-    // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
-    // （snotra-settings.exe・存命中のみ）も巻き込みうる——trim は best-effort ゆえ無害。
-    crate::working_set::trim_idle_working_set(std::process::id());
+    // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。対象は自プロセスと
+    // 設定サイドカーだけで、Snotra から起動したアプリには触らない（#1444）。
+    crate::working_set::trim_idle_working_set(app);
     // **この trace は関数の最後の文である。** hidden 区間の開始をここで区切っており、
     // trace 不変条件（`scripts/lib/SnotraTraceInvariants.psm1` の H1）が区間の判定に使う。
     crate::trace_main("egui_hide:done", serde_json::json!({}));

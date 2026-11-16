@@ -74,18 +74,18 @@
 ## 作業項目
 
 ### Phase 1 — 陰性対照
-- [ ] スクラッチに計測スクリプトを書き、main の debug ビルドで受け入れ 1〜3 の値を取る（起動したアプリの WS が hide 後に落ちることを確かめる）
+- [x] スクラッチに計測スクリプトを書き、main の debug ビルドで受け入れ 1〜3 の値を取る（起動したアプリの WS が hide 後に落ちることを確かめる） — main で起動したプロセス（cmd.exe の写し・親は Snotra）の WS が 6.24 → 0 MiB。winver の写しはすぐ終了するので使えなかった
 
 ### Phase 2 — 実装
-- [ ] `working_set.rs` の `trim_idle_working_set` を自プロセス + 設定サイドカーへ書き換え、`collect_descendant_pids`・`HandleGuard`・テストを削除し、`//!` を書き直す
-- [ ] `window_coordinator.rs` の呼び出しと 2 か所のコメント
-- [ ] `src-tauri/Cargo.toml` から `Win32_System_Diagnostics_ToolHelp` を外す
-- [ ] `src-tauri/CLAUDE.md` の索引
+- [x] `working_set.rs` の `trim_idle_working_set` を自プロセス + 設定サイドカーへ書き換え、`collect_descendant_pids`・`HandleGuard`・テストを削除し、`//!` を書き直す
+- [x] `window_coordinator.rs` の呼び出しと 2 か所のコメント
+- [x] `src-tauri/Cargo.toml` から `Win32_System_Diagnostics_ToolHelp` を外す
+- [x] `src-tauri/CLAUDE.md` の索引
 
 ### Phase 3 — 検証と記録
-- [ ] 同じスクリプトで本ブランチを測り、受け入れ 1〜3 を確かめる
+- [x] 同じスクリプトで本ブランチを測り、受け入れ 1〜3 を確かめる — 起動したプロセス 7.3 → 7.3 MiB（落ちない）・Snotra 自身 8.73 MiB（main 8.79）・サイドカーの hide 直後 13.51 / 13.34 MiB（main 13.59 / 13.59。削らない版との比較ではない）。値は PERFORMANCE.md
 - [ ] 変更後の検証チェックリスト（カテゴリ A と C）を通す
-- [ ] `PERFORMANCE.md` の注記と記録
+- [x] `PERFORMANCE.md` の注記と記録
 
 ## 未確定（実装前に潰す）
 

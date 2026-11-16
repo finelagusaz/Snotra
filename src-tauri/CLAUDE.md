@@ -18,7 +18,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計測コード
 - `scan_log.rs` — 索引の構築ごとの所要を `scan-log.jsonl` へ残す記録
 - `monitor.rs` — マルチモニター対応の Win32 ヘルパー
-- `working_set.rs` — 非表示アイドル時のプロセスツリー working set 回収
+- `working_set.rs` — 非表示アイドル時の working set 回収（自プロセスと設定サイドカー）
 - `commands/` — egui view・トレイが共有する core 関数群（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）
 - `platform/` — Win32 メッセージループスレッドとトレイ・ホットキー・ウィンドウプロシージャ（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）
 - `egui_shell/` — 製品メインウィンドウ（egui/softbuffer）の外枠と検索体験

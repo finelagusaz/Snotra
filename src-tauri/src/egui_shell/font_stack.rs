@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
+/// [`jp_font_bytes`] の読み込みを 1 スレッドに絞る錠（#1452）。
+static JP_FONT_READ: Mutex<()> = Mutex::new(());
 
 /// user_font が CJK をカバーするかを判定するプローブ文字。**全点に glyph が無ければカバーしているとみなさない**。
 ///
@@ -165,10 +167,16 @@ fn jp_font_bytes() -> Option<&'static [u8]> {
         "C:/Windows/Fonts/meiryo.ttc",
     ];
     if JP_FONT_BYTES.get().is_none() {
-        for path in candidates {
-            if let Ok(bytes) = std::fs::read(path) {
-                let _ = JP_FONT_BYTES.set(bytes.into_boxed_slice());
-                break;
+        // **読むのは 1 スレッドだけにする**——起動時の先読み（[`prefetch`]）と view の `setup` が
+        // 同時に来ると、13 MiB を 2 度読むことになる。見つからなかったことはキャッシュしない
+        // （`OnceLock::get_or_init` は失敗を表せないので、錠で囲む）。
+        let _reading = JP_FONT_READ.lock().unwrap_or_else(|e| e.into_inner());
+        if JP_FONT_BYTES.get().is_none() {
+            for path in candidates {
+                if let Ok(bytes) = std::fs::read(path) {
+                    let _ = JP_FONT_BYTES.set(bytes.into_boxed_slice());
+                    break;
+                }
             }
         }
     }
@@ -178,7 +186,9 @@ fn jp_font_bytes() -> Option<&'static [u8]> {
         .map(|bytes| unsafe { std::mem::transmute::<&[u8], &'static [u8]>(&**bytes) })
 }
 
-pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str) {
+/// `font_family` から、積むフォントの組（jp_font, user_font）を解決する。結果は
+/// [`USER_FONTS`] と [`JP_FONT_BYTES`] にキャッシュされる。
+fn resolve_stack(font_family: &str) -> (Option<&'static [u8]>, Option<ResolvedFont>) {
     // **user を先に解決し、カバー判定が済むまで jp_font のファイルを読まない**（順序が要点）。
     // jp を先に読むと、CJK をカバーするフォントでも 13.26 MiB が常駐する。
     // この順序が削減の実体である。
@@ -188,6 +198,26 @@ pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str
         None => true,
     };
     let jp = if need_jp { jp_font_bytes() } else { None };
+    (jp, user)
+}
+
+/// フォントの解決を別スレッドで先に始める（#1452）。`main()` が config を読んだ直後に呼び、
+/// 索引のロードなど main スレッドの後続と重ねる。後で view の `setup` が
+/// [`configure_japanese_font`] を呼ぶと、キャッシュに当たるか、解決が終わるのを錠で待つ。
+///
+/// **解決の結果も漏らす回数も変わらない**——どちらの経路も [`resolve_stack`] を通り、
+/// キャッシュは family 名と `OnceLock` で 1 つに決まる。スレッドを起こせなければ何もしない
+/// （`setup` がその場で解決する）。
+pub(crate) fn prefetch(font_family: String) {
+    let _ = std::thread::Builder::new()
+        .name("snotra-font-prefetch".to_string())
+        .spawn(move || {
+            let _ = resolve_stack(&font_family);
+        });
+}
+
+pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str) {
+    let (jp, user) = resolve_stack(font_family);
     if jp.is_none() && user.is_none() {
         // 積むフォントが 1 つも無い。egui 既定のままにする。
         return;

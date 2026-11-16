@@ -24,6 +24,7 @@ pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind, status_row_pre
 // launcher_controller が消費する。
 pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
 mod font_stack;
+pub(crate) use font_stack::prefetch as prefetch_fonts;
 mod launcher_controller;
 mod results_view;
 mod results_window;

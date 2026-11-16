@@ -78,18 +78,18 @@
 ## 作業項目
 
 ### Phase 1 — Red
-- [ ] `layout.rs` に `leading_only_burst_does_not_fire_trailing` と `cancel_clears_input_after_leading` を足し、現行実装で赤を確認
+- [x] `layout.rs` に `leading_only_burst_does_not_fire_trailing` と `cancel_clears_input_after_leading` を足し、現行実装で赤を確認
 
 ### Phase 2 — Green
-- [ ] `Debouncer` に `input_after_leading` を足し、`new` / `on_input` / `poll` / `cancel` を直す
-- [ ] `Debouncer` の struct・`on_input`・`poll`（`#[must_use]` 含む）・`cancel`・`is_armed` の doc を直す
+- [x] `Debouncer` に `input_after_leading` を足し、`new` / `on_input` / `poll` / `cancel` を直す
+- [x] `Debouncer` の struct・`on_input`・`poll`（`#[must_use]` 含む）・`cancel`・`is_armed` の doc を直す
 
 ### Phase 3 — 散文
-- [ ] `search_flow.rs` の `poll_search_debounce` の doc とコメント
-- [ ] `search_state.rs` の `unsettled_at_entry` / `is_unsettled` / テスト doc
-- [ ] `search_dispatch.rs` の `Settled` の doc
-- [ ] `snotra-core/tests/search_frame_cost.rs` の `//!`
-- [ ] `docs/architecture.md` の sequence 図の 1 行
+- [x] `search_flow.rs` の `poll_search_debounce` の doc とコメント
+- [x] `search_state.rs` の `unsettled_at_entry` / `is_unsettled` / テスト doc
+- [x] `search_dispatch.rs` の `Settled` の doc
+- [x] `snotra-core/tests/search_frame_cost.rs` の `//!`
+- [x] `docs/architecture.md` の sequence 図の 1 行
 
 ### Phase 4 — 検証と記録
 - [ ] 変更後の検証チェックリスト（カテゴリ A）を通す

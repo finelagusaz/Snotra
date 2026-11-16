@@ -480,12 +480,17 @@ impl FrameTimer {
 }
 
 /// 打鍵 debounce（#532）。時刻は driver が注入する（純粋・テスト可能）。
-/// - on_input: 入力フレーム。leading（バースト先頭）なら true を返し、以後 armed。
-/// - poll: 各フレーム。armed かつ elapsed>=interval で trailing 発火し disarm。
+/// - on_input: 入力フレーム。leading（バースト先頭）なら true を返す。どちらでも armed にして窓を開く。
+/// - poll: 各フレーム。armed かつ elapsed>=interval で窓を閉じ（disarm）、leading の後に入力が
+///   あったときだけ trailing を発火する（#1443）。
 pub struct Debouncer {
     interval: Duration,
     leading: bool,
     armed: bool,
+    /// leading の後（leading 無効なら窓を開いてから）に入力があったか。**trailing が撃つのはこれが
+    /// 立っているときだけである**——leading だけで終わったバーストは、leading が既に同じクエリで
+    /// 検索している（#1443）。`armed` とは独立に動く: `armed` は窓の開閉、これは窓の中身。
+    input_after_leading: bool,
 }
 
 impl Debouncer {
@@ -494,6 +499,7 @@ impl Debouncer {
             interval,
             leading,
             armed: false,
+            input_after_leading: false,
         }
     }
 
@@ -501,36 +507,40 @@ impl Debouncer {
         self.interval
     }
 
-    /// armed のまま（trailing 未発火）か。呼び出し側が repaint deadline の再要求要否を
+    /// armed のまま（窓がまだ閉じていない）か。呼び出し側が repaint deadline の再要求要否を
     /// 判定するために使う（coalescing 対策・#532）。
     pub fn is_armed(&self) -> bool {
         self.armed
     }
 
     /// 入力があったフレームで呼ぶ。leading 有効かつバースト先頭なら true（＝今すぐ検索）。
-    /// いずれにせよ armed にして trailing を予約する。
+    /// いずれにせよ armed にして窓を開く。leading を撃たなかった入力は、窓が閉じるときの
+    /// trailing を予約する。
     #[must_use = "leading 発火の信号を落とすとバースト先頭の検索が飛ぶ（#934）"]
     pub fn on_input(&mut self) -> bool {
         let fire_leading = self.leading && !self.armed;
         self.armed = true;
+        self.input_after_leading = !fire_leading;
         fire_leading
     }
 
-    /// 入力の無いフレームで呼ぶ。前回入力からの経過が interval 以上なら trailing 発火し disarm。
+    /// 入力の無いフレームで呼ぶ。前回入力からの経過が interval 以上なら窓を閉じ（disarm）、
+    /// leading の後に入力があったときだけ true（trailing 発火）を返す。
     #[must_use = "trailing 発火の信号を落とすと、既に disarm 済ゆえこのバーストの最終クエリでは検索が走らない（次の打鍵が再武装するまで戻らない・#934）"]
     pub fn poll(&mut self, elapsed_since_input: Duration) -> bool {
         if self.armed && elapsed_since_input >= self.interval {
             self.armed = false;
-            return true;
+            return std::mem::take(&mut self.input_after_leading);
         }
         false
     }
 
-    /// armed を解除し予約済み trailing を取り消す（#532）。
+    /// armed を解除し、予約済みの trailing を取り消す（#532）。
     /// instant/command モード突入時に driver が呼ぶ——モード外で予約された検索が
     /// モード中に遅延発火する経路を塞ぐ（run_search は再導出ゆえ実害は無いが無駄撃ちを消す）。
     pub fn cancel(&mut self) {
         self.armed = false;
+        self.input_after_leading = false;
     }
 }
 
@@ -717,6 +727,42 @@ mod tests {
         );
         // cancel 後の次入力はバースト先頭扱い（leading 再発火）
         assert!(d.on_input());
+    }
+
+    /// 回帰テスト: leading だけで終わったバーストでは trailing を発火しない（#1443）。leading が
+    /// 既に同じクエリで検索しているので、入力の無い trailing は同じ検索の撃ち直しになる。
+    ///
+    /// **窓は今までどおり閉じなければならない**——偽を返しても armed を落とさない実装は、repaint の
+    /// 残余の再要求が止まらず、`is_unsettled` も真のまま固まる。ゆえに `is_armed()` の偽と、次の
+    /// 入力が leading になることまで表明する。
+    #[test]
+    fn leading_only_burst_does_not_fire_trailing() {
+        let mut d = Debouncer::new(Duration::from_millis(50), true);
+        assert!(d.on_input(), "バースト先頭は leading 発火");
+        assert!(d.is_armed(), "leading の後も窓は開いている");
+        assert!(!d.poll(Duration::from_millis(30)), "窓の中は発火しない");
+        assert!(d.is_armed());
+        assert!(
+            !d.poll(Duration::from_millis(50)),
+            "leading の後に入力が無ければ trailing は発火しない"
+        );
+        assert!(!d.is_armed(), "trailing を撃たなくても窓は閉じる");
+        assert!(d.on_input(), "窓が閉じた後の入力は次のバーストの leading");
+    }
+
+    /// 回帰テスト: `cancel` は「leading の後に入力があった」の印も落とす（#1443）。落とさないと、
+    /// cancel を挟んだ次の leading だけのバーストで、前のバーストの印が trailing を撃つ。
+    #[test]
+    fn cancel_clears_input_after_leading() {
+        let mut d = Debouncer::new(Duration::from_millis(50), true);
+        assert!(d.on_input());
+        assert!(!d.on_input(), "leading の後の入力");
+        d.cancel();
+        assert!(d.on_input(), "cancel 後はバースト先頭");
+        assert!(
+            !d.poll(Duration::from_millis(50)),
+            "cancel 前の入力が、leading だけの次のバーストに trailing を撃たせない"
+        );
     }
 
     /// #646: bar_padding=28 は font 24 で 52px をピクセル再現する(後方互換の要)。

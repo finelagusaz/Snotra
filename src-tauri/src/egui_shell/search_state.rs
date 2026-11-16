@@ -89,8 +89,8 @@ pub struct FolderFrame {
     /// までの間も観測できるが、届いたかどうかが Escape の時点で判らない以上、**常に**有効な点ではない。）
     ///
     /// **控えた `armed` は減衰しない**（受容する残余）。`armed` はそれ自体が過剰近似で、
-    /// [`crate::egui_shell::layout::Debouncer::poll`] の trailing 発火で**最後の打鍵から** debounce
-    /// interval のうちに落ちる——ところがここへ写した値は folder に居る間に落ちる契機を持たない。
+    /// [`crate::egui_shell::layout::Debouncer::poll`] が窓を閉じるとき（**最後の打鍵から** debounce
+    /// interval の後）に落ちる——ところがここへ写した値は folder に居る間に落ちる契機を持たない。
     /// ゆえに「打鍵 → interval 内に結果が届いて行は最新 → まだ armed のまま `→`」で突入すると、
     /// 復帰後の Enter に不要な同期 `engine.search` が 1 回乗る。**受容する。** 余分な費用はその 1 回
     /// だけであり、**過剰近似の向きは安全側である**——[`should_flush_on_enter`] は `unsettled` が
@@ -606,8 +606,9 @@ impl SearchState {
     /// [`crate::egui_shell::layout::Debouncer::poll`] 経由で別に出す）と、空クエリ・`indexing`・
     /// 送信失敗が行を同期で差し替えた（＝ [`SearchState::put_rows`] が in-flight を失効させた）後に
     /// 打鍵が armed だけ残した状態で生じる。**これらを名指すのは、「打鍵したフレームの一瞬」と
-    /// 誤読されるのを防ぐためである**——どちらも複数フレームにわたって続き、解けるのは trailing が
-    /// 発火するか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval）、
+    /// 誤読されるのを防ぐためである**——どちらも複数フレームにわたって続き、解けるのは窓が
+    /// 閉じるか（[`crate::egui_shell::layout::Debouncer::poll`]・**最後の**打鍵から interval。trailing を
+    /// 撃つかどうかに依らない）、
     /// `cancel` か行の差し替えが起きたときである。**打鍵が続く限り armed は立ったままなので、
     /// 持続はバーストの長さで決まる。**
     ///

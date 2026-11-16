@@ -27,7 +27,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use serde_json::json;
-use snotra_core::config::{Config, GeneralConfig, HotkeyConfig, Language, LoadOutcome};
+use snotra_core::config::{Config, GeneralConfig, LoadOutcome};
 use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
@@ -278,7 +278,8 @@ fn main() {
             // Spawn the platform thread before window creation and wait for its Win32 init
             // only after windows are created, so the two run in parallel (SPEC §8.5・#1457).
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
-            let platform = begin_platform_thread(&app_handle, hotkey_config, initial_language);
+            let platform =
+                PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
 
             // ウィンドウ生成（egui・platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）。
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
@@ -382,20 +383,9 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-/// Spawn the Win32 platform thread without waiting for its init, so the init runs in
-/// parallel with window creation (`egui_shell::create`). The wait is
-/// [`finish_platform_thread`]. The tray is NOT created here; `setup_tray` sends
-/// `SetTrayVisible` later, after all windows and listeners are ready (SPEC §7.5).
-fn begin_platform_thread(
-    app_handle: &AppHandle,
-    hotkey_config: HotkeyConfig,
-    initial_language: Language,
-) -> Result<PlatformBridgePending, BridgeError> {
-    PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language)
-}
-
 /// Wait for the platform thread's Win32 init and manage the resulting `PlatformBridge`.
-/// Call after window creation and before any listener that uses the bridge.
+/// The spawn (`PlatformBridge::begin`) is at the setup call site, before window creation;
+/// call this after window creation and before any listener that uses the bridge.
 fn finish_platform_thread(
     app_handle: &AppHandle,
     pending: Result<PlatformBridgePending, BridgeError>,

@@ -1,6 +1,6 @@
 //! パスマッチング（区切り正規化・履歴キー統一・incremental 無効化）のテスト。
 
-use super::common::{empty_history, read_real_config_read_only, real_index_entries};
+use super::common::{empty_history, pool_of, read_real_config_read_only, real_index_entries};
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
 use crate::search::*;
@@ -226,24 +226,12 @@ fn cursor_fixture() -> Vec<AppEntry> {
         "C:\\a\\lib\\tool.dll",
         "C:\\b\\bin\\tool.exe",
     ];
-    let mut entries: Vec<AppEntry> = folders
+    let paths: Vec<(&str, bool)> = folders
         .iter()
-        .map(|p| AppEntry {
-            name: p.rsplit('\\').next().unwrap().to_string(),
-            target_path: (*p).to_string(),
-            is_folder: true,
-        })
-        .chain(files.iter().map(|p| {
-            let tail = p.rsplit('\\').next().unwrap();
-            AppEntry {
-                name: tail.rsplit_once('.').unwrap().0.to_string(),
-                target_path: (*p).to_string(),
-                is_folder: false,
-            }
-        }))
+        .map(|&p| (p, true))
+        .chain(files.iter().map(|&p| (p, false)))
         .collect();
-    entries.sort_by(|a, b| a.target_path.cmp(&b.target_path));
-    entries
+    entries_from_paths(&paths)
 }
 
 /// **カーソルは最適化であって意味の変更ではない。** チェーンの状態に依らない素直な組み立て
@@ -282,7 +270,9 @@ fn path_store_cursor_matches_full_rebuild() {
     ];
     let mut full = String::new();
     for (label, order) in orders {
-        // 走査ごとにチェーンを空から始める（カーソルの寿命 = 1 走査）。
+        // 3 通りの順序を独立に試すため、走査ごとにチェーンを空から始める。製品のカーソルは
+        // スレッド寿命で索引をまたぐ。索引をまたいだときの正しさは
+        // `path_store_cursor_discards_chain_across_stores` が固定する。
         let mut cursor = PathCursor::new();
         for i in order {
             store.normalized_into(&mut full, i);
@@ -297,6 +287,127 @@ fn path_store_cursor_matches_full_rebuild() {
             );
         }
     }
+}
+
+/// 索引の差し替えをまたぐ fixture（#1442 の再現）。A と B は**同じ index に別の文字列**を持つ
+/// ——同じ entries から 2 回建てると、チェーンを誤って流用しても出力が一致し、テストは
+/// 何も検知しない。
+fn swap_fixture_a() -> Vec<AppEntry> {
+    entries_from_paths(&[
+        ("C:\\aaa", true),
+        ("C:\\aaa\\zzz", true),
+        ("C:\\aaa\\zzz\\two.exe", false),
+    ])
+}
+
+fn swap_fixture_b() -> Vec<AppEntry> {
+    entries_from_paths(&[
+        ("C:\\bbb", true),
+        ("C:\\bbb\\abc", true),
+        ("C:\\bbb\\abc\\one.exe", false),
+        ("C:\\bbb\\one.exe", false),
+    ])
+}
+
+fn entries_from_paths(paths: &[(&str, bool)]) -> Vec<AppEntry> {
+    let mut entries: Vec<AppEntry> = paths
+        .iter()
+        .map(|&(p, is_folder)| {
+            let tail = p.rsplit('\\').next().unwrap();
+            let name = if is_folder {
+                tail
+            } else {
+                tail.rsplit_once('.').unwrap().0
+            };
+            AppEntry {
+                name: name.to_string(),
+                target_path: p.to_string(),
+                is_folder,
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| a.target_path.cmp(&b.target_path));
+    entries
+}
+
+/// 回帰テスト: **カーソルは索引をまたいで生きる**（製品では `CURSOR` がスレッド寿命である）。
+/// 別の索引で組み立てたチェーンを、同じ番号の親として流用してはならない（#1442）。
+///
+/// 系列 1 は**葉から**始める——A を全件走査すると index 0（根）でチェーンが捨てられ、
+/// 流用が起きないまま通る。系列 2 は A → B の根 → A と往復する。この系列が検知するのは、
+/// 根の分岐で索引の切り替わりを記録し損ねる形である（根でチェーンを作り直したのに、
+/// どの索引のチェーンかを更新しない）。
+#[test]
+fn path_store_cursor_discards_chain_across_stores() {
+    use crate::indexer::normalize_entry_key;
+    use crate::search::path_store::{PathCursor, PathStore};
+
+    let a_entries = swap_fixture_a();
+    let b_entries = swap_fixture_b();
+    let keys_of = |entries: &[AppEntry]| -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| normalize_entry_key(&e.target_path))
+            .collect()
+    };
+    let (a_keys, b_keys) = (keys_of(&a_entries), keys_of(&b_entries));
+    let a = PathStore::build(a_entries);
+    let b = PathStore::build(b_entries);
+
+    let stores = [(&a, &a_keys), (&b, &b_keys)];
+    // 各手は（索引: 0 = A / 1 = B, index）。
+    let series: [(&str, &[(usize, usize)]); 2] = [
+        (
+            "A の葉 → B",
+            &[(0, 2), (1, 2), (1, 3), (1, 0), (1, 1), (1, 2), (1, 3)],
+        ),
+        ("A の葉 → B の根 → A", &[(0, 2), (1, 0), (0, 1)]),
+    ];
+    for (label, steps) in series {
+        let mut cursor = PathCursor::new();
+        for (step, &(which, i)) in steps.iter().enumerate() {
+            let (store, keys) = stores[which];
+            assert_eq!(
+                cursor.normalized(store, i),
+                keys[i],
+                "{label}: {} 手目（index {i}）が現物とずれた",
+                step + 1
+            );
+        }
+    }
+}
+
+/// 回帰テスト: 製品の形での再現（#1442）。同じ worker で索引 A を検索した後に索引 B を検索しても、
+/// B の履歴ブーストが効く。
+///
+/// **A と B は同じ `install` の中で走らせる**——`pool_of(1)` を 2 回呼ぶと別のスレッドになり、
+/// カーソルが共有されない。再現の条件はほかに 3 つある:
+///
+/// - A のクエリは A の葉に当たる名前にする（当たらなければカーソルに触れない）
+/// - B のクエリは根を読まない名前一致にする（パスクエリは index 0 の根でチェーンを
+///   捨てるので、再現しない）
+/// - fixture は、rayon の分割が起きない件数に保つ
+#[test]
+fn history_boost_survives_index_swap_on_same_worker() {
+    let mut history = HistoryStore::empty();
+    for _ in 0..3 {
+        history.record_launch("C:\\bbb\\one.exe", "one");
+    }
+    let mut engine_a = SearchEngine::new(swap_fixture_a());
+    let mut engine_b = SearchEngine::new(swap_fixture_b());
+
+    let (a_results, b_results) = pool_of(1).install(|| {
+        let a = engine_a.search("two", 8, &empty_history(), SearchMode::Substring);
+        let b = engine_b.search("one", 8, &history, SearchMode::Substring);
+        (a, b)
+    });
+    assert_eq!(a_results.len(), 1, "A のクエリが葉に当たっていない");
+    let paths: Vec<&str> = b_results.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        ["C:\\bbb\\one.exe", "C:\\bbb\\abc\\one.exe"],
+        "索引の差し替え後に履歴ブーストが外れた"
+    );
 }
 
 /// 原文の再構築が `target_path` と 1 バイトも違わないことを、実データの全件で確かめる。

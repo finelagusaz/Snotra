@@ -31,27 +31,28 @@ pub(super) enum FolderMsg {
     Failed(u64, Vec<SearchResult>),
 }
 
-impl LauncherController {
-    /// フォルダ展開を履歴に記録する（`record_and_save` と同一パターン:
-    /// lock → record → prepare_history_save_if_dirty → drop → save）。
-    /// 呼び出しサイトは → の展開時のみ（← の親フォルダへの折り返しでは呼ばない・§4.6）。
-    fn record_folder_expansion(&self, dir: &str) {
-        let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
-            return;
-        };
-        let save = {
-            let mut engine = state.engine.lock().unwrap();
-            engine.record_folder_expansion(dir);
-            engine.prepare_history_save_if_dirty(5)
-        };
-        if let Some(save) = save {
-            let _ = save.save();
-        }
-    }
+/// 列挙と一緒に、展開を履歴へ記録するか（[`LauncherController::spawn_folder_load`] の引数）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Expansion {
+    /// 展開として記録する（→ の展開と、Results からの ← の突入・§4.6）。
+    Record,
+    /// 記録しない（Folder 中の ← の折り返し）。
+    Skip,
+}
 
+impl LauncherController {
     /// dir を別スレッドで全列挙・全ソートし FolderMsg を channel へ送る（token 付き）。
     /// capture（ロック内）→ read_dir_entries（ロック外 I/O・dead UNC でも event-loop を止めない）
     /// → finalize_folder_list_unlimited（ロック内・history でソート）の 3 段（engine.rs のロック最小化パターン）。
+    ///
+    /// **展開の履歴の記録もこのスレッドで行う**（`Expansion::Record`・#1453）。記録は capture と
+    /// 同じロックの中で行い、保存（`history.bin` の書き込み）は結果を送ってから行う
+    /// （`commands/launch.rs` の `record_and_save` と同じ「ロック内で準備・ロック外で保存」）。
+    /// UI フレームの中で `Mutex<Engine>` を取ると、検索 worker が走査の間ロックを握っている
+    /// ときにフレームが止まる。親の展開の記録は子の並び順に効かない（キーが違う）ので、
+    /// capture の前後どちらで記録しても列挙の結果は変わらない。保存の順序は
+    /// `PreparedHistorySave` の世代番号が守る。`read_dir` が返らない（dead UNC）ときは保存も
+    /// 走らないが、記録はメモリの履歴に入っているので、次の保存か終了時の flush が書く。
     ///
     /// **per-nav `std::thread::spawn` は意図的な選択**（advisor 2026-07-23）: 単一 worker だと 1 つの
     /// hung `read_dir`（dead UNC）が後続の全フォルダロードを塞ぐ。per-nav spawn は hang を 1 スレッドに
@@ -65,32 +66,50 @@ impl LauncherController {
     /// 待ち・`repaint.rs`）であり、通常フレームは不要な再描画をしない。channel 送信だけでは次の
     /// `update()` を誰も起こさないため、無関係な入力（マウス移動等）が来るまで到着済みの FolderMsg が
     /// drain されず、フォルダ内容が画面に反映されない（→/← 直後に応答が無いように見える）。
-    fn spawn_folder_load(&self, token: u64, dir: String, egui_ctx: egui::Context) {
+    fn spawn_folder_load(
+        &self,
+        token: u64,
+        dir: String,
+        expansion: Expansion,
+        egui_ctx: egui::Context,
+    ) {
         let app = self.app_handle.clone();
         let tx = self.folder_tx.clone();
         std::thread::spawn(move || {
             let Some(state) = app.try_state::<crate::AppState>() else {
                 return;
             };
-            let ctx = { state.engine.lock().unwrap().capture_folder_list_context() };
-            let entries = match ctx.read_dir_entries(std::path::Path::new(&dir), "") {
-                Ok(e) => e,
-                Err(_) => {
-                    let err = snotra_core::folder::error_result(std::path::Path::new(&dir));
-                    let _ = tx.send(FolderMsg::Failed(token, err));
-                    egui_ctx.request_repaint();
-                    return;
+            let (ctx, save) = {
+                let mut engine = state.engine.lock().unwrap();
+                let save = if expansion == Expansion::Record {
+                    engine.record_folder_expansion(&dir);
+                    engine.prepare_history_save_if_dirty(5)
+                } else {
+                    None
+                };
+                (engine.capture_folder_list_context(), save)
+            };
+            let msg = match ctx.read_dir_entries(std::path::Path::new(&dir), "") {
+                Ok(entries) => {
+                    let sorted = {
+                        state
+                            .engine
+                            .lock()
+                            .unwrap()
+                            .finalize_folder_list_unlimited(entries)
+                    };
+                    FolderMsg::Loaded(token, ctx, sorted)
                 }
+                Err(_) => FolderMsg::Failed(
+                    token,
+                    snotra_core::folder::error_result(std::path::Path::new(&dir)),
+                ),
             };
-            let sorted = {
-                state
-                    .engine
-                    .lock()
-                    .unwrap()
-                    .finalize_folder_list_unlimited(entries)
-            };
-            let _ = tx.send(FolderMsg::Loaded(token, ctx, sorted));
+            let _ = tx.send(msg);
             egui_ctx.request_repaint();
+            if let Some(save) = save {
+                let _ = save.save();
+            }
         });
     }
 
@@ -172,11 +191,10 @@ impl LauncherController {
                     .enter_folder(dir.clone(), self.search_debounce.is_armed())
             };
             // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
-            // （SolidJS enterFolderExpansion と同一サイト・#532）。
-            self.record_folder_expansion(&dir);
+            // （SolidJS enterFolderExpansion と同一サイト・#532）。記録は列挙のスレッドで行う。
             self.folder_cache = None;
             self.folder_error = None;
-            self.spawn_folder_load(tok, dir, ctx.clone());
+            self.spawn_folder_load(tok, dir, Expansion::Record, ctx.clone());
         }
         // ← : folder 中は親へ、通常検索中は選択項目の親を展開して folder 突入。
         if left {
@@ -188,7 +206,7 @@ impl LauncherController {
                         let tok = self.state.navigate_folder(parent.clone());
                         self.folder_cache = None;
                         self.folder_error = None;
-                        self.spawn_folder_load(tok, parent, ctx.clone());
+                        self.spawn_folder_load(tok, parent, Expansion::Skip, ctx.clone());
                     }
                 }
                 ViewKind::Results => {
@@ -206,10 +224,9 @@ impl LauncherController {
                             .state
                             .enter_folder(parent.clone(), self.search_debounce.is_armed());
                         // ← from Results は enterFolderExpansion(parent) 相当・記録する。
-                        self.record_folder_expansion(&parent);
                         self.folder_cache = None;
                         self.folder_error = None;
-                        self.spawn_folder_load(tok, parent, ctx.clone());
+                        self.spawn_folder_load(tok, parent, Expansion::Record, ctx.clone());
                     }
                 }
             }

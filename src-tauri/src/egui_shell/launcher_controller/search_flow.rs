@@ -298,7 +298,7 @@ impl LauncherController {
         if self.search_debounce.poll(self.last_input_at.elapsed()) {
             self.run_search();
         }
-        // armed のまま = 窓がまだ閉じていない。scheduler の coalescing で +interval の wake が
+        // armed のまま = まだ disarm していない。scheduler の coalescing で +interval の wake が
         // 消されても deadline で確実に起きるよう毎フレーム残り時間を再要求する。
         if self.search_debounce.is_armed() {
             let remaining = self

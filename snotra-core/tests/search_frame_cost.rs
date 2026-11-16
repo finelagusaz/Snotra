@@ -1,6 +1,6 @@
 //! #634 G-SYNC: egui 経路の `Engine::search` 1 回のコストを測るハーネス。
 //!
-//! egui 経路は debounce が検索を発行するたびに（leading と trailing）`engine.search` を呼ぶ。#634 の時点では UI スレッドで
+//! egui 経路は debounce が検索を発行するたびに `engine.search` を呼ぶ。#634 の時点では UI スレッドで
 //! 同期に呼んでいたが、#1004 から検索 worker で走る（`src-tauri/src/egui_shell/launcher_controller/search_flow.rs`
 //! の `//!`）。本ハーネスは、その 1 回の支配項 `Engine::search` を合成インデックスの規模別に実測する。
 //! 今の値が意味するのは「フレームを止める額」ではなく「打鍵から結果が出るまでの遅れの下限」である。

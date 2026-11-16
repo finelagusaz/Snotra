@@ -328,6 +328,17 @@ impl HistoryStore {
             .unwrap_or(0)
     }
 
+    /// 3 つの表（global・query の内側・folder_expansion）が持つ正規化パスキーをすべて返す
+    /// （表をまたいで重複しうる）。照合の前に候補を絞る `search` の `HistoryTails` が使う。
+    pub(crate) fn path_keys(&self) -> impl Iterator<Item = &str> {
+        self.data
+            .global
+            .keys()
+            .chain(self.data.query.values().flat_map(|m| m.keys()))
+            .chain(self.data.folder_expansion.keys())
+            .map(String::as_str)
+    }
+
     /// Same as `folder_expansion_count` but accepts a pre-normalized key.
     pub fn folder_expansion_count_normalized(&self, normalized_key: &str) -> u32 {
         self.data

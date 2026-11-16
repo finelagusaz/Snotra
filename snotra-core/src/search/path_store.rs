@@ -277,6 +277,25 @@ impl PathStore {
         buf.make_ascii_lowercase();
     }
 
+    /// `i` の正規化キーの末尾セグメント（[`key_tail`]）を、フルパスを組み立てずに `buf` へ書いて返す。
+    ///
+    /// キーは「祖先の部分 + 区切り + 自分のセグメント」なので、末尾セグメントは自分のセグメントの
+    /// 最後の `\` より後（無ければ全体）である。自分のセグメントは [`PathCursor`] と同じ規則で書く
+    /// ——根は `trim` して書き、根でなければ `names` と `table` を続けて書き、ASCII を小文字化する。
+    /// セグメントが空なら、キーは `\` で終わるので末尾セグメントも空になり、ここも空を返す。
+    pub(super) fn key_tail_into<'b>(&self, buf: &'b mut String, i: usize) -> &'b str {
+        let entry = &self.entries[i];
+        buf.clear();
+        if entry.parent == NO_PARENT {
+            push_segment(buf, self.table[entry.aux as usize].trim());
+        } else {
+            push_segment(buf, self.names.get(i));
+            push_segment(buf, &self.table[entry.aux as usize]);
+        }
+        buf.make_ascii_lowercase();
+        key_tail(buf)
+    }
+
     /// 2 件のフルパスを**原文のバイト列として**比べる（`ScoredEntry` の最終 tie-break）。
     ///
     /// **セグメント単位で比べてはならない。** 区切り `\`(0x5C) は `-`(0x2D) や `.`(0x2E) より
@@ -497,6 +516,11 @@ thread_local! {
     /// 容量を再利用するのでウォームアップ後の確保は起きない。
     static CMP_BUFS: std::cell::RefCell<(String, String)> =
         const { std::cell::RefCell::new((String::new(), String::new())) };
+}
+
+/// 正規化キーの末尾セグメント（最後の `\` より後。`\` が無ければ全体）。
+pub(super) fn key_tail(key: &str) -> &str {
+    key.rfind('\\').map_or(key, |pos| &key[pos + 1..])
 }
 
 /// 1 セグメントを `/` → `\` だけ直して**追記**する（`clear` も `trim` も小文字化もしない）。

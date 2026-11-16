@@ -564,16 +564,21 @@ impl SearchEngine {
         // 末尾セグメントが履歴のどのキーとも違えば、3 つの照合はすべて 0 を返すので、
         // 統計 0 で組み立てた結果と 1 バイトも変わらない（論証は [`HistoryLookup`] の doc）。
         // **下でキーを読む処理を足すなら、この早期 return の条件も見直す。**
-        if let Some(base_score) = score
-            && !history.may_hit(&self.entries, i)
-        {
-            return Some(ScoredEntry {
-                score: base_score + adjusted_history_boost(mode, base_score, 0, options),
-                last_launched: 0,
+        // 照合の結果から `ScoredEntry` を作る。2 つの出口（下の早期 return と末尾）が共有する。
+        let finish = |base_score: i64, raw_history_boost: i64, last_launched: u64| {
+            Some(ScoredEntry {
+                score: base_score
+                    + adjusted_history_boost(mode, base_score, raw_history_boost, options),
+                last_launched,
                 lower_name: v.lower_name,
                 paths: &self.entries,
                 index: i,
-            });
+            })
+        };
+        if let Some(base_score) = score
+            && !history.may_hit(&self.entries, i)
+        {
+            return finish(base_score, 0, 0);
         }
 
         // 1 エントリにつき 1 回だけ詰める——下のパスマッチと履歴照合 3 種が同じキーから始める。
@@ -620,17 +625,7 @@ impl SearchEngine {
 
             let raw_history_boost =
                 (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
-            let history_boost =
-                adjusted_history_boost(mode, base_score, raw_history_boost, options);
-            let combined = base_score + history_boost;
-
-            Some(ScoredEntry {
-                score: combined,
-                last_launched,
-                lower_name: v.lower_name,
-                paths: &self.entries,
-                index: i,
-            })
+            finish(base_score, raw_history_boost, last_launched)
         })
     }
 }

@@ -265,33 +265,39 @@ impl PathStore {
     pub(super) fn normalized_into(&self, buf: &mut String, i: usize) {
         let (root, chain, depth) = walk_to_root(self, i);
         buf.clear();
-        // 根だけ `trim` する。現物は全体へ当てるが、末尾側は最終セグメントが担う。
-        push_segment(buf, self.table[self.entries[root].aux as usize].trim());
+        self.push_own_segment(buf, root);
         for d in (0..depth).rev() {
-            let idx = chain[d] as usize;
             push_separator(buf);
-            push_segment(buf, self.names.get(idx));
-            push_segment(buf, &self.table[self.entries[idx].aux as usize]);
+            self.push_own_segment(buf, chain[d] as usize);
         }
         // ASCII の小文字化はここで 1 回だけ当てる。
         buf.make_ascii_lowercase();
     }
 
-    /// `i` の正規化キーの末尾セグメント（[`key_tail`]）を、フルパスを組み立てずに `buf` へ書いて返す。
+    /// `i` 自身のセグメントを正規化キーの規則で**追記**する（ASCII の小文字化は呼び出し側）。
     ///
-    /// キーは「祖先の部分 + 区切り + 自分のセグメント」なので、末尾セグメントは自分のセグメントの
-    /// 最後の `\` より後（無ければ全体）である。自分のセグメントは [`PathCursor`] と同じ規則で書く
-    /// ——根は `trim` して書き、根でなければ `names` と `table` を続けて書き、ASCII を小文字化する。
-    /// セグメントが空なら、キーは `\` で終わるので末尾セグメントも空になり、ここも空を返す。
-    pub(super) fn key_tail_into<'b>(&self, buf: &'b mut String, i: usize) -> &'b str {
+    /// 正規化キーの 1 段の書き方。[`Self::key_tail_into`]・参照実装の `normalized_into`・[`PathCursor`] の根が
+    /// ここを通る（カーソルの `append` だけは根でない段を直に書く。理由は同メソッド）。根だけ `trim` する（現物の
+    /// `normalize_entry_key` は全体へ当てるが、末尾側は最終セグメントが担う）。
+    #[inline]
+    fn push_own_segment(&self, buf: &mut String, i: usize) {
         let entry = &self.entries[i];
-        buf.clear();
         if entry.parent == NO_PARENT {
             push_segment(buf, self.table[entry.aux as usize].trim());
         } else {
             push_segment(buf, self.names.get(i));
             push_segment(buf, &self.table[entry.aux as usize]);
         }
+    }
+
+    /// `i` の正規化キーの末尾セグメント（[`key_tail`]）を、フルパスを組み立てずに `buf` へ書いて返す。
+    ///
+    /// キーは「祖先の部分 + 区切り + 自分のセグメント」なので、末尾セグメントは自分のセグメントの
+    /// 最後の `\` より後（無ければ全体）である。セグメントが空なら、キーは `\` で終わるので
+    /// 末尾セグメントも空になり、ここも空を返す。
+    pub(super) fn key_tail_into<'b>(&self, buf: &'b mut String, i: usize) -> &'b str {
+        buf.clear();
+        self.push_own_segment(buf, i);
         buf.make_ascii_lowercase();
         key_tail(buf)
     }
@@ -441,10 +447,7 @@ impl PathCursor {
             // 自分自身を 2 回書いてしまう）。
             self.buf.clear();
             self.stack.clear();
-            push_segment(
-                &mut self.buf,
-                store.table[store.entries[i].aux as usize].trim(),
-            );
+            store.push_own_segment(&mut self.buf, i);
             self.buf.make_ascii_lowercase();
             self.stack.push((i as u32, self.buf.len() as u32));
             return &self.buf;
@@ -461,10 +464,7 @@ impl PathCursor {
                 let (root, chain, depth) = walk_to_root(store, i);
                 self.buf.clear();
                 self.stack.clear();
-                push_segment(
-                    &mut self.buf,
-                    store.table[store.entries[root].aux as usize].trim(),
-                );
+                store.push_own_segment(&mut self.buf, root);
                 self.buf.make_ascii_lowercase();
                 self.stack.push((root as u32, self.buf.len() as u32));
                 for d in (1..depth).rev() {
@@ -482,6 +482,8 @@ impl PathCursor {
     fn append(&mut self, store: &PathStore, idx: usize) {
         push_separator(&mut self.buf);
         let start = self.buf.len();
+        // 根でないことは呼び出し側が知っている（根は `normalized` が別に書く）ので、
+        // `push_own_segment` の分岐を通さず直に書く（全件走査で 1 段ごとに走るホットループである）。
         push_segment(&mut self.buf, store.names.get(idx));
         push_segment(&mut self.buf, &store.table[store.entries[idx].aux as usize]);
         self.buf[start..].make_ascii_lowercase();

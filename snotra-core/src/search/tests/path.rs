@@ -609,18 +609,30 @@ fn key_tail_into_matches_cursor_key_tail() {
     assert_key_tail_matches_cursor(entries);
 }
 
+/// 期待値は**現物**（`normalize_entry_key`・履歴が記録するキー）の末尾セグメントから取る。
+/// カーソルと `key_tail_into` は 1 段の書き方（`push_own_segment`）を共有するので、カーソルと
+/// 比べるだけでは、共有した規則そのものの誤り（根の `trim` を外す等）を検出しない。
 fn assert_key_tail_matches_cursor(entries: Vec<AppEntry>) {
+    use crate::indexer::normalize_entry_key;
     use crate::search::path_store::{PathCursor, PathStore, key_tail};
 
+    let keys: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_entry_key(&e.target_path))
+        .collect();
     let store = PathStore::build(entries);
     let mut cursor = PathCursor::new();
     let mut buf = String::new();
-    for i in 0..store.len() {
-        let want = key_tail(cursor.normalized(&store, i)).to_string();
+    for (i, key) in keys.iter().enumerate() {
+        assert_eq!(
+            cursor.normalized(&store, i),
+            key.as_str(),
+            "カーソルのキーが現物とずれている（index {i}）"
+        );
         assert_eq!(
             store.key_tail_into(&mut buf, i),
-            want,
-            "末尾セグメントがカーソルのキーとずれている（index {i}）"
+            key_tail(key),
+            "末尾セグメントが現物のキーとずれている（index {i}）"
         );
     }
 }

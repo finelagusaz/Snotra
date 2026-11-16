@@ -1,0 +1,120 @@
+反証結果 — issue #1443（読み取りのみ・コード変更なし・smoke 未実行・常駐 snotra.exe(PID 35248) は無傷）
+
+== 争点ごとの宣言 ==
+1. trailing は同じ要求の再送にすぎない     : 壊せなかった（細部の補足 ⚠️ あり）
+2. armed の意味を保てば周辺は正しい         : 壊せなかった（publish が poll より後であることまで確認）
+3. leading が送られなかったバースト        : 壊せなかった
+4. 索引完了は別経路・show で作り直し        : 壊せなかった
+5. 偽になる散文は research.md の列挙で全部   : 壊せた（漏れが 5 件以上）
+6. 受け入れの測り方                         : 壊せた（そのままでは数えられない・smoke が通る分岐が変更の第 2 分岐を踏まない）
+
+== 所見 ==
+
+[F1 / 争点6 / 壊せた] worker は要求を合流（coalesce）するので `settled + dropped` は dispatch 数の下限にすぎない
+  根拠: src-tauri/src/egui_shell/search_worker.rs `coalesce` / `spawn_search_worker` は recv 後に try_iter で溜まりを吸い、最後の 1 件だけを走らせて Done を返す。
+        間引かれた seq は Done を返さないので settled にも dropped にも出ない（drain_search は Done 受信ごとにしか trace しない）。
+        同期クリア（空クエリ・indexing・送信失敗）は dispatch ではないので trace に出ない（これは正しい）。
+  影響: 「worker へ送った数 = settled + dropped」は成立しない。コーパスが 1 件でパス検索が sub-ms の smoke ではほぼ一致するが、
+        実索引（数万〜30万件・検索 12〜150 ms）では打鍵が詰まると過小になる。正確な dispatch 数が要るなら、
+        run_search_with の send 直前に一時 trace を足す（撤去を新設時に決める作法に従う）か、worker 側の `engine.search` 呼出し数を数える。
+  偽にする手順: 検索が 100 ms かかる索引で leading と trailing を 100 ms 内に送り、Done が 1 件しか出ないことを trace で見る。
+
+[F2 / 争点6 / 壊せた] smoke のパスクエリ打鍵は、変更が触る分岐の片方（leading のみ）しか通らない
+  根拠: scripts/smoke-egui.ps1 L481-488 は c / : / \ を 120 ms 間隔（> 50 ms）で打つ。変更後は各打鍵が「leading のみ・trailing なし」になる。
+        「入力が続いて trailing が発火する」側（受け入れ 2: 連打の最後は今までどおり trailing）は smoke では一度も走らない。
+        smoke の L484 コメント「debounce(50ms) の trailing を跨がせる」は、変更後は「バーストを分ける」の意味に変わり、trailing を跨ぐ目的は消える。
+  影響: smoke の数は 2n → n の確認にしかならず、受け入れ 2 の検証にならない。受け入れ 2 は Debouncer の純粋核テスト（leading→on_input→poll で発火）か、
+        50 ms 未満の間隔で 2 打鍵する別注入が要る。
+
+[F3 / 争点6 / 壊せた] smoke の基準線が決定的でない（Backspace → c の 50 ms 競合）
+  根拠: L452-457 で Backspace を打ち Start-Sleep 50 の後に c を打つ。Backspace のバーストの armed は +50 ms の poll で落ちる。
+        c が poll より先（armed のまま）なら c は leading なし・trailing 1 回（main で 1 dispatch）、後なら leading + trailing（main で 2 dispatch）。
+        PowerShell の Sleep 50 + 注入のオーバーヘッドは 50 ms の周りで揺れるので、main の期待値は 5〜6、変更後は 3 に定まる。
+  影響: 「main で 6、本ブランチで 3」と書くと、main 側が 5 でも正常。比較は seq 窓（最初の changed〜3 文字観測）で切り、main は複数回走らせる。
+        さらに、Ctrl+H（c:\ → c:）以降・結果表示確認の z 打鍵・retry ループが同じログに dispatch を足すので、数える窓を seq で限定する必要がある。
+  偽にする手順: main で smoke を数回走らせ、c の dispatch 数が 1 と 2 の両方に分かれることを見る（常駐があるので走らせない・CI の smoke か別マシン）。
+
+[F4 / 争点6 / ⚠️] smoke は常駐 Snotra があると走らない・走らせると常駐に副作用の恐れ
+  根拠: smoke-egui.ps1 には「既に起動している」ことを検出する明示のガードが無い（grep で Get-Process は msedgewebview2 のみ）。
+        research.md の「既に起動していると throw する」は、single-instance プラグインで 2 つ目が即終了し L327 の "Process exited during startup" に落ちる、という推論。
+        ただし single-instance は終了前に常駐側へ activate を通知しうる（commands/window.rs の :already_running）ので、常駐のウィンドウが前面に出る副作用が起きうる。
+        実測は未実施（走らせていない）。tasklist で snotra.exe(PID 35248) が稼働中であることだけを確認した。
+
+[F5 / 争点6 / 測定環境] smoke の設定と実機の設定が違う（分岐は同じだが、費用の前提が違う）
+  根拠: smoke は target/smoke-egui/profile の seed config（索引 1 件・instant_command_prefix 既定 "@"）。実 %APPDATA%\Snotra\config.toml は
+        instant_command_prefix = "@"（一致）・normal_mode = "substring"・migemo_enabled = true・result_limit = 200・scan に C:\ を含む。
+        - prefix は両方 "@" なので c / c: / c:\ は Plain に入る（Instant/Command に落ちない）。インデックス構築完了は egui_results:show 観測後なので indexing 中の同期クリアにも落ちない。この点は前提どおり。
+        - issue の費用表は Fuzzy。実機は Substring で、選択的なクエリの 2 回目は増分キャッシュで安い（表の Substring lib 2,869 → 773 µs）。
+          パスクエリ（has_path_sep でキャッシュ無効）だけが全額。実機での効果は issue の見立てより小さいクエリがある。smoke は 1 件索引なので費用は測れず、数だけが測れる。
+
+[F6 / 争点5 / 壊せた] 変更で偽（または不正確）になる散文が research.md の列挙から漏れている
+  research.md は Debouncer の doc・poll の doc・search_dispatch.rs の Settled・PERFORMANCE.md の put_rows 節・search_frame_cost.rs の //! を挙げ、
+  それ以外は「真のまま」とした。次は漏れ（git grep -i trailing の全件を読んだ結果）。
+  a. layout.rs `on_input` の doc「いずれにせよ armed にして trailing を予約する」— leading のみのバーストでは trailing は予約されない。
+  b. layout.rs `is_armed` の doc「armed のまま（trailing 未発火）か」— armed でも trailing が発火しないバーストが生じる。
+  c. layout.rs `cancel` の doc「予約済み trailing を取り消す」— 予約の意味が変わる（文言は新契約に合わせる必要あり）。
+  d. search_flow.rs poll_search_debounce の関数 doc と L296 のコメント「連打が収まって interval 経過したら最終クエリで検索し直す」— 入力が続いた場合に限る。
+     L300「armed のまま = trailing 未発火」も、poll が disarm して false を返す場合を含まなくなり不正確。
+  e. search_state.rs L92「Debouncer::poll の trailing 発火で…armed が落ちる」と L609-611「解けるのは trailing が発火するか、cancel か」— 変更後は
+     trailing が発火しない poll でも armed が落ちる。research.md は「poll が disarm する点は変わらない」から真と判断したが、文言は「trailing の発火」を原因として名指している。⚠️（読み方次第）
+  f. search_state.rs L1191 付近のテスト doc「debounce が予約を持ったまま（trailing 未発火で in-flight がまだ無い）」— 新契約では「予約」の語義が変わる。⚠️
+  g. search_state.rs L599「trailing 発火の直後は必ず armed == false かつ in-flight あり」— 真のまま。ただし #1038 の欠陥の経路が増える
+     （poll が trailing なしで disarm し、leading が in-flight のまま）。is_unsettled の pending_seq 項が覆うので式は正しいが、doc の「必ず」を読む人には新経路が見えない。⚠️
+  h. smoke-egui.ps1 L484 のコメント（F2 参照）。
+  i. PERFORMANCE.md L513（過去計測の表の注）は歴史なので真。L2843 は現在形で偽（research.md にあり）。
+  j. since_key を使う計測の基準が動く: egui_search:settled の since_key_us は孤立打鍵で trailing 分（約 50 ms + 検索）が消える。search_dispatch.rs の Settled doc
+     「打鍵起点には 50 ms の trailing debounce 待ちが必ず入る」は変更前から不正確（孤立打鍵では leading の settled が先に出る）。PERFORMANCE.md の since_key 比較表（L500 付近）が
+     変更前後で比べられなくなる点は書き残す価値がある。
+  真のまま確認できたもの: docs/architecture.md の sequence 図（arm と poll の記述）・SPEC.md（debounce 言及は §15.3 の 1 か所のみ・grep で確認）・
+  src-tauri/CLAUDE.md の layout.rs 行（「debounce の純粋核」）。
+  偽にする手順: `git grep -n -i trailing -- '*.md' '*.rs' '*.ps1'`（docs/superpowers・docs/adr・workspace を除く）を読み直し、
+  Debouncer が「必ず発火する」「予約する」を前提にした現在形の文を探す。
+
+[F7 / 争点1 / 壊せなかった] 同じクエリ・同じ解釈で同じ要求を送る
+  根拠: leading は on_input_changed が取った prefix で interp し、run_search_with が同じ state.interp(prefix) を引く（同一フレーム・同一 prefix）。
+        trailing は query（set_query は on_input_changed と clear_search だけ。grep 済み）が不変なら同一文字列を送る。
+        Engine::search は &self.history と config を読むだけで状態を持たない（PathCursor・増分キャッシュは高速化で、同じクエリの結果は変わらない設計。#1442 の直近修正も別件）。
+        migemo は索引構築時に kana を持つ設計で、遅延初期化はない（grep: engine.rs / search/*）。
+  補足 ⚠️: trailing が兼ねていた「再読み」は instant_command_prefix だけではない。engine.search は呼出し時に config（normal_mode・boost・result_limit）と history も読む。
+        50 ms 以内にこれらが変わる経路（設定ウィンドウ適用・別スレッドの履歴記録）は手操作ではほぼ起きないが、issue の「注意」は prefix だけを挙げている。
+        どれも config-applied で再検索する機構は元から無く、trailing が拾えるのは打鍵から 50 ms 以内の偶然だけなので、省いても実害の根拠にならない。
+  偽にする手順: leading 発火の直後（50 ms 以内）に設定を適用して normal_mode を変え、trailing 前後の行が変わるか見る。
+
+[F8 / 争点2 / 壊せなかった] armed の意味を保てば #1038・input_idle・repaint はそのまま
+  根拠: poll_search_debounce は poll の返り値で run_search を撃つだけで、armed の読みと request_repaint_after は is_armed() から導く。返り値だけを変えれば不変。
+        view.rs の順序は drain_search(L1111) → poll(L1114) → publish(L1165, input_idle = !is_search_armed)。disarm したフレームの publish が input_idle=true を運び、
+        results 側の wake も同フレームで発行される。trailing の結果着という次の wake に頼っていない（頼っていたら変更後はアイコン要求が止まるが、頼っていない）。
+        on_enter の flush: armed または pending_seq != 0 または restored_rows_stale。leading が遅く（> 50 ms）poll の disarm 後も in-flight なら pending_seq が覆う。
+        Debouncer が作り直される（show）ので、持たせる「入力があった」の印も同時に落ちる。cancel/new が印を落とすこと（research.md の制約）が前提。
+  新たな効果（良い方向）: 検索が 50 ms を超えるとき、従来は trailing が leading の in-flight を追い越して leading の結果を捨てていた。変更後は leading が採り込まれる。
+  偽にする手順: poll が false を返して disarm した直後のフレームで input_idle が false のままか、view.rs の順序を入れ替えて確かめる（現状は入れ替わっていない）。
+
+[F9 / 争点3 / 壊せなかった] leading が送られなかったバーストでも trailing 省略は無害
+  根拠: 各経路を確認した。
+   - Plain の最初の on_input は必ず leading（armed が false のときだけ true を返す）。cancel 後（Instant・Command・ツール突入・clear_search・Enter flush）も次の Plain は leading。
+     Command/Instant → Plain の遷移では armed は cancel 済みなので必ず leading が撃たれる（trailing に救われていない）。
+   - 空クエリ・indexing 中・送信失敗は run_search_with が同期クリア。trailing も同じクリアをするだけ。
+   - indexing 中の leading のあと索引が完成する場合: finish_index_build は indexing=false を先に、index_generation を後に更新する（state.rs）。
+     consume_external_pending（段 5-6）が世代変化で run_search（段 22 の打鍵より前）。完了は indexing.rs の notify_indexing_complete で wake される。
+     どの順序でも「leading が indexing=true を読んだのに、世代変化も観測されない」窓は無い（leading が indexing=true を読むなら、その後の finish は次フレームで世代として観測される）。
+   - Folder へ入った後の trailing は Folder ブランチの再フィルタにすぎず、検索は出さない。Escape で戻ったあとの未反映は restored_rows_stale と Enter flush が覆う。
+     trailing が Results に戻った後で救うのは「Escape が最後の打鍵から 50 ms 以内」という窓だけで、人の操作ではほぼ起きず、従来もほとんどの場合 folder 中の poll で落ちていた。⚠️（極小の窓として残る）
+   - Tool ビューは run_search_with が no-op。
+  偽にする手順: leading 経路の run_search_with が早期 return する分岐（Tool・Folder 以外）を探す。見つからなかった。
+
+[F10 / 争点4 / 壊せなかった] 索引完了は別経路・show で作り直し
+  根拠: frame_stages.rs consume_external_pending は index_generation の変化で run_search。consume_reset_pending は reset_pending（show が立てる）で Debouncer を new_search_debounce() に差し替える。
+        ただし「show のたび」は reset_pending を立てる全経路が前提（mod.rs L143 の doc: show が立てる）。個別の show 経路は網羅していない。⚠️（軽微）
+
+[F11 / research.md のその他の主張]
+  - 「SPEC.md の debounce 言及は §15.3 の 1 か所だけ」: SPEC.md の debounce / デバウンス / trailing / leading を grep。L497 の「移動位置をデバウンス保存」は別件（ウィンドウ位置）、L818 が検索の debounce。主張は検索 debounce に限れば真。
+  - 「launcher_controller.rs 168 行付近の is_armed」: 真（is_search_armed）。
+  - 既存テスト3本: leading_fires_on_burst_start_then_trailing は 2 回目の on_input を含むので新契約でも通る。no_leading_mode_only_trailing も通る
+    （leading=false の最初の on_input を「入力があった」と数える必要がある。数えない実装だと落ちる）。cancel_disarms は通る。したがって新しい失敗するテスト（leading のみ → poll false）が Red として要る。
+  - 技術的制約「cancel と new は印も落とす」: 妥当。cancel 後の次バーストが leading のみのとき trailing が出る害は設計の違反であって実害は小さい。
+  - 取りこぼし（⚠️）: 孤立 1 打鍵の trace 数だけを受け入れにすると、「2 打鍵で最後のクエリが trailing で検索される」ことを縛るテストが無い。Debouncer の純粋核テストに入れる。
+
+== 要約表 ==
+壊せた: 争点5（F6）、争点6（F1・F2・F3・F5）
+壊せなかった: 争点1（F7）、争点2（F8）、争点3（F9）、争点4（F10）
+⚠️（確信が持てない）: F4（smoke を走らせたときの常駐への副作用・未実測）、F6-e/f/g（散文が「偽」かは読み方次第）、F7 補足（config/history の再読み）、F9（Escape 50 ms 以内の極小の窓）、F10（show 経路の網羅は未確認）

@@ -45,14 +45,17 @@ impl LauncherController {
     /// capture（ロック内）→ read_dir_entries（ロック外 I/O・dead UNC でも event-loop を止めない）
     /// → finalize_folder_list_unlimited（ロック内・history でソート）の 3 段（engine.rs のロック最小化パターン）。
     ///
-    /// **展開の履歴の記録もこのスレッドで行う**（`Expansion::Record`・#1453）。記録は capture と
-    /// 同じロックの中で行い、保存（`history.bin` の書き込み）は結果を送ってから行う
-    /// （`commands/launch.rs` の `record_and_save` と同じ「ロック内で準備・ロック外で保存」）。
-    /// UI フレームの中で `Mutex<Engine>` を取ると、検索 worker が走査の間ロックを握っている
-    /// ときにフレームが止まる。親の展開の記録は子の並び順に効かない（キーが違う）ので、
-    /// capture の前後どちらで記録しても列挙の結果は変わらない。保存の順序は
-    /// `PreparedHistorySave` の世代番号が守る。`read_dir` が返らない（dead UNC）ときは保存も
-    /// 走らないが、記録はメモリの履歴に入っているので、次の保存か終了時の flush が書く。
+    /// **展開の履歴の記録もこのスレッドで行う**（`Expansion::Record`・#1453）。UI フレームの中で
+    /// `Mutex<Engine>` を取ると、検索 worker が走査の間ロックを握っているときにフレームが止まる
+    /// ためである。記録は capture と同じロックの中で行い、保存（`history.bin` の書き込み）は結果を
+    /// 送った後に行う（`commands/launch.rs` の `record_and_save` と同じく、ロックの中で準備し、
+    /// ロックの外で保存する）。
+    ///
+    /// - 記録の位置: 親の展開の記録は子の並び順に効かない（キーが違う）ので、capture の前後
+    ///   どちらで記録しても列挙の結果は変わらない
+    /// - 保存の順序: `PreparedHistorySave` の世代番号が守る
+    /// - `read_dir` が返らない（dead UNC）とき: 保存も走らない。記録はメモリの履歴に入っているので、
+    ///   次の保存か終了時の flush が書く
     ///
     /// **per-nav `std::thread::spawn` は意図的な選択**（advisor 2026-07-23）: 単一 worker だと 1 つの
     /// hung `read_dir`（dead UNC）が後続の全フォルダロードを塞ぐ。per-nav spawn は hang を 1 スレッドに

@@ -92,10 +92,11 @@
 - [x] `docs/architecture.md` の sequence 図の 1 行
 
 ### Phase 4 — 検証と記録
-- [ ] 変更後の検証チェックリスト（カテゴリ A）を通す
+- [x] 変更後の検証チェックリスト（カテゴリ A）を通す
   - ラウンド 1: sha fc14664b / verify:tree green（A・E・F）/ 指摘 High 2（既存テストの「発火後は disarm」が新契約で空洞化〈変異 f が生存〉→ `is_armed()` の偽と次の leading を表明／訳語「窓」が GUI ウィンドウの語義と衝突 → 既存の armed / disarm の語彙へ）・Medium 1（`cancel` のクリアと `take` は等価変異で何も縛らない → 両方を削り、`on_input` が毎回上書きすることを doc に書き、持ち越しを縛るテスト `trailing_reservation_does_not_leak_into_next_burst` に置き換え）・Low 4（`search_dispatch.rs` の 50 ms の写しを削除・`search_frame_cost.rs` の経路の列挙を削除。folder 往復と Phase 4 未了は既知）/ 変異 (a)(b)(d) 検知・(c)(e)(g) は等価・(f) 生存 → 上の修正で検知
-- [ ] 常駐の Snotra を終了してもらい、smoke を本ブランチと main で走らせて発行数を数える
-- [ ] `PERFORMANCE.md` に記録を足す
+  - ラウンド 2: sha 37115878 / verify:tree green（A・E・F）/ 前回の 5 件すべて解消 / 新規 Low 2（Low-5: `input_after_leading` の doc の名指しを intra-doc link へ——採用。Low-6: 「armed にする唯一の経路」は `armed = true` が 1 か所の間だけ真——記録のみ）/ 変異 (d)(f)(n)(a)(b) 検知 / 生き残り 0
+- [x] 常駐の Snotra を終了してもらい、smoke を本ブランチと main で走らせて発行数を数える — 2026-11-16・debug・各 1 回・両方 pass。`dispatch_seq` で数えて、smoke 全体で main 18 / 本ブランチ 10、`:` と `\` で main 4 / 本ブランチ 2（計画の見込みどおり）
+- [x] `PERFORMANCE.md` に記録を足す
 
 ## 未確定（実装前に潰す）
 

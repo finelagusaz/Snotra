@@ -75,19 +75,21 @@
 ## 作業項目
 
 ### Phase 1 — Red
-- [ ] `search/tests/path.rs` に `path_store_cursor_discards_chain_across_stores` を足し、修正前に赤を確認
-- [ ] `search/tests/path.rs` に `history_boost_survives_index_swap_on_same_worker` を足し、修正前に赤を確認
+- [x] `search/tests/path.rs` に `path_store_cursor_discards_chain_across_stores` を足し、修正前に赤を確認
+- [x] `search/tests/path.rs` に `history_boost_survives_index_swap_on_same_worker` を足し、修正前に赤を確認
 
 ### Phase 2 — Green
-- [ ] `path_store.rs` に `NEXT_GENERATION` と `PathStore::generation` を足し、`adopt` で振る
-- [ ] `PathCursor::generation` を足し、`normalized` の先頭で照合・破棄・更新する
-- [ ] `footprint_rows` の分解に `generation: _` を足す
-- [ ] `PathCursor` / `CURSOR` / `generation` の doc を直す
-- [ ] `path_store_cursor_matches_full_rebuild` のコメントを直す
+- [x] `path_store.rs` に `NEXT_GENERATION` と `PathStore::generation` を足し、`adopt` で振る
+- [x] `PathCursor::generation` を足し、`normalized` の先頭で照合・破棄・更新する
+- [x] `footprint_rows` の分解に `generation: _` を足す
+- [x] `PathCursor` / `CURSOR` / `generation` の doc を直す
+- [x] `path_store_cursor_matches_full_rebuild` のコメントを直す
+
+- [x] （計画外・dry-check）`cursor_fixture` を `entries_from_paths`（`swap_fixture` を改名）経由に置き換える（同じ名前導出と整列を手で書いていた。`ranking.rs` の同形は別モジュールゆえ範囲外）
 
 ### Phase 3 — 検証
 - [ ] 変更後の検証チェックリスト（該当カテゴリ）を通す
-- [ ] `path_query_cost` の `at_operating_point` で A/B を取り、結果を記録する
+- [x] `path_query_cost` の `at_operating_point` で A/B を取り、結果を記録する — 2026-11-16・開発機の実 index.bin（23,672 件・PATH マージで +248）・main と本ブランチを交互に 3 回ずつ（release・100 標本）。`c:` の p50 中央値（µs）: 4 構成で A 480/461/470/451・B 486/457/457/472。他のパスクエリも同様に差は両方向に散り、同じ側の 3 回の幅（例 `c:` A 451〜507）に収まる。退行なし。PERFORMANCE.md には書かない（計画どおり）
 
 ## 未確定（実装前に潰す）
 

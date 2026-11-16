@@ -47,6 +47,7 @@
 //! 捨てることになり、実運用点で `c:\` の p50 に 7,700〜8,900 µs 乗る（#1067・`PERFORMANCE.md`）。
 
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use super::footprint::{FootprintRow, boxed_strs, vec_body};
 use crate::index_tree::{
@@ -128,7 +129,19 @@ pub(super) struct PathStore {
     /// ——`SearchEngine::new` は任意順を受け取れるので、契約にすると破れたとき静かに
     /// 順序が変わる。測って持てば、破れた入力は遅い経路を通るだけになる。
     sorted_prefix_len: usize,
+    /// 構築ごとに一意な世代（[`NEXT_GENERATION`] から振る・0 は振らない）。[`PathCursor`] は
+    /// これが変わったらチェーンを捨てる——カーソルはスレッド寿命で索引を跨ぐので、index の
+    /// 番号だけでは別の索引の同じ番号を見分けられない（#1442）。
+    ///
+    /// **アドレスで代用しない**——`SearchEngine` は move され、旧索引を解放した跡に新索引が
+    /// 置かれうる（ABA）。**構築後に親子関係・名前・`table` を書き換える口を足すなら、そこで
+    /// 世代も進める**（今は無いので、構築時に 1 回振れば足りる。機械的な検知は無い）。
+    generation: u64,
 }
+
+/// [`PathStore::generation`] の採番元。**1 から振る**——0 は [`PathCursor::new`] の「どの索引も
+/// 見ていない」に取ってあり、初期のカーソルが必ず不一致になる。
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 impl PathStore {
     pub(super) fn len(&self) -> usize {
@@ -194,6 +207,7 @@ impl PathStore {
             names,
             table,
             sorted_prefix_len: _,
+            generation: _,
         } = self;
         // **アリーナは 2 行に割る。** 連結バイト列と切り出しのオフセットは削減の効き方が違う
         // ——前者は表現を変えても減らず（同じ文字が居る）、後者はアリーナ化で新しく足した額
@@ -352,7 +366,11 @@ impl TreeNodes for PathStore {
     }
 }
 
-/// 全件走査のあいだ、直前に組み立てた祖先のチェーンを持ち回るカーソル。
+/// 直前に組み立てた祖先のチェーンを持ち回るカーソル。
+///
+/// **寿命は走査ではなくスレッドである**（[`with_cursor`] がスレッドローカルに置く）ので、
+/// 索引の差し替えを跨ぐ。チェーンが有効なのは同じ索引の中だけであり、索引が替わったことは
+/// [`PathStore::generation`] で見分けて捨てる（#1442）。
 ///
 /// **索引はソート順に並んでいるので、隣り合うエントリは祖先をほぼ共有する。** 毎回根まで
 /// 辿って全部書き直すと、共有している部分を何度も書き直すことになる。チェーンを持ち回れば、
@@ -360,15 +378,17 @@ impl TreeNodes for PathStore {
 ///
 /// 親がチェーンに載っているかの判定は `u32` の線形走査（高々 [`crate::index_tree::CHAIN_CAP`] 個・実測の深さは平均
 /// 6.05 段）であり、メモリを追いかけない。外れたときは根まで辿って作り直すので、
-/// **順序が乱れた入力でも結果は変わらない**（速さだけが落ちる）。
+/// **順序が乱れた入力でも、索引を跨いでも、結果は変わらない**（速さだけが落ちる）。
 ///
 /// 効く根拠は構築側と同じ性質である——`PathStore::build` で親解決の照合表を「直前の親の
 /// 使い回し」に替えたとき 152 → 23 ms になった。
 pub(super) struct PathCursor {
     buf: String,
     /// いま `buf` に載っているチェーン: `(index, その段まで書いた時点の buf の長さ)`。
-    /// 先頭が根で、末尾が直前に組み立てたエントリ。
+    /// 先頭が根で、末尾が直前に組み立てたエントリ。index はすべて `generation` の索引のもの。
     stack: Vec<(u32, u32)>,
+    /// `stack` を組み立てた索引の [`PathStore::generation`]。0 はどの索引も見ていない。
+    generation: u64,
 }
 
 impl PathCursor {
@@ -376,6 +396,7 @@ impl PathCursor {
         Self {
             buf: String::new(),
             stack: Vec::new(),
+            generation: 0,
         }
     }
 
@@ -387,8 +408,16 @@ impl PathCursor {
     /// での検証は `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild`（順・逆順・
     /// 乱順）、実 `index.bin` の全件での照合は同ファイルの
     /// `path_store_cursor_matches_normalize_entry_key_over_real_index`（**実インデックスが無ければ
-    /// 自動スキップ**）。
+    /// 自動スキップ**）。索引を跨ぐ場合は `path_store_cursor_discards_chain_across_stores`。
     pub(super) fn normalized(&mut self, store: &PathStore, i: usize) -> &str {
+        // 索引が替わっていたらチェーンを捨てる。**根の分岐より前に置く**——根の分岐の中だけで
+        // 世代を更新し損ねると、根を挟んで旧索引へ戻ったときに新索引の根へ書き足してしまう。
+        // [`with_cursor`] ではなくここで見るのは、テストがこのメソッドを直接呼ぶからである。
+        if self.generation != store.generation {
+            self.buf.clear();
+            self.stack.clear();
+            self.generation = store.generation;
+        }
         let parent = store.entries[i].parent;
         if parent == NO_PARENT {
             // 根そのもの。チェーンを作り直して終わり（下の共通処理を通さない——通すと
@@ -459,8 +488,10 @@ pub(super) fn with_cursor<R>(store: &PathStore, i: usize, f: impl FnOnce(&str) -
 }
 
 thread_local! {
-    /// 全件走査のカーソル。rayon の worker ごとに 1 本である。
-    /// 走査は連続した index を順に舐めるので、worker ごとにチェーンがウォームアップされる。
+    /// 全件走査のカーソル。走査するスレッドごとに 1 本である（分割しない走査は呼び出し
+    /// スレッドで、分割した走査は rayon の worker で走る）。走査は連続した index を順に舐めるので、
+    /// スレッドごとにチェーンがウォームアップされる。**寿命はスレッドの寿命**であり索引の差し替えを
+    /// 跨ぐ——跨いでも正しいのは [`PathStore::generation`] による。
     static CURSOR: std::cell::RefCell<PathCursor> =
         const { std::cell::RefCell::new(PathCursor::new()) };
 
@@ -546,6 +577,8 @@ impl PathStore {
             names,
             table: table.into_iter().map(String::into_boxed_str).collect(),
             sorted_prefix_len,
+            // 一意性だけが要り、他のメモリとの順序は要らない。
+            generation: NEXT_GENERATION.fetch_add(1, AtomicOrdering::Relaxed),
         }
     }
 

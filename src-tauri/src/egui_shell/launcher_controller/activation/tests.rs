@@ -754,7 +754,7 @@ fn activation_uses_frame_values_not_live_reads() {
 /// この型にはテスト席が無い——`launcher_controller` に `mod tests` が無かったのは
 /// [`LauncherController`] の構築が `AppHandle` と engine lock を要求するためで、
 /// **ソーステキスト検査はそのどちらも要らない**（`indexing.rs` の
-/// `start_index_build_invalidates_the_icon_cache` と同じ形）。
+/// `drain_index_invalidates_the_icon_cache_before_the_scan` と同じ形）。
 ///
 /// **これが落ちたとき失うもの**: index 再構築中は §4.7 の表示ゲートが通常結果を隠すが、
 /// 行データは保持される（「データと選択は保持——クリアしない」）。入口がゲートを見なくなると、

@@ -166,7 +166,7 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
             && state.is_indexing()
             && !state.is_index_build_started()
         {
-            indexing::start_index_build(&handle_for_monitor);
+            indexing::start_index_build(&handle_for_monitor, indexing::BuildRequest::Rescan);
         }
     });
 

@@ -5,8 +5,10 @@
 //! 構築物 `FolderListContext`・`PrebuiltIndex`・`PreparedHistorySave` を公開する。
 //!
 //! **config 変更と index 再構築のコヒーレンシ判断は `index_stale` ledger に閉じる**——
-//! [`Engine::mark_index_stale`] / [`Engine::begin_index_drain`]（snapshot）/
+//! [`Engine::mark_index_stale`] / [`Engine::request_rescan`] / [`Engine::begin_index_drain`]（snapshot）/
 //! [`Engine::complete_index_drain`]（swap + re-diff で stale をクリア）/ [`Engine::is_index_stale`]。
+//! **走査が要るかも同じ ledger が決める**（#1456）——走査の要求の世代と、`index.bin` が
+//! いまの索引と同じ走査の結果か（`cache_in_sync`）を持ち、[`IndexDrain::must_scan`] で返す。
 //! 外側の `Mutex<Engine>` の内側に閉じることが、config 変更→index 再構築の lost-update を塞ぐ
 //! 根拠である（#347/#348-A）。消費者は `snotra` crate の `indexing.rs` と `config_watcher.rs` で、
 //! そちらの `AtomicBool` 2 つ（`indexing` / `index_build_started`）は二重ビルド防止と UI 表示専用
@@ -102,6 +104,34 @@ impl IndexInputs {
     }
 }
 
+/// 1 回の drain の基準（[`Engine::begin_index_drain`] が返し、[`Engine::complete_index_drain`] へ戻す）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexDrain {
+    /// ビルド開始時の index 入力。complete の re-diff の相手。
+    pub inputs: IndexInputs,
+    /// 走査しなければならないか。**private にしてある**——書き換えられると、呼び出し側が ledger の
+    /// 判定を飛ばせる（`/s` と初回構築が黙って走査しなくなる）。読む口は [`IndexDrain::must_scan`]。
+    must_scan: bool,
+    /// begin の時点の走査要求の世代。complete が「走査でどこまで満たしたか」を記録するのに使う。
+    rescan_generation: u64,
+}
+
+impl IndexDrain {
+    /// 走査しなければならないか。偽なら、`index.bin` を読み直して建ててよい（読めなければ走査する）。
+    pub fn must_scan(&self) -> bool {
+        self.must_scan
+    }
+}
+
+/// drain が索引をどう建てたか（[`Engine::complete_index_drain`] へ渡す）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainOutcome {
+    /// 走査せず、`index.bin` を読み直して建てた。
+    Loaded,
+    /// 走査して建てた。`saved` は `index.bin` へ書けたか。
+    Scanned { saved: bool },
+}
+
 pub struct Engine {
     search_engine: SearchEngine,
     history: HistoryStore,
@@ -119,6 +149,14 @@ pub struct Engine {
     /// 「ビルド開始時スナップショット == 現在」のときだけ落とす。コヒーレンシ判断を engine Mutex
     /// （軸1）に閉じ、lost-update ウィンドウを塞ぐための単一の真実。
     index_stale: bool,
+    /// 走査の要求の世代。[`Engine::request_rescan`] が 1 つ進める（#1456）。走査を要求しない
+    /// 再構築では、走査が要るかは `index.bin` との照合で決まる。
+    rescan_requested: u64,
+    /// 走査で満たした要求の世代。`rescan_requested` に追いつくまで stale を落とさない。
+    rescan_done: u64,
+    /// `index.bin` が、いまの索引と同じ走査の結果だと言えるか（#1456）。偽なら、走査を要求しない
+    /// 再構築でも `index.bin` を読まずに走査する。走査の complete が保存の成否で置き直す。
+    cache_in_sync: bool,
 }
 
 impl Engine {
@@ -129,6 +167,9 @@ impl Engine {
             history,
             config: Arc::new(RwLock::new(config)),
             index_stale: false,
+            rescan_requested: 0,
+            rescan_done: 0,
+            cache_in_sync: false,
         }
     }
 
@@ -144,6 +185,9 @@ impl Engine {
             history,
             config: Arc::new(RwLock::new(config)),
             index_stale: false,
+            rescan_requested: 0,
+            rescan_done: 0,
+            cache_in_sync: false,
         }
     }
 
@@ -258,8 +302,8 @@ impl Engine {
         self.search_engine = index.0;
     }
 
-    /// インデックスを stale とマークする（ビルドが必要＝要求された）。
-    /// `start_index_build`（config 変更 reindex / first-run / 手動 rebuild の全経路）が呼ぶ。
+    /// インデックスを stale とマークする（ビルドが必要＝要求された）。**走査は要求しない**——
+    /// 走査が要るかは `index.bin` との照合で決まる（#1456）。走査の要求は [`Self::request_rescan`]。
     pub fn mark_index_stale(&mut self) {
         self.index_stale = true;
     }
@@ -269,10 +313,26 @@ impl Engine {
         self.index_stale
     }
 
-    /// stale なら現在の `IndexInputs` スナップショットを返す（ロック外ビルドの基準）。stale でなければ None。
-    pub fn begin_index_drain(&self) -> Option<IndexInputs> {
+    /// 走査を要求する。stale を立て、走査要求の世代を 1 つ進める。
+    pub fn request_rescan(&mut self) {
+        self.index_stale = true;
+        self.rescan_requested += 1;
+    }
+
+    /// `index.bin` が、いまの索引と同じ走査の結果かを置く（索引を載せた直後に呼ぶ）。
+    pub fn set_cache_in_sync(&mut self, in_sync: bool) {
+        self.cache_in_sync = in_sync;
+    }
+
+    /// stale なら現在の `IndexInputs` スナップショットと、走査が要るかを返す（ロック外ビルドの基準）。
+    /// stale でなければ None。
+    pub fn begin_index_drain(&self) -> Option<IndexDrain> {
         if self.index_stale {
-            Some(IndexInputs::from_config(&self.config.read().unwrap()))
+            Some(IndexDrain {
+                inputs: IndexInputs::from_config(&self.config.read().unwrap()),
+                must_scan: self.rescan_requested > self.rescan_done || !self.cache_in_sync,
+                rescan_generation: self.rescan_requested,
+            })
         } else {
             None
         }
@@ -286,11 +346,30 @@ impl Engine {
     /// を取り、唯一の書き手 `update_config` も `&mut self` を取るので、両者が交錯する並びは
     /// 構築できない。**config を `RwLock` に移してもこの性質は変わらない**——読みだけが錠の
     /// 外へ出ており、書きは外側の `Mutex` の内側に留めてある。
-    pub fn complete_index_drain(&mut self, index: PrebuiltIndex, built_from: &IndexInputs) {
+    pub fn complete_index_drain(
+        &mut self,
+        index: PrebuiltIndex,
+        drain: &IndexDrain,
+        outcome: DrainOutcome,
+    ) {
+        debug_assert!(
+            !(drain.must_scan && outcome == DrainOutcome::Loaded),
+            "走査が要る drain を、読み直しで済ませてはならない"
+        );
         self.apply_prebuilt_index(index);
-        // ビルド開始時スナップショットと現在の index 入力が一致するときだけ stale を落とす。
-        // ビルド中に config が変わっていれば（!=）stale を残し、次の begin_index_drain で再ビルドさせる。
-        if IndexInputs::from_config(&self.config.read().unwrap()) == *built_from {
+        if let DrainOutcome::Scanned { saved } = outcome {
+            // 満たしたのは begin の時点までの要求である。begin の後に来た要求は、走査が
+            // それより前のファイルシステムを見ているかもしれないので満たさない。drain は CAS で
+            // 1 本しか走らず、世代は増える一方なので、代入で前の値を下回ることはない。
+            self.rescan_done = drain.rescan_generation;
+            self.cache_in_sync = saved;
+        }
+        // ビルド開始時スナップショットと現在の index 入力が一致し、走査の要求も満たしたときだけ
+        // stale を落とす。ビルド中に config が変わっていれば（!=）、または走査の要求が残っていれば、
+        // stale を残し、次の begin_index_drain で再ビルドさせる。
+        if IndexInputs::from_config(&self.config.read().unwrap()) == drain.inputs
+            && self.rescan_done >= self.rescan_requested
+        {
             self.index_stale = false;
         }
     }
@@ -546,37 +625,157 @@ mod tests {
         let mut engine = Engine::new(make_entries(&["x"]), empty_history(), config);
         engine.mark_index_stale();
         assert!(engine.is_index_stale());
-        let inputs = engine
+        let drain = engine
             .begin_index_drain()
             .expect("stale なら snapshot を返す");
-        assert!(inputs.migemo_enabled);
-        assert!(inputs.show_hidden_system);
+        assert!(drain.inputs.migemo_enabled);
+        assert!(drain.inputs.show_hidden_system);
+    }
+
+    fn rebuilt() -> PrebuiltIndex {
+        PrebuiltIndex::new(make_entries(&["x"]), false)
+    }
+
+    /// 起動経路が `index.bin` と同期した索引を載せた後の engine（#1456）。
+    fn synced_engine() -> Engine {
+        let mut engine = Engine::new(make_entries(&["x"]), empty_history(), default_config());
+        engine.set_cache_in_sync(true);
+        engine
     }
 
     #[test]
     fn complete_index_drain_clears_stale_when_config_stable() {
         // ビルド中に config が変わらなければ、complete で stale が落ちる→ begin None。
-        let mut engine = Engine::new(make_entries(&["x"]), empty_history(), default_config());
+        let mut engine = synced_engine();
         engine.mark_index_stale();
-        let snapshot = engine.begin_index_drain().expect("snapshot");
-        engine.complete_index_drain(PrebuiltIndex::new(make_entries(&["x"]), false), &snapshot);
+        let drain = engine.begin_index_drain().expect("snapshot");
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Loaded);
         assert!(!engine.is_index_stale(), "config 安定→stale クリア");
         assert!(engine.begin_index_drain().is_none());
+    }
+
+    // --- #1456: 走査の要否を ledger に載せる ---
+
+    #[test]
+    fn rebuild_request_does_not_require_a_scan_when_cache_is_in_sync() {
+        let mut engine = synced_engine();
+        engine.mark_index_stale();
+        let drain = engine.begin_index_drain().expect("snapshot");
+        assert!(
+            !drain.must_scan,
+            "設定変更だけなら index.bin を読み直してよい"
+        );
+    }
+
+    #[test]
+    fn rescan_request_requires_a_scan_and_a_scan_satisfies_it() {
+        let mut engine = synced_engine();
+        engine.request_rescan();
+        assert!(engine.is_index_stale());
+        let drain = engine.begin_index_drain().expect("snapshot");
+        assert!(drain.must_scan, "/s と初回構築は必ず走査する");
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Scanned { saved: true });
+        assert!(!engine.is_index_stale(), "走査で満たした");
+        assert!(engine.begin_index_drain().is_none());
+    }
+
+    #[test]
+    fn rescan_requested_during_a_loaded_drain_survives_its_completion() {
+        // 設定変更の drain（走査しない）の最中に /s が来た。
+        let mut engine = synced_engine();
+        engine.mark_index_stale();
+        let drain = engine.begin_index_drain().expect("snapshot");
+        assert!(!drain.must_scan);
+        engine.request_rescan();
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Loaded);
+        assert!(engine.is_index_stale(), "/s を取りこぼさない");
+        assert!(
+            engine.begin_index_drain().expect("次の反復").must_scan,
+            "次の反復が走査する"
+        );
+    }
+
+    #[test]
+    fn rescan_requested_during_a_scanning_drain_survives_its_completion() {
+        // /s の drain が走査を始めた後に、もう一度 /s が来た（ファイルシステムは走査の後に変わりうる）。
+        let mut engine = synced_engine();
+        engine.request_rescan();
+        let drain = engine.begin_index_drain().expect("snapshot");
+        engine.request_rescan();
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Scanned { saved: true });
+        assert!(
+            engine.is_index_stale(),
+            "begin の後の要求は、この走査では満たされない"
+        );
+        assert!(engine.begin_index_drain().expect("次の反復").must_scan);
+    }
+
+    #[test]
+    fn rescan_request_survives_a_mark_without_rescan() {
+        // finish 後の自己再 kick は `mark_index_stale` だけを呼ぶ。走査の要求を消してはならない。
+        let mut engine = synced_engine();
+        engine.request_rescan();
+        engine.mark_index_stale();
+        assert!(engine.begin_index_drain().expect("snapshot").must_scan);
+    }
+
+    #[test]
+    fn out_of_sync_cache_requires_a_scan_until_a_scan_saves() {
+        // 起動で index.bin と同期していない（first-run・保存失敗）なら、設定変更でも走査する。
+        let mut engine = Engine::new(make_entries(&["x"]), empty_history(), default_config());
+        engine.set_cache_in_sync(false);
+        engine.mark_index_stale();
+        let drain = engine.begin_index_drain().expect("snapshot");
+        assert!(
+            drain.must_scan,
+            "同期していない index.bin を読んではならない"
+        );
+
+        // 走査したが保存に失敗した → 同期していないまま。
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Scanned { saved: false });
+        assert!(!engine.is_index_stale(), "要求そのものは満たした");
+        engine.mark_index_stale();
+        let drain = engine.begin_index_drain().expect("snapshot");
+        assert!(
+            drain.must_scan,
+            "保存に失敗した走査の後も、index.bin は読まない"
+        );
+
+        // 走査して保存できた → 同期した。
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Scanned { saved: true });
+        engine.mark_index_stale();
+        assert!(
+            !engine.begin_index_drain().expect("snapshot").must_scan,
+            "保存できた走査の後は読み直してよい"
+        );
+    }
+
+    #[test]
+    fn loaded_drain_keeps_the_cache_in_sync() {
+        let mut engine = synced_engine();
+        engine.mark_index_stale();
+        let drain = engine.begin_index_drain().expect("snapshot");
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Loaded);
+        engine.mark_index_stale();
+        assert!(
+            !engine.begin_index_drain().expect("snapshot").must_scan,
+            "読み直して建てた索引は index.bin と同じ走査の結果のまま"
+        );
     }
 
     #[test]
     fn complete_index_drain_keeps_stale_when_config_changed_during_build() {
         // lost-update の核（#348-A「前」）: ビルド開始時スナップショットと現在 config が異なれば
         // complete は stale を残し、次の begin が再び snapshot を返す（取りこぼさない）。
-        let mut engine = Engine::new(make_entries(&["x"]), empty_history(), default_config());
+        let mut engine = synced_engine();
         engine.mark_index_stale();
-        let snapshot = engine.begin_index_drain().expect("snapshot");
+        let drain = engine.begin_index_drain().expect("snapshot");
         // ビルド中の config 変更を模倣（index 入力キーを 1 つ反転）
         let mut changed = engine.config().clone();
         changed.search.show_hidden_system = !changed.search.show_hidden_system;
         engine.update_config(changed);
         // 古いスナップショットで complete
-        engine.complete_index_drain(PrebuiltIndex::new(make_entries(&["x"]), false), &snapshot);
+        engine.complete_index_drain(rebuilt(), &drain, DrainOutcome::Loaded);
         assert!(
             engine.is_index_stale(),
             "ビルド中に config が変わったら stale を残す（lost-update 回避）"

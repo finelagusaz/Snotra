@@ -181,8 +181,8 @@ fn icon_bin_file() -> Option<BinFile> {
     BinFile::new(ICON_MAGIC, ICON_VERSION, "icons.bin")
 }
 
-/// アイコンキャッシュをメモリ内・ディスク両方で無効化する。索引の再構築が始まったとき
-/// （`indexing::start_index_build`）に呼ぶ。**背景再スキャンの spawn と結果適用は
+/// アイコンキャッシュをメモリ内・ディスク両方で無効化する。索引の再構築で走査するとき
+/// （`indexing::drain_index` の走査の分岐・#1456）に呼ぶ。**背景再スキャンの spawn と結果適用は
 /// #1001 で撤去済みで、現在この関数の呼び出し元はここ 1 つだけである。**
 /// メモリ内 `IconCacheState` を `None` にし、`icons.bin` を削除する。
 /// 両方やらないと、ファイルだけ消してもメモリ内の古いアイコンが終了時の

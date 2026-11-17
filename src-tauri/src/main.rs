@@ -496,14 +496,14 @@ impl InitialIndex {
         }
     }
 
-    /// 起動の時点で構築中として扱うか（UI の構築中の表示とガード）。
+    /// 起動の時点で構築中として扱うか（UI の構築中の表示とガード）。**構築を起こす状態のことである**
+    /// （[`Self::initial_build`] から導く）——構築中として起動して構築を起こさないと、構築中の旗が
+    /// 戻らず、トレイの「終了」もグレーアウトしたままになる。
     fn initial_indexing(self) -> bool {
-        !matches!(self, Self::Loaded)
+        self.initial_build() != InitialBuild::None
     }
 
-    /// setup が起こす構築。**構築中として起動した状態（[`Self::initial_indexing`]）は、どれも
-    /// 構築を起こさなければならない**——起こさないと構築中の旗が戻らず、トレイの「終了」も
-    /// グレーアウトしたままになる。
+    /// setup が起こす構築。
     fn initial_build(self) -> InitialBuild {
         match self {
             Self::Loaded => InitialBuild::None,
@@ -777,9 +777,9 @@ mod tests {
         assert!(!InitialIndex::Loaded.initial_indexing());
     }
 
-    /// 構築中として起動した状態は、どれも構築を起こす（#1448）。起こさないと構築中の旗が戻らない。
+    /// 起動時の索引の状態ごとの構築の起こし方（#1448）。`initial_indexing` はこれから導く。
     #[test]
-    fn every_indexing_start_starts_a_build() {
+    fn initial_build_is_decided_by_the_initial_index() {
         use super::InitialBuild;
         assert_eq!(InitialIndex::Loaded.initial_build(), InitialBuild::None);
         assert_eq!(
@@ -791,16 +791,5 @@ mod tests {
             InitialBuild::Rescan,
             "cache-miss の起動は背景で構築する（設定アプリは開かない）"
         );
-        for initial in [
-            InitialIndex::Loaded,
-            InitialIndex::FirstRun,
-            InitialIndex::Deferred,
-        ] {
-            assert_eq!(
-                initial.initial_indexing(),
-                initial.initial_build() != InitialBuild::None,
-                "{initial:?}: 構築中として起動するなら構築を起こし、起こすなら構築中として起動する"
-            );
-        }
     }
 }

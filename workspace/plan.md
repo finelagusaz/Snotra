@@ -38,7 +38,7 @@ pub enum BuildRequest {
 - `mark_index_stale()` は今のまま（`Rebuild`）。`request_rescan()` を足す: `index_stale = true` にし、`rescan_requested += 1`
 - `begin_index_drain(&self) -> Option<IndexDrain>`。`IndexDrain { inputs: IndexInputs, must_scan: bool, rescan_generation: u64 }`（`rescan_generation` は private）。`must_scan` は `rescan_requested > rescan_done || !cache_in_sync`、`rescan_generation` は begin の時点の `rescan_requested`（実装で `Option<u64>` から変えた。begin の時点で `rescan_requested <= rescan_done` なら世代を進めても値は変わらないので、挙動は等価）
 - `complete_index_drain(&mut self, index, drain: &IndexDrain, outcome: DrainOutcome)`。`DrainOutcome` は `Loaded`（キャッシュから建てた）か `Scanned { saved: bool }`
-  - `Scanned` なら、`drain.must_scan` が `Some(g)` のとき `rescan_done = max(rescan_done, g)`。`cache_in_sync = saved`
+  - `Scanned` なら `rescan_done = max(rescan_done, drain.rescan_generation)`。`cache_in_sync = saved`
   - `Loaded` なら `cache_in_sync` は変えない（読んだものが engine の索引になったので一致は保たれる）
   - stale を落とすのは、`IndexInputs` が `drain.inputs` と一致し、かつ `rescan_done >= rescan_requested` のときだけ
 - 起動経路が `cache_in_sync` の初期値を決める: `Engine::from_material` の後に `set_cache_in_sync(bool)` を呼ぶ。値は `LoadOrScanResult` に足す `cache_in_sync`（cache-hit なら `true`、cache-miss で保存したならその成否、保存先が無ければ `false`）。first-run は起動のロードを通らないので `false`（直後の初回構築は `Rescan` で走査し、`saved` で真になる）
@@ -93,7 +93,7 @@ prose:sweep で見つかった残りの名指しは直さない: `docs/adr/` と
 - drain が panic で complete に届かなかったときは、stale も世代も残る（次の要求で回復する。今と同じ）
 
 受容する残余:
-- **「切り替えでは走査しない」を CI で守る検知器は置かない。** 判定の材料（ledger の `must_scan`・`load_cached_material`・`material_without_scan`）はテストで守り、`/s` と初回構築が `Rescan` を渡すことはソーステキスト検査で守る（レビューのラウンド 1 の High-1 で足した）。それらを使う drain の分岐（`indexing.rs`）は `AppHandle` を要するので単体テストにできない。ここが退行して毎回走査に戻っても、CI は緑のままである（結果は正しく、遅くなるだけ）。今回は E2E の一時スクリプトで 1 度だけ確かめる
+- **「切り替えでは走査しない」を CI で守る検知器は置かない。** 判定の材料（ledger の `must_scan`・`load_cached_material`・`material_without_scan`）はテストで守り、`/s` と初回構築が `Rescan` を渡すこと・drain が `index.bin` を `material_without_scan(&drain, …)` 越しにだけ読むことはソーステキスト検査で守る（レビューのラウンド 1・2 の High-1 で足した。`/s` が走査しなくなる向きはこれで CI が守る）。守らないのは、drain が読み直しの分岐を失って毎回走査に戻る向きである。ここが退行して毎回走査に戻っても、CI は緑のままである（結果は正しく、遅くなるだけ）。今回は E2E の一時スクリプトで 1 度だけ確かめる
 - 起動時の旧版の昇格で保存に失敗し、旧版の `index.bin` が残っている場合、`Skip` の旧版の分岐は整列し直さないので、切り替えの後の並び（同点の順）が全走査と違いうる。頻度は低い（昇格の保存失敗が要る）
 
 ## テスト方針と検証コマンド
@@ -132,6 +132,7 @@ prose:sweep で見つかった残りの名指しは直さない: `docs/adr/` と
   - E2E（2026-11-17）: 3 つの切り替えで走査 0・index.bin 不変（基準は各 1 回走査）、走査対象の変更と /s は各 1 回走査。PERFORMANCE.md に記録
 - [x] `/state-check`・`/race-check`・`/symmetric-check` を当てる（3 つとも指摘なし・f7e33cb2 の後）
   - レビュー ラウンド 1（799c55b5・verify:tree A/C/E/F green）: Critical 0 / High 2 / Medium 2 / Low 3。生存変異 C2・C3・C4・I2・I3・I4・I5・I6。High-1（/s が走査しなくなる退行の検知器）・High-2（造語「非走査」）・Medium 2 件・Low 3 件を直し、C2〜C4・I3〜I6 は新しいテストで赤になることを測った。I2（無効化を読み直しの分岐へ移す）は検知手段なしのまま受容
+  - レビュー ラウンド 2（40df318c・verify:tree A/C/E/F green）: High-1 の残り（drain が must_scan を判定へ渡すことが縛られていない・I3b が生存）・Medium 1（テストの doc の付き先）・Low 2。material_without_scan に &IndexDrain を取らせ、drain が判定越しにだけ読むことをソーステキスト検査で縛った。判定を飛ばす変異と判定の中を壊す変異が、それぞれ赤になることを測った
 - [ ] 検証カテゴリ A・C・E・F
 
 ## 未確定（実装前に潰す）

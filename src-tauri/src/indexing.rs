@@ -12,7 +12,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use snotra_core::engine::{DrainOutcome, IndexInputs, PrebuiltIndex};
+use snotra_core::engine::{DrainOutcome, IndexDrain, IndexInputs, PrebuiltIndex};
 use snotra_core::indexer;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -145,15 +145,18 @@ pub(crate) fn build_index_from_material(
 /// 走査しないで建ててよいなら、`load` で読んだ材料を返す（#1456）。**`must_scan` なら `load` を
 /// 呼ばない**——`/s` と初回構築が `index.bin` を読んで済ませると、ファイルシステムの最新を
 /// 取り込まないまま黙って進む。`None` なら呼び出し側は走査する。
+///
+/// **`bool` ではなく `&IndexDrain` を取る。** `IndexDrain` は `begin_index_drain` でしか作れない
+/// （private のフィールドを持つ）ので、呼び出し側が ledger の判定を飛ばしてリテラルを渡す形が
+/// 書けない。
 fn material_without_scan(
-    must_scan: bool,
-    inputs: &IndexInputs,
+    drain: &IndexDrain,
     load: impl FnOnce(&IndexInputs) -> Option<indexer::IndexMaterial>,
 ) -> Option<indexer::IndexMaterial> {
-    if must_scan {
+    if drain.must_scan {
         return None;
     }
-    load(inputs)
+    load(&drain.inputs)
 }
 
 /// `index_stale` が解消されるまでドレインする:
@@ -178,7 +181,7 @@ fn drain_index(app_handle: &AppHandle) {
 
         // **走査しない再構築**（#1456）。`include_path_env` と migemo の切り替えは `index.bin` の
         // 中身を変えないので、読み直して PATH のマージと構築をやり直せば全走査と同じ索引になる。
-        if let Some(material) = material_without_scan(drain.must_scan, inputs, |i| {
+        if let Some(material) = material_without_scan(&drain, |i| {
             indexer::load_cached_material(&i.scan, i.show_hidden_system)
         }) {
             let new_index = build_index_from_material(material, inputs);
@@ -284,7 +287,7 @@ fn notify_indexing_complete(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexInputs, indexer, material_without_scan};
+    use super::{indexer, material_without_scan};
 
     /// トップレベル関数の本体を切り出す（**終端は列 0 の閉じ括弧**・内側のブロックは字下げされている）。
     ///
@@ -459,19 +462,68 @@ mod tests {
     ///
     /// **母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ**。**この安全性は「存在形の assert」に
     /// 依る**——`!contains` の否定形なら canary が真のまま対象だけ切り捨てられて沈黙する（#1112）。
-    fn inputs() -> IndexInputs {
-        IndexInputs::from_config(&snotra_core::config::Config::default())
+    #[test]
+    fn drain_index_invalidates_the_icon_cache_before_the_scan() {
+        let body = top_level_fn_body(
+            include_str!("indexing.rs"),
+            "fn drain_index(",
+            "begin_index_drain(",
+        );
+        let code = body
+            .lines()
+            .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let invalidate = "crate::icon::invalidate_icon_cache(";
+        let scan = "indexer::rebuild_and_save(";
+        for spelling in [invalidate, scan] {
+            assert_eq!(
+                code.matches(spelling).count(),
+                1,
+                "drain_index のコード（コメントを除く）に {spelling} がちょうど 1 回現れない"
+            );
+        }
+        assert!(
+            code.find(invalidate) < code.find(scan),
+            "drain_index が走査（{scan}）の前にアイコンキャッシュを無効化していない——\
+             走査を契機とする無効化を失う"
+        );
+    }
+
+    /// ledger から drain を 1 つ取り出す。`rescan` なら走査を要求し、そうでなければ同期した
+    /// `index.bin` を前提に設定変更の再構築を要求する。
+    fn drain(rescan: bool) -> snotra_core::engine::IndexDrain {
+        let mut engine = snotra_core::engine::Engine::new(
+            Vec::new(),
+            // 実 `history.bin` を読まない（#963）。存在しないパスを渡すと `load_in` は空で返す。
+            snotra_core::history::HistoryStore::load_in(&std::env::temp_dir().join(format!(
+                "snotra-indexing-test-{}-unused",
+                std::process::id()
+            ))),
+            snotra_core::config::Config::default(),
+        );
+        engine.set_cache_in_sync(true);
+        if rescan {
+            engine.request_rescan();
+        } else {
+            engine.mark_index_stale();
+        }
+        engine.begin_index_drain().expect("stale なら drain を返す")
+    }
+
+    fn empty_material() -> Option<indexer::IndexMaterial> {
+        Some(indexer::IndexMaterial::from_tree(
+            snotra_core::index_tree::IndexTree::empty(),
+        ))
     }
 
     /// `must_scan` なら `index.bin` を読まない（#1456）。読んで済ませると `/s` と初回構築が走査しない。
     #[test]
     fn material_without_scan_never_loads_when_a_scan_is_required() {
         let mut called = false;
-        let got = material_without_scan(true, &inputs(), |_| {
+        let got = material_without_scan(&drain(true), |_| {
             called = true;
-            Some(indexer::IndexMaterial::from_tree(
-                snotra_core::index_tree::IndexTree::empty(),
-            ))
+            empty_material()
         });
         assert!(got.is_none(), "走査が要るなら材料を返さない");
         assert!(!called, "走査が要るなら index.bin を読みにいかない");
@@ -479,15 +531,45 @@ mod tests {
 
     #[test]
     fn material_without_scan_loads_when_no_scan_is_required() {
-        let got = material_without_scan(false, &inputs(), |_| {
-            Some(indexer::IndexMaterial::from_tree(
-                snotra_core::index_tree::IndexTree::empty(),
-            ))
-        });
-        assert!(got.is_some(), "走査が要らなければ読んだ材料を使う");
         assert!(
-            material_without_scan(false, &inputs(), |_| None).is_none(),
+            material_without_scan(&drain(false), |_| empty_material()).is_some(),
+            "走査が要らなければ読んだ材料を使う"
+        );
+        assert!(
+            material_without_scan(&drain(false), |_| None).is_none(),
             "読めなければ走査へ回す"
+        );
+    }
+
+    /// **`drain_index` は `index.bin` を `material_without_scan` 越しにだけ読む**（#1456）。直に
+    /// `load_cached_material` を呼ぶと、`must_scan` の判定を飛ばせる——`/s` と初回構築が黙って
+    /// 走査しなくなる。縛るのは、コード（`//` 以降を落とした本体）に `material_without_scan(&drain,`
+    /// と `load_cached_material(` がちょうど 1 回ずつ、この順に現れること（後者は前者へ渡す
+    /// closure の中に在る）。死角は [`drain_index_appends_start_before_the_scan`] と同じ。
+    #[test]
+    fn drain_index_loads_the_cache_only_through_the_scan_check() {
+        let body = top_level_fn_body(
+            include_str!("indexing.rs"),
+            "fn drain_index(",
+            "begin_index_drain(",
+        );
+        let code = body
+            .lines()
+            .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let check = "material_without_scan(&drain,";
+        let load = "load_cached_material(";
+        for spelling in [check, load] {
+            assert_eq!(
+                code.matches(spelling).count(),
+                1,
+                "drain_index のコード（コメントを除く）に {spelling} がちょうど 1 回現れない"
+            );
+        }
+        assert!(
+            code.find(check) < code.find(load),
+            "drain_index が {check} を通さずに index.bin を読んでいる"
         );
     }
 
@@ -499,6 +581,9 @@ mod tests {
     /// すべて `BuildRequest::Rescan` を含むことと、その行が 1 つ以上あること（存在形の canary）。
     /// 呼び出しを複数行へ折り返されると赤になる（誤検知は受け入れる）。設定変更の経路
     /// （`config_watcher.rs`）は `Rebuild` を渡すことを同じ形で縛る。
+    ///
+    /// **母集団は名指しした 4 ファイルだけである。** 別のファイルへ呼び出しを足しても、この検査は
+    /// それを見ない——足すときは、ここへ並べる。
     #[test]
     fn rescan_callers_request_a_rescan() {
         let cases: [(&str, &str, &str); 4] = [
@@ -536,33 +621,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn drain_index_invalidates_the_icon_cache_before_the_scan() {
-        let body = top_level_fn_body(
-            include_str!("indexing.rs"),
-            "fn drain_index(",
-            "begin_index_drain(",
-        );
-        let code = body
-            .lines()
-            .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let invalidate = "crate::icon::invalidate_icon_cache(";
-        let scan = "indexer::rebuild_and_save(";
-        for spelling in [invalidate, scan] {
-            assert_eq!(
-                code.matches(spelling).count(),
-                1,
-                "drain_index のコード（コメントを除く）に {spelling} がちょうど 1 回現れない"
-            );
-        }
-        assert!(
-            code.find(invalidate) < code.find(scan),
-            "drain_index が走査（{scan}）の前にアイコンキャッシュを無効化していない——\
-             走査を契機とする無効化を失う"
-        );
     }
 }

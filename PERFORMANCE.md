@@ -1808,11 +1808,12 @@ B = 本改修**を 1 コマンドで差し替え、同一セッション内で�
 合わせて数十 ms の桁である。検索結果が全走査の経路と同じことは、`rebuilt_from_cache_matches_rebuilt_from_scan`
 （PATH × migemo の 4 組）が測る。
 
-**「切り替えでは走査しない」側は CI で守っていない**（受容した）。判定の材料（ledger の `must_scan`・
-`load_cached_material`・`must_scan` なら読まない `material_without_scan`）はテストが守り、`/s` と初回構築が
-`Rescan` を渡すことはソーステキスト検査（`rescan_callers_request_a_rescan`）が守る。守っていないのは
-`drain_index` がその判定を使うことで、`AppHandle` を要するので単体テストにできない。退行して毎回走査に
-戻っても、結果は正しいまま遅くなるだけで、CI は緑のままである。
+**守り方は向きで分かれる。** 「`/s` と初回構築が走査しなくなる」向き（結果が黙って古くなる）は CI が
+守る——ledger の `must_scan` と `material_without_scan`（`must_scan` なら読まない・`&IndexDrain` を取るので
+判定を飛ばせない）はテストが、`/s` と初回構築が `Rescan` を渡すことと `drain_index` が `index.bin` を
+その関数越しにだけ読むことはソーステキスト検査が縛る。**「切り替えでは走査しない」向きは守っていない**
+（受容した）。`drain_index` が読み直しの分岐を失って毎回走査に戻っても、結果は正しいまま遅くなるだけで、
+CI は緑のままである。
 
 ### 試みたが機能しない: アイコン剪定をプレフィルタへ通す（反復 12・実装前に反証）
 

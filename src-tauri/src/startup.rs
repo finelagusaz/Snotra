@@ -414,12 +414,13 @@ impl Timeline {
             ),
         );
 
-        // `load_or_scan_with_stats` の中にある未命名の処理。**first-run 分岐では
+        // `load_cache_with_stats` の中にある未命名の処理。**first-run 分岐では
         // `LoadOrScanStats` 自体が存在しないので `null`**（0 にしない）。
         //
         // **`i64` で引くので、負値は panic せず出力に現れる。** 非負であることは
-        // **外側の区間（`ConfigLoad` のマーク 〜 `load_or_scan_with_stats` の呼び出し後）が
-        // 内側の `total` を包むこと**に乗っている。`a ≥ b ⇒ floor(a) ≥ floor(b)` ゆえ差は非負になる。
+        // **外側の区間（`ConfigLoad` のマーク 〜 `load_cache_with_stats` の呼び出し後）が
+        // 内側の `total` を包むこと**に乗っている（`total_started` の起点は `try_load_with_stats_in`
+        // の入口）。`a ≥ b ⇒ floor(a) ≥ floor(b)` ゆえ差は非負になる。
         //
         // **この前提は機構では守られていない。** マークを呼び出しの手前へ動かせば黙って負へ振れる。
         // **前提が動いた実例がある**——#1023 で `total_started` の起点が `load_or_scan_with_stats`

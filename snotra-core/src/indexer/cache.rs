@@ -1,11 +1,12 @@
-//! `index.bin` の入出力——オンディスク形式（現行版と旧版へのフォールバックチェーン）、キャッシュと
-//! 走査の振り分け（[`load_or_scan_with_stats`]）、保存、旧版を現行版へ書き直す形式昇格。
+//! `index.bin` の入出力——オンディスク形式（現行版と旧版へのフォールバックチェーン）、起動時の読み込み
+//! （[`load_cache_with_stats`]・外れても走査しない）、キャッシュと走査の振り分け
+//! （[`load_or_scan_with_stats`]・計測ハーネスが使う）、保存、旧版を現行版へ書き直す形式昇格。
 //!
 //! **書き込みは `INDEX_WRITE_LOCK` で単一書き手に直列化する**——`BinFile::save` の tmp→rename は
 //! 固定 tmp 名での原子的置換ゆえ、複数経路が同時に書くと tmp を食い合って破損する。
-//! **走査の契機は明示操作だけである**——初回構築・`/s` による手動再構築・設定変更による再構築の
-//! 3 つで、キャッシュヒットの起動は読むだけで終わる（判断の記録は
-//! `docs/adr/ADR-rescan-explicit-only.md`）。**ただし「更新の契機」と「`index.bin` を書く契機」は
+//! **走査は起動の中では走らない**——走るのは背景の構築（初回構築・`/s`・走査対象の変更による
+//! 再構築・`index.bin` を読めなかった起動・#1448）だけで、キャッシュヒットの起動は読むだけで
+//! 終わる（判断の記録は `docs/adr/ADR-rescan-explicit-only.md`）。**ただし「更新の契機」と「`index.bin` を書く契機」は
 //! 同じではない**——旧版を読んだ起動は中身を変えないまま現行版で書き直す。
 //!
 //! 版を足すときに揃える項目は `snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」。
@@ -56,7 +57,7 @@ pub const INDEX_CACHE_VERSION: u32 = 10;
 /// 版上げで直前の版——実運用点に今まさに置かれている版——を計測コードが黙って落とす）。
 const INDEX_WIRE_SINCE: u32 = 7;
 
-/// `load_or_scan_with_stats` の各フェーズ所要時間。
+/// 索引の読み込み（`load_cache_with_stats`・`load_or_scan_with_stats`）の各フェーズ所要時間。
 ///
 /// **`cache_load` と `total` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
 /// 項目が無い処理は `total` にしか効かず、差を読む者がいなければ計測上は存在しないままに
@@ -96,13 +97,13 @@ pub struct LoadOrScanStats {
     /// （#1178 で型が変わり、`Instant::elapsed` が 0 を返す確率は実質消えたが、
     /// **「昇格が走ったか」を表しているのは依然として variant のほうである**）。
     ///
-    /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
+    /// **この struct の生成元（`load_cache_with_stats`・`load_or_scan_with_stats`）は常に `LegacyUpgrade::Write` で
     /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）と走査しない再構築の入口（`load_cached_material`）専用で、
     /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
     /// （`LoadCacheResult::upgrade_save` の doc は `Skip` 経由の `None` も併記しているが、
     /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
     pub cache_save: Duration,
-    /// `load_or_scan_with_stats` 全体の所要時間。**丸めずに `Duration` で運ぶ。**
+    /// 読み込み全体（起動では `load_cache_with_stats`）の所要時間。**丸めずに `Duration` で運ぶ。**
     ///
     /// 起動の計測コード（`src-tauri` の `startup.rs`）はこの値と外側の区間の差を
     /// `index_load_unattributed_ms` として出す。その引き算は両辺を同じ関数（`to_ms`）へ
@@ -128,7 +129,7 @@ pub struct LoadOrScanStats {
     pub total: Duration,
 }
 
-/// `load_or_scan_with_stats` の戻り値。
+/// `load_cache_with_stats`・`load_or_scan_with_stats` の戻り値。
 pub struct LoadOrScanResult {
     /// ロード or スキャンされた索引の材料（ツリーと派生データの組）。
     ///
@@ -293,12 +294,12 @@ struct IndexCacheV2 {
 /// **この値は `index.bin` に焼き込まれ、次の起動が同じ計算で照合する**（[`load_cache_in`] の
 /// 各分岐の `config_hash != config_hash` 判定）。ゆえに**入力・順序・ハッシュ関数のどれを変えても
 /// 全ユーザーのキャッシュが一斉に無効になる**——不一致は破損ではなく「設定が変わった」と
-/// 読まれるので、次の起動は cache-miss 分岐へ落ちて 22〜30 秒の全走査を払う（索引の更新は
-/// 明示操作だけという設計上、これが自動で走る唯一の場所である）。
+/// 読まれるので、次の起動は cache-miss になり、背景の構築で 22〜30 秒の全走査を払う（索引の更新は
+/// 明示操作だけという設計上、これが自動で走る唯一の場所である・#1448 で起動の中から背景へ移した）。
 ///
 /// **[`DefaultHasher`] の出力は Rust のリリース間で安定しない**（std の契約——値ではなく
 /// アルゴリズムが未規定である）。ツールチェインを上げた版を配ると、設定を何も変えていない
-/// ユーザーが一度だけ全走査を払いうる。**症状は「その日の起動だけ遅い」で、検索結果は
+/// ユーザーが一度だけ全走査を払いうる。**症状は「その日の起動だけ構築中が続く」で、検索結果は
 /// 正しいまま**ゆえ挙動テストでは検出されない。安定を要求するなら std ではないハッシュへ
 /// 移すことになり、それ自体が同じ一斉無効化を 1 回払う。
 fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
@@ -431,40 +432,15 @@ fn load_or_scan_with_stats_in(
     scan: &[ScanPath],
     show_hidden_system: bool,
 ) -> LoadOrScanResult {
-    let total_started = Instant::now();
-
-    let hash_started = Instant::now();
-    let current_hash = compute_config_hash(scan, show_hidden_system);
-    let hash_took = hash_started.elapsed();
-
-    let cache_load_started = Instant::now();
-    // **キャッシュが読めたらそこで終わりである。** 走査は明示操作の契機でしか走らない
-    // （`docs/adr/ADR-rescan-explicit-only.md`）。
-    if let Some(result) = load_cache_in(dir, current_hash, LegacyUpgrade::Write) {
-        let cache_load_took = cache_load_started.elapsed();
-        let stats = LoadOrScanStats {
-            cache_hit: true,
-            hash: hash_took,
-            cache_load: cache_load_took,
-            cache_read: result.read,
-            scan: Duration::ZERO,
-            sort: Duration::ZERO,
-            // 昇格が走らなかった分岐は `None` ゆえ `ZERO`。
-            // **この値は計測用であって、昇格の有無の判定には使えない**——判定を負っているのは
-            // 向こうの variant であり、こちらは時間を運ぶだけである（#1054 / #1063）。
-            // `cache_load` の内数——フェーズの和には足さない。
-            cache_save: result.upgrade_save.unwrap_or(Duration::ZERO),
-            total: total_started.elapsed(),
-        };
-        return LoadOrScanResult {
-            material: result.material,
-            cache_changed: false,
-            cache_in_sync: true,
-            stats,
-        };
-    }
-    let cache_load_took = cache_load_started.elapsed();
-
+    let MissedLoad {
+        total_started,
+        hash: hash_took,
+        cache_load: cache_load_took,
+        config_hash: current_hash,
+    } = match try_load_with_stats_in(dir, scan, show_hidden_system) {
+        Ok(hit) => return hit,
+        Err(missed) => missed,
+    };
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
@@ -507,6 +483,111 @@ fn load_or_scan_with_stats_in(
         cache_changed: true,
         cache_in_sync: saved,
         stats,
+    }
+}
+
+/// [`try_load_with_stats_in`] が外れたときに、それまでに測った区間を呼び出し側へ運ぶ。
+struct MissedLoad {
+    total_started: Instant,
+    hash: Duration,
+    cache_load: Duration,
+    config_hash: u64,
+}
+
+/// キャッシュを読む。当たれば `Ok`、外れたら `Err` でそれまでの区間を返す。**走査も、外れたときの
+/// 保存もしない**——そこから先は呼び出し側が決める（[`load_or_scan_with_stats_in`] は走査し、
+/// [`load_cache_with_stats_in`] は空を返す・#1448）。
+///
+/// 旧版は `LegacyUpgrade::Write` で読み、その場で現行版へ書き戻す（当たった分岐でだけ起きる）。
+fn try_load_with_stats_in(
+    dir: &Path,
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> Result<LoadOrScanResult, MissedLoad> {
+    let total_started = Instant::now();
+
+    let hash_started = Instant::now();
+    let current_hash = compute_config_hash(scan, show_hidden_system);
+    let hash_took = hash_started.elapsed();
+
+    let cache_load_started = Instant::now();
+    if let Some(result) = load_cache_in(dir, current_hash, LegacyUpgrade::Write) {
+        let cache_load_took = cache_load_started.elapsed();
+        let stats = LoadOrScanStats {
+            cache_hit: true,
+            hash: hash_took,
+            cache_load: cache_load_took,
+            cache_read: result.read,
+            scan: Duration::ZERO,
+            sort: Duration::ZERO,
+            // 昇格が走らなかった分岐は `None` ゆえ `ZERO`。
+            // **この値は計測用であって、昇格の有無の判定には使えない**——判定を負っているのは
+            // 向こうの variant であり、こちらは時間を運ぶだけである（#1054 / #1063）。
+            // `cache_load` の内数——フェーズの和には足さない。
+            cache_save: result.upgrade_save.unwrap_or(Duration::ZERO),
+            total: total_started.elapsed(),
+        };
+        return Ok(LoadOrScanResult {
+            material: result.material,
+            cache_changed: false,
+            cache_in_sync: true,
+            stats,
+        });
+    }
+    Err(MissedLoad {
+        total_started,
+        hash: hash_took,
+        cache_load: cache_load_started.elapsed(),
+        config_hash: current_hash,
+    })
+}
+
+/// 起動時の読み込み（#1448）。キャッシュが読めればそれを返し、**読めなければ走査せず空の材料を返す**。
+/// 走査と保存は、呼び出し側が背景の構築へ回す——起動の中で走査すると、22〜85 秒のあいだ
+/// トレイもホットキーも出ない。
+///
+/// 外れたときの返り値は、`cache_hit` / `cache_changed` / `cache_in_sync` がどれも偽で、`stats` は
+/// 外れるまでに測った区間（`hash`・`cache_load`・`total`）だけを持つ。保存先が引けない環境でも
+/// 同じく空を返す。旧版は、これまでどおり当たった分岐で昇格する（[`try_load_with_stats_in`]）。
+pub fn load_cache_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
+    match Config::config_dir() {
+        Some(dir) => load_cache_with_stats_in(&dir, scan, show_hidden_system),
+        None => missed_without_scan(Instant::now(), Duration::ZERO, Duration::ZERO),
+    }
+}
+
+/// [`load_cache_with_stats`] を `dir` 注入で行う（テスト用）。
+fn load_cache_with_stats_in(
+    dir: &Path,
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> LoadOrScanResult {
+    match try_load_with_stats_in(dir, scan, show_hidden_system) {
+        Ok(hit) => hit,
+        Err(missed) => missed_without_scan(missed.total_started, missed.hash, missed.cache_load),
+    }
+}
+
+/// 走査しなかった cache-miss の返り値（空の材料）。
+fn missed_without_scan(
+    total_started: Instant,
+    hash: Duration,
+    cache_load: Duration,
+) -> LoadOrScanResult {
+    LoadOrScanResult {
+        material: IndexMaterial::from_tree(IndexTree::empty()),
+        cache_changed: false,
+        cache_in_sync: false,
+        stats: LoadOrScanStats {
+            cache_hit: false,
+            hash,
+            cache_load,
+            cache_read: Duration::ZERO,
+            scan: Duration::ZERO,
+            sort: Duration::ZERO,
+            cache_save: Duration::ZERO,
+            total: total_started.elapsed(),
+        },
     }
 }
 
@@ -1133,7 +1214,8 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
 }
 
 /// `index.bin` の scan + save 区間を直列化する書き込みロック。
-/// 書き手（`rebuild_and_save` / cache-miss save / ロードの旧版の分岐の昇格）が共有する。
+/// 書き手（`rebuild_and_save` / `load_or_scan_with_stats` の cache-miss save（計測ハーネスだけが
+/// 通る）/ ロードの旧版の分岐の昇格）が共有する。
 /// `save_cache_sorted` 自体はロックを取らない（呼び出し側が保持する契約）。
 ///
 /// **形式昇格だけは、読みがロックの外にある。** 内容を決めてから保存するまでの間に別の書き手が

@@ -734,6 +734,105 @@ fn a_cache_hit_startup_does_not_scan() {
     let _ = fs::remove_dir_all(&scan_root);
 }
 
+fn one_txt_scan(root: &Path) -> Vec<ScanPath> {
+    vec![ScanPath {
+        path: root.display().to_string(),
+        extensions: vec![".txt".into()],
+        include_folders: false,
+    }]
+}
+
+/// **起動時の読み込みは、外れても走査しない**（#1448）。走査は背景の構築へ回す——ここで走査すると、
+/// 22〜85 秒のあいだトレイもホットキーも出ない。
+#[test]
+fn load_cache_with_stats_in_does_not_scan_on_a_miss() {
+    let dir = temp_dir("load_cache_with_stats_miss");
+    let scan_root = temp_dir("load_cache_with_stats_miss_root");
+    fs::write(scan_root.join("first.txt"), b"x").expect("write");
+
+    let result = load_cache_with_stats_in(&dir, &one_txt_scan(&scan_root), false);
+    assert!(!result.stats.cache_hit);
+    assert_eq!(result.material.tree().len(), 0, "走査せず、空の材料を返す");
+    assert_eq!(
+        result.stats.scan,
+        Duration::ZERO,
+        "走査の区間が立ってはならない"
+    );
+    assert!(
+        !result.cache_in_sync,
+        "空の材料は index.bin と同じ走査の結果ではない"
+    );
+    assert!(!result.cache_changed, "書いていない");
+    assert!(
+        !dir.join("index.bin").exists(),
+        "外れても index.bin を書かない（保存は背景の構築が行う）"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&scan_root);
+}
+
+/// 当たれば、走査して保存した起動と同じ材料を返す（#1448）。走査対象が違えば外れる。
+#[test]
+fn load_cache_with_stats_in_returns_the_cache_on_a_hit() {
+    let _guard = INDEX_LOCK_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let dir = temp_dir("load_cache_with_stats_hit");
+    let scan_root = temp_dir("load_cache_with_stats_hit_root");
+    fs::write(scan_root.join("first.txt"), b"x").expect("write");
+    let scan = one_txt_scan(&scan_root);
+    let _ = load_or_scan_with_stats_in(&dir, &scan, false);
+
+    let result = load_cache_with_stats_in(&dir, &scan, false);
+    assert!(result.stats.cache_hit);
+    assert!(result.cache_in_sync);
+    assert_eq!(result.material.tree().len(), 1);
+
+    let other = vec![ScanPath {
+        extensions: vec![".exe".into()],
+        ..scan[0].clone()
+    }];
+    let missed = load_cache_with_stats_in(&dir, &other, false);
+    assert!(!missed.stats.cache_hit, "走査対象が違えば外れる");
+    assert_eq!(missed.material.tree().len(), 0);
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&scan_root);
+}
+
+/// 旧版は、起動時の読み込みでこれまでどおり昇格する（#1448 の受け入れ 4）。
+#[test]
+fn load_cache_with_stats_in_upgrades_a_legacy_format() {
+    let _guard = INDEX_LOCK_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let dir = temp_dir("load_cache_with_stats_upgrade");
+    let scan_root = temp_dir("load_cache_with_stats_upgrade_root");
+    let scan = one_txt_scan(&scan_root);
+    let entries = vec![AppEntry {
+        name: "a".into(),
+        target_path: "C:\\a.txt".into(),
+        is_folder: false,
+    }];
+    write_v4_cache_in(&dir, &entries, compute_config_hash(&scan, false));
+
+    let result = load_cache_with_stats_in(&dir, &scan, false);
+    assert!(result.stats.cache_hit, "旧版も読める");
+    assert_eq!(result.material.tree().len(), 1);
+    let raw = cache_bin_file_in(&dir)
+        .load_bytes()
+        .expect("読み直せること");
+    assert_eq!(
+        crate::binfmt::peek_version(&raw),
+        Some(INDEX_CACHE_VERSION),
+        "旧版を読んだ起動は、現行版で書き戻す"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&scan_root);
+}
+
 /// **cache-miss で保存に失敗したら、`cache_in_sync` は偽である**（#1456）。真にすると、次の
 /// 走査しない再構築が、この材料と別の走査の結果（あるいは無い `index.bin`）を読みにいく。
 #[test]

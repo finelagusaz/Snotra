@@ -57,7 +57,7 @@ param(
     # 空なら release 本体を導く（#1179・#1293）。**理由の正本は `Resolve-SnotraCargoExecutable` の doc**。
     [string]$ExePath = '',
     [string]$HotkeyVks = '',
-    # 起動の終端を待つ上限。索引キャッシュが外れた起動は全走査を含む（実 config で約 83 秒）。
+    # 起動の終端を待つ上限。索引キャッシュが外れた起動も、走査は背景へ回るので終端は早い（#1448）。
     [int]$StartupTimeoutSeconds = 240
 )
 
@@ -148,13 +148,36 @@ function Start-TracedSnotra {
 # 残り、次の `cargo build` が exe を掴まれて「アクセスが拒否されました」で落ちる。
 # 起動したものを片付ける責務は、成功経路だけに置いてはならない。
 try {
-    # **段階 A は、索引キャッシュに当たった起動だけで測る。** 外れると起動の中で全走査が走り
+    # **段階 A は、索引キャッシュに当たった起動だけで測る。** 外れると全走査が走り
     # （実 config で約 83 秒・2026-11-03）、14 秒後の段階 A は走査の途中を測って何も言わずに
     # 出力していた。外れたら、走査が保存したキャッシュに当てるため 1 度だけ再起動する。
+    # **走査は背景で走る**（#1448）——`startup:ready` は保存より先に来るので、すぐ落とすと保存が
+    # 届かず、再起動も外れる。構築が終わるまで待ってから落とす。終わりの印は `scan-log.jsonl` の
+    # end 行（起動より後の `ts_ms`）である——`index.bin` の保存の直後で落とすと、end 行を書く前に
+    # 落ち、利用者の記録に end の無い start 行が残る（次の構築の進捗表示から分母が消える）。
     $started = Start-TracedSnotra
     if (-not $started.Data.cache_hit) {
-        Write-Host ("索引キャッシュが外れていた（first_run={0}・index_load={1} ms）。キャッシュに当てるため再起動する。" -f `
-            $started.Data.first_run, $started.Data.index_load_ms) -ForegroundColor Yellow
+        if ($started.Data.first_run) {
+            throw "初回起動だった（first_run=true）。構築は設定アプリを閉じるまで始まらないので、先に初回設定を済ませてから測る。"
+        }
+        Write-Host ("索引キャッシュが外れていた（index_load={0} ms）。背景の構築が終わるのを待ってから再起動する。" -f `
+            $started.Data.index_load_ms) -ForegroundColor Yellow
+        $configDir = if ($env:SNOTRA_CONFIG_DIR) { $env:SNOTRA_CONFIG_DIR } else { Join-Path $env:APPDATA 'Snotra' }
+        $scanLog = Join-Path $configDir 'scan-log.jsonl'
+        $launchedMs = ([DateTimeOffset]$started.LaunchedAt).ToUnixTimeMilliseconds()
+        $deadline = (Get-Date).AddSeconds(300)
+        while ($true) {
+            $ended = (Test-Path -LiteralPath $scanLog) -and
+                @(Get-Content -LiteralPath $scanLog | Where-Object { $_ -match '"ev":"end"' } | ForEach-Object {
+                    try { $_ | ConvertFrom-Json } catch { $null }
+                } | Where-Object { $null -ne $_ -and [long]$_.ts_ms -ge $launchedMs }).Count -gt 0
+            if ($ended) { break }
+            if (-not (Get-Process -Name snotra -ErrorAction SilentlyContinue)) {
+                throw "背景の構築の途中で本体が終わった（$scanLog に end 行が無い）。"
+            }
+            if ((Get-Date) -gt $deadline) { throw "背景の構築が 300 秒以内に終わらなかった（$scanLog に end 行が無い。記録は best-effort なので、index.bin の更新時刻も確かめる）。" }
+            Start-Sleep -Seconds 1
+        }
         Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         $started = Start-TracedSnotra

@@ -161,9 +161,8 @@ fn bench_fuzzy_search_scaling() {
     }
 }
 
-/// `normal_mode = "substring"` の全件走査。**Fuzzy の bitmask pre-filter を通らない**ので
-/// 全エントリが照合まで進み、1 件あたりの固定費がそのまま規模に乗る——上の Fuzzy の計測コードでは
-/// この経路を 1 度も通らない。
+/// `normal_mode = "substring"` の全件走査。bitmask pre-filter を抜けた候補が `find` の照合へ
+/// 進む——上の Fuzzy の計測コードでは、この照合を 1 度も通らない。
 ///
 /// **撤去条件**: Substring の検索経路を製品から消す変更と同じ PR で消す。
 #[test]

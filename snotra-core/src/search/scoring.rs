@@ -452,15 +452,16 @@ impl SearchEngine {
         history: &HistoryLookup,
         options: SearchOptions,
     ) -> Option<ScoredEntry<'a>> {
-        // Bitmask pre-filter: クエリ文字を含まないエントリを棄却する（Fuzzy のみ。
-        // Prefix/Substring は安価な str 操作で足り、bitmask のオーバーヘッドが見合わない）。
+        // Bitmask pre-filter: クエリ文字を含まないエントリを棄却する（全モード）。
+        // Prefix/Substring でも厳密である——接頭辞・部分文字列として一致するなら、クエリの
+        // 文字集合は名前の文字集合に含まれる（両辺が同じ正規化を通る）。
         // name/file_name と kana のいずれのマッチ経路にも候補がない場合だけ棄却する。
         // kana は専用の損失あり mask を使う。衝突で余分な候補を通すことはあっても、
         // kana substring が成立する候補を棄却しない。
         // has_path_sep 時は従来どおりスキップ: パスだけでマッチするエントリが
         // name/file_name mask で落ちる問題を回避する。
         // **必ず関数先頭**（entry_view / UTF-32 変換より前）。
-        if mode == SearchMode::Fuzzy && !plan.has_path_sep {
+        if !plan.has_path_sep {
             let name_mask = self.char_masks[i];
             let fn_mask = self.file_name_char_masks[i];
             let latin_match = (plan.query_mask & name_mask) == plan.query_mask
@@ -484,7 +485,8 @@ impl SearchEngine {
         //
         // **3 つの条件はどれも落とせない**:
         // - `Fuzzy` — Prefix/Substring は `starts_with` / `find` であって部分列ではない。
-        //   `find` は連続一致を要求するので同じ論証が使えるが、そもそも安いので飛ばす価値が無い
+        //   `find` は連続一致を要求するので同じ論証が使えるが、安いので飛ばす価値が無いと
+        //   見て入れていない（**測っていない**。同じ見立てはビットマスクでは外れた・#1445）
         // - `norm_query_has_path_sep` — **`has_path_sep`（生クエリ）ではない**。needle は
         //   `norm_query` であり、**正規化が区切りに触る版では両者がずれる**
         //   （条件の正本は `QueryPlan` の当該フィールドの doc。今の nucleo では `¥` は畳まれず

@@ -190,7 +190,7 @@ sequenceDiagram
     Note over View,W: ここから下は Plain の dispatch だけが辿る
     W->>W: coalesce（溜まった要求の最後だけ走らせる）
     W->>Eng: engine.search(&query)（entry_count と合わせ lock はこの区間だけ）
-    Note over Eng: rayon 並列スコアリング（Fuzzy の bitmask プレフィルタ・match_score・<br/>履歴ブースト・TopK。正本は search.rs / search/scoring.rs）
+    Note over Eng: rayon 並列スコアリング（bitmask プレフィルタ・match_score・<br/>履歴ブースト・TopK。正本は search.rs / search/scoring.rs）
     Eng-->>W: Vec<SearchResult>
     W->>View: SearchMsg::Done{seq} + wake_main（worker は Context を持たない・#671 PR D）
 
@@ -270,7 +270,7 @@ worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用
 
 | 段 | 単価 | 走る条件 |
 |---|---|---|
-| ビットマスク pre-filter | O(1) | Fuzzy **かつ**非パスクエリ |
+| ビットマスク pre-filter | O(1) | 非パスクエリ（全モード） |
 | name / file_name スコア | O(名前長 × クエリ長) | file_name は `has_dot` かつ name が高確度でないとき |
 | kana スコア | O(名前長 × クエリ長) | 上が全滅 **かつ** migemo |
 | 履歴の末尾セグメントの照合 | O(自分のセグメント) | name / file_name / kana のどれかが成立（`HistoryLookup::may_hit`） |
@@ -292,7 +292,7 @@ worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用
 
 **ゆえにパスクエリは「全件 × 全段」を毎打鍵払う唯一の経路であり、しかも単価がフルパス長に乗る。** 額と改善の履歴は `PERFORMANCE.md`「パスクエリ全走査のコスト」。
 
-**ビットマスクは文字の存在だけを見る**（順序に依存しない）ので、どのモードでも原理的に正しい。Fuzzy 限定なのは正しさではなく費用の判断である（Prefix/Substring は素の `str` 操作が十分安い）。**ただし写すのは `a-z` と `0-9` だけで `\` `:` `.` は落ちる**（`query.rs` の `char_bitmask`）——区切りや拡張子で弾く用途には構造的に使えない。
+**ビットマスクは文字の存在だけを見る**（順序に依存しない）ので、どのモードでも原理的に正しい。そこで全モードに通す。かつては「Prefix/Substring は素の `str` 操作が十分安い」として Fuzzy に限っていたが、測るとこの見立ては外れていた（`PERFORMANCE.md`「採用: ビットマスクの事前フィルタを Substring / Prefix にも通す（#1445）」）。**ただし写すのは `a-z` と `0-9` だけで `\` `:` `.` は落ちる**（`query.rs` の `char_bitmask`）——区切りや拡張子で弾く用途には構造的に使えない。
 
 ## 状態遷移（概要）
 

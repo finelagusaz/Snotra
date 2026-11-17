@@ -772,12 +772,27 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 | 候補 | 実測されているもの | 見積もり | 注意 |
 |---|---|---:|---|
-| `reject_existing` の走査を rayon で並列化 | 走査は逐次で約 45 ms | **-32 ms** | 倍率 3.6 は `entries_digest` の 43 → 12 ms を**別の関数へ持ち込んだ外挿**。**「read-only だから digest と条件が揃う」は誤り**——ループは `rejected[i]` へ書き、`file_buf` / `full_buf` を毎反復書き換えるので、`map_init` で per-worker に割るか添字を収集して reduce する形が要る |
-| `by_file_key` を `FxHashMap` へ | 引く回数は既存側の 312,691 回 | -3〜5 ms | 依存は `Cargo.toml` に既にある（`history.rs` が先例）。単価差は一般値からの見積もりで未実測 |
-| `path.is_dir()` をやめて `entry.metadata()` の属性語を読む | **242 回の syscall**（PATH 配下の全エントリ数） | 上限 9 ms | 列挙 9 ms が天井の根拠なので、**ここが削れると天井そのものが下がる**。⚠ `Path::is_dir()` はリンクを辿り `DirEntry::metadata()` は辿らない——reparse point / junction での挙動差は効率ではなく仕様の判断 |
-| 拡張子照合の `to_ascii_lowercase()` を `eq_ignore_ascii_case` へ | **242 回の確保**（残る 2,066 の 12%） | µs 桁 | 壁時計では無視できる。挙げてあるのは受け入れ判定が確保回数だからで、額で採る話ではない |
+| `path.is_dir()` をやめて `entry.metadata()` の属性語を読む | 判定の順序を替えた後は、拡張子が一致したエントリの数だけ syscall を払う | 未実測 | ⚠ `Path::is_dir()` はリンクを辿り `DirEntry::metadata()` は辿らない——reparse point / junction での挙動差は効率ではなく仕様の判断。順序の入れ替え（下の「採用: PATH の列挙で `is_dir()` を最後に置く（#1447）」）を先に入れた。中間の形として、リパースポイントのときだけ `path.is_dir()` を呼び、それ以外は属性の `meta.is_dir()` を使えば、意味論を保ったまま syscall がリンクの数に減る（/simplify の指摘・未実測） |
 | 列挙をロードと重ねる | `enumerate_path_candidates` は `existing_entries` を引数に取らない（**構造的に独立**） | ≤9 ms | 直列である必然が無い。ディスク I/O を競合させるので重なりは目減りする——測るなら総起動時間で |
-| プレフィルタの `rfind(['\\', '/'])` をバイトの `rposition` へ | 呼ばれる回数は 312,691 | **未実測** | 「char 配列パターンがバイトループより遅い」という前提自体が未検証。**先に単価を測ること** |
+
+**前提が消えて外した行**（#1447）: 「`reject_existing` の走査を rayon で並列化」は「走査は逐次で約 45 ms」を前提にしていたが、これは `&[AppEntry]` と `rfind` の頃の値で、行が名指す `full_buf` も今は無い。木ベースの事前フィルタ（`IndexTree::file_key_into`）が入った後は、path_merge の区間全体が 12〜16 ms（min〜max・下の「起動の端から端まで（2026-08-09 計測・release・7 標本）」・312k 規模）であり、45 ms の前提は成り立たない。「プレフィルタの `rfind(['\\', '/'])` をバイトの `rposition` へ」は、ホットループがもう `rfind` を呼ばない（呼ぶのは根のエントリだけ）。
+
+### 採用: PATH の列挙で `is_dir()` を最後に置く（#1447）
+
+`enumerate_path_candidates` は `path.is_dir()` を拡張子の判定より**前に**呼んでいたので、PATH 配下の全エントリで syscall（`fs::metadata`）を払っていた。4 つの判定は副作用の無い連言なので、安い順（拡張子 → `entry.metadata()` の hidden → `is_dir()`）に並べ替えた。`is_dir()` の意味論（リンクを辿る）は保つ。あわせて `reject_existing` の `by_file_key` を `FxHashMap` へ替え、拡張子の照合を `eq_ignore_ascii_case` にした（候補表にあった「`to_ascii_lowercase()` を `eq_ignore_ascii_case` へ」の行。エントリごとの確保が消える。下の表はこの行を入れる前に測った）。返り値は変わらない。下の計測で件数が一致し、既存の検知器 5 本と、拡張子を持つディレクトリを弾く検知器が通る。
+
+**測定条件**: 2026-11-17 / 機体 **HAL9000** / release / rustc 1.99.1 / 実 `index.bin` 23,672 件・PATH の追加 248 件
+
+- **計測コード**: 一時的な足場（`enumerate_path_candidates` と `reject_existing` を `Instant` で挟み、15 回の min / p50 / max を取るテスト）。測り終えて撤去した
+- **版**: A = `26b7a464`、B = `0482d04e`（足場を除く）。A → B を 3 回交互に回した。1 回目の A は別の検証と重なったので外す
+
+| 区間（p50・µs） | A（2・3 回目） | B（1〜3 回目） |
+|---|---:|---:|
+| `enumerate_path_candidates` | 15,691–15,781 | **11,567–11,943** |
+| `reject_existing` | 669–673 | **547–558** |
+
+- 残りの 11.6 ms のうち、`read_dir` と、拡張子の一致した 248 件に残る `is_dir()` の比は測っていない
+- `npm run bench:startup` の path_merge は測っていない（実行中の Snotra を落として起動し直すので、使用中の機体では回さなかった）
 
 **触らないと判断したもの**（額を測ったうえで）: `enumerate_path_candidates` の `key.clone()`
 （≤候補数の確保・約 7 µs）と `by_file_key` の `Vec<usize>`（同オーダー）。どちらも複雑さの
@@ -3127,6 +3142,33 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 
 - **照合器を `QueryPlan` の外で作って `score_one_entry` へ渡す**: 確保（検索 1 回に最大 3 回）は消える。しかし `score_one_entry` の引数が広がり、消える 3 回は確保の検知器（候補の数との差分で判定する）にも効かない
 - **`str::contains` を前段に置く**: 製品はスコアに一致の位置を要するので、`contains` だけでは済まない。前段に置けば、一致した候補を 2 度走査する
+
+### 採用: ビットマスクの事前フィルタを Substring / Prefix にも通す（#1445）
+
+`score_one_entry` は事前フィルタを Fuzzy のときだけ通していた。理由は「Prefix/Substring は素の `str` 操作が十分安い」だったが、この見立ては測られていなかった。この変更で全モードに通す。フィルタは Substring / Prefix でも厳密である（`score_one_entry` のコメントが論証を持つ）。kana で一致する候補は、ラテン文字のマスクとは別の述語（`kana_char_masks`）で通すので、従来どおり落ちない（検知器は `search/tests/migemo.rs` の `kana_match_skips_latin_bitmask_prefilter_in_every_mode`）。
+
+**測定条件**: 2026-11-17 / 機体 **HAL9000** / release / rustc 1.99.1
+
+- **計測コード**: `tests/match_cost.rs`（Prefix の掃引をこの変更で足した）。ウォームアップ 2 回のあと 30 標本の p50
+- **版**: A = `26b7a464` に計測コードの変更だけを足したもの、B = この変更。A → B → A → B の順に回した
+- **実 config**: `normal_mode = "substring"`・migemo 有効・`include_path_env = true`。実 `index.bin` は 23,672 件（PATH マージで +248 件）
+- **結果の同一性**: 全 108 行 × 4 回のダイジェストが一致した
+
+#### 壁時計（p50 の 2 回のレンジ・µs・抜粋）
+
+| 構成 | クエリ | A | B |
+|---|---|---|---|
+| 実 23,672 件・Substring | `code` | 99–131 | **69–74** |
+| 同 | `vis` | 57–57 | **32–36** |
+| 同 | `.exe` | 127–127 | **80–87** |
+| 同 | `c` | 312–341 | 279–325（重なる） |
+| 実 23,672 件・Prefix | `.exe` | 52–57 | **27–32** |
+| 合成 300,000 件・Substring | `code` | 1,236–1,446 | **913–916** |
+| 同 | `code.` | 699–752 | **240–256** |
+| 合成 300,000 件・Prefix | `code` | 348–366 | **185–202** |
+
+- **パスクエリ（`c:\` など）と Fuzzy は変わらない**。どちらもこの変更が触れない経路である。実の索引では一部の行で B が遅く出たが、合成 300,000 件の Fuzzy では逆に全行で B が速く出た。向きが揃わないので、回ごとの揺れと読む
+- **1 文字の `c` は効かない**。ほとんどの名前が `c` を含むので、フィルタがほぼ何も落とさない
 
 ## 試みたが機能しない手法
 

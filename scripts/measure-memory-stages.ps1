@@ -148,13 +148,23 @@ function Start-TracedSnotra {
 # 残り、次の `cargo build` が exe を掴まれて「アクセスが拒否されました」で落ちる。
 # 起動したものを片付ける責務は、成功経路だけに置いてはならない。
 try {
-    # **段階 A は、索引キャッシュに当たった起動だけで測る。** 外れると起動の中で全走査が走り
+    # **段階 A は、索引キャッシュに当たった起動だけで測る。** 外れると全走査が走り
     # （実 config で約 83 秒・2026-11-03）、14 秒後の段階 A は走査の途中を測って何も言わずに
     # 出力していた。外れたら、走査が保存したキャッシュに当てるため 1 度だけ再起動する。
+    # **走査は背景で走る**（#1448）——`startup:ready` は保存より先に来るので、すぐ落とすと保存が
+    # 届かず、再起動も外れる。`index.bin` が起動より後に書かれるまで待ってから落とす。
     $started = Start-TracedSnotra
     if (-not $started.Data.cache_hit) {
-        Write-Host ("索引キャッシュが外れていた（first_run={0}・index_load={1} ms）。キャッシュに当てるため再起動する。" -f `
+        Write-Host ("索引キャッシュが外れていた（first_run={0}・index_load={1} ms）。背景の構築が保存するのを待ってから再起動する。" -f `
             $started.Data.first_run, $started.Data.index_load_ms) -ForegroundColor Yellow
+        $configDir = if ($env:SNOTRA_CONFIG_DIR) { $env:SNOTRA_CONFIG_DIR } else { Join-Path $env:APPDATA 'Snotra' }
+        $indexBin = Join-Path $configDir 'index.bin'
+        $deadline = (Get-Date).AddSeconds(300)
+        while (-not ((Test-Path -LiteralPath $indexBin) -and
+                ((Get-Item -LiteralPath $indexBin).LastWriteTime -gt $started.LaunchedAt))) {
+            if ((Get-Date) -gt $deadline) { throw "背景の構築が 300 秒以内に index.bin を保存しなかった（$indexBin）。" }
+            Start-Sleep -Seconds 1
+        }
         Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         $started = Start-TracedSnotra

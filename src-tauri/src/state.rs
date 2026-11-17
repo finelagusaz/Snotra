@@ -23,8 +23,8 @@ pub struct AppState {
     /// **このフィールドは private である**（#1129）——読む口は [`AppState::read_config`]、
     /// 建てる口は [`AppState::new`] で、どちらもこのモジュールの中にある。適用範囲は前者の doc。
     config: Arc<RwLock<Config>>,
-    /// UI 表示用の「索引ビルド中」。first-run ではビルドスレッドが居なくても
-    /// [`AppState::new`] が true で建てる。
+    /// UI 表示用の「索引ビルド中」。索引の無い起動（first-run・`index.bin` を読めなかった起動・#1448）
+    /// では、ビルドスレッドが居なくても [`AppState::new`] が true で建てる。
     ///
     /// **書くのは [`AppState::new`] / [`AppState::try_begin_index_build`] /
     /// [`AppState::finish_index_build`] だけである**（外からの force-reset は走行中ビルドのガードを

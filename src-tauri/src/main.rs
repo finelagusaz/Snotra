@@ -2,7 +2,8 @@
 //! トレイ/ホットキー起動を行う。
 //!
 //! 起動時の背景再スキャンは撤去済み（#1001 `docs/adr/ADR-rescan-explicit-only.md`）。
-//! 索引の更新は明示操作（`start_index_build` の kick）だけを経路とする。
+//! 索引の更新は `start_index_build` の kick だけを経路とする。起動が kick するのは、索引が
+//! 無いとき（初回起動・`index.bin` を読めなかった起動）だけである（`InitialIndex`・#1448）。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -228,15 +229,17 @@ fn main() {
     // フォントの解決を先読みし、索引のロード以降と重ねる（#1452・`font_stack::prefetch` の doc）。
     egui_shell::prefetch_fonts(config.visual.font_family.clone());
 
-    let (mut material, initial_indexing, cache_in_sync) = if is_first_run {
+    let (mut material, initial, cache_in_sync) = if is_first_run {
         (
             indexer::IndexMaterial::from_tree(snotra_core::index_tree::IndexTree::empty()),
-            true,
+            InitialIndex::FirstRun,
             false,
         )
     } else {
+        // **起動の中では走査しない**（#1448）。読めなければ空の索引で起動し、setup が背景の
+        // 構築を起こす（`start_initial_build`）。
         let result =
-            indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
+            indexer::load_cache_with_stats(&config.paths.scan, config.search.show_hidden_system);
         #[cfg(debug_assertions)]
         {
             let s = &result.stats;
@@ -251,19 +254,25 @@ fn main() {
                 s.cache_save.as_millis(),
             );
         }
-        // 内側の内訳との差が `index_load_unattributed_ms` になる——`load_or_scan_with_stats`
+        // 内側の内訳との差が `index_load_unattributed_ms` になる——`load_cache_with_stats`
         // の中にある未命名の処理を、外側の計測コードが検出するための項目である。
         startup::set_index_load_stats_total(result.stats.total);
-        // **分岐は `LoadOrScanStats` から取る。** `initial_indexing` は first-run でしか
-        // 立たないので、そこから導くと非 first-run の cache-miss が cache_hit=true になる。
+        // **分岐は `LoadOrScanStats` から取る。** cache-miss の起動は `first_run: false` /
+        // `cache_hit: false` で、`index_load` も刻む——`index_load` が null でよいのは first-run
+        // だけである（起動の計測の契約）。
         startup::set_branch(startup::Branch {
             first_run: false,
             cache_hit: result.stats.cache_hit,
             include_path_env: config.search.include_path_env,
         });
         startup::mark(startup::Phase::IndexLoad);
-        (result.material, false, result.cache_in_sync)
+        (
+            result.material,
+            InitialIndex::of(false, result.stats.cache_hit),
+            result.cache_in_sync,
+        )
     };
+    let initial_indexing = initial.initial_indexing();
 
     // PATH エントリのスキャン + マージ（`indexing::build_index_from_material` と同じ手順の別実装——規則を変えるなら両方）。**ツリーとマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記もツリーへの追加も、空なら何もしない。
     if config.search.include_path_env {
@@ -298,7 +307,7 @@ fn main() {
 
     let mut engine = Engine::from_material(material, history, config);
     // `index.bin` がこの索引と同じ走査の結果か。偽なら、設定変更の再構築でも `index.bin` を読まずに
-    // 走査する（first-run・保存に失敗した cache-miss・#1456）。
+    // 走査する（#1456）。
     engine.set_cache_in_sync(cache_in_sync);
     startup::mark(startup::Phase::EngineBuild);
 
@@ -408,9 +417,9 @@ fn main() {
             app.manage(egui_shell::ResultsShared::default());
             egui_shell::spawn_update_check(&app_handle);
 
-            // First-run: launch snotra-settings directly (bypassing the indexing guard
-            // in open_settings, since initial_indexing=true during first run).
-            setup_first_run(&app_handle, is_first_run);
+            // 初回起動なら設定アプリを、cache-miss なら背景の構築を起こす（#1448）。この位置は
+            // `PlatformBridge` を manage した後（構築中の表示がトレイへ届く）・hotkey listener の前。
+            start_initial_build(&app_handle, initial);
 
             // Listen for hotkey-pressed events, then activate the hotkey on the
             // platform thread. Registering the listener before activating the
@@ -466,15 +475,52 @@ fn finish_platform_thread(
     }
 }
 
-/// First-run: launch snotra-settings directly (bypassing the indexing guard
-/// in open_settings, since initial_indexing=true during first run).
-/// Pass --first-run so SettingsApp opens on the Index tab for onboarding.
-/// On failure (exe not found / spawn error), fall back to building the index
-/// with default paths so the indexing flag eventually clears and the user
-/// can open settings via open_settings once the build finishes.
-fn setup_first_run(app_handle: &AppHandle, is_first_run: bool) {
-    if is_first_run && commands::launch_settings_process(app_handle, &["--first-run"]).is_err() {
-        indexing::start_index_build(app_handle, indexing::BuildRequest::Rescan);
+/// 起動したときの索引の状態（#1448）。`main` が 1 回だけ導き、構築を起こすかを決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitialIndex {
+    /// `index.bin` を読めた。構築は起こさない。
+    Loaded,
+    /// 初回起動（`config.toml` が無い）。設定アプリで走査対象を確かめてから構築する。
+    FirstRun,
+    /// `index.bin` を読めなかった（版上げ・破損・止めている間の走査対象の変更）。空の索引で起動し、
+    /// 背景で構築する。設定アプリは開かない。
+    Deferred,
+}
+
+impl InitialIndex {
+    fn of(is_first_run: bool, cache_hit: bool) -> Self {
+        match (is_first_run, cache_hit) {
+            (true, _) => Self::FirstRun,
+            (false, true) => Self::Loaded,
+            (false, false) => Self::Deferred,
+        }
+    }
+
+    /// 起動の時点で構築中として扱うか（UI の構築中の表示とガード）。
+    fn initial_indexing(self) -> bool {
+        !matches!(self, Self::Loaded)
+    }
+}
+
+/// 起動時の索引の状態に応じて構築を起こす（#1448）。
+///
+/// - `FirstRun`: 設定アプリを `--first-run` で起動する（索引タブでスキャン対象を確かめさせる）。
+///   `initial_indexing` が真なので、`open_settings` の構築中のガードを迂回して直接起動する。
+///   起動できなかったら（exe が無い・spawn の失敗）、既定の走査対象で構築する——構築中の旗が
+///   いずれ戻り、構築の後に `open_settings` から設定を開ける
+/// - `Deferred`: 背景で構築する。設定アプリは開かない
+/// - `Loaded`: 何もしない
+fn start_initial_build(app_handle: &AppHandle, initial: InitialIndex) {
+    match initial {
+        InitialIndex::FirstRun => {
+            if commands::launch_settings_process(app_handle, &["--first-run"]).is_err() {
+                indexing::start_index_build(app_handle, indexing::BuildRequest::Rescan);
+            }
+        }
+        InitialIndex::Deferred => {
+            indexing::start_index_build(app_handle, indexing::BuildRequest::Rescan);
+        }
+        InitialIndex::Loaded => {}
     }
 }
 
@@ -686,5 +732,27 @@ fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
         snotra_egui_runtime::on_event_loop(app_handle, |app, el| {
             egui_shell::show_egui_main(app, el, Instant::now());
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InitialIndex;
+
+    /// 起動時の索引の状態の導出（#1448）。cache-miss は first-run ではなく `Deferred` になり、
+    /// 構築中として起動する。
+    #[test]
+    fn initial_index_is_derived_from_first_run_and_cache_hit() {
+        assert_eq!(InitialIndex::of(true, false), InitialIndex::FirstRun);
+        assert_eq!(InitialIndex::of(true, true), InitialIndex::FirstRun);
+        assert_eq!(InitialIndex::of(false, true), InitialIndex::Loaded);
+        assert_eq!(InitialIndex::of(false, false), InitialIndex::Deferred);
+
+        assert!(InitialIndex::FirstRun.initial_indexing());
+        assert!(
+            InitialIndex::Deferred.initial_indexing(),
+            "cache-miss の起動は構築中として起動する"
+        );
+        assert!(!InitialIndex::Loaded.initial_indexing());
     }
 }

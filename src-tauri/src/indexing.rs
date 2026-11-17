@@ -33,7 +33,8 @@ pub enum BuildRequest {
 /// インデックスビルドを開始（または kick）する。ビルドスレッドを起動したら `true`、
 /// 既に走行中なら `false` を返す。
 ///
-/// ビルド要求の全経路（config 変更 reindex / first-run / 手動 rebuild / 自己再 kick）が通る単一入口。
+/// ビルド要求の全経路（config 変更 reindex / first-run / `index.bin` を読めなかった起動 / 手動 rebuild /
+/// 自己再 kick）が通る単一入口。
 /// 先に ledger へ要求を立て（`request_rescan` / `mark_index_stale`）、CAS に失敗（既に in-flight）
 /// しても走行中ビルドの drain ループ / finish 後再チェックが取りこぼさず拾う（lost-update を塞ぐ、
 /// issue #347/#348-A）。走査の要求も ledger が世代で持つので、同じ形で取りこぼさない（#1456）。

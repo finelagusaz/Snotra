@@ -89,6 +89,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 - トレイアイコンの表示はウィンドウ生成完了後に行う
 - ホットキー登録（`RegisterHotKey`）は `hotkey-pressed` イベントリスナーの登録完了後に行う（「有効化 ≥ リスナー登録」不変条件）
 - egui view は config を毎フレーム live-read するため bootstrap 一括取得は存在しない（#532 SU7 で IPC ごと撤去）
+- 索引は `main()` で `index.bin` を読むだけで、起動の中では走査しない。読めなければ（初回起動を含む）空の索引で起動し、setup が背景の構築を起こす（`main.rs` の `InitialIndex`・#1448）
 
 ### 設定管理
 

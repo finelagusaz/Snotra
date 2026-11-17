@@ -77,14 +77,14 @@
 ## 作業項目
 
 ### Phase 1: core
-- [ ] `cache.rs`: `try_load_with_stats_in` を切り出し、`load_cache_with_stats(_in)` を足す。テスト
+- [x] `cache.rs`: `try_load_with_stats_in` を切り出し、`load_cache_with_stats(_in)` を足す。テスト
 
 ### Phase 2: src-tauri とスクリプト
-- [ ] `main.rs`: 起動の読み・`InitialIndex` とそのテスト・`start_initial_build`
-- [ ] `measure-memory-stages.ps1`: 背景構築の完了を待つ
+- [x] `main.rs`: 起動の読み・`InitialIndex` とそのテスト・`start_initial_build`
+- [x] `measure-memory-stages.ps1`: 背景構築の完了を待つ
 
 ### Phase 3: 文書と計測
-- [ ] `SPEC.md` 3.3・`cache.rs` の doc・prose:sweep の残り
+- [x] `SPEC.md` 3.3・`cache.rs` の doc・prose:sweep の残り
 - [ ] E2E で受け入れ 1〜4 を確かめ、`PERFORMANCE.md` に記録する
 - [ ] `/state-check`・`/race-check`・`/symmetric-check` を当てる
 - [ ] 検証カテゴリ A・C・E・F

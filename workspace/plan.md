@@ -130,7 +130,7 @@ prose:sweep で見つかった残りの名指しは直さない: `docs/adr/` と
 - [x] `SPEC.md` 7.5 とアイコンの節・`docs/architecture.md`・doc コメント
 - [x] E2E で受け入れ 1・3 を確かめ、所要を `PERFORMANCE.md` に記録する
   - E2E（2026-11-17）: 3 つの切り替えで走査 0・index.bin 不変（基準は各 1 回走査）、走査対象の変更と /s は各 1 回走査。PERFORMANCE.md に記録
-- [ ] `/state-check`・`/race-check`・`/symmetric-check` を当てる
+- [x] `/state-check`・`/race-check`・`/symmetric-check` を当てる（3 つとも指摘なし・f7e33cb2 の後）
 - [ ] 検証カテゴリ A・C・E・F
 
 ## 未確定（実装前に潰す）

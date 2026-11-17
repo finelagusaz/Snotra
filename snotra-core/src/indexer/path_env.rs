@@ -6,6 +6,8 @@
 
 use std::path::Path;
 
+use rustc_hash::FxHashMap;
+
 use crate::index_tree::IndexTree;
 
 use super::AppEntry;
@@ -119,8 +121,15 @@ fn enumerate_path_candidates(path_list: &str, show_hidden_system: bool) -> Vec<P
             continue;
         };
         for entry in read_dir.flatten() {
+            // 判定は副作用の無い連言なので、安い順に並べる。`is_dir()` は 1 回ごとに syscall を
+            // 払うので最後に置く（リンクを辿る意味論は保つ。額は `PERFORMANCE.md`
+            // 「採用: PATH の列挙で `is_dir()` を最後に置く（#1447）」）。
             let path = entry.path();
-            if path.is_dir() {
+            let is_target_ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| path_exts.iter().any(|p| e.eq_ignore_ascii_case(p)));
+            if !is_target_ext {
                 continue;
             }
             let Ok(meta) = entry.metadata() else {
@@ -129,12 +138,7 @@ fn enumerate_path_candidates(path_list: &str, show_hidden_system: bool) -> Vec<P
             if !show_hidden_system && is_hidden_or_system(&meta) {
                 continue;
             }
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_ascii_lowercase());
-            let Some(ref ext) = ext else { continue };
-            if !path_exts.contains(&ext.as_str()) {
+            if path.is_dir() {
                 continue;
             }
             let name = path
@@ -186,8 +190,8 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
     }
 
     // ファイル名キー → 候補の添字（同名の候補が別ディレクトリに並びうるので複数持つ）。
-    let mut by_file_key: std::collections::HashMap<&str, Vec<usize>> =
-        std::collections::HashMap::with_capacity(candidates.len());
+    let mut by_file_key: FxHashMap<&str, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(candidates.len(), Default::default());
     for (i, c) in candidates.iter().enumerate() {
         by_file_key.entry(c.file_key.as_str()).or_default().push(i);
     }

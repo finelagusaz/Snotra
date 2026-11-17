@@ -168,6 +168,8 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();
     startup::mark(startup::Phase::ConfigLoad);
+    // フォントの解決を先読みし、索引のロード以降と重ねる（#1452・`font_stack::prefetch` の doc）。
+    egui_shell::prefetch_fonts(config.visual.font_family.clone());
 
     let (mut material, initial_indexing) = if is_first_run {
         (
@@ -293,8 +295,9 @@ fn main() {
                     return Err(Box::new(e));
                 }
             };
-            // **フォント解決を含む区間である**（`font_stack.rs`）。ウィンドウを一度も出していない
-            // 時点で常駐に効くことが実測されており、表示より前に走る。
+            // **フォント解決を含む区間である**（`font_stack.rs`）。解決は `main()` で先読みを始めて
+            // あるので（#1452）、ここに乗るのは先読みが終わっていなかった残りだけである。ウィンドウを
+            // 一度も出していない時点で常駐に効くことが実測されており、表示より前に走る。
             startup::mark(startup::Phase::WindowsCreate);
             // platform スレッドの初期化を待って bridge を manage する。**bridge を使う listener の
             // 登録（下の `register_*` と `setup_hotkey_listener`）より前に置く**——`egui_shell::create`

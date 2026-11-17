@@ -566,6 +566,16 @@ pub(crate) fn set_index_load_stats_total(total: Duration) {
 ///
 /// **イベント名はここで決めない**。[`Timeline::terminal_line`] が返した組をそのまま出す。
 pub(crate) fn finish(outcome: Result<(), StartupFailure>) {
+    finish_at(outcome, Instant::now());
+}
+
+/// [`finish`] と同じだが、終端の時刻を呼び出し側が渡す。
+///
+/// **ホットキー登録の arm の終端はこれを使う**（#1454・成功も失敗も）。`RegisterHotKey` が戻った直後の時刻を
+/// 渡し、その後に書く `hotkey:registered` の trace（stderr への 1 行）を hotkey_register の
+/// 区間へ入れない。`bench:startup` は `SNOTRA_TRACE=1` で起動するので、入れると区間が
+/// stderr の受け手の速さで動く。
+pub(crate) fn finish_at(outcome: Result<(), StartupFailure>, at: Instant) {
     if FINISHED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -575,7 +585,7 @@ pub(crate) fn finish(outcome: Result<(), StartupFailure>) {
     let Some((event, payload)) = with_timeline(|anchor, t| {
         // **1 回の読みを終端の区間と `post_main` の両方に使う。** 別々に読むと
         // `sum_phase_ns == post_main_ns` がナノ秒差で崩れる。
-        let post_main = anchor.elapsed();
+        let post_main = at.saturating_duration_since(anchor);
         // これは「arm まで到達したか」であって「成功したか」ではない。イベント名の導出
         // （[`terminal`]）とは別の問いなので、そこへ畳まない。
         if outcome.is_ok() || outcome.is_err_and(StartupFailure::reached_the_arm) {

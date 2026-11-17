@@ -101,8 +101,8 @@ pub(crate) enum ForegroundOutcome {
     Already,
     /// `SetForegroundWindow` が 1 回で通った。
     Direct,
-    /// 1 回目が拒まれ、マスクした Alt を注入して再試行した。`sent` は注入が全件入ったか
-    /// （UIPI で弾かれると偽）、`ok` は再試行の `SetForegroundWindow` の返り値。
+    /// 1 回目が拒まれ、マスクした Alt を注入して再試行した。`sent` は `SendInput` が
+    /// 全件を受け付けたか（UIPI に阻まれたときに偽になるかは未実測）、`ok` は再試行の `SetForegroundWindow` の返り値。
     MaskedAlt { sent: bool, ok: bool },
 }
 
@@ -123,7 +123,7 @@ impl ForegroundOutcome {
         }
     }
 
-    /// 注入が全件入ったか。注入しなかった経路では `None`。
+    /// 注入した経路の `sent`。注入しなかった経路では `None`。
     pub(crate) fn sent(self) -> Option<bool> {
         match self {
             Self::Already | Self::Direct => None,
@@ -142,8 +142,8 @@ impl ForegroundOutcome {
 /// 打鍵が元のアプリへ流れ続ける。注入した Alt up は押されている Alt を論理的に離すが、
 /// tao の注入も同じ Alt up を送っていた。
 ///
-/// `PlatformBridge` を通さず直接呼ぶ。呼び出し元（`show_egui_main`）は、続く IME オフの送信と
-/// `send_alt_key_up` より前に前面化を済ませる必要があり、channel 越しの非同期では順序を保てない。
+/// `PlatformBridge` を通さず直接呼ぶ。呼び出し元（`show_egui_main`）は、イベントループ上で同期に
+/// 走る `send_alt_key_up` より前に前面化を済ませる必要があり、channel 越しの非同期では順序を保てない。
 #[cfg(windows)]
 pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> ForegroundOutcome {
     use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, SendInput, VK_MENU};

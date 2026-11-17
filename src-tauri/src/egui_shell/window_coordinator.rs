@@ -434,7 +434,6 @@ pub(crate) fn show_egui_main(
     // アプリのメニューを起動する（#1470）。
     #[cfg(windows)]
     {
-        // `sent` は注入した回だけ載る（注入しなかった回は `null`）。
         let (path, ok, sent) = match window.hwnd() {
             Ok(hwnd) => {
                 let outcome = crate::bring_to_foreground(hwnd);

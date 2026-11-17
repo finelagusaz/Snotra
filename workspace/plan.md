@@ -82,7 +82,8 @@
 - [x] カテゴリ A を走らせる
 - [x] カテゴリ C を走らせる
 - [x] ラウンド 1: fd0c8d80 / verify:tree green（A・C・E・F）/ 指摘 Critical 0・High 0・Medium 1・Low 4（M1・L1〜L3 を修正、L4 は射程の記述で修正不要）/ 変異 13 件中 生存 4（UFCS・空白入り・別ファイル経由・windows ブロック削除。いずれも字面検査の射程外）
-- [ ] ラウンド 2: 修正版の verify:tree と再レビュー
+- [x] ラウンド 2: d63108b1 / verify:tree green（A・C・E・F）/ 前回指摘 M1・L1〜L3 解消（再レビューで確認）、新規 Low 3（N1〜N3: コメントの文言。すべて修正）/ 検査 1 passed。実機: d=3 の 1 回目で `masked_alt`・`sent=true`・`ok=true`、2 回目 `already`・`sent=null`
+- [ ] ラウンド 3: N1〜N3 修正版（コメントのみ）の verify:tree
 - [x] 注入ハーネスで AC1〜AC3 を測り、結果を PR 本文用に残す（2026-11-17・release・各 d で 2 起動 × 2 表示: d = 1, 3, 6, 10 の 1 回目 8/8 で tao の注入・`SC_KEYMENU`・メニューループ 0、`masked_alt` は 8/8 で `ok = true`。文字なしの 1 回目は `direct`、2 回目以降は全件 `already`）
 
 ## 未確定（実装前に潰す）

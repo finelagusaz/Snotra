@@ -97,6 +97,9 @@ impl AsRef<[u8]> for MappedFont { fn as_ref(&self) -> &[u8] { &self.map } }
 - [x] `/symmetric-check`・`/race-check`（`prefetch` のスレッドと `setup` が同じキャッシュを引く）を当てる — symmetric: 開く/写像 ↔ 解く/閉じるは `MappedFont` の drop（宣言順で写像が先）。キャッシュが never-clear なのでプロセス終了まで解かない（意図）。race（`--base origin/main`・④ 7 件・すべて font_stack.rs の錠）: 境界は prefetch スレッドと setup の 2 者が `USER_FONTS`・`JP_FONT`・`FONT_FILES` を引くことだけ。値は不変の `Arc` で古い結果が生じない（b）、UI 状態を変えないので wake 不要（c）、錠は開く・写像の間も持つので同時に引いても 1 回だけ開く（d）、錠の向きは `USER_FONTS`→`FONT_FILES` と `JP_FONT`→`FONT_FILES` だけで、`resolve_stack` は user の錠を離してから jp を引く（e）→ [安全]
 - [ ] 検証カテゴリ A・C・E・F
 
+### 検証とレビューのラウンド
+- [x] ラウンド 1: アンカー `fb34d3a6` / verify:tree A・C・E・F 緑 / 所見 High 1・Medium 4・Low 5 / 変異 9 のうち生存 3（M5・M7・M2b）。M5 はテストの綴りに大文字小文字を足して塞いだ（`10e22846` で赤を自分で確かめた）。M7（jp を user より先に解決）と M2b（`maps_on` の呼び出しを外す）は残余として受け入れる——前者は main にも順序を見るテストが無く、観測には製品コードへの注入点が要る（`ADR-no-test-only-injection-in-product-code`）。後者はテストの機体に固定ドライブ以外のファイルが無い。採らなかった所見: L2（`FontFiles` の doc の列挙は呼び出し元ではなく、同じファイルになる場合の例示）。L1 は「長さ 0 は読んで持つ」へ文言を直し、判定そのものは残した
+
 ## 決定の経緯（2026-11-17・試作の実測）
 
 試作（共有モード READ|DELETE で写像・`snotra-1449proto.exe`）と基準（main 77eb5899）を、cache-hit の起動で 2 巡ずつ交互に測った（MiB。値は r1 / r2）。

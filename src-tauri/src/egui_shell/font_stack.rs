@@ -1,9 +1,9 @@
 //! フォント解決（config font_family → システムフォント検索）と `set_fonts` 登録。
 //! 消費者は `view.rs` と `results_view.rs` の両方（main/results は別 Context を持つため
 //! それぞれが自分の Context に対して呼ぶ）——ゆえにどちらにも属させず独立モジュールにする。
-//! フォントのバイト列はファイルを写像して持ち（写像できなければ読んで写す・[`FontFiles`]）、
+//! フォントのバイト列はファイルをメモリマップして持ち（メモリマップできなければ読んで写す・[`FontFiles`]）、
 //! [`JP_FONT`] と [`USER_FONTS`] に置く（**never-clear**。消すと、次の解決が同じファイルを
-//! もう一度開く）。写像はヒープではないので private commit に載らない（#1449）。
+//! もう一度開く）。メモリマップはヒープではないので private commit に載らない（#1449）。
 //! フォント登録の分岐は次のとおり（#532・#689）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**分岐を列挙するのは、この index 0 の不変条件が分岐ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
 //!
 //! **index 0 を破ると Latin と CJK が混在する行のベースラインがずれる**（2 フォントで積むとずれること自体は
@@ -24,12 +24,12 @@ use egui::epaint::text::Blob;
 /// view の `setup` が重なっても、2 度開かない（#1452）。
 static JP_FONT: Mutex<Option<Blob>> = Mutex::new(None);
 
-/// 写像したフォントファイル。開いたハンドルを、写像と同じ値の中に持つ。
+/// メモリマップしたフォントファイル。開いたハンドルを、メモリマップと同じ値の中に持つ。
 ///
-/// フィールドは `map` を先に置く（drop は宣言順なので、写像を解いてからハンドルを閉じる）。
+/// フィールドは `map` を先に置く（drop は宣言順なので、メモリマップを解いてからハンドルを閉じる）。
 struct MappedFont {
     map: memmap2::Mmap,
-    /// 書き込みを拒む共有モードで開いたハンドル。写像の中身を変えさせない根拠（[`map_font_file`]）。
+    /// 書き込みを拒む共有モードで開いたハンドル。メモリマップの中身を変えさせない根拠（[`map_font_file`]）。
     _file: File,
 }
 
@@ -39,12 +39,12 @@ impl AsRef<[u8]> for MappedFont {
     }
 }
 
-/// [`FontFiles::load`] がバイト列をどう持ったか。写像の経路を通ったことをテストが確かめるための値。
+/// [`FontFiles::load`] がバイト列をどう持ったか。メモリマップの経路を通ったことをテストが確かめるための値。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Loaded {
-    /// ファイルを写像した（[`MappedFont`]）。
+    /// ファイルをメモリマップした（[`MappedFont`]）。
     Mapped,
-    /// 写像できず、読んでヒープへ写した。
+    /// メモリマップできず、読んでヒープへ写した。
     Copied,
 }
 
@@ -62,12 +62,13 @@ impl FontFiles {
         }
     }
 
-    /// `path` のフォントファイルを、写像して（できなければ読んで写して）返す。読めなければ `None`。
+    /// `path` のフォントファイルを、メモリマップして（できなければ読んで写して）返す。読めなければ `None`。
     ///
-    /// 錠は開く・写像する間も持つ——2 スレッドが同時に引いても 1 回だけ開く。
+    /// 錠は開く・メモリマップする間も持つ——2 スレッドが同時に引いても 1 回だけ開く。
     fn load(&self, path: &Path) -> Option<(Blob, Loaded)> {
         // 綴りの違い（fontdb の `C:\WINDOWS\Fonts\…` と `C:/Windows/Fonts/…`）を 1 つのキーに寄せる。
-        let key = std::fs::canonicalize(path).ok()?;
+        // 正規化に失敗しても、開けるなら開く（キーが綴りどおりになるだけである）。
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         // poison からは回復する（理由は `resolve_font_family` と同じ）。
         let mut files = self.files.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(hit) = files.get(&key) {
@@ -88,8 +89,8 @@ fn font_files() -> &'static FontFiles {
     FONT_FILES.get_or_init(FontFiles::new)
 }
 
-/// `path` を、書き込みを拒む共有モードで開いて写像する。写像してはならない場所のファイル・
-/// 長さ 0・開けない（共有違反を含む）・写像の失敗は `None`（呼び出し側が読んで写す）。
+/// `path` を、書き込みを拒む共有モードで開いてメモリマップする。メモリマップしないときは `None`
+/// を返し、呼び出し側が読んで写す。
 fn map_font_file(path: &Path) -> Option<MappedFont> {
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
     use windows::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ};
@@ -103,11 +104,11 @@ fn map_font_file(path: &Path) -> Option<MappedFont> {
     if meta.len() == 0 || !maps_on(drive_type_of(&file)?, meta.file_attributes()) {
         return None;
     }
-    // SAFETY: 写像の背後のファイルは、`FILE_SHARE_WRITE` を含まない共有モードで開いた `file` が
-    // 生きている間、他のハンドルから書き込みのために開けない（OS が拒む）。開けたことは、書き込みの
-    // アクセスを持つ既存のハンドルが無かったことを意味する。削除と名前の変更は許すが、それは
-    // ディレクトリの項目を外すだけで、写像が指す中身は閉じるまで残る（#1449 で実測）。`file` は
-    // 写像と同じ値（`MappedFont`）に入り、写像より先に閉じない。ページの読み込みに失敗しうる
+    // SAFETY: メモリマップの背後のファイルは、`FILE_SHARE_WRITE` を含まない共有モードで開いた `file` が
+    // 生きている間、他のハンドルから書き込みのために開けない（OS が拒む）。書き込みのために開いている
+    // 他のハンドルが既に在れば、`file` の open 自体が共有違反で失敗する。削除と名前の変更は許すが、それは
+    // ディレクトリの項目を外すだけで、メモリマップが指す中身は閉じるまで残る（#1449 で実測）。`file` は
+    // メモリマップと同じ値（`MappedFont`）に入り、メモリマップより先に閉じない。ページの読み込みに失敗しうる
     // 場所（ネットワーク・クラウドのプレースホルダ）は `maps_on` が除く。
     let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
     Some(MappedFont { map, _file: file })
@@ -145,10 +146,11 @@ fn drive_type_of(file: &File) -> Option<u32> {
     Some(unsafe { GetDriveTypeW(windows::core::PCWSTR(root.as_ptr())) })
 }
 
-/// 写像してよい場所か。ローカルの固定ドライブで、クラウドのプレースホルダ・オフラインでないこと。
+/// メモリマップしてよい場所か。ローカルの固定ドライブで、クラウドのプレースホルダ・オフラインでないこと。
 ///
-/// 写像のページを読み込めないとプロセスが落ちる（`EXCEPTION_IN_PAGE_ERROR`。release は
-/// panic=abort で捕まえられない）。読み込みが失敗しうる場所を除き、判定できなければ写さない側へ倒す。
+/// メモリマップのページを読み込めないとプロセスが落ちる（`EXCEPTION_IN_PAGE_ERROR`。release は
+/// panic=abort で捕まえられない）。読み込みが失敗しうる場所を除き、判定できないときもメモリマップしない。
+/// USB で繋いだ外付けのディスクも固定ドライブと報告されることがあり、起動中に抜くと落ちうる（受容する残余）。
 fn maps_on(drive_type: u32, attributes: u32) -> bool {
     use windows::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
@@ -177,7 +179,7 @@ const CJK_PROBE: &[char] = &[
 
 /// `bytes` の `face_index` 面が [`CJK_PROBE`] を全点持つかを cmap 実測で判定する。
 ///
-/// 真なら jp_font fallback は不要で、`YuGothM.ttc` の写像と egui のグリフ機構を
+/// 真なら jp_font fallback は不要で、`YuGothM.ttc` のメモリマップと egui のグリフ機構を
 /// 丸ごと積まずに済む（#687 の実測: user_font 分だけでアイドル 20.6 MiB）。
 /// パース不能なバイト列は `false`（= jp_font を積む安全側）にする。
 fn font_covers_cjk(bytes: &[u8], face_index: u32) -> bool {
@@ -197,7 +199,7 @@ fn font_covers_cjk(bytes: &[u8], face_index: u32) -> bool {
 /// フォント全体を深くコピーし、2 本が常駐した（実測: user_font は `from_owned` で 20.6 MiB ≒
 /// 2 × ファイル 10.21 MiB、jp_font は `from_static` で 12.9 MiB ≒ 1 × 13.26 MiB・#689）。
 /// 0.37 は `FontData.font` を `Arc` にし、epaint は内部でもその `Arc` を共有する
-/// （`face_store.rs` / `font_face.rs` が `Arc::clone`）ので、渡した写像をそのまま使う。
+/// （`face_store.rs` / `font_face.rs` が `Arc::clone`）ので、渡したメモリマップをそのまま使う。
 fn font_definitions(jp: Option<Blob>, user: Option<(Blob, u32)>) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     let has_jp = jp.is_some();
@@ -262,7 +264,7 @@ static USER_FONTS: OnceLock<Mutex<HashMap<String, ResolvedFont>>> = OnceLock::ne
 /// 解決後に drop（非常駐・列挙コストはフォント設定時の一度きり）。
 ///
 /// fontdb はファイルのパスを選ぶところまで使い、開くのは [`FontFiles`] が行う——fontdb の
-/// 写像（`make_shared_face_data`）は共有モードを絞らずに開くため使わない。
+/// メモリマップ（`make_shared_face_data`）は共有モードを絞らずに開くため使わない。
 fn resolve_font_family(name: &str) -> Option<ResolvedFont> {
     let cache = USER_FONTS.get_or_init(|| Mutex::new(HashMap::new()));
     // poison からは回復する（release は panic=abort ゆえ実際には起きないが、
@@ -317,7 +319,7 @@ fn jp_font_bytes() -> Option<Blob> {
 /// [`USER_FONTS`] と [`JP_FONT`] にキャッシュされる。
 fn resolve_stack(font_family: &str) -> (Option<Blob>, Option<ResolvedFont>) {
     // **user を先に解決し、カバー判定が済むまで jp_font のファイルを開かない**（順序が要点）。
-    // jp を先に開くと、CJK をカバーするフォントでも jp_font の写像（と、写像できない場所では
+    // jp を先に開くと、CJK をカバーするフォントでも jp_font のメモリマップ（と、メモリマップできない場所では
     // その写し）と egui の解析を持つことになる。
     let user = resolve_font_family(font_family);
     let need_jp = match &user {
@@ -481,7 +483,7 @@ mod tests {
 
     #[test]
     fn load_maps_a_local_file() {
-        // **経路を assert する。** 判定が常に写す側へ倒れても、バイト列の一致だけなら緑になる。
+        // **経路を assert する。** 判定が常に「メモリマップしない」を返しても、バイト列の一致だけなら緑になる。
         let dir = TempDir::new("maps");
         let bytes = sample_bytes();
         let path = dir.write("font.bin", &bytes);
@@ -489,7 +491,7 @@ mod tests {
         assert_eq!(
             how,
             Loaded::Mapped,
-            "ローカルの固定ドライブのファイルは写像する"
+            "ローカルの固定ドライブのファイルはメモリマップする"
         );
         assert_eq!((*loaded).as_ref(), &bytes[..]);
     }
@@ -497,7 +499,7 @@ mod tests {
     #[test]
     fn mapped_file_refuses_writes_but_survives_delete_and_replace() {
         // 書き込みを拒む共有モードの帰結（`map_font_file` の SAFETY）。書き込みでは開けず、
-        // 退避・同じ名前での置き換え・削除は通り、そのあとも写像の中身は元のままである。
+        // 退避・同じ名前での置き換え・削除は通り、そのあともメモリマップの中身は元のままである。
         let dir = TempDir::new("share");
         let bytes = sample_bytes();
         let path = dir.write("font.bin", &bytes);
@@ -506,16 +508,16 @@ mod tests {
 
         assert!(
             std::fs::OpenOptions::new().write(true).open(&path).is_err(),
-            "写像中のファイルを書き込みのために開けてしまう（中身を書き換えられる）"
+            "メモリマップ中のファイルを書き込みのために開けてしまう（中身を書き換えられる）"
         );
         let moved = dir.0.join("moved.bin");
-        std::fs::rename(&path, &moved).expect("写像中でも名前を変えられる");
+        std::fs::rename(&path, &moved).expect("メモリマップ中でも名前を変えられる");
         std::fs::write(&path, b"replaced").expect("同じ名前へ新しい中身を書ける");
-        std::fs::remove_file(&moved).expect("写像中でも削除できる");
+        std::fs::remove_file(&moved).expect("メモリマップ中でも削除できる");
         assert_eq!(
             (*loaded).as_ref(),
             &bytes[..],
-            "削除・置き換えの後に写像の中身が変わった"
+            "削除・置き換えの後にメモリマップの中身が変わった"
         );
     }
 
@@ -524,25 +526,23 @@ mod tests {
         let dir = TempDir::new("edge");
         let path = dir.write("empty.bin", &[]);
         let (loaded, how) = FontFiles::new().load(&path).expect("長さ 0 も読める");
-        assert_eq!(how, Loaded::Copied, "長さ 0 は写像できないので写す");
+        assert_eq!(how, Loaded::Copied, "長さ 0 はメモリマップせず読んで持つ");
         assert!((*loaded).as_ref().is_empty());
         assert!(FontFiles::new().load(&dir.0.join("missing.bin")).is_none());
     }
 
     #[test]
     fn load_opens_the_same_file_once_across_spellings() {
-        // fontdb は `\` 区切り、jp_font の候補は `/` 区切りで綴る。同じファイルなら同じ Arc を返す。
+        // fontdb は `C:\WINDOWS\Fonts\…`、jp_font の候補は `C:/Windows/Fonts/…` と綴る。同じファイルなら
+        // 同じ Arc を返す。**大文字小文字も変える**——Windows の `PathBuf` は区切りの `\` と `/` を同じに
+        // 比べるので、区切りだけを変えても、正規化を外した実装との差が出ない（変異注入で実測）。
         let dir = TempDir::new("spell");
         let path = dir.write("font.bin", &sample_bytes());
         let files = FontFiles::new();
         let (a, _) = files.load(&path).expect("読める");
-        let slashed = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
-        assert_ne!(
-            slashed.as_os_str(),
-            path.as_os_str(),
-            "綴りを変えられていない"
-        );
-        let (b, _) = files.load(&slashed).expect("読める");
+        let respelled = PathBuf::from(path.to_string_lossy().replace('\\', "/").to_uppercase());
+        assert_ne!(respelled, path, "綴りを変えられていない");
+        let (b, _) = files.load(&respelled).expect("読める");
         assert!(Arc::ptr_eq(&a, &b), "同じファイルを 2 回開いた");
     }
 
@@ -556,7 +556,10 @@ mod tests {
         assert!(maps_on(3, 0));
         assert!(maps_on(3, FILE_ATTRIBUTE_NORMAL.0));
         for drive in [0, 1, 2, 4, 5, 6] {
-            assert!(!maps_on(drive, 0), "drive type {drive} を写像してしまう");
+            assert!(
+                !maps_on(drive, 0),
+                "drive type {drive} をメモリマップしてしまう"
+            );
         }
         for attr in [
             FILE_ATTRIBUTE_OFFLINE,
@@ -565,7 +568,7 @@ mod tests {
         ] {
             assert!(
                 !maps_on(3, attr.0),
-                "属性 {:#x} のファイルを写像してしまう",
+                "属性 {:#x} のファイルをメモリマップしてしまう",
                 attr.0
             );
         }
@@ -573,14 +576,18 @@ mod tests {
 
     #[test]
     fn load_maps_japanese_system_font() {
-        // 実フォントでも写像の経路を通ることを見る。不在なら skip する（理由は下の positive 検査と同じ）。
+        // 実フォントでもメモリマップの経路を通ることを見る。不在なら skip する（理由は下の positive 検査と同じ）。
         let path = Path::new("C:/Windows/Fonts/YuGothM.ttc");
         let Ok(bytes) = std::fs::read(path) else {
-            eprintln!("skip: YuGothM.ttc が無いため写像の検査を実施していない");
+            eprintln!("skip: YuGothM.ttc が無いためメモリマップの検査を実施していない");
             return;
         };
         let (loaded, how) = FontFiles::new().load(path).expect("読める");
-        assert_eq!(how, Loaded::Mapped, "システムフォントを写像できず写した");
+        assert_eq!(
+            how,
+            Loaded::Mapped,
+            "システムフォントをメモリマップできず写した"
+        );
         assert_eq!((*loaded).as_ref(), &bytes[..]);
     }
 

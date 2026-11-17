@@ -4829,6 +4829,7 @@ dependencies = [
  "egui_kittest",
  "fontdb",
  "indexmap 2.14.2",
+ "memmap2",
  "notify",
  "png",
  "rayon",

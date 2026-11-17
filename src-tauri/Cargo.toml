@@ -25,6 +25,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = "0.18"
 fontdb = "0.24"
+# フォントファイルをメモリマップして積む（#1449）。
+memmap2 = "0.9"
 # cmap 実測で user_font が CJK をカバーするかを判定する（jp_font fallback の要否）。
 ttf-parser = "0.25"
 rayon = "1"

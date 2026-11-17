@@ -359,8 +359,9 @@ impl Engine {
         self.apply_prebuilt_index(index);
         if let DrainOutcome::Scanned { saved } = outcome {
             // 満たしたのは begin の時点までの要求である。begin の後に来た要求は、走査が
-            // それより前のファイルシステムを見ているかもしれないので満たさない。
-            self.rescan_done = self.rescan_done.max(drain.rescan_generation);
+            // それより前のファイルシステムを見ているかもしれないので満たさない。drain は CAS で
+            // 1 本しか走らず、世代は増える一方なので、代入で前の値を下回ることはない。
+            self.rescan_done = drain.rescan_generation;
             self.cache_in_sync = saved;
         }
         // ビルド開始時スナップショットと現在の index 入力が一致し、走査の要求も満たしたときだけ

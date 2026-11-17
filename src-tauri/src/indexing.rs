@@ -56,8 +56,7 @@ pub fn start_index_build(app: &AppHandle, request: BuildRequest) -> bool {
         return false;
     }
 
-    // アイコンキャッシュの無効化はここでは撃たない——走査するかがまだ決まっていない。
-    // `drain_index` の走査の分岐が撃つ（#1456）。
+    // アイコンキャッシュの無効化は、走査するかが決まる `drain_index` が撃つ（#1456）。
 
     notify_indexing_started(app);
 
@@ -184,6 +183,7 @@ fn drain_index(app_handle: &AppHandle) {
         if let Some(material) = material_without_scan(&drain, |i| {
             indexer::load_cached_material(&i.scan, i.show_hidden_system)
         }) {
+            // アイコンキャッシュは捨てない——アイコンはパスで引き、読み直しは対象のファイルを変えない。
             let new_index = build_index_from_material(material, inputs);
             state.engine.lock().unwrap().complete_index_drain(
                 new_index,

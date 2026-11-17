@@ -1,0 +1,56 @@
+反証レビュー: workspace/research.md (#1449)  ※書き換え・起動・cargo test なし。実測は読み取り専用の open と、TEMP の使い捨てファイルだけ。
+
+== 結論 ==
+research.md の 5 命題は、どれも「壊せなかった」。ただし周辺の前提に 4 つの穴があり、うち 2 つは計画へ効く（下の「壊せた」と ⚠️）。
+
+== 壊せた（research.md の記述が偽、または不正確） ==
+B1. 「キャッシュは never-clear なので、写像とハンドルはプロセスの終わりまで生きる」は設計の根拠として弱い。
+    memmap2 0.9.12 の Windows 実装（windows.rs MmapInner::new）は、写像を作るとき DuplicateHandle で自前のファイルハンドルを複製し、Mmap が持つ。
+    つまり共有モードを保つハンドルは、呼び出し側の File を drop しても Mmap と同じ寿命で生きる。research の「ハンドルを写像と同じだけ生かす」は、実装の詳細で自動的に満たされる。
+    ただし複製したハンドルは同じ file object を指すので、共有モードは引き継がれる（DUPLICATE_SAME_ACCESS）。File を持ち続けるコードは冗長だが害はない。
+    この挙動は memmap2 の版へ依存する。unsafe の根拠にするなら File も持つほうが版に依存しない。
+    偽にする手順: memmap2 を別版へ上げて windows.rs の DuplicateHandle が消えているかを見る。消えていれば File を drop した瞬間に共有モードが失われる。
+B2. 「1 部ずつ」は役割ごとの話で、ファイルごとではない。同じファイルを 2 度持つ経路がある。
+    (a) USER_FONTS のキーは family 名で、パスではない。"Yu Gothic"・"Yu Gothic Medium" のように同じ YuGothM.ttc へ解決する別名を font_family へ入れ替えると、別キーとして to_vec を 1 本ずつ漏らす（font_stack.rs の resolve_font_family）。
+    (b) user_font が YuGothM.ttc に解決し、cmap プローブ（CJK_PROBE の第 2 水準）を通らなければ、jp_font（YuGothM.ttc を std::fs::read）と同じファイルが 2 本常駐する（13.3 MiB が 2 倍）。
+    どちらも、写像にしてパスをキーにすれば同じページを共有して消える。research はこれを手順 2（所有を 1 つにする）の余地として挙げていない。
+    偽にする手順: font_family を "Yu Gothic Medium" → "Yu Gothic" と切り替え、各回のアイドル PrivComm の増分を見る。(b) は Yu Gothic UI などで font_covers_cjk を実行して false になるか確かめる。（⚠️ 実行はしていない。コードからの推論）
+B3. 「測定環境」の前提。PERFORMANCE.md の「常駐メモリの帰属」の実測は 2026-08-22 で、egui 0.36 の時代である。egui 0.37 への更新は 2026-11-01（#1357）。
+    研究の「0.37 は複製しない」はソース読みで裏付けたが、10.21 MiB の帰属は 0.37 では未再測定。命題 1 の実測の裏付けは古い版のもの。
+
+== 壊せなかった（命題ごと） ==
+命題 1（バイト列は役割ごとに 1 部）: 壊せなかった。ただし B2 と ⚠️1 を参照。
+  - font_stack.rs: user は with_face_data 内の to_vec 1 回、jp は std::fs::read 1 回。どちらも Box::leak。font_covers_cjk は ttf_parser が借用して解析するだけ。
+  - epaint 0.37.0 face_store.rs:69 は Arc::clone(&font_data.font)。font_face.rs:223 の peniko::Blob::new(Arc::clone(self.borrow_owner())) も Arc 共有。text 配下に to_vec / Vec<u8> は無い。egui 0.37 context.rs の font_data も Arc。
+  - egui の 2 つの Context（main と results）は set_fonts のたびに同じ &'static を from_static で包むだけ（Arc<&[u8]> の薄い包み）。
+  - snotra-settings は別バイナリ（snotra-settings/src/main.rs・src-tauri/Cargo.toml に依存なし）なので、検索プロセスの常駐に載らない。設定画面を開くと別プロセスが jp_font を from_owned で 13 MiB 持つが、別プロセスである。
+  - fontdb: with_face_data は一時の mmap を作って to_vec するだけ。Database は解決後に drop。load_system_fonts は常駐するバイト列を作らない（Source::File のパスを持つだけ）。
+  - 偽にする手順: 実機で idle PrivComm からファイルサイズを引いて、PERFORMANCE.md の 9.6〜9.9 MiB（ファイル + ヒープ以外）と同じに収まるかを 0.37 で測り直す。収まらなければ複製がある。
+命題 2（FILE_SHARE_READ で書き込み・削除・名前変更を拒む）: 壊せなかった。
+  - 使い捨てファイルで実測（TEMP・Open/Read/Share=Read）: 別 open の Write は拒否、Remove-Item は拒否、Rename-Item は拒否。Read + share ReadWrite の別 open は成功（std::fs::read や fontdb の読みは通る）。
+  - 開いているファイルを含むディレクトリの名前変更も拒否された。
+  - メモリマップ中のファイルは、ユーザーが写像したセクションがあると切り詰めも拒まれる（OS の仕様。本調査では実行していない）。
+  - 偽にする手順: 同じ手順で別プロセスから FILE_SHARE_WRITE|DELETE を渡して open する。通れば命題 2 は偽。（実行済み・通らなかった）
+  - 残る穴（⚠️2・⚠️3）: 通常の API では変わらないが、I/O エラーでは落ちる。
+命題 3（システムフォントを FILE_SHARE_READ だけで開ける）: 壊せなかった（この機体・この時点）。
+  - 実測（[IO.File]::Open(path,'Open','Read','Read')）: YuGothM.ttc（13,908,392）・msgothic.ttc（8,990,160）・meiryo.ttc（9,527,428）・segoeui.ttf・%LOCALAPPDATA% の HackGenConsole-Regular.ttf（10,709,744）はすべて開けた。yugothic.ttf は存在しない（候補 4 つのうち 1 つは元から読めない）。
+  - 開けなければ共有違反で失敗するだけで、fallback は fs::read の現行挙動に戻る。コードの形としては真。
+  - 偽にする手順: 別の機体（Windows Update 直後・フォントキャッシュが write ハンドルを持つ状況・企業の AV 常駐）で同じ 1 行を回す。
+命題 4（fontdb 0.24 の face_source）: 壊せなかった。
+  - load_system_fonts → load_fonts_dir_impl → load_fonts_from_file が Source::File(path) を作る（lib.rs:236）。SharedFile は make_shared_face_data（lib.rs:743 付近）を呼んだときだけで、Snotra は呼ばない。
+  - face_source(id) は (Source, u32) を返す（lib.rs:700）。query は変えないので id は同じ。with_face_data が File を開いて map する先と、face_source のパスは同じファイルなので選ばれるフォントは変わらない。
+  - 偽にする手順: 同じ family 名が複数フォルダにあるとき（system と user の両方・Roaming と Local）、db.query が返す id の source のパスが、with_face_data が実際に読むものと同じか、実機で println! して確かめる。（コード上は同じ face の source を使うので同一）
+  - 捕捉: fontdb が走査するのは %SYSTEMROOT%/Fonts・%USERPROFILE%/AppData/Local/Microsoft/Windows/Fonts・.../Roaming/... の 3 つ（lib.rs:402）。Roaming はフォルダリダイレクトでネットワーク共有になりうる（⚠️3）。
+命題 5（写像で private commit が 10〜14 MiB 下がる）: 壊せなかった。
+  - PERFORMANCE.md の PrivComm は scripts/measure-memory.ps1 が Win32_PerfFormattedData_PerfProc_Process の PrivateBytes で測る。PrivWS は WorkingSetPrivate。どちらも、ファイルを裏付けにした共有ビューを含まない定義である。
+  - PowerShell で実測（読み取り専用マップ・全ページに触れた）: 基準 33.7 MiB → map 34.2 → 全ページ触れた後 38.2（増分 4.5 は PowerShell のループが出すゴミ）に対し、ReadAllBytes は +10.3 MiB。WorkingSet は +15 MiB 動くが、これは共有（private ではない）。
+  - つまりマップは PrivComm の十数 MiB を下げる。作業セットは触ったぶんが載る（総 WS は下がらない・PrivWS は下がる）。
+  - 偽にする手順: Mmap に替えたビルドで npm run measure:memory:stages を回し、PrivComm の差が font のファイルサイズより 0.8 MiB 以上小さければ偽。（未実行）
+  - 機体の前提: 開発機の実 config は font_family = "HackGen Console"（%LOCALAPPDATA%/Microsoft/Windows/Fonts のユーザー導入フォント・レジストリの HKCU 登録）。PERFORMANCE.md 測定条件と同じで、cmap が CJK をカバーするので jp_font は積まれない。この機体で下がるのは 10.21 MiB の 1 本だけ。14.18 MiB 構成（既定の Segoe UI + jp）は別の config を要する。
+
+== ⚠️（確信が持てない） ==
+⚠️1. peniko / vello_cpu / skrifa がフォントのバイト列を内部で複製しないかは、ソース全読みまでは確認していない（font_face.rs:223 は Arc 共有・text 配下に to_vec が無いことは確認）。0.37 の実測（PrivComm からファイルサイズを引く）で裏付けるまでは、「1 部」は下限の主張。
+⚠️2. I/O エラー・取り外しで落ちる。ネットワーク共有や取り外し可能な媒体上のフォントで、写像のページ読み込みが失敗すると EXCEPTION_IN_PAGE_ERROR で落ちる。release は panic=abort なので catch できない。共有モードは「書き換え・削除」を塞ぐが、媒体の消失は塞げない。fontdb の走査対象に Roaming（リダイレクトされうる）がある。unsafe の根拠として「通常のファイル API では変わらない」は正しいが「落ちない」までは言えない。
+⚠️3. FILE_SHARE_READ だけで開くと、他のプログラムが FILE_SHARE_NONE や書き込み系の共有で open しようとして失敗する（フォントのインストーラ・Windows Update のサービシング・AV）。YuGothM.ttc はリンク数 2（WinSxS からのハードリンク）で、サービシングが置き換えを試みると保留や失敗になりうる。代償として research に書かれた「更新・削除できない」より広い（他アプリの排他 open も拒む）。これは未検証。
+⚠️4. 命題 3 は、この機体のこの時点の 1 標本。Windows のフォントキャッシュサービスなどが書き込みアクセスの既存ハンドルを持つ状況は再現していない。
+⚠️5. B2(b) の「Yu Gothic UI などが CJK プローブを通らない」は、コードからの推論で font_covers_cjk を実行していない。

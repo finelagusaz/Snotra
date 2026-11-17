@@ -141,14 +141,13 @@ pub struct Engine {
     /// 「ビルド開始時スナップショット == 現在」のときだけ落とす。コヒーレンシ判断を engine Mutex
     /// （軸1）に閉じ、lost-update ウィンドウを塞ぐための単一の真実。
     index_stale: bool,
-    /// 走査の要求（`/s`・初回構築）の世代。[`Engine::request_rescan`] が 1 つ進める（#1456）。
-    /// 設定変更の再構築は走査を要求しない——走査が要るかは `index.bin` との照合で決まる。
+    /// 走査の要求の世代。[`Engine::request_rescan`] が 1 つ進める（#1456）。走査を要求しない
+    /// 再構築では、走査が要るかは `index.bin` との照合で決まる。
     rescan_requested: u64,
     /// 走査で満たした要求の世代。`rescan_requested` に追いつくまで stale を落とさない。
     rescan_done: u64,
-    /// `index.bin` が、いまの索引と同じ走査の結果だと言えるか（#1456）。偽なら、設定変更の
-    /// 再構築でも `index.bin` を読まずに走査する（first-run・保存に失敗した走査の後）。
-    /// 起動経路が [`Engine::set_cache_in_sync`] で置き、走査の complete が保存の成否で置き直す。
+    /// `index.bin` が、いまの索引と同じ走査の結果だと言えるか（#1456）。偽なら、走査を要求しない
+    /// 再構築でも `index.bin` を読まずに走査する。走査の complete が保存の成否で置き直す。
     cache_in_sync: bool,
 }
 
@@ -296,8 +295,7 @@ impl Engine {
     }
 
     /// インデックスを stale とマークする（ビルドが必要＝要求された）。**走査は要求しない**——
-    /// 走査が要るかは `index.bin` との照合で決まる（#1456）。`start_index_build` の設定変更の
-    /// 要求と、finish 後の自己再 kick が呼ぶ。走査の要求は [`Self::request_rescan`]。
+    /// 走査が要るかは `index.bin` との照合で決まる（#1456）。走査の要求は [`Self::request_rescan`]。
     pub fn mark_index_stale(&mut self) {
         self.index_stale = true;
     }
@@ -307,13 +305,13 @@ impl Engine {
         self.index_stale
     }
 
-    /// 走査を要求する（`/s`・初回構築）。stale を立て、走査要求の世代を 1 つ進める。
+    /// 走査を要求する。stale を立て、走査要求の世代を 1 つ進める。
     pub fn request_rescan(&mut self) {
         self.index_stale = true;
         self.rescan_requested += 1;
     }
 
-    /// `index.bin` が、いまの索引と同じ走査の結果かを置く（起動経路が 1 回だけ呼ぶ）。
+    /// `index.bin` が、いまの索引と同じ走査の結果かを置く（索引を載せた直後に呼ぶ）。
     pub fn set_cache_in_sync(&mut self, in_sync: bool) {
         self.cache_in_sync = in_sync;
     }

@@ -704,6 +704,10 @@ fn a_cache_hit_startup_does_not_scan() {
     let first = load_or_scan_with_stats_in(&dir, &scan, false);
     assert!(!first.stats.cache_hit, "1 回目は cache-miss であること");
     assert_eq!(first.material.tree().len(), 1);
+    assert!(
+        first.cache_in_sync,
+        "走査して保存できたなら、index.bin はこの材料と同じ走査の結果である（#1456）"
+    );
 
     // キャッシュを書いた後で対象を増やす。
     std::fs::write(scan_root.join("second.txt"), b"y").expect("write");
@@ -721,8 +725,43 @@ fn a_cache_hit_startup_does_not_scan() {
         1,
         "cache-hit の起動が走査している（増えたファイルが見えてしまった）"
     );
+    assert!(
+        second.cache_in_sync,
+        "読んだ index.bin はこの材料そのものである（#1456）"
+    );
 
     let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&scan_root);
+}
+
+/// **cache-miss で保存に失敗したら、`cache_in_sync` は偽である**（#1456）。真にすると、次の
+/// 走査しない再構築が、この材料と別の走査の結果（あるいは無い `index.bin`）を読みにいく。
+#[test]
+fn a_cache_miss_that_cannot_save_is_out_of_sync() {
+    let _guard = INDEX_LOCK_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let parent = temp_dir("cache_miss_cannot_save");
+    let blocked = parent.join("not_a_dir");
+    fs::write(&blocked, b"x").expect("write blocker");
+    let scan_root = temp_dir("cache_miss_cannot_save_root");
+    fs::write(scan_root.join("first.txt"), b"x").expect("write");
+    let scan = vec![ScanPath {
+        path: scan_root.display().to_string(),
+        extensions: vec![".txt".into()],
+        include_folders: false,
+    }];
+
+    let result = load_or_scan_with_stats_in(&blocked, &scan, false);
+    assert!(!result.stats.cache_hit);
+    assert_eq!(
+        result.material.tree().len(),
+        1,
+        "保存できなくても索引は建つ"
+    );
+    assert!(!result.cache_in_sync, "保存できなかったので同期していない");
+
+    let _ = fs::remove_dir_all(&parent);
     let _ = fs::remove_dir_all(&scan_root);
 }
 
@@ -1796,7 +1835,7 @@ fn rebuild_fixture_entries() -> Vec<AppEntry> {
 }
 
 /// **保存の成否を返す**（#1456）。書けなかった走査の後は、`index.bin` が engine の索引と
-/// 別の走査の結果でありうる——非走査の再構築がそれを読まないよう、呼び出し側が知る必要がある。
+/// 別の走査の結果でありうる——走査しない再構築がそれを読まないよう、呼び出し側が知る必要がある。
 #[test]
 fn save_cache_sorted_in_reports_whether_it_wrote() {
     let dir = temp_dir("save_reports_written");
@@ -1815,7 +1854,7 @@ fn save_cache_sorted_in_reports_whether_it_wrote() {
     let _ = fs::remove_dir_all(&parent);
 }
 
-/// 非走査の再構築の入口は、走査も書き込みもしない（#1456）。
+/// 走査しない再構築の入口は、走査も書き込みもしない（#1456）。
 #[test]
 fn load_cached_material_in_reads_without_writing() {
     let dir = temp_dir("load_cached_material_reads");
@@ -1851,9 +1890,27 @@ fn load_cached_material_in_reads_without_writing() {
     );
 }
 
+/// **旧版を読んでも書き戻さない**（#1456）。起動の後に `index.bin` を書くのを走査だけに保つ。
+/// 現行版のフィクスチャでは `Write` でも何も書かないので、旧版で測る。
+#[test]
+fn load_cached_material_in_does_not_upgrade_a_legacy_format() {
+    let dir = temp_dir("load_cached_material_legacy");
+    write_v4_cache_in(&dir, &rebuild_fixture_entries(), 7);
+    let before = fs::read(dir.join("index.bin")).expect("read v4");
+
+    let material = load_cached_material_in(&dir, 7).expect("旧版も読める");
+    assert_eq!(material.tree().len(), 4);
+    assert_eq!(
+        fs::read(dir.join("index.bin")).expect("reread"),
+        before,
+        "旧版を現行版へ書き戻してはならない"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// **保存した索引を読み直して建てた結果は、全走査の経路で建てた結果と同じ**（#1456 の受け入れ）。
 ///
-/// 全走査の経路は保存が返した材料をそのまま使い、非走査の経路は同じものを `index.bin` から
+/// 全走査の経路は保存が返した材料をそのまま使い、走査しない経路は同じものを `index.bin` から
 /// 読み直す。PATH エントリ（保存の後にマージする）と migemo（構築の入力）の 4 組で比べる。
 #[test]
 fn rebuilt_from_cache_matches_rebuilt_from_scan() {

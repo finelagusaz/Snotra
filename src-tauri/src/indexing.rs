@@ -23,10 +23,10 @@ use crate::state::AppState;
 /// 再構築の要求の種類（#1456）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildRequest {
-    /// 必ず走査する（`/s`・初回構築）。ファイルシステムの最新を取り込む。
+    /// 必ず走査し、ファイルシステムの最新を取り込む。
     Rescan,
-    /// 索引を建て直す。走査するかは drain が決める（設定変更・finish 後の自己再 kick）。
-    /// 走査対象が変わっていれば `index.bin` の照合に外れるので、結果として走査する。
+    /// 索引を建て直す。走査するかは drain が決める——走査対象が変わっていれば `index.bin` の
+    /// 照合に外れるので、結果として走査する。
     Rebuild,
 }
 
@@ -120,7 +120,7 @@ pub fn start_index_build(app: &AppHandle, request: BuildRequest) -> bool {
 /// 材料から索引を建てる。**PATH エントリのマージを含む。**
 ///
 /// **索引を建てる手順（PATH マージ + `PrebuiltIndex::from_material`）を共有する
-/// 呼び出し点は、この crate ではこの drain ループの 1 つに閉じている**（背景再スキャンの
+/// 呼び出し点は、この crate では drain ループ（`drain_index`）に閉じている**（背景再スキャンの
 /// 適用は #1001 で撤去済み）。手順を書き写すと、片方だけ PATH マージを忘れる
 /// 欠陥が黙って起きる——PATH のコマンドが検索から消えるが、検索結果自体は出るので
 /// 気づく手段が無い（`normalize_entry_key_into` と同じ理屈）。**起動時のロード直後
@@ -140,6 +140,20 @@ pub(crate) fn build_index_from_material(
     // **ここで分岐しない。** 派生データの有無で建て方が分かれるのは
     // `SearchEngine::from_material` の 1 か所だけである。
     PrebuiltIndex::from_material(material, inputs.migemo_enabled)
+}
+
+/// 走査しないで建ててよいなら、`load` で読んだ材料を返す（#1456）。**`must_scan` なら `load` を
+/// 呼ばない**——`/s` と初回構築が `index.bin` を読んで済ませると、ファイルシステムの最新を
+/// 取り込まないまま黙って進む。`None` なら呼び出し側は走査する。
+fn material_without_scan(
+    must_scan: bool,
+    inputs: &IndexInputs,
+    load: impl FnOnce(&IndexInputs) -> Option<indexer::IndexMaterial>,
+) -> Option<indexer::IndexMaterial> {
+    if must_scan {
+        return None;
+    }
+    load(inputs)
 }
 
 /// `index_stale` が解消されるまでドレインする:
@@ -164,10 +178,9 @@ fn drain_index(app_handle: &AppHandle) {
 
         // **走査しない再構築**（#1456）。`include_path_env` と migemo の切り替えは `index.bin` の
         // 中身を変えないので、読み直して PATH のマージと構築をやり直せば全走査と同じ索引になる。
-        if !drain.must_scan
-            && let Some(material) =
-                indexer::load_cached_material(&inputs.scan, inputs.show_hidden_system)
-        {
+        if let Some(material) = material_without_scan(drain.must_scan, inputs, |i| {
+            indexer::load_cached_material(&i.scan, i.show_hidden_system)
+        }) {
             let new_index = build_index_from_material(material, inputs);
             state.engine.lock().unwrap().complete_index_drain(
                 new_index,
@@ -271,6 +284,8 @@ fn notify_indexing_complete(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    use super::{IndexInputs, indexer, material_without_scan};
+
     /// トップレベル関数の本体を切り出す（**終端は列 0 の閉じ括弧**・内側のブロックは字下げされている）。
     ///
     /// 母集団は狭すぎても広すぎても壊れ、**広すぎる側は沈黙する**——探す文字列はこの `mod tests` に
@@ -444,6 +459,85 @@ mod tests {
     ///
     /// **母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ**。**この安全性は「存在形の assert」に
     /// 依る**——`!contains` の否定形なら canary が真のまま対象だけ切り捨てられて沈黙する（#1112）。
+    fn inputs() -> IndexInputs {
+        IndexInputs::from_config(&snotra_core::config::Config::default())
+    }
+
+    /// `must_scan` なら `index.bin` を読まない（#1456）。読んで済ませると `/s` と初回構築が走査しない。
+    #[test]
+    fn material_without_scan_never_loads_when_a_scan_is_required() {
+        let mut called = false;
+        let got = material_without_scan(true, &inputs(), |_| {
+            called = true;
+            Some(indexer::IndexMaterial::from_tree(
+                snotra_core::index_tree::IndexTree::empty(),
+            ))
+        });
+        assert!(got.is_none(), "走査が要るなら材料を返さない");
+        assert!(!called, "走査が要るなら index.bin を読みにいかない");
+    }
+
+    #[test]
+    fn material_without_scan_loads_when_no_scan_is_required() {
+        let got = material_without_scan(false, &inputs(), |_| {
+            Some(indexer::IndexMaterial::from_tree(
+                snotra_core::index_tree::IndexTree::empty(),
+            ))
+        });
+        assert!(got.is_some(), "走査が要らなければ読んだ材料を使う");
+        assert!(
+            material_without_scan(false, &inputs(), |_| None).is_none(),
+            "読めなければ走査へ回す"
+        );
+    }
+
+    /// **`/s` と初回構築は `BuildRequest::Rescan` を渡す**（#1456）。`Rebuild` を渡すと、`index.bin`
+    /// が同期していれば走査せずに済ませ、ファイルシステムの変化を取り込まないまま黙って進む。
+    /// 結果は古いだけで正しく見えるので、挙動テストでは検出されない。
+    ///
+    /// 縛るのは、各ファイルのコード（`//` 以降を落とした行）で `start_index_build(` を含む行が
+    /// すべて `BuildRequest::Rescan` を含むことと、その行が 1 つ以上あること（存在形の canary）。
+    /// 呼び出しを複数行へ折り返されると赤になる（誤検知は受け入れる）。設定変更の経路
+    /// （`config_watcher.rs`）は `Rebuild` を渡すことを同じ形で縛る。
+    #[test]
+    fn rescan_callers_request_a_rescan() {
+        let cases: [(&str, &str, &str); 4] = [
+            (
+                "commands/system.rs",
+                include_str!("commands/system.rs"),
+                "BuildRequest::Rescan",
+            ),
+            (
+                "commands/window.rs",
+                include_str!("commands/window.rs"),
+                "BuildRequest::Rescan",
+            ),
+            ("main.rs", include_str!("main.rs"), "BuildRequest::Rescan"),
+            (
+                "config_watcher.rs",
+                include_str!("config_watcher.rs"),
+                "BuildRequest::Rebuild",
+            ),
+        ];
+        for (file, src, expected) in cases {
+            let calls: Vec<&str> = src
+                .lines()
+                .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+                .filter(|l| l.contains("start_index_build("))
+                .collect();
+            assert!(
+                !calls.is_empty(),
+                "{file} に start_index_build( の呼び出しが無い"
+            );
+            for line in calls {
+                assert!(
+                    line.contains(expected),
+                    "{file} の呼び出しが {expected} を渡していない: {line}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn drain_index_invalidates_the_icon_cache_before_the_scan() {
         let body = top_level_fn_body(

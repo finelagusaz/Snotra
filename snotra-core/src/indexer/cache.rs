@@ -97,7 +97,7 @@ pub struct LoadOrScanStats {
     /// **「昇格が走ったか」を表しているのは依然として variant のほうである**）。
     ///
     /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
-    /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）と非走査の再構築の入口（`load_cached_material`）専用で、
+    /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）と走査しない再構築の入口（`load_cached_material`）専用で、
     /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
     /// （`LoadCacheResult::upgrade_save` の doc は `Skip` 経由の `None` も併記しているが、
     /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
@@ -139,9 +139,8 @@ pub struct LoadOrScanResult {
     pub material: IndexMaterial,
     /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
     pub cache_changed: bool,
-    /// `index.bin` が、返した材料と同じ走査の結果か（#1456）。cache-hit なら真、走査したなら
-    /// 保存できたかどうか、保存先が引けなければ偽。engine の ledger の初期値になる——偽なら、
-    /// 次の非走査の再構築は `index.bin` を読まずに走査へ落ちる。
+    /// `index.bin` が、返した材料と同じ走査の結果か（#1456）。engine の ledger の初期値になる
+    /// ——偽なら、次の走査しない再構築は `index.bin` を読まずに走査する。
     pub cache_in_sync: bool,
     /// 各フェーズの所要時間。
     pub stats: LoadOrScanStats,
@@ -628,7 +627,7 @@ fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> (IndexMaterial
 /// cache-miss になるだけで、この起動の索引は正しい。
 ///
 /// **3 つ目の値は書けたかである**（#1456）。書けなかった走査の後の `index.bin` は、いまの索引と別の
-/// 走査の結果でありうる。非走査の再構築（[`load_cached_material`]）がそれを読まないよう、
+/// 走査の結果でありうる。走査しない再構築（[`load_cached_material`]）がそれを読まないよう、
 /// engine の ledger がこの値を持つ。
 fn save_cache_sorted_in(
     dir: &Path,
@@ -750,7 +749,7 @@ pub struct RebuildStats {
     /// `read_dir` に成功したディレクトリの数（[`scan_all`]）。
     pub dirs: usize,
     /// `index.bin` へ書けたか。**これだけは時計でも数でもない**——engine の ledger が
-    /// `index.bin` を非走査の再構築に使ってよいか（`cache_in_sync`）を決めるのに読む（#1456）。
+    /// `index.bin` を走査しない再構築に使ってよいか（`cache_in_sync`）を決めるのに読む（#1456）。
     pub saved: bool,
 }
 
@@ -804,7 +803,7 @@ struct LoadCacheResult {
 /// **`Skip` が要るのは、製品の起動経路以外にも `load_cache_in` を通る入口があるからである。**
 /// `load_cached_entries` は corpus テストの入口（`search/tests/common.rs`）であり、
 /// 開発者の実 `%APPDATA%\Snotra\index.bin` を読む。ここで書き戻すと、テストを走らせる
-/// だけで実データを書き換える（#1013 と同型）。もう 1 つは、起動の後に走る非走査の再構築
+/// だけで実データを書き換える（#1013 と同型）。もう 1 つは、起動の後に走る走査しない再構築
 /// （[`load_cached_material`]・#1456）である。起動の後に `index.bin` を書くのを走査だけに保つため、
 /// 旧版を読んでも書き戻さない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1141,7 +1140,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
 /// 新しい索引を書き終えると、昇格がそれを古い内容で上書きしうる。**このウィンドウが今日開かない
 /// のは機構ではなく順序による**——製品でこの経路を通る呼び出し元は `main` の起動段の 1 つだけで、
 /// もう一方の書き手（索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。
-/// 索引ビルドのスレッドも `index.bin` を読む（非走査の再構築の [`load_cached_material`]）が、
+/// 索引ビルドのスレッドも `index.bin` を読む（走査しない再構築の [`load_cached_material`]）が、
 /// `LegacyUpgrade::Skip` で読むのでこの経路を通らない。
 /// **ロード後に走りうる書き手をこの経路へ足す日には、ウィンドウが戻る。** 他の 2 つの書き手は
 /// 走査から保存までを 1 回のロック取得で覆うので、構造的に開かない。

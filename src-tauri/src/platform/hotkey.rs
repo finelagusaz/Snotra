@@ -157,7 +157,14 @@ fn trace_registration(config: &HotkeyConfig, vks: &[u32], ok: bool) {
     );
 }
 
-fn register_prepared(config: &HotkeyConfig, prepared: &PreparedHotkey) -> bool {
+/// 登録の結果と、`RegisterHotKey` が戻った時刻（設定を解釈できなかったときは、そう判定した時刻）。
+/// 時刻は trace を書く前に取る（使い道は `startup::finish_at` の doc）。
+pub struct Registration {
+    pub ok: bool,
+    pub at: std::time::Instant,
+}
+
+fn register_prepared(config: &HotkeyConfig, prepared: &PreparedHotkey) -> Registration {
     let ok = unsafe {
         RegisterHotKey(
             Some(HWND::default()),
@@ -167,20 +174,22 @@ fn register_prepared(config: &HotkeyConfig, prepared: &PreparedHotkey) -> bool {
         )
     }
     .is_ok();
+    let at = std::time::Instant::now();
     trace_registration(config, &prepared.injection_vks, ok);
-    ok
+    Registration { ok, at }
 }
 
-pub fn register(config: &HotkeyConfig) -> bool {
+pub fn register(config: &HotkeyConfig) -> Registration {
     match prepare(config) {
         Ok(prepared) => register_prepared(config, &prepared),
         Err(error) => {
+            let at = std::time::Instant::now();
             eprintln!(
                 "[hotkey] invalid config ({}+{}): {error}",
                 config.modifier, config.key
             );
             trace_registration(config, &[], false);
-            false
+            Registration { ok: false, at }
         }
     }
 }
@@ -200,7 +209,7 @@ pub fn replace(current: &HotkeyConfig, new: &HotkeyConfig) -> bool {
     };
 
     unregister();
-    if register_prepared(new, &prepared) {
+    if register_prepared(new, &prepared).ok {
         true
     } else {
         let _ = register(current);
@@ -237,8 +246,8 @@ mod tests {
     #[test]
     fn register_rejects_invalid_config_without_reaching_register_hotkey() {
         // `register` は prepare 成功後にだけ `register_prepared`（Win32 API 所有点）を呼ぶ。
-        assert!(!register(&config("Hyper", "Q")));
-        assert!(!register(&config("Alt", "!")));
+        assert!(!register(&config("Hyper", "Q")).ok);
+        assert!(!register(&config("Alt", "!")).ok);
     }
 
     #[test]

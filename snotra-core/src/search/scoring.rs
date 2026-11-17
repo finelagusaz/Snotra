@@ -12,13 +12,14 @@ use std::collections::BinaryHeap;
 
 use memchr::memmem::Finder;
 use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
+use rustc_hash::FxHashSet;
 
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::history::HistoryStore;
 use crate::query::compose_for_path_match;
 use crate::ui_types::{IconSource, SearchResult};
 
-use super::path_store::CompactEntry;
+use super::path_store::{CompactEntry, key_tail};
 use super::{
     FOLDER_EXPANSION_WEIGHT, GLOBAL_WEIGHT, PathStore, QUERY_WEIGHT, QueryPlan, SearchEngine,
     SearchMode, SearchOptions,
@@ -139,6 +140,48 @@ pub(crate) fn fuzzy_match_score(haystack: &str, needle: Utf32Str<'_>) -> Option<
 /// 中へ正規化を要する処理を足すときは外へ出すこと（誤りは沈黙せず panic として出る）。
 pub(super) fn with_normalized_key<R>(paths: &PathStore, i: usize, f: impl FnOnce(&str) -> R) -> R {
     super::path_store::with_cursor(paths, i, f)
+}
+
+/// 検索 1 回ぶんの履歴の照合の入口。履歴そのものと、履歴が持つ正規化キーの末尾セグメント
+/// （[`key_tail`]）の集合を持つ。検索 1 回に 1 度だけ作る。
+///
+/// **候補の正規化キーが履歴にあるなら、その末尾セグメントは集合にある。** 対偶として、
+/// 候補の末尾セグメントが集合に無ければ、履歴の 3 つの表（global・query・folder_expansion）の
+/// どれにもキーは無く、照合はすべて 0 を返す。候補の側の末尾セグメントは
+/// [`PathStore::key_tail_into`] がフルパスを組み立てずに書く。それがカーソルの組み立てるキーの
+/// 末尾セグメントと一致することは、`search/tests/path.rs` の
+/// `key_tail_into_matches_cursor_key_tail_over_real_index` と、合成 fixture の `key_tail_into_matches_cursor_key_tail` が守る。
+///
+/// 履歴は小さい（数十〜数百件）ので、組み立ては µs で済む。一方、名前で一致した候補ごとの
+/// キーの組み立ては 1 文字のクエリで全件近くに乗る（額は `PERFORMANCE.md`）。
+pub(super) struct HistoryLookup<'h> {
+    store: &'h HistoryStore,
+    tails: FxHashSet<&'h str>,
+}
+
+impl<'h> HistoryLookup<'h> {
+    pub(super) fn new(store: &'h HistoryStore) -> Self {
+        Self {
+            store,
+            tails: store.path_keys().map(key_tail).collect(),
+        }
+    }
+
+    /// `i` の正規化キーが履歴の表にありうるか。偽なら確実に無い（真は「ありうる」だけを言う）。
+    fn may_hit(&self, paths: &PathStore, i: usize) -> bool {
+        if self.tails.is_empty() {
+            return false;
+        }
+        TAIL_BUF.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            self.tails.contains(paths.key_tail_into(&mut buf, i))
+        })
+    }
+}
+
+thread_local! {
+    /// [`HistoryLookup::may_hit`] が候補の末尾セグメントを書く先。容量を再利用する。
+    static TAIL_BUF: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 thread_local! {
@@ -406,18 +449,19 @@ impl SearchEngine {
         plan: &QueryPlan,
         mode: SearchMode,
         kana_available: bool,
-        history: &HistoryStore,
+        history: &HistoryLookup,
         options: SearchOptions,
     ) -> Option<ScoredEntry<'a>> {
-        // Bitmask pre-filter: クエリ文字を含まないエントリを棄却する（Fuzzy のみ。
-        // Prefix/Substring は安価な str 操作で足り、bitmask のオーバーヘッドが見合わない）。
+        // Bitmask pre-filter: クエリ文字を含まないエントリを棄却する（全モード）。
+        // Prefix/Substring でも厳密である——接頭辞・部分文字列として一致するなら、クエリの
+        // 文字集合は名前の文字集合に含まれる（両辺が同じ正規化を通る）。
         // name/file_name と kana のいずれのマッチ経路にも候補がない場合だけ棄却する。
         // kana は専用の損失あり mask を使う。衝突で余分な候補を通すことはあっても、
         // kana substring が成立する候補を棄却しない。
         // has_path_sep 時は従来どおりスキップ: パスだけでマッチするエントリが
         // name/file_name mask で落ちる問題を回避する。
         // **必ず関数先頭**（entry_view / UTF-32 変換より前）。
-        if mode == SearchMode::Fuzzy && !plan.has_path_sep {
+        if !plan.has_path_sep {
             let name_mask = self.char_masks[i];
             let fn_mask = self.file_name_char_masks[i];
             let latin_match = (plan.query_mask & name_mask) == plan.query_mask
@@ -441,7 +485,8 @@ impl SearchEngine {
         //
         // **3 つの条件はどれも落とせない**:
         // - `Fuzzy` — Prefix/Substring は `starts_with` / `find` であって部分列ではない。
-        //   `find` は連続一致を要求するので同じ論証が使えるが、そもそも安いので飛ばす価値が無い
+        //   `find` は連続一致を要求するので同じ論証が使えるが、安いので飛ばす価値が無いと
+        //   見て入れていない（**測っていない**。同じ見立てはビットマスクでは外れた・#1445）
         // - `norm_query_has_path_sep` — **`has_path_sep`（生クエリ）ではない**。needle は
         //   `norm_query` であり、**正規化が区切りに触る版では両者がずれる**
         //   （条件の正本は `QueryPlan` の当該フィールドの doc。今の nucleo では `¥` は畳まれず
@@ -516,6 +561,28 @@ impl SearchEngine {
             return None;
         }
 
+        // **名前で一致した候補のうち、履歴に当たりえないものはキーを組み立てない**（#1450）。
+        // 以降でキーを読むのは、パスマッチ（`score` が `None` のときだけ）と履歴照合だけである。
+        // 末尾セグメントが履歴のどのキーとも違えば、3 つの照合はすべて 0 を返すので、
+        // 統計 0 で組み立てた結果と 1 バイトも変わらない（論証は [`HistoryLookup`] の doc）。
+        // **下でキーを読む処理を足すなら、この早期 return の条件も見直す。**
+        // 照合の結果から `ScoredEntry` を作る。2 つの出口（下の早期 return と末尾）が共有する。
+        let finish = |base_score: i64, raw_history_boost: i64, last_launched: u64| {
+            Some(ScoredEntry {
+                score: base_score
+                    + adjusted_history_boost(mode, base_score, raw_history_boost, options),
+                last_launched,
+                lower_name: v.lower_name,
+                paths: &self.entries,
+                index: i,
+            })
+        };
+        if let Some(base_score) = score
+            && !history.may_hit(&self.entries, i)
+        {
+            return finish(base_score, 0, 0);
+        }
+
         // 1 エントリにつき 1 回だけ詰める——下のパスマッチと履歴照合 3 種が同じキーから始める。
         // パスマッチだけが照合の直前に合成（NFC）を当て、履歴照合は識別用のキーをそのまま使う。
         with_normalized_key(&self.entries, i, |key| {
@@ -542,32 +609,25 @@ impl SearchEngine {
 
             let base_score = score?;
 
-            let (global_launches, last_launched) = history.get_global_stats_normalized(key);
+            let (global_launches, last_launched) = history.store.get_global_stats_normalized(key);
             // 履歴キーは record_launch の保存形式に合わせる:
             // normalize_for_match() + パス区切り統一。path_query は生クエリベースで
             // スペース/アクセントが異なるため履歴キーには使わない。
             let history_query_key = plan.path_history_key.as_deref().unwrap_or(norm_query_str);
-            let qcount = history.query_count_pre_normalized(history_query_key, key) as i64;
+            let qcount = history
+                .store
+                .query_count_pre_normalized(history_query_key, key) as i64;
 
             let folder_boost = if v.entry.is_folder {
-                history.folder_expansion_count_normalized(key) as i64 * FOLDER_EXPANSION_WEIGHT
+                history.store.folder_expansion_count_normalized(key) as i64
+                    * FOLDER_EXPANSION_WEIGHT
             } else {
                 0
             };
 
             let raw_history_boost =
                 (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
-            let history_boost =
-                adjusted_history_boost(mode, base_score, raw_history_boost, options);
-            let combined = base_score + history_boost;
-
-            Some(ScoredEntry {
-                score: combined,
-                last_launched,
-                lower_name: v.lower_name,
-                paths: &self.entries,
-                index: i,
-            })
+            finish(base_score, raw_history_boost, last_launched)
         })
     }
 }

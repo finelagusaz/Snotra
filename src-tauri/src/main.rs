@@ -27,7 +27,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use serde_json::json;
-use snotra_core::config::{Config, GeneralConfig, HotkeyConfig, Language, LoadOutcome};
+use snotra_core::config::{Config, GeneralConfig, LoadOutcome};
 use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
@@ -36,7 +36,7 @@ use tauri::{AppHandle, Listener, Manager};
 use crate::commands::SettingsProcessState;
 use crate::icon::IconCacheState;
 
-use crate::platform::{PlatformBridge, PlatformBridgePending, PlatformCommand};
+use crate::platform::{BridgeError, PlatformBridge, PlatformBridgePending, PlatformCommand};
 use crate::state::AppState;
 
 /// Alt の解放を見る間隔。Alt を離してから表示が始まるまでの遅れは、この間隔の 0〜1 倍である。
@@ -171,6 +171,8 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();
     startup::mark(startup::Phase::ConfigLoad);
+    // フォントの解決を先読みし、索引のロード以降と重ねる（#1452・`font_stack::prefetch` の doc）。
+    egui_shell::prefetch_fonts(config.visual.font_family.clone());
 
     let (mut material, initial_indexing) = if is_first_run {
         (
@@ -278,11 +280,11 @@ fn main() {
             startup::mark(startup::Phase::TauriInit);
             let app_handle = app.handle().clone();
 
-            // Spawn platform thread early to parallelize Win32 init with window creation.
+            // Spawn the platform thread before window creation and wait for its Win32 init
+            // only after windows are created, so the two run in parallel (SPEC §8.5・#1457).
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
-            // Must precede setup_hotkey_listener below, which sends RegisterInitialHotkey
-            // through the platform bridge managed here.
-            setup_platform_thread(&app_handle, hotkey_config, initial_language);
+            let platform =
+                PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
 
             // ウィンドウ生成（egui・platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）。
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
@@ -296,9 +298,14 @@ fn main() {
                     return Err(Box::new(e));
                 }
             };
-            // **フォント解決を含む区間である**（`font_stack.rs`）。ウィンドウを一度も出していない
-            // 時点で常駐に効くことが実測されており、表示より前に走る。
+            // **フォント解決を含む区間である**（`font_stack.rs`）。解決は `main()` で先読みを始めて
+            // あるので（#1452）、ここに乗るのは先読みが終わっていなかった残りだけである。ウィンドウを
+            // 一度も出していない時点で常駐に効くことが実測されており、表示より前に走る。
             startup::mark(startup::Phase::WindowsCreate);
+            // platform スレッドの初期化を待って bridge を manage する。**bridge を使う listener の
+            // 登録（下の `register_*` と `setup_hotkey_listener`）より前に置く**——`egui_shell::create`
+            // と 2 つの view の `setup` は bridge に触れないので、ここまで待たなくてよい。
+            finish_platform_thread(&app_handle, platform);
             // #671 PR D（spec 決定 8 の終端形）: show/hide を跨ぐ共有状態（世代・emit dedup）と
             // 両ウィンドウの wake handle。**`create()` の後**に manage する——handle は attach の戻り値
             // ゆえウィンドウの生成より前には存在しない。各 view の `setup()` はもう `EguiShellState` を
@@ -334,7 +341,7 @@ fn main() {
             egui_shell::register_hotkey_failure_listener(&app_handle);
             // 起動時 hotkey 登録失敗の受け口（#652）。RegisterInitialHotkey を送る
             // setup_hotkey_listener より前に登録される位置なので emit を取りこぼさない
-            //（この egui ブロック自体が setup_platform_thread の直後・hotkey listener の前）。
+            //（この egui ブロック自体が finish_platform_thread の直後・hotkey listener の前）。
             egui_shell::register_initial_hotkey_failure_listener(&app_handle);
             app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(
                 Default::default(),
@@ -382,26 +389,21 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-/// Spawn the Win32 platform thread early to parallelize its init with window
-/// creation (`egui_shell::create`), and manage the resulting `PlatformBridge`
-/// once ready. The tray
-/// is NOT created here; `setup_tray` sends `SetTrayVisible` later, after all
-/// windows and listeners are ready (SPEC §7.5).
-fn setup_platform_thread(
+/// Wait for the platform thread's Win32 init and manage the resulting `PlatformBridge`.
+/// The spawn (`PlatformBridge::begin`) is at the setup call site, before window creation;
+/// call this after window creation and before any listener that uses the bridge.
+fn finish_platform_thread(
     app_handle: &AppHandle,
-    hotkey_config: HotkeyConfig,
-    initial_language: Language,
+    pending: Result<PlatformBridgePending, BridgeError>,
 ) {
-    // Win32 init finishes in a few ms; by the time windows are created it is already done.
-    match PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language)
-        .and_then(PlatformBridgePending::wait)
-    {
+    match pending.and_then(PlatformBridgePending::wait) {
         Ok(bridge) => {
             app_handle.manage(Mutex::new(bridge));
         }
         // **起動はここで続行するが、終端は出す。** 出さないと `RegisterInitialHotkey` の
         // arm が走らないまま起動が終わり、ハーネスには「タイムアウト」としか見えない
-        // （正本は `crate::startup` の `//!`）。
+        // （正本は `crate::startup` の `//!`）。spawn の失敗もここで出す（`begin` は結果を
+        // 運ぶだけにして、終端を出す場所を 1 つに保つ）。
         Err(e) => startup::finish(Err(startup::StartupFailure::from(e))),
     }
 }

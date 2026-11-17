@@ -537,6 +537,106 @@ fn path_store_cursor_matches_normalize_entry_key_over_real_index() {
     );
 }
 
+/// 履歴照合の手前でキーの組み立てを省く判定（`HistoryLookup::may_hit`・#1450）が、履歴のある
+/// 候補を落とさない。同じ末尾セグメントを持つ兄弟を並べ、履歴の無い方は省かれても、ある方は
+/// ブーストが効いて順位が入れ替わることを、global と folder_expansion の 2 つの表で確かめる。
+/// global は空クエリで記録する——`record_launch` は空でないクエリを query 表にも書くので、
+/// そうすると query 表のキーが global の漏れを隠す。記録は大文字小文字を変えて書く（照合は
+/// 正規化キーで行う）。
+#[test]
+fn history_boost_survives_history_tail_skip() {
+    let mut entries = vec![
+        make_entry("tool", "C:\\a\\tool.exe"),
+        make_entry("tool", "C:\\b\\tool.exe"),
+    ];
+    for path in ["C:\\x\\Proj", "C:\\y\\Proj"] {
+        entries.push(AppEntry {
+            name: "Proj".to_string(),
+            target_path: path.to_string(),
+            is_folder: true,
+        });
+    }
+
+    let mut launched = HistoryStore::empty();
+    launched.record_launch("c:\\B\\TOOL.EXE", "");
+    let mut engine = SearchEngine::new(entries.clone());
+    let results = engine.search("tool", 8, &launched, SearchMode::Substring);
+    let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        ["C:\\b\\tool.exe", "C:\\a\\tool.exe"],
+        "global の履歴ブーストが外れた"
+    );
+
+    let mut expanded = HistoryStore::empty();
+    expanded.record_folder_expansion("c:\\Y\\proj");
+    let mut engine = SearchEngine::new(entries);
+    let results = engine.search("proj", 8, &expanded, SearchMode::Substring);
+    let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        ["C:\\y\\Proj", "C:\\x\\Proj"],
+        "folder_expansion の履歴ブーストが外れた"
+    );
+}
+
+/// 候補の末尾セグメントを、フルパスを組み立てずに書く `PathStore::key_tail_into` が、カーソルの
+/// 組み立てたキーの末尾セグメントと 1 バイトも違わないことを、実 `index.bin` の全件で確かめる
+/// （#1450。**実インデックスが無ければ自動スキップ**）。ずれると、履歴のある候補で
+/// `HistoryLookup::may_hit` が偽を返し、ブーストだけが黙って消える。
+#[test]
+fn key_tail_into_matches_cursor_key_tail_over_real_index() {
+    let Some(entries) = real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let n = entries.len();
+    assert_key_tail_matches_cursor(entries);
+    println!("{n} 件で末尾セグメントがカーソルのキーと一致しました。");
+}
+
+/// 同じ一致を、境界を揃えた合成 fixture で確かめる（実インデックスの無い CI でも走る）。
+/// 根そのもの・`\` で終わる根・`/` を含む根・非 ASCII・ASCII の大文字を混ぜる。
+#[test]
+fn key_tail_into_matches_cursor_key_tail() {
+    let mut entries = cursor_fixture();
+    entries.extend([
+        make_entry("C:\\", "C:\\"),
+        make_entry("Tööl", "C:\\Ünï\\Tööl.EXE"),
+        make_entry("fwd", "E:/fwd/Mixed.Lnk"),
+        make_entry("root", " F:\\Root "),
+    ]);
+    assert_key_tail_matches_cursor(entries);
+}
+
+/// 期待値は**現物**（`normalize_entry_key`・履歴が記録するキー）の末尾セグメントから取る。
+/// カーソルと `key_tail_into` は 1 段の書き方（`push_own_segment`）を共有するので、カーソルと
+/// 比べるだけでは、共有した規則そのものの誤り（根の `trim` を外す等）を検出しない。
+fn assert_key_tail_matches_cursor(entries: Vec<AppEntry>) {
+    use crate::indexer::normalize_entry_key;
+    use crate::search::path_store::{PathCursor, PathStore, key_tail};
+
+    let keys: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_entry_key(&e.target_path))
+        .collect();
+    let store = PathStore::build(entries);
+    let mut cursor = PathCursor::new();
+    let mut buf = String::new();
+    for (i, key) in keys.iter().enumerate() {
+        assert_eq!(
+            cursor.normalized(&store, i),
+            key.as_str(),
+            "カーソルのキーが現物とずれている（index {i}）"
+        );
+        assert_eq!(
+            store.key_tail_into(&mut buf, i),
+            key_tail(key),
+            "末尾セグメントが現物のキーとずれている（index {i}）"
+        );
+    }
+}
+
 /// **パスクエリでも、表示名への Fuzzy マッチは失われない。**
 ///
 /// `score_one_entry` はパスクエリのとき name の Fuzzy スコアリングを飛ばすが、それが許される

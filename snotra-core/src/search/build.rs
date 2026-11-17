@@ -11,7 +11,7 @@
 //! **kana 系 2 本（`kana_lower_names` / `kana_char_masks`）は `migemo_enabled` が true のときだけ
 //! 構築し、無効時は空である**（migemo 無効ユーザーの死蔵メモリと構築時間を削る・#337）。
 //! 2 本は必ず同時に空か同長（`assemble` の debug_assert が検証）。空のとき検索ループは
-//! `kana_available` の空ガードで `kana_lower_names.get(i)` を回避し、Fuzzy pre-filter は
+//! `kana_available` の空ガードで `kana_lower_names.get(i)` を回避し、bitmask pre-filter は
 //! `kana_char_masks.is_empty()` で kana 経路を棄却する（構築時 OFF → 検索時 ON のウィンドウでの panic 防止）。
 
 use rayon::prelude::*;
@@ -463,7 +463,7 @@ impl SearchEngine {
     ) -> Self {
         // **組のまま受け取る。** 3 引数へほどく形だと `char_masks` と `file_name_char_masks` が
         // 同型（`Vec<u64>`）で隣接し、**取り違えてもコンパイルが通る**——そして誤ったマスクを
-        // 持つ索引は panic せず、Fuzzy pre-filter の false negative（検索結果が静かに欠ける）
+        // 持つ索引は panic せず、bitmask pre-filter の false negative（検索結果が静かに欠ける）
         // としてしか現れない。`CachedMasks` はこの 4 本を「同じ導出から出た組」として束ねる
         // ためにある型なので、境界を跨ぐ手前でほどかない。
         let CachedMasks {

@@ -89,7 +89,8 @@
 - [x] `/state-check`・`/race-check`・`/symmetric-check` を当てる（3 つとも指摘なし・e014dbf1 の後）
   - レビュー ラウンド 1（03b11e75・verify:tree A/C/E/F + test:powershell green）: Critical 0 / High 1（造語「起動の読み」）/ Medium 2（LoadOrScan の doc・M6 生存: Deferred の腕を空にしても緑）/ Low 4。InitialBuild を純関数で切り出して表で縛り、rescan_callers_request_a_rescan にファイルごとの呼び出しの数を足した（腕を空にする変異と Deferred を None にする変異が assert で赤になることを測った）。measure-memory-stages.ps1 は scan-log の end 行を待ち、本体が死んだら止め、first-run なら先に止める形にした
   - レビュー ラウンド 2（b2926914）: High 0 / Medium 1（配線側の検知器が無い・R2〜R7 が単体で生存）/ Low 3。main_hands_the_initial_index_to_the_initial_build（setup が start_initial_build(&app_handle, initial) をちょうど 1 回呼ぶ）を足し、R2 で assert が赤になることを測った。R4〜R7（start_initial_build の中で Deferred を握りつぶす形）は smoke-startup の *.bin 検査が捕まえることを、R2 を当てた debug ビルドで実測し（exit 1・「*.bin が 1 件も生成されていません」）、検査の doc に名指した。計測スクリプトの timeout の文言と SPEC 3.3 の箇条の位置も直した
-- [ ] 検証カテゴリ A・C・E・F
+  - レビュー ラウンド 3（84b8fc4d）: High 0 / Medium 0 / Low 1（smoke に帰した範囲が実測より広い・doc を直した）。R2・R3・R3b が新しい検査で赤になることを確認。収束
+- [x] 検証カテゴリ A・C・E・F（84b8fc4d で green・test:powershell を含む）
 
 ## 未確定（実装前に潰す）
 

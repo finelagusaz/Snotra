@@ -580,9 +580,12 @@ mod tests {
     /// `start_initial_build(&app_handle, initial)` がちょうど 1 回現れること。
     ///
     /// **この検査の外に残るもの**: `start_initial_build` の中で `Deferred` を握りつぶす書き換え
-    /// （先頭で return する・腕を条件で包む等）。それは `smoke-startup.ps1` の「`*.bin` が生成された」
-    /// 検査が捕まえる——検証用プロファイルの最初の起動は cache-miss で、`*.bin` を書くのは背景の構築
-    /// だけだからである（2026-11-17・呼び出しを消した版で赤になることを実測）。
+    /// （先頭で return する・腕を条件で包む等）。構築が起きない形なら、`smoke-startup.ps1` の
+    /// 「`*.bin` が生成された」検査が捕まえる——検証用プロファイルの最初の起動は cache-miss で、
+    /// `*.bin` を書くのは背景の構築だけだからである（2026-11-17・setup の呼び出しを消した版で
+    /// 赤になることを実測。中で握りつぶす形は同じ症状になるという類推）。`Deferred` で設定アプリを
+    /// 開く形は CI では構築へ回って緑のままで、ローカルの smoke の `cmd:launch_settings_process:*` の
+    /// 検査だけが捕まえる。
     #[test]
     fn main_hands_the_initial_index_to_the_initial_build() {
         let calls = include_str!("main.rs")

@@ -95,10 +95,11 @@ impl AsRef<[u8]> for MappedFont { fn as_ref(&self) -> &[u8] { &self.map } }
 - [x] `check:colors` と目視（カテゴリ D）— 緑。スクリーンショットで jp_font（写像）の和文「検索…」が描かれている。対話の目視 2 点（show の一瞬の色・リサイズのちらつき）はフォントに依らない項目で、人間へ委ねる
 - [x] `//!` と doc・`SPEC.md` の 1 文・`PERFORMANCE.md` の現在形の記述を直す
 - [x] `/symmetric-check`・`/race-check`（`prefetch` のスレッドと `setup` が同じキャッシュを引く）を当てる — symmetric: 開く/写像 ↔ 解く/閉じるは `MappedFont` の drop（宣言順で写像が先）。キャッシュが never-clear なのでプロセス終了まで解かない（意図）。race（`--base origin/main`・④ 7 件・すべて font_stack.rs の錠）: 境界は prefetch スレッドと setup の 2 者が `USER_FONTS`・`JP_FONT`・`FONT_FILES` を引くことだけ。値は不変の `Arc` で古い結果が生じない（b）、UI 状態を変えないので wake 不要（c）、錠は開く・写像の間も持つので同時に引いても 1 回だけ開く（d）、錠の向きは `USER_FONTS`→`FONT_FILES` と `JP_FONT`→`FONT_FILES` だけで、`resolve_stack` は user の錠を離してから jp を引く（e）→ [安全]
-- [ ] 検証カテゴリ A・C・E・F
+- [x] 検証カテゴリ A・C・E・F
 
 ### 検証とレビューのラウンド
-- [x] ラウンド 1: アンカー `fb34d3a6` / verify:tree A・C・E・F 緑 / 所見 High 1・Medium 4・Low 5 / 変異 9 のうち生存 3（M5・M7・M2b）。M5 はテストの綴りに大文字小文字を足して塞いだ（`10e22846` で赤を自分で確かめた）。M7（jp を user より先に解決）と M2b（`maps_on` の呼び出しを外す）は残余として受け入れる——前者は main にも順序を見るテストが無く、観測には製品コードへの注入点が要る（`ADR-no-test-only-injection-in-product-code`）。後者はテストの機体に固定ドライブ以外のファイルが無い。採らなかった所見: L2（`FontFiles` の doc の列挙は呼び出し元ではなく、同じファイルになる場合の例示）。L1 は「長さ 0 は読んで持つ」へ文言を直し、判定そのものは残した
+- [x] ラウンド 1: アンカー `fb34d3a6` / verify:tree A・C・E・F 緑 / 所見 High 1・Medium 4・Low 5 / 変異 9 のうち生存 3（M5・M7・M2b）。M5 はテストの綴りに大文字小文字を足して塞いだ（`10e22846` で赤を自分で確かめた）。M7（jp を user より先に解決）と M2b（`maps_on` の呼び出しを外す）は残余として受け入れる——前者は main にも順序を見るテストが無く、観測には製品コードへの注入点が要る（`ADR-no-test-only-injection-in-product-code`）。後者はテストの機体に固定ドライブ以外のファイルが無い。採らなかった所見: L2（`FontFiles` の doc の「製品は `font_files` の 1 つを never-clear で使い、テストは自分で作る」は、型にした理由——テストが製品の static を汚さない——の説明として残す）。L1 は assert の文言を直し、判定そのものは残した
+- [x] ラウンド 2: アンカー `7bee4762` / verify:tree A・C・E・F 緑 / 前回の所見は解消（N2 を除く）・新しい所見 Low 3 / 変異 2 のうち生存 1（r2-Mb: 正規化の失敗をテストで作れない・残余）。N1 は assert の文言を「読んで写す」へ揃えた。N2 はこの行の L2 の理由を直した。N3 は先例があるので採らない
 
 ## 決定の経緯（2026-11-17・試作の実測）
 

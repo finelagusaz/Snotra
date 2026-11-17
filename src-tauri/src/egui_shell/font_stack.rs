@@ -526,7 +526,7 @@ mod tests {
         let dir = TempDir::new("edge");
         let path = dir.write("empty.bin", &[]);
         let (loaded, how) = FontFiles::new().load(&path).expect("長さ 0 も読める");
-        assert_eq!(how, Loaded::Copied, "長さ 0 はメモリマップせず読んで持つ");
+        assert_eq!(how, Loaded::Copied, "長さ 0 はメモリマップせず読んで写す");
         assert!((*loaded).as_ref().is_empty());
         assert!(FontFiles::new().load(&dir.0.join("missing.bin")).is_none());
     }

@@ -1492,9 +1492,9 @@ mod tests {
         assert_eq!((c.0, c.1, c.2, c.3), (0x12, 0x34, 0x56, 0xff));
     }
 
-    /// 回帰テスト: windows の show は tao の `set_focus` を呼ばない（#1470）。tao は前面化に
+    /// 回帰テスト: Windows の show は tao の `set_focus` を呼ばない（#1470）。tao は前面化に
     /// 失敗するとマスクなしの Alt を注入し、前面だったアプリのメニューを起動する。この経路は
-    /// 速い打鍵でしか踏まれず、smoke では見えない。非 windows 用の 1 か所だけを許す。
+    /// 速い打鍵でしか踏まれず、smoke では見えない。Windows 以外に向けた 1 か所だけを許す。
     #[test]
     fn windows_show_does_not_call_tao_set_focus() {
         let src = include_str!("window_coordinator.rs");

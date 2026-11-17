@@ -69,19 +69,19 @@
 
 ### フェーズ 1: 検出器
 
-- [ ] `window_coordinator.rs` の `mod tests` にソーステキスト検査を足し、現状で落ちることを確かめる
+- [x] `window_coordinator.rs` の `mod tests` にソーステキスト検査を足し、現状で落ちることを確かめる（Red: 行 433 の `window.set_focus()` で「直前が非 windows の cfg でない」）
 
 ### フェーズ 2: 実装
 
-- [ ] `main.rs`: マスクキー定数をモジュールへ上げ、`bring_to_foreground` を足す
-- [ ] `window_coordinator.rs`: `show_egui_main` の前面化を置き換え、`egui_show:foreground` の trace を足す
-- [ ] コメントを直す（`window_coordinator.rs` の 3 か所・`main.rs`・`platform/mod.rs`・`runtime.rs`）
+- [x] `main.rs`: マスクキー定数をモジュールへ上げ、`bring_to_foreground` を足す
+- [x] `window_coordinator.rs`: `show_egui_main` の前面化を置き換え、`egui_show:foreground` の trace を足す
+- [x] コメントを直す（`window_coordinator.rs` の 3 か所・`main.rs`・`platform/mod.rs`・`runtime.rs`）
 
 ### フェーズ 3: 検証
 
 - [ ] カテゴリ A を走らせる
 - [ ] カテゴリ C を走らせる
-- [ ] 注入ハーネスで AC1〜AC3 を測り、結果を PR 本文用に残す
+- [x] 注入ハーネスで AC1〜AC3 を測り、結果を PR 本文用に残す（2026-11-17・release・各 d で 2 起動 × 2 表示: d = 1, 3, 6, 10 の 1 回目 8/8 で tao の注入・`SC_KEYMENU`・メニューループ 0、`masked_alt` は 8/8 で `ok = true`。文字なしの 1 回目は `direct`、2 回目以降は全件 `already`）
 
 ## 未確定（実装前に潰す）
 

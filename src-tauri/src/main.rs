@@ -87,6 +87,76 @@ fn wait_alt_release_or_timeout() {
     }
 }
 
+/// MenuMaskKey 技法のマスクキー（vkE8・未割り当て）。Alt の押下と解放のあいだに挟むと、
+/// 受け手はその Alt を単独の Alt と扱わず、メニューを起動しない。
+#[cfg(windows)]
+const VK_MASK: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY =
+    windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0xE8);
+
+/// [`bring_to_foreground`] がどう前面化したか（trace 用）。
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ForegroundOutcome {
+    /// 呼んだ時点で既に前面だった。
+    Already,
+    /// `SetForegroundWindow` が 1 回で通った。
+    Direct,
+    /// 1 回目が拒まれ、マスクした Alt を注入して再試行した。`ok` は再試行の結果。
+    MaskedAlt { ok: bool },
+}
+
+#[cfg(windows)]
+impl ForegroundOutcome {
+    pub(crate) fn path(self) -> &'static str {
+        match self {
+            Self::Already => "already",
+            Self::Direct => "direct",
+            Self::MaskedAlt { .. } => "masked_alt",
+        }
+    }
+
+    pub(crate) fn ok(self) -> bool {
+        match self {
+            Self::Already | Self::Direct => true,
+            Self::MaskedAlt { ok } => ok,
+        }
+    }
+}
+
+/// main ウィンドウを前面にする。tao の `set_focus` の代わりに使う（#1470）。
+///
+/// `SetForegroundWindow` が拒まれたら、Alt の押下で前面化が許可されることを使い、Alt を
+/// 注入して 1 回だけ再試行する。**その Alt は vkE8 で包む。** tao は包まない Alt を注入する
+/// ので、まだ前面にいる元のアプリがそれを単独の Alt として受け、メニューを起動する。
+///
+/// 修飾キーが押されていても注入は省かない。省くと、最前面に見えるのに前面でない窓が残り、
+/// 打鍵が元のアプリへ流れ続ける。注入した Alt up は押されている Alt を論理的に離すが、
+/// tao の注入も同じ Alt up を送っていた。
+#[cfg(windows)]
+pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> ForegroundOutcome {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, SendInput, VK_MENU};
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+
+    unsafe {
+        if GetForegroundWindow() == hwnd {
+            return ForegroundOutcome::Already;
+        }
+        if SetForegroundWindow(hwnd).as_bool() {
+            return ForegroundOutcome::Direct;
+        }
+        let inputs = [
+            make_key_input(VK_MENU, false),
+            make_key_input(VK_MASK, false),
+            make_key_input(VK_MASK, true),
+            make_key_input(VK_MENU, true),
+        ];
+        let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        ForegroundOutcome::MaskedAlt {
+            ok: SetForegroundWindow(hwnd).as_bool(),
+        }
+    }
+}
+
 /// Clear lingering Alt modifier state via `SendInput` before showing the
 /// search window.  Uses the AutoHotkey "MenuMaskKey" technique: a dummy
 /// key-down/up (vkE8, unassigned) is injected *before* the Alt key-up so
@@ -95,10 +165,8 @@ fn wait_alt_release_or_timeout() {
 #[cfg(windows)]
 fn send_alt_key_up() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, SendInput, VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU,
+        INPUT, SendInput, VK_LMENU, VK_MENU, VK_RMENU,
     };
-
-    const VK_MASK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8); // unassigned — safe dummy key
 
     let inputs = [
         make_key_input(VK_MASK, false), // mask key down
@@ -121,8 +189,8 @@ fn send_alt_key_up() {
     // スリープの目的は自スレッド上では達成できず、純粋なコストになる
     // （`show_egui_main` の `SendMessageTimeoutW` 撤去と**同じ型の失効**。あちらの撤去跡の
     // コメントを参照）。**前提を落として「常に純粋なコスト」とは書けない**——直前の
-    // `set_focus()` はフォアグラウンド移行を同期しないため、まだ旧ウィンドウが前景なら合成キー up は
-    // そちらのスレッドで処理されうる（それこそがバリア撤去跡が「未実測」と断っている当の点で
+    // 前面化（`bring_to_foreground`）が再試行でも通らなかった場合は旧ウィンドウが前景に残り、
+    // 合成キー up はそちらのスレッドで処理されうる（それこそがバリア撤去跡が「未実測」と断っている当の点で
     // ある）。**hotkey に Alt を含む設定では実質すべての show がここを通る**
     // （`ShowAfterAltRelease` の再入時に `!is_alt_pressed()` が真になるため）。
     //

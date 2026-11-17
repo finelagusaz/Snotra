@@ -411,7 +411,7 @@ impl EguiWindow {
         }
         if let tauri_runtime_wry::tao::event::WindowEvent::Focused(true) = event {
             // #532 SU1: main.rs の Alt+Q は RuntimeFrame 経由でなく tauri::Window を直接
-            // show()/hide() する。show() 直後は必ず set_focus() が続く（show_and_focus）ため、
+            // show()/hide() する。show() 直後は必ず前面化が続く（`show_egui_main`）ため、
             // Focused(true) を「再表示された」の代理シグナルとして visible を復帰させる
             // （外部再表示イベント・不変条件⑥の最小追従）。
             self.visible = true;

@@ -1,0 +1,63 @@
+反証レビュー: workspace/research.md (#1456)
+実施: コード読み（cache.rs / indexing.rs / main.rs / config_watcher.rs / engine.rs / SPEC.md / icon.rs）と、実 %APPDATA%/Snotra の読み取りのみ。書き換え・cargo test・Snotra 起動はしていない。
+
+== 実機の前提 ==
+- config.toml: include_path_env = true / migemo_enabled = true / show_hidden_system = true。scan は 5 根（C:\Toolbox, C:\KISS, Start Menu, C:\workspace, C:\ ほか）。
+- index.bin: 721480 B・mtime 2026-11-16 20:52:42・ヘッダ版 = 0x0a = 10 = INDEX_CACHE_VERSION（現行）。ゆえに「旧版は昇格済み」の前提はこの機では成り立つ。
+- PATH 由来のエントリが index.bin に無いことの実測: HKCU\Environment\Path の各ディレクトリから、PATH にしか無さそうな名前（cargo-binstall.exe / fonttools.exe / code-tunnel.exe / zed.exe / claude.exe / antigravity-ide.cmd / copilot.exe）を index.bin のバイト列で検索 → 7 件すべて 0 ヒット（"Toolbox" 等の走査由来の文字列は平文で見つかるので、検索は有効）。命題 2 の前半はこの機で支持された。
+- scan-log.jsonl の最終 end は 11/15 19:58 だが、index.bin の mtime は 11/16 20:52。つまり index.bin は drain 以外（起動時の load_or_scan_with_stats の cache-miss / 昇格、またはテスト・計測ハーネス）でも書かれている（命題 4 参照）。
+- scan-log.jsonl に end の無い start が 1 行（sid 3908-...-3）あり、その直後に別 pid（17824）の start が続く。走査途中で落ちた／二重起動の痕跡。drain 以外の走査完走の保証が無いことの傍証。
+
+== 命題ごとの判定 ==
+
+[1] compute_config_hash は scan と show_hidden_system だけ … 壊せなかった
+- cache.rs `compute_config_hash`: ScanPath の path / extensions / include_folders と show_hidden_system のみ。include_path_env / migemo_enabled は入らない。IndexInputs（engine.rs）は 4 キーだが、ハッシュは 2 系統のみ。
+- 偽にする手順: compute_config_hash の本体に include_path_env か migemo_enabled を足す、または ScanPath に新フィールドが増えてハッシュ対象外になる（その場合は逆向きに「ハッシュが走査対象を覆わない」へ崩れる）。現状は該当せず。
+- 補足（偽ではないが注意）: ScanPath のパス文字列は未展開のままハッシュされる。環境変数展開などで走査結果が変わっても同ハッシュ。今は scan_all が展開しないので影響なし。
+
+[2] index.bin は PATH エントリを含まない／読み直して PATH マージすれば全走査と同じ索引／migemo で index.bin と派生データは変わらない … 壊せなかった（ただし条件つき）
+- save_cache_sorted は scan 結果の entries だけを保存し、PATH マージ（extend_with_path_entries）は保存の後（indexing.rs build_index_from_material / main.rs）。上の実測でも 0 ヒット。
+- IndexCache のフィールドは names/is_folder/parent/aux/table/char_masks/file_name_char_masks/lower_names/lower_file_names。kana 系（migemo 由来）は保存されない。PrebuiltIndex::from_material(material, migemo_enabled) が migemo のときだけ kana を足す。ゆえに migemo の ON/OFF で index.bin の内容は変わらない。
+- 偽にする手順（条件）:
+  a. 前回の drain の保存が失敗した（書けない環境・ディスク満杯・AV）。index.bin は古い走査のまま、同じハッシュで残る。non-scan drain は engine が今持つ索引ではなく「一つ前の走査結果」へ戻す。research の未解決の疑問 1 と同じ。実際に起きうる: scan-log の孤児 start がある。
+  b. index.bin が別プロセス（二重起動・isolated profile でない 2 つ目）に書かれた。INDEX_WRITE_LOCK はプロセス内だけ。
+  c. ⚠️ 全走査のあとのメモリ上の索引と、ロードした索引が「表現まで同じ」かは、cache.rs の doc の主張（collapse_lower_pair を通す）を読んだだけで、diff で実測していない。検査するなら: 同じ scan で rebuild_and_save の材料と load の材料から PrebuiltIndex を建て、検索結果を比べる。
+- 補足: load_cache は private で、pub の入口は load_cached_entries（Vec<AppEntry> を返す・doc(hidden)・corpus テスト専用）だけ。IndexMaterial を返す pub 入口は新設が要る（research の「再利用」に載っているが「新設が要る」とは書いていない）。
+
+[3] start_index_build の呼び出し元は 4 か所だけ／「必ず走査」は /s だけ／走査対象の変更と first-run は照合で自然に走査へ落ちる … 壊せた（2 点）
+- (a) 呼び出し元は 4 か所ではない。indexing.rs 87 行目の自己再 kick（finish ウィンドウで stale が残っていたとき `start_index_build(&app_handle)`）が 5 か所目。この再 kick は「要求の種類」を持たない。/s の要求が drain の finish ウィンドウに刺さって stale だけが残った場合、再 kick が non-scan と解釈すると /s の走査を取りこぼす。research の未解決の疑問 3 は気づいているが、呼び出し元の列挙は偽（下限の主張へ弱めるべき）。
+  - 偽にする手順: `grep -rn "start_index_build(" src-tauri/src --include=*.rs` で indexing.rs:87 が出る。
+- (b) first-run が「index.bin が無いので自然に走査へ落ちる」は無条件には偽。Config::is_first_run は config.toml が無いことだけを見る（location.rs）。config.toml を消して index.bin を残した状態（設定のリセット・手動削除・別 config_dir 切替）では、index.bin が在る。既定 scan のままなら config_hash が一致し、first-run の初回構築（setup_first_run / window.rs の settings 監視）が「キャッシュ hit」で古い索引を採用し、走査しない。first-run では engine は空のツリーで始まる（main.rs）ので、ユーザーは古い（または別環境の）索引を「初回構築の結果」として受け取る。
+  - 偽にする手順: 現 config.toml を別名に退避→ Snotra を first-run で起動（※私は実施していない。机上: main.rs の is_first_run 分岐は index.bin を読まず空ツリーで始まり、その後の start_index_build が新しい non-scan 分岐でキャッシュ hit すれば走査しない）。
+  - 対処の方向: first-run は「要求の種類」を持たせて必ず走査させる（`/s` と同じ扱い）。research は first-run を「自然に落ちる」側に置いているが、「必ず走査」の側に入れるべき。
+- (c) 走査対象の変更が「ハッシュ不一致で自然に落ちる」点は壊せなかった。ただしハッシュが一致する逆戻り（A→B で保存失敗→B→A）で stale な A を採用しうる（命題 2a と同根）。
+
+[4] 実行時に index.bin を書く経路は drain だけ／Skip なら書き手は増えない／起動経路が旧版を昇格させるので実行時の index.bin は常に現行版 … 壊せた（2 点）
+- (a) 「起動経路が旧版を昇格させる」は常には偽。起動の昇格（LegacyUpgrade::Write）は main.rs が非 first-run のときだけ load_or_scan_with_stats を呼ぶ経路にある。first-run は読まない（空ツリー）。保存失敗でも旧版が残る（upgrade_legacy_cache_in の doc:「保存に失敗してもロードは成功させる」）。ゆえに実行時の index.bin が旧版でありうる。Skip の読み（finish_legacy_read）は旧版でも Some を返す（from_untrusted / from_tree）ので動作は壊れないが、「常に現行版」という文は偽。→「旧版でも Skip で読める」を根拠にすべきで、「常に現行版」を前提にしない。
+  - 偽にする手順: index.bin を旧版バイト列に差し替え（私は実施していない）、config.toml を消して first-run 起動 → 現行版へ昇格しない。机上は上記コードのとおり。
+- (b) 「実行時に書く経路は drain だけ」は、起動を含むなら偽。load_or_scan_with_stats（cache-miss の保存と旧版昇格）も書く。cache.rs の upgrade_save の doc は「もう一方の書き手（索引ビルドのスレッド）は AppHandle を要求するため、その時点でまだ存在しない」と、起動時の書き手と drain の同時並行は無いことを前提にしている。non-scan drain が Skip で読むだけなら書き手は増えない（ここは壊せなかった）が、研究メモの「drain だけ」は「起動後は」と限定が要る。
+- 実機の傍証: index.bin の mtime（11/16 20:52）が scan-log の最終 end（11/15 19:58）より新しい。drain 以外が書いている。
+
+[5] アイコンキャッシュはパスで引くので PATH / migemo の切り替えで古くならない（無効化は不要）… 壊せた（仕様の面で）／実害の面では壊せなかった
+- 仕様: SPEC.md の 3.4 アイコン節（行 98-99 付近）は「索引の再構築が始まったとき（初回構築・/s・設定変更のいずれの契機でも）: メモリ内キャッシュと icons.bin の両方を無効化する」と明記している。research の「技術的な制約」はこの文言に触れておらず、SPEC を「7.5 だけ」しか読んでいない。non-scan 化で無効化をやめるなら、SPEC のこの文言を同じ変更で直す仕様変更になる（issue のコメントも「文言が約束しているように読めるなら先に直す」と言っている）。research 自身の「走査した ときだけでよい」は SPEC と矛盾したまま。
+  - 偽にする手順: `grep -n "いずれの契機" SPEC.md`（→ 行 99）。
+- 実害: invalidate_icon_cache は start_index_build が CAS に勝った側だけで撃つ。アイコンはパス（と拡張子）で引くので、PATH / migemo の切替で既存パスのアイコンが古くなる理由は見つからない（壊せなかった）。ただし新たに PATH エントリが加わる分は、キャッシュに無いので抽出されるだけ。無効化を省く判断自体は成り立つが、SPEC の変更と、start_index_build の先頭で撃つ現構造を「走査する／しない」が決まる drain の後ろへ動かす設計が要る（要求受理の時点では走査するか分からない——/s かハッシュ一致かは drain まで分からない）。
+- ⚠️ 無効化の位置: 「キャッシュが読めるかどうか」を drain の中でしか知れない以上、「走査したときだけ無効化」は drain 内へ移すことになる。しかし start_index_build のテスト start_index_build_invalidates_the_icon_cache（ソーステキスト検査）が現在の位置を固定している。移すならテストも直す。research のテスト一覧には出ているが、移す前提の影響は書かれていない。
+
+== research.md のその他の主張 ==
+- 関連ファイル・シンボル（start_index_build の CAS 順、drain_index の順序、build_index_from_material、IndexInputs、Engine の ledger、テスト名 fresh_engine_is_not_index_stale / index_inputs_* 3 本 / drain_index_appends_start_before_the_scan / start_index_build_invalidates_the_icon_cache）: 壊せなかった（コードで実在を確認）。「ledger の 4 本」: engine.rs 内の stale 系テストは fresh_engine_is_not_index_stale / mark_index_stale_makes_begin_return_current_inputs / complete_index_drain_clears_stale_when_config_stable / complete_index_drain_keeps_stale_when_config_changed_during_build の 4 本で一致。index_inputs_* は differ_on_each_index_key / equal_when_unrelated_key_changes / ignore_show_icons_in_both_directions の 3 本で一致。
+- 「`rebuild_index`（/s）は activation.rs から呼ばれる」: 壊せなかった（activation.rs:321）。
+- 「SPEC 7.5 のステータス『インデックスを再構築中…』の行が、アイコン表示切替の行の下へずれて入っている」: 壊せなかった（SPEC.md 行 432-433 で確認）。
+- 「scan-log.jsonl は走査ごとに start / end の 2 行」: 壊せなかったが、起動時の cache-miss 走査は書かない（drain だけが書く）。孤児 start があることは、受け入れ条件「行が増えない」の検査設計では end の有無に依存できないことを意味する（⚠️: 検査を作るなら start 行の増分で数える）。
+- 「engine のロックの内側で I/O をしない」: 壊せなかった。
+- 「前回の drain で保存に失敗した場合 index.bin は古いか無い」: 壊せなかった（上記 2a と整合）。
+
+== 未解決の疑問への追加 ==
+- 「/s の要求が non-scan の drain の実行中に届いたとき取りこぼさないか」: 取りこぼしうる、が具体形。要求の種類を持つフラグ（scan_required）を stale と同じ ledger に載せ、complete_index_drain が「走査した版のスナップショット」と照合するまで落とさない設計でないと、(1) 実行中の drain、(2) finish 後の自己再 kick（indexing.rs:87）の 2 経路で落ちる。
+- first-run の扱い（上記 3b）を未解決の疑問へ足すべき。
+
+== ⚠️ 確信の持てない所見（返り値にも含める） ==
+- ⚠️ [2c] 全走査後の材料と、キャッシュから読んだ材料が、PrebuiltIndex として同じ検索結果になるかは、doc の主張を読んだだけ（実測していない）。
+- ⚠️ [3b] first-run で index.bin が残っている場合の挙動は、机上のコード追跡（main.rs の first-run 分岐は index.bin を読まない・is_first_run は config.toml の有無だけ）。実機で再現していない（config.toml を動かせない制約のため）。
+- ⚠️ [4a] 旧版が実行時に残るのは first-run + 旧版 index.bin、または昇格保存の失敗のときで、頻度は低い。この機は現行版（v10）。
+- ⚠️ [5] アイコンキャッシュのキーが「パスだけ」かは icon.rs の全体を読んでおらず、research の主張どおりとして扱った。無効化が不要という実害面の判断は未検証（SPEC の文言との矛盾は確定）。

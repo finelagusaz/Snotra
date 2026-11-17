@@ -32,14 +32,60 @@ struct WindowSize {
     height: i32,
 }
 
+/// 検索ウィンドウの配置の、プロセス内の写し（#1446）。
+///
+/// show のたびにディスクから読み、hide のたびに（動かしていなくても）読んで書き直していた。
+/// **search の配置を書くのはこのプロセスだけである**——設定アプリは同じ `window.bin` の別の
+/// フィールドを read-modify-write で書くが、search は読んだ値のまま書き戻す。ゆえに最後に
+/// 読んだか書いた値は、ファイルの search と一致し続ける。書くときの read-modify-write は残す
+/// （設定アプリのフィールドを消さないため）。
+struct SearchPlacementCache {
+    /// `None` はまだ読んでいない。`Some(None)` は読んだが配置が無かった。
+    known: Option<Option<WindowPlacement>>,
+}
+
+impl SearchPlacementCache {
+    /// 写しがあればそれを返し、無ければ `read` で読んで覚える。
+    fn load_with(
+        &mut self,
+        read: impl FnOnce() -> Option<WindowPlacement>,
+    ) -> Option<WindowPlacement> {
+        *self.known.get_or_insert_with(read)
+    }
+
+    /// 写しと同じ値なら書かない。書けたときだけ写しを更新する（失敗を覚えると、次の hide でも
+    /// 書き直さなくなる）。
+    fn save_with(
+        &mut self,
+        placement: WindowPlacement,
+        write: impl FnOnce(WindowPlacement) -> bool,
+    ) {
+        if self.known == Some(Some(placement)) {
+            return;
+        }
+        if write(placement) {
+            self.known = Some(Some(placement));
+        }
+    }
+}
+
+static SEARCH_PLACEMENT: std::sync::Mutex<SearchPlacementCache> =
+    std::sync::Mutex::new(SearchPlacementCache { known: None });
+
+fn search_placement_cache() -> std::sync::MutexGuard<'static, SearchPlacementCache> {
+    SEARCH_PLACEMENT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn load_search_placement() -> Option<WindowPlacement> {
-    load_state_v5().and_then(|state| state.search)
+    search_placement_cache().load_with(|| load_state_v5().and_then(|state| state.search))
 }
 
 pub fn save_search_placement(placement: WindowPlacement) {
-    let mut state = load_state_v5().unwrap_or_default();
-    state.search = Some(placement);
-    save_state(&state);
+    search_placement_cache().save_with(placement, |placement| {
+        let mut state = load_state_v5().unwrap_or_default();
+        state.search = Some(placement);
+        save_state(&state)
+    });
 }
 
 pub fn load_settings_placement() -> Option<WindowPlacement> {
@@ -82,18 +128,19 @@ fn load_state_v5_in(dir: &Path) -> Option<WindowPlacementState> {
     Some(migrated)
 }
 
-fn save_state(state: &WindowPlacementState) {
-    if let Some(dir) = Config::config_dir() {
-        save_state_in(state, &dir);
-    }
+/// 書けたら `true`（設定のディレクトリが解決できなかったときも `false`）。
+fn save_state(state: &WindowPlacementState) -> bool {
+    Config::config_dir().is_some_and(|dir| save_state_in(state, &dir))
 }
 
 /// `save_state` と同じ永続化を `dir` 注入で行う（統合テスト用、issue #429）。
-fn save_state_in(state: &WindowPlacementState, dir: &Path) {
+fn save_state_in(state: &WindowPlacementState, dir: &Path) -> bool {
     let bf = bin_file_in(dir, WINDOW_VERSION_V5);
-    if !bf.save(state) {
+    let saved = bf.save(state);
+    if !saved {
         eprintln!("[window] failed to save {}", bf.path().display());
     }
+    saved
 }
 
 #[cfg(test)]
@@ -246,5 +293,70 @@ mod tests {
         let result: Result<WindowPlacementState, _> =
             try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V5);
         assert!(result.is_err(), "V4 data should not load as V5");
+    }
+
+    const P: WindowPlacement = WindowPlacement { x: 10, y: 20 };
+    const Q: WindowPlacement = WindowPlacement { x: 30, y: 40 };
+
+    /// 読むのは最初の 1 回だけで、無かったことも覚える（#1446）。
+    #[test]
+    fn search_placement_cache_reads_the_file_once() {
+        let mut cache = SearchPlacementCache { known: None };
+        let mut reads = 0;
+        assert_eq!(
+            cache.load_with(|| {
+                reads += 1;
+                None
+            }),
+            None
+        );
+        assert_eq!(
+            cache.load_with(|| {
+                reads += 1;
+                Some(P)
+            }),
+            None
+        );
+        assert_eq!(reads, 1);
+    }
+
+    /// 同じ値は書かず、違う値だけを書き、書いた値を次の読みへ返す。
+    #[test]
+    fn search_placement_cache_writes_only_changes() {
+        let mut cache = SearchPlacementCache { known: None };
+        let mut writes = Vec::new();
+        cache.save_with(P, |p| {
+            writes.push(p);
+            true
+        });
+        cache.save_with(P, |p| {
+            writes.push(p);
+            true
+        });
+        cache.save_with(Q, |p| {
+            writes.push(p);
+            true
+        });
+        assert_eq!(writes, [P, Q]);
+        assert_eq!(
+            cache.load_with(|| panic!("写しがあるので読まない")),
+            Some(Q)
+        );
+    }
+
+    /// 書けなかった値は覚えない——覚えると、次の hide でも書き直さなくなる。
+    #[test]
+    fn search_placement_cache_retries_after_a_failed_write() {
+        let mut cache = SearchPlacementCache { known: None };
+        let mut writes = 0;
+        cache.save_with(P, |_| {
+            writes += 1;
+            false
+        });
+        cache.save_with(P, |_| {
+            writes += 1;
+            true
+        });
+        assert_eq!(writes, 2);
     }
 }

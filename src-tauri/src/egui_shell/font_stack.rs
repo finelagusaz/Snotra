@@ -2,7 +2,7 @@
 //! 消費者は `view.rs` と `results_view.rs` の両方（main/results は別 Context を持つため
 //! それぞれが自分の Context に対して呼ぶ）——ゆえにどちらにも属させず独立モジュールにする。
 //! フォントのバイト列はファイルをメモリマップして持ち（メモリマップできなければ読んで写す・[`FontFiles`]）、
-//! [`JP_FONT`] と [`USER_FONTS`] に置く（**never-clear**。消すと、次の解決が同じファイルを
+//! ファイルのパスごとに 1 回だけ開く（**never-clear**。消すと、次の解決が同じファイルを
 //! もう一度開く）。メモリマップはヒープではないので private commit に載らない（#1449）。
 //! フォント登録の分岐は次のとおり（#532・#689）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**分岐を列挙するのは、この index 0 の不変条件が分岐ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
 //!
@@ -18,11 +18,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use egui::epaint::text::Blob;
-
-/// 読み込んだ jp_font（[`jp_font_bytes`]）。**見つからなかったことはキャッシュしない**（`None` の
-/// ままにして、次の呼び出しで読み直す）。錠は読み込みの間も持つ——起動時の先読み（[`prefetch`]）と
-/// view の `setup` が重なっても、2 度開かない（#1452）。
-static JP_FONT: Mutex<Option<Blob>> = Mutex::new(None);
 
 /// メモリマップしたフォントファイル。開いたハンドルを、メモリマップと同じ値の中に持つ。
 ///
@@ -51,20 +46,17 @@ enum Loaded {
 /// フォントファイルのキャッシュ。キーは正規化したパスで、**同じファイルは 1 回だけ開く**——
 /// 別名の family が同じファイルへ解決したときも、user_font と jp_font が同じファイルのときも。
 /// 製品は [`font_files`] の 1 つを never-clear で使い、テストは自分で作る。
+/// **読めなかったパスはキャッシュしない**（次の呼び出しで開き直す）。
+#[derive(Default)]
 struct FontFiles {
     files: Mutex<HashMap<PathBuf, (Blob, Loaded)>>,
 }
 
 impl FontFiles {
-    fn new() -> Self {
-        Self {
-            files: Mutex::new(HashMap::new()),
-        }
-    }
-
     /// `path` のフォントファイルを、メモリマップして（できなければ読んで写して）返す。読めなければ `None`。
     ///
-    /// 錠は開く・メモリマップする間も持つ——2 スレッドが同時に引いても 1 回だけ開く。
+    /// 錠は開く・メモリマップする間も持つ——起動時の先読み（[`prefetch`]）と view の `setup` が
+    /// 同時に引いても、1 回だけ開く（#1452）。
     fn load(&self, path: &Path) -> Option<(Blob, Loaded)> {
         // 綴りの違い（fontdb の `C:\WINDOWS\Fonts\…` と `C:/Windows/Fonts/…`）を 1 つのキーに寄せる。
         // 正規化に失敗しても、開けるなら開く（キーが綴りどおりになるだけである）。
@@ -86,7 +78,7 @@ impl FontFiles {
 /// 製品が使う [`FontFiles`]。
 fn font_files() -> &'static FontFiles {
     static FONT_FILES: OnceLock<FontFiles> = OnceLock::new();
-    FONT_FILES.get_or_init(FontFiles::new)
+    FONT_FILES.get_or_init(FontFiles::default)
 }
 
 /// `path` を、書き込みを拒む共有モードで開いてメモリマップする。メモリマップしないときは `None`
@@ -252,7 +244,7 @@ type ResolvedFont = (Blob, u32);
 /// `configure_japanese_font` は main と results の 2 Context から別々に呼ばれ、font_family を
 /// 切り替えて戻すこともある。family 名をキーにして、fontdb の照会（システムフォントの全走査）を
 /// family ごとに 1 回にする。バイト列は [`FontFiles`] の `Arc` を共有するので、別名の family が
-/// 同じファイルへ解決してもファイルは 1 回だけ開く。[`JP_FONT`] と同じく解放されない。
+/// 同じファイルへ解決してもファイルは 1 回だけ開く。[`FontFiles`] と同じく解放されない。
 ///
 /// **失敗（None）はキャッシュしない。** するとフォントを後から導入して同じ名前に
 /// 戻したとき、解決できるのに拒み続ける。再解決のコストは `applied_font_family` ゲートに
@@ -304,19 +296,15 @@ fn jp_font_bytes() -> Option<Blob> {
         "C:/Windows/Fonts/msgothic.ttc",
         "C:/Windows/Fonts/meiryo.ttc",
     ];
-    // poison からは回復する（理由は `resolve_font_family` と同じ）。
-    let mut jp = JP_FONT.lock().unwrap_or_else(|e| e.into_inner());
-    if jp.is_none() {
-        *jp = CANDIDATES
-            .iter()
-            .find_map(|path| font_files().load(Path::new(path)))
-            .map(|(blob, _)| blob);
-    }
-    jp.clone()
+    // 見つけたファイルは [`FontFiles`] がキャッシュするので、2 回目以降は最初の候補で当たる。
+    CANDIDATES
+        .iter()
+        .find_map(|path| font_files().load(Path::new(path)))
+        .map(|(blob, _)| blob)
 }
 
 /// `font_family` から、積むフォントの組（jp_font, user_font）を解決する。結果は
-/// [`USER_FONTS`] と [`JP_FONT`] にキャッシュされる。
+/// [`USER_FONTS`] と [`FontFiles`] にキャッシュされる。
 fn resolve_stack(font_family: &str) -> (Option<Blob>, Option<ResolvedFont>) {
     // **user を先に解決し、カバー判定が済むまで jp_font のファイルを開かない**（順序が要点）。
     // jp を先に開くと、CJK をカバーするフォントでも jp_font のメモリマップ（と、メモリマップできない場所では
@@ -482,29 +470,19 @@ mod tests {
     }
 
     #[test]
-    fn load_maps_a_local_file() {
-        // **経路を assert する。** 判定が常に「メモリマップしない」を返しても、バイト列の一致だけなら緑になる。
-        let dir = TempDir::new("maps");
-        let bytes = sample_bytes();
-        let path = dir.write("font.bin", &bytes);
-        let (loaded, how) = FontFiles::new().load(&path).expect("読める");
-        assert_eq!(
-            how,
-            Loaded::Mapped,
-            "ローカルの固定ドライブのファイルはメモリマップする"
-        );
-        assert_eq!((*loaded).as_ref(), &bytes[..]);
-    }
-
-    #[test]
     fn mapped_file_refuses_writes_but_survives_delete_and_replace() {
         // 書き込みを拒む共有モードの帰結（`map_font_file` の SAFETY）。書き込みでは開けず、
         // 退避・同じ名前での置き換え・削除は通り、そのあともメモリマップの中身は元のままである。
         let dir = TempDir::new("share");
         let bytes = sample_bytes();
         let path = dir.write("font.bin", &bytes);
-        let (loaded, how) = FontFiles::new().load(&path).expect("読める");
-        assert_eq!(how, Loaded::Mapped);
+        let (loaded, how) = FontFiles::default().load(&path).expect("読める");
+        // **経路を assert する。** 判定が常に「メモリマップしない」を返しても、以下は写しで全部通る。
+        assert_eq!(
+            how,
+            Loaded::Mapped,
+            "ローカルの固定ドライブのファイルはメモリマップする"
+        );
 
         assert!(
             std::fs::OpenOptions::new().write(true).open(&path).is_err(),
@@ -525,10 +503,14 @@ mod tests {
     fn load_copies_empty_file_and_rejects_missing_path() {
         let dir = TempDir::new("edge");
         let path = dir.write("empty.bin", &[]);
-        let (loaded, how) = FontFiles::new().load(&path).expect("長さ 0 も読める");
+        let (loaded, how) = FontFiles::default().load(&path).expect("長さ 0 も読める");
         assert_eq!(how, Loaded::Copied, "長さ 0 はメモリマップせず読んで写す");
         assert!((*loaded).as_ref().is_empty());
-        assert!(FontFiles::new().load(&dir.0.join("missing.bin")).is_none());
+        assert!(
+            FontFiles::default()
+                .load(&dir.0.join("missing.bin"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -538,7 +520,7 @@ mod tests {
         // 比べるので、区切りだけを変えても、正規化を外した実装との差が出ない（変異注入で実測）。
         let dir = TempDir::new("spell");
         let path = dir.write("font.bin", &sample_bytes());
-        let files = FontFiles::new();
+        let files = FontFiles::default();
         let (a, _) = files.load(&path).expect("読める");
         let respelled = PathBuf::from(path.to_string_lossy().replace('\\', "/").to_uppercase());
         assert_ne!(respelled, path, "綴りを変えられていない");
@@ -582,7 +564,7 @@ mod tests {
             eprintln!("skip: YuGothM.ttc が無いためメモリマップの検査を実施していない");
             return;
         };
-        let (loaded, how) = FontFiles::new().load(path).expect("読める");
+        let (loaded, how) = FontFiles::default().load(path).expect("読める");
         assert_eq!(
             how,
             Loaded::Mapped,

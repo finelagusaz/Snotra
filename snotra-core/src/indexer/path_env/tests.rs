@@ -211,6 +211,23 @@ fn scan_path_dirs_ignores_non_executable_extensions() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// 拡張子が対象でもディレクトリは候補にしない。`is_dir()` は拡張子の判定の後へ移したので
+/// （#1447）、拡張子を通るディレクトリでしかこの判定は効かない。
+#[test]
+fn scan_path_dirs_skips_directories_with_executable_extensions() {
+    let dir = temp_dir("path_dir_ext");
+    fs::write(dir.join("tool.exe"), "").unwrap();
+    fs::create_dir_all(dir.join("folder.exe")).unwrap();
+
+    let path_list = dir.to_string_lossy().to_string();
+    let entries = scan_path_dirs(&path_list, &IndexTree::empty(), true);
+
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["tool"]);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn scan_path_dirs_deduplicates_across_dirs() {
     let dir = temp_dir("path_dedup");

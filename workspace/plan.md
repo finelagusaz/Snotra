@@ -87,6 +87,7 @@
 - [x] `SPEC.md` 3.3・`cache.rs` の doc・prose:sweep の残り
 - [x] E2E で受け入れ 1〜4 を確かめ、`PERFORMANCE.md` に記録する（post_main 102,146 → 36 ms・構築後の索引 28,993 件で同じ。昇格は cache のテストで確かめた）
 - [x] `/state-check`・`/race-check`・`/symmetric-check` を当てる（3 つとも指摘なし・e014dbf1 の後）
+  - レビュー ラウンド 1（03b11e75・verify:tree A/C/E/F + test:powershell green）: Critical 0 / High 1（造語「起動の読み」）/ Medium 2（LoadOrScan の doc・M6 生存: Deferred の腕を空にしても緑）/ Low 4。InitialBuild を純関数で切り出して表で縛り、rescan_callers_request_a_rescan にファイルごとの呼び出しの数を足した（腕を空にする変異と Deferred を None にする変異が assert で赤になることを測った）。measure-memory-stages.ps1 は scan-log の end 行を待ち、本体が死んだら止め、first-run なら先に止める形にした
 - [ ] 検証カテゴリ A・C・E・F
 
 ## 未確定（実装前に潰す）

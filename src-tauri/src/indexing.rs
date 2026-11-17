@@ -579,7 +579,8 @@ mod tests {
     /// 結果は古いだけで正しく見えるので、挙動テストでは検出されない。
     ///
     /// 縛るのは、各ファイルのコード（`//` 以降を落とした行）で `start_index_build(` を含む行が
-    /// すべて `BuildRequest::Rescan` を含むことと、その行が 1 つ以上あること（存在形の canary）。
+    /// すべて `BuildRequest::Rescan` を含むことと、その行の数がファイルごとに決めた数ちょうどであること（存在形の
+    /// canary を兼ねる。`main.rs` は初回起動の失敗時と cache-miss の起動の 2 つ・#1448）。
     /// 呼び出しを複数行へ折り返されると赤になる（誤検知は受け入れる）。設定変更の経路
     /// （`config_watcher.rs`）は `Rebuild` を渡すことを同じ形で縛る。
     ///
@@ -587,33 +588,43 @@ mod tests {
     /// それを見ない——足すときは、ここへ並べる。
     #[test]
     fn rescan_callers_request_a_rescan() {
-        let cases: [(&str, &str, &str); 4] = [
+        let cases: [(&str, &str, &str, usize); 4] = [
             (
                 "commands/system.rs",
                 include_str!("commands/system.rs"),
                 "BuildRequest::Rescan",
+                1,
             ),
             (
                 "commands/window.rs",
                 include_str!("commands/window.rs"),
                 "BuildRequest::Rescan",
+                1,
             ),
-            ("main.rs", include_str!("main.rs"), "BuildRequest::Rescan"),
+            (
+                "main.rs",
+                include_str!("main.rs"),
+                "BuildRequest::Rescan",
+                2,
+            ),
             (
                 "config_watcher.rs",
                 include_str!("config_watcher.rs"),
                 "BuildRequest::Rebuild",
+                1,
             ),
         ];
-        for (file, src, expected) in cases {
+        for (file, src, expected, count) in cases {
             let calls: Vec<&str> = src
                 .lines()
                 .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
                 .filter(|l| l.contains("start_index_build("))
                 .collect();
-            assert!(
-                !calls.is_empty(),
-                "{file} に start_index_build( の呼び出しが無い"
+            assert_eq!(
+                calls.len(),
+                count,
+                "{file} の start_index_build( の呼び出しの数が {count} でない——消すと、構築を\
+                 起こすはずの経路が黙って起こさなくなる（#1448: cache-miss の起動は構築中の旗が戻らない）"
             );
             for line in calls {
                 assert!(

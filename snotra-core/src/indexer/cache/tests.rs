@@ -742,7 +742,7 @@ fn one_txt_scan(root: &Path) -> Vec<ScanPath> {
     }]
 }
 
-/// **起動の読みは、外れても走査しない**（#1448）。走査は背景の構築へ回す——ここで走査すると、
+/// **起動時の読み込みは、外れても走査しない**（#1448）。走査は背景の構築へ回す——ここで走査すると、
 /// 22〜85 秒のあいだトレイもホットキーも出ない。
 #[test]
 fn load_cache_with_stats_in_does_not_scan_on_a_miss() {
@@ -801,7 +801,7 @@ fn load_cache_with_stats_in_returns_the_cache_on_a_hit() {
     let _ = fs::remove_dir_all(&scan_root);
 }
 
-/// 旧版は、起動の読みでこれまでどおり昇格する（#1448 の受け入れ 4）。
+/// 旧版は、起動時の読み込みでこれまでどおり昇格する（#1448 の受け入れ 4）。
 #[test]
 fn load_cache_with_stats_in_upgrades_a_legacy_format() {
     let _guard = INDEX_LOCK_TEST_GUARD

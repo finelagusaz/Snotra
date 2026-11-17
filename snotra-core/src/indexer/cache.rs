@@ -1,4 +1,4 @@
-//! `index.bin` の入出力——オンディスク形式（現行版と旧版へのフォールバックチェーン）、起動の読み
+//! `index.bin` の入出力——オンディスク形式（現行版と旧版へのフォールバックチェーン）、起動時の読み込み
 //! （[`load_cache_with_stats`]・外れても走査しない）、キャッシュと走査の振り分け
 //! （[`load_or_scan_with_stats`]・計測ハーネスが使う）、保存、旧版を現行版へ書き直す形式昇格。
 //!
@@ -57,7 +57,7 @@ pub const INDEX_CACHE_VERSION: u32 = 10;
 /// 版上げで直前の版——実運用点に今まさに置かれている版——を計測コードが黙って落とす）。
 const INDEX_WIRE_SINCE: u32 = 7;
 
-/// `load_or_scan_with_stats` の各フェーズ所要時間。
+/// 索引の読み込み（`load_cache_with_stats`・`load_or_scan_with_stats`）の各フェーズ所要時間。
 ///
 /// **`cache_load` と `total` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
 /// 項目が無い処理は `total` にしか効かず、差を読む者がいなければ計測上は存在しないままに
@@ -97,13 +97,13 @@ pub struct LoadOrScanStats {
     /// （#1178 で型が変わり、`Instant::elapsed` が 0 を返す確率は実質消えたが、
     /// **「昇格が走ったか」を表しているのは依然として variant のほうである**）。
     ///
-    /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
+    /// **この struct の生成元（`load_cache_with_stats`・`load_or_scan_with_stats`）は常に `LegacyUpgrade::Write` で
     /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）と走査しない再構築の入口（`load_cached_material`）専用で、
     /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
     /// （`LoadCacheResult::upgrade_save` の doc は `Skip` 経由の `None` も併記しているが、
     /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
     pub cache_save: Duration,
-    /// `load_or_scan_with_stats` 全体の所要時間。**丸めずに `Duration` で運ぶ。**
+    /// 読み込み全体（起動では `load_cache_with_stats`）の所要時間。**丸めずに `Duration` で運ぶ。**
     ///
     /// 起動の計測コード（`src-tauri` の `startup.rs`）はこの値と外側の区間の差を
     /// `index_load_unattributed_ms` として出す。その引き算は両辺を同じ関数（`to_ms`）へ
@@ -129,7 +129,7 @@ pub struct LoadOrScanStats {
     pub total: Duration,
 }
 
-/// `load_or_scan_with_stats` の戻り値。
+/// `load_cache_with_stats`・`load_or_scan_with_stats` の戻り値。
 pub struct LoadOrScanResult {
     /// ロード or スキャンされた索引の材料（ツリーと派生データの組）。
     ///
@@ -542,7 +542,7 @@ fn try_load_with_stats_in(
     })
 }
 
-/// 起動の読み（#1448）。キャッシュが読めればそれを返し、**読めなければ走査せず空の材料を返す**。
+/// 起動時の読み込み（#1448）。キャッシュが読めればそれを返し、**読めなければ走査せず空の材料を返す**。
 /// 走査と保存は、呼び出し側が背景の構築へ回す——起動の中で走査すると、22〜85 秒のあいだ
 /// トレイもホットキーも出ない。
 ///

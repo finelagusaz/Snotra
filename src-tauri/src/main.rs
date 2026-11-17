@@ -500,6 +500,27 @@ impl InitialIndex {
     fn initial_indexing(self) -> bool {
         !matches!(self, Self::Loaded)
     }
+
+    /// setup が起こす構築。**構築中として起動した状態（[`Self::initial_indexing`]）は、どれも
+    /// 構築を起こさなければならない**——起こさないと構築中の旗が戻らず、トレイの「終了」も
+    /// グレーアウトしたままになる。
+    fn initial_build(self) -> InitialBuild {
+        match self {
+            Self::Loaded => InitialBuild::None,
+            Self::FirstRun => InitialBuild::SettingsElseRescan,
+            Self::Deferred => InitialBuild::Rescan,
+        }
+    }
+}
+
+/// [`InitialIndex::initial_build`] が決める、setup の構築の起こし方。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitialBuild {
+    None,
+    /// 設定アプリを `--first-run` で起動する。起動できなければ構築する。
+    SettingsElseRescan,
+    /// 背景で構築する。
+    Rescan,
 }
 
 /// 起動時の索引の状態に応じて構築を起こす（#1448）。
@@ -511,16 +532,16 @@ impl InitialIndex {
 /// - `Deferred`: 背景で構築する。設定アプリは開かない
 /// - `Loaded`: 何もしない
 fn start_initial_build(app_handle: &AppHandle, initial: InitialIndex) {
-    match initial {
-        InitialIndex::FirstRun => {
+    match initial.initial_build() {
+        InitialBuild::SettingsElseRescan => {
             if commands::launch_settings_process(app_handle, &["--first-run"]).is_err() {
                 indexing::start_index_build(app_handle, indexing::BuildRequest::Rescan);
             }
         }
-        InitialIndex::Deferred => {
+        InitialBuild::Rescan => {
             indexing::start_index_build(app_handle, indexing::BuildRequest::Rescan);
         }
-        InitialIndex::Loaded => {}
+        InitialBuild::None => {}
     }
 }
 
@@ -754,5 +775,32 @@ mod tests {
             "cache-miss の起動は構築中として起動する"
         );
         assert!(!InitialIndex::Loaded.initial_indexing());
+    }
+
+    /// 構築中として起動した状態は、どれも構築を起こす（#1448）。起こさないと構築中の旗が戻らない。
+    #[test]
+    fn every_indexing_start_starts_a_build() {
+        use super::InitialBuild;
+        assert_eq!(InitialIndex::Loaded.initial_build(), InitialBuild::None);
+        assert_eq!(
+            InitialIndex::FirstRun.initial_build(),
+            InitialBuild::SettingsElseRescan
+        );
+        assert_eq!(
+            InitialIndex::Deferred.initial_build(),
+            InitialBuild::Rescan,
+            "cache-miss の起動は背景で構築する（設定アプリは開かない）"
+        );
+        for initial in [
+            InitialIndex::Loaded,
+            InitialIndex::FirstRun,
+            InitialIndex::Deferred,
+        ] {
+            assert_eq!(
+                initial.initial_indexing(),
+                initial.initial_build() != InitialBuild::None,
+                "{initial:?}: 構築中として起動するなら構築を起こし、起こすなら構築中として起動する"
+            );
+        }
     }
 }

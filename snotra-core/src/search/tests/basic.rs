@@ -352,8 +352,10 @@ fn score_at(
     let plan =
         prepare_query_plan(query, mode, &options).expect("非空クエリは QueryPlan を生成する");
     let kana_available = !engine.kana_lower_names.is_empty();
+    let history = empty_history();
+    let history = HistoryLookup::new(&history);
     engine
-        .score_one_entry(i, &plan, mode, kana_available, &empty_history(), options)
+        .score_one_entry(i, &plan, mode, kana_available, &history, options)
         .map(|s| s.score)
 }
 

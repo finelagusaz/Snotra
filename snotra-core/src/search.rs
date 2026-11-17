@@ -30,8 +30,8 @@ use query_plan::{QueryPlan, prepare_query_plan};
 // スコアリング・順位計算（score_tier・ScoredEntry・score_one_entry・heap_into_results 等）は
 // 子モジュールへ分離（#600）。候補選択・rayon fold/reduce・incremental cache 更新は本ファイル。
 mod scoring;
-use scoring::TopK;
 pub(crate) use scoring::fuzzy_match_score;
+use scoring::{HistoryLookup, TopK};
 
 const GLOBAL_WEIGHT: i64 = 5;
 const QUERY_WEIGHT: i64 = 20;
@@ -356,6 +356,8 @@ impl SearchEngine {
         // self.kana_lower_names.get(i) が範囲外の添字で panic するのを防ぐ。
         // Copy な bool としてクロージャに move する（self への可変借用は不要）。
         let kana_available = !self.kana_lower_names.is_empty();
+        // 履歴に当たりえない候補でキーの組み立てを省く（#1450）。検索 1 回に 1 度だけ作る。
+        let history = HistoryLookup::new(history);
 
         // 並列スコアリング: 各 task は自分の top-k ヒープを組み、reduce() で併合する。
         //
@@ -393,7 +395,7 @@ impl SearchEngine {
                     // 再利用されえないクエリで集めないだけであり、top_k.push は影響を受けない
                     // ので結果は 1 件も変わらない（IncrementalCache::caches_candidates の doc）。
                     if let Some(scored) =
-                        self.score_one_entry(i, &plan, mode, kana_available, history, options)
+                        self.score_one_entry(i, &plan, mode, kana_available, &history, options)
                     {
                         if collect_candidates {
                             // 容量 0 から倍々で伸ばすと葉ごとに十数回確保する。一致が少ない

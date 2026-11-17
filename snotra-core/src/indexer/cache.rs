@@ -670,7 +670,7 @@ fn save_cache_sorted_in(
 /// 走査対象（`scan` と `show_hidden_system`）が同じでも、`include_path_env` と `migemo_enabled` を
 /// 切り替えれば索引は建て直しになる。その 2 つは `index.bin` の中身を変えない（PATH エントリは
 /// 保存の後にマージし、migemo の列は構築が足す）ので、読み直して建てれば全走査と同じ索引になる。
-/// 走査対象が違う・ファイルが無い・壊れているときは `None` を返し、呼び出し側は走査へ落ちる。
+/// 走査対象が違う・ファイルが無い・壊れているときは `None` を返し、呼び出し側は走査する。
 ///
 /// **`LegacyUpgrade::Skip` で読む。** 旧版を読んでも書き戻さない——起動の後に `index.bin` を書くのは
 /// 走査（[`rebuild_and_save`]）だけに保つ。

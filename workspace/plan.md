@@ -87,14 +87,14 @@ impl AsRef<[u8]> for MappedFont { fn as_ref(&self) -> &[u8] { &self.map } }
 
 ### Phase 1: 実装
 - [x] `Cargo.toml` に `memmap2`
-- [x] `font_stack.rs`: `MappedFont`・`Loaded`・`FontFiles`・`load_font_file`・`maps_on`・`JP_FONT` / `USER_FONTS` の型・`resolve_font_family`・`font_definitions`。テスト
+- [x] `font_stack.rs`: `MappedFont`・`Loaded`・`FontFiles`・`load_font_file`（実装では `FontFiles::load` と `map_font_file`・`drive_type_of` に分けた）・`maps_on`・`JP_FONT` / `USER_FONTS` の型・`resolve_font_family`・`font_definitions`。テスト
 
 ### Phase 2: 計測と文書
-- [ ] PrivComm の前後（2 構成）と bench:startup の windows_create を測り、`PERFORMANCE.md` に記録する
-- [ ] 写像中のフォントファイルへの書き込みが拒まれ、削除・名前の変更の後も表示が崩れないことを実機で確かめる
-- [ ] `check:colors` と目視（カテゴリ D）
-- [ ] `//!` と doc・`SPEC.md` の 1 文・`PERFORMANCE.md` の現在形の記述を直す
-- [ ] `/symmetric-check`・`/race-check`（`prefetch` のスレッドと `setup` が同じキャッシュを引く）を当てる
+- [x] PrivComm の前後（2 構成）と bench:startup の windows_create を測り、`PERFORMANCE.md` に記録する — アイドル HackGen 20.7/18.4 → 10.6/10.5、Segoe UI+jp 24.3/24.7 → 10.5/8.7。windows_create p50 13・14 → 11・11 ms
+- [x] 写像中のフォントファイルへの書き込みが拒まれ、削除・名前の変更の後も表示が崩れないことを実機で確かめる — 削除・置き換えの後も写像の中身が変わらないことは、テスト `mapped_file_refuses_writes_but_survives_delete_and_replace`（%TEMP% の実ファイル）で確かめた。導入済みの実フォント（`HackGenConsole-Regular.ttf`）は消さずに、書き込みで開けるかだけを Snotra の起動前・起動中・終了後に試した。**3 時点とも開けなかった**（Snotra 以外のプロセスが既に書き込みを拒むハンドルを持つ）。導入済みのフォントについては、この変更で新しく増える制約は実質無い
+- [x] `check:colors` と目視（カテゴリ D）— 緑。スクリーンショットで jp_font（写像）の和文「検索…」が描かれている。対話の目視 2 点（show の一瞬の色・リサイズのちらつき）はフォントに依らない項目で、人間へ委ねる
+- [x] `//!` と doc・`SPEC.md` の 1 文・`PERFORMANCE.md` の現在形の記述を直す
+- [x] `/symmetric-check`・`/race-check`（`prefetch` のスレッドと `setup` が同じキャッシュを引く）を当てる — symmetric: 開く/写像 ↔ 解く/閉じるは `MappedFont` の drop（宣言順で写像が先）。キャッシュが never-clear なのでプロセス終了まで解かない（意図）。race（`--base origin/main`・④ 7 件・すべて font_stack.rs の錠）: 境界は prefetch スレッドと setup の 2 者が `USER_FONTS`・`JP_FONT`・`FONT_FILES` を引くことだけ。値は不変の `Arc` で古い結果が生じない（b）、UI 状態を変えないので wake 不要（c）、錠は開く・写像の間も持つので同時に引いても 1 回だけ開く（d）、錠の向きは `USER_FONTS`→`FONT_FILES` と `JP_FONT`→`FONT_FILES` だけで、`resolve_stack` は user の錠を離してから jp を引く（e）→ [安全]
 - [ ] 検証カテゴリ A・C・E・F
 
 ## 決定の経緯（2026-11-17・試作の実測）

@@ -3314,6 +3314,23 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 が要る）。**開発機では値が変わらなかった**（p50 79 ms のまま）——platform 側が遅い側に
 着くためで、リスクは runner のような環境で顕在化する。
 
+### 採用: フォントの解決を config の読み込み直後に先読みする（#1452・起動の A/B は未実測）
+
+windows_create の「フォント解決込み」の内訳を測った。フォントの解決（`resolve_font_family`。fontdb の `load_system_fonts` で全システムフォントを開く）と jp_font の読み込み（`jp_font_bytes`）を、一時的な足場（`Instant` で挟むテスト・測り終えて撤去した）で 1 プロセス 1 回ずつ測った。
+
+**測定条件**: 2026-11-17 / 機体 **HAL9000** / release / rustc 1.99.1 / 各 3 回
+
+| font_family | `resolve_font_family` | `jp_font_bytes` |
+|---|---:|---:|
+| `Segoe UI`（既定・CJK を覆わない） | 15.6–15.8 ms | 2.8–3.2 ms |
+| `HackGen Console`（この機体の実 config・CJK を覆う） | 19.3–19.6 ms（初回だけ 38.7 ms） | 読まない |
+
+windows_create（27〜33 ms）のうち 16〜23 ms がフォントである。フォントの解決は config しか要らないので、`main()` が config を読んだ直後に別スレッドで始め（`font_stack::prefetch`）、索引のロード（index_load・path_merge など）と重ねる。view の `setup` は、キャッシュに当たるか、解決が終わるのを錠で待つ。jp_font は 2 スレッドが同時に 13 MiB を読まないよう、錠で読み手を 1 つに絞った。
+
+- 先読みが効くのは起動だけである。実行中に font_family を変えると、従来どおり UI のスレッドで走査を払う（issue の候補 3「DirectWrite で family からファイルを引く」がその次の段）
+
+**起動の A/B（`npm run bench:startup` の windows_create と post_main）は測っていない**。bench は実行中の Snotra を落として起動し直すので、使用中の機体では回さなかった。
+
 ## 起動の端から端まで — #1023 を挟んだ同日 A/B（2026-08-10 計測・release・各 7 標本・実 config）
 
 上の 2026-08-09 の表と今日の値を並べると `index_load` が 8 → 1 ms、`tauri_init` が 3 → 7 ms と

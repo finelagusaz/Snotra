@@ -175,7 +175,7 @@ try {
             if (-not (Get-Process -Name snotra -ErrorAction SilentlyContinue)) {
                 throw "背景の構築の途中で本体が終わった（$scanLog に end 行が無い）。"
             }
-            if ((Get-Date) -gt $deadline) { throw "背景の構築が 300 秒以内に終わらなかった（$scanLog）。" }
+            if ((Get-Date) -gt $deadline) { throw "背景の構築が 300 秒以内に終わらなかった（$scanLog に end 行が無い。記録は best-effort なので、index.bin の更新時刻も確かめる）。" }
             Start-Sleep -Seconds 1
         }
         Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue

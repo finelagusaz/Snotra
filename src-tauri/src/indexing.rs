@@ -574,6 +574,28 @@ mod tests {
         );
     }
 
+    /// **setup は起動時の索引の状態をそのまま `start_initial_build` へ渡す**（#1448）。呼び出しを消すか
+    /// 別の状態を渡すと、cache-miss の起動が構築を起こさず、構築中の旗が戻らない（トレイの「終了」も
+    /// グレーアウトしたまま）。縛るのは、`main.rs` のコード（`//` 以降を落とした行）に
+    /// `start_initial_build(&app_handle, initial)` がちょうど 1 回現れること。
+    ///
+    /// **この検査の外に残るもの**: `start_initial_build` の中で `Deferred` を握りつぶす書き換え
+    /// （先頭で return する・腕を条件で包む等）。それは `smoke-startup.ps1` の「`*.bin` が生成された」
+    /// 検査が捕まえる——検証用プロファイルの最初の起動は cache-miss で、`*.bin` を書くのは背景の構築
+    /// だけだからである（2026-11-17・呼び出しを消した版で赤になることを実測）。
+    #[test]
+    fn main_hands_the_initial_index_to_the_initial_build() {
+        let calls = include_str!("main.rs")
+            .lines()
+            .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+            .filter(|l| l.contains("start_initial_build(&app_handle, initial)"))
+            .count();
+        assert_eq!(
+            calls, 1,
+            "main.rs の setup が start_initial_build(&app_handle, initial) をちょうど 1 回呼んでいない"
+        );
+    }
+
     /// **`/s` と初回構築は `BuildRequest::Rescan` を渡す**（#1456）。`Rebuild` を渡すと、`index.bin`
     /// が同期していれば走査せずに済ませ、ファイルシステムの変化を取り込まないまま黙って進む。
     /// 結果は古いだけで正しく見えるので、挙動テストでは検出されない。

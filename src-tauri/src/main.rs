@@ -93,45 +93,6 @@ fn wait_alt_release_or_timeout() {
 const VK_MASK: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY =
     windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0xE8);
 
-/// [`bring_to_foreground`] がどう前面化したか（trace 用）。
-#[cfg(windows)]
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum ForegroundOutcome {
-    /// 呼んだ時点で既に前面だった。
-    Already,
-    /// `SetForegroundWindow` が 1 回で通った。
-    Direct,
-    /// 1 回目が拒まれ、マスクした Alt を注入して再試行した。`sent` は `SendInput` が
-    /// 全件を受け付けたか（UIPI に阻まれたときに偽になるかは未実測）、`ok` は再試行の `SetForegroundWindow` の返り値。
-    MaskedAlt { sent: bool, ok: bool },
-}
-
-#[cfg(windows)]
-impl ForegroundOutcome {
-    pub(crate) fn path(self) -> &'static str {
-        match self {
-            Self::Already => "already",
-            Self::Direct => "direct",
-            Self::MaskedAlt { .. } => "masked_alt",
-        }
-    }
-
-    pub(crate) fn ok(self) -> bool {
-        match self {
-            Self::Already | Self::Direct => true,
-            Self::MaskedAlt { ok, .. } => ok,
-        }
-    }
-
-    /// 注入した経路の `sent`。注入しなかった経路では `None`。
-    pub(crate) fn sent(self) -> Option<bool> {
-        match self {
-            Self::Already | Self::Direct => None,
-            Self::MaskedAlt { sent, .. } => Some(sent),
-        }
-    }
-}
-
 /// main ウィンドウを前面にする。tao の `set_focus` の代わりに使う（#1470）。
 ///
 /// `SetForegroundWindow` が拒まれたら、Alt の押下で前面化が許可されることを使い、Alt を
@@ -144,17 +105,27 @@ impl ForegroundOutcome {
 ///
 /// `PlatformBridge` を通さず直接呼ぶ。呼び出し元（`show_egui_main`）は、イベントループ上で同期に
 /// 走る `send_alt_key_up` より前に前面化を済ませる必要があり、channel 越しの非同期では順序を保てない。
+///
+/// 結果は trace `egui_show:foreground` に残す。`path` は `already`（既に前面）・`direct`
+/// （1 回で通った）・`masked_alt`（注入して再試行した）。`sent` は注入した回だけ値を持ち、
+/// `SendInput` が全件を受け付けたかを表す（UIPI に阻まれたときに偽になるかは未実測）。
 #[cfg(windows)]
-pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> ForegroundOutcome {
+pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, SendInput, VK_MENU};
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
+    let trace = |path: &str, ok: bool, sent: Option<bool>| {
+        trace_main(
+            "egui_show:foreground",
+            json!({ "path": path, "ok": ok, "sent": sent }),
+        );
+    };
     unsafe {
         if GetForegroundWindow() == hwnd {
-            return ForegroundOutcome::Already;
+            return trace("already", true, None);
         }
         if SetForegroundWindow(hwnd).as_bool() {
-            return ForegroundOutcome::Direct;
+            return trace("direct", true, None);
         }
         let inputs = [
             make_key_input(VK_MENU, false),
@@ -163,10 +134,11 @@ pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> For
             make_key_input(VK_MENU, true),
         ];
         let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len();
-        ForegroundOutcome::MaskedAlt {
-            sent,
-            ok: SetForegroundWindow(hwnd).as_bool(),
-        }
+        trace(
+            "masked_alt",
+            SetForegroundWindow(hwnd).as_bool(),
+            Some(sent),
+        );
     }
 }
 

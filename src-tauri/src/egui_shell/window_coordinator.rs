@@ -433,18 +433,12 @@ pub(crate) fn show_egui_main(
     // tao の `set_focus` は使わない。前面化を拒まれるとマスクなしの Alt を注入し、前面だった
     // アプリのメニューを起動する（#1470）。
     #[cfg(windows)]
-    {
-        let (path, ok, sent) = match window.hwnd() {
-            Ok(hwnd) => {
-                let outcome = crate::bring_to_foreground(hwnd);
-                (outcome.path(), outcome.ok(), outcome.sent())
-            }
-            Err(_) => ("no_hwnd", false, None),
-        };
-        crate::trace_main(
+    match window.hwnd() {
+        Ok(hwnd) => crate::bring_to_foreground(hwnd),
+        Err(_) => crate::trace_main(
             "egui_show:foreground",
-            serde_json::json!({ "path": path, "ok": ok, "sent": sent }),
-        );
+            serde_json::json!({ "path": "no_hwnd", "ok": false, "sent": null }),
+        ),
     }
     #[cfg(not(windows))]
     let _ = window.set_focus();
@@ -1506,25 +1500,17 @@ mod tests {
         let src = include_str!("window_coordinator.rs");
         let needle = concat!(".set_", "focus()");
         let lines: Vec<&str> = src.lines().collect();
-        let hits: Vec<usize> = lines
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| l.contains(needle))
-            .map(|(i, _)| i)
-            .collect();
+        let count = lines.iter().filter(|l| l.contains(needle)).count();
         assert_eq!(
-            hits.len(),
-            1,
-            "window_coordinator.rs が `{needle}` を {} 回書いている（行 {:?}）",
-            hits.len(),
-            hits.iter().map(|i| i + 1).collect::<Vec<_>>()
+            count, 1,
+            "window_coordinator.rs が `{needle}` を {count} 回書いている"
         );
-        let prev = lines[hits[0] - 1].trim();
+        let at = lines.iter().position(|l| l.contains(needle)).unwrap();
         assert_eq!(
-            prev,
+            lines[at - 1].trim(),
             "#[cfg(not(windows))]",
             "`{needle}` の直前が非 windows の cfg でない（行 {}）",
-            hits[0] + 1
+            at + 1
         );
     }
 

@@ -86,8 +86,8 @@ impl AsRef<[u8]> for MappedFont { fn as_ref(&self) -> &[u8] { &self.map } }
 ## 作業項目
 
 ### Phase 1: 実装
-- [ ] `Cargo.toml` に `memmap2`
-- [ ] `font_stack.rs`: `MappedFont`・`Loaded`・`FontFiles`・`load_font_file`・`maps_on`・`JP_FONT` / `USER_FONTS` の型・`resolve_font_family`・`font_definitions`。テスト
+- [x] `Cargo.toml` に `memmap2`
+- [x] `font_stack.rs`: `MappedFont`・`Loaded`・`FontFiles`・`load_font_file`・`maps_on`・`JP_FONT` / `USER_FONTS` の型・`resolve_font_family`・`font_definitions`。テスト
 
 ### Phase 2: 計測と文書
 - [ ] PrivComm の前後（2 構成）と bench:startup の windows_create を測り、`PERFORMANCE.md` に記録する

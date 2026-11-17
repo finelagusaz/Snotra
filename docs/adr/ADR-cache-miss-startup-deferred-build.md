@@ -10,8 +10,11 @@
 
 ## 検討した代替案と却下理由
 
-- **読みも含めて、索引のロード全体を背景へ移す**: 却下。旧版の `index.bin` の昇格は、読みがロック（`INDEX_WRITE_LOCK`）の外にあり、そのウィンドウは「昇格は `main` の起動段だけで、索引ビルドのスレッドはまだ居ない」という順序で閉じている。ロードを背景へ移すと、昇格と背景の構築が並びうる。読みを `main` に残せば、昇格は今と同じ位置で起き、cache-miss のときは昇格そのものが起きない。
-- **cache-miss を first-run の起動形（`setup_first_run`）に畳む**: 却下。first-run は設定アプリを `--first-run` で開いて走査対象を確かめさせるが、cache-miss の利用者は走査対象を既に決めている。関数の名前も嘘になる。起動の計測でも、`index_load` が null でよいのは first-run だけ（`scripts/lib/SnotraStartupContract.psm1`）なので、first-run と区別して刻む必要がある。
+- **読みも含めて、索引のロード全体を背景へ移す**: 却下。旧版の `index.bin` の昇格は、読みがロック（`INDEX_WRITE_LOCK`）の外にある。その隙が開かないのは、「昇格は `main` の起動段だけで起き、そのとき索引ビルドのスレッドはまだ居ない」という順序のおかげである。ロードを背景へ移すと、昇格と背景の構築が並びうる。読みを `main` に残せば、昇格は今と同じ位置で起きる。cache-miss のときは、昇格そのものが起きない。
+- **cache-miss を first-run の起動形（`setup_first_run`）に畳む**: 却下。理由は 3 つある。
+  - first-run は、設定アプリを `--first-run` で開いて走査対象を確かめさせる。cache-miss の利用者は、走査対象を既に決めている
+  - 関数の名前が嘘になる
+  - 起動の計測で、`index_load` が null でよいのは first-run だけである（`scripts/lib/SnotraStartupContract.psm1`）。first-run と区別して刻む必要がある
 - **構築の完了を知らせる trace を製品に足し、計測スクリプトがそれを待つ**: 却下。`scripts/measure-memory-stages.ps1` が待つべきものは「次の起動がキャッシュに当たり、記録に終わりの無い行が残らない」ことで、それは `scan-log.jsonl` の end 行がそのまま示す。計測のために製品の trace を足さずに済む。
 - **`load_or_scan_with_stats` に「外れても走査しない」引数を足す**: 却下。計測ハーネス（`snotra-core/tests/`）は外れたら走査する形を使い続けるので、呼び出しのたびに意図を引数で書かせることになる。cache-hit の分岐を `try_load_with_stats_in` へ切り出し、走査する入口と走査しない入口を別の関数にした。
 

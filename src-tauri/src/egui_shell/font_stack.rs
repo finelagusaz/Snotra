@@ -3,7 +3,7 @@
 //! それぞれが自分の Context に対して呼ぶ）——ゆえにどちらにも属させず独立モジュールにする。
 //! フォントのバイト列はファイルをメモリマップして持ち（メモリマップできなければ読んで写す・[`FontFiles`]）、
 //! ファイルのパスごとに 1 回だけ開く（**never-clear**。消すと、次の解決が同じファイルを
-//! もう一度開く）。メモリマップはヒープではないので private commit に載らない（#1449）。
+//! もう一度開く）。メモリマップしたページはヒープに無いので、private commit に載らない（#1449）。
 //! フォント登録の分岐は次のとおり（#532・#689）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**分岐を列挙するのは、この index 0 の不変条件が分岐ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
 //!
 //! **index 0 を破ると Latin と CJK が混在する行のベースラインがずれる**（2 フォントで積むとずれること自体は
@@ -98,9 +98,9 @@ fn map_font_file(path: &Path) -> Option<MappedFont> {
     }
     // SAFETY: メモリマップの背後のファイルは、`FILE_SHARE_WRITE` を含まない共有モードで開いた `file` が
     // 生きている間、他のハンドルから書き込みのために開けない（OS が拒む）。書き込みのために開いている
-    // 他のハンドルが既に在れば、`file` の open 自体が共有違反で失敗する。削除と名前の変更は許すが、それは
-    // ディレクトリの項目を外すだけで、メモリマップが指す中身は閉じるまで残る（#1449 で実測）。`file` は
-    // メモリマップと同じ値（`MappedFont`）に入り、メモリマップより先に閉じない。ページの読み込みに失敗しうる
+    // 他のハンドルが既に在れば、`file` の open 自体が共有違反で失敗する。削除と名前の変更は許す。
+    // どちらもディレクトリの項目を外すだけで、メモリマップが指す中身は閉じるまで残る（#1449 で実測）。
+    // `file` はメモリマップと同じ値（`MappedFont`）に入り、メモリマップより先に閉じない。ページの読み込みに失敗しうる
     // 場所（ネットワーク・クラウドのプレースホルダ）は `maps_on` が除く。
     let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
     Some(MappedFont { map, _file: file })
@@ -296,7 +296,7 @@ fn jp_font_bytes() -> Option<Blob> {
         "C:/Windows/Fonts/msgothic.ttc",
         "C:/Windows/Fonts/meiryo.ttc",
     ];
-    // 見つけたファイルは [`FontFiles`] がキャッシュするので、2 回目以降は最初の候補で当たる。
+    // 見つけたファイルは [`FontFiles`] がキャッシュするので、2 回目以降は開き直さない。
     CANDIDATES
         .iter()
         .find_map(|path| font_files().load(Path::new(path)))
@@ -307,8 +307,8 @@ fn jp_font_bytes() -> Option<Blob> {
 /// [`USER_FONTS`] と [`FontFiles`] にキャッシュされる。
 fn resolve_stack(font_family: &str) -> (Option<Blob>, Option<ResolvedFont>) {
     // **user を先に解決し、カバー判定が済むまで jp_font のファイルを開かない**（順序が要点）。
-    // jp を先に開くと、CJK をカバーするフォントでも jp_font のメモリマップ（と、メモリマップできない場所では
-    // その写し）と egui の解析を持つことになる。
+    // jp を先に開くと、CJK をカバーするフォントでも jp_font を開き、egui がそれを解析する
+    // （メモリマップできない場所では写しも持つ）。
     let user = resolve_font_family(font_family);
     let need_jp = match &user {
         Some((blob, face_index)) => !font_covers_cjk((**blob).as_ref(), *face_index),

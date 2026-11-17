@@ -468,8 +468,7 @@ pub(crate) fn show_egui_main(
     // **この構造では表現不能である**というのが結論であり、下 2 つの順序依存は現在
     // 「前面化（`bring_to_foreground`）を呼んだ後」でしかない（**未実測**）。
     //
-    // 残留 Alt 解除: focus 確定後かつ物理 Alt 解放後のみ（#558）。注入の後で待たない理由は
-    // `main.rs` の `send_alt_key_up` のコメントにある。
+    // 残留 Alt 解除: focus 確定後かつ物理 Alt 解放後のみ（#558）。
     if !crate::is_alt_pressed() {
         crate::send_alt_key_up();
     }

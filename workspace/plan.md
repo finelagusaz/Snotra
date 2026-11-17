@@ -86,7 +86,7 @@
 ### Phase 3: 文書と計測
 - [x] `SPEC.md` 3.3・`cache.rs` の doc・prose:sweep の残り
 - [x] E2E で受け入れ 1〜4 を確かめ、`PERFORMANCE.md` に記録する（post_main 102,146 → 36 ms・構築後の索引 28,993 件で同じ。昇格は cache のテストで確かめた）
-- [ ] `/state-check`・`/race-check`・`/symmetric-check` を当てる
+- [x] `/state-check`・`/race-check`・`/symmetric-check` を当てる（3 つとも指摘なし・e014dbf1 の後）
 - [ ] 検証カテゴリ A・C・E・F
 
 ## 未確定（実装前に潰す）

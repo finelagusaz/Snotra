@@ -430,6 +430,17 @@ pub(crate) fn show_egui_main(
     // 安価であり、show は頻繁な操作でもない。
     apply_native_background(&window, read_background(app));
     let _ = window.show();
+    // tao の `set_focus` は使わない。前面化を拒まれるとマスクなしの Alt を注入し、前面だった
+    // アプリのメニューを起動する（#1470）。
+    #[cfg(windows)]
+    match window.hwnd() {
+        Ok(hwnd) => crate::bring_to_foreground(hwnd),
+        Err(_) => crate::trace_main(
+            "egui_show:foreground",
+            serde_json::json!({ "path": "no_hwnd", "ok": false, "sent": null }),
+        ),
+    }
+    #[cfg(not(windows))]
     let _ = window.set_focus();
     // **ここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちを置かない。
     // イベントループ上では恒久的に no-op である**（#880）。
@@ -455,7 +466,7 @@ pub(crate) fn show_egui_main(
     // 禁じられている（`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。`on_event_loop` でも
     // 遅延できない——イベントループスレッドから呼ぶとインライン実行にフォールバックする。
     // **この構造では表現不能である**というのが結論であり、下 2 つの順序依存は現在
-    // 「`set_focus()` を呼んだ後」でしかない（**未実測**）。
+    // 「前面化（`bring_to_foreground`）を呼んだ後」でしかない（**未実測**）。
     //
     // 残留 Alt 解除: focus 確定後かつ物理 Alt 解放後のみ（#558）。
     // **`send_alt_key_up` は内部で 5ms スリープし、その根拠は失効している**——いまイベント
@@ -468,9 +479,9 @@ pub(crate) fn show_egui_main(
     }
     // §12: 表示時 IME オフ（設定有効時・復元なし・#532）。ime_off_on_show は実行中
     // config から都度読み（キャッシュしない・#576 同型——config_watcher の hot-reload が diff/event
-    // 追加なしに届く）。**`set_focus()` より後に置く**——前だと IME オフが対象ウィンドウに効かない。
+    // 追加なしに届く）。**前面化より後に置く**——前だと IME オフが対象ウィンドウに効かない。
     // フォーカス同期待ちはここに無いので（上のコメント）、ここが依存できるのは
-    // `set_focus()` の呼び出し順だけである。
+    // 前面化の呼び出し順だけである。
     //
     // なお `TurnOffIme` は **platform スレッドへの channel 送信**であり、`ImmSetOpenStatus` は
     // そちらで非同期に走る——順序として制御できるのは**送信の位置**までで、実行の時刻ではない。
@@ -1479,6 +1490,28 @@ mod tests {
             0x12, 0x34, 0x56, 0x80,
         ));
         assert_eq!((c.0, c.1, c.2, c.3), (0x12, 0x34, 0x56, 0xff));
+    }
+
+    /// 回帰テスト: Windows の show は tao の `set_focus` を呼ばない（#1470）。tao は前面化に
+    /// 失敗するとマスクなしの Alt を注入し、前面だったアプリのメニューを起動する。この経路は
+    /// 速い打鍵でしか踏まれず、smoke では見えない。Windows 以外に向けた 1 か所だけを許す。
+    #[test]
+    fn windows_show_does_not_call_tao_set_focus() {
+        let src = include_str!("window_coordinator.rs");
+        let needle = concat!(".set_", "focus()");
+        let lines: Vec<&str> = src.lines().collect();
+        let count = lines.iter().filter(|l| l.contains(needle)).count();
+        assert_eq!(
+            count, 1,
+            "window_coordinator.rs が `{needle}` を {count} 回書いている"
+        );
+        let at = lines.iter().position(|l| l.contains(needle)).unwrap();
+        assert_eq!(
+            lines[at - 1].trim(),
+            "#[cfg(not(windows))]",
+            "`{needle}` の直前が非 windows の cfg でない（行 {}）",
+            at + 1
+        );
     }
 
     #[cfg(windows)]

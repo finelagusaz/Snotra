@@ -168,7 +168,7 @@ fn apply_config_change(app: &AppHandle) {
     // start_index_build が mark_index_stale で stale を立て、in-flight ビルドの complete re-diff /
     // finish 後の再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。
     if index_changed {
-        indexing::start_index_build(app);
+        indexing::start_index_build(app, indexing::BuildRequest::Rebuild);
     }
 
     // 幅変更の反映は egui view が config-applied wake 後の live-read で自ら set_size する

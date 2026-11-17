@@ -228,10 +228,11 @@ fn main() {
     // フォントの解決を先読みし、索引のロード以降と重ねる（#1452・`font_stack::prefetch` の doc）。
     egui_shell::prefetch_fonts(config.visual.font_family.clone());
 
-    let (mut material, initial_indexing) = if is_first_run {
+    let (mut material, initial_indexing, cache_in_sync) = if is_first_run {
         (
             indexer::IndexMaterial::from_tree(snotra_core::index_tree::IndexTree::empty()),
             true,
+            false,
         )
     } else {
         let result =
@@ -261,7 +262,7 @@ fn main() {
             include_path_env: config.search.include_path_env,
         });
         startup::mark(startup::Phase::IndexLoad);
-        (result.material, false)
+        (result.material, false, result.cache_in_sync)
     };
 
     // PATH エントリのスキャン + マージ（`indexing::build_index_from_material` と同じ手順の別実装——規則を変えるなら両方）。**ツリーとマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記もツリーへの追加も、空なら何もしない。
@@ -295,7 +296,10 @@ fn main() {
     let window_width = config.appearance.window_width;
     let bg_color = config.visual.background_color.clone();
 
-    let engine = Engine::from_material(material, history, config);
+    let mut engine = Engine::from_material(material, history, config);
+    // `index.bin` がこの索引と同じ走査の結果か。偽なら、設定変更の再構築でも `index.bin` を読まずに
+    // 走査する（first-run・保存に失敗した cache-miss・#1456）。
+    engine.set_cache_in_sync(cache_in_sync);
     startup::mark(startup::Phase::EngineBuild);
 
     let app_state = AppState::new(engine, initial_indexing);
@@ -470,7 +474,7 @@ fn finish_platform_thread(
 /// can open settings via open_settings once the build finishes.
 fn setup_first_run(app_handle: &AppHandle, is_first_run: bool) {
     if is_first_run && commands::launch_settings_process(app_handle, &["--first-run"]).is_err() {
-        indexing::start_index_build(app_handle);
+        indexing::start_index_build(app_handle, indexing::BuildRequest::Rescan);
     }
 }
 

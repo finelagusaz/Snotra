@@ -97,7 +97,7 @@ pub struct LoadOrScanStats {
     /// **「昇格が走ったか」を表しているのは依然として variant のほうである**）。
     ///
     /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
-    /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）専用で、
+    /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）と非走査の再構築の入口（`load_cached_material`）専用で、
     /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
     /// （`LoadCacheResult::upgrade_save` の doc は `Skip` 経由の `None` も併記しているが、
     /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
@@ -139,6 +139,10 @@ pub struct LoadOrScanResult {
     pub material: IndexMaterial,
     /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
     pub cache_changed: bool,
+    /// `index.bin` が、返した材料と同じ走査の結果か（#1456）。cache-hit なら真、走査したなら
+    /// 保存できたかどうか、保存先が引けなければ偽。engine の ledger の初期値になる——偽なら、
+    /// 次の非走査の再構築は `index.bin` を読まずに走査へ落ちる。
+    pub cache_in_sync: bool,
     /// 各フェーズの所要時間。
     pub stats: LoadOrScanStats,
 }
@@ -456,6 +460,7 @@ fn load_or_scan_with_stats_in(
         return LoadOrScanResult {
             material: result.material,
             cache_changed: false,
+            cache_in_sync: true,
             stats,
         };
     }
@@ -464,7 +469,7 @@ fn load_or_scan_with_stats_in(
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
-    let (material, scan_took, sort_took, cache_save_took) = with_index_write_lock(|| {
+    let (material, saved, scan_took, sort_took, cache_save_took) = with_index_write_lock(|| {
         // **shorthand を使わない**（`scan` は引数名と衝突する・#1178）。
         let Scanned {
             entries,
@@ -477,11 +482,12 @@ fn load_or_scan_with_stats_in(
         // 同じツリーを 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
         // 保存側が計算して書いたものをここで受け取らないと、下流が全件を実体化してから
         // 建て直すことになる。
-        let (tree, masks) = save_cache_sorted_in(dir, entries, current_hash, BuiltAt::Scanned);
+        let (tree, masks, saved) =
+            save_cache_sorted_in(dir, entries, current_hash, BuiltAt::Scanned);
         let material = IndexMaterial::derived(tree, masks);
         let cache_save_took = cache_save_started.elapsed();
 
-        (material, scan_took, sort_took, cache_save_took)
+        (material, saved, scan_took, sort_took, cache_save_took)
     });
 
     let stats = LoadOrScanStats {
@@ -500,6 +506,7 @@ fn load_or_scan_with_stats_in(
         // **cache-miss でも派生データを持って返る。** 保存側が `index.bin` へ書いたのと同じ 4 本であり、キャッシュヒット時に `load_cache_in` が返すものと**表現まで同じ**である（どちらも `collapse_lower_pair` = `measure_derived_sharing` を通した `Collapsed`）。ゆえに `cache_changed` は「どのコンストラクタが選ばれるか」を決めない。
         material,
         cache_changed: true,
+        cache_in_sync: saved,
         stats,
     }
 }
@@ -536,6 +543,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             LoadOrScanResult {
                 material: IndexMaterial::from_tree(IndexTree::build(entries)),
                 cache_changed: true,
+                cache_in_sync: false,
                 stats: LoadOrScanStats {
                     cache_hit: false,
                     // **照合する相手が居ないので計算しない。** `config_hash` は `index.bin` へ
@@ -594,12 +602,15 @@ impl BuiltAt {
 /// cache-miss の分岐が実際にそうする）。
 ///
 /// **派生データを持たない材料を返す分岐がある。** `config_dir` が引けないときは `index.bin` を書かないので派生データも計算しない——常に計算する形にすると、誰も読まない列を全件ぶん組み立てることになる。**この分岐がこの性質の正本である**（数え上げは他へ書かない）。
-fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial {
+///
+/// **2 つ目の値は `index.bin` へ書けたか**（[`save_cache_sorted_in`] の返り値）。保存先が引けない
+/// 分岐は書かないので偽である。
+fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> (IndexMaterial, bool) {
     let Some(dir) = Config::config_dir() else {
-        return IndexMaterial::from_tree(IndexTree::build(entries));
+        return (IndexMaterial::from_tree(IndexTree::build(entries)), false);
     };
-    let (tree, masks) = save_cache_sorted_in(&dir, entries, config_hash, BuiltAt::Scanned);
-    IndexMaterial::derived(tree, masks)
+    let (tree, masks, saved) = save_cache_sorted_in(&dir, entries, config_hash, BuiltAt::Scanned);
+    (IndexMaterial::derived(tree, masks), saved)
 }
 
 /// `save_cache_sorted` と同じ保存処理を `dir` 注入で行う（統合テスト用、issue #429）。
@@ -612,15 +623,19 @@ fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial 
 /// `new_from_tree` がツリーを実体化して Wave 1/2 を建て直していた——**計算したものを捨ててから、
 /// 同じものを作り直していた**（実測は `PERFORMANCE.md`「採用: 保存が返した派生データを cache-miss がそのまま使う」）。
 ///
-/// **書き込みの失敗は返り値に影響しない。** 返すのは今メモリに在るツリーと、そのツリーに対して導出
+/// **書き込みの失敗はツリーと派生データに影響しない。** 返すのは今メモリに在るツリーと、そのツリーに対して導出
 /// した派生データであり、両者の整合はディスクへ届いたかとは独立である。書けなければ次回が
 /// cache-miss になるだけで、この起動の索引は正しい。
+///
+/// **3 つ目の値は書けたかである**（#1456）。書けなかった走査の後の `index.bin` は、いまの索引と別の
+/// 走査の結果でありうる。非走査の再構築（[`load_cached_material`]）がそれを読まないよう、
+/// engine の ledger がこの値を持つ。
 fn save_cache_sorted_in(
     dir: &Path,
     entries: Vec<AppEntry>,
     config_hash: u64,
     built_at: BuiltAt,
-) -> (IndexTree, CachedMasks) {
+) -> (IndexTree, CachedMasks, bool) {
     let bf = cache_bin_file_in(dir);
     let derived = derive_columns(entries);
 
@@ -641,12 +656,37 @@ fn save_cache_sorted_in(
         lower_names: Cow::Borrowed(&derived.lower_names),
         lower_file_names: Cow::Borrowed(&derived.lower_file_names),
     };
-    if !bf.save(&cache) {
+    let saved = bf.save(&cache);
+    if !saved {
         eprintln!("[indexer] failed to save {}", bf.path().display());
     }
     // **畳むのは書き終えた後である**（借用の順序）。
     // `clone` は挟まない——上の `Cow::Borrowed` の借用は `bf.save` を最後に終わる（NLL）。
-    derived.into_cached_masks()
+    let (tree, masks) = derived.into_cached_masks();
+    (tree, masks, saved)
+}
+
+/// `index.bin` に載っている索引の材料を、**走査も書き込みもせずに**読む（#1456）。
+///
+/// 走査対象（`scan` と `show_hidden_system`）が同じでも、`include_path_env` と `migemo_enabled` を
+/// 切り替えれば索引は建て直しになる。その 2 つは `index.bin` の中身を変えない（PATH エントリは
+/// 保存の後にマージし、migemo の列は構築が足す）ので、読み直して建てれば全走査と同じ索引になる。
+/// 走査対象が違う・ファイルが無い・壊れているときは `None` を返し、呼び出し側は走査へ落ちる。
+///
+/// **`LegacyUpgrade::Skip` で読む。** 旧版を読んでも書き戻さない——起動の後に `index.bin` を書くのは
+/// 走査（[`rebuild_and_save`]）だけに保つ。
+///
+/// **読んだものが engine の索引と同じ走査の結果かは、ここでは分からない。** 走査対象のハッシュが
+/// 合っても、前の走査で保存に失敗していれば、さらに前の走査の結果が残っている。それを見張るのは
+/// 呼び出し側（engine の ledger の `cache_in_sync`）である。
+pub fn load_cached_material(scan: &[ScanPath], show_hidden_system: bool) -> Option<IndexMaterial> {
+    let dir = Config::config_dir()?;
+    load_cached_material_in(&dir, compute_config_hash(scan, show_hidden_system))
+}
+
+/// [`load_cached_material`] を `dir` 注入で行う（テスト用）。
+fn load_cached_material_in(dir: &Path, config_hash: u64) -> Option<IndexMaterial> {
+    load_cache_in(dir, config_hash, LegacyUpgrade::Skip).map(|result| result.material)
 }
 
 /// Force rebuild: scan and save cache, regardless of existing cache.
@@ -678,7 +718,7 @@ pub fn rebuild_and_save(
         let scanned = entries.len();
         let config_hash = compute_config_hash(scan, show_hidden_system);
         let save_started = Instant::now();
-        let material = save_cache_sorted(entries, config_hash);
+        let (material, saved) = save_cache_sorted(entries, config_hash);
         let save_took = save_started.elapsed();
         let stats = RebuildStats {
             scan: scan_took,
@@ -686,12 +726,13 @@ pub fn rebuild_and_save(
             save: save_took,
             scanned,
             dirs: dirs.load(Ordering::Relaxed),
+            saved,
         };
         (material, stats)
     })
 }
 
-/// [`rebuild_and_save`] の区間と数。**時計と数を運ぶだけで、どの分岐を通ったかの判定には使わない。**
+/// [`rebuild_and_save`] の区間と数、と保存の成否。**区間と数は、どの分岐を通ったかの判定には使わない。**
 #[derive(Debug, Clone)]
 pub struct RebuildStats {
     /// `scan_all` の区間。
@@ -708,6 +749,9 @@ pub struct RebuildStats {
     pub scanned: usize,
     /// `read_dir` に成功したディレクトリの数（[`scan_all`]）。
     pub dirs: usize,
+    /// `index.bin` へ書けたか。**これだけは時計でも数でもない**——engine の ledger が
+    /// `index.bin` を非走査の再構築に使ってよいか（`cache_in_sync`）を決めるのに読む（#1456）。
+    pub saved: bool,
 }
 
 /// キャッシュ読み込み結果。
@@ -760,7 +804,9 @@ struct LoadCacheResult {
 /// **`Skip` が要るのは、製品の起動経路以外にも `load_cache_in` を通る入口があるからである。**
 /// `load_cached_entries` は corpus テストの入口（`search/tests/common.rs`）であり、
 /// 開発者の実 `%APPDATA%\Snotra\index.bin` を読む。ここで書き戻すと、テストを走らせる
-/// だけで実データを書き換える（#1013 と同型）。
+/// だけで実データを書き換える（#1013 と同型）。もう 1 つは、起動の後に走る非走査の再構築
+/// （[`load_cached_material`]・#1456）である。起動の後に `index.bin` を書くのを走査だけに保つため、
+/// 旧版を読んでも書き戻さない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LegacyUpgrade {
     Write,
@@ -816,7 +862,7 @@ fn upgrade_legacy_cache_in(
     // `LoadOrScanStats::cache_save` へ運んだ値は `cache_load` の**内数**になる
     // （フェーズの和には足さない——doc を参照）。
     let save_started = Instant::now();
-    let (tree, masks) = with_index_write_lock(|| {
+    let (tree, masks, _) = with_index_write_lock(|| {
         save_cache_sorted_in(dir, entries, config_hash, BuiltAt::Carried(built_at))
     });
     // **`Some` を作るのはこの 1 行だけである。**
@@ -1095,6 +1141,8 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
 /// 新しい索引を書き終えると、昇格がそれを古い内容で上書きしうる。**このウィンドウが今日開かない
 /// のは機構ではなく順序による**——製品でこの経路を通る呼び出し元は `main` の起動段の 1 つだけで、
 /// もう一方の書き手（索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。
+/// 索引ビルドのスレッドも `index.bin` を読む（非走査の再構築の [`load_cached_material`]）が、
+/// `LegacyUpgrade::Skip` で読むのでこの経路を通らない。
 /// **ロード後に走りうる書き手をこの経路へ足す日には、ウィンドウが戻る。** 他の 2 つの書き手は
 /// 走査から保存までを 1 回のロック取得で覆うので、構造的に開かない。
 ///

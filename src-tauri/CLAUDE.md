@@ -16,7 +16,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `trace.rs` — `SNOTRA_TRACE` 環境変数ゲートの構造化トレースログ
 - `heap_trace.rs` — Rust ヒープ常駐の計装（`heap-trace` feature でのみ有効）
 - `startup.rs` — 起動の端から端まで（プロセス作成 → ホットキー登録完了）を刻む計測コード
-- `scan_log.rs` — 索引の構築ごとの所要を `scan-log.jsonl` へ残す記録
+- `scan_log.rs` — 索引の走査ごとの所要を `scan-log.jsonl` へ残す記録
 - `monitor.rs` — マルチモニター対応の Win32 ヘルパー
 - `working_set.rs` — 非表示アイドル時の working set 回収（自プロセスと設定サイドカー）
 - `commands/` — egui view・トレイが共有する core 関数群（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）

@@ -282,7 +282,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 
 `-ExePath` の既定を持つ起動ハーネスも、既定の本体を `test:powershell` と同じ形で導く（対象の正本は `scripts/lib/SnotraSmoke.Tests.ps1` の既定 ExePath の検査、debug か release かは各スクリプトの既定）。起点はスクリプトが置かれたリポジトリであって、cwd ではない。そのため、worktree から既定のまま回せば、worktree の本体を測る（#1179。以前は絶対パスが直書きされており、別の作業コピーを黙って測りながら緑を返していた）。測った本体の出し方は、`Resolve-SnotraCargoExecutable` の doc が正本である。別の本体を指すときだけ `-ExePath <path>` を渡す。明示した相対パスは、これらのハーネスでは（`test:powershell` と違い）cwd 相対のまま解釈される。
 
-索引の構築（`/s`・設定変更・初回構築）ごとの所要は、製品が `scan-log.jsonl`（`SPEC.md` §13.4）へ残す。テキストなので PowerShell で直接読む:
+走査を伴う索引の構築（`/s`・走査対象の変更・初回構築）ごとの所要は、製品が `scan-log.jsonl`（`SPEC.md` §13.4）へ残す。走査しない再構築（`include_path_env`・migemo の切り替え）は記録しない。テキストなので PowerShell で直接読む:
 
 ```powershell
 Get-Content "$env:APPDATA/Snotra/scan-log.jsonl" -Tail 20   # start だけの行 = 完走しなかった構築

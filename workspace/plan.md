@@ -119,15 +119,15 @@ prose:sweep で見つかった残りの名指しは直さない: `docs/adr/` と
 ## 作業項目
 
 ### Phase 1: core
-- [ ] `cache.rs`: 保存の成否を返す・`RebuildStats.saved`・`load_cached_material` とテスト
-- [ ] `engine.rs`: ledger の拡張とテスト
+- [x] `cache.rs`: 保存の成否を返す・`RebuildStats.saved`・`load_cached_material` とテスト
+- [x] `engine.rs`: ledger の拡張とテスト
 
 ### Phase 2: src-tauri
-- [ ] `indexing.rs`: `BuildRequest`・drain の分岐・アイコン無効化の移設・ソーステキスト検査
-- [ ] 呼び出し元 4 か所へ種類を渡す・`main.rs` で `set_cache_in_sync`
+- [x] `indexing.rs`: `BuildRequest`・drain の分岐・アイコン無効化の移設・ソーステキスト検査
+- [x] 呼び出し元 4 か所へ種類を渡す・`main.rs` で `set_cache_in_sync`
 
 ### Phase 3: 文書と計測
-- [ ] `SPEC.md` 7.5 とアイコンの節・`docs/architecture.md`・doc コメント
+- [x] `SPEC.md` 7.5 とアイコンの節・`docs/architecture.md`・doc コメント
 - [ ] E2E で受け入れ 1・3 を確かめ、所要を `PERFORMANCE.md` に記録する
 - [ ] `/state-check`・`/race-check`・`/symmetric-check` を当てる
 - [ ] 検証カテゴリ A・C・E・F

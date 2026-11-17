@@ -17,7 +17,7 @@ fn ensure_not_indexing(state: &AppState) -> Result<(), String> {
 // 返り値契約の「失敗しうる操作系」（`commands/mod.rs` の `//!`・#434）。
 pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     ensure_not_indexing(&state)?;
-    if indexing::start_index_build(&app) {
+    if indexing::start_index_build(&app, indexing::BuildRequest::Rescan) {
         Ok(())
     } else {
         // try_begin_index_build の CAS に負けた（既に別スレッドがビルド中）場合も

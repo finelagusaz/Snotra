@@ -3,13 +3,16 @@
 //! `start_index_build` は stale マーク → CAS → spawn の順で、drain ループ（現在 config の
 //! `IndexInputs` snapshot → ロック外で再構築 → swap + re-diff）を stale が消えるまで回す。
 //! ビルド本体は `catch_unwind` で包み、panic 時の flag 固着（永久「構築中」）を防ぐ。
-//! drain の各反復は所要を `scan-log.jsonl` へ記録し（[`crate::scan_log`]）、走査したフォルダ数を
-//! status 行の進捗として `AppState` に置く。
+//!
+//! **再構築は走査するとは限らない**（#1456）。走査が要るか（`IndexDrain::must_scan`）は engine の
+//! ledger が決め、要らなければ `index.bin` を読み直して建てる（読めなければ走査へ落ちる）。
+//! 走査した反復だけが、所要を `scan-log.jsonl` へ記録し（[`crate::scan_log`]）、走査したフォルダ数を
+//! status 行の進捗として `AppState` に置き、アイコンキャッシュを無効化する。
 
 use std::sync::Mutex;
 use std::time::Instant;
 
-use snotra_core::engine::{IndexInputs, PrebuiltIndex};
+use snotra_core::engine::{DrainOutcome, IndexInputs, PrebuiltIndex};
 use snotra_core::indexer;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -17,40 +20,44 @@ use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::scan_log;
 use crate::state::AppState;
 
+/// 再構築の要求の種類（#1456）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildRequest {
+    /// 必ず走査する（`/s`・初回構築）。ファイルシステムの最新を取り込む。
+    Rescan,
+    /// 索引を建て直す。走査するかは drain が決める（設定変更・finish 後の自己再 kick）。
+    /// 走査対象が変わっていれば `index.bin` の照合に外れるので、結果として走査する。
+    Rebuild,
+}
+
 /// インデックスビルドを開始（または kick）する。ビルドスレッドを起動したら `true`、
 /// 既に走行中なら `false` を返す。
 ///
 /// ビルド要求の全経路（config 変更 reindex / first-run / 手動 rebuild / 自己再 kick）が通る単一入口。
-/// 先に `mark_index_stale` で index を stale にし、CAS に失敗（既に in-flight）しても走行中ビルドの
-/// drain ループ / finish 後再チェックが取りこぼさず拾う（lost-update を塞ぐ、issue #347/#348-A）。
+/// 先に ledger へ要求を立て（`request_rescan` / `mark_index_stale`）、CAS に失敗（既に in-flight）
+/// しても走行中ビルドの drain ループ / finish 後再チェックが取りこぼさず拾う（lost-update を塞ぐ、
+/// issue #347/#348-A）。走査の要求も ledger が世代で持つので、同じ形で取りこぼさない（#1456）。
 ///
 /// **finish 後に `is_index_stale` を再チェック**し、finish ウィンドウで刺さった変更を自己再 kick で拾う。
 /// **unwind の panic 経路では再 kick しない**——決定論的な panic を無限にリトライしないため。
-pub fn start_index_build(app: &AppHandle) -> bool {
+pub fn start_index_build(app: &AppHandle, request: BuildRequest) -> bool {
     let state = app.state::<AppState>();
 
     // ビルド要求: index を stale とマーク（CAS の前に立てる＝CAS 失敗側でも in-flight が拾える）。
-    state.engine.lock().unwrap().mark_index_stale();
+    {
+        let mut engine = state.engine.lock().unwrap();
+        match request {
+            BuildRequest::Rescan => engine.request_rescan(),
+            BuildRequest::Rebuild => engine.mark_index_stale(),
+        }
+    }
 
     if !state.try_begin_index_build() {
         return false;
     }
 
-    // **アイコンキャッシュを捨てる（メモリ内 `IconCacheState` と `icons.bin` の両方を
-    // 無効化）。** #996 が索引照合の剪定を撤去して以来、この無効化は背景再スキャンの
-    // `RescanOutcome::Changed`（main.rs）が担っていた。#1001 で背景再スキャンの
-    // spawn と結果適用そのものが撤去されたため、**現在はここが唯一の担い手である**。
-    // **判定を置かない**——ユーザー（あるいは config 変更）が再構築を
-    // 要求した事実そのものが引き金であり、集合が変わったかを測り直す必要は無い。
-    //
-    // ここで撃つのは CAS に成功した側だけである（要求のたびに撃つと、走行中ビルドへの
-    // 重複要求で無駄に捨てる）。ただし `drain_index` の finish ウィンドウで刺さった変更は自己再 kick
-    // として再びここを通るため、直前の無効化から間を置かず 2 回撃たれうる——1 回目の無効化後に
-    // ユーザーが検索してアイコンを再抽出していれば、それも巻き添えで捨てる。無害だが無駄。
-    // engine ロックは `mark_index_stale()` の中で解放済みで、ロックを跨いだ取得にはならない。
-    if let Some(icons) = app.try_state::<crate::icon::IconCacheState>() {
-        crate::icon::invalidate_icon_cache(&icons);
-    }
+    // アイコンキャッシュの無効化はここでは撃たない——走査するかがまだ決まっていない。
+    // `drain_index` の走査の分岐が撃つ（#1456）。
 
     notify_indexing_started(app);
 
@@ -83,8 +90,9 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                         .lock()
                         .unwrap()
                         .is_index_stale();
+                    // 再 kick は新しい要求ではない——走査の要求が残っていれば ledger が持っている。
                     if stale {
-                        start_index_build(&app_handle);
+                        start_index_build(&app_handle, BuildRequest::Rebuild);
                     }
                 }
                 Err(_) => {
@@ -139,17 +147,35 @@ pub(crate) fn build_index_from_material(
 /// ビルド中に config が変わっていれば complete が stale を残し、次の begin が再び snapshot を返して再ビルドする。
 /// 各反復で engine ロックを保持するのは snapshot 取得とスワップの一瞬だけ（ロック最小化を維持）。
 ///
-/// **1 反復ごとに `scan-log.jsonl` へ 2 行を書く**（走査の前に `start`、差し替えの後に `end`。
+/// **反復は走査するとは限らない**（#1456）。ledger が走査を要求していなければ（`must_scan` が偽）、
+/// `index.bin` を読み直して建てる。読めなければ（ファイルが無い・壊れている・走査対象が違う）
+/// 走査へ落ちる。
+///
+/// **走査する反復ごとに `scan-log.jsonl` へ 2 行を書く**（走査の前に `start`、差し替えの後に `end`。
 /// 形式と「構築の入力にしない」理由は [`scan_log`] の `//!`）。あわせて status 行の進捗
-/// （[`AppState::begin_scan_progress`]）を反復の先頭で置く。
+/// （[`AppState::begin_scan_progress`]）を置き、アイコンキャッシュを無効化する。読み直して建てる
+/// 反復はどれもしない。
 fn drain_index(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
     loop {
-        let inputs = {
-            let state = app_handle.state::<AppState>();
-            let engine = state.engine.lock().unwrap();
-            engine.begin_index_drain()
-        };
-        let Some(inputs) = inputs else { break };
+        let drain = state.engine.lock().unwrap().begin_index_drain();
+        let Some(drain) = drain else { break };
+        let inputs = &drain.inputs;
+
+        // **走査しない再構築**（#1456）。`include_path_env` と migemo の切り替えは `index.bin` の
+        // 中身を変えないので、読み直して PATH のマージと構築をやり直せば全走査と同じ索引になる。
+        if !drain.must_scan
+            && let Some(material) =
+                indexer::load_cached_material(&inputs.scan, inputs.show_hidden_system)
+        {
+            let new_index = build_index_from_material(material, inputs);
+            state.engine.lock().unwrap().complete_index_drain(
+                new_index,
+                &drain,
+                DrainOutcome::Loaded,
+            );
+            continue;
+        }
 
         // **記録（`scan-log.jsonl`）は構築の振る舞いを決めない**（`scan_log` の `//!`）。ここで
         // 記録から読むのは進捗表示の分母だけで、その値は `begin_scan_progress` にしか渡らない。
@@ -170,9 +196,19 @@ fn drain_index(app_handle: &AppHandle) {
             );
             (dir, sid, scan_id, expected)
         });
-        let state = app_handle.state::<AppState>();
         state.begin_scan_progress(log.as_ref().and_then(|(.., expected)| *expected));
         let total_started = Instant::now();
+
+        // **アイコンキャッシュを捨てる（メモリ内 `IconCacheState` と `icons.bin` の両方を
+        // 無効化）。** 契機は「走査した」ことであって、再構築の要求ではない（#1456）——読み直して
+        // 建てる反復はアイコンの対象を変えない。#996 が索引照合の剪定を、#1001 が背景再スキャンを
+        // 撤去したので、**索引の再構築を契機とする無効化の担い手はここだけである**。集合が
+        // 変わったかは測り直さない。反復のたびに撃つので、続けて 2 回走査すれば 2 回捨てる
+        // （1 回目の後に再抽出したアイコンも捨てる。無害だが無駄）。表示無効化時の破棄は
+        // `config_watcher` の true → false のエッジの別経路である（`icon::drop_icon_cache`）。
+        if let Some(icons) = app_handle.try_state::<crate::icon::IconCacheState>() {
+            crate::icon::invalidate_icon_cache(&icons);
+        }
 
         // **保存が返した派生データをそのまま索引の表現に使う**。捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」。
         let (material, stats) = indexer::rebuild_and_save(
@@ -181,22 +217,16 @@ fn drain_index(app_handle: &AppHandle) {
             state.scan_dirs_counter(),
         );
 
-        // **drain ループ自身はアイコンキャッシュに触らない。** 無効化は `start_index_build` が
-        // ビルド要求を受理した瞬間に 1 回だけ撃つ（このループの外）。索引照合の剪定は #996 で
-        // 撤去したままであり、表示無効化時の破棄も `config_watcher` の true → false のエッジの
-        // まま（理由は `icon::drop_icon_cache` の doc が正本）。ゆえに `IndexInputs` は索引を
-        // 建て直す入力だけを持つ（この結論は変わらない）。
-
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。
         let build_started = Instant::now();
-        let new_index = build_index_from_material(material, &inputs);
+        let new_index = build_index_from_material(material, inputs);
         let build_took = build_started.elapsed();
-        state
-            .engine
-            .lock()
-            .unwrap()
-            .complete_index_drain(new_index, &inputs);
+        state.engine.lock().unwrap().complete_index_drain(
+            new_index,
+            &drain,
+            DrainOutcome::Scanned { saved: stats.saved },
+        );
         let total = total_started.elapsed();
 
         if let Some((dir, sid, scan_id, _)) = &log {
@@ -397,37 +427,48 @@ mod tests {
     /// 撤去済み。#996 が再構築時の索引照合剪定を撤去して以来、**メモリ内
     /// `IconCacheState` と `icons.bin` の両方を無効化する**（`invalidate_icon_cache`）
     /// 直接契機はここだけに限られる——表示無効化トグル（`config_watcher`）はメモリ内のみを
-    /// 破棄する別経路であり、これには数えない。**ここが落ちると、索引再構築を直接の契機と
+    /// 破棄する別経路であり、これには数えない。**ここが落ちると、走査を直接の契機と
     /// する無効化を丸ごと失う**——アイコンが古いまま FIFO 上限まで残る。
     /// 検索結果は正しいままなので挙動テストでは検出されない。
     ///
-    /// **残る死角**: 母集団は `start_index_build` のソーステキストだけであり、呼び出しグラフは
-    /// 辿らない。**無効化をこの関数の外のヘルパーへ移すこと自体は、この検査が赤にする**——本体から
-    /// 綴りが消えるためである（#1108 で実測）。**ただし測っているのは本体テキストへの部分文字列
-    /// 一致であって呼び出しではない**——移設後も本体に `invalidate_icon_cache(` の綴りが残れば
-    /// 緑のまま通る（移し先の名前がそれを含む場合だけでなく、**説明コメントへ書き残した場合も
-    /// 同じである**。この関数は無効化の理由を説明する長いコメントを実際に抱えている）。
-    /// 検出されないのは、**移した先で無効化が落ちる**退行の方である。なお呼び出しの単純な削除は
-    /// `-D warnings` の `dead_code` が先に検出する——2026-08-17 時点で `invalidate_icon_cache` を
-    /// 呼ぶのはここだけだからであり、呼び出し点が増えればその二重の守りは消えてこの検査だけが残る。
+    /// **契機は走査である**（#1456 でビルド要求の受理時から移した）。ゆえに走査（`rebuild_and_save`）の
+    /// **前**に、`drain_index` の本体にちょうど 1 回現れることを測る。読み直して建てる分岐は
+    /// 走査の手前で `continue` するので、そこでは撃たれない。
     ///
-    /// **母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ**（何をどう塞ぐかは同関数の doc と
-    /// `top_level_fn_body_rejects_*` の回帰テストが正本。ここで数え上げない）。
+    /// **縛るのはテキストの順序であって実行順ではない**（死角は
+    /// [`drain_index_appends_start_before_the_scan`] と同じ）。無効化をこの関数の外のヘルパーへ
+    /// 移すことは、本体から綴りが消えるので赤になる（#1108 で実測した形）。コメントの綴りは
+    /// `//` 以降を落として数えないので、説明コメントに書き残しても通らない。なお呼び出しの単純な
+    /// 削除は `-D warnings` の `dead_code` も検出する——`invalidate_icon_cache` を呼ぶのはここだけ
+    /// だからであり、呼び出し点が増えればその二重の守りは消えてこの検査だけが残る。
     ///
-    /// **この安全性は「存在形の assert」に依る**——`!contains` の否定形なら canary が真のまま
-    /// 対象だけ切り捨てられて沈黙する（#1112）。
+    /// **母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ**。**この安全性は「存在形の assert」に
+    /// 依る**——`!contains` の否定形なら canary が真のまま対象だけ切り捨てられて沈黙する（#1112）。
     #[test]
-    fn start_index_build_invalidates_the_icon_cache() {
+    fn drain_index_invalidates_the_icon_cache_before_the_scan() {
         let body = top_level_fn_body(
             include_str!("indexing.rs"),
-            "pub fn start_index_build(",
-            "try_begin_index_build(",
+            "fn drain_index(",
+            "begin_index_drain(",
         );
+        let code = body
+            .lines()
+            .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let invalidate = "crate::icon::invalidate_icon_cache(";
+        let scan = "indexer::rebuild_and_save(";
+        for spelling in [invalidate, scan] {
+            assert_eq!(
+                code.matches(spelling).count(),
+                1,
+                "drain_index のコード（コメントを除く）に {spelling} がちょうど 1 回現れない"
+            );
+        }
         assert!(
-            body.contains("invalidate_icon_cache("),
-            "start_index_build がアイコンキャッシュを無効化していない——背景再スキャンの\
-             spawn/適用は #1001 で撤去済みなので、ここが落ちると索引再構築を\
-             直接の契機とする無効化を丸ごと失う"
+            code.find(invalidate) < code.find(scan),
+            "drain_index が走査（{scan}）の前にアイコンキャッシュを無効化していない——\
+             走査を契機とする無効化を失う"
         );
     }
 }

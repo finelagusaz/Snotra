@@ -109,10 +109,18 @@ impl IndexInputs {
 pub struct IndexDrain {
     /// ビルド開始時の index 入力。complete の re-diff の相手。
     pub inputs: IndexInputs,
-    /// 走査しなければならないか。偽なら、`index.bin` を読み直して建ててよい（読めなければ走査へ落ちる）。
-    pub must_scan: bool,
+    /// 走査しなければならないか。**private にしてある**——書き換えられると、呼び出し側が ledger の
+    /// 判定を飛ばせる（`/s` と初回構築が黙って走査しなくなる）。読む口は [`IndexDrain::must_scan`]。
+    must_scan: bool,
     /// begin の時点の走査要求の世代。complete が「走査でどこまで満たしたか」を記録するのに使う。
     rescan_generation: u64,
+}
+
+impl IndexDrain {
+    /// 走査しなければならないか。偽なら、`index.bin` を読み直して建ててよい（読めなければ走査する）。
+    pub fn must_scan(&self) -> bool {
+        self.must_scan
+    }
 }
 
 /// drain が索引をどう建てたか（[`Engine::complete_index_drain`] へ渡す）。

@@ -153,7 +153,7 @@ fn material_without_scan(
     drain: &IndexDrain,
     load: impl FnOnce(&IndexInputs) -> Option<indexer::IndexMaterial>,
 ) -> Option<indexer::IndexMaterial> {
-    if drain.must_scan {
+    if drain.must_scan() {
         return None;
     }
     load(&drain.inputs)

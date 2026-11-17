@@ -133,6 +133,7 @@ prose:sweep で見つかった残りの名指しは直さない: `docs/adr/` と
 - [x] `/state-check`・`/race-check`・`/symmetric-check` を当てる（3 つとも指摘なし・f7e33cb2 の後）
   - レビュー ラウンド 1（799c55b5・verify:tree A/C/E/F green）: Critical 0 / High 2 / Medium 2 / Low 3。生存変異 C2・C3・C4・I2・I3・I4・I5・I6。High-1（/s が走査しなくなる退行の検知器）・High-2（造語「非走査」）・Medium 2 件・Low 3 件を直し、C2〜C4・I3〜I6 は新しいテストで赤になることを測った。I2（無効化を読み直しの分岐へ移す）は検知手段なしのまま受容
   - レビュー ラウンド 2（40df318c・verify:tree A/C/E/F green）: High-1 の残り（drain が must_scan を判定へ渡すことが縛られていない・I3b が生存）・Medium 1（テストの doc の付き先）・Low 2。material_without_scan に &IndexDrain を取らせ、drain が判定越しにだけ読むことをソーステキスト検査で縛った。判定を飛ばす変異と判定の中を壊す変異が、それぞれ赤になることを測った
+  - レビュー ラウンド 3（b90a0c25・verify:tree A/C/E/F green）: High 0 / Medium 1（pub must_scan で判定を書き換えられる・B1 が生存）/ Low 1（B2: 綴りを保って読む処理だけを外へ出す書き換え・宣言済みの死角として受容）。must_scan を private にして読む口を IndexDrain::must_scan() にした（B1 は型で書けなくなった）
 - [ ] 検証カテゴリ A・C・E・F
 
 ## 未確定（実装前に潰す）

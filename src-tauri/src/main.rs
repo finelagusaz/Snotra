@@ -101,8 +101,9 @@ pub(crate) enum ForegroundOutcome {
     Already,
     /// `SetForegroundWindow` が 1 回で通った。
     Direct,
-    /// 1 回目が拒まれ、マスクした Alt を注入して再試行した。`ok` は再試行の結果。
-    MaskedAlt { ok: bool },
+    /// 1 回目が拒まれ、マスクした Alt を注入して再試行した。`sent` は注入が全件入ったか
+    /// （UIPI で弾かれると偽）、`ok` は再試行の `SetForegroundWindow` の返り値。
+    MaskedAlt { sent: bool, ok: bool },
 }
 
 #[cfg(windows)]
@@ -118,7 +119,15 @@ impl ForegroundOutcome {
     pub(crate) fn ok(self) -> bool {
         match self {
             Self::Already | Self::Direct => true,
-            Self::MaskedAlt { ok } => ok,
+            Self::MaskedAlt { ok, .. } => ok,
+        }
+    }
+
+    /// 注入が全件入ったか。注入しなかった経路では `None`。
+    pub(crate) fn sent(self) -> Option<bool> {
+        match self {
+            Self::Already | Self::Direct => None,
+            Self::MaskedAlt { sent, .. } => Some(sent),
         }
     }
 }
@@ -132,6 +141,9 @@ impl ForegroundOutcome {
 /// 修飾キーが押されていても注入は省かない。省くと、最前面に見えるのに前面でない窓が残り、
 /// 打鍵が元のアプリへ流れ続ける。注入した Alt up は押されている Alt を論理的に離すが、
 /// tao の注入も同じ Alt up を送っていた。
+///
+/// `PlatformBridge` を通さず直接呼ぶ。呼び出し元（`show_egui_main`）は、続く IME オフの送信と
+/// `send_alt_key_up` より前に前面化を済ませる必要があり、channel 越しの非同期では順序を保てない。
 #[cfg(windows)]
 pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> ForegroundOutcome {
     use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, SendInput, VK_MENU};
@@ -150,8 +162,9 @@ pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> For
             make_key_input(VK_MASK, true),
             make_key_input(VK_MENU, true),
         ];
-        let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len();
         ForegroundOutcome::MaskedAlt {
+            sent,
             ok: SetForegroundWindow(hwnd).as_bool(),
         }
     }
@@ -189,8 +202,8 @@ fn send_alt_key_up() {
     // スリープの目的は自スレッド上では達成できず、純粋なコストになる
     // （`show_egui_main` の `SendMessageTimeoutW` 撤去と**同じ型の失効**。あちらの撤去跡の
     // コメントを参照）。**前提を落として「常に純粋なコスト」とは書けない**——直前の
-    // 前面化（`bring_to_foreground`）が再試行でも通らなかった場合は旧ウィンドウが前景に残り、
-    // 合成キー up はそちらのスレッドで処理されうる（それこそがバリア撤去跡が「未実測」と断っている当の点で
+    // 前面化（`bring_to_foreground`）は活性化の処理の完了を待たず、再試行でも通らなかった場合は
+    // 旧ウィンドウが前景に残る。どちらでも、合成キー up は旧ウィンドウのスレッドで処理されうる（それこそがバリア撤去跡が「未実測」と断っている当の点で
     // ある）。**hotkey に Alt を含む設定では実質すべての show がここを通る**
     // （`ShowAfterAltRelease` の再入時に `!is_alt_pressed()` が真になるため）。
     //

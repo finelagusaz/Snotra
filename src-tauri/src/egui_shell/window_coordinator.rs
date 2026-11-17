@@ -434,16 +434,17 @@ pub(crate) fn show_egui_main(
     // アプリのメニューを起動する（#1470）。
     #[cfg(windows)]
     {
-        let (path, ok) = match window.hwnd() {
+        // `sent` は注入した回だけ載る（注入しなかった回は `null`）。
+        let (path, ok, sent) = match window.hwnd() {
             Ok(hwnd) => {
                 let outcome = crate::bring_to_foreground(hwnd);
-                (outcome.path(), outcome.ok())
+                (outcome.path(), outcome.ok(), outcome.sent())
             }
-            Err(_) => ("no_hwnd", false),
+            Err(_) => ("no_hwnd", false, None),
         };
         crate::trace_main(
             "egui_show:foreground",
-            serde_json::json!({ "path": path, "ok": ok }),
+            serde_json::json!({ "path": path, "ok": ok, "sent": sent }),
         );
     }
     #[cfg(not(windows))]

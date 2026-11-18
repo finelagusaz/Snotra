@@ -1,12 +1,16 @@
-//! スキャン対象の列挙・走査中の重複排除・走査結果の正準整列。
+//! スキャン対象の列挙・重複排除・走査結果の正準整列。
 //!
 //! **重複排除に払う代金は根ごとに決める**——役割を割り当てるのが [`root_roles`]、それを消費して
 //! 採否を決めるのが [`Dedup::accept`] である。正規化キーの規則そのものは `super::keys` が持ち、
 //! ここはその呼び出し側にすぎない（記録側と照合側が同じ関数を通ることがバイト一致の根拠）。
+//!
+//! **走査は専用のプールで並列に回し、重複排除は根を歩き終えてから、その根の前順の列へ順に当てる**
+//! （[`scan_all_with_threads`]）。返す列は 1 スレッドで歩いたときと同じになる。
 
+use rayon::prelude::*;
 use std::fs::Metadata;
 use std::os::windows::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
@@ -123,6 +127,9 @@ impl Dedup {
     }
 }
 
+/// 走査の専用プールのスレッド数の上限。根拠は `PERFORMANCE.md`「採用: 索引の走査を専用プールで fork-join の並列にする（#1455）」。
+const SCAN_THREADS_MAX: usize = 8;
+
 /// 全根を走査し、登録するエントリを返す。
 ///
 /// **`dirs` には `read_dir` に成功したディレクトリの数を足していく**（根も 1 つと数える）。
@@ -130,10 +137,32 @@ impl Dedup {
 /// である（`extensions` が空で `include_folders` が偽の根。所要の大半をそこが占めても件数は
 /// 動かない）。読み手は走査と並行して別スレッドから読むので、加算は 1 ディレクトリにつき
 /// `Relaxed` の 1 回だけにする（単調に増えるだけで、ほかの値との順序を運ばない）。
+///
+/// **走査は専用のプールで並列に回すが、返す列は 1 スレッドで歩いたときと同じ前順である**
+/// （[`scan_directory`]）。検索と kana が使うグローバルなプールは塞がない。
 pub fn scan_all(
     scan_paths: &[ScanPath],
     show_hidden_system: bool,
     dirs: &AtomicUsize,
+) -> Vec<AppEntry> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(SCAN_THREADS_MAX);
+    scan_all_with_threads(scan_paths, show_hidden_system, dirs, threads)
+}
+
+/// [`scan_all`] の本体。スレッド数を外から決められるのは、テストが 1 本と複数本の結果を比べるためである。
+///
+/// **重複排除は、根を 1 つ歩き終えてから、その根の列へ順に当てる。** 並列の走査の中では集合に
+/// 触れない。根の列は前順なので、根の中でも根をまたいでも、勝つのは 1 スレッドで歩いたときと
+/// 同じエントリである（[`Dedup::accept`] は呼ばれた順だけで決まる）。
+///
+/// プールを建てられなければ、同じ走査をグローバルなプールで回す（結果は同じ）。
+fn scan_all_with_threads(
+    scan_paths: &[ScanPath],
+    show_hidden_system: bool,
+    dirs: &AtomicUsize,
+    threads: usize,
 ) -> Vec<AppEntry> {
     let mut entries = Vec::new();
     let roles = root_roles(scan_paths);
@@ -147,39 +176,63 @@ pub fn scan_all(
             record: false,
         },
     };
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("snotra-scan-{i}"))
+        .build()
+        .ok();
 
     for (sp, role) in scan_paths.iter().zip(&roles) {
         dedup.role = *role;
         let ext_set = build_extension_list(&sp.extensions);
-        scan_directory_with_extensions(
-            Path::new(&sp.path),
-            &ext_set,
-            sp.include_folders,
-            show_hidden_system,
-            &mut entries,
-            &mut dedup,
-            dirs,
-        );
+        let walk = || {
+            scan_directory(
+                Path::new(&sp.path),
+                &ext_set,
+                sp.include_folders,
+                show_hidden_system,
+                dirs,
+            )
+        };
+        let found = match &pool {
+            Some(pool) => pool.install(walk),
+            None => walk(),
+        };
+        entries.extend(found.into_iter().filter(|e| dedup.accept(&e.target_path)));
     }
 
     entries
 }
 
-/// Recursively scan for files matching given extensions, optionally including folders
-fn scan_directory_with_extensions(
+/// ディレクトリ 1 つの中で、列挙順に見たエントリ。
+enum Item {
+    /// 登録するファイル。
+    Leaf(AppEntry),
+    /// 降りる子フォルダ。`folder` はそのフォルダ自身を登録するとき（`include_folders`）だけ持つ。
+    Dir {
+        folder: Option<AppEntry>,
+        path: PathBuf,
+    },
+}
+
+/// `dir` の下を歩き、登録するエントリを前順（pre-order）で返す: エントリを列挙順に並べ、
+/// フォルダの直後にその中身を置く。
+///
+/// **列挙は 1 スレッドで終え、子フォルダだけを並列に降りる**（fork-join）。子の結果は列挙順に
+/// 連結するので、返す列はスレッド数に依らない。重複排除はここでは当てない（[`scan_all_with_threads`]）。
+fn scan_directory(
     dir: &Path,
     extensions: &[String],
     include_folders: bool,
     show_hidden_system: bool,
-    entries: &mut Vec<AppEntry>,
-    dedup: &mut Dedup,
     dirs: &AtomicUsize,
-) {
+) -> Vec<AppEntry> {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return;
+        return Vec::new();
     };
     dirs.fetch_add(1, Ordering::Relaxed);
 
+    let mut items = Vec::new();
     for entry in read_dir.flatten() {
         let path = entry.path();
         let Ok(meta) = entry.metadata() else {
@@ -191,52 +244,62 @@ fn scan_directory_with_extensions(
         }
 
         if meta.is_dir() {
-            if include_folders {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                if !name.is_empty() {
-                    let path_str = path.to_string_lossy();
-                    if dedup.accept(path_str.as_ref()) {
-                        entries.push(AppEntry {
-                            name,
-                            target_path: path_str.into_owned(),
-                            is_folder: true,
-                        });
-                    }
-                }
-            }
-            scan_directory_with_extensions(
-                &path,
-                extensions,
-                include_folders,
-                show_hidden_system,
-                entries,
-                dedup,
-                dirs,
-            );
+            let folder = include_folders
+                .then(|| {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (!name.is_empty()).then(|| AppEntry {
+                        name,
+                        target_path: path.to_string_lossy().into_owned(),
+                        is_folder: true,
+                    })
+                })
+                .flatten();
+            items.push(Item::Dir { folder, path });
         } else {
             let ext = path.extension().and_then(|e| e.to_str());
-            let matches = ext.is_some_and(|e| matches_extension(extensions, e));
-            if matches {
+            if ext.is_some_and(|e| matches_extension(extensions, e)) {
                 let name = path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
                     .to_string();
-                let path_str = path.to_string_lossy();
-                if !name.is_empty() && dedup.accept(path_str.as_ref()) {
-                    entries.push(AppEntry {
+                if !name.is_empty() {
+                    items.push(Item::Leaf(AppEntry {
                         name,
-                        target_path: path_str.into_owned(),
+                        target_path: path.to_string_lossy().into_owned(),
                         is_folder: false,
-                    });
+                    }));
                 }
             }
         }
     }
+
+    // `collect` は添字の順を保つ——子の結果は列挙順に並ぶ。
+    let children: Vec<Vec<AppEntry>> = items
+        .par_iter()
+        .map(|item| match item {
+            Item::Dir { path, .. } => {
+                scan_directory(path, extensions, include_folders, show_hidden_system, dirs)
+            }
+            Item::Leaf(_) => Vec::new(),
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    for (item, sub) in items.into_iter().zip(children) {
+        match item {
+            Item::Leaf(entry) => out.push(entry),
+            Item::Dir { folder, .. } => {
+                out.extend(folder);
+                out.extend(sub);
+            }
+        }
+    }
+    out
 }
 
 /// エントリが hidden または system 属性を持つか判定する。

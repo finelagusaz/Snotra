@@ -128,7 +128,7 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
         || {
             // migemo 無効時は kana を構築しない（空のアリーナ）。
             if migemo_enabled {
-                // **ここは逐次のままでよい。** この分岐が通るのは cache-miss（走査 22〜30 秒）の
+                // **ここは逐次のままでよい。** この分岐が通るのは cache-miss（全走査）の
                 // 内側だけで、キャッシュヒット起動が通るのは `new_with_cached_masks` の
                 // `kana_for_cached` である——**あちらは並列を保つ**（そちらの doc が理由を持つ）。
                 //

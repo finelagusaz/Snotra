@@ -451,7 +451,7 @@ pub enum LowerFileSlot<'a> {
 
 /// 線上へ書くときの形。**variant の並びを `crate::indexer::LowerFileName` と一致させること**
 /// ——postcard は variant を**添字**で書くので、並べ替えると線上表現が黙って変わる（版は
-/// 同じまま読めなくなるので、症状は破損ではなく cache-miss ＝ 22〜30 秒の全走査になる）。
+/// 同じまま読めなくなるので、症状は破損ではなく cache-miss ＝ 全走査になる）。
 /// 一致は `lower_file_column_wire_format_is_identical_to_vec_of_lower_file_name` が固定する。
 #[derive(Serialize)]
 enum LowerFileNameRef<'a> {

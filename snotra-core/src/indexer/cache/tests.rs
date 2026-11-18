@@ -743,7 +743,7 @@ fn one_txt_scan(root: &Path) -> Vec<ScanPath> {
 }
 
 /// **起動時の読み込みは、外れても走査しない**（#1448）。走査は背景の構築へ回す——ここで走査すると、
-/// 22〜85 秒のあいだトレイもホットキーも出ない。
+/// 全走査のあいだトレイもホットキーも出ない。
 #[test]
 fn load_cache_with_stats_in_does_not_scan_on_a_miss() {
     let dir = temp_dir("load_cache_with_stats_miss");

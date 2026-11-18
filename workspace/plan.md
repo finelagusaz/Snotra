@@ -56,7 +56,7 @@
 - `snotra-core/tests/memory_footprint.rs`: 変えない（`report_scan_all_cost` は `scan_all` を呼ぶだけ）。確保回数が増えることは
   PERFORMANCE.md の節に書く（ディレクトリごとの `Vec`。照合分岐の確保ゼロは保たれる）
 
-- 走査の所要を「22〜30 秒」と現在形で書いた散文（並列で偽になる）。数を写さず「全走査」と書き、所要は PERFORMANCE.md の新しい節を指す:
+- 走査の所要を「22〜30 秒」と現在形で書いた散文（並列で偽になる）。数を写さず「全走査」と書く（所要の正本は PERFORMANCE.md の新しい節）:
   - `snotra-core/src/indexer/cache.rs` の `config_hash` 周りの doc（「背景の構築で 22〜30 秒の全走査を払う」）
   - `snotra-core/src/index_tree.rs` の wire 形式の doc（「cache-miss ＝ 22〜30 秒の全走査へ落ちる」）
   - `snotra-core/src/str_arena.rs` の `LowerFileName` の線上表現の doc（同上）
@@ -124,13 +124,13 @@ Red → Green: `scan_directory` を先にシグネチャだけ（中身は `Vec:
 
 ### Phase 1: 走査の並列化
 
-- [ ] `scan.rs` に `SCAN_THREADS_MAX` と `scan_directory`（中身は空）・`scan_all_with_threads` を置き、新規テストを書いて赤を見る
-- [ ] `scan_directory` を実装し、`scan_all` / `scan_all_with_threads` を専用プールと根ごとの後段の重複排除へ組み替える
-- [ ] 既存テストを `scan_directory` の呼び出しへ直す
-- [ ] `scan.rs` の `//!`・`Dedup::accept` の doc・`snotra-core/CLAUDE.md`「`scan_all` の重複排除」を新しい結線に合わせる
-- [ ] 走査の所要と 1 コアを前提にした散文（「`SPEC.md` は変えない」の直前の列挙・cache.rs 2 か所・cache/tests.rs・index_tree.rs・
+- [x] `scan.rs` に `SCAN_THREADS_MAX` と `scan_directory`（中身は空）・`scan_all_with_threads` を置き、新規テストを書いて赤を見る
+- [x] `scan_directory` を実装し、`scan_all` / `scan_all_with_threads` を専用プールと根ごとの後段の重複排除へ組み替える
+- [x] 既存テストを `scan_directory` の呼び出しへ直す
+- [x] `scan.rs` の `//!`・`Dedup::accept` の doc・`snotra-core/CLAUDE.md`「`scan_all` の重複排除」を新しい結線に合わせる（`Dedup::accept` の doc は「`scan_all` の結線の退行」が今も真なので変えない）
+- [x] 走査の所要と 1 コアを前提にした散文（「`SPEC.md` は変えない」の直前の列挙・cache.rs 2 か所・cache/tests.rs・index_tree.rs・
   str_arena.rs・search/build.rs・tests/path_query_cost.rs・PERFORMANCE.md 2 か所）を、数を写さない形へ直す
-- [ ] 変更した crate の fmt / clippy / test を手元で通す
+- [x] 変更した crate の fmt / clippy / test を手元で通す
 
 ### Phase 2: 実測と記録
 

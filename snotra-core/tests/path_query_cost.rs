@@ -361,7 +361,7 @@ fn measure_path_query_frame_cost_at_operating_point() {
 ///   `cmp_paths` の呼び出し回数に直結する
 ///
 /// **`show_hidden_system` は掃かない。** `compute_config_hash` の入力なので、振ると cache-miss で
-/// 全走査（22〜30 秒）が走り**実 `index.bin` を上書きする**。計測コードが測定対象の環境を壊す。
+/// 全走査が走り**実 `index.bin` を上書きする**。計測コードが測定対象の環境を壊す。
 ///
 /// **`migemo_min_chars` / `fuzzy_history_cap_ratio` / `history_normalization` も掃かない。**
 /// 前 2 つは上のとおり `kana_query` が常に `None` ゆえ効かず、最後は `adjusted_history_boost` の

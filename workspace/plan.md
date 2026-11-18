@@ -51,7 +51,7 @@
 - `snotra-core/CLAUDE.md`「`scan_all` の重複排除」: 「重複排除は根ごとの列へ後段で当てる（並列の走査の中では触れない）」を 1 文足す
 - `PERFORMANCE.md`: 新しい節「採用: 索引の走査を専用プールで fork-join の並列にする（#1455）」。スパイクの 2 表・A-B-A・測っていないもの
   （冷えた状態の並列・他の機械での上限・8 が物理コア数〔本機は 16 論理〕と FS の飽和のどちらで決まるか・ワーカーの深いスタック・
-  ワーカーの優先度）。「冷えた」は、scan-log の起動直後の製品（85.2 s）と、スパイクの温め前の 1 回（116.9 s）を書き分ける。
+  ワーカーの優先度・照合で落とす件も `target_path` を確保してから捨てること・走査中のピークのメモリ・`scan_all` ごとにスレッドを建てて捨てる代金）。「冷えた」は、scan-log の起動直後の製品（85.2 s）と、スパイクの温め前の 1 回（116.9 s）を書き分ける。
   スパイクの数は採否の目安で、効果の額は製品の A-B-A で言う
 - `snotra-core/tests/memory_footprint.rs`: 変えない（`report_scan_all_cost` は `scan_all` を呼ぶだけ）。確保回数が増えることは
   PERFORMANCE.md の節に書く（ディレクトリごとの `Vec`。照合分岐の確保ゼロは保たれる）
@@ -132,6 +132,7 @@ Red → Green: `scan_directory` を先にシグネチャだけ（中身は `Vec:
   str_arena.rs・search/build.rs・tests/path_query_cost.rs・PERFORMANCE.md 2 か所）を、数を写さない形へ直す
 - [x] 変更した crate の fmt / clippy / test を手元で通す
 - [x] ラウンド 1: d79b7038・verify:tree green（A/E/F）・指摘 High 1 / Medium 2 / Low 5・生き残った変異 1（スレッド数 1 固定・速度だけが変わるので検知器を置かない）。用語集に「前順」・CI ではスキップを失敗に・`Dedup` の doc・グローバルプールの条件・連結の確保と `par_iter` を子フォルダだけへ、を直した。PERFORMANCE.md の節は Phase 2 で足す
+- [x] ラウンド 2: a646ad4f・verify:tree green（A/E/F）・指摘 Low 2（`subdirs` と `Dir` の数のずれを `debug_assert!` で止める・測っていないものを計画の PERFORMANCE.md の項へ足す）・生き残った変異 0（スレッド数 1 固定は対象外）。両方直した
 
 ### Phase 2: 実測と記録
 

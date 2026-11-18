@@ -296,6 +296,7 @@ fn scan_directory(
             }
         }
     }
+    debug_assert!(children.next().is_none(), "subdirs と Dir の数がずれた");
     out
 }
 

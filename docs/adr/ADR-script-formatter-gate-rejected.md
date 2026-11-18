@@ -36,7 +36,7 @@ PR #1011 のブランチで、`REQUIRED_RUSTDOC_LINTS = [` と `STALE_EXTRA_DOCS
 
 - **formatter（prettier など）を devDependency に入れ、CI でゲートする**: 却下した。守るものが 714 コミットで 4 行、しかも害が無かったのに対して、費用は常に掛かる。
   - devDependency と CI の step が 1 つずつ増える。
-  - 既定の様式に合わせるために、全体の整形が要る見込みである。prettier の既定の行幅は 80 桁である。`scripts` 配下の `.mjs`（43 本・7,316 行）で、表示幅（全角を 2 桁と数える）が 80 桁を超える行は 1,883 行ある。prettier はコメントと文字列を折り返さないので、整形で実際に変わる行はこれより少ない。整形するなら、`ADR-rustfmt-gate` と同じく、整形だけの PR を先にマージし、その SHA を `.git-blame-ignore-revs` へ書く 2 段の手順が要る。prettier そのものを当てたときの drift の量は、測っていない。
+  - 既定の様式に合わせるために、全体の整形が要る見込みである。prettier の既定の行幅は 80 桁である。`scripts` 配下の `.mjs`（43 本・7,316 行）で、表示幅（全角を 2 桁と数える）が 80 桁を超える行は 1,883 行ある。prettier はコメントと文字列を折り返さないので、このすべてが整形で変わるわけではない（コメントを除くと 968 行）。逆に、80 桁に収まる行も変わりうる。整形するなら、`ADR-rustfmt-gate` と同じく、整形だけの PR を先にマージし、その SHA を `.git-blame-ignore-revs` へ書く 2 段の手順が要る。prettier そのものを当てたときの drift の量は、測っていない。
   - PowerShell 側の formatter（PSScriptAnalyzer の `Invoke-Formatter`）は手元に無く、#132 の形を直すかも測っていない。
   - `ADR-rustfmt-gate` とは前提が違う。あちらは 460 ハンクの drift が実際に積み上がり、PR #857 で関係の無い差分が「不合格」として報告される実害が出ていた。初期コミットの drift も 0 で、守るべき様式が在った。
 - **formatter の検査を編集時の hook に置く**: 却下した。編集時の自動検証（PostToolUse）は #1255 で撤去済みである（`ADR-meta-harness-thinning`）。それを書式のためだけに戻す理由は無い。

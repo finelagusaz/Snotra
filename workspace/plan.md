@@ -73,8 +73,8 @@ Red → Green: `row_span` をシグネチャだけ（常に `None`）で置き�
 
 ### Phase 1: 実装
 
-- [ ] `row_span`（常に `None`）・`ROW_SPAN_MARGIN_PX`・`fill_mesh_reference`・比較テスト 2 本と `row_span` の単体テストを書き、赤を見る
-- [ ] `row_span` と白テクセルの省略を実装し、緑にする
+- [x] `row_span`（常に `None`）・`ROW_SPAN_MARGIN_PX`・`fill_mesh_reference`・比較テスト 2 本と `row_span` の単体テストを書き、赤を見る
+- [x] `row_span` と白テクセルの省略を実装し、緑にする
 - [ ] 2 つの改良の寄与を分ける: egui で組んだ実 config 相当のフレーム（10 行・幅 600・アイコン付き）を ppp 1.0 / 1.5 / 2.0 で、
   3 版（今・範囲だけ・両方）の `fill_mesh` に通して所要を比べる（scratchpad の一時の計測。製品コードには残さない）。
   片方が効かなければ（差がぶれの中に収まれば）、その片方を外して計画とコードを直す

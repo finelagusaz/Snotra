@@ -65,6 +65,14 @@ impl CpuTexture {
         }
     }
 
+    /// `WHITE_UV`（= (0, 0)）での [`Self::sample`] が白 `[255; 4]` を返すか。
+    ///
+    /// (0, 0) の標本は、Nearest でも Linear（half-texel の位置を端で切り詰め、重みが左上へ 1 つに寄る）でも
+    /// `pixels[0]` そのものである。大きさ 0 のテクスチャは白を返す。epaint のフォントアトラスは (0, 0) に白を書く。
+    pub(crate) fn samples_white(&self) -> bool {
+        self.width == 0 || self.height == 0 || self.pixels.first() == Some(&[255, 255, 255, 255])
+    }
+
     fn sample_bilinear(&self, u: f32, v: f32) -> [u8; 4] {
         let fx = (u * self.width as f32 - 0.5).clamp(0.0, self.width as f32 - 1.0);
         let fy = (v * self.height as f32 - 0.5).clamp(0.0, self.height as f32 - 1.0);
@@ -86,7 +94,54 @@ impl CpuTexture {
     }
 }
 
+/// [`row_span`] が境界の外へ広げる余白（物理画素）。境界の計算の誤差（座標が数千画素の f32 で
+/// 1 画素の千分の一の桁）より桁で大きくとり、真に内側の画素を範囲から落とさない。
+const ROW_SPAN_MARGIN_PX: f32 = 2.0;
+
+/// 行（画素中心の y 座標が `py`）のうち、三角形の内側になりうる画素の x の範囲 `[start, end)` を返す。
+///
+/// **保守的な範囲であって、内外の判定ではない。** 3 つの辺の式は、行を固定すると x の 1 次式なので、
+/// 条件を満たす x はそれぞれ半直線になる。その共通部分を [`ROW_SPAN_MARGIN_PX`] だけ広げ、
+/// `min_x..max_x` で切る。呼び手は範囲の中で、今までどおりの内外判定を行う——ゆえに範囲が真に内側の
+/// 画素をすべて含む限り、描く画素は範囲を絞らないときと 1 つも変わらない。水平な辺（`by - ay == 0`）と、
+/// 境界が NaN になる辺は範囲を狭めない。
+fn row_span(
+    tri: [(f32, f32); 3],
+    area: f32,
+    py: f32,
+    min_x: usize,
+    max_x: usize,
+) -> Option<(usize, usize)> {
+    let (mut lo, mut hi) = (f32::NEG_INFINITY, f32::INFINITY);
+    // `fill_mesh` の w0 / w1 / w2 と同じ辺の組（a → b）。
+    for ((ax, ay), (bx, by)) in [(tri[1], tri[2]), (tri[2], tri[0]), (tri[0], tri[1])] {
+        let dy = by - ay;
+        if dy == 0.0 {
+            continue;
+        }
+        // w(px) = (bx - ax)(py - ay) - dy (px - ax) は px について傾き -dy の 1 次式で、x* で 0 になる。
+        let boundary = ax + (bx - ax) * (py - ay) / dy;
+        if boundary.is_nan() {
+            continue;
+        }
+        // 面積が正なら w >= 0、負なら w <= 0 が内側。dy > 0 のとき w は px とともに減る。
+        if (dy > 0.0) == (area > 0.0) {
+            hi = hi.min(boundary);
+        } else {
+            lo = lo.max(boundary);
+        }
+    }
+    // 画素 x の中心は x + 0.5。中心が [lo - 余白, hi + 余白] に入る x を `min_x..max_x` の中で選ぶ。
+    let start = (lo - ROW_SPAN_MARGIN_PX - 0.5).ceil().max(min_x as f32);
+    let end = ((hi + ROW_SPAN_MARGIN_PX - 0.5).floor() + 1.0).min(max_x as f32);
+    (start < end).then_some((start as usize, end as usize))
+}
+
 /// 1 つの epaint Mesh を framebuffer へ描く。pos は物理ピクセル座標へ変換済みであること。
+///
+/// 各行で内外を判定するのは [`row_span`] の範囲の画素だけである。3 頂点の UV がすべて `WHITE_UV` で、
+/// テクスチャがそこで白を返すなら（[`CpuTexture::samples_white`]）、標本化と変調を省く——白との変調は
+/// 恒等なので、描く値は変わらない。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fill_mesh(
     buffer: &mut [u32],
@@ -99,6 +154,7 @@ pub(crate) fn fill_mesh(
     clip_max: (usize, usize),
     pixels_per_point: f32,
 ) {
+    let texture_is_white = texture.samples_white();
     for triangle in indices.as_chunks::<3>().0 {
         let v0 = &vertices[triangle[0] as usize];
         let v1 = &vertices[triangle[1] as usize];
@@ -110,6 +166,10 @@ pub(crate) fn fill_mesh(
         if area.abs() < f32::EPSILON {
             continue;
         }
+        let white = texture_is_white
+            && [v0.uv, v1.uv, v2.uv]
+                .iter()
+                .all(|uv| *uv == egui::epaint::WHITE_UV);
         let min_x = x0.min(x1).min(x2).floor().max(clip_min.0 as f32) as usize;
         let min_y = y0.min(y1).min(y2).floor().max(clip_min.1 as f32) as usize;
         let max_x = (x0.max(x1).max(x2).ceil() as usize)
@@ -120,7 +180,12 @@ pub(crate) fn fill_mesh(
             .min(height);
         for y in min_y..max_y {
             let py = y as f32 + 0.5;
-            for x in min_x..max_x {
+            let Some((start, end)) =
+                row_span([(x0, y0), (x1, y1), (x2, y2)], area, py, min_x, max_x)
+            else {
+                continue;
+            };
+            for x in start..end {
                 let px = x as f32 + 0.5;
                 let w0 = edge(x1, y1, x2, y2, px, py);
                 let w1 = edge(x2, y2, x0, y0, px, py);
@@ -134,8 +199,6 @@ pub(crate) fn fill_mesh(
                     continue;
                 }
                 let (b0, b1, b2) = (w0 / area, w1 / area, w2 / area);
-                let u = v0.uv.x * b0 + v1.uv.x * b1 + v2.uv.x * b2;
-                let v = v0.uv.y * b0 + v1.uv.y * b1 + v2.uv.y * b2;
                 let c0 = v0.color.to_array();
                 let c1 = v1.color.to_array();
                 let c2 = v2.color.to_array();
@@ -145,7 +208,13 @@ pub(crate) fn fill_mesh(
                     (c0[2] as f32 * b0 + c1[2] as f32 * b1 + c2[2] as f32 * b2) as u8,
                     (c0[3] as f32 * b0 + c1[3] as f32 * b1 + c2[3] as f32 * b2) as u8,
                 ];
-                let src = modulate(color, texture.sample(u, v));
+                let src = if white {
+                    color
+                } else {
+                    let u = v0.uv.x * b0 + v1.uv.x * b1 + v2.uv.x * b2;
+                    let v = v0.uv.y * b0 + v1.uv.y * b1 + v2.uv.y * b2;
+                    modulate(color, texture.sample(u, v))
+                };
                 if src[3] == 0 && src[0] == 0 && src[1] == 0 && src[2] == 0 {
                     continue;
                 }
@@ -416,5 +485,347 @@ mod tests {
         partial.pos = Some([0, 0]);
         apply_texture_delta(&mut store, egui::TextureId::Managed(7), &partial);
         assert!(store.is_empty(), "未登録 ID への部分更新は無言破棄");
+    }
+
+    // ---- #1451: 行の範囲と白テクセルの省略が、描く画素を 1 つも変えないことの検知器 ----
+
+    /// テスト用の小さな擬似乱数（xorshift64）。crate は乱数の依存を持たない。
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+        fn unit(&mut self) -> f32 {
+            (self.next() >> 40) as f32 / (1u64 << 24) as f32
+        }
+        fn byte(&mut self) -> u8 {
+            self.next() as u8
+        }
+    }
+
+    /// premultiplied の色（各チャネルが alpha 以下）。
+    fn random_color(rng: &mut Rng) -> egui::Color32 {
+        let a = rng.byte();
+        let mut channel = || (rng.byte() as u16 * a as u16 / 255) as u8;
+        egui::Color32::from_rgba_premultiplied(channel(), channel(), channel(), a)
+    }
+
+    /// (0, 0) が白で、残りはばらばらなテクスチャ。
+    fn random_texture(rng: &mut Rng, filter: TexFilter) -> CpuTexture {
+        let (width, height) = (8, 8);
+        let mut pixels: Vec<[u8; 4]> = (0..width * height)
+            .map(|_| random_color(rng).to_array())
+            .collect();
+        pixels[0] = [255, 255, 255, 255];
+        CpuTexture {
+            width,
+            height,
+            pixels,
+            filter,
+        }
+    }
+
+    /// 座標の 1 成分。画面の外へはみ出す値と、画素中心の行（`n + 0.5`）に極めて近い値を混ぜる
+    /// （水平に近い辺の境界が最も動く形）。
+    fn random_coord(rng: &mut Rng, extent: f32) -> f32 {
+        match rng.below(4) {
+            0 => rng.below(extent as u64) as f32 + 0.5 + (rng.unit() - 0.5) * 1e-4,
+            _ => rng.unit() * (extent + 40.0) - 20.0,
+        }
+    }
+
+    /// `fill_mesh` と、#1451 より前の実装（`fill_mesh_reference`）で同じ buffer を描き、全画素を比べる。
+    #[allow(clippy::too_many_arguments)]
+    fn assert_same_as_reference(
+        label: &str,
+        width: usize,
+        height: usize,
+        vertices: &[egui::epaint::Vertex],
+        indices: &[u32],
+        texture: &CpuTexture,
+        clip_min: (usize, usize),
+        clip_max: (usize, usize),
+        ppp: f32,
+    ) {
+        let mut got = vec![0x0012_3456u32; width * height];
+        let mut want = got.clone();
+        fill_mesh(
+            &mut got, width, height, vertices, indices, texture, clip_min, clip_max, ppp,
+        );
+        fill_mesh_reference(
+            &mut want, width, height, vertices, indices, texture, clip_min, clip_max, ppp,
+        );
+        let differ = got.iter().zip(&want).filter(|(a, b)| a != b).count();
+        assert_eq!(differ, 0, "{label}: 前の実装と {differ} 画素が違う");
+    }
+
+    /// **ランダムな三角形で、描く画素が前の実装と 1 つも変わらない。** 両方の巻き方・水平に近い辺・
+    /// 画面の外へはみ出す頂点・白 UV とテクスチャ UV・Nearest / Linear / 大きさ 0 のテクスチャ・切り抜き矩形・
+    /// 4 つの表示倍率を混ぜる。
+    #[test]
+    fn fill_mesh_matches_reference_on_random_meshes() {
+        let mut rng = Rng(0x1451_0000_dead_beef);
+        let (width, height) = (96usize, 64usize);
+        let textures = [
+            random_texture(&mut rng, TexFilter::Nearest),
+            random_texture(&mut rng, TexFilter::Linear),
+            texture(0, 0),
+        ];
+        for ppp in [1.0f32, 1.25, 1.5, 2.0] {
+            for case in 0..1000 {
+                let white_uv = rng.below(2) == 0;
+                let vertices: Vec<egui::epaint::Vertex> = (0..3)
+                    .map(|_| egui::epaint::Vertex {
+                        pos: egui::pos2(
+                            random_coord(&mut rng, width as f32) / ppp,
+                            random_coord(&mut rng, height as f32) / ppp,
+                        ),
+                        uv: if white_uv {
+                            egui::epaint::WHITE_UV
+                        } else {
+                            egui::pos2(rng.unit(), rng.unit())
+                        },
+                        color: random_color(&mut rng),
+                    })
+                    .collect();
+                let clip_min = (rng.below(16) as usize, rng.below(16) as usize);
+                let clip_max = (
+                    width - rng.below(16) as usize,
+                    height - rng.below(16) as usize,
+                );
+                let tex = &textures[rng.below(3) as usize];
+                assert_same_as_reference(
+                    &format!("ppp={ppp} case={case}"),
+                    width,
+                    height,
+                    &vertices,
+                    &[0, 1, 2],
+                    tex,
+                    clip_min,
+                    clip_max,
+                    ppp,
+                );
+            }
+        }
+    }
+
+    /// **egui が組んだ実際のフレームで、描く画素が前の実装と 1 つも変わらない。** 結果リストに似た UI
+    /// （2 段のラベル・選択行の角丸の塗り・アイコン相当のテクスチャ付きの矩形・枠線）を 4 つの表示倍率で描く。
+    #[test]
+    fn fill_mesh_matches_reference_on_an_egui_frame() {
+        for ppp in [1.0f32, 1.25, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(ppp);
+            let size = egui::vec2(600.0, 330.0);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                for row in 0..8 {
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(4.0, 4.0 + row as f32 * 40.0),
+                        egui::vec2(592.0, 38.0),
+                    );
+                    if row == 2 {
+                        ui.painter()
+                            .rect_filled(rect, 6.0, egui::Color32::from_rgb(60, 90, 160));
+                    }
+                    ui.painter().rect_stroke(
+                        rect,
+                        6.0,
+                        egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+                        egui::StrokeKind::Inside,
+                    );
+                    let icon = egui::Rect::from_min_size(
+                        rect.min + egui::vec2(6.0, 6.0),
+                        egui::vec2(26.0, 26.0),
+                    );
+                    ui.painter().image(
+                        egui::TextureId::Managed(0),
+                        icon,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.5, 0.5)),
+                        egui::Color32::WHITE,
+                    );
+                    ui.painter().text(
+                        rect.min + egui::vec2(40.0, 4.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("Application {row} — 検索結果"),
+                        egui::FontId::proportional(15.0),
+                        egui::Color32::from_gray(230),
+                    );
+                    ui.painter().text(
+                        rect.min + egui::vec2(40.0, 21.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("C:\\Program Files\\App{row}\\app.exe"),
+                        egui::FontId::proportional(11.0),
+                        egui::Color32::from_gray(160),
+                    );
+                }
+            });
+            let mut store: HashMap<egui::TextureId, CpuTexture> = HashMap::new();
+            for (id, deltas) in output.textures_delta.set.drain() {
+                for delta in deltas {
+                    apply_texture_delta(&mut store, id, &delta);
+                }
+            }
+            output.textures_delta.free.clear();
+            let clipped = ctx.tessellate(output.shapes, ppp);
+            let (width, height) = (
+                (size.x * ppp).ceil() as usize,
+                (size.y * ppp).ceil() as usize,
+            );
+            let blank = texture(0, 0);
+            let mut meshes = 0;
+            for primitive in &clipped {
+                let egui::epaint::Primitive::Mesh(mesh) = &primitive.primitive else {
+                    continue;
+                };
+                meshes += 1;
+                let tex = store.get(&mesh.texture_id).unwrap_or(&blank);
+                let clip = primitive.clip_rect;
+                let clip_min = (
+                    (clip.min.x * ppp).round().max(0.0) as usize,
+                    (clip.min.y * ppp).round().max(0.0) as usize,
+                );
+                let clip_max = (
+                    (clip.max.x * ppp).round().min(width as f32) as usize,
+                    (clip.max.y * ppp).round().min(height as f32) as usize,
+                );
+                assert_same_as_reference(
+                    &format!("ppp={ppp}"),
+                    width,
+                    height,
+                    &mesh.vertices,
+                    &mesh.indices,
+                    tex,
+                    clip_min,
+                    clip_max,
+                    ppp,
+                );
+            }
+            assert!(
+                meshes > 0,
+                "ppp={ppp}: メッシュが 1 つも無い（検知器が何も見ていない）"
+            );
+        }
+    }
+
+    /// **範囲は、真に内側の画素をすべて含む。** 水平な辺・垂直な辺・両方の巻き方で、範囲の外に内側の画素が無いこと。
+    #[test]
+    fn row_span_contains_every_inside_pixel() {
+        let triangles: [[(f32, f32); 3]; 4] = [
+            [(1.0, 1.0), (20.0, 1.0), (1.0, 15.0)], // 水平な辺と垂直な辺
+            [(1.0, 1.0), (1.0, 15.0), (20.0, 1.0)], // 逆の巻き方
+            [(0.3, 7.5), (30.7, 7.5001), (12.0, 0.2)], // 行の中心に乗る、ほぼ水平な辺
+            [(5.0, -3.0), (40.0, 20.0), (-6.0, 18.0)], // 画面の外へはみ出す
+        ];
+        for tri in triangles {
+            let [(x0, y0), (x1, y1), (x2, y2)] = tri;
+            let area = edge(x0, y0, x1, y1, x2, y2);
+            for y in 0..20usize {
+                let py = y as f32 + 0.5;
+                let span = row_span(tri, area, py, 0, 32);
+                for x in 0..32usize {
+                    let px = x as f32 + 0.5;
+                    let w = [
+                        edge(x1, y1, x2, y2, px, py),
+                        edge(x2, y2, x0, y0, px, py),
+                        edge(x0, y0, x1, y1, px, py),
+                    ];
+                    let inside = if area > 0.0 {
+                        w.iter().all(|&w| w >= 0.0)
+                    } else {
+                        w.iter().all(|&w| w <= 0.0)
+                    };
+                    if inside {
+                        let (start, end) = span.unwrap_or_else(|| {
+                            panic!("{tri:?} y={y}: 内側の画素 x={x} があるのに範囲が空")
+                        });
+                        assert!(
+                            (start..end).contains(&x),
+                            "{tri:?} y={y}: 内側の画素 x={x} が範囲 {start}..{end} の外"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// #1451 より前の `fill_mesh`。比較の基準として、変えずに残す。
+    #[allow(clippy::too_many_arguments)]
+    fn fill_mesh_reference(
+        buffer: &mut [u32],
+        width: usize,
+        height: usize,
+        vertices: &[egui::epaint::Vertex],
+        indices: &[u32],
+        texture: &CpuTexture,
+        clip_min: (usize, usize),
+        clip_max: (usize, usize),
+        pixels_per_point: f32,
+    ) {
+        for triangle in indices.as_chunks::<3>().0 {
+            let v0 = &vertices[triangle[0] as usize];
+            let v1 = &vertices[triangle[1] as usize];
+            let v2 = &vertices[triangle[2] as usize];
+            let (x0, y0) = (v0.pos.x * pixels_per_point, v0.pos.y * pixels_per_point);
+            let (x1, y1) = (v1.pos.x * pixels_per_point, v1.pos.y * pixels_per_point);
+            let (x2, y2) = (v2.pos.x * pixels_per_point, v2.pos.y * pixels_per_point);
+            let area = edge(x0, y0, x1, y1, x2, y2);
+            if area.abs() < f32::EPSILON {
+                continue;
+            }
+            let min_x = x0.min(x1).min(x2).floor().max(clip_min.0 as f32) as usize;
+            let min_y = y0.min(y1).min(y2).floor().max(clip_min.1 as f32) as usize;
+            let max_x = (x0.max(x1).max(x2).ceil() as usize)
+                .min(clip_max.0)
+                .min(width);
+            let max_y = (y0.max(y1).max(y2).ceil() as usize)
+                .min(clip_max.1)
+                .min(height);
+            for y in min_y..max_y {
+                let py = y as f32 + 0.5;
+                for x in min_x..max_x {
+                    let px = x as f32 + 0.5;
+                    let w0 = edge(x1, y1, x2, y2, px, py);
+                    let w1 = edge(x2, y2, x0, y0, px, py);
+                    let w2 = edge(x0, y0, x1, y1, px, py);
+                    let inside = if area > 0.0 {
+                        w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0
+                    } else {
+                        w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0
+                    };
+                    if !inside {
+                        continue;
+                    }
+                    let (b0, b1, b2) = (w0 / area, w1 / area, w2 / area);
+                    let u = v0.uv.x * b0 + v1.uv.x * b1 + v2.uv.x * b2;
+                    let v = v0.uv.y * b0 + v1.uv.y * b1 + v2.uv.y * b2;
+                    let c0 = v0.color.to_array();
+                    let c1 = v1.color.to_array();
+                    let c2 = v2.color.to_array();
+                    let color = [
+                        (c0[0] as f32 * b0 + c1[0] as f32 * b1 + c2[0] as f32 * b2) as u8,
+                        (c0[1] as f32 * b0 + c1[1] as f32 * b1 + c2[1] as f32 * b2) as u8,
+                        (c0[2] as f32 * b0 + c1[2] as f32 * b1 + c2[2] as f32 * b2) as u8,
+                        (c0[3] as f32 * b0 + c1[3] as f32 * b1 + c2[3] as f32 * b2) as u8,
+                    ];
+                    let src = modulate(color, texture.sample(u, v));
+                    if src[3] == 0 && src[0] == 0 && src[1] == 0 && src[2] == 0 {
+                        continue;
+                    }
+                    let index = y * width + x;
+                    buffer[index] = blend_premultiplied(buffer[index], src);
+                }
+            }
+        }
     }
 }

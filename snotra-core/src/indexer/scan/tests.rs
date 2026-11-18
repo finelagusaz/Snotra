@@ -318,7 +318,7 @@ fn scan_all_returns_the_same_preorder_regardless_of_threads() {
 
 /// **同じ根の中の重複では、先に列挙した方が勝つ**（積む側の根のとき）。大文字小文字だけ違う
 /// 兄弟は、大文字小文字を区別するディレクトリでしか並ばない。`fsutil` で作れない環境
-/// （WSL の機能が無い機械など）ではスキップする。
+/// （WSL の機能が無い機械など）ではスキップする。ただし環境変数 `CI` があれば失敗にする。
 #[test]
 fn scan_all_dedups_in_enumeration_order_within_a_root() {
     let dir = temp_dir("dedup_within_root");
@@ -338,6 +338,11 @@ fn scan_all_dedups_in_enumeration_order_within_a_root() {
         .map(|e| e.path().to_string_lossy().into_owned())
         .collect();
     if !made || listed.len() != 2 {
+        // この勝者を見る検知器はこの 1 本だけなので、CI では黙ってスキップさせない。
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI で大文字小文字を区別するディレクトリを作れなかった（検知器が走っていない）"
+        );
         eprintln!("大文字小文字を区別するディレクトリを作れないのでスキップする");
         let _ = fs::remove_dir_all(&dir);
         return;

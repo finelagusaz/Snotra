@@ -4,13 +4,13 @@
 //! 採否を決めるのが [`Dedup::accept`] である。正規化キーの規則そのものは `super::keys` が持ち、
 //! ここはその呼び出し側にすぎない（記録側と照合側が同じ関数を通ることがバイト一致の根拠）。
 //!
-//! **走査は専用のプールで並列に回し、重複排除は根を歩き終えてから、その根の前順の列へ順に当てる**
-//! （[`scan_all_with_threads`]）。返す列は 1 スレッドで歩いたときと同じになる。
+//! **走査は専用のプールで並列に回し、重複排除は根を歩き終えてから、その根の前順（pre-order）の
+//! 列へ順に当てる**（[`scan_all_with_threads`]）。返す列は 1 スレッドで歩いたときと同じになる。
 
 use rayon::prelude::*;
 use std::fs::Metadata;
 use std::os::windows::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
@@ -86,14 +86,14 @@ fn root_roles(scan_paths: &[ScanPath]) -> Vec<RootRole> {
         .collect()
 }
 
-/// 走査中の重複排除の状態。**集合・バッファ・根の役割を 1 つに束ねる**——別々の引数で
-/// 並べると、再帰の呼び出し点で組を崩せてしまう。
+/// 重複排除の状態。**集合・バッファ・根の役割を 1 つに束ねる**——別々に持つと、根を
+/// 差し替える箇所で組を崩せてしまう。
 struct Dedup {
     /// 重なる根が 1 つも無ければ `None`（この走査は重複排除を必要としない）。
     set: Option<std::collections::HashSet<String>>,
     /// 照合だけの根で使い回す正規化キーのバッファ。**確保を走査あたり 1 回に抑える。**
     buf: String,
-    /// いま走査している根の役割。[`scan_all`] のループが根ごとに差し替える。
+    /// いま当てている根の役割。[`scan_all_with_threads`] のループが根ごとに差し替える。
     role: RootRole,
 }
 
@@ -108,7 +108,7 @@ impl Dedup {
     ///
     /// **この関数の照合分岐で確保が戻る退行は、CI では検出されない。** 走査結果が同じままなので
     /// 挙動テストにも `root_roles` の単体テストにも映らず、`tests/memory_footprint.rs` の確保
-    /// 回数（`#[ignore]` の手動計測）だけが見る。`scan_all` の結線の退行も同じである。確保の側で
+    /// 回数（`#[ignore]` の手動計測）だけが見る。`scan_all_with_threads` の結線の退行も同じである。確保の側で
     /// CI が守るのは、役割の割り当て（`root_roles_over_the_real_shape_leave_the_largest_root_inert`）
     /// までである。
     fn accept(&mut self, path: &str) -> bool {
@@ -139,7 +139,8 @@ const SCAN_THREADS_MAX: usize = 8;
 /// `Relaxed` の 1 回だけにする（単調に増えるだけで、ほかの値との順序を運ばない）。
 ///
 /// **走査は専用のプールで並列に回すが、返す列は 1 スレッドで歩いたときと同じ前順である**
-/// （[`scan_directory`]）。検索と kana が使うグローバルなプールは塞がない。
+/// （[`scan_directory`]）。検索と kana が使うグローバルなプールは、専用のプールを建てられない
+/// ときを除いて使わない。
 pub fn scan_all(
     scan_paths: &[ScanPath],
     show_hidden_system: bool,
@@ -208,11 +209,8 @@ fn scan_all_with_threads(
 enum Item {
     /// 登録するファイル。
     Leaf(AppEntry),
-    /// 降りる子フォルダ。`folder` はそのフォルダ自身を登録するとき（`include_folders`）だけ持つ。
-    Dir {
-        folder: Option<AppEntry>,
-        path: PathBuf,
-    },
+    /// 降りる子フォルダの位置。そのフォルダ自身を登録するとき（`include_folders`）だけエントリを持つ。
+    Dir(Option<AppEntry>),
 }
 
 /// `dir` の下を歩き、登録するエントリを前順（pre-order）で返す: エントリを列挙順に並べ、
@@ -232,7 +230,9 @@ fn scan_directory(
     };
     dirs.fetch_add(1, Ordering::Relaxed);
 
+    // 子フォルダは `items` の `Dir` と同じ順で `subdirs` にも積む（並列に降りるのは子フォルダだけ）。
     let mut items = Vec::new();
+    let mut subdirs = Vec::new();
     for entry in read_dir.flatten() {
         let path = entry.path();
         let Ok(meta) = entry.metadata() else {
@@ -258,7 +258,8 @@ fn scan_directory(
                     })
                 })
                 .flatten();
-            items.push(Item::Dir { folder, path });
+            items.push(Item::Dir(folder));
+            subdirs.push(path);
         } else {
             let ext = path.extension().and_then(|e| e.to_str());
             if ext.is_some_and(|e| matches_extension(extensions, e)) {
@@ -278,24 +279,20 @@ fn scan_directory(
         }
     }
 
-    // `collect` は添字の順を保つ——子の結果は列挙順に並ぶ。
-    let children: Vec<Vec<AppEntry>> = items
+    // `collect` は添字の順を保つ——子の結果は `subdirs` の順（＝列挙順）に並ぶ。
+    let children: Vec<Vec<AppEntry>> = subdirs
         .par_iter()
-        .map(|item| match item {
-            Item::Dir { path, .. } => {
-                scan_directory(path, extensions, include_folders, show_hidden_system, dirs)
-            }
-            Item::Leaf(_) => Vec::new(),
-        })
+        .map(|path| scan_directory(path, extensions, include_folders, show_hidden_system, dirs))
         .collect();
 
-    let mut out = Vec::new();
-    for (item, sub) in items.into_iter().zip(children) {
+    let mut out = Vec::with_capacity(items.len() + children.iter().map(Vec::len).sum::<usize>());
+    let mut children = children.into_iter();
+    for item in items {
         match item {
             Item::Leaf(entry) => out.push(entry),
-            Item::Dir { folder, .. } => {
+            Item::Dir(folder) => {
                 out.extend(folder);
-                out.extend(sub);
+                out.extend(children.next().unwrap_or_default());
             }
         }
     }

@@ -83,7 +83,7 @@
 - 走査中のパニック: `install` が呼び出し側へ伝える。今の逐次と同じく、走査スレッド（`indexing.rs` の専用スレッド）で落ちる
 - プールを建てられない: グローバルプールで回す（結果は同じ。検索と競合するだけ）
 - `scan_all` を rayon のワーカーの中から呼ぶ経路: 製品には無い（`scan_and_sort_timed` は `indexing.rs` の専用スレッドと起動時の経路から呼ばれる）。
-  ワーカーの中から別プールの `install` を呼んでもデッドロックはしない（rayon の仕様: 呼び出し側は待つ間に自分のプールの仕事を盗まない）
+  ワーカーの中から別プールの `install` を呼んでもデッドロックはしない（rayon-core の `Registry::in_worker_cross` は、待つ間に呼び出し側のプールの仕事を処理しながら完了を待つ）
 - 深い再帰: 1 段ごとに `par_iter` の join がスタックに積まれ、待機中のワーカーの steal で逐次より深くなりうる。スタックの大きさは
   変えない（今の逐次も既定のスタックで同じ再帰を回す・スパイクは実運用点の最大深さ 22・68 万ディレクトリを既定のスタックで完走した）。
   release は `panic = "abort"` なので、溢れれば即終了する。PERFORMANCE.md の「測っていないもの」に残す
@@ -131,6 +131,7 @@ Red → Green: `scan_directory` を先にシグネチャだけ（中身は `Vec:
 - [x] 走査の所要と 1 コアを前提にした散文（「`SPEC.md` は変えない」の直前の列挙・cache.rs 2 か所・cache/tests.rs・index_tree.rs・
   str_arena.rs・search/build.rs・tests/path_query_cost.rs・PERFORMANCE.md 2 か所）を、数を写さない形へ直す
 - [x] 変更した crate の fmt / clippy / test を手元で通す
+- [x] ラウンド 1: d79b7038・verify:tree green（A/E/F）・指摘 High 1 / Medium 2 / Low 5・生き残った変異 1（スレッド数 1 固定・速度だけが変わるので検知器を置かない）。用語集に「前順」・CI ではスキップを失敗に・`Dedup` の doc・グローバルプールの条件・連結の確保と `par_iter` を子フォルダだけへ、を直した。PERFORMANCE.md の節は Phase 2 で足す
 
 ### Phase 2: 実測と記録
 

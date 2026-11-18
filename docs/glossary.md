@@ -17,6 +17,7 @@
 | 母集団 | population | 検査や列挙が、漏れなく見るべき対象の全体 |
 | 述語 | predicate | 検査で、対象が条件に当たるかどうかを決める判定 |
 | 照合 | verification | 写しや参照を、正本と突き合わせて確かめること |
+| 前順 | pre-order | ツリーを歩いた順に並べた列で、各ディレクトリのエントリを列挙順に置き、フォルダの直後にその中身を置くもの（索引の走査が返す列の順。`snotra-core/src/indexer/scan.rs`） |
 | 分離プロファイル | isolated profile | `SNOTRA_CONFIG_DIR` が実プロファイル（`%APPDATA%\Snotra`）以外を指す起動。単一インスタンス・スタートアップ登録・既定ホットキーが普段使いの Snotra から分かれる（`SPEC.md` §13）。スクリプトが作る検証用プロファイルは、その一種である |
 | 着地 | resolve | 参照（intra-doc link など）が、実在する対象に当たること |
 | 規範（規範文書） | norm | 作業の決まりを書いた文書。ルート `CLAUDE.md`・`AGENTS.md`・`.claude/rules/`・`.claude/skills/` |

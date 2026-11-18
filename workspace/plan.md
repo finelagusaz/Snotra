@@ -104,19 +104,19 @@ npm run governance:check
 
 ### Phase 1 — 選別の純関数
 
-- [ ] `scripts/lib/SnotraMemoryScope.Tests.ps1` に a〜j を書き、モジュール不在で赤になることを確かめる
-- [ ] `scripts/lib/SnotraMemoryScope.psm1` に `Select-SnotraMemoryScope` と doc を書き、`npm run test:powershell` を緑にする
+- [x] `scripts/lib/SnotraMemoryScope.Tests.ps1` に a〜j を書き、モジュール不在で赤になることを確かめる
+- [x] `scripts/lib/SnotraMemoryScope.psm1` に `Select-SnotraMemoryScope` と doc を書き、`npm run test:powershell` を緑にする
 
 ### Phase 2 — スクリプトと文書
 
-- [ ] `scripts/measure-memory.ps1` の BFS を置き換え、件数行・除外行・exit 2 のメッセージ・`.SYNOPSIS` / `.DESCRIPTION` / `.PARAMETER ProcessName` を直す
-- [ ] `docs/build-commands.md` の `measure:memory` の行を直す
-- [ ] 「ツリー合算」「子孫」「BFS」の語を `git grep` で数え、`measure-memory` を説明している現役の記述に古い語が残っていないことを確かめる
+- [x] `scripts/measure-memory.ps1` の BFS を置き換え、件数行・除外行・exit 2 のメッセージ・`.SYNOPSIS` / `.DESCRIPTION` / `.PARAMETER ProcessName` を直す
+- [x] `docs/build-commands.md` の `measure:memory` の行を直す
+- [x] 「ツリー合算」「子孫」「BFS」の語を `git grep` で数え、`measure-memory` を説明している現役の記述に古い語が残っていないことを確かめる
 
 ### Phase 3 — 検証
 
 - [ ] `npm run test:powershell`・`npm test`・`npm run governance:check` を実行する
-- [ ] 実機確認 0〜8 を行い、Red / Green の出力を `workspace/verify-1461.txt` へ記録する
+- [x] 実機確認 0〜8 を行い、Red / Green の出力を `workspace/verify-1461.txt` へ記録する。結果: probe とサイドカーの親は snotra（5）。変更前は probe と conhost 2 件まで合算して PrivWS 73.9 MiB（6）、変更後は snotra + サイドカーの 69.5 MiB で probe1461.exe と conhost 2 件が除外の行に出た（7）。probe を止めると除外は基準集合の conhost 1 件に戻った（8）。debug の snotra は自分の conhost を子に持ち、変更前はそれも合算していた
 
 ## 未確定（実装前に潰す）
 

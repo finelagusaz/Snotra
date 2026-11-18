@@ -1,21 +1,24 @@
 <#
 .SYNOPSIS
   Snotra のメモリ実測（#532 flip 基準 3）。PrivWS（物理私有 working set）を本命軸に
-  プロセスツリー全体を合算する。
+  snotra と設定サイドカーを合算する。
 
 .DESCRIPTION
   採用ゲート（issue #532 comment 5011127487）と同じ手法を再現する:
   - 本命軸は Win32_PerfFormattedData_PerfProc_Process.WorkingSetPrivate（PrivWS）。
-    WorkingSet64 は共有ページをツリー合算で二重計上するため**出力しない**（採用ゲート当時に
+    WorkingSet64 は共有ページを合算で二重計上するため**出力しない**（採用ゲート当時に
     それを最も大きく歪めていたのは撤去済み WebView2 の共有ページだった）。
-  - 子孫プロセスを BFS で辿って合算する。**現構成でツリーに乗りうる子は設定サイドカー
-    snotra-settings だけである**（存命中のみ）。
-  - **プロセス件数を必ず出力する**。BFS が沈黙して 0 件を返す罠（#532 SU2 実測: CIM の
-    ParentProcessId は uint32 で返り、int の PID 集合との比較が一致しない）を出力から
-    検知できるようにするため——「測れなかった」と「0 だった」を区別できない測定器は使えない。
+  - **合算するのは、ルートと、その直接の子の設定サイドカー snotra-settings だけである**
+    （存命中のみ）。Snotra から起動したアプリも子孫に入るので、合算から除外し、件数と名前を
+    別に出す（#1461）。選び方と理由の正本は `lib/SnotraMemoryScope.psm1`。
+  - **プロセス件数を必ず出力する**。ルート 0 件（exit 1）と perf 0 件（exit 2）を件数で見せ、
+    「測れなかった」と「0 だった」を区別するため——区別できない測定器は使えない。ppid の型の罠
+    （#532 SU2: CIM の ParentProcessId は uint32 で返り、int の PID 集合との比較が一致しない）は
+    実行時の出力では「子が居ない」と区別できないので、`lib/SnotraMemoryScope.Tests.ps1` が固定する。
 
 .PARAMETER ProcessName
-  ルートプロセス名（既定 snotra）。
+  ルートプロセス名（既定 snotra）。名前の完全一致で選ぶ。変えるのはルートの名前だけで、
+  サイドカー名は固定（`snotra-settings.exe`）。
 
 .PARAMETER Label
   出力に付ける見出し（例 "egui-visible" / "egui-hidden"）。
@@ -38,6 +41,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraMemoryScope.psm1') -Force
 
 if ($DelaySeconds -gt 0) {
     Write-Host "$DelaySeconds 秒後にサンプリングします..." -ForegroundColor Cyan
@@ -51,31 +55,13 @@ if ($roots.Count -eq 0) {
     exit 1
 }
 
-# (ppid -> 子 pid) の索引を一度だけ作る。**型は uint32 に揃える**（上記 SU2 の罠）。
-$byPpid = @{}
-foreach ($p in Get-CimInstance Win32_Process) {
-    $parent = [uint32]$p.ParentProcessId
-    if (-not $byPpid.ContainsKey($parent)) {
-        $byPpid[$parent] = New-Object System.Collections.ArrayList
-    }
-    [void]$byPpid[$parent].Add([uint32]$p.ProcessId)
-}
-
-# ルートから子孫を BFS（$pid は PowerShell の自動変数なので別名を使う）。
-$tree = @{}
-$queue = New-Object System.Collections.Queue
-foreach ($r in $roots) { [void]$queue.Enqueue($r) }
-while ($queue.Count -gt 0) {
-    $cur = [uint32]$queue.Dequeue()
-    if ($tree.ContainsKey($cur)) { continue }
-    $tree[$cur] = $true
-    if ($byPpid.ContainsKey($cur)) {
-        foreach ($c in $byPpid[$cur]) { [void]$queue.Enqueue($c) }
-    }
-}
+$scope = Select-SnotraMemoryScope -Processes @(Get-CimInstance Win32_Process) -RootIds $roots
+$included = @{}
+foreach ($id in $scope.Included) { $included[[uint32]$id] = $true }
+$sidecarCount = @($scope.Included).Count - $roots.Count
 
 $rows = @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process |
-    Where-Object { $tree.ContainsKey([uint32]$_.IDProcess) } |
+    Where-Object { $included.ContainsKey([uint32]$_.IDProcess) } |
     ForEach-Object {
         [pscustomobject]@{
             Name     = $_.Name
@@ -88,11 +74,11 @@ $rows = @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process |
 $title = if ($Label) { "=== Snotra メモリ実測 [$Label] ===" } else { '=== Snotra メモリ実測 ===' }
 Write-Host ''
 Write-Host $title -ForegroundColor Cyan
-Write-Host ("  ルート {0} 件 / ツリー {1} 件 / perf 取得 {2} 件" -f $roots.Count, $tree.Count, $rows.Count)
+Write-Host ("  ルート {0} 件 / 設定サイドカー {1} 件 / perf 取得 {2} 件" -f $roots.Count, $sidecarCount, $rows.Count)
 
 if ($rows.Count -eq 0) {
-    Write-Host '  perf カウンタが 0 件です。BFS 不成立か perf 未提供の疑いがあり、' -ForegroundColor Red
-    Write-Host '  「0 MiB だった」と読んではならない。ツリー件数と併せて手法を疑うこと。' -ForegroundColor Red
+    Write-Host '  perf カウンタが 0 件です。perf 未提供か、PID の引き違いの疑いがあり、' -ForegroundColor Red
+    Write-Host '  「0 MiB だった」と読んではならない。ルートとサイドカーの件数と併せて手法を疑うこと。' -ForegroundColor Red
     exit 2
 }
 
@@ -101,4 +87,10 @@ $sumWs = [math]::Round(($rows | Measure-Object -Property PrivWS -Sum).Sum, 1)
 $sumPc = [math]::Round(($rows | Measure-Object -Property PrivComm -Sum).Sum, 1)
 Write-Host ("  合計 PrivWS  : {0,7} MiB  ← 本命軸（物理私有・flip 基準 3）" -f $sumWs) -ForegroundColor Green
 Write-Host ("  合計 PrivComm: {0,7} MiB  （参考・commit）" -f $sumPc) -ForegroundColor DarkGray
+
+$excluded = @($scope.Excluded)
+Write-Host ("  合算から除外した子孫 {0} 件（Snotra から起動したアプリ・サイドカーが開いたもの等）" -f $excluded.Count) -ForegroundColor Yellow
+foreach ($e in $excluded) {
+    Write-Host ("    {0} ({1})" -f $e.Name, $e.ProcessId) -ForegroundColor Yellow
+}
 Write-Host ''

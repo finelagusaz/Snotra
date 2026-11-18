@@ -2774,7 +2774,7 @@ B 側は live +73.74 に対し peak 73.83（差 0.09 MiB）——`HashSet` に�
 `scan_all_with_threads` の doc）。
 
 **製品の A-B-A**（2026-11-18・HAL9000・16 論理コア・release・実 config の 5 根・`show_hidden_system = true`）。基準は 98ef3f3a、新は b0507b7d
-（この節を足したコミットとの差は PERFORMANCE.md だけ）。
+（この節を足したコミットとの差に、製品のコードは含まれない）。
 `index.bin` を消して起動し（実 `index.bin` は退避して最後に戻した）、cache-miss の起動の背景の構築（#1448）で走査させた。`/s` と同じ `scan_and_sort_timed` を通る。
 温めに基準を 1 回走らせてから、基準と新を交互に 3 回ずつ走らせた。
 

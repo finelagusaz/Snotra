@@ -109,9 +109,11 @@ Red → Green: `scan_directory` を先にシグネチャだけ（中身は `Vec:
 ### A-B-A の手順（受け入れ条件 3）
 
 1. 基準 = この計画の分岐元（origin/main）の release exe、新 = 実装後の release exe を、scratchpad へ別名で置く
-2. 静かな状態（ビルドを走らせない・ユーザーは PC に触れない）で、基準 → 新 → 基準の順に、各 exe を起動し、`/s` で再構築し、
-   `scan-log.jsonl` の終了の行が書かれたら `index.bin` を scratchpad へ写して終了する
-3. `scan_ms / dirs` を 3 回分並べる。`index.bin` は先頭の varint（`built_at`）を除いてバイト比較する
+2. 静かな状態（ビルドを走らせない）で、温めの基準 1 回のあと、基準 → 新 → 基準 → 新 → 基準 → 新の順に、`index.bin` を退けて各 exe を
+   起動する（`/s` の代わりに cache-miss の起動の背景の構築〔#1448〕で走査させる。同じ `scan_and_sort_timed` を通り、`scan-log.jsonl` に
+   記録される。GUI への入力の注入が要らない）。終了の行が書かれたら `index.bin` を scratchpad へ写して終了する。実 `index.bin` は最初に
+   退避し、最後に戻す（道具は scratchpad の `aba.ps1`）
+3. `scan_ms / dirs` を版ごとに並べる。`index.bin` は先頭の varint（`built_at`）を除いてバイト比較する
 4. 不一致なら、`load_cached_entries` 相当でエントリの集合を出して差を列挙する（scratchpad の一時の道具）
 
 ## 新しく導入する用語
@@ -136,8 +138,9 @@ Red → Green: `scan_directory` を先にシグネチャだけ（中身は `Vec:
 
 ### Phase 2: 実測と記録
 
-- [ ] A-B-A を回し、`scan_ms / dirs` と `index.bin` のバイト比較を取る
-- [ ] `PERFORMANCE.md` に「採用: 索引の走査を専用プールで fork-join の並列にする（#1455）」を書く（スパイクの 2 表・A-B-A・測っていないもの）
+- [x] A-B-A を回し、`scan_ms / dirs` と `index.bin` のバイト比較を取る
+  - 結果: 基準 24.35〜24.61 s・新 5.48〜5.62 s（約 4.4 倍）・`dirs` 688,043 と `scanned` 30,932 は全 7 回で一致・`index.bin` は `built_at` を除いて全 7 回でバイト一致
+- [x] `PERFORMANCE.md` に「採用: 索引の走査を専用プールで fork-join の並列にする（#1455）」を書く（スパイクの 2 表・A-B-A・測っていないもの）
 
 ## 未確定（実装前に潰す）
 

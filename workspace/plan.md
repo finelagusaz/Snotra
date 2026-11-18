@@ -109,7 +109,7 @@ Red → Green: `scan_directory` を先にシグネチャだけ（中身は `Vec:
 ### A-B-A の手順（受け入れ条件 3）
 
 1. 基準 = この計画の分岐元（origin/main）の release exe、新 = 実装後の release exe を、scratchpad へ別名で置く
-2. 静かな状態（ビルドを走らせない）で、温めの基準 1 回のあと、基準 → 新 → 基準 → 新 → 基準 → 新の順に、`index.bin` を退けて各 exe を
+2. 静かな状態（ビルドを走らせない）で、温めの基準 1 回のあと、基準 → 新 → 基準 → 新 → 基準 → 新の順に、`index.bin` を消して各 exe を
    起動する（`/s` の代わりに cache-miss の起動の背景の構築〔#1448〕で走査させる。同じ `scan_and_sort_timed` を通り、`scan-log.jsonl` に
    記録される。GUI への入力の注入が要らない）。終了の行が書かれたら `index.bin` を scratchpad へ写して終了する。実 `index.bin` は最初に
    退避し、最後に戻す（道具は scratchpad の `aba.ps1`）
@@ -135,6 +135,7 @@ Red → Green: `scan_directory` を先にシグネチャだけ（中身は `Vec:
 - [x] 変更した crate の fmt / clippy / test を手元で通す
 - [x] ラウンド 1: d79b7038・verify:tree green（A/E/F）・指摘 High 1 / Medium 2 / Low 5・生き残った変異 1（スレッド数 1 固定・速度だけが変わるので検知器を置かない）。用語集に「前順」・CI ではスキップを失敗に・`Dedup` の doc・グローバルプールの条件・連結の確保と `par_iter` を子フォルダだけへ、を直した。PERFORMANCE.md の節は Phase 2 で足す
 - [x] ラウンド 2: a646ad4f・verify:tree green（A/E/F）・指摘 Low 2（`subdirs` と `Dir` の数のずれを `debug_assert!` で止める・測っていないものを計画の PERFORMANCE.md の項へ足す）・生き残った変異 0（スレッド数 1 固定は対象外）。両方直した
+- [x] ラウンド 3: 799a9439・verify:tree green（A/E/F）・指摘 Medium 1（新の版の sha）/ Low 6・生き残った変異 0（ただし `debug_assert!` は片方向だけ）。sha・件数の `debug_assert_eq!`・表の µs / dir・冷えた状態の列挙・「退けて」→「消して」・「ツリーの深さ」を直した。節の置き場所（メモリの章の下）は直さない（#1002 の走査の節と隣り合わせるため）
 
 ### Phase 2: 実測と記録
 

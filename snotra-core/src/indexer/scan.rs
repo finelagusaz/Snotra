@@ -286,6 +286,11 @@ fn scan_directory(
         .collect();
 
     let mut out = Vec::with_capacity(items.len() + children.iter().map(Vec::len).sum::<usize>());
+    debug_assert_eq!(
+        items.iter().filter(|i| matches!(i, Item::Dir(_))).count(),
+        children.len(),
+        "subdirs と Dir の数がずれた"
+    );
     let mut children = children.into_iter();
     for item in items {
         match item {
@@ -296,7 +301,6 @@ fn scan_directory(
             }
         }
     }
-    debug_assert!(children.next().is_none(), "subdirs と Dir の数がずれた");
     out
 }
 

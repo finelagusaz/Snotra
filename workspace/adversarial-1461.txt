@@ -1,0 +1,54 @@
+#1461 research.md 反証結果（実行時点: 実機で snotra / snotra-settings は動いていない）
+
+■ 実機の状況
+- Get-CimInstance Win32_Process で名前 snotra を検索: 0 件。perf カウンタも 0 件。よって争点 1 の「実プロセスの親子」は実測できていない（コードからの導出のみ）。
+- 代用実験: cmd.exe を 2 つ起動。Win32_PerfFormattedData_PerfProc_Process.Name は "cmd#7" "cmd#8"（.exe なし・#N 付き）、Win32_Process.Name は "cmd.exe"。争点 3 は実測で壊せず。
+- target/debug/snotra-settings.exe と target/release/snotra-settings.exe と src-tauri/binaries/snotra-settings-x86_64-pc-windows-msvc.exe は、この worktree ではいずれも 0 バイトのプレースホルダ（build.rs が作る）。ここでは設定サイドカーが実際には起動できない（exists() は通るが spawn は失敗する）。この環境では「サイドカー有り」の分岐は測れない。
+
+■ 争点 1: サイドカーは Snotra の直接の子で、イメージ名 snotra-settings.exe — 壊せなかった（条件付き）
+- window.rs:65-85: current_exe の親ディレクトリ + "snotra-settings.exe" を Command::new(...).spawn() で起動（cmd/シェルを挟まない）。直接の子。
+- externalBin のターゲットトリプル付きの名前 (tauri.conf.json:15-16, prepare-sidecar.ps1, release.yml:61) は「ビルド入力側の名前」。コードは常に snotra-settings.exe を探すので、トリプル付きのまま置かれていれば not_found で起動に失敗する。起動に成功した場合のイメージ名は必ず snotra-settings.exe。つまり名前の食い違いで合算が 0 件になる経路は、起動成功の場合には無い。
+- ⚠️ 確信なし: インストール版（NSIS）で Tauri が externalBin をトリプルなしにして snotra.exe の隣へ置く点は、この環境にインストーラが無く実測できない（コードの探し方から逆算しただけ）。偽にする手順: インストール版を起動し、設定を開いて Get-CimInstance Win32_Process で Name と ParentProcessId を読む。
+- 偽にする手順（開発ビルド）: 本物の snotra-settings.exe を target/debug に置いて起動し、同上で確認。
+
+■ 争点 2: ParentProcessId / WorkingSetPrivate 合算の欠陥は measure-memory.ps1 だけ — 字面は壊せなかったが、実質は壊せた（言い方が不正確）
+- grep（ParentProcessId|WorkingSetPrivate|PerfProc）の該当は scripts/measure-memory.ps1 のみ（他は docs/adr, safety-nets.md の散文、docs/superpowers の旧計画の写し）。bench-startup.ps1 は Get-Process の WorkingSet64（子孫走査なし・コメントで明言）。smoke 系は Stop-Process -Id / -Name のみ。CI(.github) に該当なし。
+- ただし: scripts/measure-memory-stages.ps1 は measure-memory.ps1 を `& $measure -Label ...` で 4 回（A〜D）呼ぶ（measure-memory-stages.ps1:68, Invoke-Stage）。パターンを持たないのではなく、欠陥を継承している。-ProcessName は渡さないので既定 snotra のまま。直す対象は 1 ファイルで足りるが、「stages は無関係」と書くと誤り。stages は snotra を kill してから起動し直すので、起動アプリの混入は通常起きにくい（クエリ注入だけで Enter は押さない）。実害は低いが、波及先として research.md に書く価値がある。
+- 偽にする手順: grep -rn "measure-memory" scripts/ で呼び出し元を数える（stages が 1 件出る）。
+
+■ 争点 3: perf の Name は .exe なし・#N 付き。選別は Win32_Process.Name、perf は PID — 壊せなかった（実測）
+- 上記の cmd#7 / cmd#8 の実測。snotra 実機では未測定。単一インスタンスなら Name は "snotra" / "snotra-settings" になるはず（推測）。
+- 補足（⚠️）: 選別を Win32_Process.Name で行うとき、PowerShell の -eq は大文字小文字を区別しないが、Hashtable キーや .NET の Equals / -ceq / -cmatch は区別する。実装でどれを使うか次第で Windows のイメージ名の大小で外れる。
+- 補足（⚠️）: Win32_Process と perf の 2 つのスナップショット間にプロセスが死ぬ・PID が再利用される競合があるが、既存の BFS も同じで、新規のリスクではない。
+
+■ 争点 4: 「ルート snotra ＋ 直接の子で名前が snotra-settings.exe」に絞れば #1444 の trim 対象と一致し、起動アプリ・open::that の子は確実に除外される — 一部壊せた
+- 一致しない場合（壊せた）:
+  a) working_set.rs の trim 対象は SettingsProcessState の Child（Snotra 自身が spawn したもの）。名前+親での選別は、ユーザーが Snotra から snotra-settings.exe 自体を起動した場合（ShellExecute 経由）を含む。research.md:29 が既に認めているので「確実に除外」は偽ではなく、「一致する」も厳密には偽（上位集合）。
+  b) ShellExecuteW が起動したアプリの親が Snotra とは限らない（lnk / ドキュメント / プロトコル / DDE は explorer 等経由になりうる）。research.md は「通常」と書いて留保済み。逆方向の話で、除外に影響しない。
+  c) 除外は「名前が snotra-settings.exe 以外」「直接の子でない」ものに対して成立する。サイドカーの子（open::that の子）は孫なので確実に除外される。ここは壊せなかった。
+- 壊せなかった: 名前+直接の子の絞り込みで、起動アプリ（名前が別）の除外は成立する。
+- ⚠️ ルートが複数（Get-Process -Name は複数件を返しうる。-ProcessName にワイルドカード 'snotra*' を渡すと snotra-settings もルートに入る）なら「ルートの直接の子」の定義が変わる。既定値のままなら問題なし。
+
+■ 争点 5: Name 列は既にある / docs で直すのは build-commands.md の 1 行だけ / PERFORMANCE.md は変更不要 — 一部壊せた
+- Name 列: measure-memory.ps1 の pscustomobject に Name=$_.Name がある。壊せなかった。ただし perf の Name は "snotra" / "snotra-settings" / "cmd#7" の形で、除外した子孫の表示が必要なら、perf ではなく Win32_Process の Name（.exe 付き）を使う必要がある。候補 2 の「名前を出す」は合算対象内の名前だけが実装済みで、「除外した子孫の名前」は未実装（ユーザー決定の項目で、research.md 自身もそこを分けている）。
+- 壊せた（直す対象が 1 行ではない）: 挙動の記述を持つのは次のとおり。
+  1) scripts/measure-memory.ps1 の .SYNOPSIS「プロセスツリー全体を合算する」と、.DESCRIPTION の WorkingSet64 の項「ツリー合算で二重計上」、BFS の項（research.md は SYNOPSIS と BFS の項のみ挙げ、二重計上の項は挙げていない。これは過去の文脈の説明で、直さなくてよい可能性が高い）。
+  2) docs/build-commands.md:274「ツリー合算」。
+  3) 出力の見出し行「ルート N 件 / ツリー N 件 / perf 取得 N 件」と、exit 2 のメッセージ「BFS 不成立」「ツリー件数と併せて」（measure-memory.ps1 の本文）。「ツリー」の意味が変わるので、語の整合が要る。
+  4) scripts/measure-memory-stages.ps1 には「合算」の記述なし。
+- PERFORMANCE.md: 147 行は名指しのみ（壊せなかった）。ただし PERFORMANCE.md:74-75, 87, 659-660 は #1444 に関する別の主張で、本件の対象ではない。過去の計測値は「ツリー合算」で測っていて、当時の子は設定サイドカーだけなので数値の連続性は保たれる（推測）。ここは壊せなかった。
+
+■ その他の主張（research.md）
+- 「CIM の ParentProcessId は uint32」「PID 集合の型を揃える」: measure-memory.ps1 本文に [uint32] キャスト有り。壊せなかった（実走は未実施）。
+- 「ppid は PID 再利用で偽の親子を作りうる」: ADR-mutation-timeout-process-tree.md に同旨。壊せなかった。
+- 「scripts/** はセーフティネット paths」: safety-nets.md の本文参照で整合（フロントマターの paths 自体は未確認）。⚠️
+- 「scripts/lib の psm1 + Pester」パターン: scripts/lib に SnotraInputMetrics / SnotraWindowColors 等と *.Tests.ps1 が実在。壊せなかった。
+- 「measure-memory.ps1 は [CmdletBinding(PositionalBinding = $false)] を満たす」: 本文で確認。壊せなかった。
+
+■ -ProcessName を既定以外にした場合（未解決の疑問 1 の補強）
+- Get-Process -Name は拡張子なし・ワイルドカード可。'snotra.exe' は 0 件で exit 1。'snotra*' はルートに snotra-settings も入る。
+- サイドカー名を固定にすると、-ProcessName が別名（例えば別ビルドのリネーム）のとき、サイドカーを拾えず子が 0 件になる。逆にルート名から導く（"$ProcessName-settings.exe"）と、実際のコードの固定名 snotra-settings.exe と食い違う。実際に起動される名前は window.rs が固定で決めているので、固定の snotra-settings.exe が正しい。-ProcessName は「ルートの名前」だけを変える引数にするのが整合する（推奨は判断の領域）。
+
+■ 測定環境（計測スクリプトが測る分岐と、変更が触る分岐が違う、の点検）
+- この worktree ではサイドカーが 0 バイトで起動できない。かつ実機で snotra が動いていない。よって「サイドカー有りで合算が正しい」「起動アプリが除外される」は、この環境では実測できない。受け入れ条件 1 の実機確認は、本物の snotra-settings.exe を用意し、snotra を起動し、設定を開き、Snotra から何かを起動して行う必要がある。純関数の Pester テスト（偽の Win32_Process 行を渡す）なら、この環境でも測れる。
+- Pester でも、型の罠（uint32 と int の比較）と、Name の大小・.exe 付きを fixture に含めること。

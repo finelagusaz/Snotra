@@ -31,7 +31,7 @@
 
 - `snotra-egui-runtime/src/raster.rs`: `fill_mesh`・新規 `row_span`・新規 `ROW_SPAN_MARGIN_PX`・新規 `samples_white`（`CpuTexture` のメソッド
   か関数。白を返すかの判定）。テストモジュールに今の `fill_mesh` の写し `fill_mesh_reference`（`#[cfg(test)]`）と、比較テスト
-- `PERFORMANCE.md`: 新しい節「採用: `fill_mesh` の内外判定を行ごとの範囲に絞る（#1451）」（実機の A/B・DPI ごと）
+- `PERFORMANCE.md`: 新しい節「採用: `fill_mesh` の内外判定を行ごとの範囲に絞り、白テクセルの標本化を省く（#1451）」（実機の A/B・DPI ごと）
 - `snotra-egui-runtime/CLAUDE.md`: 変えない（不変条件「カバレッジ AA を持たない二値判定」は保たれる）
 - `SPEC.md`: 変えない（描画結果は 1 画素も変わらない）
 
@@ -82,11 +82,13 @@ Red → Green: `row_span` をシグネチャだけ（常に `None`）で置き�
 - [x] snotra-egui-runtime の fmt / clippy / test を手元で通す
 - [x] ラウンド 1: 6c33ce7d・verify:tree green（A/E/F）・指摘 Medium 1 / Low 3・生き残った変異 1（`samples_white` を常に真にする）。(0, 0) が白でないテクスチャと `samples_white` の単体テスト・巨大な座標（`ROW_SPAN_COORD_LIMIT_PX` を超える三角形は範囲を絞らない）・コメント 2 か所を直した
 - [x] ラウンド 2: 359c916e・verify:tree green（A/E/F）・指摘 Low 1（巨大な座標を全ケースに混ぜたので余白 0 の変異が生き残った）・生き残った変異 4（余白 0・同値の 3 つ）。巨大な座標を末尾の 250 件へ分けた
+- [x] ラウンド 3: a2e158fd・verify:tree green・指摘 0・余白 0 / huge / 上限 3e7 / 余白 -1.5 の変異をすべて検知
+- [x] ラウンド 4: c7365b4b（PERFORMANCE.md）・verify:tree green・指摘 Low 4（倍率の算出法・175% の上限の言い方・ppp 2.0 の比の扱い・plan の節名）と ⚠️（175% の超過は主にアイコンの無いフレーム）。すべて直した
 
 ### Phase 2: 実測と記録
 
 - [x] 実機の計測（DPI 100 / 150 / 200%・基準と新）を取る（1920×1080 の上限が 175% のため、200% の代わりに 175% で測った）
-- [x] `PERFORMANCE.md` に「採用: `fill_mesh` の内外判定を行ごとの範囲に絞る（#1451）」を書く（DPI ごとの p50 / p95・基準の再開の条件との位置・
+- [x] `PERFORMANCE.md` に「採用: `fill_mesh` の内外判定を行ごとの範囲に絞り、白テクセルの標本化を省く（#1451）」を書く（DPI ごとの p50 / p95・基準の再開の条件との位置・
   2 つの改良の寄与・`raster_ms` には `fill_mesh` の外の固定費も入ること・却下した逆数の乗算（#628 の指定・issue の測定で 1〜2 LSB の差）・
   測っていないもの〔144 Hz の枠を超えたときの落ちフレーム〕）
 

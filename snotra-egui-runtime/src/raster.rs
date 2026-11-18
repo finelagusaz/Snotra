@@ -65,12 +65,9 @@ impl CpuTexture {
         }
     }
 
-    /// `WHITE_UV`（= (0, 0)）での [`Self::sample`] が白 `[255; 4]` を返すか。
-    ///
-    /// (0, 0) の標本は、Nearest でも Linear（half-texel の位置を端で切り詰め、重みが左上へ 1 つに寄る）でも
-    /// `pixels[0]` そのものである。大きさ 0 のテクスチャは白を返す。epaint のフォントアトラスは (0, 0) に白を書く。
+    /// `WHITE_UV` での [`Self::sample`] が白 `[255; 4]` を返すか。epaint のフォントアトラスは (0, 0) に白を書く。
     pub(crate) fn samples_white(&self) -> bool {
-        self.width == 0 || self.height == 0 || self.pixels.first() == Some(&[255, 255, 255, 255])
+        self.sample(egui::epaint::WHITE_UV.x, egui::epaint::WHITE_UV.y) == [255, 255, 255, 255]
     }
 
     fn sample_bilinear(&self, u: f32, v: f32) -> [u8; 4] {
@@ -98,32 +95,27 @@ impl CpuTexture {
 /// 1 画素の千分の一の桁）より桁で大きくとり、真に内側の画素を範囲から落とさない。
 const ROW_SPAN_MARGIN_PX: f32 = 2.0;
 
-/// [`row_span`] が範囲を絞る頂点の座標の上限（物理画素・絶対値）。境界の誤差は座標に比例して
+/// [`fill_mesh`] が範囲を絞る頂点の座標の上限（物理画素・絶対値）。境界の誤差は座標に比例して
 /// 伸び、約 3e7 画素で余白を超える。epaint は無限の矩形を ±1e7 pt に切り詰めて渡すので、
 /// それより桁で小さいここで線を引き、超える三角形は範囲を絞らずに `min_x..max_x` をすべて判定する。
 const ROW_SPAN_COORD_LIMIT_PX: f32 = 1.0e6;
 
-/// 行（画素中心の y 座標が `py`）のうち、三角形の内側になりうる画素の x の範囲 `[start, end)` を返す。
+/// 行（画素中心の y 座標が `py`）のうち、三角形の内側になりうる画素の x の範囲 `start..end` を返す
+/// （空なら `start >= end`）。
 ///
 /// **保守的な範囲であって、内外の判定ではない。** 3 つの辺の式は、行を固定すると x の 1 次式なので、
 /// 条件を満たす x はそれぞれ半直線になる。その共通部分を [`ROW_SPAN_MARGIN_PX`] だけ広げ、
 /// `min_x..max_x` で切る。呼び手は範囲の中で、今までどおりの内外判定を行う——ゆえに範囲が真に内側の
 /// 画素をすべて含む限り、描く画素は範囲を絞らないときと 1 つも変わらない。水平な辺（`by - ay == 0`）と、
-/// 境界が NaN になる辺は範囲を狭めない。頂点の座標が [`ROW_SPAN_COORD_LIMIT_PX`] を超える三角形も狭めない。
+/// 境界が NaN になる辺は範囲を狭めない。頂点の座標の大きさの前提は [`ROW_SPAN_COORD_LIMIT_PX`]（呼び手が守る）。
 fn row_span(
     tri: [(f32, f32); 3],
     area: f32,
     py: f32,
     min_x: usize,
     max_x: usize,
-) -> Option<(usize, usize)> {
+) -> (usize, usize) {
     let (mut lo, mut hi) = (f32::NEG_INFINITY, f32::INFINITY);
-    let huge = tri
-        .iter()
-        .any(|(x, y)| !(x.abs() <= ROW_SPAN_COORD_LIMIT_PX && y.abs() <= ROW_SPAN_COORD_LIMIT_PX));
-    if huge {
-        return (min_x < max_x).then_some((min_x, max_x));
-    }
     // 3 つの辺（a → b）。
     for ((ax, ay), (bx, by)) in [(tri[1], tri[2]), (tri[2], tri[0]), (tri[0], tri[1])] {
         let dy = by - ay;
@@ -145,7 +137,7 @@ fn row_span(
     // 画素 x の中心は x + 0.5。中心が [lo - 余白, hi + 余白] に入る x を `min_x..max_x` の中で選ぶ。
     let start = (lo - ROW_SPAN_MARGIN_PX - 0.5).ceil().max(min_x as f32);
     let end = ((hi + ROW_SPAN_MARGIN_PX - 0.5).floor() + 1.0).min(max_x as f32);
-    (start < end).then_some((start as usize, end as usize))
+    (start as usize, end as usize)
 }
 
 /// 1 つの epaint Mesh を framebuffer へ描く。pos は物理ピクセル座標へ変換済みであること。
@@ -181,6 +173,15 @@ pub(crate) fn fill_mesh(
             && [v0.uv, v1.uv, v2.uv]
                 .iter()
                 .all(|uv| *uv == egui::epaint::WHITE_UV);
+        // 座標が上限を超える（NaN を含む）三角形は範囲を絞らない（[`ROW_SPAN_COORD_LIMIT_PX`]）。
+        let narrow = [x0, y0, x1, y1, x2, y2]
+            .iter()
+            .all(|c| c.abs() <= ROW_SPAN_COORD_LIMIT_PX);
+        let (c0, c1, c2) = (
+            v0.color.to_array(),
+            v1.color.to_array(),
+            v2.color.to_array(),
+        );
         let min_x = x0.min(x1).min(x2).floor().max(clip_min.0 as f32) as usize;
         let min_y = y0.min(y1).min(y2).floor().max(clip_min.1 as f32) as usize;
         let max_x = (x0.max(x1).max(x2).ceil() as usize)
@@ -191,10 +192,10 @@ pub(crate) fn fill_mesh(
             .min(height);
         for y in min_y..max_y {
             let py = y as f32 + 0.5;
-            let Some((start, end)) =
+            let (start, end) = if narrow {
                 row_span([(x0, y0), (x1, y1), (x2, y2)], area, py, min_x, max_x)
-            else {
-                continue;
+            } else {
+                (min_x, max_x)
             };
             for x in start..end {
                 let px = x as f32 + 0.5;
@@ -210,9 +211,6 @@ pub(crate) fn fill_mesh(
                     continue;
                 }
                 let (b0, b1, b2) = (w0 / area, w1 / area, w2 / area);
-                let c0 = v0.color.to_array();
-                let c1 = v1.color.to_array();
-                let c2 = v2.color.to_array();
                 let color = [
                     (c0[0] as f32 * b0 + c1[0] as f32 * b1 + c2[0] as f32 * b2) as u8,
                     (c0[1] as f32 * b0 + c1[1] as f32 * b1 + c2[1] as f32 * b2) as u8,
@@ -767,7 +765,7 @@ mod tests {
             let area = edge(x0, y0, x1, y1, x2, y2);
             for y in 0..20usize {
                 let py = y as f32 + 0.5;
-                let span = row_span(tri, area, py, 0, 32);
+                let (start, end) = row_span(tri, area, py, 0, 32);
                 for x in 0..32usize {
                     let px = x as f32 + 0.5;
                     let w = [
@@ -781,9 +779,6 @@ mod tests {
                         w.iter().all(|&w| w <= 0.0)
                     };
                     if inside {
-                        let (start, end) = span.unwrap_or_else(|| {
-                            panic!("{tri:?} y={y}: 内側の画素 x={x} があるのに範囲が空")
-                        });
                         assert!(
                             (start..end).contains(&x),
                             "{tri:?} y={y}: 内側の画素 x={x} が範囲 {start}..{end} の外"

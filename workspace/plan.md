@@ -58,9 +58,9 @@
 
 ### Phase 1 — 記録
 
-- [ ] `PERFORMANCE.md` の #1450 の節に小節「実運用点での測り直し（#1479）」を足す
-- [ ] 同節の古くなった 2 つの記述を直す
-- [ ] `npm run governance:check` が通る
+- [x] `PERFORMANCE.md` の #1450 の節に小節「実運用点での測り直し（#1479）」を足す
+- [x] 同節の古くなった 2 つの記述を直す
+- [x] `npm run governance:check` が通る（主ツリーで 13 件 passed）
 
 ## 未確定（実装前に潰す）
 

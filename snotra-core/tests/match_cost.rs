@@ -2,7 +2,8 @@
 //! 実 `index.bin` と合成の索引で測る計測コード（#1281）。
 //!
 //! タイミング測定は環境依存ゆえ CI では回さない。手元で release 実行する（コマンドの SSOT は
-//! `docs/build-commands.md`）。計測値は `PERFORMANCE.md`。
+//! `docs/build-commands.md`）。計測値は `PERFORMANCE.md`。版の A/B の並べ方と、数 % の差の読み方は
+//! `PERFORMANCE.md`「計測と受け入れ基準」の「数 % の差を版の A/B で読むとき」の項にある。
 //!
 //! # 何を測るか
 //!

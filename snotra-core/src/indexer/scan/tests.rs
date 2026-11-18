@@ -5,8 +5,8 @@ use crate::indexer::test_support::temp_dir;
 use std::fs;
 use std::sync::atomic::AtomicUsize;
 
-/// 述語のテスト用に最小の `ScanPath` を作る。拡張子と `include_folders` は
-/// **判定に関与しない**（設計書 §2.2 の過剰近似）。
+/// `.exe` だけを拾う最小の `ScanPath` を作る。[`root_roles`] の判定には、拡張子と `include_folders` は
+/// **関与しない**（設計書 §2.2 の過剰近似）。
 fn root(path: &str) -> ScanPath {
     ScanPath {
         path: path.to_string(),
@@ -253,13 +253,8 @@ fn scan_keeps_same_name_different_paths() {
     fs::write(sub1.join("tool.exe"), "").unwrap();
     fs::write(sub2.join("tool.exe"), "").unwrap();
 
-    let exe_root = |p: &std::path::Path| ScanPath {
-        path: p.to_string_lossy().into_owned(),
-        extensions: vec![".exe".to_string()],
-        include_folders: false,
-    };
     let entries = scan_all(
-        &[exe_root(&dir), exe_root(&sub1)],
+        &[root(&dir.to_string_lossy()), root(&sub1.to_string_lossy())],
         true,
         &AtomicUsize::new(0),
     );
@@ -268,6 +263,14 @@ fn scan_keeps_same_name_different_paths() {
     assert_eq!(tools.len(), 2);
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// `scan_all_with_threads` が返す列の `target_path`（整列の前）。
+fn scanned_paths(scan: &[ScanPath], threads: usize) -> Vec<String> {
+    scan_all_with_threads(scan, true, &AtomicUsize::new(0), threads)
+        .into_iter()
+        .map(|e| e.target_path)
+        .collect()
 }
 
 /// テスト側の期待値: `dir` を 1 スレッドで歩き、フォルダと `.exe` のパスを前順（列挙順に並べ、
@@ -301,15 +304,11 @@ fn scan_all_returns_the_same_preorder_regardless_of_threads() {
     let mut expected = Vec::new();
     preorder_paths(&dir, &mut expected);
     let scan = [ScanPath {
-        path: dir.to_string_lossy().into_owned(),
-        extensions: vec![".exe".to_string()],
         include_folders: true,
+        ..root(&dir.to_string_lossy())
     }];
     for threads in [1, SCAN_THREADS_MAX] {
-        let got: Vec<String> = scan_all_with_threads(&scan, true, &AtomicUsize::new(0), threads)
-            .into_iter()
-            .map(|e| e.target_path)
-            .collect();
+        let got = scanned_paths(&scan, threads);
         assert_eq!(got, expected, "{threads} スレッドの列が前順と一致しない");
     }
 
@@ -348,18 +347,10 @@ fn scan_all_dedups_in_enumeration_order_within_a_root() {
         return;
     }
 
-    let exe_root = |p: &std::path::Path| ScanPath {
-        path: p.to_string_lossy().into_owned(),
-        extensions: vec![".exe".to_string()],
-        include_folders: false,
-    };
     // 先の根が積む側、後の根が照合だけの側になる。
-    let scan = [exe_root(&dir), exe_root(&cs)];
+    let scan = [root(&dir.to_string_lossy()), root(&cs.to_string_lossy())];
     for threads in [1, SCAN_THREADS_MAX] {
-        let got: Vec<String> = scan_all_with_threads(&scan, true, &AtomicUsize::new(0), threads)
-            .into_iter()
-            .map(|e| e.target_path)
-            .collect();
+        let got = scanned_paths(&scan, threads);
         assert_eq!(
             got,
             vec![listed[0].clone()],

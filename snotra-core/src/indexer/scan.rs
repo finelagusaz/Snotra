@@ -4,13 +4,13 @@
 //! 採否を決めるのが [`Dedup::accept`] である。正規化キーの規則そのものは `super::keys` が持ち、
 //! ここはその呼び出し側にすぎない（記録側と照合側が同じ関数を通ることがバイト一致の根拠）。
 //!
-//! **走査は専用のプールで並列に回し、重複排除は根を歩き終えてから、その根の前順（pre-order）の
-//! 列へ順に当てる**（[`scan_all_with_threads`]）。返す列は 1 スレッドで歩いたときと同じになる。
+//! **走査は専用のプールで並列に回し、重複排除はその後段で根ごとに当てる**（結線は
+//! [`scan_all_with_threads`]）。
 
 use rayon::prelude::*;
 use std::fs::Metadata;
 use std::os::windows::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
@@ -138,9 +138,8 @@ const SCAN_THREADS_MAX: usize = 8;
 /// 動かない）。読み手は走査と並行して別スレッドから読むので、加算は 1 ディレクトリにつき
 /// `Relaxed` の 1 回だけにする（単調に増えるだけで、ほかの値との順序を運ばない）。
 ///
-/// **走査は専用のプールで並列に回すが、返す列は 1 スレッドで歩いたときと同じ前順である**
-/// （[`scan_directory`]）。検索と kana が使うグローバルなプールは、専用のプールを建てられない
-/// ときを除いて使わない。
+/// **走査は専用のプールで並列に回す。** 返す列と重複排除の勝者が 1 スレッドで歩いたときと同じである
+/// 根拠と、グローバルなプールを使う唯一の場合は [`scan_all_with_threads`] の doc にある。
 pub fn scan_all(
     scan_paths: &[ScanPath],
     show_hidden_system: bool,
@@ -209,8 +208,11 @@ fn scan_all_with_threads(
 enum Item {
     /// 登録するファイル。
     Leaf(AppEntry),
-    /// 降りる子フォルダの位置。そのフォルダ自身を登録するとき（`include_folders`）だけエントリを持つ。
-    Dir(Option<AppEntry>),
+    /// 降りる子フォルダ。`folder` はそのフォルダ自身を登録するとき（`include_folders`）だけ持つ。
+    Dir {
+        folder: Option<AppEntry>,
+        path: PathBuf,
+    },
 }
 
 /// `dir` の下を歩き、登録するエントリを前順（pre-order）で返す: エントリを列挙順に並べ、
@@ -230,9 +232,7 @@ fn scan_directory(
     };
     dirs.fetch_add(1, Ordering::Relaxed);
 
-    // 子フォルダは `items` の `Dir` と同じ順で `subdirs` にも積む（並列に降りるのは子フォルダだけ）。
     let mut items = Vec::new();
-    let mut subdirs = Vec::new();
     for entry in read_dir.flatten() {
         let path = entry.path();
         let Ok(meta) = entry.metadata() else {
@@ -244,33 +244,24 @@ fn scan_directory(
         }
 
         if meta.is_dir() {
-            let folder = include_folders
-                .then(|| {
-                    let name = path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    (!name.is_empty()).then(|| AppEntry {
-                        name,
-                        target_path: path.to_string_lossy().into_owned(),
-                        is_folder: true,
-                    })
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let folder = if include_folders && !name.is_empty() {
+                Some(AppEntry {
+                    name: name.to_string(),
+                    target_path: path.to_string_lossy().into_owned(),
+                    is_folder: true,
                 })
-                .flatten();
-            items.push(Item::Dir(folder));
-            subdirs.push(path);
+            } else {
+                None
+            };
+            items.push(Item::Dir { folder, path });
         } else {
             let ext = path.extension().and_then(|e| e.to_str());
             if ext.is_some_and(|e| matches_extension(extensions, e)) {
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
+                let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 if !name.is_empty() {
                     items.push(Item::Leaf(AppEntry {
-                        name,
+                        name: name.to_string(),
                         target_path: path.to_string_lossy().into_owned(),
                         is_folder: false,
                     }));
@@ -279,25 +270,25 @@ fn scan_directory(
         }
     }
 
-    // `collect` は添字の順を保つ——子の結果は `subdirs` の順（＝列挙順）に並ぶ。
-    let children: Vec<Vec<AppEntry>> = subdirs
+    // 子の結果を `items` と同じ添字で持つ（`collect` は添字の順を保つ）。ファイルの位置は空の
+    // `Vec`（確保しない）。
+    let children: Vec<Vec<AppEntry>> = items
         .par_iter()
-        .map(|path| scan_directory(path, extensions, include_folders, show_hidden_system, dirs))
+        .map(|item| match item {
+            Item::Dir { path, .. } => {
+                scan_directory(path, extensions, include_folders, show_hidden_system, dirs)
+            }
+            Item::Leaf(_) => Vec::new(),
+        })
         .collect();
 
     let mut out = Vec::with_capacity(items.len() + children.iter().map(Vec::len).sum::<usize>());
-    debug_assert_eq!(
-        items.iter().filter(|i| matches!(i, Item::Dir(_))).count(),
-        children.len(),
-        "subdirs と Dir の数がずれた"
-    );
-    let mut children = children.into_iter();
-    for item in items {
+    for (item, sub) in items.into_iter().zip(children) {
         match item {
             Item::Leaf(entry) => out.push(entry),
-            Item::Dir(folder) => {
+            Item::Dir { folder, .. } => {
                 out.extend(folder);
-                out.extend(children.next().unwrap_or_default());
+                out.extend(sub);
             }
         }
     }

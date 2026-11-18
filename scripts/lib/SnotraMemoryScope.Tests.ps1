@@ -75,6 +75,7 @@ Describe 'Select-SnotraMemoryScope' {
         $r = Select-SnotraMemoryScope -Processes $procs -RootIds @([uint32]100, [uint32]500)
 
         @($r.Included) | Sort-Object | Should -Be @(100, 200, 500, 600)
+        @($r.Sidecars) | Should -Be @(200, 600)
         ExcludedPairs $r | Should -Be @('probe1461.exe:700')
     }
 
@@ -90,6 +91,7 @@ Describe 'Select-SnotraMemoryScope' {
         $r = Select-SnotraMemoryScope -Processes $procs -RootIds @([uint32]100, [uint32]500)
 
         @($r.Included) | Sort-Object | Should -Be @(100, 500)
+        @($r.Sidecars).Count | Should -Be 0
         @($r.Excluded).Count | Should -Be 0
     }
 

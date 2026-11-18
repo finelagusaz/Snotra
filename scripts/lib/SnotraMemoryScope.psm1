@@ -5,9 +5,9 @@
 
 .DESCRIPTION
   **合算するのは、ルート（Snotra 本体）と、その直接の子の設定サイドカーだけである**（#1461）。
-  Snotra の子孫には、Snotra から起動したアプリも入る（`commands/launch.rs` は `ShellExecuteW` を
-  Snotra のプロセス内で呼び、オープナー経由では `Command` で spawn する。`ShellExecuteW` で起動した
-  プロセスの親が Snotra になることは #1444 と #1461 の実機確認で測った）。サイドカーが `open::that` で開いたブラウザ等も、サイドカーの子になる。
+  Snotra の子孫には、Snotra から起動したアプリも入る（`commands/launch.rs` は起動を Snotra の
+  プロセス内で行う。起動したアプリの親が Snotra になることは #1444 と #1461 の実機確認で測った）。
+  サイドカーが `open::that` で開いたブラウザ等も、サイドカーの子になる。
   子孫をすべて合算すると、それらの分まで「Snotra のメモリ」として数えてしまう。
 
   対象は、hide の trim（`src-tauri/src/working_set.rs`・#1444）と同じ 2 つに絞る。ただし、

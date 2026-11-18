@@ -1,0 +1,96 @@
+敵対的調査 #1451（research.md の反証）
+
+試験プログラム: C:/Users/Eoh/AppData/Local/Temp/claude/699a5ede5655d824/867dd70f-9cb7-4d92-bd81-56d386a5cc15/scratchpad/adv1451/ の t.rs / t2.rs / t3.rs
+
+■ 壊せた
+
+[B1] 命題3「raster_ms は fill_mesh のループだけを測る」は偽
+  根拠: renderer.rs の paint。t_tess は L106（tessellate の直後）、t_raster は L154（ループの直後）。raster_ms = t_raster - t_tess（L187）。
+        その間に surface.resize（L108-113）・buffer_mut（L114-117）・buffer.fill(clear)（L119）・white の組み立て（L121-126）・
+        プリミティブごとの HashMap 引き（L131）・clip 計算が入る。fill_mesh の呼び手は renderer.rs:142 の 1 か所だけ（git grep 済み。
+        font_stack.rs の言及はコメント）。
+  含意: 受け入れ条件の「raster_ms の p50/p95 が下がる」は、fill 以外の固定費が混ざった値で測る。改良の効果は希釈される。
+        改良前後の差は同じ固定費を引いた差になるので「下がるか」の判定自体は有効だが、速度比（1.25〜1.45）をそのまま
+        raster_ms の比として期待してはならない。固定費の大きさは未測（buffer.fill は結果ウィンドウ 22.5 万 px で約 0.9 MB、小さいはずだが
+        surface.resize/buffer_mut の Win32 側の費用は未測）。
+  偽にする手順: 同じ trace で、fill_mesh 呼び出しだけを囲む一時計装（撤去前提）と raster_ms を並べ、差が p50 の 1% 未満なら本所見は無視できる。
+
+[B2] 命題4: issue のベンチの想定と実 config が一致しない
+  根拠: 実 config（C:/Users/Eoh/AppData/Roaming/Snotra/config.toml）は visible_rows = 10・window_width = 600・show_icons = true・font_size = 15・
+        row_padding = 6・preset monokai。issue のベンチは 640×328 pt・8 行。#628 の実測 px は results 225,000（コメント「項目 1」の理由 2）、
+        ベンチは 209,920 px（DPI 100%）で近いが、行数（10 対 8）と幅（600 対 640）は違う。アイコン付き（show_icons）の行は
+        WHITE_UV でない UV のメッシュを足す。ベンチにアイコン相当は「矩形」としてあるだけで、実アイコンのテクスチャ付き三角形は
+        2 つ目の改良（白 UV の省略）が効かない側。
+  含意: 速度比は、実 config の実フレーム（egui::Context で組む比較テスト用フレーム）で測り直すまで、1.25〜1.45 を引用できない。
+  偽にする手順: 実 config 相当（10 行・600 幅・アイコン付き）のフレームを組み、現行/改良の fill_mesh を同条件で測って 1.25 以上なら無視できる。
+
+[B3] 命題4の副次: 実機の DPI は 100%・144 Hz で確認したが、そこでは効果が体感に出ない見込み
+  根拠: PowerShell で GetDpiForSystem = 96、GetSystemMetrics = 1920×1080、Win32_VideoController: RTX 4060 Ti の CurrentRefreshRate = 144・
+        1920×1080（AMD Radeon は値なし）。#628 の G3(b) は p95 4.68 ms（既定 config・DPI 100% 想定）で 144 Hz の 6.9 ms 未満。
+        ゆえに本機の 100% では、6.9 ms の枠を超える根拠が「無い」。issue の主張「DPI 200% で 1 フレームを超えうる」は、
+        150% 以上の計測（ユーザーが倍率を切り替えて取る）が無いと確かめられない。PERFORMANCE.md L2904 も DPI 150〜200% を未測と書く（research と整合）。
+  注意: GetDpiForSystem は PowerShell プロセスの DPI 認識に依存する。ただし GetSystemMetrics が物理解像度と同じ 1920×1080 を返し、
+        CIM も 1920×1080 なので、100% で矛盾しない。
+  偽にする手順: SNOTRA_EGUI_PAINT_TRACE を立て 100% で raster_ms を取り、p95 が 6.9 ms を超えていれば B3 の「枠内」は偽。
+
+■ 壊せなかった（反証を試みて崩せなかったもの）
+
+[N1] 命題1: 行ごとの半直線（余白 2 px）の範囲の中だけで今の内外判定を行えば出力は変わらない
+  試験: f32 で xs = ax + (bx-ax)*(py-ay)/k、向きは sign(area)*k の符号、k == 0 は範囲を狭めない、lo-2・hi+2 の候補を実装し、
+        元の inside 述語と全画素で突き合わせた（t.rs）。
+        (a) 一様ランダム三角形 20 万個（座標 0..1920×0..1080）: 内側 8.4 億 px、範囲外へ漏れた内側画素 0
+        (b) 1 辺を |dy| = 1e-5〜1e-2 の近水平にした 20 万個: 内側 24 億 px、漏れ 0
+        (c) 座標を 0..20000 まで広げ近水平も混ぜた 20 万個: 内側 4.2 億 px、漏れ 0
+        (d) 敵対的: 近水平の辺の y を行の中心（n+0.5）に ±1e-6〜1e-4 だけずらし、|dy| = 1e-7〜1e-4（t2.rs）: 内側 26 億 px、漏れ 0
+  理屈: 境界の x* の誤差は「相対 6e-8 × |x*-ax|」なので、2 px を超えるには |x*-ax| が 3e7 px 級でなければならず、画面外である。
+        k が極小でも、py-ay は Sterbenz で正確、積の相対誤差は x* に比例してしか効かない。
+  NaN / inf: 頂点が NaN → area が NaN で `abs() < EPSILON` は偽（スキップされない）、min_x は clip へ落ち、max_x の `NaN as usize` は 0 → 空範囲。
+        現行も w が NaN で inside が常に偽。範囲の側が NaN になっても、範囲内で現行の判定を残す限り、描かれる画素は現行の部分集合かつ
+        現行が描く画素を落とさない（NaN の min/max は Rust の f32::min/max が NaN を無視するので狭めない側へ倒れる）。
+        頂点が inf: max_x は usize::MAX（clip で切れる）。w が NaN で何も描かれないのは現行と同じ。
+  clip による切り詰め・min_x..max_x の境界: 範囲を min_x/max_x との交差にして負の浮動小数は `as usize` が 0 へ飽和するので問題は起きない
+        （実装が `.max(min_x)` を忘れても、飽和が 0 を返すだけで min_x より下を描く＝現行より余計に描く方向の誤りになりうる点だけが残る。
+        これは実装の注意で、命題の反例ではない）。
+  限界: 試験は inside 述語の集合一致のみ（画素の色の計算は同一コードを通るので同じ）。f32 の演算順序を実装が変えた場合（FMA・逆数の乗算）は別問題で、
+        issue もその版を採っていない。
+  偽にする手順: 上の候補の margin を -1.5 へ壊すと漏れが出ることを t.rs の margin 引数で確かめられる（issue も同じことを言っている）。
+
+[N2] 命題2: 3 頂点の UV がすべて (0,0) でテクセル pixels[0] が [255;4] なら modulate(color, sample) == color
+  Nearest: (u*w) as isize で u は ±0 または NaN。NaN as isize = 0。clamp(0, w-1) → pixels[0]。
+  Linear: fx = clamp(u*w - 0.5, 0, w-1)。u = ±0 → -0.5 → 0。x0 = 0、tx = 0。top = c00*1 + c10*0。c10 は u8 由来で有限なので c10*0 = 0。
+        ty も同様。out = round(255*...) = 255。-0.0 の経路も t3.rs で fx = 0 を確認。width == 1 / height == 1 でも x1 = min(...) で同じ。
+  modulate: (255*c + 127)/255 = c（c を 0..255 で整数除算するので 127/255 が切り捨てられる）。恒等。
+  epaint のアトラス: epaint-0.37.0/src/texture_atlas.rs（TextureAtlas::new）が最初の allocate((1,1)) を (0,0) に置いて Color32::WHITE を書く
+        （assert_eq!(pos, (0,0)) 付き）。lib.rs:99 の WHITE_UV = (0,0)。textures.rs:31 の doc も「(0,0) に白画素が必須」。
+        Snotra 側の CpuTexture は ImageData::Color の c.to_array() をそのまま premultiplied で持つ（raster.rs の image_to_pixels）。WHITE = [255;4]。
+  部分更新: apply_texture_delta の Some([x,y]) が (0,0) を上書きする経路は、epaint が (0,0) を再割当しないので無い。
+  幅 0 のテクスチャ: sample は [255;4] を返す。
+  実行時の判定は pixels[0] を見る方式にしておけば、白でないテクスチャ（ユーザーテクスチャで UV が (0,0)）は自動で除外される。
+  NaN の u（巨大座標で b が NaN/inf のとき）: Linear では texel が 0 に化けるが、その場合は同時に color の全チャネルも NaN→0 になるので
+        modulate(0, 0) = 0 = 省略版の color と一致する、と推論した（巨大座標の数値例は t3.rs で作れず、inside が偽になった。到達不能に近い）。
+  偽にする手順: (0,0) を白でないテクスチャ（pixels[0] = [255,255,255,254] など）で fast path の条件文が通るかを単体テストで見る。
+
+[N3] 命題5: #628 の理由 3（単色 fast path は画素を変える）は今回の 2 つの改良に当たらない
+  根拠: #628 の理由 3 の機序は「単色三角形でも重心 b0+b1+b2 で色を再構成して `as u8` で切り捨てる（浮動小数で 1.0 にならない）ので、
+        頂点色を直接使う fast path は一部の画素の値を黙って変える」。今回は raster.rs L136-147 の b と color の補間を残し、省くのは
+        sample と modulate だけで、modulate は白に対して恒等（N2）。1 つ目は内外判定の範囲を狭めるだけで色の経路に触れない。
+  限界: 「当たらない」は N1・N2 が成り立つ限りであり、実フレームでの一致は比較テストでしか固定できない（issue の受け入れどおり）。
+  偽にする手順: 白 UV 三角形の color を b 補間でなく頂点色で代用する実装（逆数の乗算版も含む）を入れると、画素が変わる。issue はその版を除外している。
+
+[N4] research.md のその他の主張
+  - fill_mesh の唯一の呼び手: 確認（B1 の根拠）。
+  - テストの記述（raster_core_matches_soft_probe_invariants は 2 画素だけ固定）: raster.rs L302-340 で確認（buffer[9] と buffer[63]）。
+  - texture が無いメッシュには width 0 の CpuTexture: renderer.rs L121-131 で確認（`unwrap_or(&white)`）。
+  - crate に乱数依存が無い・egui の default_fonts: 未確認（Cargo.toml は読んでいない）⚠️。
+  - 「`raster_ms` を DPI 100/150/200% で取る」の再開条件: #628「項目 1」の再オープン条件は「極端な config で raster_ms p95 が 16.7 ms を超えたら」で、
+    issue の主張どおり（#628 コメント L20〜）。ただし #628 は「まず inv_area の乗算化だけを入れて再測」を指定している。
+    issue は乗算化を採らず厳密版を選んでいる（意図した差。research.md はこの差を書いていない ⚠️ 軽微）。
+
+■ ⚠️（確信なし）
+  [W1] ベンチは Linux VM 4 コア。本機（RTX 4060 Ti の機体・CPU 不明）で同じ比が出る保証は無い。ラスタは単スレッドで、
+       分岐予測・キャッシュの差が出る。本機で比較ベンチを取るまで速度比は引用できない。
+  [W2] 144 Hz の枠（6.9 ms）は #737 によるフレーム上限で、描画が枠を超えると上限に届かない、という議論は未検証。
+       ラスタ 6.9 ms 超が実際に落ちフレームを生むかは、frame の間隔の trace（SNOTRA_EGUI_REPAINT_TRACE）でしか見えない。
+  [W3] 実フレームの比較テストが使う文字の面（字形の三角形）は、WHITE_UV でないので 2 つ目の改良が効かない。効果の内訳
+       （範囲の狭め 対 白 UV の省略）を issue は分けていない。どちらが効くかを分けて測らないと、片方だけが効いている場合に
+       もう片方の複雑さを取り除く判断ができない。

@@ -118,6 +118,7 @@ npm run governance:check
 - [x] `npm run test:powershell`・`npm test`・`npm run governance:check` を実行する
   - ラウンド 1: sha 248ac712 / verify:tree green（E・F・test:powershell）/ 指摘 6 件（High 1・Medium 1・Low 4）/ 生き残った変異 3（部分一致の 3 形・j の fixture の穴）→ すべて修正（造語「引き違い」→「取り違え」、j に前方・後方・中間・正規表現の一致を足す、`.PARAMETER ProcessName` のワイルドカード、除外の行を exit 2 の前へ、psm1 の頻度の主張を実測へ、サイドカーを `Sidecars` で明示して返す）。実機確認を再実施して `verify-1461.txt` に追記
   - ラウンド 2: sha 4d8090ac / verify:tree green（E・F・test:powershell）/ 指摘 6 件すべて解消を委譲先が実測、新規 2 件（Low ⚠️）/ 生き残った変異 0（10 種）→ 2 件とも修正（f・h で `Sidecars` を assert、psm1 の doc で起動経路を数え上げない）
+  - ラウンド 3: sha d9145bfe / verify:tree green / ラウンド 2 の 2 件解消、新規 1 件（Low ⚠️: `.PARAMETER ProcessName` が縁のケースの件数表示を約束しテストが無い）/ 13 種中 1 種生存（R2b: その縁のケース）→ 件数表示を仕様として約束しない書き方へ直した（「内訳が崩れる」）。散文だけの修正なので、変異の再注入は行わず verify:tree だけを回し直す
 - [x] 実機確認 0〜8 を行い、Red / Green の出力を `workspace/verify-1461.txt` へ記録する。結果: probe とサイドカーの親は snotra（5）。変更前は probe と conhost 2 件まで合算して PrivWS 73.9 MiB（6）、変更後は snotra + サイドカーの 69.5 MiB で probe1461.exe と conhost 2 件が除外の行に出た（7）。probe を止めると除外は基準集合の conhost 1 件に戻った（8）。debug の snotra は自分の conhost を子に持ち、変更前はそれも合算していた
 
 ## 未確定（実装前に潰す）

@@ -18,7 +18,7 @@
 
 .PARAMETER ProcessName
   ルートプロセス名（既定 snotra）。`Get-Process -Name` へ渡すのでワイルドカードも効くが、
-  `snotra*` のように渡すとサイドカーもルートとして選ばれ、件数行がサイドカーを 0 件と数える。
+  `snotra*` のように渡すとサイドカーもルートとして選ばれ、件数行の内訳が崩れる。
   完全な名前を渡すこと。変えるのはルートの名前だけで、サイドカー名は固定（`snotra-settings.exe`）。
 
 .PARAMETER Label

@@ -545,10 +545,11 @@ mod tests {
 
     /// 座標の 1 成分。画面の外へはみ出す値・画素中心の行（`n + 0.5`）に極めて近い値（水平に近い辺の境界が
     /// 最も動く形）・境界の誤差が余白を超える桁の値（[`ROW_SPAN_COORD_LIMIT_PX`] の外）を混ぜる。
-    fn random_coord(rng: &mut Rng, extent: f32) -> f32 {
-        match rng.below(16) {
-            0 => (rng.unit() - 0.5) * 3.0e8,
-            1..=4 => rng.below(extent as u64) as f32 + 0.5 + (rng.unit() - 0.5) * 1e-4,
+    /// 巨大な値は `huge` のケースだけに混ぜる（通常のケースで範囲を絞る経路の際を見る感度を薄めない）。
+    fn random_coord(rng: &mut Rng, extent: f32, huge: bool) -> f32 {
+        match rng.below(4) {
+            0 if huge => (rng.unit() - 0.5) * 3.0e8,
+            0 => rng.below(extent as u64) as f32 + 0.5 + (rng.unit() - 0.5) * 1e-4,
             _ => rng.unit() * (extent + 40.0) - 20.0,
         }
     }
@@ -597,13 +598,15 @@ mod tests {
             texture(0, 0),
         ];
         for ppp in [1.0f32, 1.25, 1.5, 2.0] {
-            for case in 0..1000 {
+            for case in 0..1250 {
+                // 末尾の 250 件は、巨大な座標を混ぜる。
+                let huge = case >= 1000;
                 let white_uv = rng.below(2) == 0;
                 let vertices: Vec<egui::epaint::Vertex> = (0..3)
                     .map(|_| egui::epaint::Vertex {
                         pos: egui::pos2(
-                            random_coord(&mut rng, width as f32) / ppp,
-                            random_coord(&mut rng, height as f32) / ppp,
+                            random_coord(&mut rng, width as f32, huge) / ppp,
+                            random_coord(&mut rng, height as f32, huge) / ppp,
                         ),
                         uv: if white_uv {
                             egui::epaint::WHITE_UV

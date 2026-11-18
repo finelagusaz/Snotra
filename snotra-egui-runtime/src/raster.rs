@@ -98,13 +98,18 @@ impl CpuTexture {
 /// 1 画素の千分の一の桁）より桁で大きくとり、真に内側の画素を範囲から落とさない。
 const ROW_SPAN_MARGIN_PX: f32 = 2.0;
 
+/// [`row_span`] が範囲を絞る頂点の座標の上限（物理画素・絶対値）。境界の誤差は座標に比例して
+/// 伸び、約 3e7 画素で余白を超える。epaint は無限の矩形を ±1e7 pt に切り詰めて渡すので、
+/// それより桁で小さいここで線を引き、超える三角形は範囲を絞らずに `min_x..max_x` をすべて判定する。
+const ROW_SPAN_COORD_LIMIT_PX: f32 = 1.0e6;
+
 /// 行（画素中心の y 座標が `py`）のうち、三角形の内側になりうる画素の x の範囲 `[start, end)` を返す。
 ///
 /// **保守的な範囲であって、内外の判定ではない。** 3 つの辺の式は、行を固定すると x の 1 次式なので、
 /// 条件を満たす x はそれぞれ半直線になる。その共通部分を [`ROW_SPAN_MARGIN_PX`] だけ広げ、
 /// `min_x..max_x` で切る。呼び手は範囲の中で、今までどおりの内外判定を行う——ゆえに範囲が真に内側の
 /// 画素をすべて含む限り、描く画素は範囲を絞らないときと 1 つも変わらない。水平な辺（`by - ay == 0`）と、
-/// 境界が NaN になる辺は範囲を狭めない。
+/// 境界が NaN になる辺は範囲を狭めない。頂点の座標が [`ROW_SPAN_COORD_LIMIT_PX`] を超える三角形も狭めない。
 fn row_span(
     tri: [(f32, f32); 3],
     area: f32,
@@ -113,7 +118,13 @@ fn row_span(
     max_x: usize,
 ) -> Option<(usize, usize)> {
     let (mut lo, mut hi) = (f32::NEG_INFINITY, f32::INFINITY);
-    // `fill_mesh` の w0 / w1 / w2 と同じ辺の組（a → b）。
+    let huge = tri
+        .iter()
+        .any(|(x, y)| !(x.abs() <= ROW_SPAN_COORD_LIMIT_PX && y.abs() <= ROW_SPAN_COORD_LIMIT_PX));
+    if huge {
+        return (min_x < max_x).then_some((min_x, max_x));
+    }
+    // 3 つの辺（a → b）。
     for ((ax, ay), (bx, by)) in [(tri[1], tri[2]), (tri[2], tri[0]), (tri[0], tri[1])] {
         let dy = by - ay;
         if dy == 0.0 {
@@ -517,13 +528,13 @@ mod tests {
         egui::Color32::from_rgba_premultiplied(channel(), channel(), channel(), a)
     }
 
-    /// (0, 0) が白で、残りはばらばらなテクスチャ。
-    fn random_texture(rng: &mut Rng, filter: TexFilter) -> CpuTexture {
+    /// (0, 0) が `corner` で、残りはばらばらなテクスチャ。
+    fn random_texture(rng: &mut Rng, filter: TexFilter, corner: [u8; 4]) -> CpuTexture {
         let (width, height) = (8, 8);
         let mut pixels: Vec<[u8; 4]> = (0..width * height)
             .map(|_| random_color(rng).to_array())
             .collect();
-        pixels[0] = [255, 255, 255, 255];
+        pixels[0] = corner;
         CpuTexture {
             width,
             height,
@@ -532,11 +543,12 @@ mod tests {
         }
     }
 
-    /// 座標の 1 成分。画面の外へはみ出す値と、画素中心の行（`n + 0.5`）に極めて近い値を混ぜる
-    /// （水平に近い辺の境界が最も動く形）。
+    /// 座標の 1 成分。画面の外へはみ出す値・画素中心の行（`n + 0.5`）に極めて近い値（水平に近い辺の境界が
+    /// 最も動く形）・境界の誤差が余白を超える桁の値（[`ROW_SPAN_COORD_LIMIT_PX`] の外）を混ぜる。
     fn random_coord(rng: &mut Rng, extent: f32) -> f32 {
-        match rng.below(4) {
-            0 => rng.below(extent as u64) as f32 + 0.5 + (rng.unit() - 0.5) * 1e-4,
+        match rng.below(16) {
+            0 => (rng.unit() - 0.5) * 3.0e8,
+            1..=4 => rng.below(extent as u64) as f32 + 0.5 + (rng.unit() - 0.5) * 1e-4,
             _ => rng.unit() * (extent + 40.0) - 20.0,
         }
     }
@@ -567,15 +579,21 @@ mod tests {
     }
 
     /// **ランダムな三角形で、描く画素が前の実装と 1 つも変わらない。** 両方の巻き方・水平に近い辺・
-    /// 画面の外へはみ出す頂点・白 UV とテクスチャ UV・Nearest / Linear / 大きさ 0 のテクスチャ・切り抜き矩形・
+    /// 画面の外へはみ出す頂点・巨大な座標・白 UV とテクスチャ UV・(0, 0) が白のテクスチャと白でないテクスチャ・
+    /// Nearest / Linear / 大きさ 0 のテクスチャ・切り抜き矩形・
     /// 4 つの表示倍率を混ぜる。
     #[test]
     fn fill_mesh_matches_reference_on_random_meshes() {
         let mut rng = Rng(0x1451_0000_dead_beef);
         let (width, height) = (96usize, 64usize);
+        const WHITE: [u8; 4] = [255, 255, 255, 255];
+        const NEAR_WHITE: [u8; 4] = [255, 255, 255, 254];
         let textures = [
-            random_texture(&mut rng, TexFilter::Nearest),
-            random_texture(&mut rng, TexFilter::Linear),
+            random_texture(&mut rng, TexFilter::Nearest, WHITE),
+            random_texture(&mut rng, TexFilter::Linear, WHITE),
+            // (0, 0) が白でない: 白 UV でも標本化を省いてはならない。
+            random_texture(&mut rng, TexFilter::Nearest, NEAR_WHITE),
+            random_texture(&mut rng, TexFilter::Linear, NEAR_WHITE),
             texture(0, 0),
         ];
         for ppp in [1.0f32, 1.25, 1.5, 2.0] {
@@ -600,7 +618,7 @@ mod tests {
                     width - rng.below(16) as usize,
                     height - rng.below(16) as usize,
                 );
-                let tex = &textures[rng.below(3) as usize];
+                let tex = &textures[rng.below(textures.len() as u64) as usize];
                 assert_same_as_reference(
                     &format!("ppp={ppp} case={case}"),
                     width,
@@ -617,7 +635,7 @@ mod tests {
     }
 
     /// **egui が組んだ実際のフレームで、描く画素が前の実装と 1 つも変わらない。** 結果リストに似た UI
-    /// （2 段のラベル・選択行の角丸の塗り・アイコン相当のテクスチャ付きの矩形・枠線）を 4 つの表示倍率で描く。
+    /// （2 段のラベル・選択行の角丸の塗り・フォントアトラスの一部を貼った矩形〔アイコンの代わり〕・枠線）を 4 つの表示倍率で描く。
     #[test]
     fn fill_mesh_matches_reference_on_an_egui_frame() {
         for ppp in [1.0f32, 1.25, 1.5, 2.0] {
@@ -716,6 +734,20 @@ mod tests {
                 "ppp={ppp}: メッシュが 1 つも無い（検知器が何も見ていない）"
             );
         }
+    }
+
+    /// **`samples_white` は (0, 0) の標本が白のときだけ真になる。** 大きさ 0 のテクスチャは白を返す。
+    #[test]
+    fn samples_white_only_when_the_corner_texel_is_white() {
+        let mut rng = Rng(7);
+        for filter in [TexFilter::Nearest, TexFilter::Linear] {
+            let white = random_texture(&mut rng, filter, [255, 255, 255, 255]);
+            assert!(white.samples_white());
+            assert_eq!(white.sample(0.0, 0.0), [255, 255, 255, 255]);
+            let near = random_texture(&mut rng, filter, [255, 255, 255, 254]);
+            assert!(!near.samples_white());
+        }
+        assert!(texture(0, 0).samples_white());
     }
 
     /// **範囲は、真に内側の画素をすべて含む。** 水平な辺・垂直な辺・両方の巻き方で、範囲の外に内側の画素が無いこと。

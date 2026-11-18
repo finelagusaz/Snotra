@@ -59,10 +59,10 @@ issue を閉じるのは PR 本文の `Closes #1324` とマージツールに任
 
 ### Phase 1 — ADR と issue
 
-- [ ] `docs/adr/ADR-command-shape-norms-in-hook.md` へ追記節を文案どおりに足す
-- [ ] `npm run governance:check` が通る
-- [ ] ADR の差分が追加行だけであることを確かめる
-- [ ] #1324 へ数え直しの表をコメントする（投稿前に生データが無いことを grep で確かめる）
+- [x] `docs/adr/ADR-command-shape-norms-in-hook.md` へ追記節を文案どおりに足す
+- [x] `npm run governance:check` が通る（全検査 passed・13 件）
+- [x] ADR の差分が追加行だけであることを確かめる
+- [x] #1324 へ数え直しの表をコメントする（投稿前に生データが無いことを grep で確かめる） — https://github.com/finelagusaz/Snotra/issues/1324#issuecomment-6983276736
 
 ## 未確定（実装前に潰す）
 

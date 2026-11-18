@@ -950,7 +950,7 @@ mod tests {
     ///
     /// これが `INDEX_CACHE_VERSION` を上げずに `IndexCache.names` の型を替えられた根拠であり、
     /// 破れると**全ユーザーの `index.bin` が黙って読めなくなる**（版が同じまま形式だけ変わる
-    /// ので、フォールバックのチェーンはどの分岐も拾わず cache-miss ＝ 22〜30 秒の全走査へ落ちる）。
+    /// ので、フォールバックのチェーンはどの分岐も拾わず cache-miss ＝ 全走査へ落ちる）。
     ///
     /// **`index_cache_on_disk_format_is_stable`（golden bytes）と役割が違う。** あちらは
     /// `IndexCache` 全体の凍結バイト列を守り、こちらは**なぜそれが凍結されたままでいられるか**

@@ -5,8 +5,8 @@ use crate::indexer::test_support::temp_dir;
 use std::fs;
 use std::sync::atomic::AtomicUsize;
 
-/// 述語のテスト用に最小の `ScanPath` を作る。拡張子と `include_folders` は
-/// **判定に関与しない**（設計書 §2.2 の過剰近似）。
+/// `.exe` だけを拾う最小の `ScanPath` を作る。[`root_roles`] の判定には、拡張子と `include_folders` は
+/// **関与しない**（設計書 §2.2 の過剰近似）。
 fn root(path: &str) -> ScanPath {
     ScanPath {
         path: path.to_string(),
@@ -193,25 +193,8 @@ fn scan_with_extensions_filters_by_ext() {
     fs::write(dir.join("script.bat"), "").unwrap();
     fs::write(dir.join("readme.txt"), "").unwrap();
 
-    let mut entries = Vec::new();
-    let mut dedup = Dedup {
-        set: Some(std::collections::HashSet::new()),
-        buf: String::new(),
-        role: RootRole {
-            check: false,
-            record: true,
-        },
-    };
     let exts = build_extension_list(&["exe".to_string(), "bat".to_string()]);
-    scan_directory_with_extensions(
-        &dir,
-        &exts,
-        false,
-        true,
-        &mut entries,
-        &mut dedup,
-        &AtomicUsize::new(0),
-    );
+    let entries = scan_directory(&dir, &exts, false, true, &AtomicUsize::new(0));
 
     let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"app"));
@@ -228,25 +211,8 @@ fn scan_with_extensions_includes_folders() {
     fs::write(dir.join("app.exe"), "").unwrap();
     fs::create_dir(dir.join("subdir")).unwrap();
 
-    let mut entries = Vec::new();
-    let mut dedup = Dedup {
-        set: Some(std::collections::HashSet::new()),
-        buf: String::new(),
-        role: RootRole {
-            check: false,
-            record: true,
-        },
-    };
     let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(
-        &dir,
-        &exts,
-        true,
-        true,
-        &mut entries,
-        &mut dedup,
-        &AtomicUsize::new(0),
-    );
+    let entries = scan_directory(&dir, &exts, true, true, &AtomicUsize::new(0));
 
     let folder_entries: Vec<&AppEntry> = entries.iter().filter(|e| e.is_folder).collect();
     assert_eq!(folder_entries.len(), 1);
@@ -266,25 +232,8 @@ fn scan_with_extensions_no_folders_when_disabled() {
     fs::write(dir.join("app.exe"), "").unwrap();
     fs::create_dir(dir.join("subdir")).unwrap();
 
-    let mut entries = Vec::new();
-    let mut dedup = Dedup {
-        set: Some(std::collections::HashSet::new()),
-        buf: String::new(),
-        role: RootRole {
-            check: false,
-            record: true,
-        },
-    };
     let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(
-        &dir,
-        &exts,
-        false,
-        true,
-        &mut entries,
-        &mut dedup,
-        &AtomicUsize::new(0),
-    );
+    let entries = scan_directory(&dir, &exts, false, true, &AtomicUsize::new(0));
 
     assert!(entries.iter().all(|e| !e.is_folder));
     assert_eq!(entries.len(), 1);
@@ -292,6 +241,8 @@ fn scan_with_extensions_no_folders_when_disabled() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// **重複排除のキーはパスであって名前ではない。** 先の根が積む側（`record`）に回るよう根を重ね、
+/// 同名・別パスの 2 件が両方残ることを `scan_all` の結果で見る。
 #[test]
 fn scan_keeps_same_name_different_paths() {
     let dir = temp_dir("ext_dedup");
@@ -302,23 +253,9 @@ fn scan_keeps_same_name_different_paths() {
     fs::write(sub1.join("tool.exe"), "").unwrap();
     fs::write(sub2.join("tool.exe"), "").unwrap();
 
-    let mut entries = Vec::new();
-    let mut dedup = Dedup {
-        set: Some(std::collections::HashSet::new()),
-        buf: String::new(),
-        role: RootRole {
-            check: false,
-            record: true,
-        },
-    };
-    let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(
-        &dir,
-        &exts,
-        false,
+    let entries = scan_all(
+        &[root(&dir.to_string_lossy()), root(&sub1.to_string_lossy())],
         true,
-        &mut entries,
-        &mut dedup,
         &AtomicUsize::new(0),
     );
 
@@ -328,30 +265,109 @@ fn scan_keeps_same_name_different_paths() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// `scan_all_with_threads` が返す列の `target_path`（整列の前）。
+fn scanned_paths(scan: &[ScanPath], threads: usize) -> Vec<String> {
+    scan_all_with_threads(scan, true, &AtomicUsize::new(0), threads)
+        .into_iter()
+        .map(|e| e.target_path)
+        .collect()
+}
+
+/// テスト側の期待値: `dir` を 1 スレッドで歩き、フォルダと `.exe` のパスを前順（列挙順に並べ、
+/// フォルダの直後にその中身を置く）で積む。製品の走査を通さずに組む。
+fn preorder_paths(dir: &std::path::Path, out: &mut Vec<String>) {
+    for entry in fs::read_dir(dir).expect("read fixture").flatten() {
+        let path = entry.path();
+        if entry.file_type().expect("file type").is_dir() {
+            out.push(path.to_string_lossy().into_owned());
+            preorder_paths(&path, out);
+        } else if path.extension().is_some_and(|e| e == "exe") {
+            out.push(path.to_string_lossy().into_owned());
+        }
+    }
+}
+
+/// **返す列（整列の前）は前順で、スレッド数に依らない。** 重複排除の勝者が列の順で決まる
+/// （[`Dedup::accept`]）ことの前提である。子フォルダの数は `SCAN_THREADS_MAX` を跨がせ、
+/// 複数のワーカーが実際に分け合う形にする。
+#[test]
+fn scan_all_returns_the_same_preorder_regardless_of_threads() {
+    let dir = temp_dir("preorder");
+    for i in 0..SCAN_THREADS_MAX * 4 {
+        let child = dir.join(format!("d{i:02}"));
+        fs::create_dir_all(child.join("g")).expect("create child");
+        fs::write(child.join("a.exe"), b"x").expect("write fixture");
+        fs::write(child.join("g").join("b.exe"), b"x").expect("write fixture");
+    }
+    fs::write(dir.join("z.exe"), b"x").expect("write fixture");
+
+    let mut expected = Vec::new();
+    preorder_paths(&dir, &mut expected);
+    let scan = [ScanPath {
+        include_folders: true,
+        ..root(&dir.to_string_lossy())
+    }];
+    for threads in [1, SCAN_THREADS_MAX] {
+        let got = scanned_paths(&scan, threads);
+        assert_eq!(got, expected, "{threads} スレッドの列が前順と一致しない");
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **同じ根の中の重複では、先に列挙した方が勝つ**（積む側の根のとき）。大文字小文字だけ違う
+/// 兄弟は、大文字小文字を区別するディレクトリでしか並ばない。`fsutil` で作れない環境
+/// （WSL の機能が無い機械など）ではスキップする。ただし環境変数 `CI` があれば失敗にする。
+#[test]
+fn scan_all_dedups_in_enumeration_order_within_a_root() {
+    let dir = temp_dir("dedup_within_root");
+    let cs = dir.join("cs");
+    fs::create_dir_all(&cs).expect("create cs dir");
+    let made = std::process::Command::new("fsutil")
+        .args(["file", "setCaseSensitiveInfo"])
+        .arg(&cs)
+        .arg("enable")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    fs::write(cs.join("Tool.exe"), b"x").expect("write fixture");
+    fs::write(cs.join("tool.exe"), b"x").expect("write fixture");
+    let listed: Vec<String> = fs::read_dir(&cs)
+        .expect("read cs")
+        .flatten()
+        .map(|e| e.path().to_string_lossy().into_owned())
+        .collect();
+    if !made || listed.len() != 2 {
+        // この勝者を見る検知器はこの 1 本だけなので、CI では黙ってスキップさせない。
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI で大文字小文字を区別するディレクトリを作れなかった（検知器が走っていない）"
+        );
+        eprintln!("大文字小文字を区別するディレクトリを作れないのでスキップする");
+        let _ = fs::remove_dir_all(&dir);
+        return;
+    }
+
+    // 先の根が積む側、後の根が照合だけの側になる。
+    let scan = [root(&dir.to_string_lossy()), root(&cs.to_string_lossy())];
+    for threads in [1, SCAN_THREADS_MAX] {
+        let got = scanned_paths(&scan, threads);
+        assert_eq!(
+            got,
+            vec![listed[0].clone()],
+            "{threads} スレッドで、先に列挙した方が勝っていない"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn scan_extensions_case_insensitive() {
     let dir = temp_dir("ext_case");
     fs::write(dir.join("app.EXE"), "").unwrap();
 
-    let mut entries = Vec::new();
-    let mut dedup = Dedup {
-        set: Some(std::collections::HashSet::new()),
-        buf: String::new(),
-        role: RootRole {
-            check: false,
-            record: true,
-        },
-    };
     let exts = build_extension_list(&["exe".to_string()]);
-    scan_directory_with_extensions(
-        &dir,
-        &exts,
-        false,
-        true,
-        &mut entries,
-        &mut dedup,
-        &AtomicUsize::new(0),
-    );
+    let entries = scan_directory(&dir, &exts, false, true, &AtomicUsize::new(0));
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "app");

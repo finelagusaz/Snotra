@@ -67,7 +67,8 @@ issue を閉じるのは PR 本文の `Closes #1324` とマージツールに任
 ### 検証ラウンド
 
 - [x] R1: sha 58f58e30 / verify:tree green（E・F） / 委譲レビュー Critical 0・High 0・Medium 5・Low 6 / 変異 5 件中、文の正しさ 3 件は検知器が原理的に無い（ADR のパス参照は凍結規約で照合外）。Medium 5 と Low 5（L1・L3〜L6）と L2 を追記節と #1324 のコメントへ反映
-- [ ] R2: 反映後の sha で verify:tree と委譲レビューを回し直す
+- [x] R2: sha 33bb1a8f / verify:tree green（E・F） / R1 の指摘はすべて解消・新規 Low 5（⚠️ 2）/ 変異注入は参照の追加が無いため前回の結果を継承。Low 5 を追記節へ反映
+- [ ] R3: 反映後の sha で verify:tree と委譲レビューを回し直す
 
 ## 未確定（実装前に潰す）
 

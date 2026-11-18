@@ -1,0 +1,62 @@
+adversarial-1012 反証結果（research.md 対象）
+
+使った測定: scratchpad の adv-scan.mjs / adv-scan3.mjs（ws-scan.mjs の拡張。ファイル単位の対照合・追加行の臭い検出）、tree-scan.mjs（現行ツリー）。
+
+== 測定環境そのものの検証 ==
+- pathspec: `git ls-files -- <ws-scan と同じ 5 本の pathspec>` = 72、`git ls-files scripts .claude/hooks .githooks | grep -E '\.(mjs|ps1|psm1)$'` = 72。一致。scripts 直下・scripts/lib/*.psm1・governance/checks/*.mjs を含む。範囲外に .mjs/.ps1/.psm1/.js/.sh は 0 件。 → 壊せなかった
+- PR の総数: `gh pr list --state all` = 945 件、refs/prhead = 945 本、欠けは 0（comm 差分 0）。945 は妥当。ただし refs/pull/N/head は最終先端だけで、force-push で消えた途中コミットは見えない（research.md も認めている）。
+- ハンク分割: ws-scan はハンクごとに flush する。ファイル単位で対を取り直した adv-scan でも 28 対で、同じ集合。ハンク分割による取りこぼしは 0。 → 壊せなかった
+- 述語の盲点（本命）: 述語は「空白除去で一致」しか見ないので、(a) 同じ行の別の箇所も変えた修正、(b) 逸脱が混入したあと行ごと消えた/書き換わったもの、(c) 混入だけで修正の対が無いもの、を拾わない。追加行を直接見る臭い検出（`=` の左右非対称・`}|`・`)\{`・`if(`・行末空白・タブ・CR）を 714 コミットの全追加行へ当てたところ、(c) の実例が 1 件出た → 争点 3 を壊した（下記）。
+- CRLF: 追加行の CR は 0 件だが、この機の core.autocrlf=input（`git config core.autocrlf`）で、Windows のコミットは入る前に LF へ正規化される。`git ls-files --eol` は index が全部 i/lf。.gitattributes は `.githooks/** text eol=lf` だけ。つまり「履歴に CRLF が 0 件」は、この機では観測できない形の 0 件である。現行 index に CR が無いことは確か（tree-scan も 0）。
+
+== 争点ごとの判定 ==
+
+[争点 1] PostToolUse 撤去済み・cargo fmt --check は今は CI でしか走らない
+判定: 一部だけ壊せた（後半の「CI でしか」は強すぎる）
+根拠: `git show --stat 88064cea` で post-edit.mjs 等の削除を確認、`.claude/settings.json` の hooks は pre-bash.mjs だけ（前半は真）。一方 `docs/build-commands.md` のカテゴリ A（必須）に `cargo fmt --all -- --check` があり、`npm run verify:tree`（scripts/verify-tree.mjs が A・C・E・F を回す。verify-tree.test.mjs:120 が A にこのコマンドが入ることを検査）が手元で実行する。AGENTS.md 手順 6 もカテゴリ A を要求する。
+言い直し: 「自動で走るのは CI だけ。手元では verify:tree とカテゴリ A の手順で走る」。
+偽にする手順: 上記の言い直しのとおりに直せば真になる。research.md の結論（issue の前提が偽）は残る。
+
+[争点 2] 逸脱は 2 行・f2e4b04c が混入・b68ce6b7 が修正・main に未到達
+判定: 壊せなかった
+根拠: `git show -U0 f2e4b04c -- scripts` に `+export const REQUIRED_RUSTDOC_LINTS =[` と `+export const STALE_EXTRA_DOCS =[` の 2 行。`git show -U0 b68ce6b7 -- scripts` が両方を `= [` へ直す。`git merge-base --is-ancestor f2e4b04c origin/main` は否（`f2-not-main`）。`git log origin/main -S'REQUIRED_RUSTDOC_LINTS =['` は 0 件。PR #1011 の他のコミットに同種の追加行は無い（adv-scan の asym 検出は #1011 でこの 2 行だけ）。
+偽にする手順: PR #1011 の force-push 前の途中コミットが別の逸脱を持っていたら偽になるが、refs から観測できない。
+
+[争点 3] formatter の射程の逸脱は PR #1011 の 1 件だけ
+判定: 壊せた
+根拠: 追加行の臭い検出で、PR #132 の `scripts/bench-startup.ps1`（コミット 2123b45e、main 側 bc30cbbe）に
+  `$numericSettings= @($summaries | Where-Object { $_.settings_ms -ne "-" }| ForEach-Object { [int]$_.settings_ms })`
+がある。`=` の左に空白が無く、`}|` の右に空白が無い、空白だけの逸脱。`git merge-base --is-ancestor bc30cbbe origin/main` は真で main に入っており、`ce580ea9`（2026-03-08、#195）がその行を消すまで約 3 日、main に居た。修正の対（−行/＋行）が無く、行ごと消えたので、ws-scan の述語には構造的に出ない。PowerShell なので、research.md が formatter の射程としている .ps1 に当たる（Invoke-Formatter が直すかは未測定。⚠️下記）。
+ → 「main へ届いた逸脱は 0 件」も偽。「射程内の逸脱は 1 件」は少なくとも 2 件（#1011 は main 未到達、#132 は main 到達済み）。PR #1305（27da65b9）にも `const g =(...a) =>` があった（同じブランチ内で `= (` へ直っている。現行 race-boundaries.test.mjs:293 は直っている）。この件は修正の対が「別の箇所も変えた」形で除外されていた可能性がある（研究の 28 対に出ていない）ので、述語の盲点の実例でもある。
+ → #1305 を数えると、母集団の 714 コミットで追加行を直接見た結果は、`=` 非対称の逸脱が PR #1011 の 2 行・PR #1305 の 1 行・PR #132 の 1 行。修正で消えた順に、ブランチ内の目視/修正で捕まったのは #1011 と #1305、main に残ったのは #132。
+ .mjs だけに絞れば #1011 と #1305 の 2 PR。研究の「1 件」は 3 PR に直る。
+ 数の訂正: 件数は 1 → 3 PR（4 行）。なお 3 件とも、便益の大きさ（頻度）としては「少ない」という方向の結論は変わらない。ただし「全 PR のうち 1 件だけ」と書いた全称は偽。
+偽にする手順: 上の 3 件を `git show -U0 <sha> -- <file> | grep -n '=\['`/`numericSettings=`/`const g =(` で再現し、いずれも射程外だと示せれば偽にならない（#132 は PowerShell なので、PSScriptAnalyzer が直さないと分かれば射程外にできる。⚠️）。
+
+[争点 4] 現行 72 ファイルに行末空白・タブ・CRLF・`識別子=[` の逸脱は 0 件
+判定: 壊せなかった（条件つき）
+根拠: tree-scan.mjs で 72 ファイルの全行に、行末空白・行頭タブ・CR・最終改行の欠落・`)\{`・`}|`・`if(`を当てた。trail/tab/crlf/nofinalnl は 0。`=` 非対称は 5 件だが全部「行末の `=` で式が次の行へ続く」形（pre-bash.mjs:440/588、G-ci-table.mjs:64、G-workspace-lints.test.mjs:10、SnotraStartupContract.psm1:117）で逸脱ではない。`}|` の 1 件は regex リテラル（governance/lib.mjs:137）。`git ls-files --eol` は index 全 LF。
+⚠️ 限定: CRLF の 0 は index の内容（LF）についてのみ真。作業ツリーは autocrlf で変わりうる。
+⚠️ 限定: 「識別子=[」を含め `\w=\w` 形は広く見たが、PowerShell の `$x= @(`・`}|` 形は #132 でしか出ず、現行には無い。
+偽にする手順: tree-scan.mjs の pats に新しい型を足して 1 件でも出れば偽。
+
+[争点 5] prettier / PSScriptAnalyzer で drift を測っていないことは結論に効かない（費用の側にしか効かない）
+判定: ⚠️確信なし（一部壊せた）
+根拠: (a) 費用の側に効くのは真だが、「入れるか」は便益と費用の比較なので、費用が未測定なら結論（入れない/入れる）はどちらも裏付けが足りない。便益が 1 件（実際は上の 3 PR）でも、drift が 0 なら費用は小さく入れる側へ傾き、drift が大きければ入れない側へ傾く。つまり結論に効く。(b) 実測の手がかり: .mjs 約 9,777 行のうち 80 桁超 2,943 行・100 桁超 2,122 行・120 桁超 1,297 行（`awk length>N`）。prettier の既定（printWidth 80）では大量の整形が出る。printWidth を 120 以上にする設定を足せば減るが、設定ファイルがもう 1 つ増える（`.prettierrc*` は無い・package.json に prettier は無い）。PowerShell は `=` の桁揃えが様式として広く使われている（#954・#1049・#1029 などの追加行 240 件の多くが桁揃え）ので、既定の UseConsistentWhitespace/AlignAssignmentStatement の設定次第で結果が変わる。
+偽にする手順: `npx prettier --check` を実測して 0 ファイルなら偽（可能性は低い）。
+
+[争点 6] formatter ゲートは ADR-meta-harness-thinning の撤去単位（走査対象がハーネス自身の層）に当たる
+判定: 壊せた（「scripts 全体」は言い過ぎ）
+根拠: ADR は撤去の単位を「走査対象がハーネス自身かどうか」と定め、撤去したのはハーネスを照合する検査 7 本・編集時 reminder・manifest 差分検査・PostToolUse フックである。formatter が走査するのは .mjs/.ps1/.psm1 の書式で、ハーネスの定義（rules・skills・manifest・hook の記述）の照合ではない。しかも 72 ファイルのうち governance/ 配下は 33 件、hooks 4 件、githooks テスト 1 件で、残りの約 34 件（bench-startup.ps1・measure-memory*.ps1・inject-version.ps1・prepare-sidecar.ps1・smoke-*.ps1・lib/Snotra*.psm1・merge-pr.mjs など）は製品の計測・ビルド・smoke の道具で、ハーネス自身を走査する層ではない。ADR の「守ったもの」には製品の設定を照合する検査群があり、製品側の道具の扱いは ADR が決めていない。さらに ADR の受容する残余に「.rs を編集しても fmt / clippy / test は自動では走らない」とあり、書式ゲートの自動化を撤去した判断が既にある。これは研究の主張を補強する方向（PostToolUse の撤去と同じ撤去判断）だが、「撤去単位に当たる層を新しく足す」は ADR の適用として単純ではない。
+言い直し: 「ADR の撤去時の判断（編集時の自動検証を持たない・fmt の自動実行を残余として受容）と、CI の job を足す判断は別である。scripts の約半分は製品の道具である」。
+偽にする手順: ADR を読んで、formatter が「ハーネスを照合する検査」と同じ層と数えられるとユーザーが裁定すれば真になる。
+
+== 追加所見（争点外）==
+- research.md 11 行目「`.mjs` はテスト 1 本だけ」: `git ls-files .githooks` は _lib.sh・pre-commit・pre-merge-commit・pre-push・pre-rebase と githooks.test.mjs。真。
+- 技術的な制約の「PowerShell 側の formatter が CI の runner に入っているか」: ci.yml の Windows job は Pester を回している（`npm run test:powershell`）が、PSScriptAnalyzer を入れる step は無い。未確認のまま。
+- 「捕捉実績」の計測は squash 前のブランチ先端が対象で、force-push された途中コミットと、レビューで指摘されて同じコミットに直された逸脱は見えない。research.md が認めているとおり、件数は下限である。
+- #1305 のように、同じ PR の追加行が `=(`→`= (` へ直った場合、−行と＋行で空白の差が複数あっても空白除去で一致する。この対は 28 対の集合に見当たらない。理由は未追跡（⚠️）。27da65b9 のあとのコミットで別の変更を挟んで直したためと思われるが、確認していない。
+- 述語が対を要求するため、「直された逸脱」しか数えられない。追加行を直接見る検出器（adv-scan）を併用すると、逸脱の数は 3 PR/4 行に増える。ゲートの便益を見積もるときの母数は、前者でなく後者を使うべき。
+
+== 判定の一覧 ==
+1 一部壊せた / 2 壊せなかった / 3 壊せた（#132 の PowerShell が main に到達、#1305 の 1 行が追加）/ 4 壊せなかった（CRLF は履歴では観測不能という条件つき）/ 5 ⚠️確信なし（費用は結論に効く）/ 6 壊せた（scripts の約半分は製品の道具で、ADR の単位は単純に当たらない）

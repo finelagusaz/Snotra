@@ -29,6 +29,7 @@ Describe 'Select-SnotraMemoryScope' {
         $r = Select-SnotraMemoryScope -Processes $script:typical -RootIds @([uint32]100)
 
         @($r.Included) | Sort-Object | Should -Be @(100, 200)
+        @($r.Sidecars) | Should -Be @(200)
         ExcludedPairs $r | Should -Be @('msedge.exe:210', 'probe1461.exe:300', 'conhost.exe:310')
     }
 
@@ -102,10 +103,21 @@ Describe 'Select-SnotraMemoryScope' {
     }
 
     It 'j. サイドカー名に似た名前は、直接の子でも除外に出る（完全一致）' {
-        $procs = @((P 100 4 'snotra.exe'), (P 200 100 'snotra-settings-helper.exe'))
+        # 前方・後方・中間の一致と、`.` を任意文字と読む正規表現の一致を、それぞれ 1 件ずつ置く。
+        $procs = @(
+            (P 100 4 'snotra.exe'),
+            (P 200 100 'snotra-settings-helper.exe'),
+            (P 201 100 'snotra-settings.exe.old'),
+            (P 202 100 'old-snotra-settings.exe'),
+            (P 203 100 'snotra-settingsXexe')
+        )
         $r = Select-SnotraMemoryScope -Processes $procs -RootIds @([uint32]100)
 
         @($r.Included) | Should -Be @(100)
-        ExcludedPairs $r | Should -Be @('snotra-settings-helper.exe:200')
+        @($r.Sidecars).Count | Should -Be 0
+        ExcludedPairs $r | Should -Be @(
+            'snotra-settings-helper.exe:200', 'snotra-settings.exe.old:201',
+            'old-snotra-settings.exe:202', 'snotra-settingsXexe:203'
+        )
     }
 }

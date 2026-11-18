@@ -17,8 +17,9 @@
     実行時の出力では「子が居ない」と区別できないので、`lib/SnotraMemoryScope.Tests.ps1` が固定する。
 
 .PARAMETER ProcessName
-  ルートプロセス名（既定 snotra）。名前の完全一致で選ぶ。変えるのはルートの名前だけで、
-  サイドカー名は固定（`snotra-settings.exe`）。
+  ルートプロセス名（既定 snotra）。`Get-Process -Name` へ渡すのでワイルドカードも効くが、
+  `snotra*` のように渡すとサイドカーもルートとして選ばれ、件数行がサイドカーを 0 件と数える。
+  完全な名前を渡すこと。変えるのはルートの名前だけで、サイドカー名は固定（`snotra-settings.exe`）。
 
 .PARAMETER Label
   出力に付ける見出し（例 "egui-visible" / "egui-hidden"）。
@@ -58,7 +59,6 @@ if ($roots.Count -eq 0) {
 $scope = Select-SnotraMemoryScope -Processes @(Get-CimInstance Win32_Process) -RootIds $roots
 $included = @{}
 foreach ($id in $scope.Included) { $included[[uint32]$id] = $true }
-$sidecarCount = @($scope.Included).Count - $roots.Count
 
 $rows = @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process |
     Where-Object { $included.ContainsKey([uint32]$_.IDProcess) } |
@@ -74,10 +74,16 @@ $rows = @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process |
 $title = if ($Label) { "=== Snotra メモリ実測 [$Label] ===" } else { '=== Snotra メモリ実測 ===' }
 Write-Host ''
 Write-Host $title -ForegroundColor Cyan
-Write-Host ("  ルート {0} 件 / 設定サイドカー {1} 件 / perf 取得 {2} 件" -f $roots.Count, $sidecarCount, $rows.Count)
+Write-Host ("  ルート {0} 件 / 設定サイドカー {1} 件 / perf 取得 {2} 件" -f $roots.Count, @($scope.Sidecars).Count, $rows.Count)
+# 除外の行は exit 2 の経路でも出す（件数は 0 件でも必ず出す）。
+$excluded = @($scope.Excluded)
+Write-Host ("  合算から除外した子孫 {0} 件（Snotra から起動したアプリ・サイドカーが開いたもの等）" -f $excluded.Count) -ForegroundColor Yellow
+foreach ($e in $excluded) {
+    Write-Host ("    {0} ({1})" -f $e.Name, $e.ProcessId) -ForegroundColor Yellow
+}
 
 if ($rows.Count -eq 0) {
-    Write-Host '  perf カウンタが 0 件です。perf 未提供か、PID の引き違いの疑いがあり、' -ForegroundColor Red
+    Write-Host '  perf カウンタが 0 件です。perf 未提供か、PID の取り違えの疑いがあり、' -ForegroundColor Red
     Write-Host '  「0 MiB だった」と読んではならない。ルートとサイドカーの件数と併せて手法を疑うこと。' -ForegroundColor Red
     exit 2
 }
@@ -87,10 +93,4 @@ $sumWs = [math]::Round(($rows | Measure-Object -Property PrivWS -Sum).Sum, 1)
 $sumPc = [math]::Round(($rows | Measure-Object -Property PrivComm -Sum).Sum, 1)
 Write-Host ("  合計 PrivWS  : {0,7} MiB  ← 本命軸（物理私有・flip 基準 3）" -f $sumWs) -ForegroundColor Green
 Write-Host ("  合計 PrivComm: {0,7} MiB  （参考・commit）" -f $sumPc) -ForegroundColor DarkGray
-
-$excluded = @($scope.Excluded)
-Write-Host ("  合算から除外した子孫 {0} 件（Snotra から起動したアプリ・サイドカーが開いたもの等）" -f $excluded.Count) -ForegroundColor Yellow
-foreach ($e in $excluded) {
-    Write-Host ("    {0} ({1})" -f $e.Name, $e.ProcessId) -ForegroundColor Yellow
-}
 Write-Host ''

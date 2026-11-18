@@ -5,9 +5,9 @@
 
 .DESCRIPTION
   **合算するのは、ルート（Snotra 本体）と、その直接の子の設定サイドカーだけである**（#1461）。
-  Snotra の子孫には、Snotra から起動したアプリも入る（`commands/launch.rs` の
-  `launch_item_core` は `ShellExecuteW` を Snotra のプロセス内で呼ぶので、起動したアプリの親は
-  通常 Snotra になる）。サイドカーが `open::that` で開いたブラウザ等も、サイドカーの子になる。
+  Snotra の子孫には、Snotra から起動したアプリも入る（`commands/launch.rs` は `ShellExecuteW` を
+  Snotra のプロセス内で呼び、オープナー経由では `Command` で spawn する。`ShellExecuteW` で起動した
+  プロセスの親が Snotra になることは #1444 と #1461 の実機確認で測った）。サイドカーが `open::that` で開いたブラウザ等も、サイドカーの子になる。
   子孫をすべて合算すると、それらの分まで「Snotra のメモリ」として数えてしまう。
 
   対象は、hide の trim（`src-tauri/src/working_set.rs`・#1444）と同じ 2 つに絞る。ただし、
@@ -31,7 +31,8 @@
 function Select-SnotraMemoryScope {
     <#
     .SYNOPSIS
-      合算する PID（`Included`）と、辿れたが合算しない子孫（`Excluded`: Name / ProcessId）を返す。
+      合算する PID（`Included`）、そのうちサイドカーの PID（`Sidecars`）、辿れたが合算しない子孫
+      （`Excluded`: Name / ProcessId）を返す。
     .PARAMETER Processes
       `ProcessId` / `ParentProcessId` / `Name` を持つオブジェクト列（`Win32_Process` をそのまま渡せる）。
     .PARAMETER RootIds
@@ -61,11 +62,15 @@ function Select-SnotraMemoryScope {
     foreach ($r in $roots) {
         if (-not $included.Contains($r)) { $included.Add($r) }
     }
+    $sidecars = [System.Collections.Generic.List[uint32]]::new()
     foreach ($r in $roots) {
         if (-not $byPpid.ContainsKey($r)) { continue }
         foreach ($c in $byPpid[$r]) {
             $cid = [uint32]$c.ProcessId
-            if ($c.Name -eq $SidecarName -and -not $included.Contains($cid)) { $included.Add($cid) }
+            if ($c.Name -eq $SidecarName -and -not $included.Contains($cid)) {
+                $included.Add($cid)
+                $sidecars.Add($cid)
+            }
         }
     }
 
@@ -94,6 +99,7 @@ function Select-SnotraMemoryScope {
 
     [pscustomobject]@{
         Included = @($included | Sort-Object)
+        Sidecars = @($sidecars | Sort-Object)
         Excluded = @($excluded | Sort-Object ProcessId)
     }
 }

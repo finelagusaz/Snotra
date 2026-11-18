@@ -1,0 +1,117 @@
+敵対的調査 #1455（読むだけ・編集なし）。凡例: 壊せなかった / 壊せた / ⚠️（確信なし）
+
+■ 争点 1: fork-join + 根ごとに今の Dedup::accept を同じ順に当てれば出力は逐次と完全一致
+  判定: 壊せなかった（条件付き）
+  根拠: scan.rs scan_directory_with_extensions は「dir エントリ(include_folders 時) → その場で再帰 → 次の兄弟」の前順。
+        スパイクの fork_join(main.rs) は items を readdir 順に積み、Dir の直後にその sub を連結する同じ前順。
+        順序の指紋が逐次と fj4/fj8/fj16 で一致（run2.out: 84caed6171d7b0b0、件数 696,226）。
+        accept の状態は「呼ばれた列」だけの関数なので、列が同じなら勝者も同じ。check 専用の根は set を読むだけで、set が変わるのは
+        record の根だけ（scan.rs:114-122）。
+  条件・弱点:
+   - 構成で示せるのは「列が同じ」まで。実装時は accept の前段の絞り込み（`!name.is_empty()`・拡張子・include_folders）を
+     収集側で逐次と同じ位置に置く必要がある（accept を呼ぶ/呼ばないで set の中身が変わる）。
+   - スパイクの指紋は「フォルダ + .exe/.lnk のパス」だけで、AppEntry（name 導出・is_folder）や accept 後の集合は検証していない。
+     製品実装後の `index.bin` バイト一致（issue の受け入れ）は未検証。
+   - 指紋が一致したのは温めの 4 回。FS が動いた回は 1 件差で指紋が変わる（メモ自身が記載）。非決定は FS 側で、形の差ではない。
+  偽にする手順: 実装後に fork-join 版と逐次版の scan_all を同一 FS で比べ、sort 前の Vec<AppEntry> が一致しない根を探す
+   （同名で大文字小文字だけ違う兄弟を、大文字小文字を区別するディレクトリに作る fixture が最も鋭い）。
+
+■ 争点 2: 同じ根の中の重複排除（record の根は先勝ち・record 偽の根は落とさない）は現行コードの読みとして正しい
+  判定: 壊せなかった
+  根拠: scan.rs:114-122。(_, true) は set.insert(正規化キー)＝既出なら false → 先に accept した方が勝つ（根をまたぐ先行も同じ関数で効く）。
+        (true,false) は contains だけ（集合へ積まない）→ 同じ根の内側の重複は両方残る。(false,false) は常に true。set が None も true。
+        root_roles の doc（:48-69）とも矛盾しない。
+  補足（メモの軽い欠け）: 「record の根で先に列挙した方が勝つ」は、先行の根のキーが既に入っている場合は「先行の根が勝つ」が先に効く。
+        メモの制約 1 に両方書いてあるので誤りではない。
+  偽にする手順: record=true の根へ、正規化キーが同じになる 2 兄弟（`A.exe` / `a.exe`）を置いて scan_all の結果に 1 件だけ残るか見る。
+        既存テストは scan_keeps_same_name_different_paths など。同じ根の中の大小文字重複を直に固定するテストは scan/tests.rs には見当たらない
+        （`git grep` で要確認。実装時に先に足すと良い）。
+
+■ 争点 3: DirEntry::metadata は Windows でリンクを辿らず、ジャンクション/シンボリックリンクへは再帰しない
+  判定: 壊せなかった（実測）
+  根拠: スクラッチに junction と symlink を作り、製品と同じ `read_dir → entry.metadata() → is_dir()` を実行（rustc 1.99.1）:
+        "jn" is_dir=false is_symlink=true / "sl" is_dir=false is_symlink=true / "real" is_dir=true。
+        jn は祖先（root）へ向けた循環 junction だったが再帰対象にならない。後始末済み（junction は rmdir で外した）。
+  限界: 名前サロゲートでない reparse point（OneDrive プレースホルダ・WSL・dedup 等）は is_dir が真のまま再帰される。
+        これは現行の逐次でも同じで、並列化で変わらない。本機の maxdepth は 22・最長パス 257 文字（私の計測）。
+  偽にする手順: 名前サロゲートでない reparse tag を持つディレクトリが自分の祖先を指す例を作る（通常のユーザー操作では作れないはず）。
+
+■ 争点 4: スパイクは製品の走査と同じ操作を測っているか（実 config を読んで照合）
+  判定: 概ね壊せなかった。ただし差が 5 点あり、うち 2 点はメモに書いていない。
+  一致した前提（実 config.toml を読んだ）:
+   - show_hidden_system = true ✓（[search]）→ is_hidden_or_system を評価せず、枝刈りなし。スパイクも刈らない。
+   - 根は 5 本・順序 Toolbox / KISS / Start Menu / workspace / C:\ ✓（スパイクの run() と同順）。
+   - 根どうしは C:\ の下に入れ子 → workspace や Toolbox などは C:\ の走査でも二度走る。スパイクも同じ根列なので同じ二重走査を測っている。
+  差（コストに効くものを優先）:
+   a) [書いていない] スパイクは全 5 根で「フォルダ + .exe/.lnk」のパスを PathBuf で積む（出力 696,226 件）。
+      製品は C:\ の根（extensions = []・include_folders = false）と KISS では何も登録せず、scan-log の scanned は 23,869 件。
+      → スパイクの fork-join は製品よりずっと重い出力を連結している（製品の並列版は同じかそれ以下のはず＝メモの結論に対し保守的）。
+      逆に逐次側もスパイクは余分に積んでいるので、逐次 27 s の中身は製品より少し重い可能性。差は I/O（read_dir + metadata）に比べ小さいが未測定。
+   b) [書いていない] 拡張子照合: スパイクは eq_ignore_ascii_case("exe"/"lnk") を全根に適用。製品は根ごとの extensions
+      （Toolbox/KISS = .exe・Start Menu = .lnk・workspace と C:\ = 空 → 常に偽）で binary_search。費用は無視できる。
+   c) スパイクの根は `C:/…`（スラッシュ）。製品の根は `C:\…`。子の path は "C:/" + name の混在。PathBuf::push の費用は同等で、
+      順序の指紋はスパイク内で自己完結。実害なし。
+   d) 進捗用 dirs の Relaxed 加算は両方にある。スパイクはさらに entries の加算を 1 エントリごとに足している（共有カウンタの競合）。
+      並列時のスパイクは製品より競合が重い（entries.fetch_add は並列版でも全エントリ 374 万回）→ 製品の並列版は速くなる方向。
+   e) 製品は run 中に UI / 検索 / 設定画面が同居する。スパイクは単独。
+  scan-log.jsonl との整合（ほぼ不整合に近い⚠️）:
+   - 末尾の 4 回の走査（2026-11-15 19:54 前後）は dirs = 613,341・scan_ms = 27,295〜28,144（温）・85,199（冷）。
+     スパイク（11-17〜18）は dirs = 680,8xx。+67,5xx（+11%）の差は 3 日間のファイル増（worktree・target 等）と読めるが、同じ FS の状態では比べていない。
+   - 1 ディレクトリあたり: 製品 27.3〜28.1 s / 613,341 = 44.5〜45.9 µs。スパイク逐次 39.0〜41.8 µs（私の再実行: 11-18 に dirs = 680,817・28.4 s・41.8 µs）。
+     製品の方が 6〜15% 遅く見える。原因は未特定（登録・文字列確保・同居する他スレッド・日付差のいずれか）。
+     逐次 27 s という見出しの一致は、dirs の増加と µs/dir の差が相殺した結果で、同じ状態の対応ではない。
+   - 報告する価値のある欠落: 11-15 以降の製品側の scan-log が無い。受け入れ条件の A-B-A（scan_ms/dirs）は実装後に同じ日・同じ FS で取る必要がある。
+  偽にする手順: スパイクの hit()/push を製品と同じ根ごとの extensions/include_folders にして逐次を測り直し、27 s が動くか見る。
+        そのうえで製品のバイナリ（逐次）の scan_ms/dirs を同じ日に取って µs/dir を並べる。
+
+■ 争点 5: scan_all の製品の呼び手は cache.rs の scan_and_sort_timed だけで、rayon のワーカーの中から呼ばれる経路は無い
+  判定: 壊せなかった（ただしメモに 1 点の数え漏れ）
+  根拠: git grep（.rs 全体）。scan_all の呼び手: cache.rs:407（scan_and_sort_timed）、search/tests/common.rs:92、
+        tests/memory_footprint.rs:489、src-tauri/src/icon.rs:835（#[ignore] のプローブ）、scan/tests.rs。
+        いずれも rayon の closure の外。icon.rs:835 は par_iter（:858）より前の逐次な式の中。
+        製品の入口は src-tauri/src/indexing.rs:65 の std::thread::Builder（rayon ではない）→ drain_index → rebuild_and_save（:231）。
+        load_or_scan_with_stats の製品の呼び手は src-tauri に無い（コメントだけ）。
+  数え漏れ [壊せた・軽微]: メモは scan_and_sort_timed の呼び手を「rebuild_and_save と cache-miss の load_or_scan_with_stats_in の両方」としたが、
+        cache.rs:621（load_or_scan_with_stats の config_dir() が None の分岐）が 3 つ目。実害は無い（同じ関数を通る）。
+  デッドロックの前提について: そもそも前提が要らない。専用プールの install は、別プールのワーカーから呼ぶと呼び手を塞ぐだけで、
+        専用プールのワーカーから呼べば inline で走る。デッドロックするのは「同じ（枯渇した）プールのワーカーが、同じプールへ install して待つ」場合だけ。
+  別の落とし穴（⚠️）: release は panic = "abort"（indexing.rs コメント）。rayon のワーカー内の panic は abort になる。
+        逐次版と同じ（build スレッドの panic も abort）なので悪化はしない。
+  偽にする手順: `git grep -n "scan_all\|rebuild_and_save\|load_or_scan_with_stats" -- '*.rs'` に、par_iter/spawn の closure の中の呼び出しが出る変更が入れば偽。
+
+■ 争点 6: 「並列度 8 が最良」はこの 1 台の測定から出ており、min(8) 以外の上限の決め方に根拠の差は無い
+  判定: 壊せなかった（メモの自己申告のとおり）。さらに弱点を足す。
+  根拠: run.out / run2.out は HAL9000（16 論理コア）1 台。測った点は 1/2/4/8/16 のみ（6・12 は無い）、各点 2 巡。
+        2→4→8 は 15.3 → 8.8 → 6.2 s で、8 → 16 は 6.2 → 7.8〜8.0 s に悪化。8 が谷底という以上は言えない。
+  ⚠️:
+   - 16 論理 = 8 物理コア（SMT）の可能性が高く、「8」は FS の飽和ではなく物理コア数かもしれない。available_parallelism() は論理数を返す。
+     `min(8)` は 8 論理（4 物理）の機で全論理を使い、同居する UI/検索を飢えさせうる。反対に 4 論理の機は 4。
+   - 冷えた状態の並列は未測定（メモも認める）。冷えの逐次は 85〜117 s で I/O 待ちが混じるため、HDD や遅い SSD での並列は逆効果もありうる。
+   - Defender の有無・別の AV・ネットワークドライブの根は測っていない。
+   - ワーカーの優先度は下げていない。8 本が常時 CPU を使い切ると起動直後の UI（show_on_startup / 検索）に響きうる。体感の測定は無い。
+  偽にする手順: 別の機（4 コア / 8 論理・HDD・企業 AV）で 2・4・8・16 を測り、最良点が 8 でない/16 で悪化しない例を 1 つ出す。
+
+■ その他のメモの主張（母集団）
+  - rayon 依存: snotra-core/Cargo.toml:15 `rayon = "1"`・Cargo.lock は 1.12.0 でスパイクの `=1.12.0` と一致 ✓
+  - pool_of: search/tests/common.rs:32 にあり、製品コードで ThreadPoolBuilder を建てる前例は無い（`git grep ThreadPoolBuilder`: tests のみ 3 件）✓
+  - 4〜5 本のテスト: scan/tests.rs の scan_with_extensions_filters_by_ext(:190)・_includes_folders(:226)・_no_folders_when_disabled(:264)・
+    scan_keeps_same_name_different_paths(:296)＋Dedup 直組みの 5 箇所（:197,232,270,306,337）✓。シグネチャを変えると直す、は正しい
+  - Dedup::accept の照合分岐が確保しない／CI が守らない ✓（scan.rs の doc :99-109）。fork-join で accept を後段へ移しても
+    この性質は保てるが、保持する候補の Vec（AppEntry の String 2 本/件）は新しい確保で、製品では登録件数ぶん（23,869 件）なので小さい
+  - dirs は Relaxed 1 回 ✓（scan.rs:181）。並列でも安全
+  - 設計候補 B「連結のコピー（深さ回の move）」: 前順の連結は O(n × 深さ)。本機の maxdepth 22・登録 2.4 万件なので無視できる。
+    スパイクの出力 69.6 万件でも 6 s に収まっている
+  - [⚠️ 未確認] rayon のワーカーは既定スタック 2 MiB（製品の build スレッドも既定 2 MiB で逐次再帰が既に乗っている）。
+    join/par_iter で待つ間のワーカーは他のタスクを steal して同じスタックに積むため、再帰の深さ × steal の入れ子で逐次より深くなりうる。
+    本機の maxdepth 22 では無害（スパイクは 680k ディレクトリで落ちていない）。深い木（node_modules・長いパスの有効化）の機で、
+    release の panic = "abort" だとスタックオーバーフローは即プロセス終了。専用プールなら `stack_size` を指定できる（グローバルでは不可）。
+  - 冷え 116.9 s（スパイクの温め 1 回）と scan-log の冷え 85.2 s は別物で、メモが「冷えた状態の逐次 116.9 s」と書くのは
+    「再起動後ではなく、最初の 1 回」。冷えの意味が 2 つある点は書き分けた方が良い（メモの表現の問題）
+  - issue 本文の「実運用点 約 31 万件」は旧 config の話で、現 config の scanned は 23,869 件（実 config に 5 根が入った後）。
+    ADR-mtime-differential-scan-ceiling の `67,814` ディレクトリ・17,321 ms とも桁が違う。issue 側の数字を今の config の基準として使わない方が良い
+
+■ 総括
+  壊せたのは次の 1 点だけ（軽微）: メモの scan_and_sort_timed の呼び手の数え漏れ（cache.rs:621）。
+  壊せなかった: 争点 1・2・3・5 と、6 の「根拠は 1 台のみ」。
+  ⚠️: 争点 4 の「製品 44.5〜45.9 µs/dir ≠ スパイク 39〜42 µs/dir、かつ dirs が 613k ≠ 681k」（同じ FS の状態で比べていない）、
+      争点 6 の物理コア/SMT・冷え・優先度、rayon のスタック深さ。

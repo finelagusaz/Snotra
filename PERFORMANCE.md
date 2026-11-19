@@ -3496,11 +3496,11 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 
 ## 試みたが機能しない手法
 
-- **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。**後日（#532 SU7）: この項目全体が WebView2 期のものであり、代替として指した `tauri::ipc::Response` にも現行構成の呼び出し点は無い**——アイコンの PNG は `commands::load_icon_pngs` がプロセス内で egui のテクスチャへ渡す。
+- **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x はこれを自動では処理せず、`eprintln` で診断して、ハンドラーが一度も呼ばれないことを確かめた。バイナリを配信するには、代わりに `tauri::ipc::Response`（上記セクション2）を使うこと。**後日（#532 SU7）: この項目全体が WebView2 期のものであり、代替として指した `tauri::ipc::Response` にも現行構成の呼び出し点は無い**——アイコンの PNG は `commands::load_icon_pngs` がプロセス内で egui のテクスチャへ渡す。
 
 - **`SearchEngine` の並列 Vec を `CachedEntry` 構造体に統合**（issue #110、branch `refactor/cached-entry`）:
-  保守性改善を目的に、8本の並列 Vec をフィールドごとにまとめた `CachedEntry` 構造体への移行を試みた。
-  実測で **Fuzzy full scan が 35〜120% 遅化** し却下。
+  保守性を上げるために、8本の並列 Vec をフィールドごとにまとめた `CachedEntry` 構造体への移行を試みた。
+  実測すると **Fuzzy full scan が 35〜120% 遅くなった** ので却下した。
 
   | エントリ数 | 並列Vec（現行） | CachedEntry | 増加率 |
   |----------:|---------------:|------------:|-------:|
@@ -3509,18 +3509,18 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
   |    50,000 |        ~14 ms  |      ~30 ms | +120%  |
   |   100,000 |        ~22 ms  |      ~29 ms |  +35%  |
 
-  原因: `char_masks`（`Vec<u64>`）は 8エントリ/キャッシュライン で bitmask プリフィルタを高速に走査できる。
-  `CachedEntry`（~160 bytes/entry）に埋め込むと同じ走査で **~25倍のキャッシュライン**を消費する。
+  原因は次のとおりである。`char_masks`（`Vec<u64>`）は 8エントリ/キャッシュライン で並ぶので、bitmask プリフィルタを高速に走査できる。
+  これを `CachedEntry`（~160 bytes/entry）に埋め込むと、同じ走査で **~25倍のキャッシュライン**を消費する。
   並列 Vec のレイアウトはキャッシュ局所性のために意図的に維持している。
   詳細は `snotra-core/src/search.rs` の `SearchEngine` 構造体コメントを参照。
 
-  **採用した別案（branch `refactor/entry-view-accessor`）**: AoS 統合の代わりに `EntryView<'a>` アクセサパターンを導入。
+  **採用した別案（branch `refactor/entry-view-accessor`）**: AoS へ統合する代わりに、`EntryView<'a>` アクセサパターンを導入した。
   `entry_view(i)` が並列 Vec の参照（`entry` / `lower_name` / `lower_file_name`。当時は `normalized_key` も含んでいたが、2026-08-07 に索引ごと廃して導出へ移した）を束ねて返すことで、スコアリングループの可読性を向上させた。`char_masks` / `file_name_char_masks` はプリフィルタのキャッシュ効率を保つため EntryView に含めず SearchEngine から直接アクセスする。
-  `#[inline]` により性能への影響はゼロ（メモリレイアウト不変）。`new()` 末尾の `debug_assert!` で全 Vec 長の同期を検証する。
+  `#[inline]` なので性能への影響は無い（メモリレイアウトも変わらない）。`new()` 末尾の `debug_assert!` で全 Vec 長の同期を検証する。
 
 ## 計測と受け入れ基準
 
-- **計測コードが測る分岐と、変更が触る分岐が同じか先に確かめる**（反復 11）。`tests/memory_footprint.rs` の `measure_real_index_footprint` は開発機に `index.bin` が在る限り **cache-HIT 分岐しか測らない**ので、cache-miss を触る変更は素直に走らせると差分ゼロになり、**出力の見た目は成功時とまったく同じ**である。cache-miss を測るには `SNOTRA_CONFIG_DIR` を temp へ向け `config.toml` だけ置く（`index.bin` は置かない）——scan 集合は実物のまま初回起動を再現でき、実運用の `index.bin` も無傷で済む。**A 側の標本は実装前にしか取れない**
+- **計測コードが測る分岐と、変更が触る分岐が同じか先に確かめる**（反復 11）。`tests/memory_footprint.rs` の `measure_real_index_footprint` は開発機に `index.bin` が在る限り **cache-HIT 分岐しか測らない**ので、cache-miss を触る変更は素直に走らせると差分ゼロになり、**出力の見た目は成功時とまったく同じ**である。cache-miss を測るには、`SNOTRA_CONFIG_DIR` を temp へ向けて `config.toml` だけを置く（`index.bin` は置かない）——scan 集合は実物のまま初回起動を再現でき、実運用の `index.bin` も無傷で済む。**A 側の標本は実装前にしか取れない**
 - **候補を「前提が崩れうる」という理由で却下するときは、既定・実運用点でその前提がどちらかを測る**（反復 12）。二分探索で照合を絞る案は「`sorted_by_path` は PATH 併合で偽になる」を理由に着手前に却下したが、**既定は `include_path_env = false`** でフラグは真のまま——崩れうることと、実際に崩れていることは別である。**却下の判断も測ってから書く**（`AGENTS.md`「検証の作法」の「主張は代理ではなく対象そのもので測ってから書く」を、否定側へ当てたもの）
 - **`startup:ready` の `cache_hit=false` の起動時間は、#1448 の前後で意味が変わる**。前は起動の中で全走査を待った時間、後は走査を背景へ回した起動の時間である。前後の値を比べない（cache-miss の走査そのものの所要は `scan-log.jsonl` の end 行で測る）
 - 変更ごとに「入力 → 検索結果反映」までの遅延を観測し、体感を先に確認する
@@ -3530,47 +3530,47 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 - **フレームループ中の trace は 1 行あたり約 10 ms かかる。フレーム時間を trace で測るなら、
   絶対値ではなく A/B の差分で読む**（#1004 / #1032・2026-08-11 実測。開発機・release・
   `SNOTRA_TRACE` 有効・stderr をファイルへリダイレクトした条件）。**別々の測り方が同じ規模を
-  出している**——#1004 は連続する
-  trace の `ts_ms` 差が**間に実質的な処理が無くても 10〜18 ms** 空くことを見（`SearchDispatch::issue`
+  出している**——#1004 は、連続する
+  trace の `ts_ms` 差が**間に実質的な処理が無くても 10〜18 ms** 空くことを観察した（`SearchDispatch::issue`
   と `SearchState::set_results` しか挟まない区間で 12 ms。同条件の `Engine::search` 自身は
-  7〜162 µs）、#1032 は `trace()` の `eprintln!` を直接計時して控除し、その控除量が `update_us` の
-  50〜96% を占めた。ゆえに `update_us` のような量は「フレームの所要」ではなく**「そのフレームで
-  trace を何本吐いたか」**を強く反映し、**60fps の予算 16,700 µs は trace 2 本で超える**。
-  **絶対値での合否判定は成立しない**——汚染は A/B の両側へ等しく乗るので、差分としてなら読める
+  7〜162 µs）。#1032 は `trace()` の `eprintln!` を直接計時して控除し、その控除量が `update_us` の
+  50〜96% を占めた。したがって `update_us` のような量は、「フレームの所要」ではなく**「そのフレームで
+  trace を何本吐いたか」**を強く反映する。**60fps の予算 16,700 µs は trace 2 本で超える**。
+  **絶対値では合否を判定できない**——汚染は A/B の両側へ等しく乗るので、差分としてなら読める
   （#1004 が smoke へフレーム予算の不変条件を置く案を取り下げた理由でもある・
   `docs/superpowers/specs/2026-08-10-search-worker-design.md`）
   - **未調停の反例が 1 つある。** 起動段の ON/OFF A/B（`PERFORMANCE.md`「起動の端から端まで（2026-08-09 計測・release・7 標本）」の「計測コードは系を乱していない」）
-    は「差は雑音」と記録しており、上の規模なら見えるはずの差が出ていない。代理指標の分散か
-    観測時間に入る行数の数え方に依るとみられるが、**確かめていない**。**フレームループの外へこの数を
+    は「差は雑音」と記録しており、上の規模なら見えるはずの差が出ていない。代理指標の分散か、
+    観測時間に入る行数の数え方によるとみられるが、**確かめていない**。**フレームループの外へこの数を
     持ち出すときは、この反例を見ること。**
   - **区間ごとに trace を吐かない。** 内訳を 3 区間へ分けて素直に 3 本吐けば、測定行為そのものが
     30 ms 級を足して答えを歪める。所要を蓄積してフレーム末尾の 1 本へまとめる（#1004 の
     `egui_frame`）か、書き込み時間を各区間から控除する（#1032）
-  - **値は観測点で変わる。** CI runner での実測は同節の `SNOTRA_EGUI_INPUT_TRACE` の項が持つ
-    ——**別条件の実測ゆえ 1 つの数へ併合しない**
-- **起動の端から端まで（プロセス作成 → ホットキー登録完了）は `src-tauri/src/startup.rs` が 1 行で出す**（`startup:ready` / `startup:failed`・#1000）。ハーネスは `npm run bench:startup`。**区間の意味・`null` の規則・恒等式は `startup.rs` の `//!` が正本**（ここへ写すと片方だけ古くなる）。要点だけ: **壁時計の引き算は `pre_main` の 1 か所に閉じ**、丸めは表示境界でだけ行う（厳密に検算するのは生 ns）。**通らなかった区間は `null` で、0 ではない**
-  - **区間和では「マークの取り落とし」を検出できない**——累積タイムラインは telescoping sum ゆえ、落ちた区間の時間は隣へ吸収されて等式が崩れない。取り落としを検出するのは**キーの網羅**と**分岐フラグ・`reached_phase` が説明しない `null`** のほうである（`scripts/lib/SnotraStartupContract.psm1` の同名の検査）
+  - **値は観測点で変わる。** CI runner での実測は同節の `SNOTRA_EGUI_INPUT_TRACE` の項にある
+    ——**条件の違う実測なので、1 つの数へまとめない**
+- **起動の端から端まで（プロセス作成 → ホットキー登録完了）は `src-tauri/src/startup.rs` が 1 行で出す**（`startup:ready` / `startup:failed`・#1000）。ハーネスは `npm run bench:startup`。**区間の意味・`null` の規則・恒等式は `startup.rs` の `//!` が正本**（ここへ写すと片方だけ古くなる）。要点だけ挙げる。**壁時計の引き算は `pre_main` の 1 か所でだけ行い**、丸めは表示境界でだけ行う（厳密に検算するのは生 ns）。**通らなかった区間は `null` で、0 ではない**
+  - **区間和では「マークの取り落とし」を検出できない**——累積タイムラインは telescoping sum なので、落ちた区間の時間は隣へ吸収されて等式が崩れない。取り落としを検出するのは**キーの網羅**と**分岐フラグ・`reached_phase` が説明しない `null`** のほうである（`scripts/lib/SnotraStartupContract.psm1` の同名の検査）
   - **検査は双方向でなければならない**——「説明されない `null`」だけを見る形は、**スキップした区間に `0` を書く誤りを素通しする**（変異を書いていて気づいた）。逆向き（`null` であるべき区間に値がある）も同じ重さで落とす
-- egui/softbuffer の計測コードは 5 つの env（いずれも未設定なら計測コードのコストは 0）。**このリストが計測コードの正本である**——`docs/build-commands.md` には置かない
+- egui/softbuffer の計測コードには 5 つの env がある（どれも未設定なら、計測コードのコストは 0 である）。**このリストが計測コードの正本である**——`docs/build-commands.md` には置かない
   - **受理値: 空でなければ何でもよい**（`=1` でも `=0` でも点く）。**空文字は「未設定」として扱う**——判定は `snotra-egui-runtime/src/env.rs` の 1 箇所に集約してある（#872: PowerShell の env 復元が空文字を作り、測定ハーネスの全反復が黙って計測を有効にしたまま走っていた）。**`SNOTRA_TRACE` だけは別の意味論である**（`1｜true｜yes｜on` のみ・`src-tauri/src/trace.rs` の `env_flag`）
   - `SNOTRA_EGUI_PAINT_TRACE`: paint フェーズ（`win` / `tess_ms` / `raster_ms` / `total_ms` / `meshes` / `px`）と**描画側メモリの内訳**（`surface_kib` / `atlas`＝epaint のアトラス寸法 / `atlas_kib` / `tex_font_kib`＝この層が持つその複製 / `tex_other_kib` / `tex_other_n`）。#532 SU6.5 の flip ゲート G3(b) の主判定に使った。**内訳の 3 値は同じ字形集合の別々の実体であり、ウィンドウごとに出る**（`win` を見ずに合算しない）——意味と撤去条件は `snotra-egui-runtime/src/renderer.rs` の当該コメントが正本
   - `SNOTRA_EGUI_REPAINT_TRACE`: フレームの到着（`window` / `focused` / `since_prev_ms` / egui の repaint 原因 `file:line`）。**「なぜ再描画が止まらないか」を推測せず原因に示させる**ための計測コード（#628）
   - `SNOTRA_EGUI_WAKE_TRACE`: `RequestRedraw` の送信（repaint worker・`SEND`）と受信（イベントループの `RedrawRequested` arm・`RECV`・ウィンドウ特定の結果付き）。hidden 中にどの層が配送を抑止しているかの切り分けに使う（#697）
   - `SNOTRA_EGUI_INPUT_TRACE`: 打鍵の到達（注入 → tao の配送 → egui への push → フレーム）。**この計測コードは系を乱す**——runner では stderr 1 行が 17〜56ms かかり、最初のフレームの到来を押し下げる。**率を測る回と機序を測る回は別の回にすること**（#872/#936）
   - `SNOTRA_EGUI_IME_TRACE`: IMM32 の preedit・確定の取得（文字数だけ・文字列は出さない）と候補ウィンドウ位置（`windows_ime.rs`）
-- **操作中の上限（2026-07-26・release・#737 実測）**: `RequestRedraw` の配送はウィンドウが載るモニターのリフレッシュレートで頭打ち（取得失敗時 60Hz・contract-design spec 契約②）。144Hz 機の A/B でポインタ移動中の results 間隔 p50 が 3.5ms → **7.1ms（≈141fps）**、>200fps 相当の間隔（<5ms）が 4,829 → 170（−96%・残余は event queue のジッタとみられる——`SNOTRA_EGUI_WAKE_TRACE` の送信間隔での裏取りは未実施）、paint 占有 17.6% → 8.9%。**ポインタ移動中の p50 がリフレッシュレートの逆数を大きく下回ったら回帰を疑う**
-- **可視アイドルの基準値（2026-07-26・release・#628 実測）**: main 2.0 fps / results 2.0 fps（＝ egui のキャレット点滅の下限）・paint 平均 0.96ms・**CPU 0.59%（1 コア比）**。修正前は 11.9 / 19.8 fps・5.1% だった。差は `RawInput::predicted_dt` の既定値（1/60 秒）が短い repaint 予約を「即時再描画」へ飽和させ、点滅の遷移ごとに約 26ms スピンしていたことによる（`snotra-egui-runtime/src/input.rs` の `take` を参照）。**アイドルで 2 fps を超えていたら回帰を疑う**
-- コアロジックのマイクロベンチは `ignored` テストとして保持する。実行コマンドは [docs/build-commands.md](docs/build-commands.md) の「検索パフォーマンス計測」を SSOT として参照
+- **操作中の上限（2026-07-26・release・#737 実測）**: `RequestRedraw` の配送は、ウィンドウが載るモニターのリフレッシュレートで頭打ちになる（取得に失敗したときは 60Hz。contract-design spec 契約②）。144Hz 機の A/B では、ポインタ移動中の results 間隔 p50 が 3.5ms → **7.1ms（≈141fps）** になり、>200fps 相当の間隔（<5ms）が 4,829 → 170 に減り（−96%。残余は event queue のジッタとみられる——`SNOTRA_EGUI_WAKE_TRACE` の送信間隔での裏取りはしていない）、paint 占有は 17.6% → 8.9% になった。**ポインタ移動中の p50 がリフレッシュレートの逆数を大きく下回ったら回帰を疑う**
+- **可視アイドルの基準値（2026-07-26・release・#628 実測）**: main 2.0 fps / results 2.0 fps（＝ egui のキャレット点滅の下限）、paint 平均 0.96ms、**CPU 0.59%（1 コア比）**である。修正前は 11.9 / 19.8 fps・5.1% だった。差は `RawInput::predicted_dt` の既定値（1/60 秒）が短い repaint 予約を「即時再描画」へ飽和させ、点滅の遷移ごとに約 26ms スピンしていたことによる（`snotra-egui-runtime/src/input.rs` の `take` を参照）。**アイドルで 2 fps を超えていたら回帰を疑う**
+- コアロジックのマイクロベンチは `ignored` テストとして保持する。実行コマンドは [docs/build-commands.md](docs/build-commands.md) の「検索パフォーマンス計測」を SSOT として参照する
 - フォルダ列挙のベンチ（`bench_folder_*` 3 本）は撤去した（#1391）。経緯と最後の測定は「フォルダ列挙（`bench_folder_*`、max_results=50）」の節にある
-- **warm frame は日をまたいで比較しない**——同一ホスト・同一バイナリでも日によって 3 倍変わる。構成 A / B の比較は必ず**同日・同条件で両方を測る**（#532 Phase 1 の検証バイナリで実測: 2026-07-17 に 26-30ms、7/14 は 8-10ms。変動の原因は未解明ゆえ、日をまたいだ数値の差を改善・退行と読んではならない）
+- **warm frame は日をまたいで比較しない**——同一ホスト・同一バイナリでも日によって 3 倍変わる。構成 A / B の比較は必ず**同日・同条件で両方を測る**（#532 Phase 1 の検証バイナリで実測: 2026-07-17 に 26-30ms、7/14 は 8-10ms。変動の原因は未解明なので、日をまたいだ数値の差を改善・退行と読んではならない）
 - **数 % の差を版の A/B で読むときは、ビルドごとの揺れを先に疑う**（#1479）。同じ機・同じ日でも、チェーンが外れたときにしか走らない分岐を書き換えただけのビルドで、全件走査が数 % 動いた。原因の候補を戻す変種にも同じ揺れが乗るので、揺れより小さい差は候補へ帰属させられない（実例は「採用: 履歴に当たりえない候補で正規化キーを組み立てない（#1450）」の小節「実運用点での測り直し（#1479）」）
   - **変種ごとに独立の worktree と `CARGO_TARGET_DIR` でビルドし、順と逆を混ぜて並べる。** A → B の固定順では、先に走る側だけが直前の負荷を被る。#1479 の最初の測定では、索引を作り直す全走査の直後に A が走り、A だけが遅く出た
   - **回ごとの値の中央値は、偶数個なら中央 2 つの平均で取る。** 上側の値で代用すると、#1479 では比が 1 ポイント以上ずれた
 
 ## 起動の端から端まで（2026-08-09 計測・release・7 標本）
 
-`npm run bench:startup`（`scripts/bench-startup.ps1`）。実運用 config（cache-hit・
-`include_path_env = true`・312k 規模）。**最小値に畳まない**——このハーネスが答える問いは
+`npm run bench:startup`（`scripts/bench-startup.ps1`）で、実運用の config（cache-hit・
+`include_path_env = true`・312k 規模）を測った。**最小値に畳まない**——このハーネスが答える問いは
 「起動が何 ms か」ではなく「分散がどの区間に住むか」である。
 
 | 区間 | min | p50 | max |
@@ -3607,9 +3607,9 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 
 ### runner での内訳 — 分散は `RegisterHotKey` に集中していた（2026-08-09・CI 実測・7 標本）
 
-`smoke.yml` の "Measure startup timeline"（`-UseVerificationProfile`・検証用プロファイルゆえ
-索引は極小・`include_path_env = false`）。**`smoke-startup.ps1` が `first_trace_ms` として
-0.6s / 5.2s / 8s超 を記録しながら原因未解明だった分散の、最初の内訳である。**
+`smoke.yml` の "Measure startup timeline"（`-UseVerificationProfile`。検証用プロファイルなので
+索引はごく小さく、`include_path_env = false`）。**`smoke-startup.ps1` が `first_trace_ms` として
+0.6s / 5.2s / 8s超 を記録しながら、原因が分かっていなかった分散を、初めて内訳に分けたものである。**
 
 > **後の実測（#1454）で、この区間の中身は `RegisterHotKey` ではなく、その後の trace の書き込みだと分かった。**
 > 見出しは当時の読みのまま残す。詳しくは「起動の端から端まで — #1447 / #1452 / #1454 / #1457 の同日 A/B」にある。
@@ -3646,15 +3646,15 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 である。2 桁足りない。runner 側の何か（イメージのウォームアップ・同居ジョブ・Defender の
 初回走査）が有力だが、**どれも測っていない**。
 
-**ゆえに「cold は消えた」とも「2.2 秒は再現する」とも書けない。** 分かっているのは
+**したがって「cold は消えた」とも「2.2 秒は再現する」とも書けない。** 分かっているのは
 **1 回の 7 標本では runner の変動を捉えきれない**ことだけである（#1007 で追う）。
 
 ### 計測コードが計測コードの欠陥を暴いた（配置ミス・実測で発覚）
 
 最初の 7 標本は **`hotkey_register` が 7 回とも 0 ms** だった。`SetupRest` のマークを
 `setup_hotkey_listener` の中（送信直前）に置いていたためで、そこは setup ブロックの**途中**
-——以降のリスナー登録・config watcher・トレイ生成が丸ごと `hotkey_register` へ吸われ、
-しかも platform スレッドは並行に登録を終えるので差がほぼ 0 に潰れていた。
+——それ以降のリスナー登録・config watcher・トレイ生成が丸ごと `hotkey_register` へ吸われ、
+しかも platform スレッドは並行に登録を終えるので、差がほぼ 0 に潰れていた。
 
 マークを setup ブロックの末尾へ移したところ **0 → 18〜19 ms**、`post_main` も
 55〜62 → 76〜80 ms になった。**前の測定は setup の残り約 20 ms を取りこぼしていた。**
@@ -3667,8 +3667,8 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 **代償として `hotkey_register` は「純粋な登録待ち」ではない**——送信後に main スレッドが
 やった残り（リスナー登録・config watcher・トレイ生成）を含む。**並行に走るものを 1 本の
 時間軸で刻む以上、どちらかへ寄せるしかない**（分けるには platform 側にも独立した anchor
-が要る）。**開発機では値が変わらなかった**（p50 79 ms のまま）——platform 側が遅い側に
-着くためで、リスクは runner のような環境で顕在化する。
+が要る）。**開発機では値が変わらなかった**（p50 79 ms のまま）——platform 側のほうが後に
+終わるためで、リスクは runner のような環境で表に出る。
 
 ### 採用: フォントの解決を config の読み込み直後に先読みする（#1452・起動の A/B は未実測）
 
@@ -3713,7 +3713,7 @@ windows_create（27〜33 ms）のうち 16〜23 ms がフォントである。�
 
 - **起動時間の差は日内変動に埋もれる。** 同一バイナリの A1 と A2 が `post_main` で 82 → 71 ms
   （11 ms・14%）動き、**B はその間にある**。**#1023 の起動時間への効果は、この計測コードでは測れない**
-- **起動直後の working set は減った。** 旧が 44.9〜49.4 MB に対し現行は 39.0〜40.6 MB で
+- **起動直後の working set は減った。** 旧が 44.9〜49.4 MB なのに対し、現行は 39.0〜40.6 MB で
   **範囲が重ならない**——最接近しても 4.3 MB あり、同一バイナリの日内差 1.5 MB を超える。
   背景再スキャンの撤去がここに出ている
   - **測っているのは定常常駐ではない。** ハーネスは終端の trace + 1.5 秒の時点で
@@ -3821,7 +3821,7 @@ windows_create（27〜33 ms）のうち 16〜23 ms がフォントである。�
 
 ### ホットキー表示レイテンシ（`show_main_and_emit`、SNOTRA_TRACE=1 計測、2026-03-07）
 
-Win32 IPC cold-call 最適化（`is_visible()` → `AtomicBool`）適用後の値。
+Win32 IPC cold-call 最適化（`is_visible()` → `AtomicBool`）を適用した後の値である。
 
 | 条件 | `show_main:total` | 備考 |
 |------|------------------:|------|

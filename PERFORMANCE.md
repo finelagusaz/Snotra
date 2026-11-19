@@ -150,13 +150,13 @@ trace 計装（`suspend:call_returned` / `suspend:completed`）で、`TrySuspend
 
 hide 経路の `EmptyWorkingSet`（`src-tauri/src/working_set.rs`）は物理ページをほぼ完全に返す。
 **非表示アイドルの PrivWS は 2.3 MiB** で、ここに削る余地は無い。一方 PrivComm は trim で
-**動かない**（97.1 → 97.1）。ゆえに**ヒープ調律の軸は PrivComm のみ**であり、PrivWS の
+**動かない**（97.1 → 97.1）。したがって**ヒープを調律するときの軸は PrivComm だけ**であり、PrivWS の
 小ささを「メモリを使っていない」と読んではならない。
 
 ### font_family A/B（前景計測・`auto_hide_on_focus_lost = false`）
 
-実運用 config（38,847 エントリ・migemo 有効）での PrivComm。B は `font_family` を
-解決不能名にして user_font 経路だけを落とした変種。
+実運用 config（38,847 エントリ・migemo 有効）での PrivComm。B は、`font_family` を
+解決できない名前にして、user_font の経路だけを外した変種である。
 
 | 段階 | A: `font_family = "HackGen Console"` | B: 解決不能（jp_font 単一） | 差 |
 |---|---:|---:|---:|
@@ -164,19 +164,19 @@ hide 経路の `EmptyWorkingSet`（`src-tauri/src/working_set.rs`）は物理ペ
 | 表示（空クエリ） | 75.1 MiB | 43.8 MiB | **31.3** |
 | 検索実行後 | 97.1 MiB | 56.2 MiB | **40.9** |
 
-- **user_font 経路が最大の単一項目**。ウィンドウを一度も出していないアイドル時点で既に 20.6 MiB 効いており、
-  フォント解決が表示より前に走ることを示す
-- 差はファイルサイズ（`HackGenConsole-Regular.ttf` = 10.21 MiB）の約 2 倍。`resolve_font_family` の
-  `data.to_vec()` による複製に加え、egui 側の解析・グリフ実体化が上乗せされる。**内訳は未分離**
-- **差が段階とともに広がる（20.6 → 31.3 → 40.9）のが要点**。一度きりのバイト複製なら差は一定のはずで、
-  広がるということはグリフ実体化の分が乗っているということ。同じクエリ 1 回の検索で A は +22.0 MiB、
-  B は +12.4 MiB しか増えない——検索時の増分もアイコンではなく**主にフォント由来**である。
-  ゆえに「user_font が CJK をカバーするなら冗長な jp_font を積まない」が具体的な削減候補になる
+- **単一の項目としては user_font の経路が最大である**。ウィンドウを一度も出していないアイドル時点で既に 20.6 MiB 効いており、
+  フォントの解決が表示より前に走ることがわかる
+- 差はファイルサイズ（`HackGenConsole-Regular.ttf` = 10.21 MiB）の約 2 倍である。`resolve_font_family` の
+  `data.to_vec()` による複製に加えて、egui 側の解析とグリフの実体化が上乗せされる。**内訳はまだ分けていない**
+- **差が段階とともに広がる（20.6 → 31.3 → 40.9）のが要点である**。一度きりのバイト複製なら差は一定のはずで、
+  広がるのは、グリフを実体化した分が乗っているからである。同じクエリ 1 回の検索で A は +22.0 MiB 増えるのに、
+  B は +12.4 MiB しか増えない——検索時の増分もアイコンではなく**主にフォントから来ている**。
+  したがって「user_font が CJK をカバーするなら冗長な jp_font を積まない」が具体的な削減候補になる
   （カバー判定の述語が要る）
-- `JP_FONT_BYTES: OnceLock<Box<[u8]>>` は `YuGothM.ttc`（**13.26 MiB**）を丸ごと保持し**解放経路が無い**。
-  user_font が CJK をカバーする場合（HackGen 等）でも fallback として常駐し続ける
+- `JP_FONT_BYTES: OnceLock<Box<[u8]>>` は `YuGothM.ttc`（**13.26 MiB**）を丸ごと保持していて、**解放する経路が無い**。
+  user_font が CJK をカバーする場合（HackGen 等）でも、fallback として常駐し続ける
 - 実行間のばらつきは ~4 MiB（別実行のアイドルは 65.9 MiB）。当時のアイドルは背景再スキャンが
-  走っている最中で、その進行差による。**1 MiB 単位の差を有意と読まない**——ただし
+  走っている最中で、ばらつきはその進み具合の差による。**1 MiB 単位の差を有意と読まない**——ただし
   **この根拠は #1001 で消えた**（再スキャンごと撤去した）。撤去後のばらつきは測り直して
   いないので、この閾値を今の計測へ持ち込むなら自分で取り直すこと
 
@@ -185,11 +185,11 @@ hide 経路の `EmptyWorkingSet`（`src-tauri/src/working_set.rs`）は物理ペ
 > この節と次節が述べるバイト列の持ち方（`'static` への leak・never-clear の根拠）は当時のものである。
 > #1449 以降はファイルをメモリマップして持つ（「採用: フォントファイルをメモリマップして積む（#1449）」）。
 
-user_font 自身が CJK をカバーするなら jp_font（`YuGothM.ttc` 13.26 MiB）は一度も glyph を
-出さないまま常駐する。**user を先に解決 → cmap 実測でカバー判定 → 必要なときだけ jp を読む**
+user_font 自身が CJK をカバーするなら、jp_font（`YuGothM.ttc` 13.26 MiB）は一度も glyph を
+出さないまま常駐する。そこで、**user を先に解決 → cmap 実測でカバー判定 → 必要なときだけ jp を読む**
 という順序へ入れ替えた（実装は `egui_shell/font_stack.rs` の `font_covers_cjk` /
-`configure_japanese_font`）。判定はかな + JIS 第1水準 + **第2水準・互換漢字**を引き、
-かなと常用漢字だけの中途半端な和文フォントを弾く。パース不能は「カバーしていない」＝ jp を積む安全側。
+`configure_japanese_font`）。判定では、かな + JIS 第1水準 + **第2水準・互換漢字**を引いて、
+かなと常用漢字だけの中途半端な和文フォントを弾く。パースできないときは「カバーしていない」とみなし、jp を積む安全側に倒す。
 
 | 段階 | 変更前 | 変更後 | 差 |
 |---|---:|---:|---:|
@@ -197,14 +197,14 @@ user_font 自身が CJK をカバーするなら jp_font（`YuGothM.ttc` 13.26 M
 | 表示 | 75.2 MiB | 61.6-62.6 MiB | **-13.3** |
 | 検索実行後 | 97.3 MiB | 84.6-84.8 MiB | **-12.6** |
 
-- 削減量が**ファイルサイズとほぼ一致する**のは機構と整合する。user_font が全 glyph を
+- 削減量が**ファイルサイズとほぼ一致する**のは、機構と矛盾しない。user_font が全 glyph を
   出していたため jp_font はラスタライズされておらず、効いていたのは生バイト列と
   eager parse の分だけだった。**glyph 機構まで削れると見積もったのは誤りで、実測が正した**
-- `JP_FONT_BYTES` の `OnceLock` は set-once・never-clear（`transmute` による `'static` 化の
+- `JP_FONT_BYTES` の `OnceLock` は set-once・never-clear である（これが `transmute` による `'static` 化の
   健全性の根拠）。CJK をカバーしないフォントで一度読むと、カバーするフォントへ切り替えても解放されない
   ——**削減は fresh start の値である**
 - 残余リスク: プローブは標本であり、カバーしていると判定した後にプローブ外の文字が user_font に
-  無ければ豆腐（□）になる。クラッシュしない字単位の静かな欠落ゆえ、判定は厳しい側に寄せてある
+  無ければ豆腐（□）になる。クラッシュはせず、字単位で静かに欠けるだけなので、判定は厳しい側に寄せてある
 
 ### 採用: user_font も `from_static` で積む（epaint の全体複製を止める）
 
@@ -220,14 +220,14 @@ jp_font は元から `from_static` だったが user_font だけ `from_owned` �
 | 表示 | 61.0 MiB | **40.1 MiB** | -20.9 |
 | 検索実行後 | 84.3 MiB | **54.3 MiB** | -30.0 |
 
-- **差が 10.2 MiB 刻みで 3 段に増えるのが機構の証明**（ファイルサイズちょうど 3 つ分）。
-  変更前の複製は 4 本: `FontData` が 2 Context 分（アイドルで顕在）＋ 各 Context が
-  `FontsImpl` を組む時の Blob 深いコピー 2 本（main は表示時・results は検索時に顕在）。
+- **差が 10.2 MiB 刻みで 3 段に増えることが、機構の証明である**（ファイルサイズのちょうど 3 つ分）。
+  変更前の複製は 4 本あった: `FontData` が 2 Context 分（アイドルで現れる）＋ 各 Context が
+  `FontsImpl` を組む時の Blob の深いコピー 2 本（main は表示時に、results は検索時に現れる）。
   変更後は leak した 1 本を全員が借りる
 - **ウィンドウが 2 つある構成では、フォント常駐は Context 数に比例する**。egui の Context は
   ウィンドウごとに独立で `FontsImpl` も別々に持つ——「1 フォント = 1 常駐」ではない
 - leak は family 名をキーにしたキャッシュで共有する（`Box::leak` を素で置くと 1 回の
-  font_family 変更で 2 回漏れる）。漏れは distinct family 数で頭打ち・解放はされない
+  font_family 変更で 2 回漏れる）。漏れる量は distinct family の数で頭打ちになり、解放はされない
 
 ### 採用: フォントファイルをメモリマップして積む（#1449）
 
@@ -274,11 +274,11 @@ jp_font は元から `from_static` だったが user_font だけ `from_owned` �
 
 - `index.bin` は **6.80 MiB / 38,847 件**。「index は極小（数百 bytes）」という旧記述は
   WebView2 期の別環境の値で、実運用点とは 4 桁ずれる
-- **`normalized_keys` が 3.05 MiB**（索引の 22%）。`normalize_entry_key` = 小文字化 + `/`→`\` の
-  長さ保存変換ゆえ、on-disk バイト数は `target_path` と完全一致する——原文パスと二重に持っている
+- **`normalized_keys` が 3.05 MiB**（索引の 22%）。`normalize_entry_key`（小文字化 + `/`→`\`）は
+  長さを保つ変換なので、on-disk のバイト数は `target_path` と完全に一致する——原文のパスと二重に持っている
 - migemo の限界費用は 10k/38.8k/100k で一貫して **+28.6%**（133 → 171 B/entry）
 - アロケータ実測は `layout.size()` の集計であり、Windows ヒープのブロックヘッダ・
-  サイズクラス丸めを**含まない**。233,430 ブロックゆえ実 RSS はこれより大きい
+  サイズクラス丸めを**含まない**。233,430 ブロックあるので、実 RSS はこれより大きい
 
 ## 索引の常駐の内訳（2026-08-07 計測・312,377 エントリ）
 

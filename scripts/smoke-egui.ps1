@@ -80,8 +80,7 @@ Write-Host "本体: $ExePath"
 
 # 検証用プロファイル（#804）。**target/ の下に置く**（`visual-check-colors.ps1` の `$profileDir` のコメントと同じ理由
 # ——cargo clean が掃くので新しい後始末機構を足さない。CARGO_TARGET_DIR を設定している環境では
-# cargo の掃除対象から外れるが、それは受容する残余である
-# ——ADR-config-dir-env-seam-rejected-alternatives.md §4）。
+# cargo の掃除対象から外れるが、それは受容する残余である）。
 # パスの計算に副作用は無いので guard より前に置いてよい（下の throw が指し先を示せる）。
 $profileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile'
 
@@ -149,7 +148,7 @@ function Get-LetterVk {
 }
 
 # 段取りのスクリプト内関数（どの検査も判定はここに持たせない）。
-# モジュールへ寄せないのは、このスクリプトだけが使うからである（`ADR-smoke-egui-not-split`）。
+# モジュールへ寄せないのは、このスクリプトだけが使うからである。
 
 # 1 キーを打つ（down → HoldMs → up）。後ろの待ちは持たない——打鍵の後に何 ms 置くかは
 # 呼び出し側の文脈（debounce を跨がせる・全件走査を待つ）で決まるので、呼び出し側に残す。
@@ -628,8 +627,8 @@ try {
   #
   # **H1 判定より後に置く**——既存の待ちは 1 件でも現れれば成立するので、それより前に show / hide を
   # 足すと既存の断言が新しい事象で満たされる。ここで新しく書く待ちはすべて増分で待つ。
-  # **検出しないもの**: 物理キーボードのオートリピート（`keybd_event` はリピートを生まない・
-  # `ADR-synthetic-key-press-suppression`）。
+  # **検出しないもの**: 物理キーボードのオートリピート（`keybd_event` はリピートを生まない——
+  # Z を 4 秒保持しても `repeat=true` は 0 件だった・#927 で実測。ゆえに注入ではこの経路を発火させられない）。
   if ($failures.Count -eq 0 -and $resultsChecked) {
     $VK_Z = 0x5A
     $VK_X = 0x58

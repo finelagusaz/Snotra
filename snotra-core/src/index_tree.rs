@@ -743,8 +743,7 @@ impl IndexTree {
     /// 昇順」かつ「既存の最大より後ろ」のときだけだが、実運用点では既存の最大が
     /// `C:\workspace\...` で追加の最小が `C:\Users\...` であり、**PATH エントリは必ず途中に
     /// 入る**（2026-08-13 実測）。測っても偽にしかならないのに、毎回「既存の最大」を
-    /// 組み立てる費用が全ユーザーへ乗る。判断の記録は
-    /// `docs/adr/ADR-sorted-prefix-over-reflagging.md`。
+    /// 組み立てる費用が全ユーザーへ乗る。
     pub(crate) fn extend_with_roots(&mut self, entries: Vec<AppEntry>) {
         if entries.is_empty() {
             return;
@@ -782,7 +781,7 @@ impl IndexTree {
         // `sorted_prefix_len` に追いつかなくなる形で表れる）。
         //
         // **範囲を伸ばそうと測り直しても空振りする**——実運用点では PATH エントリが必ず途中に
-        // 入る（2026-08-13 実測）。却下の論証は `docs/adr/ADR-sorted-prefix-over-reflagging.md`。
+        // 入る（2026-08-13 実測・#1067）。
     }
 
     /// `i` の**末尾成分**を、`indexer` のプレフィルタと同じ規則で正規化して `buf` へ書く。

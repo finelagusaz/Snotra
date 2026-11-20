@@ -103,7 +103,7 @@ fn blur_should_hide(focused: bool, grace_elapsed: bool, auto_hide: bool) -> bool
 ///
 /// **フレーム内の入口は `reset`（段 3）と `observe`（段 16–17）の 2 つだけである。**
 /// 段 14・34 は欠番である——2 フィールド表現で独立していた 2 段を、#745 でここ（段 16–17）へ
-/// 合流させた（`ADR-blur-grace-single-field-state-machine`）。1 フィールドなので `reset` が
+/// 合流させた。1 フィールドなので `reset` が
 /// 1 行で済み、「両方消したか」という問い自体が生じない。
 ///
 /// **`Idle` は武装を解かない。** `auto_hide` が off の間に猶予が明けても `Blurred` のまま
@@ -146,8 +146,12 @@ impl BlurGrace {
     /// 段 16–17: 今フレームの focus を畳み、このフレームの処置を返す。
     ///
     /// 副作用（`emit_hide` / `request_repaint_after`）は呼び出し側が持つ。**`auto_hide` は
-    /// 値渡しである**（実行中 config の毎フレーム live-read・#576）——遅延評価やキャッシュを
-    /// 選ばなかった理由は `ADR-blur-grace-single-field-state-machine`。
+    /// 値渡しである**（実行中 config の毎フレーム live-read・#576）——遅延評価の
+    /// クロージャ形は、レシーバ `&mut self.blur_grace` と `&self` 全体の捕捉が衝突して
+    /// borrow checker を通らないので採らない（#932）。
+    ///
+    /// `focused` と `auto_hide` はどちらも `bool` で、呼び出し点で取り違えても型・テスト・smoke は
+    /// 通る（#745 で実測。受容する残余。塞ぐなら `auto_hide` を enum にする）。
     ///
     /// **`#[must_use]` はここではなく `BlurAction` の型宣言に在る**（#934）。
     pub(crate) fn observe(&mut self, focused: bool, now: Instant, auto_hide: bool) -> BlurAction {

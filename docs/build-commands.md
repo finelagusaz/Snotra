@@ -105,7 +105,7 @@ npm run smoke:manual '--' -PostToPr # 記録を PR コメントへ投稿する
   - 実施の有無が会話にしか残らないと、「検証されていない」と「問題が無かった」を区別できなくなる。`-PostToPr` か、出力ファイルの貼り付けで PR に残す
   - カテゴリ D の全体がそうなのではない。`check:colors` は exit code で自動判定するので、エージェントも実行できる（画面がロックされているときを除く）。目視項目も、打鍵注入とウィンドウ矩形のキャプチャで実施した実績がある（#836 / #870）
 - **新機能のために、先回りして `$items` へ項目を足さない。** 足す条件は「その表示が実際に一度回帰したとき」である
-  - `scripts/manual-smoke.ps1` の `$items`（常設の項目）が SSOT であり、PR 本文の目視表とは別の母集団である（写しではない・`docs/adr/ADR-folder-location-display-surface.md`「却下 6」）
+  - `scripts/manual-smoke.ps1` の `$items`（常設の項目）が SSOT であり、PR 本文の目視表とは別の母集団である（写しではない・#836）
   - `$items` に載るのは、どの変更でも壊れうる横断的な不変条件である。PR 本文の表は、その PR 限りの受け入れ確認である
 - **`cargo run` には必ず `-p snotra` を付ける**（既定は egui・#532 SU7 の flip 済み・env フラグは不要）。`-p` を欠くと、ルートでは bin を決められずにエラーになる（候補は `snotra` / `snotra-settings`。実測: `error: cargo run could not determine which binary to run`）。cwd が crate の配下なら、その crate の bin が起動する
 
@@ -123,7 +123,7 @@ npm run check:colors '--' -Interactive    # 判定せず起動し、目視項目
   - 判定は「ウィンドウ全体の最頻色が期待色か」ではない。その前提（背景はウィンドウで最も広い色）は、main ウィンドウでは偽である。入力欄の塗りが背景より広く（実測 37.6% > 33.3%）、旧来の判定では、main はどんな背景色を指定しても赤だった
   - 下限の占有率は、宣言ごとに持つ（main 15% / results 50%・実測に対して 1.5〜2.5 倍の余裕）。「最頻である」は「下限以上」を含意するが、逆は成り立たない。一律の小さな下限にすると、results の検出力が落ちる
   - 合否に依らず、色ごとの実測の占有率を出す。そのため、レイアウトのドリフトは、失敗になる前に「余裕の縮小」として見える
-  - 判定の述語は `scripts/lib/SnotraWindowColors.psm1` が持つ（Pester が、述語と配備される下限の両方を測る）。宣言を呼び出すのは `scripts/visual-check-colors.ps1` である。却下した代替案は `docs/adr/ADR-declared-colors-over-modal-color.md`
+  - 判定の述語は `scripts/lib/SnotraWindowColors.psm1` が持つ（Pester が、述語と配備される下限の両方を測る）。宣言を呼び出すのは `scripts/visual-check-colors.ps1` である（#953）
 - results は、専用の scan 3 件を seed し、キー注入で表示して、実ピクセルを測る。残る 2 点は目視（`-Interactive`）に留まる
   - show の一瞬のフラッシュ: present の前の 1 フレーム未満なので、連写しても捉えられない
   - results のリサイズ時のちらつき: 入力と描画のタイミングに依存するので、単一のキャプチャでは不在を証明できない

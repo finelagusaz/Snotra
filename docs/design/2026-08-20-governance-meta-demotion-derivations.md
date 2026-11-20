@@ -237,7 +237,7 @@ registry の走査・dependents/edit-findings）は第 1 層か対象外であ�
 
 ### 1. #1077 — 同じ原因で一方だけが CI で赤、他方は空虚に緑
 
-出典: docs/development-principles.md:192-194、docs/adr/ADR-source-text-probe-helper-locality.md:5-9。
+出典: docs/development-principles.md:192-194、#1108。
 
 記録の原文:
 > 2026-08-16 実測（#1077）: 検知器 2 本のうち 1 本が CI でだけ落ち、**もう 1 本は同じ理由で「空虚に緑」だった**——ガードを消しても通る状態で、**落ちた側を追わなければ気づけなかった**。手元は 3 度の全件実行がすべて緑である。

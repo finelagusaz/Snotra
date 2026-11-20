@@ -9,9 +9,7 @@
 # root `Ui` は pass 冒頭で `ctx.global_style()` を `Arc<Style>` として掴む。ゆえに run_ui の
 # callback 内からの書き込みは**その pass に届かず**、色だけを変えた config 適用フレーム
 # （＝次フレームが来る保証の無い状況）で入力欄だけが旧色で残る。修正は PR #901（7562cef。
-# squash subject が #751 を含まないので `git log --grep` では辿れない）、却下した代替案は
-# ADR-visuals-application-target（このファイルからの参照は governance:check の走査元に入らないため、
-# パス形で書いても保護されない。改名しない slug 名で指す）。
+# squash subject が #751 を含まないので `git log --grep` では辿れない）。
 #
 # 含めなかったもの:
 #   - `style_ui` / `settings_ui` — 内部で書き込み口を呼ぶが、これらは egui 組み込みのスタイル

@@ -51,4 +51,4 @@ Rust 側が `reached_phase`（実際に刻んだ最後の区間名）を出す�
 
 ## 関連
 
-注入点を製品コードへ足さない判断は `ADR-no-test-only-injection-in-product-code`。
+注入点を製品コードへ足さない判断は #1000。

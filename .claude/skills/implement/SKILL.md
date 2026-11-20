@@ -82,7 +82,7 @@ allowed-tools:
 
 カテゴリ A〜F の検証も、レビューも、主エージェントの作業ツリーでは行わない。コミットを 1 つ作り、その sha に対して行う。権威ある A〜F は、ツール（`npm run verify:tree`）がツールの worktree で回す。レビューと変異注入は、worktree のサブエージェントが自分の worktree で行う。
 
-この形の要点は、対象を不変オブジェクトにすることである。委譲した検査が対象を読む時刻は、制御できない（ルート `CLAUDE.md`「サブエージェント委譲と worktree」）。だから、動かないものを渡す。検証とレビューを別の worktree で走らせても、2 つの報告は別の版へ向かない。ツールの要約と委譲先の `align` の出力が、どちらも sha を機械可読な形で示すからである。動く対象を渡していた頃の経緯は、`docs/adr/ADR-implement-verification-delegated-to-worktree.md` にある。委譲先をツールの worktree へ入れない理由と、却下した形は、`docs/adr/ADR-implement-verification-tool-tree.md` にある。
+この形の要点は、対象を不変オブジェクトにすることである。委譲した検査が対象を読む時刻は、制御できない（ルート `CLAUDE.md`「サブエージェント委譲と worktree」）。だから、動かないものを渡す。検証とレビューを別の worktree で走らせても、2 つの報告は別の版へ向かない。ツールの要約と委譲先の `align` の出力が、どちらも sha を機械可読な形で示すからである。委譲先をツールの worktree へ入れない理由と、却下した形は、`docs/adr/ADR-implement-verification-tool-tree.md` にある。
 
 主エージェントがビルドを回さなくなるわけではない。編集中の速い確認（変更した crate の fmt / clippy / test）は、主ツリーで手で回す。ツールが回すのは、権威ある一式である（`cargo doc` と `npm run governance:check` を含む）。
 
@@ -120,7 +120,7 @@ allowed-tools:
 
 ### 3c. 報告を受けてから
 
-ツールの要約と委譲の報告が両方届くまで、作業ツリーに触らず、HEAD を進めない。どちらも、アンカーの sha を示す。届く前に HEAD を進めると、「報告の sha == HEAD」が崩れる。すると、その指摘がまだ生きているかの照合が、毎回入る（`docs/adr/ADR-implement-verification-delegated-to-worktree.md`）。
+ツールの要約と委譲の報告が両方届くまで、作業ツリーに触らず、HEAD を進めない。どちらも、アンカーの sha を示す。届く前に HEAD を進めると、「報告の sha == HEAD」が崩れる。すると、その指摘がまだ生きているかの照合が、毎回入る（#1137）。
 
 - ツールの判定の内訳を読む。標準出力の JSON が、要約ファイルの `status`・`categories_run`・各コマンドの `exit`・`warnings` をそのまま載せる（ファイルのパスは、同じ JSON の `summary`）。`status` と各コマンドの `exit` だけでなく、`categories_run` とコマンドの一覧を、変更が触れたコードパスと突き合わせる（緑は、走ったコマンドが変更を見ていることまでは示さない）。`warnings` があれば、根拠欄に書く
 - 並走したラウンドでツールが赤なら、委譲の報告が届いたあとに、同じ `run` を単独で 1 回だけ回し直してから確定する（委譲先との CPU 競合で、timeout の赤が出うる）
@@ -187,4 +187,4 @@ allowed-tools:
 
 ---
 
-本文の括弧の issue 番号は、規則の出所か、経緯の手がかりである。却下した形と設計の理由は、`ADR-implement-verification-delegated-to-worktree`・`ADR-implement-verification-tool-tree` が持つ。事件の経緯は、多くが、その番号を件名に含む PR の本文にある（main の squash commit。`git log --grep='#<N>'` で引ける）。本文に経緯を書き残した番号（#1154・#1179）は、ほかに記録が無いものである。これらは改修するときに読む。実装で従うのは本文である。
+本文の括弧の issue 番号は、規則の出所か、経緯の手がかりである。却下した形と設計の理由は、`ADR-implement-verification-tool-tree` が持つ。事件の経緯は、多くが、その番号を件名に含む PR の本文にある（main の squash commit。`git log --grep='#<N>'` で引ける）。本文に経緯を書き残した番号（#1154・#1179）は、ほかに記録が無いものである。これらは改修するときに読む。実装で従うのは本文である。

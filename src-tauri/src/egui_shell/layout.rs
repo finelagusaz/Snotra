@@ -110,7 +110,7 @@ pub fn main_window_height(
 
 /// 結果ウィンドウの高さ（#835）。**`max_results` 分の固定高**。**件数を入力に持たない**
 /// ——候補が少なくてもウィンドウは縮まない（実件数フィットを採らない理由は
-/// `ADR-results-fixed-height`）。
+/// `SPEC.md`「4.5 最大列挙数」）。
 ///
 /// **`0.0` は「hide せよ」の契約値である。** 返すのは `max_results == 0` のときだけで
 /// （`config.toml` の手編集でのみ到達する・`ResultsInputs::max_results` の doc）、
@@ -379,8 +379,8 @@ pub fn bar_rect_center(x: i32, y: i32, width_phys: u32, bar_outer_height_phys: i
 /// （memo はウィンドウの所有型が持つ）と `view.rs` の main ウィンドウガード（memo は view が持つ——main の高さの
 /// 導出が show 経路（`show_egui_main`）と共有される事実の正本は `window_coordinator.rs` の `//!`。
 /// ここでの結論は**memo は共有しない**ことだけである）。`main_size` を
-/// results の導出へ入れないという `ADR-results-presentation-two-stage` 却下 1 の**結論**は今も真である
-/// （却下 1 の第 3 理由が挙げた「意図的な 2 導出」の部分は `ADR-show-path-derives-drawn-height` が反転させた）。
+/// results の導出へ入れないという #752 の**結論**は今も真である
+/// （#752 が「意図的な 2 導出」とした部分は #755 / #801 で反転した）。
 pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
     (next.0 - prev.0).abs() > 0.5 || (next.1 - prev.1).abs() > 0.5
 }
@@ -454,7 +454,7 @@ pub enum ResultsPresentation {
 ///
 /// **②と④は完全に独立している**（#835）。高さが件数を入力に持たないため、「0 件だから
 /// 高さ 0、ゆえに hide」という代行は成り立たない——②は `result_count > 0` として連言に
-/// 直接現れる。④が偽になるのは `max_results == 0` のときだけである（`ADR-results-fixed-height`）。
+/// 直接現れる。④が偽になるのは `max_results == 0` のときだけである（#835）。
 pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
     let desired_height = results_window_height(i.max_results, i.row_height);
     if i.main_visible && !i.plain_hidden && i.result_count > 0 && desired_height > 0.0 {
@@ -585,7 +585,7 @@ pub fn truncate_middle_chars(s: &str, max_chars: usize) -> String {
 ///
 /// `measure` は「候補を書式へ埋めた文字列（＝ hint 全体）の実幅」を返す。**固定部
 /// （接頭辞・接尾辞）の幅を別に推定しなくて済む**のがこの注入の要点で、
-/// `ADR-folder-location-display-surface` の却下理由 2（「接尾辞の実幅も別途推定が要る」）は
+/// 接尾辞の実幅を別に推定する設計は
 /// これで消える。CJK も呼び出し側のフォント実寸に乗る。
 ///
 /// **1 件でも収まる候補があれば、返す候補は必ず実測で収まっている**——収まった候補だけを
@@ -837,7 +837,7 @@ mod tests {
     }
 
     /// #835: 結果ウィンドウは **`max_results` 分の固定高**。**件数では変わらない**
-    /// （実件数フィットを採らない・`ADR-results-fixed-height`）。
+    /// （実件数フィットを採らない・`SPEC.md`「4.5 最大列挙数」）。
     ///
     /// **`row_height` の整数倍ちょうどであること**（余りを持たないこと）も測る——`results_view`
     /// が `item_spacing.y = 0` で行ピッチを `row_height` に揃えているため、余りは余白ではなく
@@ -995,7 +995,7 @@ mod tests {
     ///
     /// **16 行すべてが到達可能である**（#835）。④は `max_results` だけで決まるため、
     /// `result_count = 0 ∧ max_results > 0` が「②false ∧ ④true」の 4 行を埋める——**②と④が
-    /// 完全に独立しているので、測る側もその 4 行を持つ**（`ADR-results-fixed-height`）。
+    /// 完全に独立しているので、測る側もその 4 行を持つ**（#835）。
     #[test]
     fn present_results_truth_table_distinguishes_all_four_conjuncts() {
         use ResultsPresentation::{Hidden, Visible};

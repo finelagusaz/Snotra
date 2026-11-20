@@ -105,7 +105,10 @@ export function parseDiff(diffText) {
  *  設定と cwd で変わり、行が**黙って**落ちた（形を変えた設定はテストの `CONFIGS` が持つ・#1300 の作業中に実測）。
  *  plumbing の `diff-index` は quotePath 以外を無視する。
  *  patch から解いた名前を、`-z` の一覧（quote されない）と突き合わせる——観測した壊れ方はどれも名前が化ける形で
- *  あり、化けた名前の行はソース拡張子に合わず黙って落ちた。行数までは照合しない（ADR-race-boundaries-git-plumbing）。 */
+ *  あり、化けた名前の行はソース拡張子に合わず黙って落ちた。行数までは照合しない——照合の端
+ *  （削除・バイナリ・`--include-removed`・壊れた hunk）を塞ぐ部品が委譲レビューのたびに増え（コード 1.6 倍・
+ *  テスト 2.7 倍）、守る事態はこのリポジトリで 0 件だった。この検査は網羅ではなく grep の入口である（#1300・
+ *  ユーザーと合意）。 */
 export function readTrackedRows(git, mergeBase) {
   const rows = parseDiff(git("-c", "core.quotePath=false", "diff-index", "-M", "-p", "-U0", mergeBase));
   const names = new Set(

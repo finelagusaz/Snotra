@@ -135,6 +135,8 @@ const lintPriority = (value) => (value.startsWith("{") ? tomlInt(value.match(/pr
  *  （fail-closed。直し方は `priority = -1` で群を先に当てること）。
  *  隣の rustdocLintsAreDenied が「節内の全エントリが deny」という ∀ で同型の穴を塞いでいるのに対し、
  *  こちらは節に allow を書く正当な用途を残すため、**打ち消しうる群だけを名指しして**塞ぐ。
+ *  正当な allow を書ける場所はこの節しか無い——member 側の `[lints]` で上書きしようとすると、cargo が
+ *  `cannot override 'workspace.lints' in 'lints'` で拒む（#950）。
  *  **節が無い形が最も起きやすい欠落である**（2 行消すだけで起きる）。 */
 export function clippyMethodsDenied(rootText) {
   const entries = new Map();

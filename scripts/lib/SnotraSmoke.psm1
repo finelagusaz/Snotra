@@ -910,6 +910,9 @@ function Send-SnotraKey {
 
     Initialize-SnotraNativeInterop
     $flags = if ($Up) { 0x2 } else { 0 }
+    # `bScan` を 0 で撃つので、注入した矢印キーは tao の `rx_key` に `physical=Numpad2` と出る
+    # （#999 で 400/400 実測・NumLock OFF）。egui へ届く物理キーは subclass が VK から導くので
+    # 欠陥ではない。直さない。
     [SnotraSmokeInterop.Native]::keybd_event($VirtualKey, 0, $flags, [UIntPtr]::Zero)
     # **注入の時刻を残す**（`SNOTRA_EGUI_INPUT_TRACE` を立てた実行だけ・#872/#936）。
     # `keybd_event` は void を返すので、残せるのは「呼んだ」ことだけである。本体側の
@@ -917,6 +920,8 @@ function Send-SnotraKey {
     # （時計は epoch ms で、本体の `ts_ms` と比べられる）。`keybd_event` で打鍵するのはこの関数
     # だけなので、ここで記録すれば打鍵の注入をすべて拾える。文字の注入
     # （`Send-SnotraUnicodeText` / `Send-SnotraPostedChar`）は記録しない。
+    # 読むのは呼び出し側の env である。`Start-SnotraProcess` の `-ExtraVariables` は子の env を
+    # 立てて戻すだけなので、注入時刻を出すには打鍵の区間で呼び出し側の env を立て直す（#999）。
     if ($env:SNOTRA_EGUI_INPUT_TRACE) {
         $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         $state = if ($Up) { 'up' } else { 'down' }

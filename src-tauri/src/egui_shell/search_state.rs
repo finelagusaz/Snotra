@@ -264,7 +264,7 @@ impl SearchState {
     ///
     /// **同じ出来事に対する 2 つの義務をここへ合流させたのが #1039 である**——同期で行を差し替えた
     /// 以上、飛んでいる worker の結果は必ず古い。呼び出し側が [`SearchDispatch::invalidate`] を
-    /// 書く規約では漏れる（実測は `ADR-row-replacement-choke-point`）。
+    /// 書く規約では漏れる（#1039 以前は手書きの 11 か所のうち 3 か所が漏れていた）。
     ///
     /// **ここで `view_kind()` を読んではならない**——読ませると経路ごとに意味が変わる。呼ぶ側は
     /// 既に自分がどの遷移の途中かを知っている（`enter_tool` は `self.tool` を `Some` にした後で
@@ -273,9 +273,6 @@ impl SearchState {
     /// **`results` を差し替える経路はこのメソッドに収束する。** `enter_tool` の
     /// `std::mem::take(&mut self.results)` だけは外にあるが、それは frame への**退避**であって
     /// 差し替えではなく、直後に必ずここを通る（take が空の `Arc` を残すので代入と衝突しない）。
-    ///
-    /// 却下した代替案（公開 `apply_rows(RowOrigin, ..)` など）は
-    /// `docs/adr/ADR-row-replacement-choke-point.md` が正本。
     fn put_rows(&mut self, rows: Arc<[SearchResult]>, next_selected: usize) {
         self.results = rows;
         self.selected = clamp_selected(self.results.len(), next_selected);

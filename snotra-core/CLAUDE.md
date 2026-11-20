@@ -106,7 +106,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 ## indexer.rs の索引更新の契機
 
 - 更新の契機と `index.bin` を書く契機は別である（`indexer/cache.rs` の `//!`）。旧版の書き戻しは `load_cache_in` の旧版の分岐（`upgrade_legacy_cache_in`）に置く
-- **ツリーを直に読む版（`entries` を持たない版）の分岐で、ツリーから作り直して昇格させない**——ロード直後に全エントリの複製が戻る（却下した案は `docs/adr/ADR-index-v7-cache-miss.md`）
+- **ツリーを直に読む版（`entries` を持たない版）の分岐で、ツリーから作り直して昇格させない**——ロード直後に全エントリの複製が戻る（#1326）
 
 ## `scan_all` の重複排除
 
@@ -123,7 +123,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 config のフィールドには到達性の検出器が無い（`docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」）。
 
 - **新しい config フィールドには、追加と同じ変更で消費者を与える。** 読まないなら、理由をフィールドの doc コメントに書く。機械検査は無い（#894）
-- **既定値のリテラルを写さない。** フォールバックの正本は、各セクションの `Default` 実装である（#680・#795）。ただし、読み元が違えば同じ数でも写しではない（`ADR-config-default-fallback-references`）
+- **既定値のリテラルを写さない。** フォールバックの正本は、各セクションの `Default` 実装である（#680・#795）。ただし、読み元が違えば同じ数でも写しではない（#826）
 - **`Default` 実装も、既定関数を呼ぶ形にそろえる。** serde はセクションの欠落とキーの欠落を別の経路で埋めるので、食い違うと TOML の書き方で既定が変わる。一致は `snotra-core/src/config/tests.rs` の `empty_section_deserializes_to_default_*` が固定する
 
 ## Config のデシリアライズ経路

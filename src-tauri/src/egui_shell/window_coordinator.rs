@@ -27,7 +27,7 @@
 //! 共有する。分かれている理由は読み点だけで、ここは「フレームの外・reset-on-show 後の値」を、`view.rs` は
 //! 「フレームの中・実際の値」を読む。show 側は reset-on-show 後の状態をリテラルで渡す——畳む高さと描く高さが
 //! 食い違っても memo リセットが同じフレームの動的高さ算出で直すので固着せず、ずれはその 1 フレームの
-//! スナップとして現れる（#755 / #801。反転の経緯は `ADR-show-path-derives-drawn-height`）。
+//! スナップとして現れる（#755 / #801）。
 //!
 //! **main の位置に基準モニターを判断する 3 箇所は、材料をバー高で共通にする**（#738 / #878）——show
 //! （`position_on_target_monitor`）・可視中のクランプ（`clamp_main_into_work_area`。呼ぶのは `view.rs` の
@@ -1370,7 +1370,7 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
 
 /// `drive_results_window` の 1 フレーム分の入力（#749）。
 ///
-/// **`result_count` の読み点は呼び出し側の責務である**（#752 / ADR-results-presentation-two-stage）。同一フレーム内で
+/// **`result_count` の読み点は呼び出し側の責務である**（#752）。同一フレーム内で
 /// `plain_hidden` はクリック逆流の消費**前**、`result_count` は消費**後**に読む。
 /// **この構造体を作る式を `plain_hidden` の算出の隣へ動かしてはならない**——行クリック起動
 /// フレームで古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
@@ -1451,7 +1451,7 @@ pub(crate) fn drive_results_window(
     position_results_below_main(app);
     // 高さは `present_results` が導いた値をそのまま渡す。**作業領域の下端ではクランプしない**
     // （#835）——ウィンドウの大きさは表示位置で変わらず、収まらない分は画面外へはみ出す
-    // （`layout::results_window_height` の doc・`ADR-results-fixed-height`）。
+    // （`layout::results_window_height` の doc）。
     //
     // デルタガードは `ResultsWindow::set_size` が内蔵する（#749）。**照合対象が
     // `set_size` の実引数と同じであること**——素の値を覚えると、毎フレーム撃つか必要な

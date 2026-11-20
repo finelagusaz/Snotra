@@ -45,8 +45,7 @@ $failures = @()
 # 検証用プロファイル（#804）。**実ユーザーの %APPDATA%\Snotra は読みも書きもしない**——
 # 5 起動が実 config を作る/汚すことが #804 の元凶だった。target/ の下に置くのは
 # `visual-check-colors.ps1` の `$profileDir` のコメントと同じ理由（cargo clean が掃くので新しい後始末機構を足さない。
-# CARGO_TARGET_DIR 環境で掃除対象から外れるのは受容する残余
-# ——ADR-config-dir-env-seam-rejected-alternatives.md §4）。
+# CARGO_TARGET_DIR 環境で掃除対象から外れるのは受容する残余）。
 $profileDir = Join-Path $PSScriptRoot '..\target\smoke-startup\profile'
 
 # **ループの前に 1 回だけ seed し、5 起動で共有する**（#804・不変条件 5）。毎回作り直すと 5 回

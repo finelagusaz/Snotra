@@ -1031,7 +1031,7 @@ auto_hide_on_focus_lost = false
         #
         # **絞る材料が無ければ落とす（fail-closed）。** 空の `$expected` で絞ると一致が常に
         # 空になり、**検出器は主語ゼロで自明に緑を返す**——「効いていない」と「漏れが無い」が
-        # 同じ緑になる。これは本 PR が `ADR-egui-trace-hatch-empty-only` で塞いだ空文字 env と
+        # 同じ緑になる。これは #872 で塞いだ空文字 env（`snotra-egui-runtime/src/env.rs`）と
         # 同じ形の欠陥であり、検出器の側に開けてはならない。
         $expected = $env:SNOTRA_PESTER_EXE
         if ([string]::IsNullOrWhiteSpace($expected)) {

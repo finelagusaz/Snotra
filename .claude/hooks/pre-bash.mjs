@@ -19,7 +19,7 @@
 // 後者は、`docs/development-principles.md`「規則を守らせる強さ」の原則 6（判定は構文の位置で決める）から、
 // 意図して外れている。引用の内側の言及でも発火する。
 // この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
-// 例外を一般則の側へ書き戻さずここに置く理由は `docs/adr/ADR-command-shape-norms-in-hook.md`。
+// 例外を一般則の側へ書き戻さずここに置くのは、狭い例外を広い原則文書へ書くと、原則そのものが弱まるからである。
 //
 // 契約: **exit 2 だけがツール呼び出しをブロックする。** exit 0 は許可であり、
 // それ以外の非ゼロ（Node が未捕捉例外で返す 1 を含む）は「非ブロッキングエラー」で
@@ -318,7 +318,7 @@ export function judgeCommandShape(command, platform) {
 /**
  * 判定の SSOT。reader（`readGitState` / `readPlanState` / `readVerifyState`）を注入することで、
  * 分岐表全体が git 無しでテストできる。引数は options オブジェクトである（#1299。位置引数のまま
- * 5 本目を足すと、省略可能な `platform` の後ろに穴が開く・`docs/adr/ADR-command-shape-norms-in-hook.md`）。
+ * 5 本目を足すと、省略可能な `platform` の後ろに穴が開く）。
  *
  * 「管轄外」と「判定不能」を混同しない。前者は allow（対象ツール以外・`gh pr create` 以外）、
  * 後者は block（見えないものは通さない）。**reader は 3 つとも必須で、`gh pr create` の経路で
@@ -443,7 +443,8 @@ const VERIFY_REMEDY =
 
 /**
  * ツールの要約の中身の判定（#1299）。照合を続けてよければ null、止めるなら理由を返す。
- * 照合するのはツールの A〜F だけである——委譲のレビューが見た sha は見ない（裁定は `docs/adr/ADR-pr-gate-verified-sha.md`）。
+ * 照合するのはツールの A〜F だけである——委譲のレビューが見た sha は見ない（利用者の裁定・#1303）。
+ * 照合に例外の口は無い。要約の無いブランチも通さない——迂回を設けると、ツールの回し忘れが黙って通る。
  */
 export function judgeSummary(summary, branch) {
   if (summary == null) return `このブランチ（${branch}）のツールの要約が無い。${VERIFY_REMEDY}`;
@@ -466,6 +467,10 @@ export function judgeSummary(summary, branch) {
  * 渡す）で、`summaryPathFor` と `mainRoot` を使う。読み込めなかった（null）なら止める。
  * 要約の置き場は本体のルート（`mainRoot`）から、ブランチと HEAD は呼び出し元の作業ツリーから読む——harness の
  * linked worktree で動くセッションも、本体に置かれた要約で照合する（#1436）。
+ *
+ * このゲートが防ぐのは事故であって改竄ではない——要約は自己申告で、`categories_run` が変更に見合うかは見ない。
+ * 照合は `gh pr create` の時点だけで走るので、PR を作ったあとに足したコミットと、`--out` で既定の置き場の外へ
+ * 出した要約は見ない。
  */
 export function readVerifyState(cwd, tool, importError = null) {
   if (typeof tool?.summaryPathFor !== "function" || typeof tool?.mainRoot !== "function") {

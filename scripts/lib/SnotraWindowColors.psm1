@@ -24,7 +24,7 @@
   **判定できるのはここまでである（受容する残余）。** これは位置に紐付かない存在検査なので、
   **背景領域と入力欄領域で色が入れ替わる「クロス配線」を検出できない**——両色とも下限を超えて
   緑になる。位置に紐付ける案は、入力欄の矩形を検査側で導く（＝製品のレイアウト計算の写しを作る）
-  ことになるため採らない。詳細は `docs/adr/ADR-declared-colors-over-modal-color.md`。
+  ことになるため採らない（#953）。
 #>
 
 Set-StrictMode -Version Latest
@@ -130,6 +130,11 @@ function Test-SnotraWindowColors {
   下限の根拠（`npm run check:colors` が実際に印字する値）:
   - main    — 背景と入力欄がウィンドウを分け合う（実測 33.3% / 37.6%）→ それぞれ 15%（2.2〜2.5 倍の余裕）
   - results — 背景が支配的（実測 76.1%・行の塗りは選択行だけで行数に依らない）→ 50%（1.5 倍）
+
+  **故障注入は宣言色ごとに置く。** `frame.set_clear_color` を落としても、`input_bg` は
+  `ui.visuals_mut()` の経路で届き続ける（#953 で実測）。また status 行も同じ `input_bg` を raw painter
+  で描くので、宣言が測るのは色の存在であって入力欄の存在ではない（main の撮影時は status 行が出ない
+  ので、今は鳴らない）。
 #>
 function Get-SnotraDeclaredColors {
     [CmdletBinding()]

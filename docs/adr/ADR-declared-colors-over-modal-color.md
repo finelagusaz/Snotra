@@ -74,4 +74,4 @@ results 側の判定まで道連れになる**。
 
 status: Accepted
 関連: #953 ・#949（テーマ 3 値の適用位置——`input_bg` の到達経路）・#680 の 1（hex パーサ統合・
-3 桁 hex の受理）・`ADR-race-check-population-tooling`（判定をスクリプトへ出す先例）
+3 桁 hex の受理）・#806（判定をスクリプトへ出す先例）

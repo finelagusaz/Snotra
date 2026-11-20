@@ -75,7 +75,7 @@ allowed-tools:
 - plan.md のチェックリストを消し込みながら進める。完了した項目は、その都度 `- [x]` へ更新し、フェーズのコミットに含める（チェック状態を git に残し、中断・再開時に「どこまでやったか」を確かめられるようにするため）。実装中に判明した計画外の作業は、その場で `- [ ]` として plan.md へ追記する（途中で見つけたタスクも、PR 前ゲートに乗せるため）
 - 新しい純ロジックには、それが属する crate に `#[cfg(test)]` ユニットテストを追加する
 - 既存テストを改名・転用するときは、元のテストが証明していた不変条件を孤立させない。改名では、内容だけでなく「どの命題を証明していたか」も追跡する。転用で失われる不変条件は、別テストで補う
-- ソースファイル（`.rs`）を新規追加・削除したら、同じ変更で、該当 `CLAUDE.md` のモジュール構成節の索引（ファイル名）を更新する（責務の散文は各ファイルの `//!` が正本である・#562）。索引漏れは `governance:check` が捕捉する。ただし、対象は `MODULE_INDEX_CRATES` に載っている crate に限る。また、同名のファイルが同じ節で既に言及されていれば、緑のまま通る。適用範囲と死角の正本は、`scripts/governance/checks/G-module-index.mjs` と `ADR-module-index-reverse-scope` である
+- ソースファイル（`.rs`）を新規追加・削除したら、同じ変更で、該当 `CLAUDE.md` のモジュール構成節の索引（ファイル名）を更新する（責務の散文は各ファイルの `//!` が正本である・#562）。索引漏れは `governance:check` が捕捉する。ただし、対象は `MODULE_INDEX_CRATES` に載っている crate に限る。また、同名のファイルが同じ節で既に言及されていれば、緑のまま通る。適用範囲と死角の正本は、`scripts/governance/checks/G-module-index.mjs` である
 - `SPEC.md` に記載された挙動に影響する変更の場合、`SPEC.md` も更新する（`AGENTS.md`「3層分担」に従う）
 
 ## Step 3 — 検証とレビュー（委譲・最大5サイクル）
@@ -92,7 +92,7 @@ allowed-tools:
 - `git branch --show-current` で現在のブランチを確認する。`main` 上にいる場合は、feature ブランチ（`feat/` / `fix/` / `chore/` 等）を作成する（`main` への直コミットは禁止であり、`.githooks/pre-commit` に弾かれる。`/start-issue` を経ずに単体で起動したときに起きやすい）
 - このタスクで変更したファイルだけをステージし、conventional commit を作成する（例: `feat:`, `fix:`, `refactor:`）。何を実装したか、なぜ実装したかの簡潔な説明を含める
 - `plan.md` の消し込みを、同じコミットへ含める（Step 2 が「その都度 `- [x]`」を求めている。含めないと、未コミットの実行記録が溜まる。すると、Step 4 の `workspace/` 撤去が、それを抱えたまま消すことになる）
-- check スキルは、ここで主エージェント自身が実行する。変更の種類に応じた check スキル（`/symmetric-check`・`/dry-check`・`/race-check`・`/persistence-check`・`/state-check`）を、`AGENTS.md`「条件別チェック（トリガー → 参照先）」表に従って実行する。トリガーから検査への対応の SSOT は、その表である（二重管理を避けるため、ここに再掲しない）。この列挙は写しである。表と同期している間だけ、「出力」の母集団が一致する（これを受け入れた理由は `docs/adr/ADR-implement-step4-report-slot.md`）。ビルドを伴わない読む仕事なので、委譲先と競合しない。`/symmetric-check` は、コードパスの変更・バグ修正でほぼ常に該当する。同じ check が `/start-issue` の計画段階で走っていても、ここで実行する。対象が、計画と実装で別だからである（計画に無い変更は、実装中に必ず生じる）。発見事項は修正し、コミットへ含めてから委ねる
+- check スキルは、ここで主エージェント自身が実行する。変更の種類に応じた check スキル（`/symmetric-check`・`/dry-check`・`/race-check`・`/persistence-check`・`/state-check`）を、`AGENTS.md`「条件別チェック（トリガー → 参照先）」表に従って実行する。トリガーから検査への対応の SSOT は、その表である（二重管理を避けるため、ここに再掲しない）。この列挙は写しである。表と同期している間だけ、「出力」の母集団が一致する（#779）。ビルドを伴わない読む仕事なので、委譲先と競合しない。`/symmetric-check` は、コードパスの変更・バグ修正でほぼ常に該当する。同じ check が `/start-issue` の計画段階で走っていても、ここで実行する。対象が、計画と実装で別だからである（計画に無い変更は、実装中に必ず生じる）。発見事項は修正し、コミットへ含めてから委ねる
 
 ### 3b. 委譲へ渡すもの
 
@@ -139,7 +139,7 @@ allowed-tools:
 
 実装差分は、Step 3 で既にコミットされている。ここに残るのは、`workspace/` を畳む前の回収と、ツールの回し直しと、worktree の片づけと、その撤去コミットだけである。これらは、この順序で行う。PR 前ゲート（`.claude/hooks/pre-bash.mjs`）は、ツールの要約の sha から HEAD までに、`workspace/` の外の変更が無いことを照合する。その照合に例外は無い（#1299）。ADR の回収コミットは `workspace/` の外に載る。そのため、ツールの最後の実行より後に積むと、PR が止まる。
 
-- `workspace/` を削除する前に、否定の知識を ADR へ回収する（#593）。`plan.md`・委譲先の `.delegate/` の報告・本サイクルの検討に「代替案 B を検討して却下した」判断があれば、削除で失う前に `docs/adr/ADR-<slug>.md` を起こす。形式は `docs/adr/ADR-doc-minimization-cap-enforcement.md` に倣う。連番は振らない（slug はテーマが決まった時点で決める・#812）。起こすのは、否定の知識が生じたときだけである。自明な実装・一本道の選択では作らない。無ければ何もしない。ADR に書くのは、却下した代替案と、却下の理由である。採用案の再説明は書かない（採用案はコードと `SPEC.md` が持つ）。「やらないと決めた作業項目」は、代替案の却下ではない。そのため、同じ節の `workspace/` 削除条件が挙げる ADR / issue の 2 択のうち、issue 側へ送る
+- `workspace/` を削除する前に、否定の知識を回収する（#593）。`plan.md`・委譲先の `.delegate/` の報告・本サイクルの検討に「代替案 B を検討して却下した」判断があれば、削除で失う前に、ADR にするか PR 本文に残すかを決める（PR がまだ無いなら、PR 本文へ転記するまで撤去コミットのメッセージに書いておく）。ADR にする条件の正本は `AGENTS.md`「ドキュメント参照」の意思決定記録の行である。ADR にするなら `docs/adr/ADR-<slug>.md` を起こす。形式は `docs/adr/ADR-rescan-explicit-only.md` に倣う。連番は振らない（slug はテーマが決まった時点で決める・#812）。否定の知識が無ければ何もしない。ADR に書くのは、却下した代替案と、却下の理由である。採用案の再説明は書かない（採用案はコードと `SPEC.md` が持つ）。「やらないと決めた作業項目」は、代替案の却下ではない。そのため、同じ節の `workspace/` 削除条件が挙げる ADR / issue の 2 択のうち、issue 側へ送る
 - 最後の要約から `workspace/` の外が動いたら（ADR を起こした場合など）、ツールを回し直す: `npm run verify:tree '--' run --sha HEAD --categories <該当カテゴリ>`。worktree は warm なので、E と F だけなら数十秒で済む。green でなければ、Step 3 へ戻る
 - worktree を片づける: `npm run verify:tree '--' remove --delegate-tree <align が出した worktree>`。これは、ツールの worktree と、委譲先の worktree（`.delegate/` だけが残るもの）と、そのブランチを消す。要約は残る（PR 前ゲートが読む。マージの後は `merge:pr` が消す）。委譲先の worktree は、`.delegate/` で意図的に dirty に保ってある。そのため、`npm run clean:worktrees` は `--force` なしでは拾わない。exit 1 で止まったら、出力を読む。`.delegate/` 以外の変更が残っていれば、中身を確かめる。「ロックされている」なら、委譲先がまだ動いている。停止を待って打ち直す（ロックは `--force` 1 回では外れない）。ディレクトリだけが残ったなら、`git worktree list` で他のセッションの `agent-*` が無いことを確かめる。それから、`npm run clean:worktrees -- --force` で消す（`--force` は dirty な worktree をすべて消す）
 - `workspace/` ディレクトリが存在する場合は、`plan.md` の全項目が `- [x]` であることを確認してから削除し、ステージに含める（`/start-issue` の引き継ぎバッファは、実装の完了で役目を終える）。未チェックの項目が残っているなら、削除しない。完了させるか、やらないと決めた項目を計画から外し、理由を ADR か issue へ記録する。未チェックを残したまま削除すると、PR 前ゲート（PreToolUse hook）が計画を見られなくなる
@@ -187,4 +187,4 @@ allowed-tools:
 
 ---
 
-本文の括弧の issue 番号は、規則の出所か、経緯の手がかりである。却下した形と設計の理由は、`ADR-implement-verification-delegated-to-worktree`・`ADR-implement-verification-tool-tree`・`ADR-implement-step4-report-slot` が持つ。事件の経緯は、多くが、その番号を件名に含む PR の本文にある（main の squash commit。`git log --grep='#<N>'` で引ける）。本文に経緯を書き残した番号（#1154・#1179）は、ほかに記録が無いものである。これらは改修するときに読む。実装で従うのは本文である。
+本文の括弧の issue 番号は、規則の出所か、経緯の手がかりである。却下した形と設計の理由は、`ADR-implement-verification-delegated-to-worktree`・`ADR-implement-verification-tool-tree` が持つ。事件の経緯は、多くが、その番号を件名に含む PR の本文にある（main の squash commit。`git log --grep='#<N>'` で引ける）。本文に経緯を書き残した番号（#1154・#1179）は、ほかに記録が無いものである。これらは改修するときに読む。実装で従うのは本文である。

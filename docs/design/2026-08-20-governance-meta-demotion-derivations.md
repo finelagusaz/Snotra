@@ -1,6 +1,6 @@
 # メタ層の格下げ — 独立導出と敵対レビューの原文（2026-08-20）
 
-`docs/adr/ADR-governance-meta-demotion.md` が結論を持つ。**ここに置くのは、その結論を出した 2 つの導出の原文である**——2 サイクル後の撤去判定は「どの項目が争点で、どちらの側がどんな根拠を出したか」を要る。要約に落とすと、そのとき必要になる根拠が消える。
+#1150 が結論を持つ。**ここに置くのは、その結論を出した 2 つの導出の原文である**——2 サイクル後の撤去判定は「どの項目が争点で、どちらの側がどんな根拠を出したか」を要る。要約に落とすと、そのとき必要になる根拠が消える。
 
 - **Fable（独立導出）** — 「機構を守る機構は、それ自身を機構で守らない」の下で撤去できるものの列挙。呼び出し側の結論は渡していない。走査範囲は `scripts/` / `.claude/` / `docs/adr/` / `docs/development-principles.md`。
 - **Codex 0.147.0（敵対レビュー）** — 「メタ層の欠陥は遅れて気づいても害がない」の反証を求めた。
@@ -122,7 +122,7 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
     governance-check.mjs の呼び出し（L153 付近の findings.push）。
     ※ 計測本体（normativeArea L124-133・skillDescriptionArea L61-82・ALWAYS_LOADED_FILES L34）は
       残す——面積の観測は第 0 層（規範文書）に向いた計測コードであり、原則の対象外。
-(b) 合否を持たない計測コード（ADR-retire-area-budget で判定を廃した面積報告）の入力の健全性。
+(b) 合否を持たない計測コード（#1052 で判定を廃した面積報告）の入力の健全性。
     計測コードを守る機構 = 第 3 層。
 (c) - rules/skills が 0 件の finding —— ただしこれは G-domain-anchors の「メンバーが 0 件」
       （ruleDocs / skillDocs ドメイン）と重複しており、失われない
@@ -207,8 +207,8 @@ registry.mjs の検証（L35-52）と unmigrated ラチェット（governance-ch
 - instrument.mjs（133 行）: duplicateDomains が項目 2・checkNormativeAreaInstrument が項目 6。
   面積計測本体は第 0 層に向いた計測コードで対象外。
 - dependents.mjs（198 行）・edit-findings.mjs（132 行）: どちらも**文書（第 0 層）を見る**編集時
-  reminder である（#1140/#1139・ADR-dependents-reminder-at-edit-time /
-  ADR-scoped-governance-findings-at-edit-time）。機構を守る機構ではなく、第 1 層の所見を時間軸で
+  reminder である（#1140/#1139・#1142 /
+  #1144）。機構を守る機構ではなく、第 1 層の所見を時間軸で
   前倒しする並走器。この原則は撤去の根拠を与えない（別の原則での再検討は妨げない）。
 - governance-check.mjs（213 行）: facade = 実行基盤（第 1 層）。L137-148 は §3-3、L167/L189 のみ項目 3。
 - governance-manifest.mjs（102 行）: 本体は §3-1。domains 列（2 行）のみ項目 4。
@@ -267,7 +267,7 @@ registry の走査・dependents/edit-findings）は第 1 層か対象外であ�
 
 ### 3. #1143 — #837 の保護を後続のディレクトリ分割が無効化した（出生時検証後の失効）
 
-出典: docs/adr/ADR-rules-paths-subtree-coverage.md:5-12、commit fce42f132eb749b391591ee195ca5f0591cc51cc (2026-08-19 21:36:23 +09:00, #1143)。失効を生んだ分割は commit 4f5f4d3faf8f3e36576b238c5d7679e2b9f261fb (2026-08-16 00:30:58 +09:00, #1093)。
+出典: commit fce42f132eb749b391591ee195ca5f0591cc51cc (2026-08-19 21:36:23 +09:00, #1143)。失効を生んだ分割は commit 4f5f4d3faf8f3e36576b238c5d7679e2b9f261fb (2026-08-16 00:30:58 +09:00, #1093)。
 
 記録の原文:
 > #1088/#1093 の per-check 分割で `governance:check` の判定がディレクトリごと `scripts/governance/` へ移った結果、**判定そのものを編集してもルールが配送されない**状態になった（#1143）。

@@ -346,7 +346,7 @@ export const RULE_FILE_RE = /^\.claude\/rules\/[^/]+\.md$/;
  *
  *  **2 本の導出が食い違わないことを、今日は誰も見ていない。** かつては
  *  「`moduleIndexSources` は本関数の結果の部分集合」を `npm test` で縛るテストが在ったが、
- *  それは錨の層と一緒に #1152 で撤去された（`ADR-governance-anchor-layer-discarded`「受容する残余」）。
+ *  それは錨の層と一緒に #1152 で撤去された。
  *  **畳んではならないという制約だけが残り、畳まれていないことの検知は無い**（#1155 で確認）。 */
 export function crateSourceFiles(snapshot) {
   const { members } = workspaceMembers(snapshot);

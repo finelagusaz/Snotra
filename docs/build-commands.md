@@ -228,7 +228,7 @@ npm run governance:check    # 必須: ガバナンス文書の決定的検査（
 - ローカルでこのコマンドを実行するか、PR CI の `governance-check` job（skip-ci の対象外・常時実行）に委ねる
 - 検査の実体は、`scripts/governance-check.mjs`（facade）と、`scripts/governance/checks/` 配下の各ファイルである
   - **検査の一覧は、`checks/` ディレクトリの走査が SSOT である**（`scripts/governance/registry.mjs`）。ファイルを置けばそのまま検査になり、範囲を手で書く面が無い。旧来はファイル冒頭のコメント見出しへ範囲を手で書いていたので、黙って古くなった（「G-module-index〜G-config-reachability」と書いたまま、実際は G-check-skill-enumeration まで増えていた・#812。per-check への分割（#1088）が、範囲の手書きそのものを消した）
-  - 関連する判断の在りか: 面積 ratchet の文字数指標は `docs/adr/ADR-area-metric-characters.md`、config フィールドの到達性は `docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」
+  - 関連する判断の在りか: config フィールドの到達性は `docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」
   - 意味の判断（責務の妥当性・npm ラッパーの等価性・メモリの整合）は、`/health-check` に残る
 
 ## Windows/macOS/Linux で実行可能

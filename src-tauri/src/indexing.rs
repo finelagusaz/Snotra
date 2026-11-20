@@ -301,8 +301,9 @@ mod tests {
     /// `docs/development-principles.md`「検証の手段と、見ていないもの」**（ここに写しを置かない）。
     ///
     /// `launcher_controller/activation/tests.rs` の `method_body` とは**終端の形が違う**（あちらはメソッドゆえ
-    /// 4 スペース字下げの `}`）。共通化を却下した判断と反転条件は
-    /// `docs/adr/ADR-source-text-probe-helper-locality.md`。
+    /// 4 スペース字下げの `}`）。共通化しない——一般化すると、それに依存する検査の変異注入を
+    /// 測り直すことになる（#1108）。ソーステキスト検査を新設して 3 つ目の切り出しが要るなら、
+    /// そこで共通化を見直す。
     ///
     /// **`anchor` は列 0 から始まる宣言を指すこと。** 字下げされたアンカー（メソッドや `mod tests`
     /// 内の関数）を渡すと、終端の `}` はその外側の閉じ括弧になり、母集団が意図より広く伸びる——
@@ -403,7 +404,7 @@ mod tests {
     /// 分岐に置く、がそれに当たる。
     ///
     /// **綴りが「ちょうど 1 回」であることも assert する。** 位置の比較だけだと、母集団の先頭側に
-    /// 別の出現が紛れたとき、順序が壊れていても通る（`ADR-source-text-probe-predicate-polarity`）。
+    /// 別の出現が紛れたとき、順序が壊れていても通る。
     /// 母集団自身の壊れ方は [`top_level_fn_body`] が塞ぐ。
     #[test]
     fn drain_index_appends_start_before_the_scan() {

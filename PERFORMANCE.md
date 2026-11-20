@@ -1749,7 +1749,7 @@ p50 13,390・max 16,444 で 1 フレームの内側にある。** 落ちてい�
 集めない。読み手は `IncrementalCache::can_reuse` ただ 1 つで、その述語が `!has_path_sep` を要求する
 ——実運用点では索引の**ほぼ全件が `c:\` にマッチする**ため、312,208 個の `usize`（約 2.4 MiB）を
 毎打鍵で組み立てては読まれないまま捨てていた。**収集（write）と再利用（read）は
-`IncrementalCache::caches_candidates` の 1 本を通す**（不変条件は `snotra-core/CLAUDE.md`「incremental cache とパスクエリの非互換」、却下した案は `docs/adr/ADR-path-query-tail-top-k.md`）。
+`IncrementalCache::caches_candidates` の 1 本を通す**（不変条件は `snotra-core/CLAUDE.md`「incremental cache とパスクエリの非互換」、却下した案は下の「`max < 16,700` に届かなかった実測と、その理由」）。
 
 計測コード・機体・構成は、上の「実運用点のパスクエリのフレームコストと、マッチ後の分解」と同じである
 （`measure_path_query_frame_cost_at_operating_point`。**1 バイトも触っていない**）。
@@ -1793,9 +1793,9 @@ p50 13,390・max 16,444 で 1 フレームの内側にある。** 落ちてい�
   ほぼ全件 0 なので、`ScoredEntry::cmp` は毎回 `lower_name` の比較まで落ちる
 - **削るものを全部削っても届かない**: X2（`local_matches` と `top_k.push` を両方殺し、検索結果が
   空になる天井）ですら max 13,080〜17,335 で、**3 回中 1 回はゲートを超えた**
-- **X3 / X4 は却下した**（理由は `docs/adr/ADR-path-query-tail-top-k.md`）。X4 は `c:\` の min を下げるが
+- **X3 / X4 は却下した**。X3 は p50 も max も X1 単体と区別できない——X1 で `push` を止めた時点で
+  候補 index の `Vec` は空のまま伸びず、削るものが残っていない。X4 は `c:\` の min を下げるが
   **対照行が 1 フレームを超える**（`\program files\` max 18,590 / `c:\users\` 16,809 / `zzz` 16,096）
-- **未測定で残した候補**（バッチ選択・多段比較キー・rayon をより細かく分割）は同 ADR に書いてある
 
 **2026-08-13 のユーザー決定でゲートを max から p90 へ改めた。**
 

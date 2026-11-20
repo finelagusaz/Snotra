@@ -10,7 +10,7 @@
 
 - **linked worktree からの実行を拒み続け、本体のブランチを切り替えて回す**（#1429 の回避）: 却下。本体は他のセッションと共有である。切り替えている間に他のセッションが本体で打ったコマンドは、別のブランチを相手にする。戻し忘れれば、それが残る。
 - **置き場も呼び出し元の worktree の下へ移す**（`show-toplevel` をそのまま使う）: 却下。ツールの worktree は harness の worktree の中にネストされ、harness が worktree を片づけるときに道連れになる。マージのツール（`scripts/merge-pr.mjs`）は PR の head ブランチ名から要約の置き場を導くので、どの worktree で回したかを知らないと要約に届かない。置き場は、どこから打っても同じ値になる本体のルートに置く。
-- **`test:powershell` を、本体でビルドした本体（`CARGO_TARGET_DIR=<本体>/target`）で回す**（#1429 の回避）: 却下。本体のブランチを sha へ切り替えない以上、本体の `target/` にあるのは別の版の本体である。検査は成功したまま、sha でない版を測る（#835・#1179 と同じ型）。`CARGO_TARGET_DIR` の共有は、`ADR-implement-verification-delegated-to-worktree` が fingerprint の往復を理由に既に却下している。
+- **`test:powershell` を、本体でビルドした本体（`CARGO_TARGET_DIR=<本体>/target`）で回す**（#1429 の回避）: 却下。本体のブランチを sha へ切り替えない以上、本体の `target/` にあるのは別の版の本体である。検査は成功したまま、sha でない版を測る（#835・#1179 と同じ型）。`CARGO_TARGET_DIR` の共有は、#1137 が fingerprint の往復を理由に既に却下している。
 - **`run-pester.ps1` 自身が、既定の本体を使うときに `cargo build -p snotra` を打つ**: 見送り。古い本体を測る危険を発生源で塞げるが、CI と人が手で打つ経路の挙動も変える。CI の rust-check はすでに別のステップでビルドしており、効くのはツールの worktree だけである。変える範囲をツールの計画に閉じた。
 
 ## 受容した残余
@@ -23,4 +23,4 @@
 ---
 
 status: Accepted
-関連: #1436 ・#1429 ・#1298 ・`docs/adr/ADR-implement-verification-tool-tree.md` ・`docs/adr/ADR-implement-verification-delegated-to-worktree.md`
+関連: #1436 ・#1429 ・#1298 ・`docs/adr/ADR-implement-verification-tool-tree.md` ・#1137

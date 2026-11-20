@@ -27,4 +27,4 @@
 ---
 
 status: Accepted
-関連: #1395 ・#1285 ・`docs/adr/ADR-index-v7-cache-miss.md`（`index.bin` の版上げの扱い）
+関連: #1395 ・#1285 ・#1326（`index.bin` の版上げの扱い）

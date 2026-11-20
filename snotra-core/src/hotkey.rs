@@ -30,7 +30,9 @@ fn default_hotkey_key() -> String {
 const ISOLATED_PROFILE_HOTKEY_MODIFIER: &str = "Alt";
 
 /// 分離プロファイルの既定ホットキーのメインキー。修飾を実プロファイルの既定と同じ `Alt` 単独に保ち、
-/// キーだけを変える（`Alt` を離す扱いが実プロファイルの既定と同じ形で通る）。修飾なしの `F12` はデバッガ予約で
+/// キーだけを変える（`Alt` を離す扱いが実プロファイルの既定と同じ形で通る）。`Ctrl+Alt` は AltGr として扱う
+/// 配列があり、`Alt+Shift` は Windows の入力言語切り替えの既定で注入すると IME・レイアウトが切り替わりうるので、
+/// どちらも修飾に使わない。修飾なしの `F12` はデバッガ予約で
 /// 登録できないが、`Alt` 付きなら登録できる（2026-11-07 実測）。
 /// `scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile` の既定はこれの写しである。
 const ISOLATED_PROFILE_HOTKEY_KEY: &str = "F12";

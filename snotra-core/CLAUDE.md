@@ -49,7 +49,7 @@ UI 非依存の純ロジック lib crate（Win32 を使うモジュールもあ�
 
 ### incremental cache とパスクエリの非互換
 
-`has_path_sep` のクエリでは incremental search を使わない。収集と再利用は `IncrementalCache::caches_candidates` の 1 本を通し、read 側の述語が正しさを担う（論証は `can_reuse` / `caches_candidates` の doc、却下した経路は `docs/adr/ADR-path-query-tail-top-k.md`）。
+`has_path_sep` のクエリでは incremental search を使わない。収集と再利用は `IncrementalCache::caches_candidates` の 1 本を通し、read 側の述語が正しさを担う（論証は `can_reuse` / `caches_candidates` の doc、却下した経路は `PERFORMANCE.md`「採用: パスクエリで再利用されえない候補を集めない」）。
 
 ## データ永続化の注意
 

@@ -2,7 +2,10 @@
 //!
 //! `windows_ime.rs` の subclass がメッセージを読み、ここで [`NativeInput`] の列へ写して `mpsc` へ
 //! 送る。**キーボードの持ち主は subclass だけである**——tao の `KeyboardInput` /
-//! `ReceivedImeText` は egui へ渡さない（`input.rs`）。Win32 の呼び出しを含まないので、
+//! `ReceivedImeText` は egui へ渡さない（`input.rs`）。持ち主を tao と分けたまま tao の振る舞いを
+//! 検査で固定する形は採らない——#1265 で tao 0.35 → 0.37 へ上げたとき、コンパイルの通る形で
+//! 入力経路が 3 か所黙って壊れた。検査は壊れたことに気づけても、壊れることは防げない。
+//! Win32 の呼び出しを含まないので、
 //! メッセージ番号と VK はこのファイルの定数で持ち、テストで順序と条件を固定する。
 //!
 //! 修飾キーはここでは扱わない。egui へ載せる修飾と Ctrl+C/X/V の判定は、drain の時点で
@@ -218,6 +221,8 @@ impl KeyboardTranslator {
 }
 
 /// VK から egui のキー（論理）を導く。#1289 で subclass へ移す前の tao 経路（`logical_key` からの写像）と同じ集合。
+/// 例外: AZERTY のように数字が Shift 側にある配列では、無修飾の数字キーが `Num*` になり旧経路
+/// （tao の logical）と違う。src-tauri も TextEdit も数字キーの `Event::Key` を読まないので受け入れた。
 ///
 /// 数字の VK は Shift が無いときだけ写す——tao の logical は Shift+1 で `"!"` になり写らなかった。
 /// `VK_PROCESSKEY`（変換中）と `VK_PACKET`（`SendInput` の Unicode・絵文字パネル）は論理キーを

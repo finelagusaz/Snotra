@@ -31,7 +31,7 @@
 //!
 //! **main の位置に基準モニターを判断する 3 箇所は、材料をバー高で共通にする**（#738 / #878）——show
 //! （`position_on_target_monitor`）・可視中のクランプ（`clamp_main_into_work_area`。呼ぶのは `view.rs` の
-//! ポインタ非押下のフレーム・`ADR-main-window-clamp-on-pointer-release`）・hide 時の保存
+//! ポインタ非押下のフレーム）・hide 時の保存
 //! （`read_placement_relative`）。バー高である理由は `layout::bar_rect_height_phys` の doc、基準モニターの
 //! 分かれ方は `read_bar_anchor` の doc。
 //!
@@ -269,7 +269,7 @@ pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
 ///
 /// **クランプの材料は引数で受け取る**——`main.outer_size()` を読み戻さない。読み戻す形では、
 /// 呼び出し側が「位置計算へ高さを伝える」ためだけにウィンドウを `set_size(幅, バー高)` で畳むことになる
-/// （#878・`ADR-show-path-derives-bar-rect`）。
+/// （#878）。
 #[cfg(windows)]
 fn position_on_target_monitor(
     app_handle: &tauri::AppHandle,
@@ -849,8 +849,7 @@ struct BarRectPhys {
 /// [`BarRectPhys`] の唯一の構築点——型がその証拠を担う（`FrameVisibleRows` と同じ形）。
 ///
 /// **クランプ経路（[`read_bar_anchor`]）と同じ材料・同じ合成を通る**——**同じ物理
-/// バー高を 2 通りに導出しない**（#878・`ADR-main-window-clamp-on-pointer-release`
-/// 「残っている代価」）。導出が 1 つなので、上流の丸め規則への依存も
+/// バー高を 2 通りに導出しない**（#878）。導出が 1 つなので、上流の丸め規則への依存も
 /// [`layout::logical_to_phys`] の doc 1 か所に集まる。
 #[cfg(windows)]
 fn derive_bar_rect_phys(
@@ -879,7 +878,10 @@ fn derive_bar_rect_phys(
 /// フォーカス喪失でも落ちない。release が届かない経路が 1 つでもあれば `any_down()` は固着し、
 /// クランプが黙って死ぬ。だが**実測ではドラッグ中も毎フレームクランプが走り、上の封鎖が
 /// そのまま現実になった**（backstop 無し: ドラッグ中 top=1050 のまま／有り: 956 へ引き戻される）。
-/// 固着は**受容残余**である（理由と再測の手順は `ADR-main-window-clamp-on-pointer-release`）。
+/// 固着は**受容残余**である。release が届かない状況は実測で起きない（ドラッグ後に放置しても
+/// 0.5s で復帰する。tao の `WM_EXITSIZEMOVE` が `WM_LBUTTONUP` を合成する経路がある）。
+/// 再測は `SetCursorPos` + `mouse_event` でドラッグを注入し、押下したままの窓矩形と、離して
+/// 0.5s 後の窓矩形を `GetWindowRect` で比べる——押下中に引き戻されていれば封鎖が起きている。
 ///
 /// # キーボードによるウィンドウ移動（`Alt+Space` → `M`）
 ///
@@ -905,6 +907,10 @@ fn derive_bar_rect_phys(
 ///
 /// **モーダルループ中の `egui_frame` は 0 枚**（5/5・移動区間 3 秒・フレーム間隔の最大 5.9 秒）。
 /// `egui_main:clamp` の発火は反復あたりちょうど 1 回で、すべて `Enter` の後である。
+/// toast 有りの条件でも 0 枚だった——armed の毎フレーム再要求（`request_repaint_after` の鎖）は
+/// モーダルループを越えない。ループ中に repaint を繋いで確定直後のフレームを保証する案は、
+/// この実測で潰れた。多モニターでの封鎖は測っていない（開発機が単一モニターで、#1194 は
+/// 人間裁定により単一モニターでの代替の判別で進めた）。
 ///
 /// **#1173 / PR #1193（2026-08-26）は逆を記録している**: 「クランプ有効なら移動中に 1020 で
 /// 落ち着き、`Enter` の前に戻る（外に留まれない）」。**条件の違いは特定できていない**——
@@ -925,7 +931,6 @@ fn derive_bar_rect_phys(
 /// ——クランプがモーダルループ中に走らない以上、抑止する対象が無い。述語自体は
 /// [`main_in_modal_move_loop`] として**観測専用**で残してある（`egui_main:clamp` の
 /// `in_move_size` 欄。この doc が言う「フレームが回らない」の検知手段がそれである）。
-/// 却下の全文は `ADR-modal-move-loop-clamp-suppression`。
 ///
 /// **再測の手順**: release ビルドを使い捨てプロファイル（`SNOTRA_CONFIG_DIR`）で起動し、
 /// `Alt+Space` → `M` → `↓` の反復 → `Enter` を `Send-SnotraKey` で注入して `GetWindowRect` の
@@ -1004,13 +1009,13 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 /// **これは「測り終わったら消す足場」ではない**（`heap_trace.rs` はそちらで、撤去条件を
 /// `//!` に持つ）。この欄は上の前提が偽になった瞬間に真を出す**番人**であり、真を出したときに
 /// 起きるのは撤去ではなく**用途変更**である——前提が偽なら、そのときこの述語は観測専用から
-/// クランプの抑止条件へ昇格する（`ADR-modal-move-loop-clamp-suppression` 却下 1 が
-/// 「効かない」を理由に却下しているので、効くと分かれば却下が覆る）。
+/// クランプの抑止条件へ昇格する（抑止を却下した理由は「効かない」なので、効くと分かれば
+/// 却下が覆る）。
 /// **ゆえに「いつ消すか」の合図は存在しない。** 消えるとすれば、クランプそのものか
 /// モーダル移動ループの扱いが作り直されるときである。
 ///
 /// クランプの抑止条件へ入れる案は**実測により却下した**——抑止する対象（ループ中に走る
-/// クランプ）が存在しない。経緯は `ADR-modal-move-loop-clamp-suppression`。
+/// クランプ）が存在しない（実測は [`clamp_main_into_work_area`] の doc・#1194）。
 ///
 /// **`GUI_INMOVESIZE` **かつ** `hwndMoveSize == main` の連言である。** フラグ単独では
 /// 「このスレッドの**何か**が move/size 中」しか言えず、settings ウィンドウのループでも真になる。
@@ -1023,7 +1028,9 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 /// **スレッド id はウィンドウから引く**（`GetWindowThreadProcessId`）——`GetCurrentThreadId()` を使う形は
 /// 「モーダルループはイベントループスレッドで走る」という**測っていない前提**の上に立つ。
 /// ウィンドウの所有スレッドを直接問えばその前提が要らない。`GetGUIThreadInfo` に `0` を渡すのは
-/// **フォアグラウンドスレッド**の意味であり、こちらのスレッドではない。
+/// **フォアグラウンドスレッド**の意味であり、こちらのスレッドではない。`PlatformBridge`
+/// （`.claude/rules/src-tauri.md`）へ委ねず直に呼ぶのも同じ理由である——問うのは窓の所有スレッド
+/// 自身の状態で、platform スレッドへ渡すと答えるスレッドが変わり、測りたいものが測れない。
 ///
 /// **適用範囲: `GUI_INMOVESIZE` は move と size を区別しない。** main は `resizable(false)` で
 /// 生成される（`egui_shell/mod.rs` のウィンドウ生成）ため通常の経路で size ループへは入らないが、
@@ -1031,8 +1038,8 @@ fn clamp_trace_should_emit(last: Option<ClampSample>, now: &ClampSample) -> bool
 ///
 /// 取得に失敗したら **`false`（＝モーダルループ中ではない）にする。** クランプ側から見ると
 /// 「働きすぎる」側である。逆にするとクランプが黙って死ぬ
-/// ——`ADR-main-window-clamp-on-pointer-release` 却下 5 が「検知手段が無い」と記録した形に
-/// 戻ってしまう（いまは `egui_main:clamp` の系列が検知手段である）。
+/// ——[`clamp_main_into_work_area`] の doc が書く「クランプが黙って死ぬ」形に戻ってしまう
+/// （いまは `egui_main:clamp` の系列が検知手段である）。
 #[cfg(windows)]
 fn main_in_modal_move_loop(window: &tauri::Window) -> bool {
     use windows::Win32::Foundation::HWND;
@@ -1169,8 +1176,7 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 ///
 /// **「クランプが動いたか」を見る形は採らなかった。** `WorkArea::clamp` は矩形が境界を
 /// 越えたときにしか座標を変えないため、ウィンドウが作業領域の内側にいる限り導出が壊れていても
-/// 沈黙する（＝**守りたい退行の経路を 1 本も検出しない配置がある**）。却下の詳細は
-/// `ADR-show-path-derives-bar-rect`。
+/// 沈黙する（＝**守りたい退行の経路を 1 本も検出しない配置がある**）。
 ///
 /// # 何を突き合わせているのか——**2 軸の強さは同じではない**
 ///
@@ -1254,8 +1260,11 @@ pub(crate) fn check_show_bar_rect(_app: &tauri::AppHandle, _bar_height: f64) {}
 /// 正当である**——ここがその唯一の例外である（`Moved` リスナーは egui のフレームの外で走る）。
 /// `outer_position()` はそもそもユーザーが動かした位置＝コードが持っていない量である。
 ///
-/// **「main の直近の書き込み高さを共有 atomic へ残して渡す」案は却下した**（理由は
-/// `ADR-show-path-derives-bar-rect`）。
+/// **「main の直近の書き込み高さを共有 atomic へ残して渡す」案は採らない。** `outer_position()` は
+/// どのみち読み、物理の外形高を atomic へ入れるには書き込み点で非クライアント分を読むので、
+/// 読み戻しが移るだけである。しかも書き手が 2 人（show と毎フレーム）の値をフレーム跨ぎで持つ形は
+/// #878 の継ぎ目 1 そのもので、results 側には、main で `view.rs` がポインタ非押下のフレームごとに呼ぶ
+/// [`clamp_main_into_work_area`] のような「次のフレームが直す」補正が無い。
 ///
 /// # 補正するのは縦だけである
 ///

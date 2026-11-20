@@ -325,6 +325,10 @@ fn trace_ime_event(event: &egui::ImeEvent) {
 
 /// `WM_SETFOCUS` の瞬間に押されているキー（#927）。tao の `get_async_kbd_state` → 合成 press と
 /// 同じ集合を、物理キーとして返す。
+///
+/// 抑止を lParam bit 30（直前も押下）で判定する形へは替えない。`scripts/smoke-egui.ps1` の #1274 の
+/// 節は取り込みが起きなければ 2 回目の down が通って赤になる判別を持っており、判定を替えると
+/// その節が何を判別しているかが変わる。
 fn held_keys() -> Vec<PhysicalScan> {
     (0x08u16..=0xFE)
         // SAFETY: GetAsyncKeyState only reads the global key state.

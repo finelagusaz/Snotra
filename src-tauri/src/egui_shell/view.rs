@@ -1272,7 +1272,7 @@ impl EguiView for SearchWindowView {
         // #738: バー矩形を作業領域の内側へ戻す。**ポインタが押されていないフレームだけ**である
         // ——ドラッグ中も戻すと横並びモニター間の移動が封鎖される（機序と作業例、および
         // `was_reset_frame` を OR で足す backstop を実測で却下した経緯は
-        // `clamp_main_into_work_area` の doc と `ADR-main-window-clamp-on-pointer-release`）。
+        // `clamp_main_into_work_area` の doc）。
         //
         // **呼び出し側にしか無い制約はこちら**: **`drive_results_window` より前**でなければ
         // ならない。`position_results_below_main` は main の位置を OS から読み直すため、後ろへ

@@ -17,7 +17,7 @@ export function run(snapshot, ctx) {
 // ——ある索引行が消えても、同じ節に他の言及が残っていれば赤くならない（#1214 で実際に踏んだ）。
 // **同じ理由で、crate 内に同名のファイルが複数あるとき、それらは 1 回の言及でまとめて覆われる。**
 // 所有関係をパースする案を却下した理由・照合先を `text` 全体からこの節へ絞ったときの実測・
-// 受容する残余は `ADR-module-index-reverse-scope`。
+// 受容する残余は #1219 の ADR（削除済み）。
 // ---------------------------------------------------------------------------
 // ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
 // snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
@@ -98,7 +98,7 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
     }
     // 逆方向: production ファイルの basename が「モジュール構成」節に出現。
     // **索引行かどうかは見ない**——同じ節の中なら集約行でも別ファイルの索引行の説明文でも通る
-    // （残る死角。閉じない理由と実測は `ADR-module-index-reverse-scope`）
+    // （残る死角。閉じない理由と実測は #1219 の ADR（削除済み））
     const production = moduleIndexSources(snapshot, [crate]);
     for (const f of production) {
       const base = f.split("/").pop();

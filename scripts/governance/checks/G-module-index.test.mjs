@@ -51,7 +51,7 @@ describe("G-module-index checkModuleIndex", () => {
   it("緑: 同じ節の中の言及は索引として通る（受容する残余——索引行かどうかは見ない）", () => {
     // #1214 の残る死角。**索引行の所有関係はパースしない**ので、集約行でも別ファイルの索引行の
     // 説明文でも、同じ節の中にバッククォート付きで在れば緑になる。閉じない理由は
-    // `ADR-module-index-reverse-scope`
+    // #1219 の ADR（削除済み）
     const s = snap({
       "snotra-core/CLAUDE.md":
         "# x\n## モジュール構成\n- `lib.rs` — エントリ（`search.rs` が消費する）\n\n## 次節\n",

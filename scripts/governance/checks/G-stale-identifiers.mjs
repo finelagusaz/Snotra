@@ -21,7 +21,7 @@ function stripRustComments(src) {
 // **識別子として書かれた陳腐化は機械で拾える**。G-references が見るのはパスの実在までで、
 // 識別子の実在は誰も見ていなかった。
 //
-// **自称スコープ**（#891 で広げた。適用範囲の内訳は `ADR-stale-identifier-detector-scope` の追記節）。
+// **自称スコープ**（#891 で広げた。適用範囲の内訳は #808 の ADR（削除済み） の追記節）。
 // 見るのは次の 3 群の中の**バッククォート内 camelCase / SCREAMING_SNAKE / lowercase snake_case
 // 識別子**だけである（型で修飾した形は末尾セグメントを見る・#993。判定の正本は `staleTarget`）:
 // - `.claude/**` の規範の散文（`staleIdentifierDocs`）
@@ -47,7 +47,7 @@ function stripRustComments(src) {
 // **「文書の陳腐化が機構で検出される」とは言えない**——言えるのは
 // **「`.md` の散文に camelCase / SCREAMING_SNAKE / lowercase snake_case で書かれた再発は検出される
 // （型で修飾されていてもよい）」**までである。**`.rs` の doc コメントは母集団外**ゆえ、そこに書かれた陳腐化は検出されない
-// （#975 で `.rs` を足す案を測って却下した。理由は外部 API の密度・`ADR-stale-identifier-detector-scope`
+// （#975 で `.rs` を足す案を測って却下した。理由は外部 API の密度・#808 の ADR（削除済み）
 // 「その後（#975・述語へ lowercase snake_case を足し、`.rs` への母集団拡大は却下した）」）。
 // **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G-stale-identifiers が引き受けるのは再発防止だけである。
 //
@@ -61,7 +61,7 @@ function stripRustComments(src) {
 //   `createObjectURL`（本検査が守りたい対象として `governance-check.test.mjs` に名指しで書いた語）が、
 //   同ファイルに書かれているという理由だけで実リポジトリでは永久に検出されなかった（実測）
 //
-// **`SPEC.md` は語彙源ではなく検査対象である**（`ADR-stale-identifier-detector-scope`
+// **`SPEC.md` は語彙源ではなく検査対象である**（#808 の ADR（削除済み）
 // 「却下 4: 現行語彙をソースだけから作る（`SPEC.md` を入れない）」の失効注記が経緯を持つ）。
 // 語彙に置いていた頃は、SPEC 内の候補が**自分自身に一致して自分を免罪していた**。
 // 語彙から外すと同時に検査対象へ入れることで、SSOT と写しが**同時に鳴る**——
@@ -105,7 +105,7 @@ function stripRustComments(src) {
  *  **追跡され・人が書き・CI が実際に実行する**＝「現に動いている実装」だからである
  *  （`.yaml` はリポジトリに 1 本も無い）。**`.json` は入れない**——生成物・依存メタデータ・
  *  gitignore 済みファイルを同時に招き入れ、除外リスト無しには分離できない
- *  （`ADR-stale-identifier-detector-scope` の追記節） */
+ *  （#808 の ADR（削除済み） の追記節） */
 const VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml|yml)$/;
 /** 語彙源から外すテストコード。見るのは `.test.<ext>` という**ファイル名の形**だけで、
  *  拡張子は `VOCAB_SOURCE_EXT` の **JS/TS 系だけ**を採る（`rs|ps1|toml` は含まない——
@@ -126,7 +126,7 @@ const STALE_LOWER_SNAKE_IDENT = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(\(\))?$/;
 /** 判定対象の識別子を取り出す。無ければ `null`。
  *  **修飾形（`::`）は末尾セグメントだけを見る**——型セグメント（PascalCase）を見ない理由は
  *  「単語 1 つの識別子は対象外」と同じで、外部の型名は語彙源をどう広げても免罪できない
- *  （`ADR-stale-identifier-detector-scope` の #993 の追記節に測定表がある）。
+ *  （#808 の ADR（削除済み） の #993 の追記節に測定表がある）。
  *  **`.` の除外はトークン全体ではなくセグメントへ当てる**——先に当てると
  *  `icon.rs::encode_batch_binary` の形が検出されない（実測で唯一の真の陳腐化がこの形だった）。
  *  **捕獲群を読まない**のは 3 述語と同じ理由である（`scanStaleIdentifiers` のコメント）。 */

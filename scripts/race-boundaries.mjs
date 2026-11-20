@@ -23,9 +23,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** 種別表（序数・名称・パターンの SSOT。#894 以前は SKILL.md 側に写しの表があった）。
- *  **序数 ①〜⑧ は書き換えない** — `docs/adr/ADR-race-check-predicate-and-norm-hardening.md` `docs/adr/ADR-check-skill-skeleton.md`
- *  `docs/check-skill-skeleton-design.md` から参照され、うち 2 つは status: Accepted の ADR である
- *  （`docs/adr/ADR-race-check-simplification.md` 却下 4）。 */
+ *  **序数 ①〜⑧ は書き換えない** — `docs/check-skill-skeleton-design.md` が序数で参照する
+ *  （#788 の ADR（削除済み） 却下 4）。 */
 export const KINDS = [
   { ord: "①", name: "worker の spawn", patterns: ["thread::spawn", "async_runtime::spawn"] },
   { ord: "②", name: "channel への send", patterns: ["\\.send\\(", "Sender", "channel\\("] },
@@ -40,7 +39,7 @@ export const KINDS = [
     patterns: ["try_state", "Mutex", "Atomic", "\\.lock\\(", "RwLock", "\\.read\\(\\)", "\\.write\\(\\)"],
   },
   { ord: "⑤", name: "Tauri listener / emit", patterns: ["\\.listen\\(", "\\.emit\\(", "events::"] },
-  // ⑥ は定義上 ① の部分集合で、独立した grep を原理的に書けない（ADR-race-check-simplification 却下 4）。
+  // ⑥ は定義上 ① の部分集合で、独立した grep を原理的に書けない（#788 の ADR（削除済み） 却下 4）。
   // 行を落とさず「① のヒットを送信の有無で分類する」ことを出力へ明示する。
   { ord: "⑥", name: "channel を経由しない worker", patterns: null },
   { ord: "⑦", name: ".await 地点", patterns: ["\\.await"] },

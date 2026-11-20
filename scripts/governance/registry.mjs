@@ -2,7 +2,7 @@
 //! 忘れうる登録行が存在しない（#1088 が問うた欠陥の構造的な解消）。
 //! **`checks/` の外にあるものは検査ではない**。
 //! **母集団の宣言（ドメイン）は要求しない**——各検査は自分が読む母集団を自分で導く。錨の層ごと
-//! 撤去した経緯は `ADR-governance-anchor-layer-discarded`。
+//! 撤去した経緯は #1152 の ADR（削除済み）。
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

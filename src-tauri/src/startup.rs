@@ -55,7 +55,8 @@
 //! **失敗経路のうち実機で観測したのは `HotkeyRegistration` だけである**（#1009 で、他プロセスに
 //! ホットキーを握らせて実際に `RegisterHotKey` を失敗させた——`scripts/occupy-hotkey.ps1`）。
 //! bridge の spawn / Win32 初期化 / channel を実際に失敗させる手段は無く、
-//! **注入点を製品コードへ足す案は却下した**（`ADR-no-test-only-injection-in-product-code`）
+//! **注入点を製品コードへ足す案は却下した**（#1000・`docs/development-principles.md`
+//! 「検証の手段と、見ていないもの」）
 //! ——計測しきれないリスクは残るが、**本来不要なコードがトラブルの原因を作り込む理由には
 //! ならない**。`SNOTRA_FAKE_INITIAL_HOTKEY_FAILURE`（`platform/mod.rs`）のような既存のハッチを
 //! 増やす方向も同じ理由で採らない（あのハッチが何をするかは `platform/mod.rs` の当該 arm が
@@ -953,8 +954,9 @@ mod tests {
     #[test]
     fn every_outcome_pairs_event_and_ok_in_one_place() {
         // **`Ok` と `StartupFailure` の全 variant を踏む**（#1026）。実機のハーネスが踏めるのは成功と
-        // `HotkeyRegistration` の 2 つだけで、残りは `ADR-no-test-only-injection-in-product-code`
-        // により実機では永久に踏めない。出る 1 行（名前と payload）を組で照合する。
+        // `HotkeyRegistration` の 2 つだけで、残りは製品コードへ注入点を足さない
+        // 判断（上の `//!`「受容する残余」）により実機では永久に踏めない。出る 1 行（名前と
+        // payload）を組で照合する。
         let t = Timeline::new(None);
 
         let (event, payload) = t.terminal_line(Duration::ZERO, Ok(()));

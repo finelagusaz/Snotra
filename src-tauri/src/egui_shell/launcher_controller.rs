@@ -206,7 +206,7 @@ impl LauncherController {
             // 誤った文言を出す。
             // `GeneralConfig::default()` を経由するのは、`default_language()` を `pub` にすると
             // lib crate の公開面が増えて `dead_code` による到達性の検出を失うためである
-            // （`docs/adr/ADR-config-default-fallback-references.md`）。
+            // （#826）。
             || snotra_core::config::GeneralConfig::default().language,
         )
     }

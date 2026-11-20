@@ -175,6 +175,9 @@ impl Drop for PlatformIme {
 /// 通すと二重に入る——tao が `WM_IME_ENDCOMPOSITION` で `GCS_RESULTSTR` を読み直して
 /// `ReceivedImeText` を送り、`DefWindowProc` が確定から `WM_IME_CHAR` → `WM_CHAR` を作る。
 /// tao 0.35 は確定をその `WM_CHAR` から拾っていた（`minimal_ime`）ので、以前は確定を通していた。
+///
+/// 実打鍵で確かめたのは日本語 IME 1 種だけである（確定・部分確定・取り消し・Ctrl 併用。
+/// 2026-10-09・#1265）。`GCS_RESULTSTR` を立てずに確定する IME（TSF 系の別 IME など）は測っていない。
 fn is_owned_ime_message(message: u32) -> bool {
     matches!(
         message,

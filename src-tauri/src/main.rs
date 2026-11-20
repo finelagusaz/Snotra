@@ -102,7 +102,10 @@ const VK_MASK: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY =
 ///
 /// 修飾キーが押されていても、注入は省かない。省くと、最前面に見えるのに前面でないウィンドウが
 /// 残り、打鍵が元のアプリへ流れ続ける。注入した Alt up は押されている Alt を論理的に離すが、
-/// tao の注入も同じ Alt up を送っていた。
+/// tao の注入も同じ Alt up を送っていた。Shift を押したまま前面化を拒ませて注入しても、
+/// 入力言語の切り替え要求（`WM_INPUTLANGCHANGEREQUEST`）は起きなかった（#1470 で 3 起動を実測）。
+/// マスクした Alt は、Word・メモ帳・VS Code・Edge・エクスプローラーでキーヒントもフォーカスの
+/// 移動も起こさなかった（各 3 回。素の Alt では全アプリで起きた・2026-11-17 実測）。
 ///
 /// `PlatformBridge` を通さず直接呼ぶ。呼び出し元（`show_egui_main`）は、イベントループ上で
 /// 同期に走る `send_alt_key_up` より前に前面化を済ませる必要がある。channel 越しの非同期では、

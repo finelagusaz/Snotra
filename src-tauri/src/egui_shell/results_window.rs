@@ -22,7 +22,7 @@
 //! 「フラグを無視して撃つ hide」（その理由の型だった `layout::HideReason::MainGone` も撤去した）を置かない。**
 //! 可視性を変える関数は証人型（`EventLoopProof`）によりイベントループスレッドへ閉じており、
 //! ゲートの読みと raw 操作の間に別スレッドの hide が割り込む並びは構築できない（#880）。
-//! それらが要るのは「フラグ = false・ウィンドウ = 可視」を作れるときだけである（経緯は `ADR-results-gate-single-point`・
+//! それらが要るのは「フラグ = false・ウィンドウ = 可視」を作れるときだけである（#1230。
 //! 閉じ込めの適用範囲は `window_coordinator::hide_egui_main` の doc）。
 //!
 //! **1 つのウィンドウの show / hide / topmost は全部 tao か全部 raw にそろえる**（#646）——

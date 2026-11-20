@@ -122,8 +122,7 @@ impl LauncherController {
                         // 読みは同じ不在で `None` へ落ち、`egui_instant_error` を残して何もしない。
                         // 空にすれば、起動できない行がそもそも出ない。
                         // なお不在そのものが実運用で起きない（`.manage` は `.setup` より前・根拠は
-                        // `crate::egui_shell::read_config` のコメントと
-                        // ADR-config-default-fallback-references）。
+                        // `crate::egui_shell::read_config` のコメント）。
                         let rows = crate::egui_shell::read_config(
                             &self.app_handle,
                             |c| {

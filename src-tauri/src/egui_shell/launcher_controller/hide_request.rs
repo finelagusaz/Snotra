@@ -38,9 +38,9 @@ impl LauncherController {
 
     /// auto_hide_on_focus_lost を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     ///
-    /// **毎フレーム無条件に読むのは意図的である**（`ADR-blur-grace-single-field-state-machine` が
-    /// 遅延評価を却下して値渡しを採った）。**毎フレーム読むので、読み口は engine lock を取らない
-    /// [`crate::egui_shell::read_config`] にする**（#1036・#1076）。同 ADR が却下理由に置いた費用の前提
+    /// **毎フレーム無条件に読むのは意図的である**（遅延評価を却下して値渡しを採った・
+    /// `BlurGrace::observe` の doc）。**毎フレーム読むので、読み口は engine lock を取らない
+    /// [`crate::egui_shell::read_config`] にする**（#1036・#1076）。遅延評価の却下理由に置いた費用の前提
     /// （engine lock が 1 回増える）は、この読み口では当たらない。
     fn auto_hide_enabled(&self) -> bool {
         crate::egui_shell::read_config(

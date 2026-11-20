@@ -1071,7 +1071,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
     // v9 はラテン文字を nucleo-matcher 0.3.1 の壊れた表で畳んでいる・#1395）。
     // どれも `entries` を持たないので、旧版の分岐のように手に持った走査結果から導き直して
     // 書き戻すことができない——ツリーから作り直すと「indexer.rs の索引更新の契機」が戒める
-    // 複製が戻る。却下した扱いは `docs/adr/ADR-index-v7-cache-miss.md`。
+    // 複製が戻る（#1326）。
     //
     // v6 フォールバック: `target_path` を全件そのまま持つ形式。**読めるが確保が 312,691 回
     // 余分にかかる**——フルパスの `String` を作り、ツリーへ組み替えた段で即座に捨てる。

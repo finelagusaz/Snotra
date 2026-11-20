@@ -80,7 +80,7 @@ const TEXT_EDIT_HINT_H_MARGIN: f32 = (SEARCH_INPUT_MARGIN.left + SEARCH_INPUT_MA
 /// 「読み取りは外・書式化と省略は内」で切る。
 ///
 /// **ラダーを純粋核へ切り出したのではない**——分岐の中身・順序・条件は元の 3 分岐のままである
-/// （切り出しは `ADR-folder-location-display-surface` 却下 4 で退けられている。
+/// （切り出しは #836 で退けた。
 /// `view_kind()` の 2 重導出になるため）。
 enum HintPlan<'a> {
     Tool,
@@ -268,7 +268,7 @@ pub(crate) struct SearchInputParams {
 /// **適用位置は、3 値の唯一の消費者（下の `TextEdit`）を描くこの関数の入口に固定する**（#949）
 /// ——`update()` の中に置くと規範だけで守られ、破っても検知されない（#751）。**検査が守るのは「この関数の中」だけである**——`update()` 側でこの関数の呼び出し
 /// より前に visuals を読むウィジェットを足す退行は、検査から**原理的に見えない**（受容する残余・
-/// 却下した代替案とあわせて `ADR-visuals-order-detector-at-choke-point`）。
+/// #949）。
 ///
 /// **観測点は `hint` クロージャである**——実コードのクロージャが子 `Ui` を受け取るのを流用する。
 /// 代価として、本来必要な「子 `Ui` の生成より前」より 1 段強い「`hint` の呼び出しより前」まで
@@ -288,8 +288,8 @@ pub(crate) fn search_input_ui(
     // 子は生成時に親の style を `Arc::clone` 済みで、この書き込みは届かない（実測）。
     //
     // **この書き込みは呼び出し元の `ui` に残る**（`&mut` ゆえ関数を出ても戻らない）。
-    // **呼び出しより後ろは 3 値が適用済み**で、**前の区間は未適用**である（上の doc と
-    // `ADR-visuals-order-detector-at-choke-point`）。`search_input_ui` より後の status 行・toast は
+    // **呼び出しより後ろは 3 値が適用済み**で、**前の区間は未適用**である（上の doc・
+    // #949）。`search_input_ui` より後の status 行・toast は
     // raw painter へ色を明示渡しするため 3 値を読まない。`ui.scope()` で閉じないのは、
     // **呼び出しより後ろ**を適用済みのまま保つためである（#949）。
     let visuals = ui.visuals_mut();
@@ -721,7 +721,7 @@ impl EguiView for SearchWindowView {
         //
         // **`indexing_hint()` は名前に反して status 行の文言である**（#700）。`hint` で grep して
         // ここへ辿り着いた編集者が、現在地を `overlay_kind` のラダーへ配線しないこと——それは
-        // 却下した案（`ADR-folder-location-display-surface` 却下 1）であり、排他ラダー
+        // 却下した案（#836）であり、排他ラダー
         // ゆえ indexing 中に現在地が黙って消える（#700 が是正した失敗様態そのもの）。
         //
         // **ここで決めるのは「どれを出すか」だけである**（#870）。書式化と、フォルダ現在地の
@@ -821,7 +821,7 @@ impl EguiView for SearchWindowView {
         // 3 値が未適用の区間である。
         // **この区間の退行を検出する自動検査は無い**——#949 の検査は `search_input_ui` を
         // 単独で駆動するので、ここには届かない。残るのは**カテゴリ D の非既定色目視**だけである
-        //（受容する残余・`ADR-visuals-order-detector-at-choke-point`）。現時点でこの区間に visuals を読む描画は
+        //（受容する残余・#949）。現時点でこの区間に visuals を読む描画は
         // 無い: `ui.interact` は `create_widget` を呼ぶが（`ui.rs:906` → `:920`）ヒットテストの
         // 矩形を積むだけで visuals を読まず、status 行と toast は raw painter へ色を明示渡しする。
         let input_visuals = InputVisuals {
@@ -1245,7 +1245,7 @@ impl EguiView for SearchWindowView {
         }
         let width = self.window_width();
         // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
-        // memo は共有しない**（ADR-results-presentation-two-stage 却下 1: `main_size` を results の
+        // memo は共有しない**（#752: `main_size` を results の
         // 導出へ入れない）。高さの導出が show 経路と共有される事実の正本は
         // `window_coordinator.rs` の `//!`（#755 / #801）。
         // 共有するのは導出であって memo ではない。
@@ -1302,7 +1302,7 @@ impl EguiView for SearchWindowView {
             crate::egui_shell::check_show_bar_rect(&app, metrics.bar_height);
         }
         // **`result_count` はここで読む**（#749）——`take_clicked_for`（クリック逆流の消費・
-        // 上のブロック）より**後**でなければならない（#752 / ADR-results-presentation-two-stage）。この式を
+        // 上のブロック）より**後**でなければならない（#752）。この式を
         // `plain_hidden` の算出（`show_results` の直前）へ動かすと、行クリック起動フレームで
         // 古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
         crate::egui_shell::drive_results_window(
@@ -1866,7 +1866,9 @@ mod tests {
     ///
     /// 「子 `Ui` の生成より前で適用する」順序不変条件は、#751 が「コンパイラもユニットテストも
     /// `check:colors` も smoke も検出しない受容残余」と記録した。この検査がその
-    /// **検知手段である**（#949）。
+    /// **検知手段である**（#949）。#949 で適用漏れ・移設の巻き戻し・子 `Ui` 生成より後ろへ動かす
+    /// 退行の 5 変異を当て、すべて赤になることを確かめた。巻き戻しは 3 値同時の適用漏れと観測上
+    /// 区別できないので、判別できるのは 4 種である。適用漏れと巻き戻しは `dead_code` でも落ちる。
     ///
     /// **`Harness` ではなく素の `run_ui` を使う。** 初回 pass であることが症状の成立条件そのもの
     /// であり、`egui_kittest::Harness` は構築の時点で既に 1 フレーム走らせる

@@ -30,7 +30,15 @@ export const KINDS = [
   { ord: "①", name: "worker の spawn", patterns: ["thread::spawn", "async_runtime::spawn"] },
   { ord: "②", name: "channel への send", patterns: ["\\.send\\(", "Sender", "channel\\("] },
   { ord: "③", name: "フレームでの drain", patterns: ["try_recv", "Receiver"] },
-  { ord: "④", name: "managed state の読み書き", patterns: ["try_state", "Mutex", "Atomic", "\\.lock\\("] },
+  // RwLock 系は Mutex / `.lock(` と対称に、宣言と取得の両方を置く（#1040）。宣言だけでは、既存の RwLock を
+  // 新しく読む変更が当たらない（#1473 の drain 照合 `self.config.read()` が実例）。取得は引数なしの形に限る——
+  // `\.read\(` は `io::Read::read(&mut buf)`・`OpenOptions::read(true)`・`snapshot.read(path)` に当たり、
+  // 履歴の追加行 119 行のうち真陽性は 14 行だった。引数なしの形は同じ母集団で 14 行すべてが RwLock の取得だった（716b816 で実測）。
+  {
+    ord: "④",
+    name: "managed state の読み書き",
+    patterns: ["try_state", "Mutex", "Atomic", "\\.lock\\(", "RwLock", "\\.read\\(\\)", "\\.write\\(\\)"],
+  },
   { ord: "⑤", name: "Tauri listener / emit", patterns: ["\\.listen\\(", "\\.emit\\(", "events::"] },
   // ⑥ は定義上 ① の部分集合で、独立した grep を原理的に書けない（ADR-race-check-simplification 却下 4）。
   // 行を落とさず「① のヒットを送信の有無で分類する」ことを出力へ明示する。

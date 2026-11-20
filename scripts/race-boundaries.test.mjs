@@ -187,6 +187,47 @@ describe("classify（種別ごとの検出）", () => {
   });
 });
 
+describe("④ の RwLock 系（#1040 — #1036 の中核が母集団に現れなかった）", () => {
+  // 差分の形で入れる——行単位の classify だけでは、parseDiff / selectPopulation を通った後にも残ることを示せない。
+  // 行は現行の engine.rs から写した: `RwLock` の 2 行と `.write()` は #1036（8182cb5f）が入れた形、`.read()` は #1473（51516e34）が
+  // 既存の RwLock を新しく読んだ行（宣言を含まない差分で、`RwLock` だけでは当たらなかった）。
+  const diff = [
+    "diff --git a/snotra-core/src/engine.rs b/snotra-core/src/engine.rs",
+    "--- a/snotra-core/src/engine.rs",
+    "+++ b/snotra-core/src/engine.rs",
+    "@@ -10,0 +11,4 @@",
+    "+use std::sync::{Arc, RwLock};",
+    "+    config: Arc<RwLock<Config>>,",
+    "+        if IndexInputs::from_config(&self.config.read().unwrap()) == drain.inputs {",
+    "+        *self.config.write().unwrap() = config;",
+    "",
+  ].join("\n");
+  const hits = () => kindOf(run(parseDiff(diff)), "④").hits;
+
+  // 理由ごとに assert する（.claude/rules/safety-nets.md「検出器のカバー範囲」）——件数だけを見ると、
+  // どれか 1 つのパターンを消しても別のパターンが同じ行を拾って緑のまま残りうる。
+  it("宣言・読み・書きのそれぞれが、そのパターンで ④ に立つ", () => {
+    expect(hits().map((h) => [h.text, h.pattern])).toEqual([
+      ["use std::sync::{Arc, RwLock};", "RwLock"],
+      ["config: Arc<RwLock<Config>>,", "RwLock"],
+      ["if IndexInputs::from_config(&self.config.read().unwrap()) == drain.inputs {", "\\.read\\(\\)"],
+      ["*self.config.write().unwrap() = config;", "\\.write\\(\\)"],
+    ]);
+  });
+
+  // 判定対象外の不混入。どれも現行ソースに実在する形である（716b816 時点: font_stack.rs・scan_log.rs・
+  // scripts/governance/checks/*.mjs・.claude/hooks/pre-bash.mjs・font_stack.rs のテスト）。
+  it.each([
+    "        .read(true)",
+    "    matches!(f.read(&mut last), Ok(1)) && last[0] != b'\\n'",
+    "    const text = snapshot.read(doc);",
+    "  process.stderr.write(`BLOCKED [pre-bash]${who}: ${reason}\\n`);",
+    "        let path = dir.write(\"font.bin\", &bytes);",
+  ])("ファイル I/O の read/write は ④ に立たない: %s", (text) => {
+    expect(kindOf(run([{ file: "src-tauri/src/a.rs", sign: "+", text }]), "④").hits).toHaveLength(0);
+  });
+});
+
 describe("formatReport（#800 — 費用が結論に依存しない）", () => {
   const meta = { base: "main", mergeBase: "abcdef1234", changedFiles: 1, untrackedFiles: 0, populationLines: 1, includeRemoved: false };
 

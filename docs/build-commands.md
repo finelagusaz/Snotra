@@ -41,7 +41,7 @@ cargo doc --workspace --no-deps --document-private-items                        
 - **fmt が赤いときは `cargo fmt --all` を打つ**（#858）
   - 検査（`cargo fmt --all -- --check`）と修復（`cargo fmt --all`）は別のコマンドで、`--check` は直さない
   - 差分を読んで手で直さない。機械が持つ判定を、人が写す作業になるからである
-  - 整形の様式は rustfmt の既定とし、`rustfmt.toml` を置かない（既定が drift 最小であることを、7 つの設定の比較で実測した・`docs/adr/ADR-rustfmt-gate.md`）
+  - 整形の様式は rustfmt の既定とし、`rustfmt.toml` を置かない。初期コミットの drift は 0 で、様式は最初から既定だった。行幅・ヒューリスティクス・style edition を変えた設定と既定の 7 通りを比べ、既定（460 ハンク）より有意に減るものは無かった（最小は `max_width = 110` の 459。style edition を 2015 / 2018 / 2021 に固定するとどれも 495 で、edition の移行は drift の原因ではない）（#861）
 - カテゴリ A のコマンドは、いずれも CI（`ci.yml` の rust-check）が PR で自動実行する（「CI/CD メモ」の対応表）。ローカルで自動実行する仕組みは無い（編集後フックは 2026-09-29 に撤去した）
 - **`check` / `clippy` には `--workspace` を使う**（#500）
   - crate 名を `-p` で列挙すると、`Cargo.toml` の `members` の写しになる。5 つ目の crate を足したとき、CI と本ファイルが同じ誤りを共有し、気づかれないまま漏れる。`--workspace` なら、cargo に SSOT を読ませられる

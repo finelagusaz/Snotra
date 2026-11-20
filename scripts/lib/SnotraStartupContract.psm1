@@ -52,7 +52,7 @@ $ErrorActionPreference = 'Stop'
   ホットキー登録の完了より手前で打ち切る変異は**原理的に検出されない**（#1009 で (j) として
   実測）。下限を置けば検出されるが、**trace の到着遅れと区別できない**ため置いていない。
 - **`event` と `ok` / `reason` の整合** — イベント名が意味を運ぶ設計
-  （`ADR-startup-instrument-contract-shape`）ゆえ、**名前と中身が食い違ったら壊れている**。
+  （`startup.rs` の `StartupFailure` の doc）ゆえ、**名前と中身が食い違ったら壊れている**。
   #1009 で実測: ホットキー登録が実際に失敗した起動で `event` だけを `startup:ready` に偽ると、
   `ok=false` / `reason=hotkey-registration` が正直に載ったまま**他の検査は全部通った**
   ——キーの存在しか見ておらず、値を一度も読んでいなかったためである。

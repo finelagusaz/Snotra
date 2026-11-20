@@ -809,6 +809,8 @@ $expectedShowHeightLogical = $expectedBarLogical * 2
 $toastErrPath = Join-Path $toastProfileDir 'stderr.log'
 Remove-Item -LiteralPath $toastErrPath -Force -ErrorAction SilentlyContinue
 
+# `[SnotraSmokeInterop.Native]` は `SnotraSmoke.psm1` の `Initialize-SnotraNativeInterop` が `Add-Type` した型で、
+# 先にモジュールの関数が呼ばれていることに依存する。
 function Get-MainWindowDwmSize {
   param([IntPtr]$Handle)
   $r = New-Object SnotraSmokeInterop.Native+RECT

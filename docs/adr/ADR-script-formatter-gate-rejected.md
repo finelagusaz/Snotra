@@ -4,7 +4,7 @@
 
 ## 文脈
 
-PR #1011 のブランチで、`REQUIRED_RUSTDOC_LINTS = [` と `STALE_EXTRA_DOCS = [` の 2 行が `=[` に変わった。`governance:check` も vitest も通り、目視だけがこれに気づいた（1 行はレビュアーが、もう 1 行は実装者が `git diff` を通しで読んで見つけた）。Rust 側には CI の `cargo fmt --all -- --check` がある（`ADR-rustfmt-gate`）。一方、`scripts/**` の `.mjs`・`.ps1`・`.psm1` と `.claude/hooks/*.mjs` には、書式を見る機構が無い。
+PR #1011 のブランチで、`REQUIRED_RUSTDOC_LINTS = [` と `STALE_EXTRA_DOCS = [` の 2 行が `=[` に変わった。`governance:check` も vitest も通り、目視だけがこれに気づいた（1 行はレビュアーが、もう 1 行は実装者が `git diff` を通しで読んで見つけた）。Rust 側には CI の `cargo fmt --all -- --check` がある（#861）。一方、`scripts/**` の `.mjs`・`.ps1`・`.psm1` と `.claude/hooks/*.mjs` には、書式を見る機構が無い。
 
 ## 決定
 
@@ -36,9 +36,9 @@ PR #1011 のブランチで、`REQUIRED_RUSTDOC_LINTS = [` と `STALE_EXTRA_DOCS
 
 - **formatter（prettier など）を devDependency に入れ、CI でゲートする**: 却下した。守るものが 714 コミットで 4 行、しかも害が無かったのに対して、費用は常に掛かる。
   - devDependency と CI の step が 1 つずつ増える。
-  - 既定の様式に合わせるために、全体の整形が要る見込みである。prettier の既定の行幅は 80 桁である。`scripts` 配下の `.mjs`（43 本・7,316 行）で、表示幅（全角を 2 桁と数える）が 80 桁を超える行は 1,883 行ある。prettier はコメントと文字列を折り返さないので、このすべてが整形で変わるわけではない（コメントを除くと 968 行）。逆に、80 桁に収まる行も変わりうる。整形するなら、`ADR-rustfmt-gate` と同じく、整形だけの PR を先にマージし、その SHA を `.git-blame-ignore-revs` へ書く 2 段の手順が要る。prettier そのものを当てたときの drift の量は、測っていない。
+  - 既定の様式に合わせるために、全体の整形が要る見込みである。prettier の既定の行幅は 80 桁である。`scripts` 配下の `.mjs`（43 本・7,316 行）で、表示幅（全角を 2 桁と数える）が 80 桁を超える行は 1,883 行ある。prettier はコメントと文字列を折り返さないので、このすべてが整形で変わるわけではない（コメントを除くと 968 行）。逆に、80 桁に収まる行も変わりうる。整形するなら、#861 と同じく、整形だけの PR を先にマージし、その SHA を `.git-blame-ignore-revs` へ書く 2 段の手順が要る。prettier そのものを当てたときの drift の量は、測っていない。
   - PowerShell 側の formatter（PSScriptAnalyzer の `Invoke-Formatter`）は手元に無く、#132 の形を直すかも測っていない。
-  - `ADR-rustfmt-gate` とは前提が違う。あちらは 460 ハンクの drift が実際に積み上がり、PR #857 で関係の無い差分が「不合格」として報告される実害が出ていた。初期コミットの drift も 0 で、守るべき様式が在った。
+  - #861 とは前提が違う。あちらは 460 ハンクの drift が実際に積み上がり、PR #857 で関係の無い差分が「不合格」として報告される実害が出ていた。初期コミットの drift も 0 で、守るべき様式が在った。
 - **formatter の検査を編集時の hook に置く**: 却下した。編集時の自動検証（PostToolUse）は #1255 で撤去済みである（#1256）。それを書式のためだけに戻す理由は無い。
 
 ## 受容する残余
@@ -49,4 +49,4 @@ PR #1011 のブランチで、`REQUIRED_RUSTDOC_LINTS = [` と `STALE_EXTRA_DOCS
 ---
 
 status: Accepted
-関連: #1012・#1011・`ADR-rustfmt-gate`・`.claude/rules/safety-nets.md`
+関連: #1012・#1011・#861・`.claude/rules/safety-nets.md`

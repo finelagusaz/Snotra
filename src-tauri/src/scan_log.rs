@@ -45,6 +45,13 @@ pub(crate) struct ScanRecord {
     /// 登録したエントリの件数（PATH のマージ前）。
     pub(crate) scanned: usize,
     /// `read_dir` に成功したディレクトリの数。
+    ///
+    /// 進捗表示の分母もこれである（[`last_completed_dirs`]）。登録件数を単位にしないのは、
+    /// `extensions = []`・`include_folders = false` の根を走査するあいだ件数が止まるためである
+    /// （2026-11-15 の実機でフォルダ 613,341 に対し 23,869 件）。同じ `scan_id` の行どうしで
+    /// `scan_ms / dirs` を比べると、仕事が増えたのか遅くなったのかを分けられる（同じ実機で
+    /// フォルダあたり 139 µs と 45 µs）——構築スレッドの CPU 時間は rayon の別スレッド分を
+    /// 取りこぼすので、この比較の代わりにならない。
     pub(crate) dirs: usize,
 }
 

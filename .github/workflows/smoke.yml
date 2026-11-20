@@ -81,6 +81,10 @@ jobs:
       # `save-if` で main からしか保存しないのは、Actions キャッシュの 10GB 上限を
       # 守るためである。PR ごとに release の target（GB 級）を書くと LRU で
       # rust-check の 2.5GB が落ち、CI 全体が今より遅くなる。
+      #
+      # `ci.yml` の rust-check とキーを揃えて共有しない——debug と release でプロファイルが違い、
+      # 先に保存した側が後続を `Cache up-to-date` で止めるので、release の target が入らない
+      # （同じ理由で rust-check の job へ統合もしない。統合すると smoke が rust-check 本体（約 4m）の後ろへ直列化もされる）。
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -93,6 +97,9 @@ jobs:
       # キャッシュでは削れない。**この job に限って** env で緩める（`Cargo.toml` は触らない
       # ——release.yml が建てる配布物の設定は変えない）。`panic = "abort"` と `opt-level` は
       # そのままゆえ、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
+      # この env はキャッシュキーに入らない（ログの "Environment considered" は `CARGO_HOME` /
+      # `CARGO_INCREMENTAL` / `CARGO_TERM_COLOR` だけ・実測）。変えても誤ったバイナリは出ず
+      # （cargo の fingerprint が判定する）、キャッシュが効かない run が 1 回増えるだけである。
       - name: Build release binary
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"

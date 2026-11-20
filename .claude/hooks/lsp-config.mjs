@@ -5,7 +5,12 @@
  *
  * **RA は semantic navigation のツールであり、検証の権威ではない。** 確定判定は fmt / clippy / crate test
  * （手動と CI）が持ち、そこへ LSP の状態（診断の到着順・quiescence）を混ぜない。診断は抑制しない
- * （`.lsp.json` に `diagnostics` キーを置かない）。理由は `docs/adr/ADR-ra-diagnostics-suppression.md`。
+ * （`.lsp.json` に `diagnostics` キーを置かない）。2026-08-14 に Claude Code の RA を stdio で測ると、正常な編集で
+ * 届く診断は構文エラーだけで減らす量が無く、抑制すると cargo の視界に無い未リンク `.rs` の構文エラーを失う（#1090）。
+ * 抑制へ戻すなら、その下で navigation が生きるかをセッション再起動を伴って先に測る。測るときは CLI
+ * （`rust-analyzer diagnostics .`）を使わない——`cfg(test)` を立てず ratoml も読まないので、LSP に無い
+ * `inactive-code` を数える。`unlinked-file` が届かないのは RA 既定の設定でも同じで、こちらの設定が原因ではない。
+ * RA の更新で届くようになったら、`G-module-linkage` を畳むかを測り直す。
  *
  * **なぜ自前の検知器が要るか。** `claude plugin validate --strict` は `.lsp.json` を視界に入れない——
  * JSON として壊しても抑制キーを消しても exit 0 を返す（2026-08-14 実測・#1083）。

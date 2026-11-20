@@ -38,6 +38,10 @@
 // 検出を shell パーサ相当まで広げると、payload 全体 grep の誤爆（#482 の D2）を作り直すことになる。
 //
 // 詳細と実測の根拠は issue #482。
+//
+// この hook は settings の `CLAUDE_PROJECT_DIR` が指す本体の版で走る（harness の worktree のセッションでも同じ・
+// #1436 で観察）。ゲートの修正が効くのは本体の作業ツリーがその変更を持ってからで、hook を変える PR は
+// worktree のセッションから自分の版のゲートで確かめられない。
 
 // 実測（#482 Phase 2 のフォールトインジェクション V2）: Windows の PowerShell tool の tool_name は
 // 文字列 "PowerShell" である。matcher が取りこぼすと hook は気づかれないまま検出されないため

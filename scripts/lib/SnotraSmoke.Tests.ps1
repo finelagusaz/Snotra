@@ -290,6 +290,12 @@ Describe '起動ハーネスの既定 ExePath はスクリプトの住むコピ�
     # 名指したもの以外が導出から脱落しても緑のまま）。**導出が 0 件なら Pester がコンテナごと
     # 失敗させる**（空の `-ForEach` は既定で discovery エラー・実測）ので、件数の検査は置かない。
     #
+    # **導出を共有 module へ寄せ、`$repoRoot` を module 自身に導かせる形は採らない**（#1371）。複製への
+    # 変異注入で測ると、`bench-startup.ps1`（`$ProfileDir`）・`visual-input-metrics.ps1`（`$outDir`）は
+    # `$repoRoot` を本体のパス以外にも使うので行が消えず、cwd 起点への変異が害を保ったまま緑になった
+    # （`smoke-startup.ps1` もいまは `Resolve-SnotraCargoTargetDirectory` へ渡す）。加えて自己導出は
+    # import のパスと起点を結び付けるので、import 行の滑りが、この述語の読まない新しい死角になる。
+    #
     # **適用範囲の外**（どれも、この Describe には映らない）:
     # - `scripts/` 直下以外の `.ps1`。再帰にすると、補集合の検査でこのファイル自身が `$ExePath` を語る側に
     #   当たり、許可リストへ自分を足すことになる（実測）。起動ハーネスは `package.json` から呼ばれる直下の入口である

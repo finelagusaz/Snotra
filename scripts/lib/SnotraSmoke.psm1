@@ -5,6 +5,11 @@ $ErrorActionPreference = 'Stop'
 
 $script:dpiAwarenessInitialized = $false
 
+# このモジュールは役割ごとに分けない（#1403）。`SnotraSmoke.Tests.ps1` の `Mock -ModuleName SnotraSmoke` は
+# Mock の対象を呼ぶ関数の居るモジュールを名指すので、関数を移して名指しがずれると Mock が効かず、実プロセスを
+# 止める・起動する。また `smoke-egui.ps1` の `Get-MainWindowDwmSize` は、下の関数が先に `Add-Type` した
+# `[SnotraSmokeInterop.Native]` を直接使う。分けるなら、trace の関数群が最初の候補である（他の役割を呼ばない
+# ことを 2026-11-07 に AST で確かめた）。
 function Initialize-SnotraNativeInterop {
     if ($null -eq ('SnotraSmokeInterop.Native' -as [type])) {
         Add-Type -Namespace SnotraSmokeInterop -Name Native -MemberDefinition @'
@@ -437,6 +442,9 @@ function Resolve-SnotraCargoTargetDirectory {
     # manifest ではなく cargo プロセスの cwd を起点に解決される。固定しないと、worktree の本体を
     # 導いたつもりで、メインの作業コピーの target を指す（実測）。
     # manifest の存在検査の後に置く（根が無ければ、そちらが先に落とす）。
+    # `--target-dir` で明示すれば cwd に依存しないが、ユーザーの `CARGO_TARGET_DIR` を無視して
+    # 追随の約束（`docs/build-commands.md`）を壊すので採らない。ambient な env を読ませる以上、
+    # cwd の固定は迂回できない。
     Push-Location -LiteralPath $RepositoryRoot
     try {
         $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath

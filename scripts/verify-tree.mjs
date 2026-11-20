@@ -37,7 +37,8 @@ const DELEGATE_DIR = ".delegate";
 /**
  * `--also` の npm script のうち、実バイナリを起動するものと、その前に打つビルド（`docs/build-commands.md` の C 節
  * 「実バイナリを起動する検査の前に」）。ツールの worktree は cold か、前のラウンドの sha の本体を持つので、計画に
- * ビルドが無ければ直前に足す（#1436）。字面は C のフェンスと揃える（重複の判定が字面で行われるため・テストが固定する）
+ * ビルドが無ければ直前に足す（#1436）。字面は C のフェンスと揃える（重複の判定が字面で行われるため・テストが固定する）。
+ * 実バイナリを起動する npm script を `--also` に足す経路が増えたら、ここへも足す。その漏れを見る検査は無い
  */
 export const BUILD_BEFORE = { "test:powershell": "cargo build -p snotra" };
 
@@ -108,6 +109,8 @@ function treePathFor(root, branch) {
  * 本体の作業ツリーのルート（`canon` 済み）。ツールの worktree・要約・ログの置き場はこの下にある。git の共通ディレクトリ
  * （本体の `.git`）の親から導くので、どの worktree から呼んでも同じ値になる（#1436）。PR 前ゲート
  * （`.claude/hooks/pre-bash.mjs`）とマージのツール（`scripts/merge-pr.mjs`・#1312）も要約を読むので同じ導き方を使う。
+ * 呼び出し元の worktree の下には置かない——harness の worktree の中へネストされて片づけのときに道連れになり、
+ * head ブランチ名から要約を導くマージのツールが、どこで回したかを知らないと要約に届かない。
  * `timeout` は hook が渡す（hook の上限を越えると非ブロッキング＝検出されなくなるため）
  */
 export function mainRoot(cwd, { timeout } = {}) {

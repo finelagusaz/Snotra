@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const kindOf = (kinds, ord) => kinds.find((k) => k.ord === ord);
 const run = (rows, opts) => classify(selectPopulation(rows, opts));
 
-describe("種別表の不変条件（序数は書き換え不可・#788 の ADR（削除済み） 却下 4）", () => {
+describe("種別表の不変条件（序数は書き換え不可）", () => {
   it("①〜⑧ が順に 8 件そろう", () => {
     expect(KINDS.map((k) => k.ord)).toEqual(["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"]);
   });

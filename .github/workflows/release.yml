@@ -124,6 +124,10 @@ jobs:
           # このアップロードで draft 指定を省くと softprops の既定 (draft=false) に
           # 上書きされ、署名済み成果物が即時公開されてしまう。署名を人手で検証して
           # から手動 publish する検証ゲートを残すため、ここで明示的に draft: true を指定する。
+          # 手動 publish の注意（v0.19.0 で実測）: `gh release edit <tag> --prerelease=false` は
+          # Latest を移さないので、`gh release edit <tag> --latest` を別に打つ。updater の実地確認は、
+          # `/releases/latest/download/` のリダイレクトが数分キャッシュされるので、
+          # `curl -sI` の `Date` ヘッダが現在時刻に追随してから行う。
           draft: true
           prerelease: ${{ steps.meta.outputs.prerelease }}
           files: |

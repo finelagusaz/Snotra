@@ -25,7 +25,7 @@ paths:
 
 - 変異は複製（worktree・一時ディレクトリ・メモリ上のコピー）に当てる。ライブの hook を無効にしない（#504）。git 操作の手本は `.githooks/githooks.test.mjs` にある
 - 変異の対象には、他の場所から逐語で名指されていないものを選ぶ。名指されていると別の理由で赤になり、確かめたいことを観測できない（#1094）
-- 本体リポジトリの内側の worktree では、`node_modules` を張らない。外へ置いた複製では junction を張る。モジュール解決の失敗は、検出と同じ exit 1 になる。そのため、どのモジュールが解決できなかったかを必ず読む
+- 本体リポジトリの内側の worktree では、`node_modules` を張らない。外へ置いた複製では junction を張る。junction を抱えたディレクトリを再帰削除（`rm -rf`・`Remove-Item -Recurse`）すると、リンク先の本体の `node_modules` まで消える。消すときは `(Get-Item <dir>/node_modules).LinkType` が `Junction` であることを確かめ、`[System.IO.Directory]::Delete("<dir>/node_modules")`（非再帰）でリンクだけを外してから、残りを消す。`npm run clean:worktrees` は junction を扱わない（2026-11-03 に登録の消えた worktree の残骸 3 つで実測）。モジュール解決の失敗は、検出と同じ exit 1 になる。そのため、どのモジュールが解決できなかったかを必ず読む
 - 結果を読む前に、測定ハーネスそのものが壊れていないかを疑う（自前で組んだ母集団・finding を絞るキーの取り違え・独立でない対照）（#1214）
 - Windows で変異の実行に timeout を掛けるなら、`spawnSync` の timeout に任せない。timeout が止めるのは、`shell: true` や `npx.cmd` が挟む直下の `cmd.exe` だけで、その下は孤児として残る。timeout の後はルートプロセスが既に死んでいるので、taskkill も効かない。代わりに `spawn`（`npx` を呼ぶなら `shell: true` のまま）と自前のタイマーを使う。止める前に `Get-CimInstance Win32_Process` のスナップショットを 1 回取り、`child.pid` から `ParentProcessId` でたどった子孫の `(ProcessId, CreationDate)` を控える。`taskkill /PID <child.pid> /T /F` で止め、数秒おいて、控えた組が 1 つも残っていないことを確かめる。PID は再利用されるので、PID だけでなく組で照合する。残りの確認を `CommandLine` で絞らない。ワーカーの `CommandLine` は junction の先の本体を指して複製のパスを含まず、`vitest` を含むかで絞ると、並走する正当な vitest や、確かめる側の PowerShell 自身まで一致する（#1352・Node v24 で実測）
 

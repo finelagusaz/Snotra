@@ -279,6 +279,8 @@ export function checkLspConfig(rootDir) {
     );
   }
   const search = init.workspace?.symbol?.search;
+  // 効いていると実測で示せたのは `kind` だけである。`limit` は、既定の 128 を超えるクエリを投げておらず
+  // （実測は 114 件）、独立には示せていない（#1090）。
   if (search?.kind !== "all_symbols" || search?.limit !== 512) {
     violations.push(
       `initializationOptions.workspace.symbol.search が {kind:"all_symbols", limit:512} でない: ${JSON.stringify(search)}` +

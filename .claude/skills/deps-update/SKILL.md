@@ -65,7 +65,7 @@ smoke はローカルで実行せず、`Smoke` workflow（`smoke.yml`）に任�
 - `chore(deps): ...` の conventional commit を作る。何を更新したかの短い要約を含める
 - コミットしてから `npm run verify:tree '--' run --sha HEAD --categories A` を回し、green を確かめる（C は渡さない。smoke は Step 5 で CI の結果を待つ）。PR 前ゲート（`.claude/hooks/pre-bash.mjs`）は、ツールの要約が無いブランチの `gh pr create` を止める（#1299）
 - push して、`gh pr create` で PR を作る
-- PR 本文に更新一覧を載せる。major bump は ⚠ で明示する
+- PR 本文は `.github/pull_request_template.md` の節に従って書く（テンプレートが本文の契約の正本である）。更新一覧は「変更」の節に載せ、major bump は ⚠ で明示する
 
 ## Step 5 — CI ポーリング
 

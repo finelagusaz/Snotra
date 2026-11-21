@@ -94,17 +94,17 @@
 
 ### Phase 1 — 正本
 
-- [ ] `.github/pull_request_template.md` を D5 の節で書き直す
-- [ ] `/start-issue` の 5c に 3 基準・2 形式・自己承認の扱いを書く（D1・D2・D8）
-- [ ] `/start-issue` の description・冒頭・Step 4 の雛形と解消の段落・Step 5 と 5c の見出し・5b（「check スキル」の行）・Step 6・自己承認時の `/implement` 起動・「出力」・引き渡し契約を直す（D3・D10・D13・D14）
+- [x] `.github/pull_request_template.md` を D5 の節で書き直す
+- [x] `/start-issue` の 5c に 3 基準・2 形式・自己承認の扱いを書く（D1・D2・D8）
+- [x] `/start-issue` の description・冒頭・Step 4 の雛形と解消の段落・Step 5 と 5c の見出し・5b（「check スキル」の行）・Step 6・自己承認時の `/implement` 起動・「出力」・引き渡し契約を直す（D3・D10・D13・D14）
 
 ### Phase 2 — 参照側
 
-- [ ] `/implement` の description・allowed-tools・冒頭・Step 1 冒頭・1a・1b・1c（1c-D 新設・種の数を書かない言い方・5c の見出し名）を直す（D1・D4・D10・D11）
-- [ ] `/implement` に Step 5 を足し、3b の `-PostToPr`・Step 4 の否定の知識の転記先・「出力」を直す（D4・D6・D12）
-- [ ] `/plan-review` の「リスク判定」・Step 1 末尾・Step 3 末尾を直す（D9）
-- [ ] `/deps-update` の Step 4 を直す（D7）
-- [ ] 旧見出し（`人間レビュー`・`人間の注釈と承認`・`計画検証と人間レビュー`）を `git grep` で数え、現役の文書に残っていないことを確かめる
+- [x] `/implement` の description・allowed-tools・冒頭・Step 1 冒頭・1a・1b・1c（1c-D 新設・種の数を書かない言い方・5c の見出し名）を直す（D1・D4・D10・D11）
+- [x] `/implement` に Step 5 を足し、3b の `-PostToPr`・Step 4 の否定の知識の転記先・「出力」を直す（D4・D6・D12）
+- [x] `/plan-review` の「リスク判定」・Step 1 末尾・Step 3 末尾を直す（D9）
+- [x] `/deps-update` の Step 4 を直す（D7）
+- [x] 旧見出し（`人間レビュー`・`人間の注釈と承認`・`計画検証と人間レビュー`）を `git grep` で数え、現役の文書に残っていないことを確かめる
 
 ## 未確定（実装前に潰す）
 

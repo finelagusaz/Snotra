@@ -465,7 +465,6 @@ fn path_store_raw_matches_target_path_over_real_index() {
 #[test]
 fn index_tree_file_key_matches_normalize_file_name_key_over_real_index() {
     let Some(entries) = real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
         return;
     };
     let expected: Vec<String> = entries
@@ -515,7 +514,6 @@ fn path_store_cursor_matches_normalize_entry_key_over_real_index() {
     use crate::search::path_store::{PathCursor, PathStore};
 
     let Some(entries) = real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
         return;
     };
     let expected: Vec<String> = entries
@@ -587,7 +585,6 @@ fn history_boost_survives_history_tail_skip() {
 #[test]
 fn key_tail_into_matches_cursor_key_tail_over_real_index() {
     let Some(entries) = real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
         return;
     };
     let n = entries.len();
@@ -715,7 +712,6 @@ fn path_env_merge_does_not_raise_any_name_has_path_sep() {
 #[ignore = "実インデックス依存。手元で release 実行する"]
 fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
     let Some(entries) = real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
         return;
     };
     let config = read_real_config_read_only().expect("real_index_entries が読めた config");
@@ -787,7 +783,6 @@ fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
 #[ignore = "実インデックス依存。手元で release 実行する"]
 fn skipping_name_scoring_changes_nothing_over_real_index() {
     let Some(entries) = real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
         return;
     };
     let n = entries.len();

@@ -2059,3 +2059,110 @@ fn rebuilt_from_cache_matches_rebuilt_from_scan() {
         }
     }
 }
+
+fn one_entry() -> Vec<AppEntry> {
+    vec![AppEntry {
+        name: "a".into(),
+        target_path: "C:\\a".into(),
+        is_folder: false,
+    }]
+}
+
+/// 現行版を `config_hash = 42` で書いた `index.bin` のバイト列。
+fn current_index_bytes(tag: &str) -> Vec<u8> {
+    let dir = temp_dir(tag);
+    let _ = save_cache_sorted_in(&dir, one_entry(), 42, BuiltAt::Scanned);
+    let bytes = fs::read(dir.join("index.bin")).expect("read index.bin");
+    let _ = fs::remove_dir_all(&dir);
+    bytes
+}
+
+/// `bytes` を `index.bin` として置いた dir で [`load_cached_entries_in`] を呼ぶ。
+fn miss_of(tag: &str, bytes: Option<&[u8]>, config_hash: u64) -> Result<usize, CachedEntriesMiss> {
+    let dir = temp_dir(tag);
+    if let Some(bytes) = bytes {
+        fs::write(dir.join("index.bin"), bytes).expect("write index.bin");
+    }
+    let result = load_cached_entries_in(&dir, config_hash).map(|entries| entries.len());
+    let _ = fs::remove_dir_all(&dir);
+    result
+}
+
+/// corpus テストの入口は、読めた現行版をそのまま返す（分類を通らない）。
+#[test]
+fn cached_entries_returns_a_readable_current_index() {
+    let bytes = current_index_bytes("miss_ok_src");
+    assert_eq!(miss_of("miss_ok", Some(&bytes), 42), Ok(1));
+}
+
+/// 読めなかった理由を、ファイルの有無とヘッダーで区別する（#1400）。
+#[test]
+fn cached_entries_miss_tells_missing_file_from_unrecognized_header() {
+    assert_eq!(
+        miss_of("miss_no_file", None, 42),
+        Err(CachedEntriesMiss::NoFile)
+    );
+    assert_eq!(
+        miss_of("miss_short", Some(&[0x49, 0x4e, 0x44, 0x58]), 42),
+        Err(CachedEntriesMiss::Unrecognized)
+    );
+    // **magic を見ずに版だけを読むと、これは「v5 の旧版」に見える**（`peek_version` は magic を
+    // 照合しない）。
+    let mut foreign = current_index_bytes("miss_foreign_src");
+    foreign[0..4].copy_from_slice(b"XXXX");
+    foreign[4..8].copy_from_slice(&5u32.to_le_bytes());
+    assert_eq!(
+        miss_of("miss_foreign", Some(&foreign), 42),
+        Err(CachedEntriesMiss::Unrecognized)
+    );
+}
+
+/// 版で落ちたものは、現行版との大小で古い・新しいを分ける。読める旧版でも `config_hash` が
+/// 食い違えば、読まない旧版と同じく「古い」に入る。
+#[test]
+fn cached_entries_miss_tells_older_from_newer_version() {
+    assert_eq!(
+        miss_of("miss_v7", Some(GOLDEN_V7), 42),
+        Err(CachedEntriesMiss::Older { found: 7 })
+    );
+
+    let v4 = try_serialize_with_header(
+        INDEX_MAGIC,
+        4,
+        &IndexCacheV4 {
+            built_at: 1_700_000_000,
+            entries: one_entry(),
+            config_hash: 42,
+            char_masks: vec![0],
+            file_name_char_masks: vec![0],
+            lower_names: vec!["a".into()],
+            lower_file_names: vec![None],
+            normalized_keys: vec![],
+        },
+    )
+    .expect("serialize v4");
+    assert_eq!(miss_of("miss_v4_ok", Some(&v4), 42), Ok(1), "v4 は読める");
+    assert_eq!(
+        miss_of("miss_v4_hash", Some(&v4), 43),
+        Err(CachedEntriesMiss::Older { found: 4 })
+    );
+
+    let mut newer = current_index_bytes("miss_newer_src");
+    newer[4..8].copy_from_slice(&(INDEX_CACHE_VERSION + 1).to_le_bytes());
+    assert_eq!(
+        miss_of("miss_newer", Some(&newer), 42),
+        Err(CachedEntriesMiss::Newer {
+            found: INDEX_CACHE_VERSION + 1
+        })
+    );
+}
+
+/// 現行版で落ちたもの（`config_hash` の不一致）は、版の問題として報せない。
+#[test]
+fn cached_entries_miss_reports_a_rejected_current_version() {
+    let bytes = current_index_bytes("miss_rejected_src");
+    assert_eq!(
+        miss_of("miss_rejected", Some(&bytes), 43),
+        Err(CachedEntriesMiss::Rejected)
+    );
+}

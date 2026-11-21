@@ -910,7 +910,6 @@ fn shared_lower_name_chain_collapses_both_links() {
 #[test]
 fn entry_view_shared_strings_match_derivation_over_real_index() {
     let Some(entries) = real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
         return;
     };
     // `new_with_migemo` は entries を消費するので、期待値は先に導出しておく。

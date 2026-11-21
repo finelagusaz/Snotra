@@ -363,9 +363,49 @@ pub fn index_built_at_in(dir: &Path) -> Option<u64> {
 /// `target_path` を持たない）。ゆえに「組み直しが原文と一致するか」をこの返り値と
 /// 突き合わせても、**組み直しの結果どうしを比べることになる**。その照合の裏付けは
 /// `index_tree_raw_matches_frozen_v6_specimen`（旧形式の凍結バイト列が唯一の原文）が持つ。
+///
+/// **返せなかったときは理由を [`CachedEntriesMiss`] で返す。** corpus テストは理由を区別して
+/// スキップを報せる——区別しないと、緑が「実データで一致した」のか「何も走らなかった」のかが
+/// 出力から分からない（#1400）。
 #[doc(hidden)]
-pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Option<Vec<AppEntry>> {
-    let hash = compute_config_hash(scan, show_hidden_system);
+pub fn load_cached_entries(
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> Result<Vec<AppEntry>, CachedEntriesMiss> {
+    let dir = Config::config_dir().ok_or(CachedEntriesMiss::NoConfigDir)?;
+    load_cached_entries_in(&dir, compute_config_hash(scan, show_hidden_system))
+}
+
+/// [`load_cached_entries`] が `index.bin` からエントリを返せなかった理由。文言は持たない
+/// （組み立てるのは corpus テストの側である）。
+///
+/// **版で分ける 3 つは、ヘッダーの版と [`INDEX_CACHE_VERSION`] の大小だけで決める**
+/// （[`classify_cache_miss`]）。フォールバックチェーンが読む版の一覧はここへ写さない——写すと、
+/// 版を足すたびに分類だけが古くなる。
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CachedEntriesMiss {
+    /// `Config::config_dir` が引けない。
+    NoConfigDir,
+    /// `index.bin` が無い、または読めない。
+    NoFile,
+    /// 短すぎるか magic が違い、版を読めない。
+    Unrecognized,
+    /// 現行より古い版で、読めなかった。設計上読まない版（`load_cache_in` の v6 分岐の手前の
+    /// コメント）と、読める旧版で `config_hash` が食い違うものの両方が入る——どちらも現行版で
+    /// 置き換えれば読める。
+    Older { found: u32 },
+    /// 現行より新しい版（このコードより新しい製品が書いた）。
+    Newer { found: u32 },
+    /// 現行版だが受け付けなかった（`config_hash` の不一致か、列の検証の失敗）。
+    Rejected,
+}
+
+/// [`load_cached_entries`] を `dir` 注入で行う（分類のテスト用）。
+fn load_cached_entries_in(
+    dir: &Path,
+    config_hash: u64,
+) -> Result<Vec<AppEntry>, CachedEntriesMiss> {
     // **実体化の規則は `IndexTree::materialize` の 1 つである。** ここに写しを置いていた
     // ときは、ツリー →`Vec<AppEntry>` の規則が 2 部出荷されていた——片方に触れば corpus テストは
     // 製品が決して見ないデータを検証することになる（`index_tree.rs` の `//!` が「辿る規則は
@@ -374,12 +414,33 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     // **`LegacyUpgrade::Skip` を渡す。** ここは開発者の実 `%APPDATA%\Snotra\index.bin` を
     // 読む corpus テストの入口であり（`search/tests/common.rs`）、`Write` にすると
     // テストを走らせるだけで実データを書き換える。
-    Some(
-        load_cache(hash, LegacyUpgrade::Skip)?
-            .material
-            .tree()
-            .materialize(),
-    )
+    match load_cache_in(dir, config_hash, LegacyUpgrade::Skip) {
+        Some(result) => Ok(result.material.tree().materialize()),
+        None => Err(classify_cache_miss(dir)),
+    }
+}
+
+/// `load_cache_in` が `None` を返した後に、その理由を `index.bin` のヘッダーから決める。
+///
+/// **バイト列を読み直す。** 間に `index.bin` が置き換わると分類がずれうるが、通るのは corpus
+/// テストの入口だけで、ずれても出る文言が変わるだけである。
+fn classify_cache_miss(dir: &Path) -> CachedEntriesMiss {
+    let Some(bytes) = cache_bin_file_in(dir).load_bytes() else {
+        return CachedEntriesMiss::NoFile;
+    };
+    // **magic を先に照合する。** `peek_version` は magic を見ないので、別物のファイルの 4..8 バイトを
+    // 版として読み、「古い版」と報せうる（同関数の doc）。
+    if bytes.get(0..4) != Some(INDEX_MAGIC.as_slice()) {
+        return CachedEntriesMiss::Unrecognized;
+    }
+    let Some(found) = crate::binfmt::peek_version(&bytes) else {
+        return CachedEntriesMiss::Unrecognized;
+    };
+    match found.cmp(&INDEX_CACHE_VERSION) {
+        std::cmp::Ordering::Less => CachedEntriesMiss::Older { found },
+        std::cmp::Ordering::Greater => CachedEntriesMiss::Newer { found },
+        std::cmp::Ordering::Equal => CachedEntriesMiss::Rejected,
+    }
 }
 
 /// 走査して正準の並びへ整列するまで（保存はしない）と、その 2 段の所要時間。
@@ -893,11 +954,6 @@ enum LegacyUpgrade {
     Skip,
 }
 
-fn load_cache(config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResult> {
-    let dir = Config::config_dir()?;
-    load_cache_in(&dir, config_hash, upgrade)
-}
-
 /// 旧版を読んだ分岐の共通処理: **走査結果を既に手に持っているので、その場で現行版へ書き戻す。**
 ///
 /// **返す材料は書き戻しの副産物である**（`save_cache_sorted_in` が返すツリーとマスクをそのまま
@@ -1009,7 +1065,7 @@ fn finish_legacy_read(
     }
 }
 
-/// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
+/// `dir` の `index.bin` を、版のフォールバックチェーンで読む（`dir` 注入は issue #429）。
 ///
 /// **`INDEX_WRITE_LOCK` を保持したまま呼んではならない。** `LegacyUpgrade::Write` で旧版を
 /// 読むと、この関数は [`upgrade_legacy_cache_in`] 経由で同じロックを取りに行く——

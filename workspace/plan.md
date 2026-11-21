@@ -102,22 +102,28 @@ fmt・clippy・test・doc）をすべて走らせる。加えて、開発機の�
 
 ### Phase 1 — core
 
-- [ ] `cache/tests.rs` に分類テスト 8 件を書き、コンパイルエラー/失敗（Red）を確かめる
-- [ ] `CachedEntriesMiss`・`load_cached_entries_in`・`classify_cache_miss` を実装し、`load_cached_entries` の返り値を替える
-- [ ] `indexer.rs` の re-export に `CachedEntriesMiss` を足す
-- [ ] 分類テストが通る（Green）
+- [x] `cache/tests.rs` に分類テスト 8 件を書き、コンパイルエラー/失敗（Red）を確かめる
+- [x] `CachedEntriesMiss`・`load_cached_entries_in`・`classify_cache_miss` を実装し、`load_cached_entries` の返り値を替える
+- [x] `indexer.rs` の re-export に `CachedEntriesMiss` を足す
+- [x] 分類テストが通る（Green）
 
 ### Phase 2 — helper と呼び手
 
-- [ ] `common.rs` の `real_index_entries` と doc を替える
-- [ ] `basic.rs`・`build.rs`・`path.rs` の呼び手 7 本から `println!` を消す
-- [ ] `path_query_cost.rs` の `load_real_index` と `derives_same_bytes_as_normalize_entry_key` を替える
-- [ ] `cargo build -p snotra-core --all-targets` が通る
+- [x] `common.rs` の `real_index_entries` と doc を替える
+- [x] `basic.rs`・`build.rs`・`path.rs` の呼び手 7 本から `println!` を消す
+- [x] `path_query_cost.rs` の `load_real_index` と `derives_same_bytes_as_normalize_entry_key` を替える
+- [x] `cargo build -p snotra-core --all-targets` が通る
+
+実行記録: 分類テストは 8 行を 4 本のテストに束ねた（Red は `todo!()` で 3 本が落ち、読める場合の 1 本だけ通った）。
+計画の外の変更が 1 つある: `load_cache` は呼び手が `load_cached_entries` だけだったので、`dead_code` が立った。そのため消し、
+`load_cache_in` の doc の「`load_cache` と同じ読み込み」を書き直した（製品の経路の挙動は変わらない）。
+AC5: `over_real_index` の既定 5 本と `derives_same_bytes_as_normalize_entry_key` が「v7（現行 v10）」の文言を出して通った。
+`cargo test -p snotra-core` は全件緑。
 
 ### Phase 3 — 検証
 
 - [ ] カテゴリ別の検証コマンドを走らせる
-- [ ] 開発機の v7 で 6 本が「v7（現行 v10）」を含む古い版の文言を出して通ることを観測する（AC5）
+- [x] 開発機の v7 で 6 本が「v7（現行 v10）」を含む古い版の文言を出して通ることを観測する（AC5）
 
 ## 未確定（実装前に潰す）
 

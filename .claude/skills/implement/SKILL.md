@@ -164,7 +164,7 @@ Step 4 のあとに、`workspace/` の外を動かさない（PR 前ゲートの
 
 - 本文は `.github/pull_request_template.md` を Read し、その節に従って書く。テンプレートが PR 本文の契約の正本である（`--body-file` で渡すと、テンプレートが本文に入るとは限らないので、自分で節を写す）。Step 4 で撤去コミットのメッセージに退避した否定の知識は、「残したもの」へ書く
 - 本文ファイルは、リポジトリの外（一時ディレクトリ）へ Write で書く。パスは `/` 区切りで渡す
-- push して PR を作る: `git push -u origin HEAD && gh pr create --title "<conventional commit 形式>" --body-file <path>`。このチェーンにリダイレクトを挟まない。PR を作るときに機械で止まる条件の正本は、`.claude/hooks/pre-bash.mjs` の冒頭である。止まったら、拒否メッセージの復帰手順に従う
+- push して PR を作る: `git push -u origin HEAD && gh pr create --title "<conventional commit 形式>" --body-file <path>`。タイトルの issue 番号は末尾か括弧に置く（`fix: #N …` のように型名の直後に置くと、マージで issue が閉じる。`/merge-pr`「止められたとき（exit 1）」）。このチェーンにリダイレクトを挟まない。PR を作るときに機械で止まる条件の正本は、`.claude/hooks/pre-bash.mjs` の冒頭である。止まったら、拒否メッセージの復帰手順に従う
 - カテゴリ D の目視判定を人へ委ねるなら、PR を作ったあとに `scripts/manual-smoke.ps1 -PostToPr` で人へ依頼する（Step 3「3b. 委譲へ渡すもの」）
 
 ## 出力

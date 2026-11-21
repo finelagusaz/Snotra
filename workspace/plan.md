@@ -65,7 +65,8 @@
 - [x] `/start-issue`「出力」6 から #1300 の URL を消す
 - [x] `/plan-review`「リスク判定」から試行の 2 文を消す
 - [x] `git grep '#1300' .claude/skills` が 0 件であることを確かめる
-- [ ] #1300 に結論（D1・D2）をコメントする
+- [x] #1300 に結論（D1・D2・D5）をコメントする（https://github.com/finelagusaz/Snotra/issues/1300#issuecomment-7058710917）
+- [x] 検証ラウンド 1: sha 470a30ab・verify:tree E,F green・委譲の指摘 0 件・変異注入 該当なし（検知器と、検知器・implement 1a が読む節と行に触れない）・実地の確かめ 該当なし（手順を消すだけ。A2 の grep はアンカーで 0 件）・軸の違うレビュー 該当なし（所見はすべて採った／安全機構を足していない／規範の前提を反転していない）
 
 ## 未確定（実装前に潰す）
 

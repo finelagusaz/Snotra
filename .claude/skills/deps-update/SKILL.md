@@ -21,6 +21,7 @@ cargo / npm の依存関係を一括で更新する。ローカル検証 → PR 
 
 ## Step 1 — 前提確認
 
+- 本体のチェックアウト（`main` を checkout しているディレクトリ）で走らせる。harness の worktree（`.claude/worktrees/` の下）に居るなら、走らせずに止まり、本体で走らせるよう伝える。worktree からは `main` を最新にできず、古い `main` から切ることになる。依存の更新は影響が広いので、いつも最新の `main` の上で行う
 - `git status` で作業ツリーが clean かを確認する。未コミットの変更があれば停止し、ユーザーに整理を促す
 - `git fetch` して `main` を最新にする
 - `main` から `chore/deps-YYYYMMDD` ブランチを作る（`YYYYMMDD` は当日の日付。`CLAUDE.md` の「`main` 直コミット禁止」を守る）

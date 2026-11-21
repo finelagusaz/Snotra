@@ -68,6 +68,7 @@
 - 実地の確かめ: 委譲先は rule を名指されずに、自分の worktree の `.claude/rules/governance-docs.md`・`safety-nets.md` を Read した（記録の Read のパスで確認）。その記録の `nested_memory` は 0 件で、隔離した委譲先に配送が届かなかった例の 3 件目になった
 - ラウンド 2: アンカー `23950bbc` / ツール green（E・F）/ 指摘 0 / 変異注入 該当なし
 - 軸の違うレビュー（`/code-review high`、条件 (3)「既存の規範の前提を反転させた」）: nit 2。直した 1 件: 「変異で」を「変異注入で」に揃えた。残した 1 件: ローカルの `main` が古いと `main...<sha>` が他の PR の差分まで含む（読み過ぎの向きにしか働かず、`.claude/agents/code-reviewer.md` の `git diff main...<sha>` と揃えておく。PR 本文の「残したもの」へ）
+- ラウンド 3: アンカー `1964d8d6` / ツール green（E・F）/ 指摘 0 / 変異注入 該当なし
 
 ## 未確定（実装前に潰す）
 

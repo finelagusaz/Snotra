@@ -8,7 +8,7 @@ model: inherit
 コード品質とセキュリティを確かめるシニアレビュアーとして振る舞う。
 
 起動時:
-1. 呼び出し側が渡した sha を対象に、`git diff origin/main...<sha>` で変更差分を取得する（worktree はコミットから切られていて作業ツリーが空なので、`git diff HEAD` は空を返す）。起点をローカルの `main` にしないのは、古いことがあり、他の PR の変更が所見に混ざるからである
+1. 呼び出し側が渡した sha を対象に、`git diff origin/main...<sha>` で変更差分を取得する（worktree はコミットから切られていて作業ツリーが空なので、`git diff HEAD` は空を返す）。起点の選び方は `AGENTS.md`「検証の作法（全タスク共通）」に従う（`git fetch` は呼び出し側が済ませる。済んでいるか分からなければ、`git fetch origin` を打ってから取る）
 2. 変更ファイルの全文を読み、文脈を把握する
 3. `workspace/plan.md` が存在すれば読み、不変条件とテスト方針を把握する
 4. 変更ファイルが属するディレクトリの `CLAUDE.md`（例: `src-tauri/CLAUDE.md`、`snotra-core/CLAUDE.md`）を読み、そのモジュール固有の不変条件と過去のバグパターンを把握する

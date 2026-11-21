@@ -425,21 +425,25 @@ fn load_cached_entries_in(
 /// **バイト列を読み直す。** 間に `index.bin` が置き換わると分類がずれうるが、通るのは corpus
 /// テストの入口だけで、ずれても出る文言が変わるだけである。
 fn classify_cache_miss(dir: &Path) -> CachedEntriesMiss {
+    use crate::error::BinError;
+
     let Some(bytes) = cache_bin_file_in(dir).load_bytes() else {
         return CachedEntriesMiss::NoFile;
     };
-    // **magic を先に照合する。** `peek_version` は magic を見ないので、別物のファイルの 4..8 バイトを
-    // 版として読み、「古い版」と報せうる（同関数の doc）。
-    if bytes.get(0..4) != Some(INDEX_MAGIC.as_slice()) {
-        return CachedEntriesMiss::Unrecognized;
-    }
-    let Some(found) = crate::binfmt::peek_version(&bytes) else {
-        return CachedEntriesMiss::Unrecognized;
-    };
-    match found.cmp(&INDEX_CACHE_VERSION) {
-        std::cmp::Ordering::Less => CachedEntriesMiss::Older { found },
-        std::cmp::Ordering::Greater => CachedEntriesMiss::Newer { found },
-        std::cmp::Ordering::Equal => CachedEntriesMiss::Rejected,
+    // **ヘッダーの照合は `try_deserialize_with_header` の 1 つを通す**（magic を見てから版を見る。
+    // 配置を知るのは `binfmt` だけにする）。`()` で読むのは、本体を復号せずに照合だけを使うためである。
+    match try_deserialize_with_header::<()>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION) {
+        Err(BinError::VersionMismatch { actual, .. }) if actual < INDEX_CACHE_VERSION => {
+            CachedEntriesMiss::Older { found: actual }
+        }
+        Err(BinError::VersionMismatch { actual, .. }) => CachedEntriesMiss::Newer { found: actual },
+        Err(BinError::MagicMismatch { .. } | BinError::BufferTooShort) => {
+            CachedEntriesMiss::Unrecognized
+        }
+        // 版は現行と一致した。
+        Ok(()) | Err(BinError::DeserializeFailed | BinError::SerializeFailed) => {
+            CachedEntriesMiss::Rejected
+        }
     }
 }
 

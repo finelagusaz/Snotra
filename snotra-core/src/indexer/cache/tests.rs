@@ -2106,8 +2106,7 @@ fn cached_entries_miss_tells_missing_file_from_unrecognized_header() {
         miss_of("miss_short", Some(&[0x49, 0x4e, 0x44, 0x58]), 42),
         Err(CachedEntriesMiss::Unrecognized)
     );
-    // **magic を見ずに版だけを読むと、これは「v5 の旧版」に見える**（`peek_version` は magic を
-    // 照合しない）。
+    // **magic を見ずに版だけを読むと、これは「v5 の旧版」に見える。**
     let mut foreign = current_index_bytes("miss_foreign_src");
     foreign[0..4].copy_from_slice(b"XXXX");
     foreign[4..8].copy_from_slice(&5u32.to_le_bytes());
@@ -2126,26 +2125,13 @@ fn cached_entries_miss_tells_older_from_newer_version() {
         Err(CachedEntriesMiss::Older { found: 7 })
     );
 
-    let v4 = try_serialize_with_header(
-        INDEX_MAGIC,
-        4,
-        &IndexCacheV4 {
-            built_at: 1_700_000_000,
-            entries: one_entry(),
-            config_hash: 42,
-            char_masks: vec![0],
-            file_name_char_masks: vec![0],
-            lower_names: vec!["a".into()],
-            lower_file_names: vec![None],
-            normalized_keys: vec![],
-        },
-    )
-    .expect("serialize v4");
-    assert_eq!(miss_of("miss_v4_ok", Some(&v4), 42), Ok(1), "v4 は読める");
+    let dir = temp_dir("miss_v4_hash");
+    write_v4_cache_in(&dir, &one_entry(), 42);
     assert_eq!(
-        miss_of("miss_v4_hash", Some(&v4), 43),
+        load_cached_entries_in(&dir, 43).map(|entries| entries.len()),
         Err(CachedEntriesMiss::Older { found: 4 })
     );
+    let _ = fs::remove_dir_all(&dir);
 
     let mut newer = current_index_bytes("miss_newer_src");
     newer[4..8].copy_from_slice(&(INDEX_CACHE_VERSION + 1).to_le_bytes());
@@ -2164,22 +2150,8 @@ fn cached_entries_miss_tells_older_from_newer_version() {
 #[test]
 fn cached_entries_does_not_rewrite_a_legacy_index() {
     let dir = temp_dir("miss_v4_no_rewrite");
-    let v4 = try_serialize_with_header(
-        INDEX_MAGIC,
-        4,
-        &IndexCacheV4 {
-            built_at: 1_700_000_000,
-            entries: one_entry(),
-            config_hash: 42,
-            char_masks: vec![0],
-            file_name_char_masks: vec![0],
-            lower_names: vec!["a".into()],
-            lower_file_names: vec![None],
-            normalized_keys: vec![],
-        },
-    )
-    .expect("serialize v4");
-    fs::write(dir.join("index.bin"), &v4).expect("write v4 index.bin");
+    write_v4_cache_in(&dir, &one_entry(), 42);
+    let v4 = fs::read(dir.join("index.bin")).expect("read v4 index.bin");
 
     let entries = load_cached_entries_in(&dir, 42).expect("v4 は読める");
     assert_eq!(entries.len(), 1);

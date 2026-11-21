@@ -122,46 +122,41 @@ fn derives_same_bytes_as_normalize_entry_key() {
 fn load_real_index() -> Option<Vec<AppEntry>> {
     use indexer::{CachedEntriesMiss, INDEX_CACHE_VERSION};
 
-    let Some(config) = Config::config_path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|content| Config::from_toml_str(&content).ok())
-        .map(|mut config| {
-            config.apply_migrations();
-            config
-        })
-    else {
+    let Some(config) = read_real_config_read_only() else {
         println!("実 config が無い・読めないためスキップします。");
         return None;
     };
-    let scan = &config.paths.scan;
-    if scan.is_empty() {
+    if config.paths.scan.is_empty() {
         println!("実 config に scan パスが無いためスキップします。");
         return None;
     }
-    let miss = match indexer::load_cached_entries(scan, config.search.show_hidden_system) {
-        Ok(entries) => return Some(entries),
-        Err(miss) => miss,
-    };
-    match miss {
-        CachedEntriesMiss::NoConfigDir => {
-            println!("config の置き場所が引けないためスキップします。")
-        }
-        CachedEntriesMiss::NoFile => println!("実 index.bin が無いためスキップします。"),
-        CachedEntriesMiss::Unrecognized => {
-            println!("実 index.bin のヘッダーが読めないためスキップします。")
-        }
-        CachedEntriesMiss::Older { found } => println!(
-            "実 index.bin は v{found}（現行 v{INDEX_CACHE_VERSION}）で読めないためスキップします。\
-             現行版を書く製品を起動して置き換えると走ります。"
-        ),
-        CachedEntriesMiss::Newer { found } => println!(
-            "実 index.bin は v{found} でこのコード（v{INDEX_CACHE_VERSION}）より新しいためスキップします。"
-        ),
-        CachedEntriesMiss::Rejected => {
-            println!("実 index.bin は現行版だが、設定と食い違うか壊れているためスキップします。")
-        }
-    }
+    let reason =
+        match indexer::load_cached_entries(&config.paths.scan, config.search.show_hidden_system) {
+            Ok(entries) => return Some(entries),
+            Err(CachedEntriesMiss::NoConfigDir) => "config の置き場所が引けない".to_string(),
+            Err(CachedEntriesMiss::NoFile) => "実 index.bin が無い".to_string(),
+            Err(CachedEntriesMiss::Unrecognized) => "実 index.bin のヘッダーが読めない".to_string(),
+            Err(CachedEntriesMiss::Older { found }) => format!(
+                "実 index.bin は v{found}（現行 v{INDEX_CACHE_VERSION}）で読めない\
+                 （現行版を書く製品を起動して置き換えると走る）"
+            ),
+            Err(CachedEntriesMiss::Newer { found }) => {
+                format!("実 index.bin は v{found} でこのコード（v{INDEX_CACHE_VERSION}）より新しい")
+            }
+            Err(CachedEntriesMiss::Rejected) => {
+                "実 index.bin は現行版だが、設定と食い違うか壊れている".to_string()
+            }
+        };
+    println!("{reason}ためスキップします。");
     None
+}
+
+/// 実 `config.toml` を**読むだけ**で `Config` にする（`search/tests/common.rs` の同名関数の写し）。
+fn read_real_config_read_only() -> Option<Config> {
+    let content = std::fs::read_to_string(Config::config_path()?).ok()?;
+    let mut config = Config::from_toml_str(&content).ok()?;
+    config.apply_migrations();
+    Some(config)
 }
 
 /// パス区切りを含むクエリの**製品レベル**フレームコスト（実 `index.bin` × `Engine::search`）。

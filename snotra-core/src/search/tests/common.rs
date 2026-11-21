@@ -77,32 +77,26 @@ pub(super) fn real_index_entries() -> Option<Vec<AppEntry>> {
         println!("実 config に scan パスが無いためスキップします。");
         return None;
     }
-    let miss = match crate::indexer::load_cached_entries(
+    let reason = match crate::indexer::load_cached_entries(
         &config.paths.scan,
         config.search.show_hidden_system,
     ) {
         Ok(entries) => return Some(entries),
-        Err(miss) => miss,
+        Err(CachedEntriesMiss::NoConfigDir) => "config の置き場所が引けない".to_string(),
+        Err(CachedEntriesMiss::NoFile) => "実 index.bin が無い".to_string(),
+        Err(CachedEntriesMiss::Unrecognized) => "実 index.bin のヘッダーが読めない".to_string(),
+        Err(CachedEntriesMiss::Older { found }) => format!(
+            "実 index.bin は v{found}（現行 v{INDEX_CACHE_VERSION}）で読めない\
+             （現行版を書く製品を起動して置き換えると走る）"
+        ),
+        Err(CachedEntriesMiss::Newer { found }) => {
+            format!("実 index.bin は v{found} でこのコード（v{INDEX_CACHE_VERSION}）より新しい")
+        }
+        Err(CachedEntriesMiss::Rejected) => {
+            "実 index.bin は現行版だが、設定と食い違うか壊れている".to_string()
+        }
     };
-    match miss {
-        CachedEntriesMiss::NoConfigDir => {
-            println!("config の置き場所が引けないためスキップします。")
-        }
-        CachedEntriesMiss::NoFile => println!("実 index.bin が無いためスキップします。"),
-        CachedEntriesMiss::Unrecognized => {
-            println!("実 index.bin のヘッダーが読めないためスキップします。")
-        }
-        CachedEntriesMiss::Older { found } => println!(
-            "実 index.bin は v{found}（現行 v{INDEX_CACHE_VERSION}）で読めないためスキップします。\
-             現行版を書く製品を起動して置き換えると走ります。"
-        ),
-        CachedEntriesMiss::Newer { found } => println!(
-            "実 index.bin は v{found} でこのコード（v{INDEX_CACHE_VERSION}）より新しいためスキップします。"
-        ),
-        CachedEntriesMiss::Rejected => {
-            println!("実 index.bin は現行版だが、設定と食い違うか壊れているためスキップします。")
-        }
-    }
+    println!("{reason}ためスキップします。");
     None
 }
 

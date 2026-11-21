@@ -182,6 +182,25 @@ describe("clean-worktrees", () => {
     expect(branches(repo)).toContain("worktree-agent-own");
   });
 
+  it("ブランチの削除で git が失敗しても、残りの孤児の処理と集計を続けて exit 1（#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    const tip = commitOffHead(repo, "upstream.txt");
+    git(repo, ["update-ref", "refs/remotes/origin/main", tip]);
+    for (const id of ["locked", "free"]) {
+      git(repo, ["worktree", "add", path.join(repo, ".claude", "worktrees", `agent-${id}`), "-b", `worktree-agent-${id}`, tip]);
+    }
+    // ref のロックファイルを置くと、祖先の判定（読むだけ）は通り、-d と -D（書く）は失敗する
+    writeFileSync(path.join(repo, ".git", "refs", "heads", "worktree-agent-locked.lock"), "");
+
+    const r = runScript(repo);
+
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("git が失敗した");
+    expect(branches(repo)).toContain("worktree-agent-locked");
+    expect(branches(repo)).not.toContain("worktree-agent-free");
+    expect(r.output).toContain("失敗 1");
+  });
+
   it("対象ゼロなら exit 0 で「対象なし」を表示する", { timeout: T }, () => {
     const repo = initRepo();
 

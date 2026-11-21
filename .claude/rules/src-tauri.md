@@ -23,4 +23,4 @@ paths:
 ## トリガー → 検査
 
 - 並行境界（worker・channel・drain・listener・共有状態・live-read・async）を追加/変更したら: `/race-check`（述語の全文の SSOT は、常時ロードされる `AGENTS.md`「条件別チェック」表である。ここに写しは置かない。`.await` は `egui_shell/` の updater の経路に実際にある）
-- ホットキー・ウィンドウの生成/表示順・スラッシュコマンドの経路を変更したら: カテゴリ A に加えて、`docs/build-commands.md` カテゴリ C（`smoke:startup` / `smoke:egui`）も該当する。検証カテゴリは、拡張子ではなく、変更が触れるコードパスの意味で決める（#558）。
+- ホットキー・ウィンドウの生成/表示順・スラッシュコマンドの経路を変更したら: カテゴリ A に加えて、`docs/build-commands.md` カテゴリ C（`smoke:startup` / `smoke:egui`）も該当する。カテゴリ C の該当は、拡張子ではなく、変更が触れるコードパスの意味で決める（#558）。

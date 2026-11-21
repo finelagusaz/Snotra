@@ -180,15 +180,16 @@ export function hasSafeChain(command) {
   // `git push --dry-run` は送信しない。安全なチェーンではない。
   if (DRY_RUN.test(command.slice(pushAt, pushEnd))) return false;
 
-  // `\&&` は Bash では「文字の `&` ＋背景実行の `&`」で、push を待たずに gh が走る。エスケープされた区切りが
-  // 1 つでもあれば認めない（push の終端の区切り自身もエスケープでありうるので、その直前の 1 字から見る）
+  // `\&&` は Bash では「文字の `&` ＋背景実行の `&`」で、push を待たずに gh が走る。PowerShell のエスケープ文字
+  // `` ` `` も同じ。エスケープされた区切りが 1 つでもあれば認めない（push の終端の区切り自身もエスケープでありうるので、
+  // その直前の 1 字から見る）
   if (ESCAPED_SEPARATOR.test(command.slice(Math.max(pushEnd - 1, 0), ghAt))) return false;
 
   const separators = command.slice(pushEnd, ghAt).match(SEPARATOR_RUN) ?? [];
   return separators.length >= 1 && separators.every((s) => s === "&&");
 }
 
-const ESCAPED_SEPARATOR = new RegExp(String.raw`\\${SEPARATOR_CLASS}`);
+const ESCAPED_SEPARATOR = new RegExp(String.raw`[\\\x60]${SEPARATOR_CLASS}`);
 
 const ALLOW = Object.freeze({ action: "allow" });
 const block = (reason) => ({ action: "block", reason });

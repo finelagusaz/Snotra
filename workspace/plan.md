@@ -97,11 +97,16 @@ hook に止められたエージェントが `gh pr "create"` のような綴り
 - [x] `hasSafeChain` で、push の終端から gh までにエスケープされた区切り（`\&&` など）があれば認めない
 - [x] `\&&` のテストを `decide` の分岐表へ足す
 
+### Phase 7 — ラウンド 4 のあとの自動セキュリティレビューの反映
+
+- [x] エスケープされた区切りの判定に PowerShell の `` ` `` を含め、PowerShell ツールのテストを足す
+
 ### 検証の記録
 
 - ラウンド 1: sha 0cb20d70 / ツール green（E: npm test 0・F: governance:check 0・warnings なし）/ 委譲の指摘 3 件（High 1: 行継続の連結が継続でない改行の次の行を検出から外す fail-open・Medium 1: その帰結を decide で固定するテストが無い・Low 1: doc が読む側を列挙）/ 変異 (a)〜(f) と追加 6 種はすべて assert で赤・生き残り 0（ただし連結の変異 f1・g1・g2 は単体の出力比較 1 本だけが捕捉）/ 実地の確かめ: 冒頭コメントの検出・受容の主張を node で実測し、すべて主張どおり。別に自動セキュリティレビューが 2 件（HIGH: 同上の行継続・MEDIUM: 正規化した見え方の `hasSafeChain` が `'&'&` を安全と取り違える）を出した。挙動を変える 4 件（High・Medium・セキュリティ 2 件）と Low をすべて Phase 4 で直した
 - ラウンド 2: sha 2b5f898a / ツール green（E 0・F 0・warnings なし）/ ラウンド 1 の High・Medium は before/after で解消を確認 / 新しい指摘 3 件（Medium-A: 見え方でだけ当たる gh が push より前にあると後ろの安全なチェーンで allow（修正前も allow で退行ではない）・Low-A: 見え方の site での cwd 判定をテストが固定していない・Low-B: 元の文字列の site が守るのはいま過剰検出 1 形だけ）/ 変異 (a)(b)(c1)(d)(e)(f)(g)(i) は assert で赤、(c2: cwd を見え方の位置で比べる＝過剰 block の向き)と h（cwd のループを先頭の site だけ）が緑 / 不変条件「正規化が block を allow に変えない」は構造からの導出と差分ファズ（20 万入力 × 2 tool × 16 状態で 0 件。ラウンド 1 版には 8496 件などを出す検出力）で確認。別に自動セキュリティレビューが Medium-A と同じ形を 1 件出した。Medium-A と Low-A を Phase 5 で直した（h はこれで赤になるはず）。Low-B は設計どおり（`gh pr create'x'` のような糊付けの形と、将来の正規化の変更への保険）として残す。c2 は fail-closed の向きなので残す
 - ラウンド 3: sha 94ae8c51 / ツール green（E 0・F 0・warnings なし）/ Medium-A・Low-A の解消を確認（変異 h が赤に）/ 変異 e'・e''・e3・h はすべて assert で赤・生き残り 0 / 正当な安全なチェーンの典型（`--title "a b"`・`--body "x; y"`・`--body-file` など）は修正前どおり git を読まずに allow。動的判定へ移ったのは 4 形（引用付き `--dry-run`・`-n` は修正前の fail-open が塞がった改善、残り 2 形は fail-closed の過剰）/ 差分ファズ（元の文字列で hasSafeChain が真の場合を含む）で「修正前 block → 修正後 allow」ほか 0 件 / 新しい指摘 2 件（Medium-R3-1: Bash の `\&&` を安全なチェーンと認める、修正前から・Low-R3-1: hasSafeChain の doc が decide の条件を写す）。Medium-R3-1 は挙動を変えるので Phase 6 で直した。Low-R3-1 は挙動を変えないので捨てた
+- ラウンド 4: sha 6d3b81f1 / ツール green（E 0・F 0・warnings なし）/ Medium-R3-1 の解消を確認 / 変異（判定を外す・範囲を pushEnd 起点にする）はどちらも assert で赤 / r3 → r4 で移ったのは 5 形（`\&&` の 2 形は正しく動的判定へ、`\\&&` 2 形と PowerShell の `\&&` は fail-closed の過剰）。典型の安全なチェーンは allow のまま / 差分ファズは全項目 0 件（r3 の 630 件も 0 件に）/ 新しい指摘は挙動を変えない Low 3 件だけで、捨てた。別に自動セキュリティレビューが 1 件（MEDIUM: PowerShell のエスケープ文字 `` ` `` の区切りを見ていない）を出したので、Phase 7 で直した
 - [x] 範囲外の 2 件を PR 本文の「範囲外」に書く文面を用意する: (a) `usesNoVerify`・`pullWithoutFfOnly` の同じ形の素通り（`git "pull"`・`git commit --no-ver""ify`） (b) `hasSafeChain` が最初の一致の位置を使うため、引用の内側の言及が位置を前へずらす修正前からの素通り（`git commit -m "a && git push" && gh pr create` が allow になる。独立導出で実測）
 
 ## 未確定（実装前に潰す）

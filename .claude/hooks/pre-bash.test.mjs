@@ -425,6 +425,17 @@ describe("decide — 分岐表", () => {
     expect(spy).toHaveBeenCalled();
   });
 
+  // PowerShell のエスケープ文字は `` ` ``
+  it.each([
+    [`git push -u origin HEAD \`&& ${ghPrCreate()}`],
+    [`git push -u origin HEAD && echo x \`&& ${ghPrCreate()}`],
+  ])("PowerShell の `` ` `` でエスケープされた区切りを挟むチェーンも認めない: %j", (cmd) => {
+    const spy = vi.fn(NO_UPSTREAM);
+    const r = decide(pwsh(cmd), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(spy).toHaveBeenCalled();
+  });
+
   // 見え方でだけ当たる gh が push より前にあれば、後ろの安全なチェーンでは認めない（前の gh はチェーンの外で走る）
   it("見え方でだけ当たる gh が push より前にあると、後ろの安全なチェーンでも動的判定へ回す", () => {
     const spy = vi.fn(NO_UPSTREAM);

@@ -25,6 +25,7 @@
 | `.claude/agents/code-reviewer.md` | 起動時の手順 1 の `git diff main...<sha>`（実装中に追加。下の「実装中に判明した作業」） |
 | `.claude/skills/retrospective/SKILL.md` | 「Step 1 — サイクルの全体像を把握」の `git log` / `git diff` の起点（同上） |
 | `.claude/skills/implement/SKILL.md` | 「3b. 委譲へ渡すもの」の `git diff --name-only main...<sha>`（同上） |
+| `docs/build-commands.md` | `race:boundaries` の `--base` の箇条（軸の違うレビューの指摘で追加） |
 
 ## 実装の順序
 
@@ -65,6 +66,8 @@
 - ラウンド 1: アンカー `48b7401e` / ツール green（E・F）/ 指摘 High 1（訳語「掴む」）・Medium 1（ローカルの `main` を進める手順が消え、`main` 起点の差分の害が増える）→ 2 件とも直した / 実地の確かめ: 委譲先が使い捨てのリポジトリで、本体相当と worktree 相当の両方で新しい 2 行を打ち、最新の `origin/main` から upstream なしで切れ、`push -u` で同名が upstream になることを確かめた / 変異注入 該当なし
 - ラウンド 2: アンカー `7cd7bd88` / ツール green（E・F）/ ラウンド 1 の 2 件は解消 / 新規 High 1（`/retrospective` の `git diff origin/main..HEAD` は 2 点形で、マージの後に自分の変更が消え他の PR が逆向きに出る。委譲先が使い捨てのリポジトリで実測）・Low 2（以前からの問題: 複数 PR にまたがるサイクルでは Step 1 の範囲が空になる／書き方: Step 2 の括弧の数え上げ・code-reviewer の括弧の連続）→ High と書き方の 2 点を直した。以前からの問題は範囲外として PR 本文の「残したもの」へ / 変異注入 該当なし
 - ラウンド 3: アンカー `354d9212` / ツール green（E・F）/ ラウンド 2 の指摘は解消（retrospective の 3 点形を S1〜S4 で打ち直し、途中で main を merge したブランチでも正しいことを実測）/ 新規 Low 1（code-reviewer の括弧の掛かり先）→ 直した / 変異注入 該当なし
+- ラウンド 4: アンカー `c9df3dea` / ツール green（E・F）/ 指摘 0 / 変異注入 該当なし
+- 軸の違うレビュー: 条件 (1)「委譲の所見を主が退けた」（注の重複・複数 PR のサイクルで範囲が空になる以前からの問題）/ 対象 `chore/1496-start-issue-worktree-branch`、差分は `origin/main...HEAD` / nit 2 / 直した 1（`docs/build-commands.md` の `race:boundaries --base` に `origin/main` を渡すことを添えた）/ 残した 1（ローカルの `main` が進まなくなるので、`verify:tree remove` が委譲先のブランチを「not fully merged」で消せない場面が増える — 中身は祖先で害は手間だけ。PR 本文の「残したもの」へ）
 
 ## 未確定（実装前に潰す）
 

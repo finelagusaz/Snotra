@@ -11,6 +11,7 @@ import {
   tokenStart,
   GH_PR_CREATE,
   ghPrCreateView,
+  ghPrCreateSites,
   GIT_PUSH,
   hasSafeChain,
   decide,
@@ -178,9 +179,9 @@ describe("GH_PR_CREATE — コマンド位置検出（過剰検出は許容・�
 });
 
 // #1499: hook に止められたエージェントが `gh pr "create"` へ書き換えてゲートを素通りした。
-// 検出は `decide` と `main` と同じく `ghPrCreateView` を通して測る（生の GH_PR_CREATE を直接測らない）。
-describe("ghPrCreateView — 引用符・エスケープで語を割った綴り（#1499）", () => {
-  const detects = (cmd) => tokenStart(GH_PR_CREATE, ghPrCreateView(cmd)) >= 0;
+// 検出は `decide` と `main` と同じく `ghPrCreateSites` を通して測る（生の GH_PR_CREATE を直接測らない）。
+describe("ghPrCreateSites / ghPrCreateView — 引用符・エスケープで語を割った綴り（#1499）", () => {
+  const detects = (cmd) => ghPrCreateSites(cmd).length > 0;
 
   it.each([
     [`${GH} pr create --fill`],
@@ -202,17 +203,18 @@ describe("ghPrCreateView — 引用符・エスケープで語を割った綴り
   it.each([
     [`git commit -m "${ghPrCreate()} を足す"`],
     [`grep -n "${ghPrCreate()}" CLAUDE.md`],
-    // シェルでは `createx` なので、正規化後に検出しないほうが正しい（正規化前は検出していた）
-    [`${ghPrCreate()}'x'`],
-  ])("言及・別の語は検出しない: %j", (cmd) => {
+  ])("言及は検出しない: %j", (cmd) => {
     expect(detects(cmd)).toBe(false);
   });
 
-  // 受容する過剰検出（fail-closed）: 区切り文字の直後の引用が外れて、言及がコマンド位置に来る
+  // 受容する過剰検出（fail-closed）
   it.each([
+    // 区切り文字の直後の引用が外れて、言及がコマンド位置に来る
     [`node -e "console.log('${ghPrCreate()}')"`],
     [`"${ghPrCreate()}"`],
-  ])("区切りの直後の引用の内側は検出する（過剰検出を意図として固定）: %j", (cmd) => {
+    // シェルでは `createx` だが、元の文字列で当たる（どちらかの見え方で当たれば検出）
+    [`${ghPrCreate()}'x'`],
+  ])("過剰検出を意図として固定する: %j", (cmd) => {
     expect(detects(cmd)).toBe(true);
   });
 
@@ -226,9 +228,25 @@ describe("ghPrCreateView — 引用符・エスケープで語を割った綴り
     expect(detects(cmd)).toBe(false);
   });
 
-  it("行継続は連結し、改行（区切り文字）を残さない", () => {
-    expect(ghPrCreateView(`a \\\nb`)).toBe("a b");
-    expect(ghPrCreateView(`a \`\r\nb`)).toBe("a b");
+  // 連結すると、継続でない改行の次の行の gh pr create を検出から外す（委譲レビューで実測した fail-open）
+  it("行継続を連結せず、改行（区切り文字）を残す", () => {
+    expect(ghPrCreateView(`a \\\nb`)).toBe("a \nb");
+    expect(ghPrCreateView(`a \`\r\nb`)).toBe("a \r\nb");
+  });
+
+  // 元の文字列で検出し、正規化した見え方では外れる形も落とさない（どちらかで当たれば検出）
+  it.each([
+    [`echo a\\\\\n${ghPrCreate()} --fill`], // Bash: `\\` は文字どおりの `\`、改行は区切り
+    [`echo hi \\\n${ghPrCreate()} --fill`], // PowerShell: `\` + 改行は継続ではない
+    [`echo hi \`\`\n${ghPrCreate()} --fill`], // PowerShell: 偶数個の `` ` `` + 改行は継続ではない
+    [`# memo \\\n${ghPrCreate()} --fill`], // コメント行末
+  ])("継続でない改行の次の行は検出する: %j", (cmd) => {
+    expect(detects(cmd)).toBe(true);
+  });
+
+  it("見え方ごとに位置を返す（位置の比較は同じ見え方の中で行う）", () => {
+    const cmd = `echo "a"; ${GH} pr "create"`;
+    expect(ghPrCreateSites(cmd)).toEqual([{ text: `echo a; ${ghPrCreate()}`, at: 8 }]);
   });
 
   it.each([[""], ["\\"], ["`"], ['"'], ["'"], ["\\\n"], ["\u0000\u0007"]])("全域関数である（throw しない）: %j", (cmd) => {
@@ -383,10 +401,27 @@ describe("decide — 分岐表", () => {
     expect(r.reason).toContain("upstream が未設定");
   });
 
-  it("引用符で語を割った綴りでも、安全なチェーンは upstream を読まずに allow（hasSafeChain も同じ見え方で測る）", () => {
+  // 安全なチェーンは元の文字列でだけ認める。引用符を消した見え方で認めると、`'&'&`（背景実行）を `&&` と取り違える
+  it.each([
+    [`git push -u origin HEAD && ${GH} pr "create"`],
+    [`git push -u origin HEAD '&'& ${ghPrCreate()}`],
+  ])("引用符で作った安全なチェーンは認めず、動的判定へ回す: %j", (cmd) => {
     const spy = vi.fn(NO_UPSTREAM);
-    expect(decide(bash(`git push -u origin HEAD && ${GH} pr "create"`), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN }).action).toBe("allow");
-    expect(spy).not.toHaveBeenCalled();
+    const r = decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("upstream が未設定");
+    expect(spy).toHaveBeenCalled();
+  });
+
+  // 継続でない改行の次の行の gh pr create は、修正前と同じく block する（行継続を連結した版の fail-open の回帰）
+  it.each([
+    [`git push -u origin HEAD \`\n${ghPrCreate()} --fill`],
+    [`git push -u origin HEAD \\\\\n${ghPrCreate()} --fill`],
+    [`echo hi \\\n${ghPrCreate()} --fill`],
+  ])("継続でない改行の次の行の gh pr create は block: %j", (cmd) => {
+    const r = decide(pwsh(cmd), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("upstream が未設定");
   });
 
   // cd の位置と gh の位置を別の見え方で比べると、引用符の数だけ gh が前へずれて cwd の block が外れる（fail-open）
@@ -790,18 +825,18 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("src/y.rs");
   });
 
-  // #1499: main() の verify-tree の import 判定が decide と同じ見え方で検出していることを、実行で固定する。
-  // import 判定だけが元の文字列を見ると、decide は検出するのに tool が null になり、exit 2 で止まる
-  it("引用符で語を割った綴りの安全なチェーンは exit 0（main の import 判定も同じ見え方で検出する）", () => {
+  // #1499: main() の verify-tree の import 判定が decide と同じ関数で検出していることを、実行で固定する。
+  // import 判定だけがずれると、decide は検出するのに tool が null になり、要約の照合で偽の理由のまま止まる。
+  // ずれていなければ、要約の照合を通り、その先の upstream の判定で止まる
+  it("引用符で語を割った綴りは、要約の照合を通って upstream の判定で exit 2（main の import 判定も検出する）", () => {
     const dir = verifiedRepo();
-    const res = runHook(
-      { tool_name: "Bash", tool_input: { command: `git push -u origin HEAD && ${GH} pr "create"` }, cwd: dir },
-      dir,
-    );
-    expect(res.status, res.stderr).toBe(0);
+    const res = runHook({ tool_name: "Bash", tool_input: { command: `${GH} pr "create"` }, cwd: dir }, dir);
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("upstream が未設定");
+    expect(res.stderr).not.toContain("verify-tree.mjs を読み込めませんでした");
   });
 
-  // 上の exit 0 は、decide が検出しなくても出る。検出していることを、ゲートの理由で固定する
+  // 検出していることを、upstream より前のゲートの理由でも固定する
   it("引用符で語を割った綴りも、未チェックの plan.md がある repo では exit 2 で plan.md の理由を出す", () => {
     const dir = verifiedRepo();
     mkdirSync(path.join(dir, "workspace"), { recursive: true });

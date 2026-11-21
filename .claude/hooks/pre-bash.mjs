@@ -14,7 +14,8 @@
 // 判定単位は 2 種類ある。
 //   - コマンド位置: `gh pr create` と `git` の各判定。`git` 系はさらに次の区切りまでのセグメントに閉じる
 //     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする。`gh pr create` の判定だけは、
-//     引用符とエスケープ文字を取り除いた見え方（`ghPrCreateView`）の上でコマンド位置を探す
+//     元の文字列に加えて、引用符とエスケープ文字を取り除いた見え方（`ghPrCreateView`）の上でもコマンド位置を探す
+//     （`ghPrCreateSites`）
 //   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
 //     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
 // 後者は、`docs/development-principles.md`「規則を守らせる強さ」の原則 6（判定は構文の位置で決める）から、
@@ -30,8 +31,9 @@
 // この領域は hook にしか見えない。`gh pr create` はリポジトリを触らないため git hook は
 // 鳴らず、push もしないので pre-push も鳴らない。GitHub ruleset も空 PR を防げない。
 //
-// 引用符とエスケープ文字で語を割る形（`gh pr "create"` / `cr\eate` / 行継続）は検出する（`ghPrCreateView`）。
-// hook に止められた委譲先が自然にたどり着いた事故モードである（#1499）。
+// 引用符とエスケープ文字で語を割る形（`gh pr "create"` / `cr\eate` / `gh pr \` + 改行 + `create`）は検出する
+// （`ghPrCreateSites`）。hook に止められた委譲先が自然にたどり着いた事故モードである（#1499）。この形は安全なチェーンと
+// 認めず、動的判定（upstream と未 push）へ回す（`hasSafeChain` の doc）。
 //
 // 受容する未対応リスク（いずれも「gh pr create がコマンド位置に現れない」形。意図的迂回であり事故モードではない。
 // `--no-verify` と同格に人間専用として扱う）:
@@ -89,23 +91,38 @@ export const GH_PR_CREATE = new RegExp(
   `${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}create\\b)`,
 );
 
-const LINE_CONTINUATION = /[\\`]\r?\n/g;
 const QUOTE_OR_ESCAPE = /["'\\`]/g;
 
 /**
- * `gh pr create` の判定が読む見え方。シェルが語を組み立てるときに消える文字を取り除く——行継続（Bash の `\`・
- * PowerShell の `` ` `` + 改行）を連結し、残る引用符とエスケープ文字を消す。`gh pr "create"` と `cr\eate` は、
- * シェルでは素の `gh pr create` として走る（#1499。hook に止められた委譲先がこの形へ書き換えて素通りした）。
+ * 引用符とエスケープ文字（`"` `'` `\` `` ` ``）を取り除いた見え方。`gh pr "create"` と `cr\eate` は、シェルでは
+ * 素の `gh pr create` として走る（#1499。hook に止められた委譲先がこの形へ書き換えて素通りした）。
  *
- * 検出・`CWD_CHANGE` の位置比較・`hasSafeChain`・`main` の import 判定は、すべてこの出力を読む。位置を比べる判定の
- * どれかが元の文字列を読むと、引用符の数だけ位置がずれる（cwd 判定の fail-open・偽の理由での block）。
- * 形の判定（`judgeCommandShape`）には渡さない。`\` パスの判定が消える。
+ * **区切り文字を消さない。** 消すのは区切り文字でない 4 字だけなので、元の文字列にある区切りはすべてこの見え方にも残る。
+ * 行継続（`\` / `` ` `` + 改行）も連結せず、改行を残す。連結すると、継続でない改行（Bash の `\\` + 改行・
+ * PowerShell の `\` + 改行・コメント行末）の次の行の `gh pr create` を検出から外す（#1499 の委譲レビューで実測した
+ * fail-open）。`gh pr \` + 改行 + `create` は `\s+` が改行を読むので、連結しなくても検出する。
  *
  * 区切り文字の直後の引用が外れると、言及がコマンド位置に来る（`node -e "console.log('gh pr create')"`）。
  * この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
  */
 export function ghPrCreateView(command) {
-  return command.replace(LINE_CONTINUATION, "").replace(QUOTE_OR_ESCAPE, "");
+  return command.replace(QUOTE_OR_ESCAPE, "");
+}
+
+/**
+ * `gh pr create` を検出した見え方と、その中の位置。元の文字列と `ghPrCreateView` の見え方の**どちらか**で当たれば
+ * 検出とする（どちらの見え方にしか現れない検出も落とさない。片方だけでは、もう片方が当てる形を通す）。
+ * 位置は見え方ごとに測る。引用符を消すと位置がずれるので、位置の比較は同じ見え方の中でしか行わない。
+ * `decide` と `main` の import 判定がこの関数を共有する（ずれると、decide は検出するのに verify-tree を読み込まず、
+ * 偽の理由で止まる）。
+ */
+export function ghPrCreateSites(command) {
+  const sites = [];
+  for (const text of new Set([command, ghPrCreateView(command)])) {
+    const at = tokenStart(GH_PR_CREATE, text);
+    if (at >= 0) sites.push({ text, at });
+  }
+  return sites;
 }
 
 // `git -C <tree> push` は意図的に一致させない。別ツリーへ push しても
@@ -145,7 +162,8 @@ export function tokenStart(re, command) {
  * 区切りが 1 つでも `;` / `||` / `|` / 改行なら、push が失敗しても `gh pr create` が
  * 走りうる。そのときコミットは remote に無く、空 PR になる。判定不能として block する。
  *
- * `decide` は `ghPrCreateView` の出力を渡す（gh・push・区切りを、検出と同じ見え方で測る）。
+ * `decide` は元の文字列を渡す。引用符を消した見え方では `'&'&` が `&&` に見え、背景実行の `&` を安全なチェーンと
+ * 取り違える（#1499 の自動セキュリティレビュー）。引用符で語を割った `gh pr create` はここで偽になり、動的判定へ回る。
  */
 export function hasSafeChain(command) {
   const ghAt = tokenStart(GH_PR_CREATE, command);
@@ -370,14 +388,15 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
   const shape = judgeCommandShape(command, platform);
   if (shape) return shape;
 
-  // ここから先の位置の判定は、すべて同じ見え方で読む（#1499）
-  const view = ghPrCreateView(command);
-  const ghAt = tokenStart(GH_PR_CREATE, view);
-  if (ghAt < 0) return ALLOW; // 管轄外
+  const sites = ghPrCreateSites(command);
+  if (sites.length === 0) return ALLOW; // 管轄外
 
-  const cwdAt = tokenStart(CWD_CHANGE, view);
-  if (cwdAt >= 0 && cwdAt < ghAt) {
-    return block("PR 作成の前に作業ディレクトリを変更しています。どのリポジトリに PR が作られるか判定できません。");
+  // cwd 変更は、検出した見え方それぞれの中で位置を比べる（#1499）
+  for (const { text, at } of sites) {
+    const cwdAt = tokenStart(CWD_CHANGE, text);
+    if (cwdAt >= 0 && cwdAt < at) {
+      return block("PR 作成の前に作業ディレクトリを変更しています。どのリポジトリに PR が作られるか判定できません。");
+    }
   }
 
   // reader はすべて必須（#1299）。渡されなければ止める——配線忘れを allow にも未捕捉の例外にもしない
@@ -399,7 +418,7 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
   const verified = readVerifyState();
   if (!verified.ok) return block(`${verified.reason}`);
 
-  if (hasSafeChain(view)) return ALLOW; // push が `&&` で先行する
+  if (hasSafeChain(command)) return ALLOW; // push が `&&` で先行する（元の文字列でだけ認める・hasSafeChain の doc）
 
   const state = readGitState();
   if (!state.ok) return block(`git の状態を確認できませんでした（${state.reason}）。${REMEDY}`);
@@ -599,8 +618,8 @@ async function main() {
   let tool = null;
   let importError = null;
   const command = payload?.tool_input?.command;
-  // `decide` と同じ見え方で検出する。ずれると decide は検出するのに tool が null になり、偽の理由で止まる
-  if (typeof command === "string" && tokenStart(GH_PR_CREATE, ghPrCreateView(command)) >= 0) {
+  // `decide` と同じ関数で検出する（`ghPrCreateSites` の doc）
+  if (typeof command === "string" && ghPrCreateSites(command).length > 0) {
     try {
       tool = await import(new URL("../../scripts/verify-tree.mjs", import.meta.url).href);
     } catch (e) {

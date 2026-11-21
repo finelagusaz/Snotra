@@ -6,22 +6,24 @@
 
 hook に止められたエージェントが `gh pr "create"` のような綴りへ書き換えて、PR 前ゲート（空 PR・plan.md の未チェック・ツールの要約）を素通りする事故を塞ぐ。
 
-1. issue の表の 8 綴り（`gh pr create --fill` / `gh pr "create"` / `gh pr 'create'` / `gh "pr" create` / `"gh" pr create` / `gh pr cre""ate` / `gh pr cr\eate` / `git push -u origin HEAD; gh pr "create" --fill`）を、`decide()` が `gh pr create` として扱う（ゲートへ回す）。表に無い同類として、行継続（`gh pr \` + 改行 + `create`、PowerShell の `` ` `` + 改行）と、PowerShell のエスケープ（`` gh pr cr`eate ``）も扱う
+1. issue の表の 8 綴り（`gh pr create --fill` / `gh pr "create"` / `gh pr 'create'` / `gh "pr" create` / `"gh" pr create` / `gh pr cre""ate` / `gh pr cr\eate` / `git push -u origin HEAD; gh pr "create" --fill`）を、`decide()` が `gh pr create` として扱う（ゲートへ回す）。表に無い同類として、行継続（`gh pr \` + 改行 + `create`、PowerShell の `` ` `` + 改行）と、PowerShell のエスケープ（`` gh pr cr`eate ``）も扱う。行継続は連結しない（改行を残しても `\s+` が読む）。継続でない改行（Bash の `\\` + 改行・PowerShell の `\` + 改行・コメント行末）の次の行の `gh pr create` は、修正前と同じく検出する（ラウンド 1 で追加）
 2. 言及の扱いがテストに固定されている
    - 検出しない: `git commit -m "gh pr create を足す"`、`grep -n "gh pr create" CLAUDE.md`
    - 検出する（受容する過剰検出・fail-closed）: `node -e "console.log('gh pr create')"`、`"gh pr create"` を 1 語として引用した形
-   - 検出しない（正規化後のほうが正しい）: `gh pr create'x'`（シェルでは `createx`）
+   - 検出する（受容する過剰検出）: `gh pr create'x'`（シェルでは `createx` だが、元の文字列で当たる。ラウンド 1 で「どちらかの見え方で当たれば検出」にしたため、検出しない側から移した）
 3. 受容する未対応の形（`$'create'`・`$"create"`・`${X}create`・`c$()reate`）が、hook 冒頭の一覧とテストに固定されている
 4. 正規化は `gh pr create` の判定だけに通る。`judgeCommandShape` は元の文字列で判定する（`--body-file "C:\Users\x\y.md"` を含む `gh pr create` は、今までどおり `\` パスの判定で止まる）
-5. `main()` の verify-tree の import 判定と `decide()` の検出が、同じ関数を通る。`CWD_CHANGE` の位置比較と `hasSafeChain` も、検出と同じ正規化後の文字列で判定する（`echo "a" "b" "c" "d" "e" "f"; cd x; gh pr "create"` が cwd 変更で block される）
+5. `main()` の verify-tree の import 判定と `decide()` の検出が、同じ関数（`ghPrCreateSites`）を通る。検出は、元の文字列と正規化した見え方の**どちらか**で当たれば成立する。`CWD_CHANGE` の位置比較は、検出した見え方それぞれの中で行う（`echo "a" "b" "c" "d" "e" "f"; cd x; gh pr "create"` が cwd 変更で block される）
+6. 安全なチェーン（`hasSafeChain`）は元の文字列でだけ認める。正規化が block を allow に変える経路を作らない（`git push '&'& gh pr create` は背景実行なので block。引用符で語を割った `gh pr create` は動的判定へ回る）（ラウンド 1 で追加。自動セキュリティレビューの指摘）
 
 ## 変更するファイル
 
 - `.claude/hooks/pre-bash.mjs`
-  - 新設: `export function ghPrCreateView(command)` — 行継続（`\` / `` ` `` + 改行）を連結し、残る `"` `'` `\` `` ` `` を取り除いた文字列を返す。`gh pr create` の判定だけが使う
-  - `hasSafeChain(command)`: 引数は正規化後の文字列を受け取る前提にする（doc にそう書く。中身の正規表現は変えない）
-  - `decide`: `judgeCommandShape(command, platform)` は元の文字列のまま。その後 `const view = ghPrCreateView(command)` を作り、`tokenStart(GH_PR_CREATE, view)`・`tokenStart(CWD_CHANGE, view)`・`hasSafeChain(view)` に渡す
-  - `main`: import の判定を `tokenStart(GH_PR_CREATE, ghPrCreateView(command))` にする
+  - 新設: `export function ghPrCreateView(command)` — `"` `'` `\` `` ` `` を取り除いた文字列を返す（行継続は連結しない）
+  - 新設: `export function ghPrCreateSites(command)` — 元の文字列と `ghPrCreateView` の見え方のうち、`gh pr create` を検出したものを `{ text, at }` で返す
+  - `hasSafeChain(command)`: 元の文字列を受け取る（doc にそう書く。中身は変えない）
+  - `decide`: `judgeCommandShape(command, platform)` は元の文字列のまま。`ghPrCreateSites(command)` が空なら管轄外。`CWD_CHANGE` は各 site の `text` の中で `at` と比べる。`hasSafeChain(command)`
+  - `main`: import の判定を `ghPrCreateSites(command).length > 0` にする
   - 冒頭コメントの「受容する未対応リスク」: 引用・エスケープで語を割る形は検出することを書き、`$'…'`・`$"…"`・変数展開・置換で語を組み立てる形を受容の一覧へ足す。「`$(...)` の内側」は、`(` が区切りなので現状でも検出される（委譲先のコマンドで実測）ため、一覧から外す。バッククォートは、`` ` `` を取り除くので、先頭の `` `gh pr create` `` は検出されることに合わせて直す
   - `AT_CMD_POS` の注釈「引用の内側までは解釈しない」: 引用符は取り除くが、引用の内側の区切りは解釈しない、という今の意味に合わせて直す
 - `.claude/hooks/pre-bash.test.mjs`
@@ -41,7 +43,9 @@ hook に止められたエージェントが `gh pr "create"` のような綴り
 
 - fail-closed の骨格（既定の exit 2、許可が確定した経路だけが 0）を変えない。`ghPrCreateView` は全域関数で、例外を投げない（文字列の置換だけ）。既存の「5 述語は全域関数である」の describe に倣い、空文字・制御文字を含む入力で投げないことをテストする
 - `judgeCommandShape` に渡す文字列を変えない（変えると `\` パスと heredoc の判定が弱まる。調査で実測）
-- 検出・`CWD_CHANGE`・`hasSafeChain`・`main` の import は、同じ `ghPrCreateView` の出力を見る（どれかが元の文字列を見ると、偽の理由での block か、cwd 判定の fail-open になる）
+- 検出と `main` の import は同じ `ghPrCreateSites` を通る（ずれると偽の理由で block）。`CWD_CHANGE` の位置は検出と同じ見え方の中で比べる（別の見え方と比べると cwd 判定が fail-open）
+- 正規化は区切り文字を消さない。元の文字列で検出する形を、正規化で検出から外さない（どちらかで当たれば検出）
+- 正規化した見え方で block を allow に変えない（安全なチェーンは元の文字列でだけ認める）
 - 正規表現（`GH_PR_CREATE`・`FLAG` など）の形は変えない（バックトラックの性質を保つ）
 
 ## テスト方針と検証コマンド
@@ -50,7 +54,7 @@ hook に止められたエージェントが `gh pr "create"` のような綴り
 - プロセス起動: 既存の「プロセス起動 — exit code の契約」に、`gh pr "create"` を stdin に渡したときに block（exit 2）になる 1 ケースを足す。`main` の import 判定の配線を、実プロセスで固定する。**block の理由の文言まで assert する**（「verify-tree.mjs を読み込めませんでした」で止まっていないこと。import 判定がずれても exit 2 にはなるので、exit code だけでは配線のずれが緑のまま残る）
 - `CWD_CHANGE` のケースも、理由の文言（「作業ディレクトリを変更しています」）まで assert する（ずれた変異が別のゲートで block されても緑にならないように）
 - 新しいテストは `ghPrCreateView` か `decide` を通して呼ぶ。既存の describe のように `GH_PR_CREATE.test(raw)` を直接呼ぶと、生の正規表現を測るだけになる
-- 変異注入（`/implement`「3b. 委譲へ渡すもの」の委譲先が行う）: (a) `decide` の検出を元の文字列へ戻す (b) `main` の import 判定だけを元の文字列へ戻す (c) `CWD_CHANGE` の比較だけを元の文字列へ戻す (d) `judgeCommandShape` に正規化後の文字列を渡す。それぞれで新設のテストが assert で赤になることを確かめる
+- 変異注入（`/implement`「3b. 委譲へ渡すもの」の委譲先が行う）: (a) `decide` の検出を元の文字列だけにする (b) `main` の import 判定だけを元の文字列にする (c) `CWD_CHANGE` を検出と別の見え方で比べる (d) `judgeCommandShape` に正規化後の文字列を渡す (e) `hasSafeChain` に正規化後の文字列を渡す (f) 行継続の連結を戻す (g) 検出を正規化後の見え方だけにする。それぞれで新設のテストが assert で赤になることを確かめる
 - 検証コマンドは `docs/build-commands.md`「変更後の検証チェックリスト」の該当カテゴリ（hook のテストと governance:check）に従う
 
 ## SPEC.md・関連文書の更新
@@ -75,6 +79,17 @@ hook に止められたエージェントが `gh pr "create"` のような綴り
 
 - [x] 冒頭コメントの「受容する未対応リスク」と `AT_CMD_POS` の注釈を、実装に合わせて直す
 - [ ] hook のテストと `npm run governance:check` を通す
+
+### Phase 4 — ラウンド 1 の指摘の反映
+
+- [x] 行継続の連結をやめ、`ghPrCreateSites`（どちらかの見え方で検出・位置は見え方ごと）を新設して `decide` と `main` を移す
+- [x] 安全なチェーンを元の文字列でだけ認める（`hasSafeChain(command)`）
+- [x] 継続でない改行の回帰・`'&'&`・引用符で作った安全なチェーンのテストを `decide` の分岐表へ足し、e2e の import 判定の断言を upstream の理由へ替える
+- [x] `ghPrCreateView` の doc から読む側の列挙を外す
+
+### 検証の記録
+
+- ラウンド 1: sha 0cb20d70 / ツール green（E: npm test 0・F: governance:check 0・warnings なし）/ 委譲の指摘 3 件（High 1: 行継続の連結が継続でない改行の次の行を検出から外す fail-open・Medium 1: その帰結を decide で固定するテストが無い・Low 1: doc が読む側を列挙）/ 変異 (a)〜(f) と追加 6 種はすべて assert で赤・生き残り 0（ただし連結の変異 f1・g1・g2 は単体の出力比較 1 本だけが捕捉）/ 実地の確かめ: 冒頭コメントの検出・受容の主張を node で実測し、すべて主張どおり。別に自動セキュリティレビューが 2 件（HIGH: 同上の行継続・MEDIUM: 正規化した見え方の `hasSafeChain` が `'&'&` を安全と取り違える）を出した。挙動を変える 4 件（High・Medium・セキュリティ 2 件）と Low をすべて Phase 4 で直した
 - [ ] 範囲外の 2 件を PR 本文の「範囲外」に書く文面を用意する: (a) `usesNoVerify`・`pullWithoutFfOnly` の同じ形の素通り（`git "pull"`・`git commit --no-ver""ify`） (b) `hasSafeChain` が最初の一致の位置を使うため、引用の内側の言及が位置を前へずらす修正前からの素通り（`git commit -m "a && git push" && gh pr create` が allow になる。独立導出で実測）
 
 ## 未確定（実装前に潰す）

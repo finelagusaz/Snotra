@@ -28,6 +28,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { deleteMergedBranch } from "./delete-merged-branch.mjs";
 import { sectionOf } from "./governance/lib.mjs";
 
 const DOC = "docs/build-commands.md";
@@ -401,11 +402,11 @@ function cmdRemove(opts) {
     rmSync(path.join(target, DELEGATE_DIR), { recursive: true, force: true });
     if (removeTree(root, target)) {
       if (branch) {
-        try {
-          git(root, ["branch", "-d", branch]);
-          console.log(`ブランチ削除: ${branch}`);
-        } catch (e) {
-          console.error(`ブランチを消せなかった: ${branch}\n${e.stderr ?? e.message}`);
+        // `-d` だけでは本体の HEAD（古いローカルの main など）に照らされる。origin/main の祖先も消す（#1507）
+        const r = deleteMergedBranch(root, branch);
+        if (r.deleted) console.log(`ブランチ削除: ${branch}${r.basis === "origin/main" ? "（origin/main の祖先）" : ""}`);
+        else {
+          console.error(`ブランチを消せなかった: ${branch}（${r.reason}）\n${r.detail}`);
           ok = false;
         }
       }

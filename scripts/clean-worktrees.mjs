@@ -6,11 +6,13 @@
 //   npm run clean:worktrees            # クリーンなものだけ削除
 //   npm run clean:worktrees -- --force # 未コミット変更・未マージも削除
 //
-// 成果保全の最終防衛は git 自身の拒否（`worktree remove` / `branch -d`）に
+// 成果保全の最終防衛は、worktree では git 自身の拒否（`worktree remove`）に、
+// ブランチでは `deleteMergedBranch`（`git branch -d` に加え、`origin/main` の祖先かを見る）に
 // 委ねる。自作の dirty 判定はスキップ表示のための事前チェックにすぎない。
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { deleteMergedBranch } from "./delete-merged-branch.mjs";
 
 const force = process.argv.includes("--force");
 
@@ -73,8 +75,9 @@ try {
 
 // ブランチ削除は worktree 削除後に一括で行う（checkout 中のブランチは消せない）。
 // worktree に紐付かない worktree-agent-* をすべて対象にすることで、
-// 未マージゆえに -d が拒否された過去実行の残り（squash マージのみの本リポジトリでは
-// worktree 削除後にブランチだけ残るのが標準経路）も同じ規則で掃討される
+// 過去の実行で消せなかった残り（squash マージのみの本リポジトリでは、コミットを作った
+// 委譲先のブランチは origin/main の祖先にならず、worktree 削除後にブランチだけ残るのが標準経路）も
+// 同じ規則で掃討される
 const attached = new Set();
 for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {
   if (line.startsWith("branch refs/heads/")) attached.add(line.slice("branch refs/heads/".length));
@@ -85,12 +88,23 @@ const orphans = git(["branch", "--list", "worktree-agent-*", "--format=%(refname
   .filter((b) => b !== "" && !attached.has(b));
 let orphanRemoved = 0;
 for (const b of orphans) {
+  if (!force) {
+    const r = deleteMergedBranch(process.cwd(), b);
+    if (r.deleted) {
+      orphanRemoved++;
+      console.log(`孤児ブランチ削除: ${b}${r.basis === "origin/main" ? "（origin/main の祖先）" : ""}`);
+    } else {
+      console.warn(`孤児ブランチ削除に失敗（${r.reason}。--force で消せます）: ${b}\n${r.detail}`);
+      failed.push(b);
+    }
+    continue;
+  }
   try {
-    git(["branch", force ? "-D" : "-d", b]);
+    git(["branch", "-D", b]);
     orphanRemoved++;
     console.log(`孤児ブランチ削除: ${b}`);
   } catch (e) {
-    console.warn(`孤児ブランチ削除に失敗（未マージ？ --force で消せます）: ${b}\n${e.stderr ?? e.message}`);
+    console.warn(`孤児ブランチ削除に失敗: ${b}\n${e.stderr ?? e.message}`);
     failed.push(b);
   }
 }

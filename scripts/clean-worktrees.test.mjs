@@ -142,6 +142,46 @@ describe("clean-worktrees", () => {
     expect(branches(repo)).toContain("keep-me");
   });
 
+  // #1507: 呼び出し側の HEAD（main）がブランチの先端を含まない状態を作る。始点は sha で渡す
+  // （追跡ブランチを名前で渡すと upstream が付き、修正前の `git branch -d` でも通って偽の緑になる）
+  /** HEAD からは届かないコミットを 1 つ作って sha を返す（HEAD は動かさない） */
+  function commitOffHead(repo, name) {
+    git(repo, ["checkout", "-q", "-b", "tmp-off-head"]);
+    writeFileSync(path.join(repo, name), `${name}\n`);
+    git(repo, ["add", name]);
+    git(repo, ["commit", "-q", "-m", name]);
+    const sha = git(repo, ["rev-parse", "HEAD"]).trim();
+    git(repo, ["checkout", "-q", "main"]);
+    git(repo, ["branch", "-D", "tmp-off-head"]);
+    return sha;
+  }
+
+  it("HEAD が古くても、origin/main の祖先の孤児ブランチは --force なしで消える（#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    const tip = commitOffHead(repo, "upstream.txt");
+    git(repo, ["update-ref", "refs/remotes/origin/main", tip]);
+    git(repo, ["worktree", "add", path.join(repo, ".claude", "worktrees", "agent-ahead"), "-b", "worktree-agent-ahead", tip]);
+
+    const r = runScript(repo);
+
+    expect(r.status, r.output).toBe(0);
+    expect(r.output).toContain("origin/main の祖先");
+    expect(branches(repo)).not.toContain("worktree-agent-ahead");
+  });
+
+  it("origin/main に無いコミットを持つ孤児ブランチは --force なしでは残り、理由を出す（#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/main", commitOffHead(repo, "upstream.txt")]);
+    const own = commitOffHead(repo, "own.txt");
+    git(repo, ["worktree", "add", path.join(repo, ".claude", "worktrees", "agent-own"), "-b", "worktree-agent-own", own]);
+
+    const r = runScript(repo);
+
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("origin/main に無いコミットがある");
+    expect(branches(repo)).toContain("worktree-agent-own");
+  });
+
   it("対象ゼロなら exit 0 で「対象なし」を表示する", { timeout: T }, () => {
     const repo = initRepo();
 

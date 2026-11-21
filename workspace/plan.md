@@ -73,17 +73,17 @@
 
 ### フェーズ 1 — 共通の関数
 
-- [ ] `scripts/delete-merged-branch.mjs` にシグネチャだけ置き（常に `{ deleted: false }`）、`delete-merged-branch.test.mjs` の 4 ケースを書いて Red を確かめる
-- [ ] 設計どおりに実装して Green にする
+- [x] `scripts/delete-merged-branch.mjs` にシグネチャだけ置き（常に `{ deleted: false }`）、`delete-merged-branch.test.mjs` の 4 ケースを書いて Red を確かめる
+- [x] 設計どおりに実装して Green にする
 
 ### フェーズ 2 — 呼び出し側
 
-- [ ] `verify-tree.test.mjs` に受け入れ条件 1〜3 のテストを足し、今の `cmdRemove` で 1 が落ちることを確かめる
-- [ ] `cmdRemove` を `deleteMergedBranch` へ替えて Green にする
-- [ ] `clean-worktrees.test.mjs` に受け入れ条件 4 のテストを足し、今の実装で落ちることを確かめる
-- [ ] `clean-worktrees.mjs` を替え、コメントと警告文を直して Green にする
-- [ ] `/implement` Step 4 の exit 1 の読み方に、ブランチを残した場合を足す
-- [ ] `npm test` と `npm run governance:check` を通す
+- [x] `verify-tree.test.mjs` に受け入れ条件 1〜3 のテストを足し、今の `cmdRemove` で 1 が落ちることを確かめる
+- [x] `cmdRemove` を `deleteMergedBranch` へ替えて Green にする
+- [x] `clean-worktrees.test.mjs` に受け入れ条件 4 のテストを足し、今の実装で落ちることを確かめる
+- [x] `clean-worktrees.mjs` を替え、コメントと警告文を直して Green にする
+- [x] `/implement` Step 4 の exit 1 の読み方に、ブランチを残した場合を足す
+- [x] `npm test` と `npm run governance:check` を通す
 
 ## 未確定（実装前に潰す）
 

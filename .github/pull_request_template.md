@@ -1,4 +1,4 @@
-<!-- 冒頭の行: セーフティネット（.claude/rules/safety-nets.md のフロントマターの paths）か規範文書（ルートの CLAUDE.md・AGENTS.md）に触れるときだけ、次の行を残して対象を書く。触れないなら消す -->
+<!-- 冒頭の行: セーフティネット（hook・CI・rules・skills・scripts など。範囲の正本は safety-nets のルールのフロントマター）か規範文書（ルートの CLAUDE.md・AGENTS.md）に触れるときだけ、次の行を残して対象を書く。触れないなら消す -->
 **マージは合意してから**（<触れたセーフティネット・規範文書>）
 
 ## 対応Issue

@@ -12,7 +12,7 @@
 - コミットメッセージは日本語または英語で、変更の意図が伝わる内容にする
 - コードコメントの書き方（rustdoc / TSDoc の様式・粒度）は [docs/comment-guidelines.md](docs/comment-guidelines.md) を参照
 - PR タイトルは "feat: ...", "fix: ...", "docs: ..." などのプレフィックスを付ける
-- PR には変更内容・影響範囲・テスト結果を記載する
+- PR 本文は `.github/pull_request_template.md` の節に従って書く
 - レビュー承認後にスカッシュマージする（リポジトリ設定で squash のみ有効。運用の詳細はルート `CLAUDE.md`「Git/GitHub 運用」を参照）
 
 ## リリースフロー

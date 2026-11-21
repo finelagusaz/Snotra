@@ -92,6 +92,7 @@
 - [x] R3 `c3f4b739`: verify:tree green（E・F）／足したテストへの変異: try/catch を外す・ロックファイルを消す・catch で失敗に数えない、は assert で検知。catch の後に break する変異が生き残った（孤児は名前順に処理され、失敗する側が最後だった）→ 孤児の名前を z-free に替え、順序に依ることをコメントで添えた（委譲先が同じ改名で break の変異が赤になることを測った）
 - [x] R4 `5d0050a3`: verify:tree green（E・F）／T1〜T4 すべて assert で赤、指摘 0
 - [x] 軸の違うレビュー（`/code-review high fix/1507-verify-tree-remove-branch`・条件 (2) 回復機構を足した）: 4 件。直した 1: verify-tree の remove で祖先判定の後の `-D` が throw すると exit 2（旧版は exit 1）→ `deleteMergedBranch` が throw せず理由「git branch -D が失敗した」を返す形にし、clean-worktrees の try/catch を外した（ロックファイルのテストを delete-merged-branch と verify-tree にも足した）。捨てた 3: Step 4 の文言の精度・`-d` のほかの失敗も「判定できない」にまとめる（stderr を添えている）・`--force` なしの clean:worktrees の巻き添え（中身を失わない。R2 で同じ判定）
+- [x] R5 `f843f1d3`: verify:tree green（E・F）／変異 U1（`-D` を throw に戻す）・U2a〜d（理由のすり替え・失敗を成功と報告）・T3'・T4' すべて赤、生き残り 0／指摘 0（挙動を変えない ⚠ Low 1 件は捨てた）
 
 ## 未確定（実装前に潰す）
 

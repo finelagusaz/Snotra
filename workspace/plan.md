@@ -14,7 +14,7 @@ hook に止められたエージェントが `gh pr "create"` のような綴り
 3. 受容する未対応の形（`$'create'`・`$"create"`・`${X}create`・`c$()reate`）が、hook 冒頭の一覧とテストに固定されている
 4. 正規化は `gh pr create` の判定だけに通る。`judgeCommandShape` は元の文字列で判定する（`--body-file "C:\Users\x\y.md"` を含む `gh pr create` は、今までどおり `\` パスの判定で止まる）
 5. `main()` の verify-tree の import 判定と `decide()` の検出が、同じ関数（`ghPrCreateSites`）を通る。検出は、元の文字列と正規化した見え方の**どちらか**で当たれば成立する。`CWD_CHANGE` の位置比較は、検出した見え方それぞれの中で行う（`echo "a" "b" "c" "d" "e" "f"; cd x; gh pr "create"` が cwd 変更で block される）
-6. 安全なチェーン（`hasSafeChain`）は元の文字列でだけ認める。正規化が block を allow に変える経路を作らない（`git push '&'& gh pr create` は背景実行なので block。引用符で語を割った `gh pr create` は動的判定へ回る）（ラウンド 1 で追加。自動セキュリティレビューの指摘）
+6. 安全なチェーン（`hasSafeChain`）は、元の文字列で検出し、かつ検出したすべての見え方で成り立つときだけ認める（ラウンド 2 で「すべての見え方」を追加。`gh pr "create"; git push && gh pr create` の前の gh はチェーンの外で走る）。正規化が block を allow に変える経路を作らない（`git push '&'& gh pr create` は背景実行なので block。引用符で語を割った `gh pr create` は動的判定へ回る）（ラウンド 1 で追加。自動セキュリティレビューの指摘）
 
 ## 変更するファイル
 
@@ -87,10 +87,16 @@ hook に止められたエージェントが `gh pr "create"` のような綴り
 - [x] 継続でない改行の回帰・`'&'&`・引用符で作った安全なチェーンのテストを `decide` の分岐表へ足し、e2e の import 判定の断言を upstream の理由へ替える
 - [x] `ghPrCreateView` の doc から読む側の列挙を外す
 
+### Phase 5 — ラウンド 2 の指摘の反映
+
+- [x] 安全なチェーンを、元の文字列で検出し、かつ検出したすべての見え方で `hasSafeChain` が真のときだけ認める
+- [x] 見え方でだけ当たる gh が push より前にある形・引用符を含む素の安全なチェーン・引用符で割った cd のテストを `decide` の分岐表へ足す
+
 ### 検証の記録
 
 - ラウンド 1: sha 0cb20d70 / ツール green（E: npm test 0・F: governance:check 0・warnings なし）/ 委譲の指摘 3 件（High 1: 行継続の連結が継続でない改行の次の行を検出から外す fail-open・Medium 1: その帰結を decide で固定するテストが無い・Low 1: doc が読む側を列挙）/ 変異 (a)〜(f) と追加 6 種はすべて assert で赤・生き残り 0（ただし連結の変異 f1・g1・g2 は単体の出力比較 1 本だけが捕捉）/ 実地の確かめ: 冒頭コメントの検出・受容の主張を node で実測し、すべて主張どおり。別に自動セキュリティレビューが 2 件（HIGH: 同上の行継続・MEDIUM: 正規化した見え方の `hasSafeChain` が `'&'&` を安全と取り違える）を出した。挙動を変える 4 件（High・Medium・セキュリティ 2 件）と Low をすべて Phase 4 で直した
-- [ ] 範囲外の 2 件を PR 本文の「範囲外」に書く文面を用意する: (a) `usesNoVerify`・`pullWithoutFfOnly` の同じ形の素通り（`git "pull"`・`git commit --no-ver""ify`） (b) `hasSafeChain` が最初の一致の位置を使うため、引用の内側の言及が位置を前へずらす修正前からの素通り（`git commit -m "a && git push" && gh pr create` が allow になる。独立導出で実測）
+- ラウンド 2: sha 2b5f898a / ツール green（E 0・F 0・warnings なし）/ ラウンド 1 の High・Medium は before/after で解消を確認 / 新しい指摘 3 件（Medium-A: 見え方でだけ当たる gh が push より前にあると後ろの安全なチェーンで allow（修正前も allow で退行ではない）・Low-A: 見え方の site での cwd 判定をテストが固定していない・Low-B: 元の文字列の site が守るのはいま過剰検出 1 形だけ）/ 変異 (a)(b)(c1)(d)(e)(f)(g)(i) は assert で赤、(c2: cwd を見え方の位置で比べる＝過剰 block の向き)と h（cwd のループを先頭の site だけ）が緑 / 不変条件「正規化が block を allow に変えない」は構造からの導出と差分ファズ（20 万入力 × 2 tool × 16 状態で 0 件。ラウンド 1 版には 8496 件などを出す検出力）で確認。別に自動セキュリティレビューが Medium-A と同じ形を 1 件出した。Medium-A と Low-A を Phase 5 で直した（h はこれで赤になるはず）。Low-B は設計どおり（`gh pr create'x'` のような糊付けの形と、将来の正規化の変更への保険）として残す。c2 は fail-closed の向きなので残す
+- [x] 範囲外の 2 件を PR 本文の「範囲外」に書く文面を用意する: (a) `usesNoVerify`・`pullWithoutFfOnly` の同じ形の素通り（`git "pull"`・`git commit --no-ver""ify`） (b) `hasSafeChain` が最初の一致の位置を使うため、引用の内側の言及が位置を前へずらす修正前からの素通り（`git commit -m "a && git push" && gh pr create` が allow になる。独立導出で実測）
 
 ## 未確定（実装前に潰す）
 

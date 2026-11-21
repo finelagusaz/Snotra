@@ -413,6 +413,30 @@ describe("decide — 分岐表", () => {
     expect(spy).toHaveBeenCalled();
   });
 
+  // 見え方でだけ当たる gh が push より前にあれば、後ろの安全なチェーンでは認めない（前の gh はチェーンの外で走る）
+  it("見え方でだけ当たる gh が push より前にあると、後ろの安全なチェーンでも動的判定へ回す", () => {
+    const spy = vi.fn(NO_UPSTREAM);
+    const cmd = `${GH} pr "create" --fill; git push -u origin HEAD && ${ghPrCreate()} --fill`;
+    const r = decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("upstream が未設定");
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("引用符を含む素の安全なチェーンは、今までどおり upstream を読まずに allow", () => {
+    const spy = vi.fn(NO_UPSTREAM);
+    const cmd = `git push -u origin HEAD && ${ghPrCreate()} --title "a b"`;
+    expect(decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN }).action).toBe("allow");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  // cd を引用符で割った形は、見え方の site でだけ cwd 変更として見える
+  it("引用符で割った cd も、gh より前なら block（cwd は見え方の site ごとに比べる）", () => {
+    const r = decide(bash(`c'd' x; ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("作業ディレクトリを変更しています");
+  });
+
   // 継続でない改行の次の行の gh pr create は、修正前と同じく block する（行継続を連結した版の fail-open の回帰）
   it.each([
     [`git push -u origin HEAD \`\n${ghPrCreate()} --fill`],

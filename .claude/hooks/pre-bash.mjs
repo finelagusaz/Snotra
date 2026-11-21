@@ -162,8 +162,9 @@ export function tokenStart(re, command) {
  * 区切りが 1 つでも `;` / `||` / `|` / 改行なら、push が失敗しても `gh pr create` が
  * 走りうる。そのときコミットは remote に無く、空 PR になる。判定不能として block する。
  *
- * `decide` は元の文字列を渡す。引用符を消した見え方では `'&'&` が `&&` に見え、背景実行の `&` を安全なチェーンと
- * 取り違える（#1499 の自動セキュリティレビュー）。引用符で語を割った `gh pr create` はここで偽になり、動的判定へ回る。
+ * 引用符を消した見え方だけで判定してはならない。`'&'&` が `&&` に見え、背景実行の `&` を安全なチェーンと取り違える
+ * （#1499 の自動セキュリティレビュー）。`decide` は、元の文字列で検出し、かつ検出したすべての見え方でこの関数が真の
+ * ときだけ認める。引用符で語を割った `gh pr create` は元の文字列で検出されないので、動的判定へ回る。
  */
 export function hasSafeChain(command) {
   const ghAt = tokenStart(GH_PR_CREATE, command);
@@ -418,7 +419,9 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
   const verified = readVerifyState();
   if (!verified.ok) return block(`${verified.reason}`);
 
-  if (hasSafeChain(command)) return ALLOW; // push が `&&` で先行する（元の文字列でだけ認める・hasSafeChain の doc）
+  // push が `&&` で先行する。元の文字列で検出し、かつ検出したすべての見え方で成り立つときだけ認める——見え方でだけ
+  // 当たる gh が push より前にあれば（`gh pr "create"; git push && gh pr create`）、それはチェーンの外で走る
+  if (sites.some((s) => s.text === command) && sites.every((s) => hasSafeChain(s.text))) return ALLOW;
 
   const state = readGitState();
   if (!state.ok) return block(`git の状態を確認できませんでした（${state.reason}）。${REMEDY}`);

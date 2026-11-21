@@ -62,18 +62,18 @@ hook に止められたエージェントが `gh pr "create"` のような綴り
 
 ### Phase 1 — Red
 
-- [ ] `pre-bash.test.mjs` に受け入れ条件 1〜5 のテストを書き、落ちることを確かめる
+- [x] `pre-bash.test.mjs` に受け入れ条件 1〜5 のテストを書き、落ちることを確かめる
 
 ### Phase 2 — Green
 
-- [ ] `ghPrCreateView` を実装して export する
-- [ ] `decide` の検出・`CWD_CHANGE`・`hasSafeChain` の入力を `ghPrCreateView(command)` にする（`judgeCommandShape` は元の文字列のまま）
-- [ ] `main` の import 判定を `ghPrCreateView` 経由にする
-- [ ] プロセス起動テストに `gh pr "create"` の block を足す
+- [x] `ghPrCreateView` を実装して export する
+- [x] `decide` の検出・`CWD_CHANGE`・`hasSafeChain` の入力を `ghPrCreateView(command)` にする（`judgeCommandShape` は元の文字列のまま）
+- [x] `main` の import 判定を `ghPrCreateView` 経由にする
+- [x] プロセス起動テストに `gh pr "create"` の block を足す
 
 ### Phase 3 — 注釈と検証
 
-- [ ] 冒頭コメントの「受容する未対応リスク」と `AT_CMD_POS` の注釈を、実装に合わせて直す
+- [x] 冒頭コメントの「受容する未対応リスク」と `AT_CMD_POS` の注釈を、実装に合わせて直す
 - [ ] hook のテストと `npm run governance:check` を通す
 - [ ] 範囲外の 2 件を PR 本文の「範囲外」に書く文面を用意する: (a) `usesNoVerify`・`pullWithoutFfOnly` の同じ形の素通り（`git "pull"`・`git commit --no-ver""ify`） (b) `hasSafeChain` が最初の一致の位置を使うため、引用の内側の言及が位置を前へずらす修正前からの素通り（`git commit -m "a && git push" && gh pr create` が allow になる。独立導出で実測）
 

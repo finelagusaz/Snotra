@@ -13,7 +13,8 @@
 //
 // 判定単位は 2 種類ある。
 //   - コマンド位置: `gh pr create` と `git` の各判定。`git` 系はさらに次の区切りまでのセグメントに閉じる
-//     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする
+//     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする。`gh pr create` の判定だけは、
+//     引用符とエスケープ文字を取り除いた見え方（`ghPrCreateView`）の上でコマンド位置を探す
 //   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
 //     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
 // 後者は、`docs/development-principles.md`「規則を守らせる強さ」の原則 6（判定は構文の位置で決める）から、
@@ -29,12 +30,17 @@
 // この領域は hook にしか見えない。`gh pr create` はリポジトリを触らないため git hook は
 // 鳴らず、push もしないので pre-push も鳴らない。GitHub ruleset も空 PR を防げない。
 //
-// 受容する未対応リスク（いずれも「gh がコマンド位置に現れない」形。意図的迂回であり事故モードではない。
+// 引用符とエスケープ文字で語を割る形（`gh pr "create"` / `cr\eate` / 行継続）は検出する（`ghPrCreateView`）。
+// hook に止められた委譲先が自然にたどり着いた事故モードである（#1499）。
+//
+// 受容する未対応リスク（いずれも「gh pr create がコマンド位置に現れない」形。意図的迂回であり事故モードではない。
 // `--no-verify` と同格に人間専用として扱う）:
-//   - `sh -c 'gh pr create'` / `eval` / バッククォート / `$(...)` の内側
+//   - `sh -c 'gh pr create'` / `eval` / バッククォートの内側（`ghPrCreateView` がバッククォートを消すので、
+//     バッククォートそのものがコマンド位置にあれば検出する。`$(...)` は `(` が区切り文字なので検出する）
 //   - ラッパ経由（`timeout 5 gh pr create` / `nohup` / `xargs gh pr create`）
 //   - 実行ファイルの名前やパスで呼ぶ形（`gh.exe pr create` / `& '<path>/gh.exe' pr create`）と、
 //     `gh api …/pulls` で PR を作る形（検出は `gh` の直後の空白を要求する・#1299 の敵対的調査で実測）
+//   - 展開・置換で語を組み立てる形（`$'create'` / `$"create"` / `${X}create` / `c$()reate`）
 // 検出を shell パーサ相当まで広げると、payload 全体 grep の誤爆（#482 の D2）を作り直すことになる。
 //
 // 詳細と実測の根拠は issue #482。
@@ -60,7 +66,7 @@ export const TARGET_TOOLS = Object.freeze(["Bash", "PowerShell"]);
 export const GIT_TIMEOUT_MS = 10_000;
 
 // コマンド位置 = 文字列先頭、または区切り文字の直後。`&&` の 2 文字目も区切り文字なので
-// `&& gh pr create` は一致する。引用の内側までは解釈しない（過剰検出は許容、過小検出は不可）。
+// `&& gh pr create` は一致する。引用の内側の区切り文字も区切りと見なす（過剰検出は許容、過小検出は不可）。
 const AT_CMD_POS = String.raw`(?:^|[;&|\n\r(){}])\s*`;
 
 // フラグはサブコマンドの前後どちらにも来うる。値がスペース区切り（`--repo o/r`）でも読み飛ばす。
@@ -82,6 +88,25 @@ const ENV_PREFIX = String.raw`(?:[A-Za-z_]\w*=\S*\s+)*`;
 export const GH_PR_CREATE = new RegExp(
   `${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}create\\b)`,
 );
+
+const LINE_CONTINUATION = /[\\`]\r?\n/g;
+const QUOTE_OR_ESCAPE = /["'\\`]/g;
+
+/**
+ * `gh pr create` の判定が読む見え方。シェルが語を組み立てるときに消える文字を取り除く——行継続（Bash の `\`・
+ * PowerShell の `` ` `` + 改行）を連結し、残る引用符とエスケープ文字を消す。`gh pr "create"` と `cr\eate` は、
+ * シェルでは素の `gh pr create` として走る（#1499。hook に止められた委譲先がこの形へ書き換えて素通りした）。
+ *
+ * 検出・`CWD_CHANGE` の位置比較・`hasSafeChain`・`main` の import 判定は、すべてこの出力を読む。位置を比べる判定の
+ * どれかが元の文字列を読むと、引用符の数だけ位置がずれる（cwd 判定の fail-open・偽の理由での block）。
+ * 形の判定（`judgeCommandShape`）には渡さない。`\` パスの判定が消える。
+ *
+ * 区切り文字の直後の引用が外れると、言及がコマンド位置に来る（`node -e "console.log('gh pr create')"`）。
+ * この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
+ */
+export function ghPrCreateView(command) {
+  return command.replace(LINE_CONTINUATION, "").replace(QUOTE_OR_ESCAPE, "");
+}
 
 // `git -C <tree> push` は意図的に一致させない。別ツリーへ push しても
 // このツリーのコミットは remote に載らないため、安全なチェーンではない。
@@ -119,6 +144,8 @@ export function tokenStart(re, command) {
  *
  * 区切りが 1 つでも `;` / `||` / `|` / 改行なら、push が失敗しても `gh pr create` が
  * 走りうる。そのときコミットは remote に無く、空 PR になる。判定不能として block する。
+ *
+ * `decide` は `ghPrCreateView` の出力を渡す（gh・push・区切りを、検出と同じ見え方で測る）。
  */
 export function hasSafeChain(command) {
   const ghAt = tokenStart(GH_PR_CREATE, command);
@@ -343,10 +370,12 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
   const shape = judgeCommandShape(command, platform);
   if (shape) return shape;
 
-  const ghAt = tokenStart(GH_PR_CREATE, command);
+  // ここから先の位置の判定は、すべて同じ見え方で読む（#1499）
+  const view = ghPrCreateView(command);
+  const ghAt = tokenStart(GH_PR_CREATE, view);
   if (ghAt < 0) return ALLOW; // 管轄外
 
-  const cwdAt = tokenStart(CWD_CHANGE, command);
+  const cwdAt = tokenStart(CWD_CHANGE, view);
   if (cwdAt >= 0 && cwdAt < ghAt) {
     return block("PR 作成の前に作業ディレクトリを変更しています。どのリポジトリに PR が作られるか判定できません。");
   }
@@ -370,7 +399,7 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
   const verified = readVerifyState();
   if (!verified.ok) return block(`${verified.reason}`);
 
-  if (hasSafeChain(command)) return ALLOW; // push が `&&` で先行する
+  if (hasSafeChain(view)) return ALLOW; // push が `&&` で先行する
 
   const state = readGitState();
   if (!state.ok) return block(`git の状態を確認できませんでした（${state.reason}）。${REMEDY}`);
@@ -570,7 +599,8 @@ async function main() {
   let tool = null;
   let importError = null;
   const command = payload?.tool_input?.command;
-  if (typeof command === "string" && tokenStart(GH_PR_CREATE, command) >= 0) {
+  // `decide` と同じ見え方で検出する。ずれると decide は検出するのに tool が null になり、偽の理由で止まる
+  if (typeof command === "string" && tokenStart(GH_PR_CREATE, ghPrCreateView(command)) >= 0) {
     try {
       tool = await import(new URL("../../scripts/verify-tree.mjs", import.meta.url).href);
     } catch (e) {

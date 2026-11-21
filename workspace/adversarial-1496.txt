@@ -1,0 +1,28 @@
+adversarial-1496: research.md の反証結果（使い捨てリポジトリで実測・削除済み。git 2.56.1.windows.1）
+
+測定環境
+- グローバル ~/.gitconfig: push.autosetupremote=true。branch.autoSetupMerge / push.default は未設定（既定）。
+- このリポジトリ: .git/config に extensions.worktreeConfig=true、config.worktree は core.longpaths と hooksPath のみ。autoSetupMerge 等への影響なし。
+- 一時リポジトリはグローバル設定を引き継ぐ。GIT_CONFIG_GLOBAL=/dev/null の基準でも 1 は同じ結果。ゆえに結論は設定差で変わらない。ただし push 後の挙動（下の 2 の補足）だけは autoSetupRemote に依存する。
+
+1. 壊せなかった: `git switch -c b origin/main` で "set up to track 'origin/main'"（グローバル有無とも）。
+   偽にする手順: autoSetupMerge=false を設定して同じ手順を打つ（偽になるが、このマシンは未設定）。
+2. 壊せなかった: `--no-track` で `@{u}` は "no upstream configured"、`git push -u origin HEAD` で origin/<同名> が upstream。
+   補足（調査書に無い事実）: autoSetupRemote=true のため、-u なしの `git push` でも同名が upstream になる。この設定が無い環境では -u が要る。
+   補足: 追跡が origin/main のままでも `git push -u origin HEAD` が upstream を origin/<同名> へ張り替える。つまり誤った upstream は Step 6 の -u で自己修復する。-u なしの `git push` は push.default=simple の仕様で失敗する（"won't match"、このマシンでも基準でも）。
+3. 壊せなかった（両半分とも）: 本体（main を checkout 中）で `git switch --no-track -c b6 origin/main` は作業ツリーが b6 へ移る。worktree では `git checkout main` が "already used by worktree" で fatal、`git switch --no-track -c b5 origin/main` は成功。
+   偽にする手順: 作業ツリーが dirty で HEAD と origin/main の差分と衝突するとき、switch は拒む（checkout -b も同様。差はない）。
+4. 壊せなかった。ただし害の向きを訂正する。pre-bash.mjs の動的判定は `@{u}` と `@{u}..HEAD` を読む（readGitState）。upstream=origin/main のまま:
+   - コミット前: 未 push 0 件 → 許可になりうる。ただしこの状態は元から head==base の空 PR で、gh 側が失敗する。
+   - コミット後に `git push origin HEAD`（-u なし）で push 済みでも、upstream=origin/main のまま `@{u}..HEAD` が 1 件 → 「未 push」と誤って block（実測）。
+   つまり食い違いは「許可へ倒す偽陰性」ではなく「誤 block（fail-closed 方向）」。調査書の「実際の push 先と食い違う」は正しいが、害の向きが書かれていない。-u を使う標準手順では自己修復するので実害は小さい。
+5. 壊せなかった。ただし調査書より広い: `git fetch origin main:main` は worktree からだけでなく、本体の main checkout 自身からも "refusing to fetch into branch ... checked out" で拒まれる（rc=128）。main がどこかで checkout 中なら、本体・worktree を問わず拒まれる。
+   ⚠️ main をどこでも checkout していない状態なら通る（未実測の推論）。
+
+調査書のその他の主張
+- 「#1493 は --no-track なしで upstream が origin/main になった」は 1 と整合する。
+- ⚠️ 「ローカル main は更新されない」は構造上自明。/implement 3b の `main...<sha>` が古い main になりうるという帰結は、私は SKILL.md を読んでいない。
+- ⚠️ deps-update Step 1 は散文のみ（25-26 行を確認）。worktree での動きの未確認は妥当。
+- 未測定: harness の worktree 作成時の既定ブランチ設定。
+
+壊せた: 0 件。訂正が要る記述: 4（害の向き）、5（本体 checkout 自身でも拒まれる）、2（autoSetupRemote と -u の張り替えの補足）。

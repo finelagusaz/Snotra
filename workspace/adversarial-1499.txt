@@ -1,0 +1,64 @@
+# adversarial-1499 結果（測定スクリプトは scratchpad の t1/t2/t3.mjs。ライブ hook は無変更・研究メモの正規化 norm = 行継続連結 → ["'\`] 除去 を再現して比較）
+
+norm(c) = c.replace(/(?:\\|`)\r?\n/g,"").replace(/["'\\`]/g,"")
+
+## 測定環境の確認
+- .claude/settings.json: matcher "Bash|PowerShell"、command は node "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pre-bash.mjs"。TARGET_TOOLS も両方。tool_input.command は生文字列で届く（hook は加工しない）。
+- 実測: decide({tool_name:"PowerShell", command:'gh pr "create" --fill'}) に readPlanState{unchecked:1} を注入 → allow（素通り）。素の `gh pr create --fill` → BLOCK(plan.md)。メモの再現は decide() を通しても成立（測定環境のずれは無し）。
+- 注意: 本セッションのライブ hook（本体版）が、私の Bash コマンド本文に含まれた `$(gh pr create)` の文字列で実際にブロックした（引用内の言及での過剰検出が既存で在る実例。norm で増える FP の同類）。
+
+## 争点ごとの判定
+### 争点1: 「文書から導ける結論」 → 壊せた（部分的。結論そのものではなく「導ける」の強さ）
+- 根拠: pre-bash.mjs の gitSegments 注釈は「引用・継続の解釈は shell パーサ相当になる」ので、引用内区切り・行継続をまたぐ形の過小検出を「sh -c と同格の意図的迂回として受容する」と明記している（既存の先例）。メモはこの一節に触れていない。ヘッダ「検出を shell パーサ相当まで広げると誤爆を作り直す」も、引用除去を shell 解釈に近づける行為として読める。文書は検出にも受容にも読める。結論を決めるのは「#1493 で事故として起きた」という事実で、文書の導出ではない。
+- 追加: ヘッダは「`$(...)` の内側」を未検出と書くが、実測は `echo $(gh pr create)` / `x=$(gh pr create)` が既に raw で検出（AT_CMD_POS に `(` が入っているため）。ヘッダ記述自体が偽（メモの引用は正確だが、前提の足場が偽）。
+- 偽にする手順: 上の gitSegments の注釈が「git の同形は受容」と書いている理由（#1493 のような事故が起きていない）を示し、gh だけ事故なので別扱い、と区別できれば「導ける」は成立する。
+### 争点1 補遺: `git "pull"` / `git commit "--no-verify"` / `--no-ver"ify"` は raw で allow（実測）。同じ「止められたエージェントが自然に書き換える」事故は --no-verify でも起こりうる（これは人間専用規範で、gh より重い）。メモは「別の判定」で範囲外としたが、事故モードの論理はそのまま当たる。→ ⚠️ 範囲の線引きの根拠が薄い（壊せたとまでは言わない）。
+
+### 争点2: 全綴り検出・言及は検出しない → issue 表は壊せず／「言及は検出しない」は壊せた
+- 壊せなかった部分: issue 表の 8 綴り全て GH_PR_CREATE.test(norm(c)) = true。`git commit -m "gh pr create を足す"`、`grep -n "gh pr create" CLAUDE.md`、`echo 'gh pr create'`、`gh pr "view" 1`、`gh pr list --search "create"` は norm 後も false。
+- 壊せた部分（新しい誤爆）: 区切り文字（`(` `{` `;` `|` `&`）の直後に引用が来る言及が、引用を外すとコマンド位置になる。
+  - `node -e "console.log('gh pr create')"` raw=allow → norm=detect
+  - `git commit -m "fix ('gh pr create' detection)"` raw=allow → norm=detect
+  - `git commit -m "a" ; "gh pr create"`（実行されるのは「gh pr create という名のコマンド」で gh ではない）も norm で detect
+  メモの「言及は検出しない（誤爆の回帰にならない）」は、`-m "..."`・`grep "..."` の 2 形だけの確認で、全称に伸ばせない。fail-closed 方向だが、復帰手順が無い拒否（要約が無いブランチでは「要約が無い」で止まる）になりうる＝safety-nets.md「復帰手順が適用できない誤爆」の枠。
+- 逆方向（検出が減る）: `gh pr create'x'` は raw=detect → norm=undetect（シェルでは create'x' = createx で本当に別語なので正しい。ただし「正規化は検出を増やすだけ」ではない。実装が raw との OR でなく norm のみなら、この差が出る）。
+- 偽にする手順: `(` `{` `;` `|` `&` の直後の引用内言及を it.each で固定し、受容と明記すれば誤爆ではなく既知の過剰検出になる（メモ自身の「`echo "&& gh pr create"` を過剰検出として固定」の先例と同形）。
+
+### 争点3: decide の CWD_CHANGE・hasSafeChain・main() を同じ正規化へ → 壊せなかった（実測で確認）
+- main()（pre-bash.mjs 573 行）は tokenStart(GH_PR_CREATE, command) を decide とは別に呼ぶ。実測: decide(`gh pr create`, readVerifyState(cwd, tool=null)) → block 理由「要約の置き場を導く scripts/verify-tree.mjs を読み込めませんでした」（偽の理由）。
+- CWD の位置ずれは fail-open: `echo "a" "b" "c" "d" "e" "f"; cd x; gh pr "create"` で、cd の位置は raw=30、gh の位置は norm=24。cwdAt < ghAt が false → 作業ディレクトリ変更ブロックが外れる。メモの「ずれる」は正しく、方向は fail-open（偽の理由より重い）。
+- hasSafeChain は内部で tokenStart(GH_PR_CREATE) を呼ぶので、raw のまま渡すと ghAt<0 → false（動的判定へ落ちる・fail-closed だが理由が別）。
+- メモが落としていた点: 正規化の適用範囲。decide の入口で command 全体を norm 化すると judgeCommandShape が弱る。実測: `git push -u origin HEAD && gh pr create --body-file "C:\Users\x\y.md"` は raw では backslashPath で BLOCK、norm 済みを decide へ渡すと別の理由に変わり（`\` が消えて usesBackslashPath が発火しない）、plan/verify/git が緑なら allow になる。`git commit "--no-verify"` は norm 後 BLOCK（逆に増える）。つまり「前処理して既存の GH_PR_CREATE に通す」を decide 入口で行うのは誤り。gh 検出専用の位置関数（ghAt/hasSafeChain/CWD/main が共有する 1 つ）にだけ入れる設計が要る。この点はメモに無い → 追加すべき欠落。
+- 偽にする手順: tokenStart の GH_PR_CREATE 引数を 1 箇所のラッパにして main/decide/hasSafeChain/CWD 比較が全て同じ関数を使い、judgeCommandShape は raw のままにすれば、争点3の懸念は消える（メモの主張の裏返し）。
+
+### 争点4: 過剰検出は fail-closed だけで、正当コマンドを新たに block しない → 壊せた
+- 反例: 上の `node -e "console.log('gh pr create')"` と `git commit -m "fix ('gh pr create' detection)"` は、現状 allow で、norm 後は検出→plan/verify/upstream の各ゲートに掛かる。#1499 のようなコミット（`gh pr create` の検出を直す PR の作業中）では、この種のメッセージが自然に出る。
+- 壊せなかった部分: `git push -u origin HEAD && gh pr create --body-file x`、`--body-file "C:/x/y.md"`（`/` 区切り）、`gh pr create --title "a" --body-file "/tmp/x" 2>&1` は raw/norm で同じ判定。Windows バックスラッシュ入りパス（`"C:\Users\x\y.md"`）は raw 側の judgeCommandShape が先に BLOCK するので、gh 検出専用の norm なら挙動は変わらない（争点3の適用範囲の注意付き）。`git push origin HEAD \<改行> && gh pr create` は norm で 安全チェーン判定になる（raw では `\` 改行が区切り扱い）＝許可が増える方向。PowerShell の `Write-Host 'gh pr create'`、`echo "it's" 'gh pr create'` は raw/norm とも allow。
+- 偽にする手順: 上の 2 つの反例を受容する過剰検出としてテストで固定する（メモは反例自体を挙げていないので、測らないまま「fail-closed だけ」と言うのは全称の飛躍）。
+
+### 争点5: 前処理にすれば指数爆発を招かない → 壊せなかった
+- GH_PR_CREATE を norm 済みの文字列に当てる測定（フラグ連鎖 n=24/200/2000 × 引用なし/"/'、値が引用内空白のもの、20,000 回反復の `gh pr --a "b"`、21 万字の引用だらけ入力）はすべて 2ms 未満（`gh --f0=…` の形は pr が無く一意に失敗）。norm 自体は 1 回の線形 replace。FLAG の一意性（--?[^-\s]）は引用除去で曖昧にならない（値が空白を含まなくなるだけ）。
+- ただしメモの理由づけ「正規表現ではなく前処理だから」は因果として弱い。爆発しないのは FLAG が一意に作られているため。前処理でも FLAG が曖昧なら爆発する。
+- 偽にする手順: FLAG の曖昧な版（-{1,2}\S+）に戻して norm の出力を当てれば、前処理でも爆発する（理由づけの反証）。結論（今回は新たな爆発なし）は偽にできなかった。
+
+### 争点6: 利用者は pre-bash.mjs とそのテストだけ → 壊せなかった（付記あり）
+- git grep（docs/superpowers を除く）: GH_PR_CREATE/tokenStart/hasSafeChain の外部使用は pre-bash.mjs と pre-bash.test.mjs のみ。docs/superpowers/plans/2026-07-27-plan-checklist-gate.md が言及（過去の記録）。
+- 付記: scripts/merge-pr.mjs は pre-bash.mjs から verifiedSummaryState を import している（今回の変更が触るのは別シンボル）。pre-bash.mjs の挙動変更の影響は受けるので、「pre-bash.mjs を触ると merge-pr の import 先も変わる」点は変更時に確認が要る（シンボル非共有なので影響は無いはず）。
+- 偽にする手順: 上の 3 シンボルを import する別ファイルを 1 つ挙げる。見つからなかった。
+
+## research.md 各節の判定
+- 要約: 事実どおり（壊せず）。
+- 検出か受容か: 結論は妥当だが「文書から決まる」は壊せた（争点1）。
+- 関連ファイル・シンボル: 行番号（64/74/77/82/88/94/106/112/123/333/573、describe の 121/190/246/643）を grep で再確認。すべて一致（壊せず）。「利用者は…だけ」は壊せず（争点6）。
+- 再利用パターン: 壊せず（未検査・形は既存どおり）。
+- 技術的な制約: 「位置を使う後段も同じ正規化」は壊せず・むしろ下限（CWD は fail-open、争点3）。「timeout は fail-open」は header のとおり（壊せず）。
+- 正規化の案: `\;` の記述は妥当。ただし ①`(` `{` `;` `|` `&` 直後の引用内言及で誤爆が増える（壊せた）、②適用範囲（gh 検出専用で判定の入口に置かない）を書いていない（欠落）、③`gh pr \<改行> create` は raw で未検出（区切りが改行扱い）だが norm の行継続連結で検出される（メモの案が正しい。この形は issue の表に無い別の穴）。
+- 未解決の疑問:
+  - PowerShell `` ` ``: `gh pr cr`eate` を norm は検出（壊せず・含めるのが筋）。ただし Bash では `` `gh pr create` `` 単独（コマンド置換）が新たに検出される。ヘッダの「バッククォートの内側」を直す必要があるという記述は正しい。PowerShell の二重引用内の `` `r `` / `` `n `` は文字ではなく改行・CR になる（`gh pr "c`reate"` は create ではない）が、norm は検出する（過剰検出のみ・fail-closed）。
+  - `$'create'` / `$"create"` / `c$()reate` / `${X}create` / `cr$'e'ate` / `gh^ pr create` / `c^reate`: norm 後も未検出（すべて allow を実測）。メモが「未解決」とした `$'...'` は受容の一覧へ足すしかない（検出するなら `$` 除去が要り、`$create` の過検出を呼ぶ）。`$(...)` 置換・変数展開による綴りも同じ穴。引用除去で埋まる穴は、引用で割る形の一部だけ。
+  - judgeCommandShape へ当てない判断: ⚠️ 争点1補遺（`git "pull"` 等は allow のまま）。
+
+## ⚠️ 確信なし
+- 争点1補遺の線引き（gh だけ検出し --no-verify/pull を放置する正当性）。
+- PowerShell 側の `` ` `` / `$'..'` は decide 経由では測ったが、実 PowerShell が hook へ渡す文字列（ユーザー入力の逐語か）は本セッションでは未確認（settings と hook コードからは逐語）。
+- 自己の測定は norm のプロトタイプで、実装案（gh 専用の位置関数）での main/decide 通し e2e は未実施。

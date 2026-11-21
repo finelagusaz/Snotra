@@ -85,6 +85,10 @@
 - [x] `/implement` Step 4 の exit 1 の読み方に、ブランチを残した場合を足す
 - [x] `npm test` と `npm run governance:check` を通す
 
+### ラウンドの記録
+
+- [x] R1 `a0d5ac57`: verify:tree green（E・F）／指摘: 挙動を変える 3（Step 4「判定できない」の打ち直しが exit 2 で働かない・fetch を先に挟む・clean-worktrees で `-D` の throw がループを止める）を直した。挙動を変えない 2（短縮名の `origin/main`・テストのコメントの精度）は捨てた／変異 M1〜M5 生き残り 0、M6（始点を追跡ブランチ名）も assert が basis を断言するので赤／実地: 一時リポジトリ（bare origin + clone）で Step 4 の手順を打ち、「判定できない」の打ち直しだけが働かなかった
+
 ## 未確定（実装前に潰す）
 
 - [x] 基準を `origin/main` に固定するか、`refs/remotes/origin/HEAD` から導くか — 固定する。`refs/remotes/origin/main` の完全名で指す（設計の「決めたこと」）

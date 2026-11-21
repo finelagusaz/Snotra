@@ -89,7 +89,13 @@ const orphans = git(["branch", "--list", "worktree-agent-*", "--format=%(refname
 let orphanRemoved = 0;
 for (const b of orphans) {
   if (!force) {
-    const r = deleteMergedBranch(process.cwd(), b);
+    let r;
+    try {
+      r = deleteMergedBranch(process.cwd(), b);
+    } catch (e) {
+      // git の想定外の失敗（祖先と確かめた後の -D など）でも、残りの孤児の処理と集計を止めない
+      r = { deleted: false, reason: "git が失敗した", detail: e.stderr ?? e.message };
+    }
     if (r.deleted) {
       orphanRemoved++;
       console.log(`孤児ブランチ削除: ${b}${r.basis === "origin/main" ? "（origin/main の祖先）" : ""}`);

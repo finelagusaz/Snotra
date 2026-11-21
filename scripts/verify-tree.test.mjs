@@ -702,4 +702,75 @@ describe("verify-tree remove", () => {
     expect(runScript(repo, ["remove", "--delegate-tree", wt]).status).toBe(1);
     expect(existsSync(path.join(wt, ".delegate", "round1.txt"))).toBe(true);
   });
+
+  // #1507: 本体の HEAD（feat/x）がブランチの先端を含まない状態を作る。始点は sha で渡す
+  // （追跡ブランチを名前で渡すと upstream が付き、修正前の `git branch -d` でも通って偽の緑になる）
+  /** HEAD からは届かないコミットを 1 つ作って sha を返す（HEAD は動かさない） */
+  function commitOffHead(repo, name) {
+    const back = git(repo, ["branch", "--show-current"]);
+    git(repo, ["checkout", "-q", "-b", "tmp-off-head"]);
+    const sha = commitFile(repo, name, `${name}\n`);
+    git(repo, ["checkout", "-q", back]);
+    git(repo, ["branch", "-D", "tmp-off-head"]);
+    return sha;
+  }
+  function delegateAt(repo, start) {
+    const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
+    git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc", start]);
+    mkdirSync(path.join(wt, ".delegate"));
+    writeFileSync(path.join(wt, ".delegate", "round1.txt"), "report\n");
+    return wt;
+  }
+
+  it("--delegate-tree は、本体の HEAD が古くても origin/main の祖先のブランチを消す（#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    const tip = commitOffHead(repo, "upstream.txt");
+    git(repo, ["update-ref", "refs/remotes/origin/main", tip]);
+    const wt = delegateAt(repo, tip);
+
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+
+    expect(r.status, r.output).toBe(0);
+    expect(r.output).toContain("origin/main の祖先");
+    expect(existsSync(wt)).toBe(false);
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toBe("");
+  });
+
+  it("--delegate-tree は、origin/main に無いコミットを持つブランチを残し、理由を出して exit 1（#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/main", commitOffHead(repo, "upstream.txt")]);
+    const wt = delegateAt(repo, commitOffHead(repo, "own.txt"));
+
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("origin/main に無いコミットがある");
+    expect(existsSync(wt)).toBe(false);
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).not.toBe("");
+  });
+
+  it("--delegate-tree は、origin/main の祖先でも git branch -D が失敗したら、ブランチを残して exit 1（2 にしない・#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    const tip = commitOffHead(repo, "upstream.txt");
+    git(repo, ["update-ref", "refs/remotes/origin/main", tip]);
+    const wt = delegateAt(repo, tip);
+    writeFileSync(path.join(repo, ".git", "refs", "heads", "worktree-agent-abc.lock"), "");
+
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("git branch -D が失敗した");
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).not.toBe("");
+  });
+
+  it("--delegate-tree は、origin/main が無く -d も拒むブランチを残し、判定できないと出して exit 1（2 にしない・#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    const wt = delegateAt(repo, commitOffHead(repo, "own.txt"));
+
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("origin/main の祖先か判定できない");
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).not.toBe("");
+  });
 });

@@ -78,7 +78,8 @@
 - [x] `check-skill-skeleton-design.md` の例を揃える
 - [x] `deps-update` Step 1 の「main を最新にする」を `git merge --ff-only origin/main` の形に直す
 - [x] 理由の説明が正本以外に残っていないことを `git grep` で確かめる
-- [ ] #1507 に敵対的調査の補足をコメントする
+- [x] #1507 に敵対的調査の補足をコメントする（https://github.com/finelagusaz/Snotra/issues/1507#issuecomment-7059412256）
+- [x] 検証ラウンド 1: sha abb7c961・verify:tree E,F green・指摘 3 件（挙動を変える 2 件を直した: log と diff の形の書き分け・code-reviewer の fetch の前提。言い回しの 1 件は書き直しに吸収）・変異注入 該当なし（検知器と、検知器が読む構造に触れない）・実地の確かめ 一時リポジトリで 3 つの git の挙動を確認（ローカル main が古いと混ざる・2 点形の diff は squash 後に自分の変更が消える・fetch だけでは main は進まず ff-only で進む）、.githooks は ff-only を止めない
 
 ## 未確定（実装前に潰す）
 

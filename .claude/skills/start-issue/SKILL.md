@@ -36,7 +36,7 @@ git fetch origin
 git switch --no-track -c <feat|fix|chore>/<short-name> origin/main
 ```
 
-`git fetch` が失敗したら、ブランチを切らずに止まる（古い `origin/main` から切ることになるため）。`--no-track` を外さない。外すと upstream が `origin/main` になり、`-u` なしで push したときに、PR 前ゲート（`.claude/hooks/pre-bash.mjs`）が「未 push のコミットがある」と誤って止める。upstream は Step 6 の `git push -u origin HEAD` で同名のリモートブランチに決まる。ローカルの `main` はこの手順では更新されないので、差分の起点には `origin/main` を使う。
+`git fetch` が失敗したら、ブランチを切らずに止まる（古い `origin/main` から切ることになるため）。`--no-track` を外さない。外すと upstream が `origin/main` になり、`-u` なしで push したときに、PR 前ゲート（`.claude/hooks/pre-bash.mjs`）が「未 push のコミットがある」と誤って止める。upstream は Step 6 の `git push -u origin HEAD` で同名のリモートブランチに決まる。ローカルの `main` はこの手順では更新されないので、差分の起点には `origin/main` を使う（`AGENTS.md`「検証の作法（全タスク共通）」）。
 
 ## Step 3 — 調査（workspace/research.md）
 

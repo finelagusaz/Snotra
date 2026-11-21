@@ -69,15 +69,15 @@
 
 ### Phase 1
 
-- [ ] `AGENTS.md`「検証の作法」の検証コマンドの項に、起点（fetch したあとの `origin/main`）と 3 点形の規範を足し、例を `origin/main...HEAD` に揃える
-- [ ] `code-reviewer.md` 起動時 1 の理由を参照に替える
-- [ ] `implement` 3b に委譲の前の `git fetch` を添え、3c の理由を参照に替える
-- [ ] `retrospective` Step 1 の理由を参照に替える
-- [ ] `start-issue` Step 2 に参照を添える
-- [ ] `build-commands.md` の `race:boundaries` の理由を参照に替え、fetch を添える
-- [ ] `check-skill-skeleton-design.md` の例を揃える
-- [ ] `deps-update` Step 1 の「main を最新にする」を `git merge --ff-only origin/main` の形に直す
-- [ ] 理由の説明が正本以外に残っていないことを `git grep` で確かめる
+- [x] `AGENTS.md`「検証の作法」の検証コマンドの項に、起点（fetch したあとの `origin/main`）と 3 点形の規範を足し、例を `origin/main...HEAD` に揃える
+- [x] `code-reviewer.md` 起動時 1 の理由を参照に替える
+- [x] `implement` 3b に委譲の前の `git fetch` を添え、3c の理由を参照に替える
+- [x] `retrospective` Step 1 の理由を参照に替える
+- [x] `start-issue` Step 2 に参照を添える
+- [x] `build-commands.md` の `race:boundaries` の理由を参照に替え、fetch を添える
+- [x] `check-skill-skeleton-design.md` の例を揃える
+- [x] `deps-update` Step 1 の「main を最新にする」を `git merge --ff-only origin/main` の形に直す
+- [x] 理由の説明が正本以外に残っていないことを `git grep` で確かめる
 - [ ] #1507 に敵対的調査の補足をコメントする
 
 ## 未確定（実装前に潰す）

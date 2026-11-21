@@ -21,7 +21,7 @@
   - 照合は worktree のルートからの相対パス（`/` 区切り）で行う。絶対パスは `.claude/worktrees/agent-<id>/` を含むので使わない
   - 当たるか迷ったら読む（読み過ぎの害は Read 1 回だけ）
 - D4 3b の既存の箇条（timeout の後始末で `.claude/rules/safety-nets.md` の節を指す）は残す。新しい箇条は「どの rule を読むか」の一般則、既存の箇条は「timeout のときにどの節に従うか」の名指しで、役が違う
-- D5 配送を述べる他の現役の記述（`.claude/rules/safety-nets.md` 冒頭・`.claude/skills/retrospective/SKILL.md`・`docs/comment-guidelines.md`・`docs/glossary.md`）は変えない。隔離という例外が付く全称だが、読み手は主セッションで、例外が効く読み手（隔離した委譲先）はその文を読まない。前提の書き添えは `AGENTS.md` 冒頭の 1 文が担う（全称の反証プローブの処置「前提を書き添える」）
+- D5 配送を述べる他の現役の記述（`.claude/rules/safety-nets.md` 冒頭・`.claude/skills/retrospective/SKILL.md`・`docs/comment-guidelines.md`・`docs/glossary.md`）は変えない。隔離という例外が付く全称だが、読み手の多くは主セッションである。隔離した委譲先も 3b の箇条に従って `safety-nets.md` などを読むが、その時点で Read を済ませているので、「触ると自動で配送される」を読んでも誤った行動にはつながらない（委譲レビュー ラウンド 1 の L2 で根拠を直した）。前提の書き添えは `AGENTS.md` 冒頭の 1 文が担う（全称の反証プローブの処置「前提を書き添える」）
 - D3（Q2）`AGENTS.md` 冒頭には、測定の報告と行動形を 1 文ずつ足す。報告: 2026-11-21 の測定（#1494）では、worktree に隔離したサブエージェントには、ファイルツールで触っても配送されなかった。全称にしない、機序を書かない（`workspace/research.md`「敵対的調査（3b）の反映」）。行動形: 隔離した委譲先に rule を読ませるときは、委譲の指示で Read を求める。手順の本文は `/implement` 3b が持つ
 
 ## 変更するファイル
@@ -61,6 +61,11 @@
 - [x] `AGENTS.md` 冒頭の配送の文に、隔離したサブエージェントの事実と行動形を足す（D3）
 - [x] `/implement` 3b に、自分の worktree の `.claude/rules/` から `paths` で当たる rule を Read で読む箇条を足す（D1・D2）
 - [x] #1494 に測定結果（`workspace/research.md`「測定」の表）をコメントする
+
+### 検証の記録
+
+- ラウンド 1: アンカー `26fd0247` / ツール green（E・F）/ 指摘 Medium 1（3b の写しが測定の報告を全称に強めていた）・Low 2（rule を読む時点と変異の時点のずれ・D5 の根拠）→ 3 件とも直した / 変異注入 該当なし
+- 実地の確かめ: 委譲先は rule を名指されずに、自分の worktree の `.claude/rules/governance-docs.md`・`safety-nets.md` を Read した（記録の Read のパスで確認）。その記録の `nested_memory` は 0 件で、隔離した委譲先に配送が届かなかった例の 3 件目になった
 
 ## 未確定（実装前に潰す）
 

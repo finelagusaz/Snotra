@@ -1,0 +1,49 @@
+# adversarial 1400 -- 反証の結果
+
+## 壊せた項目
+[壊1] 命題2「古い版で落ちるケースは、製品を起動すれば必ず現行版へ置き換わる」(research.md 70-71 行) は偽。
+  - 実測: いま走っている製品は C:\toolbox\Snotra\snotra.exe（PID 38276・2026-11-21 9:45 起動）で、exe の LastWriteTime は 2026-10-08。
+    これは現行 HEAD（INDEX_CACHE_VERSION=10・#1397 で 2026-11-04 に v10 化）より古い別ビルドである。
+    実 index.bin は 2026-11-20 21:16 に v7 で書かれており、書き手はこのビルド系統（HEAD のコードではない）と考えるのが自然。
+  - 「製品」が指すのは HEAD のコードではなく、開発機に入っている出荷版（auto_update = "full"）。出荷版が追いつくまで、
+    起動しても v7 のまま（書き戻しも v7）。この版では default suite の 5 本 + path_query_cost の 1 本が panic し続ける。
+    他ワークツリー・古いブランチの #[ignore] 計測が実 index.bin を旧版で書き戻す経路も同じ。
+  - 偽にする手順の逆（=この所見を覆す手順）: C:\toolbox\Snotra\snotra.exe を HEAD ビルドに差し替えて起動し、index.bin の先頭 8 byte が v10 になるか確かめる。
+  - 帰結: 「旧版で panic」は開発機で恒常的に赤になりうる。裁定時の前提（起動すれば直る）が崩れる。直す手段が「出荷版の更新待ち」になる点をユーザーに戻すべき。
+[壊2] 命題2「ヘッダーの版の大小比較だけで分類できる」は、peek_version が magic を見ないので不完全（binfmt.rs peek_version の doc 自身が
+  「v1701077335 は旧版である」型の嘘を警告している）。magic 違いの任意ファイルでも version 部が小さい値なら「旧版」に分類され panic しうる。
+  分類の前に magic == INDEX_MAGIC を要求し、満たさなければスキップにする必要がある（research 74 行は「magic 違い→スキップ」と書くが、
+  peek_version だけでは magic 違いが区別できない。別に先頭 4 byte を見る処理が要る）。
+  また「現行版の版が付いた破損」「v7〜v9 だが本体が壊れている」も旧版扱いで panic する（読めない理由が「設計上読まない」ではなく破損でも同じ分類）。
+  偽にする手順: 先頭 8 byte が `XXXX 05 00 00 00` のダミーファイルで分類関数を呼び、スキップになるか確認。
+[壊3] 命題5（未解決の疑問）「#1394 で計測が走らなかった可能性が高い」は推論にすぎず、取れていない。
+  index.bin の mtime が 11-20 21:16 で v7 なのは「計測が Write で v10 に昇格させた後、旧ビルドの製品が v7 で上書きした」場合とも矛盾しない
+  （scan-log.jsonl は 11-18 が最終で、製品が 11-20 21:16 に v7 を書いた時刻の記録は無い=この説の判別材料にならない）。
+  ⚠️ 確信なし。判別する手順: #1394 の PR 本文・コメントに計測の出力（cache_hit / 版）が貼られているかを読む。research の「範囲外」扱い自体は妥当。
+
+## 壊せなかった項目
+[保1] 命題1の主要部分: 実 index.bin は v7（`494e4458 07000000`、1,074,089 byte）。config.toml の [[paths.scan]] は 5 件（空でない）。
+  SNOTRA_CONFIG_DIR は環境に無し（Git Bash の env で確認）。Config::config_dir() は location.rs で env 優先、無ければ dirs::config_dir()/Snotra（= %APPDATA%\Snotra）。
+  よって helper は config の段を抜け、load_cached_entries → load_cache_in の「現行版にも v6〜v2 にも当たらない」落ち（None）に達する。
+  ※ただし scan の config_hash 照合は v7 では到達しない（v7 は分岐が無い）ので「版の違いで落ちる」は正しい。
+  ⚠️ 注意: 別シェル・別プロセスで SNOTRA_CONFIG_DIR が設定されていれば前提が変わる（このセッションの env にはない）。
+[保2] 命題3: load_cached_entries の呼び手は common.rs real_index_entries と tests/path_query_cost.rs load_real_index の 2 つだけ（git grep で全リポジトリ確認、snotra-core 外は 0 件）。
+  real_index_entries の呼び手は basic 1・build 1・path 5 の 7 本。#[ignore] は path.rs:715 と :787 の 2 本、既定は 5 本。
+  8 か所（+ path_query_cost.rs:78）すべて同じ文言「実インデックスが無いためスキップします。」。
+  製品の load_cached_material（:762）は load_cache_in を直接呼び load_cached_entries を経由しない。
+[保3] 命題4: ci.yml の rust-check は windows-latest で、cargo test -p snotra-core より前に製品を起動する step は無い（check / fmt / cache のみ）。
+  smoke.yml は別 workflow で、SNOTRA_CONFIG_DIR の検証用プロファイルへ seed する（実 config を作らない）。.github に config.toml/index.bin の seed は無い。
+  よって CI の helper は config の段（read_to_string 失敗）で None。⚠️ 未確認: core の既定テストがどれか実 config_dir に config.toml を作る可能性。
+  作っても index.bin が無ければ load_bytes() の段で None になり、旧版の分岐へは届かないので結論は変わらない。
+[保4] 命題2 の「v2〜v6 の hash 不一致も旧版として扱える」自体は、load_cache_in の分岐構造（各版で config_hash 不一致なら None）から正しい。
+  ただし v2〜v6 は hash 不一致で panic するため、「scan を編集したが製品をまだ起動していない開発機」でも panic する（旧版 +設定変更が同居）。
+  これは[壊1]の帰結の一部であり、分類としては研究どおり。
+[保5] 製品の再構築経路: 起動は走査しない（main.rs の load_cache_with_stats・#1448）。読めなければ空の索引で起動し setup が背景構築（rebuild_and_save で保存）。
+  load_cached_material は Skip で書かない。→ 「起動すれば置き換わる」は、書き込める環境かつ背景構築が完走した場合に限る（書き込み失敗は eprintln のみ・保存先が引けなければ書かない）。
+  研究の「置き換わる」は無条件でなく、この条件付き。
+
+## ⚠️ 確信の持てない所見
+- v7 の書き手の特定: exe mtime 10-08 の製品が v7 を書いたと断定できない（v7 の導入時期を git log で確定していない。-S の結果は 8f55e8e2=#1326 が v8 化した時点を指す）。
+  確かめる手順: git log -S"INDEX_CACHE_VERSION: u32 = 7" の追加側コミット日を見て、10-08 以前なら成立。
+- SNOTRA_CONFIG_DIR の有無は、このセッションの Bash の env だけを根拠にしている。
+- #1394 の計測が走ったかは未判別（上の壊3）。

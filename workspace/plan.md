@@ -22,6 +22,9 @@
 | ファイル | 対象 |
 |---|---|
 | `.claude/skills/start-issue/SKILL.md` | 「Step 2 — main 最新化 & ブランチ作成」の見出しとコードブロックと前後の文 |
+| `.claude/agents/code-reviewer.md` | 起動時の手順 1 の `git diff main...<sha>`（実装中に追加。下の「実装中に判明した作業」） |
+| `.claude/skills/retrospective/SKILL.md` | 「Step 1 — サイクルの全体像を把握」の `git log` / `git diff` の起点（同上） |
+| `.claude/skills/implement/SKILL.md` | 「3b. 委譲へ渡すもの」の `git diff --name-only main...<sha>`（同上） |
 
 ## 実装の順序
 
@@ -51,6 +54,15 @@
 
 - [x] Step 2 のコードブロックを `git fetch origin` と `git switch --no-track -c … origin/main` にし、`--no-track` の理由と、`git fetch` が失敗したら止まることを書く（D1・D2）
 - [x] Step 2 の見出しを改め、旧見出しへの参照を `git grep` で数えて直す
+
+### 実装中に判明した作業（委譲レビュー ラウンド 1 の指摘から）
+
+- [x] 「本体が `main` を掴んでいる」を「checkout している」に直す（訳語）
+- [x] ローカルの `main` を起点にした差分の 3 か所（`.claude/agents/code-reviewer.md`・`/retrospective` Step 1・`/implement` 3b）を `origin/main` 起点にし、Step 2 にその旨を書く。計画 D3 は「読み過ぎの向きにしか働かない」として範囲外にしていたが、消した `git pull --ff-only` はローカルの `main` を進める唯一の手順で、この変更で `main` はさらに古くなりやすくなる。code-reviewer と retrospective では、他の PR の変更が所見やサイクルの範囲に混ざる（読み過ぎではなく誤りの向き。委譲先が使い捨てのリポジトリで実測）。自分の変更が悪化させる害なので範囲に入れた
+
+### 検証の記録
+
+- ラウンド 1: アンカー `48b7401e` / ツール green（E・F）/ 指摘 High 1（訳語「掴む」）・Medium 1（ローカルの `main` を進める手順が消え、`main` 起点の差分の害が増える）→ 2 件とも直した / 実地の確かめ: 委譲先が使い捨てのリポジトリで、本体相当と worktree 相当の両方で新しい 2 行を打ち、最新の `origin/main` から upstream なしで切れ、`push -u` で同名が upstream になることを確かめた / 変異注入 該当なし
 
 ## 未確定（実装前に潰す）
 

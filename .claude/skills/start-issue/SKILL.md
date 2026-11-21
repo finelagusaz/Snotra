@@ -29,14 +29,14 @@ gh issue view $ARGUMENTS
 
 ## Step 2 — 最新の origin/main からブランチ作成
 
-作業ツリーに未保存の変更が無いことを確かめてから実行する。`main` を checkout しないので、本体のチェックアウトでも harness の worktree（本体が `main` を掴んでいる）でも同じ手順で動く。
+作業ツリーに未保存の変更が無いことを確かめてから実行する。`main` を checkout しないので、本体のチェックアウトでも harness の worktree（本体が `main` を checkout している）でも同じ手順で動く。
 
 ```bash
 git fetch origin
 git switch --no-track -c <feat|fix|chore>/<short-name> origin/main
 ```
 
-`git fetch` が失敗したら、ブランチを切らずに止まる（古い `origin/main` から切ることになるため）。`--no-track` を外さない。外すと upstream が `origin/main` になり、`-u` なしで push したときに、PR 前ゲート（`.claude/hooks/pre-bash.mjs`）が「未 push のコミットがある」と誤って止める。upstream は Step 6 の `git push -u origin HEAD` で同名のリモートブランチに決まる。ローカルの `main` はこの手順では更新されない。
+`git fetch` が失敗したら、ブランチを切らずに止まる（古い `origin/main` から切ることになるため）。`--no-track` を外さない。外すと upstream が `origin/main` になり、`-u` なしで push したときに、PR 前ゲート（`.claude/hooks/pre-bash.mjs`）が「未 push のコミットがある」と誤って止める。upstream は Step 6 の `git push -u origin HEAD` で同名のリモートブランチに決まる。ローカルの `main` はこの手順では更新されないので、差分の起点には `origin/main` を使う（`/implement`・`.claude/agents/code-reviewer.md`・`/retrospective` はそう書いてある）。
 
 ## Step 3 — 調査（workspace/research.md）
 

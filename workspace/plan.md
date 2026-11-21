@@ -68,6 +68,7 @@
 - ラウンド 3: アンカー `354d9212` / ツール green（E・F）/ ラウンド 2 の指摘は解消（retrospective の 3 点形を S1〜S4 で打ち直し、途中で main を merge したブランチでも正しいことを実測）/ 新規 Low 1（code-reviewer の括弧の掛かり先）→ 直した / 変異注入 該当なし
 - ラウンド 4: アンカー `c9df3dea` / ツール green（E・F）/ 指摘 0 / 変異注入 該当なし
 - 軸の違うレビュー: 条件 (1)「委譲の所見を主が退けた」（注の重複・複数 PR のサイクルで範囲が空になる以前からの問題）/ 対象 `chore/1496-start-issue-worktree-branch`、差分は `origin/main...HEAD` / nit 2 / 直した 1（`docs/build-commands.md` の `race:boundaries --base` に `origin/main` を渡すことを添えた）/ 残した 1（ローカルの `main` が進まなくなるので、`verify:tree remove` が委譲先のブランチを「not fully merged」で消せない場面が増える — 中身は祖先で害は手間だけ。PR 本文の「残したもの」へ）
+- ラウンド 5: アンカー `b56372ff` / ツール green（E・F）/ ⚠️ Low 1（`race:boundaries` の箇条が「分岐元はいつも main」と読める。別の feature ブランチに積んだブランチでは、その分岐元を渡す）。上限の 5 サイクルに達したので直さず PR 本文の「残したもの」へ（Critical・High は 0）/ 変異注入 該当なし
 
 ## 未確定（実装前に潰す）
 

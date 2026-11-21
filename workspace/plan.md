@@ -49,8 +49,8 @@
 
 ### Phase 1
 
-- [ ] Step 2 のコードブロックを `git fetch origin` と `git switch --no-track -c … origin/main` にし、`--no-track` の理由と、`git fetch` が失敗したら止まることを書く（D1・D2）
-- [ ] Step 2 の見出しを改め、旧見出しへの参照を `git grep` で数えて直す
+- [x] Step 2 のコードブロックを `git fetch origin` と `git switch --no-track -c … origin/main` にし、`--no-track` の理由と、`git fetch` が失敗したら止まることを書く（D1・D2）
+- [x] Step 2 の見出しを改め、旧見出しへの参照を `git grep` で数えて直す
 
 ## 未確定（実装前に潰す）
 

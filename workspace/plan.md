@@ -58,9 +58,9 @@
 
 ### Phase 1
 
-- [ ] `AGENTS.md` 冒頭の配送の文に、隔離したサブエージェントの事実と行動形を足す（D3）
-- [ ] `/implement` 3b に、自分の worktree の `.claude/rules/` から `paths` で当たる rule を Read で読む箇条を足す（D1・D2）
-- [ ] #1494 に測定結果（`workspace/research.md`「測定」の表）をコメントする
+- [x] `AGENTS.md` 冒頭の配送の文に、隔離したサブエージェントの事実と行動形を足す（D3）
+- [x] `/implement` 3b に、自分の worktree の `.claude/rules/` から `paths` で当たる rule を Read で読む箇条を足す（D1・D2）
+- [x] #1494 に測定結果（`workspace/research.md`「測定」の表）をコメントする
 
 ## 未確定（実装前に潰す）
 

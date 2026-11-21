@@ -2157,6 +2157,41 @@ fn cached_entries_miss_tells_older_from_newer_version() {
     );
 }
 
+/// **corpus テストの入口は、旧版を読んでも書き戻さない。** 入口が `LegacyUpgrade::Write` を
+/// 渡すと、テストを走らせるだけで開発者の実 `index.bin` を書き換える。
+/// `load_cache_skip_does_not_upgrade_a_legacy_format` は `load_cache_in` を直に呼ぶので、
+/// 入口がどちらを渡すかはここでしか見ない。
+#[test]
+fn cached_entries_does_not_rewrite_a_legacy_index() {
+    let dir = temp_dir("miss_v4_no_rewrite");
+    let v4 = try_serialize_with_header(
+        INDEX_MAGIC,
+        4,
+        &IndexCacheV4 {
+            built_at: 1_700_000_000,
+            entries: one_entry(),
+            config_hash: 42,
+            char_masks: vec![0],
+            file_name_char_masks: vec![0],
+            lower_names: vec!["a".into()],
+            lower_file_names: vec![None],
+            normalized_keys: vec![],
+        },
+    )
+    .expect("serialize v4");
+    fs::write(dir.join("index.bin"), &v4).expect("write v4 index.bin");
+
+    let entries = load_cached_entries_in(&dir, 42).expect("v4 は読める");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        fs::read(dir.join("index.bin")).expect("read index.bin"),
+        v4,
+        "読んだだけで index.bin が書き換わった"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// 現行版で落ちたもの（`config_hash` の不一致）は、版の問題として報せない。
 #[test]
 fn cached_entries_miss_reports_a_rejected_current_version() {

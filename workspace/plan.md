@@ -120,6 +120,10 @@ fmt・clippy・test・doc）をすべて走らせる。加えて、開発機の�
 AC5: `over_real_index` の既定 5 本と `derives_same_bytes_as_normalize_entry_key` が「v7（現行 v10）」の文言を出して通った。
 `cargo test -p snotra-core` は全件緑。
 
+- ラウンド 1: sha e1a27840 / verify:tree green（A・E・F）/ 指摘 3（Medium 1・Low 2）/ 変異 6 のうち生き残り 1（入口の `Skip`→`Write`。検知器が無かった）/ 実地の確かめは該当なし（手順・挙動を述べない差分。実 index.bin の SHA256 はテストの前後で不変）。
+  Medium（入口の `Skip` を守る検知器が無い）は `cached_entries_does_not_rewrite_a_legacy_index` を足して直した。主の手元で同じ変異を当て、assert で赤になることを確かめた。
+  Low-1（`Older`/`Rejected` の doc が分岐を列挙していて既に偽）は、自分が書いた偽の記述なので下限の形へ直した。Low-2（到達可能性の主張）は挙動を変えないので捨てた。
+
 ### Phase 3 — 検証
 
 - [ ] カテゴリ別の検証コマンドを走らせる

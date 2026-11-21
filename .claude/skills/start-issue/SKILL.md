@@ -27,15 +27,16 @@ gh issue view $ARGUMENTS
 - 「何を作るか」が不明: 影響の大きい 1〜2 点を質問し、回答を得てから進む
 - 「検討:」「保留」を冠した issue（本文が「今は作らない」判断と実施条件を持つ）: 計画へ進まず、実施条件が今のコードと `SPEC.md` で満たされているかを先に確かめ、実装するかクローズするかを問う。確かめる中で issue に無い選択肢が出たら、それも示して問う（#77・#488）
 
-## Step 2 — main 最新化 & ブランチ作成
+## Step 2 — 最新の origin/main からブランチ作成
 
-作業ツリーに未保存の変更が無いことを確かめてから実行する。
+作業ツリーに未保存の変更が無いことを確かめてから実行する。`main` を checkout しないので、本体のチェックアウトでも harness の worktree（本体が `main` を checkout している）でも同じ手順で動く。
 
 ```bash
-git checkout main
-git pull --ff-only
-git checkout -b <feat|fix|chore>/<short-name>
+git fetch origin
+git switch --no-track -c <feat|fix|chore>/<short-name> origin/main
 ```
+
+`git fetch` が失敗したら、ブランチを切らずに止まる（古い `origin/main` から切ることになるため）。`--no-track` を外さない。外すと upstream が `origin/main` になり、`-u` なしで push したときに、PR 前ゲート（`.claude/hooks/pre-bash.mjs`）が「未 push のコミットがある」と誤って止める。upstream は Step 6 の `git push -u origin HEAD` で同名のリモートブランチに決まる。ローカルの `main` はこの手順では更新されないので、差分の起点には `origin/main` を使う。
 
 ## Step 3 — 調査（workspace/research.md）
 

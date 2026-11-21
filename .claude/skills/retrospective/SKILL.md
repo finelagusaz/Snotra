@@ -20,9 +20,12 @@ allowed-tools:
 ## Step 1 — サイクルの全体像を把握
 
 ```bash
-git log main..HEAD --oneline
-git diff main..HEAD --stat
+git fetch origin
+git log origin/main..HEAD --oneline
+git diff origin/main...HEAD --stat
 ```
+
+（ローカルの `main` は古いことがあり、そこを起点にすると他の PR のコミットがサイクルに混ざる。`diff` は 3 点形にする。2 点形は merge-base を取らずに 2 つのツリーを比べるので、マージの後に走らせると自分の変更が消え、他の PR の変更が逆向きに出る）
 
 - 変更したファイルとコミット履歴から、サイクルの全体像を把握する
 - `workspace/plan.md` があれば読み、当初の計画と実際の実装を比較する

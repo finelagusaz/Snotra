@@ -8,10 +8,11 @@
 // `-d` が拒んだら `refs/remotes/origin/main` の祖先かを確かめ、祖先なら `-D` で消す。fetch はしない
 // （`origin/main` が古ければ「祖先でない」側、つまり残す側へ倒れる）。
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 export const REASON_NOT_IN_ORIGIN = "origin/main に無いコミットがある";
 export const REASON_UNDECIDABLE = "origin/main の祖先か判定できない";
+export const REASON_GIT_FAILED = "origin/main の祖先だが git branch -D が失敗した";
 
 // 短縮名の `origin/main` は、同じ名前のローカルブランチがあるとそちらへ解決される
 const ORIGIN_MAIN = "refs/remotes/origin/main";
@@ -20,7 +21,7 @@ const ORIGIN_MAIN = "refs/remotes/origin/main";
  * @param {string} cwd git を打つ作業ツリー
  * @param {string} branch 消すブランチの短い名前
  * @returns {{ deleted: boolean, basis?: "-d" | "origin/main", reason?: string, detail?: string }}
- *   消さなかったときの `detail` は `git branch -d` の stderr
+ *   消さなかったときの `detail` は、失敗した git（`branch -d` か `branch -D`）の stderr。throw しない
  */
 export function deleteMergedBranch(cwd, branch) {
   const soft = spawnSync("git", ["branch", "-d", branch], { cwd, encoding: "utf8" });
@@ -31,8 +32,10 @@ export function deleteMergedBranch(cwd, branch) {
   // 1 とそれ以外を混ぜない——「origin/main が無い」を「固有のコミットがある」と報告しない
   const anc = spawnSync("git", ["merge-base", "--is-ancestor", `refs/heads/${branch}`, ORIGIN_MAIN], { cwd, encoding: "utf8" });
   if (anc.status === 0) {
-    execFileSync("git", ["branch", "-D", branch], { cwd, encoding: "utf8", stdio: "pipe" });
-    return { deleted: true, basis: "origin/main" };
+    // throw しない——呼び出し側は「残した」として報告する（verify-tree では exit 1。2 は検査が走らなかったときだけ）
+    const hard = spawnSync("git", ["branch", "-D", branch], { cwd, encoding: "utf8" });
+    if (hard.status === 0) return { deleted: true, basis: "origin/main" };
+    return { deleted: false, reason: REASON_GIT_FAILED, detail: (hard.stderr || hard.error?.message || "").trim() };
   }
   return { deleted: false, reason: anc.status === 1 ? REASON_NOT_IN_ORIGIN : REASON_UNDECIDABLE, detail };
 }

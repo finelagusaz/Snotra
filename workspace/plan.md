@@ -90,6 +90,8 @@
 - [x] R1 `a0d5ac57`: verify:tree green（E・F）／指摘: 挙動を変える 3（Step 4「判定できない」の打ち直しが exit 2 で働かない・fetch を先に挟む・clean-worktrees で `-D` の throw がループを止める）を直した。挙動を変えない 2（短縮名の `origin/main`・テストのコメントの精度）は捨てた／変異 M1〜M5 生き残り 0、M6（始点を追跡ブランチ名）も assert が basis を断言するので赤／実地: 一時リポジトリ（bare origin + clone）で Step 4 の手順を打ち、「判定できない」の打ち直しだけが働かなかった
 - [x] R2 `402f47e0`: verify:tree green（E・F）／R1 の 1〜3 は同じ道具で解消を確認（3 は `-D` を失敗させる変異で、修正前はスタックトレースで集計が出ず、修正後は「掃討 1 / 失敗 1」で exit 1）／挙動を変える 1（catch の経路を断言するテストが無い）を直した: ref のロックファイルで `-D` を失敗させるテストを足した。捨てた: 既定ブランチが main でないリポジトリ（このリポジトリに当たらない）・`--force` なしの clean:worktrees の巻き添え（消すのはクリーンな worktree と origin/main の祖先だけで、中身を失わない）・Step 4 の文言の精度
 - [x] R3 `c3f4b739`: verify:tree green（E・F）／足したテストへの変異: try/catch を外す・ロックファイルを消す・catch で失敗に数えない、は assert で検知。catch の後に break する変異が生き残った（孤児は名前順に処理され、失敗する側が最後だった）→ 孤児の名前を z-free に替え、順序に依ることをコメントで添えた（委譲先が同じ改名で break の変異が赤になることを測った）
+- [x] R4 `5d0050a3`: verify:tree green（E・F）／T1〜T4 すべて assert で赤、指摘 0
+- [x] 軸の違うレビュー（`/code-review high fix/1507-verify-tree-remove-branch`・条件 (2) 回復機構を足した）: 4 件。直した 1: verify-tree の remove で祖先判定の後の `-D` が throw すると exit 2（旧版は exit 1）→ `deleteMergedBranch` が throw せず理由「git branch -D が失敗した」を返す形にし、clean-worktrees の try/catch を外した（ロックファイルのテストを delete-merged-branch と verify-tree にも足した）。捨てた 3: Step 4 の文言の精度・`-d` のほかの失敗も「判定できない」にまとめる（stderr を添えている）・`--force` なしの clean:worktrees の巻き添え（中身を失わない。R2 で同じ判定）
 
 ## 未確定（実装前に潰す）
 

@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { deleteMergedBranch, REASON_NOT_IN_ORIGIN, REASON_UNDECIDABLE } from "./delete-merged-branch.mjs";
+import { deleteMergedBranch, REASON_GIT_FAILED, REASON_NOT_IN_ORIGIN, REASON_UNDECIDABLE } from "./delete-merged-branch.mjs";
 
 const T = 20_000;
 
@@ -77,6 +77,22 @@ describe("deleteMergedBranch", () => {
 
     expect(r.deleted).toBe(false);
     expect(r.reason).toBe(REASON_NOT_IN_ORIGIN);
+    expect(exists(repo, "b")).toBe(true);
+  });
+
+  it("origin/main の祖先でも git branch -D が失敗したら、throw せず消さなかったと返す", { timeout: T }, () => {
+    const repo = initRepo();
+    const tip = commitOffHead(repo, "upstream.txt");
+    git(repo, ["update-ref", "refs/remotes/origin/main", tip]);
+    git(repo, ["branch", "b", tip]);
+    // ref のロックファイルを置くと、祖先の判定（読むだけ）は通り、-d と -D（書く）は失敗する
+    writeFileSync(path.join(repo, ".git", "refs", "heads", "b.lock"), "");
+
+    const r = deleteMergedBranch(repo, "b");
+
+    expect(r.deleted).toBe(false);
+    expect(r.reason).toBe(REASON_GIT_FAILED);
+    expect(r.detail).not.toBe("");
     expect(exists(repo, "b")).toBe(true);
   });
 

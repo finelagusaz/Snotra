@@ -196,7 +196,7 @@ describe("clean-worktrees", () => {
     const r = runScript(repo);
 
     expect(r.status, r.output).toBe(1);
-    expect(r.output).toContain("git が失敗した");
+    expect(r.output).toContain("git branch -D が失敗した");
     expect(branches(repo)).toContain("worktree-agent-locked");
     expect(branches(repo)).not.toContain("worktree-agent-z-free");
     expect(r.output).toContain("失敗 1");

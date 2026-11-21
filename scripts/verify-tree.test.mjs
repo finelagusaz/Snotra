@@ -749,6 +749,20 @@ describe("verify-tree remove", () => {
     expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).not.toBe("");
   });
 
+  it("--delegate-tree は、origin/main の祖先でも git branch -D が失敗したら、ブランチを残して exit 1（2 にしない・#1507）", { timeout: T }, () => {
+    const repo = initRepo();
+    const tip = commitOffHead(repo, "upstream.txt");
+    git(repo, ["update-ref", "refs/remotes/origin/main", tip]);
+    const wt = delegateAt(repo, tip);
+    writeFileSync(path.join(repo, ".git", "refs", "heads", "worktree-agent-abc.lock"), "");
+
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("git branch -D が失敗した");
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).not.toBe("");
+  });
+
   it("--delegate-tree は、origin/main が無く -d も拒むブランチを残し、判定できないと出して exit 1（2 にしない・#1507）", { timeout: T }, () => {
     const repo = initRepo();
     const wt = delegateAt(repo, commitOffHead(repo, "own.txt"));

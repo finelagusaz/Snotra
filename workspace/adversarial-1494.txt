@@ -1,0 +1,55 @@
+adversarial-1494 : research.md の反証結果
+
+測定の下地: subagents の jsonl 5 本と主セッション jsonl を、python で型ごとに走査した（attachment.type、tool_use、tool_result、rules 見出し文字列の出現位置）。
+
+## 壊せた
+B1. 表の行 3「#1493 の実装レビュー（隔離）: 0（rules を先に自分で Read していたため判定に使えない）」は、判定に使える。
+  - a510（isolation あり）は idx38 で自分の worktree の .claude/agents/code-reviewer.md を Read している。このパスは safety-nets（.claude/agents/**）にも governance-docs（**/*.md）にも当たる。rules を自分で Read するのは idx40・42 で、その後である。
+  - idx39〜40 の間に attachment は 1 件も無い。a510 の記録全体で nested_memory は 0 件。非隔離の a51bb は Read（idx17）の後、次の assistant 発話の前に att が入っている（idx24）。
+  - a510 のモデルは haiku ではない（meta に model 指定なし）。
+  - 帰結: 「隔離すると配送されない」は haiku 1 件ではなく、別モデル 2 件で再現している。次項 ⚠️1 の「モデル交絡」はこれで弱まる。
+  - この所見を偽にする手順: a510 の idx38〜41 に nested_memory の attachment があれば偽。python で attachment.type を走査して確認した（0 件）。
+B2. 「機序の推測: paths の照合が主の worktree のルートからの相対パスで行われ、.claude/worktrees/agent-<id>/… は .claude/skills/** などに当たらない」は説明として不十分で、一部が偽。
+  - 隔離側の worktree は、主の worktree（.../worktrees/local-memory-insights-abf21e）の配下ではなく、兄弟ディレクトリ（.../worktrees/agent-<id>）である。ルートからの相対パスは `.claude/worktrees/agent-<id>/…` ではなく `../agent-<id>/…` になりうる。
+  - 隔離側が Read した merge-pr/SKILL.md と code-reviewer.md は、`**/*.md` と `*.md`（governance-docs）にも当たるはずだが、governance-docs も届いていない。「.claude/skills/** に当たらない」では、governance-docs の不達を説明できない。
+  - 非隔離の af0a は、ドットで始まる dir 内の .md（.claude/rules/safety-nets.md）を Read して governance-docs を受けた。「ドット dir は `**/*.md` に当たらない」という説明も使えない。
+  - 他の候補で、測っていないもの: (a) ルート外パスは配送対象外 (b) `.gitignore` の `.claude/worktrees/` に当たるパスは配送対象外（check-ignore で、agent worktree 配下は ignore 対象と確認した。主 worktree 自身も `.claude/worktrees/` 配下にあるが、ルートからの相対パスなら ignore に当たらない）(c) 隔離サブエージェントは nested_memory 機構自体が無効。
+  - research は「機序は確かめていない・推測」と断っているので、虚偽の主張ではない。ただし、推測を AGENTS.md の文面に写してはならない。
+  - この所見を偽にする手順: 隔離せず、ルート外の兄弟パスにある .md を Read する委譲先を作って配送を見る。配送されれば (a) は偽。
+
+## 壊せなかった
+命題 1（配送は nested_memory だけ）: 壊せなかった。rules 見出し（セーフティネット… / ガバナンス文書の参照と命名のルール）の出現位置を全 jsonl で分類した。
+  - nested_memory の attachment: 配送そのもの。
+  - api-request-blob: 同じ nested_memory 本文を API リクエスト側へ再構成したコピー。別経路ではない。
+  - tool_result: 委譲先が rules を自分で Read した結果、または Bash/git grep の出力。a510 idx41/43/45、af0a idx28、a51bb idx35（implement/SKILL.md を読んだ Bash 出力に見出し文字列が含まれる）。配送ではない。
+  - プロンプト文字列: 呼び出し側の指示に引用した文字列（af76 idx0、acb5 idx0 など）と、assistant の Write。
+  - system-reminder 型の rules 本文: 委譲先 5 本のどれにも無い。attachment の型一覧（instructions、session_context 等）の中にも rules 本文は無い。
+  - この所見を偽にする手順: nested_memory 以外の attachment 型、または Read 結果以外のブロックに、見出し文字列が現れれば偽。an2.py の分類で 0 件。
+命題 2（隔離 af76 が自分の worktree の merge-pr/SKILL.md を Read しても配送なし）: 壊せなかった。
+  - af76 idx27 で Read `C:/workspace/Snotra/.claude/worktrees/agent-af76bc07813fb15c7/.claude/skills/merge-pr/SKILL.md`。その後に nested_memory は 0 件。
+  - merge-pr/SKILL.md は safety-nets の `.claude/skills/**` と governance-docs の `**/*.md` の両方に、作業ツリー相対で当たる。
+  - この所見を偽にする手順: af76 に nested_memory があれば偽。
+命題 3（隔離しない委譲先は主のパスを Read した直後に配送を受けた）: 壊せなかった。
+  - a51bb: Read research.md（idx17）の後に governance-docs（idx24）。Read pre-bash.mjs（idx54）の後に safety-nets（idx56）。
+  - af0a: Read safety-nets.md（idx27）の後に governance-docs（idx30）。
+  - Bash が契機でないことの確認: af0a の Bash（idx26、`ls .claude/rules/ …`）の後には配送が無く、Read の後で初めて入った。a51bb の idx52 の Bash の後も無く、Read（idx54）の後に入った。
+  - acb5（私）は Bash と Read を同じ並びで出したため、Read が契機だと単独では言えない（この件は上の 2 本で足りる）。
+  - 注意: af0a の配送が governance-docs で safety-nets でないのは、safety-nets を自分で Read したため（自分の Read は重複配送されない）。「自分が Read した rule は再配送されない」は、research の表の注記と整合する。
+  - この所見を偽にする手順: Read のない並びで配送が入っていれば偽（Grep や Bash 起点の att）。見つからなかった。
+命題 4（委譲先にも AGENTS.md が届く）: 壊せなかった。委譲先 5 本すべての instructions attachment に `Contents of …AGENTS.md` がある。
+  - 付随の発見（research に無い）: 隔離した委譲先（a510・af76）の instructions に載っている CLAUDE.md・AGENTS.md・MEMORY.md のパスは、自分の worktree ではなく、主の worktree のもの（`C:/workspace/Snotra/.claude/worktrees/local-memory-insights-abf21e/AGENTS.md`）である。
+  - 帰結: 隔離した委譲先が受ける AGENTS.md は、主のツリーの版。アンカーの sha とずれうる。この文書の中身（配送の文）の変更は、隔離した委譲先に主ツリーの版で届く。
+  - この所見を偽にする手順: instructions の `Contents of` のパスが agent-<id> 側になっていれば偽。
+命題 5（isolation の指定箇所）: 壊せなかった。
+  - `isolation` の出現: .claude/skills/implement/SKILL.md:112 のみ（skills・agents・CLAUDE.md・AGENTS.md を grep。docs/ の ADR と設計メモの言及は仕様ではない）。
+  - start-issue 3b の `Agent` は subagent_type: general-purpose / model: sonnet で isolation 指定なし（62 行）。plan-review も isolation の指定なし。health-check にも指定なし。
+  - 実測の裏付け: a51bb・af0a・acb5 の meta に worktreePath が無い（隔離なし）。隔離は a510（worktreePath あり）と af76（worktreeCleanlyRemoved あり）。
+  - この所見を偽にする手順: `git grep -n isolation -- .claude CLAUDE.md AGENTS.md` で、implement/SKILL.md 以外にヒットすれば偽。
+命題「主セッションの記録でも path に .claude/rules/*.md が入る」: 壊せなかった（主の記録の nested_memory 4 件は governance-docs と safety-nets のパス）。
+
+## ⚠️（確信が持てない所見）
+⚠️1 測定環境: af76 は haiku で、非隔離の haiku との対照が無い。隔離と haiku が交絡する。B1 の a510（別モデル）で弱まったが、a510 は代理の読み方（コミット済みの diff を中心に Read）で動いており、これも単独では対照にならない。偽にする手順: 非隔離の haiku に、主のパスの .md を Read させる（配送されれば haiku は無罪、されなければモデル交絡が残る）。
+⚠️2 触るパスの当たり方: af76 は merge-pr/SKILL.md を Read しただけで、safety-nets の主要な型（.claude/hooks/**）は未測。a510 の code-reviewer.md（.claude/agents/**）と合わせて .claude/skills/**・.claude/agents/** は当たるはずのパスで不達、と言える。hooks と scripts/** は隔離側で未測。変更が触る分岐（/implement 3b の指示文面は .claude/skills/** に当たる）は、測った分岐と同じパス型なので、結論への影響は小さい。
+⚠️3 配送が起きない条件の一般化: 「隔離したサブエージェントには配送されない」を全称で書くと偽になりうる。測ったのは worktree 隔離 2 件（opus 系と haiku）、Read 対象 2 種のみ。AGENTS.md に書くなら下限（「2026-11-21 の測定では、隔離した委譲先に届かなかった」）に倒すこと。
+⚠️4 a510 の dedupe: a510 の rules の自己 Read（idx40・42）の後は、重複配送が抑止された可能性が残る。判定に使えるのは idx38〜39 の窓だけ。この窓に配送が無いことは確認した。
+⚠️5 「マージ済みでない」点: research.md の「今回の測定用（haiku）」の行は、worktree が既に削除されている（worktreeCleanlyRemoved）ので、再測定できない。jsonl が唯一の証拠。

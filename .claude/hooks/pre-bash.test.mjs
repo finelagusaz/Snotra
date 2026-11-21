@@ -413,6 +413,18 @@ describe("decide — 分岐表", () => {
     expect(spy).toHaveBeenCalled();
   });
 
+  // `\&&` は Bash では「文字の `&` ＋背景実行の `&`」。push を待たずに gh が走る
+  it.each([
+    [`git push -u origin HEAD \\&& ${ghPrCreate()}`],
+    [`git push -u origin HEAD &\\& ${ghPrCreate()}`],
+    [`git push -u origin HEAD && echo x \\&& ${ghPrCreate()}`],
+  ])("エスケープされた区切りを挟むチェーンは認めず、動的判定へ回す: %j", (cmd) => {
+    const spy = vi.fn(NO_UPSTREAM);
+    const r = decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: spy, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(spy).toHaveBeenCalled();
+  });
+
   // 見え方でだけ当たる gh が push より前にあれば、後ろの安全なチェーンでは認めない（前の gh はチェーンの外で走る）
   it("見え方でだけ当たる gh が push より前にあると、後ろの安全なチェーンでも動的判定へ回す", () => {
     const spy = vi.fn(NO_UPSTREAM);

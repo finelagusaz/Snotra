@@ -50,11 +50,16 @@ pub(super) fn read_real_config_read_only() -> Option<crate::config::Config> {
     Some(config)
 }
 
-/// 実 `%APPDATA%\Snotra\index.bin` に**載っているときだけ**エントリを返す。
-/// scan パス未設定・キャッシュ不在・キャッシュが config と食い違うときは `None`。
+/// 実 `%APPDATA%\Snotra\index.bin` に**載っているときだけ**エントリを返す。読めなければ理由を
+/// 出して `None` を返す（実 config が無い・scan パス未設定・[`crate::indexer::CachedEntriesMiss`] の
+/// 各理由）。**呼び出し側でメッセージを書き分けないこと**——理由を区別して出すのは、緑が
+/// 「実データで一致した」のか「何も走らなかった」のかを出力から見分けるためである（#1400）。
 ///
-/// **これは corpus であって保証ではない。** 上の 3 条件のいずれかで呼び出し側のテストは自動
-/// スキップし（CI は 1 つめで必ず該当する）、そこに残る保証は同じ論点を合成 fixture で押さえる
+/// **どの理由でも落とさない。** 開発機の製品が現行版を書くまで（版を上げる PR のマージから、
+/// リリースと製品の更新まで）、開発機の `index.bin` は古い版のまま残るからである（#1400）。
+///
+/// **これは corpus であって保証ではない。** 上の理由のいずれかで呼び出し側のテストは自動
+/// スキップし（CI は実 config が無いので必ず該当する）、そこに残る保証は同じ論点を合成 fixture で押さえる
 /// テストのほうである。合成が届かない多様さ（ドライブ直下・UNC 共有・非 ASCII・深いツリー・親が
 /// 索引に不在のエントリ）を開発機の実データで舐めるのがこの corpus の役目で、両者は代替では
 /// なく補完である。**「実データの全件で固定してある」と書くときは、この自動スキップを併記すること。**
@@ -62,11 +67,37 @@ pub(super) fn read_real_config_read_only() -> Option<crate::config::Config> {
 /// 走査しない入口（[`crate::indexer::load_cached_entries`]）を通すのは必須である——理由は
 /// その doc にある。
 pub(super) fn real_index_entries() -> Option<Vec<AppEntry>> {
-    let config = read_real_config_read_only()?;
+    use crate::indexer::{CachedEntriesMiss, INDEX_CACHE_VERSION};
+
+    let Some(config) = read_real_config_read_only() else {
+        println!("実 config が無い・読めないためスキップします。");
+        return None;
+    };
     if config.paths.scan.is_empty() {
+        println!("実 config に scan パスが無いためスキップします。");
         return None;
     }
-    crate::indexer::load_cached_entries(&config.paths.scan, config.search.show_hidden_system)
+    let reason = match crate::indexer::load_cached_entries(
+        &config.paths.scan,
+        config.search.show_hidden_system,
+    ) {
+        Ok(entries) => return Some(entries),
+        Err(CachedEntriesMiss::NoConfigDir) => "config の置き場所が引けない".to_string(),
+        Err(CachedEntriesMiss::NoFile) => "実 index.bin が無い".to_string(),
+        Err(CachedEntriesMiss::Unrecognized) => "実 index.bin のヘッダーが読めない".to_string(),
+        Err(CachedEntriesMiss::Older { found }) => format!(
+            "実 index.bin は v{found}（現行 v{INDEX_CACHE_VERSION}）で読めない\
+             （現行版を書く製品を起動して置き換えると走る）"
+        ),
+        Err(CachedEntriesMiss::Newer { found }) => {
+            format!("実 index.bin は v{found} でこのコード（v{INDEX_CACHE_VERSION}）より新しい")
+        }
+        Err(CachedEntriesMiss::Rejected) => {
+            "実 index.bin は現行版だが、設定と食い違うか壊れている".to_string()
+        }
+    };
+    println!("{reason}ためスキップします。");
+    None
 }
 
 /// ファイルシステムを**実際に走査して**エントリを返す（`#[ignore]` の corpus 専用・実測 75 秒）。

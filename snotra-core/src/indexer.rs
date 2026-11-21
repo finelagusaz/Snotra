@@ -21,10 +21,10 @@ mod path_env;
 mod scan;
 
 pub use cache::{
-    CacheByteBreakdown, CacheByteRow, INDEX_CACHE_VERSION, LoadOrScanResult, LoadOrScanStats,
-    RebuildStats, cache_byte_breakdown_in, index_built_at_in, load_cache_with_stats,
-    load_cached_entries, load_cached_material, load_or_scan_with_stats, rebuild_and_save,
-    scan_identity_hash,
+    CacheByteBreakdown, CacheByteRow, CachedEntriesMiss, INDEX_CACHE_VERSION, LoadOrScanResult,
+    LoadOrScanStats, RebuildStats, cache_byte_breakdown_in, index_built_at_in,
+    load_cache_with_stats, load_cached_entries, load_cached_material, load_or_scan_with_stats,
+    rebuild_and_save, scan_identity_hash,
 };
 pub use columns::{CachedLower, CachedMasks, LowerFileName};
 pub(crate) use columns::{derive_columns, extend_cached_masks};

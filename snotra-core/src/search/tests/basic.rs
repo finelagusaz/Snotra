@@ -707,7 +707,6 @@ fn utf32_haystack_matches_utf32_string_from() {
 #[test]
 fn utf32_haystack_matches_utf32_string_from_over_real_index() {
     let Some(entries) = super::common::real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
         return;
     };
     let engine = SearchEngine::new_with_migemo(entries, false);

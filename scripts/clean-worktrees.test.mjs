@@ -186,7 +186,8 @@ describe("clean-worktrees", () => {
     const repo = initRepo();
     const tip = commitOffHead(repo, "upstream.txt");
     git(repo, ["update-ref", "refs/remotes/origin/main", tip]);
-    for (const id of ["locked", "free"]) {
+    // 孤児は名前順に処理される。失敗する locked を z-free より先に置き、失敗の後も処理が続くことを縛る
+    for (const id of ["locked", "z-free"]) {
       git(repo, ["worktree", "add", path.join(repo, ".claude", "worktrees", `agent-${id}`), "-b", `worktree-agent-${id}`, tip]);
     }
     // ref のロックファイルを置くと、祖先の判定（読むだけ）は通り、-d と -D（書く）は失敗する
@@ -197,7 +198,7 @@ describe("clean-worktrees", () => {
     expect(r.status, r.output).toBe(1);
     expect(r.output).toContain("git が失敗した");
     expect(branches(repo)).toContain("worktree-agent-locked");
-    expect(branches(repo)).not.toContain("worktree-agent-free");
+    expect(branches(repo)).not.toContain("worktree-agent-z-free");
     expect(r.output).toContain("失敗 1");
   });
 

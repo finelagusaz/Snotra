@@ -1,0 +1,44 @@
+敵対的調査 #1528（research.md の反証）
+
+【測定環境】
+- 本体 C:/workspace/Snotra: ブランチ main、porcelain 空、HEAD 29af7e73。origin/main も 29af7e73、ls-remote も 29af7e73。
+  => issue の「本体のローカル main が 23197681 のまま」は今は再現しない（誰かが既に進めた）。実装後の受け入れ確認は、本体を意図的に 1 つ古くして行う必要がある（現状のままだと no-op で緑になる）。
+- 一時リポジトリ: scratchpad/adv（bare remote + main クローン + 同じ common dir の linked worktree + 別クローンで remote を 3 コミット進める）。
+
+【壊せた項目】
+F1（research 技術制約 L37-38 の「--ff-only に任せれば安全」を壊した。T6/T8）
+  - detached HEAD で `git merge --ff-only origin/main` は成功し、detached HEAD を進める。
+  - 別ブランチ topic（origin/main の祖先）でも成功し、topic ブランチを origin/main へ進める。
+  - よって --ff-only は「本体が main に居る」ことを保証しない。事前に `git branch --show-current === "main"` を明示判定しないと、research の「触らない」が守られない。
+  - 偽にする手順: 一時リポジトリで `git checkout --detach; git merge --ff-only origin/main` を打つ（出力: 進む）。
+F2（未解決の疑問 1 の前提「止めるほうが --ff-only より…」の前提確認 T2/T3）
+  - 追跡ファイルの変更があっても、差分に含まれないファイルなら --ff-only は成功し、変更はそのまま残る（T2）。差分に含まれるなら拒んで何も変えない（T3）。
+  - 事前に dirty で止めるのは --ff-only より厳しい設計判断で、「ff が壊すから止める」のではない。理由の文言を「作業中の本体に触らない」にそろえること。
+F3（質問 4「未追跡ファイルがあるとき ff が何を壊しうるか」: 無視されたファイル T5）
+  - 未追跡（無視されていない）ファイルが衝突するときは拒む（T4、何も変わらない）。
+  - しかし .gitignore / .git/info/exclude で無視されたファイルが、PR が新たに追跡し始めるパスと衝突すると、--ff-only は警告なしで上書きする（T5: 内容 mine -> ign に置換）。
+  - porcelain（既定は無視を出さない）では検知できない。起きうる例: 本体の無視された .claude/settings.local.json 等を PR が追跡し始める。現実の頻度は低いが、データ損失方向。事前判定に `git diff --name-only HEAD origin/main` と `git status --porcelain --ignored` の突き合わせを足すか、既知のリスクとして書く。
+  - 偽にする手順: T5 を再現する（exclude に .ig を足し、remote が .ig を追加する）。
+F4（命題 3: 置き場の整合）⚠️ 設計判断
+  - exit 3 の「何もしない」は #1359 の片づけにとって「調べる材料を残す」ためだが、ff はその材料を消さない。exit 3 でもマージ自体は済んでいる（L281 の 3 は成否不明のケースも含む）ため、スキル・hook が古いままの害は exit 3 でも残る。
+  - 「整合する」と言い切れない。最低限、exit 3 でも手で打つコマンドを出す（ff 自体はしない）なら整合を保てる。成否不明（L281）では ff はしない・fetch もしない。
+  - 偽にする手順: exit 3 の事後検証の findings 経路でマージが済んでいる実例を作り、本体が古いままになることを見る。
+F5（命題 2 の細部）
+  - refs の共有は確認できた（worktree で fetch すると本体の origin/main が進む。T の先頭行）。しかし merge:pr の既存 fetch は `git fetch -q origin refs/pull/<N>/head`（L217）で、origin/main を進めない。新しい後処理は明示的に `git fetch origin main` 相当を足す必要がある（research は fetch を挙げているので矛盾はしないが、既存の fetch で進むと誤読しないこと）。
+  - ⚠️ gh pr merge 直後に ls-remote の main がマージコミットを含むかは未測定（反映遅れの可能性）。事後検証が最大 30 秒待つので、fetch はその後に置けば足りるはず。fetch 後に origin/main がマージを含むか（merge commit か mergedAt）を確かめず ff すると「既に最新」と誤報しうる。
+F6（命題 1: 新しい版が効く）⚠️
+  - hook スクリプト（pre-bash.mjs）は呼び出しごとに本体の版を読むので ff で効く。スキルも本体 .claude/skills を読む観測（issue）と矛盾しない。
+  - ただし .claude/settings.json 自体（hook の登録・permissions）を変える PR は、実行中のセッションが設定を起動時に読むため、ff しても再起動／再読み込みまで効かない可能性がある。未測定。「ff すれば新しい版が効く」を settings に広げて書かないこと。
+  - スキルが本体を読むことは、この worktree のセッションからは測れていない（issue の観測を信じるだけ）。
+
+【壊せなかった項目】
+S1 命題 1: ユーザーグローバル・プラグインに旧版が残る経路。~/.claude/skills は chezmoi-dotfiles 等の 7 つで merge-pr / retrospective / deps-update と同名なし。~/.claude/plugins 配下を find して同名ディレクトリなし。~/.claude/settings.json の hooks は Edit|Write 用の 3 本のみで pre-bash に関与しない。~/.claude/commands なし。hook の CLAUDE_PROJECT_DIR 参照は .claude/settings.json の command 文字列で確認（${CLAUDE_PROJECT_DIR:-.}）。本体の settings.local.json に hook / merge-pr の記述なし。
+S2 命題 2 の中核: refs 共有。一時リポジトリで linked worktree から `git fetch origin` すると、本体の origin/main が進んだ（同 sha）。本体の `git merge --ff-only origin/main` が足りる（T1 成功）。
+S3 命題 4: 分岐（T7: "Not possible to fast-forward"、何も変わらない）、追跡ファイルの変更が差分と重なる（T3: 拒否・何も変わらない）、未追跡の衝突（T4: 拒否・内容保持）。これらは --ff-only が安全に止まる。
+S4 命題 5: mainRoot は本体（C:/workspace/Snotra）・harness worktree（issue-1504…、agent-a328…）・本体の scripts サブディレクトリのいずれから呼んでも C:\workspace\Snotra を返した（実 node で実行）。戻り値はバックスラッシュ表記の canon。git の cwd にそのまま渡せる。本体から feature ブランチで走らせた場合の root も同じ本体なので、ブランチ判定が必須（F1 に帰着）。
+S5 命題 3 の技術面: dry-run は L249 の return 0 で後処理の手前に抜けるので ff に届かない。cleanup は L362 の try/catch の形で、同じ形の try/catch を足せば終了コードを変えない。
+S6 .githooks: pre-merge-commit は main 上のマージコミットを拒むが、FF は hook を呼ばない（hook 冒頭コメント）。post-merge hook なし。pre-bash の hook は `--ff-only` なしの git pull だけを拒む（L307-316）。ツールが node から spawn する git には hook は掛からない。ユーザーに案内する手打ちのコマンドは `git merge --ff-only origin/main` か `git pull --ff-only` にすること（`git pull` だけだと pre-bash が拒む）。
+
+【追加の推奨（反証の副産物）】
+- 判定の順: (1) 本体の `branch --show-current` が main（空=detached も止める）、(2) `status --porcelain` が空、(3) fetch、(4) `merge --ff-only origin/main`、の順で、各 else に理由と手打ちコマンドを出す。cwd は mainRoot の戻り値。
+- テストは、実 git の一時リポジトリで detached・他ブランチ・分岐・dirty・衝突の各状態を確かめる（fake だけだと F1 は見えない）。

@@ -108,6 +108,7 @@
 - R2 `80a31581`: verify:tree green（E・F、warnings なし）。委譲: R1 の 11 件すべて解消（一時環境で打ち直し）、残した 2 件に同意。新規 Low 2・⚠️ 2。変異注入: 該当なし（散文だけ）。実地: 範囲の行の取り出し・`00:00` の日付変換・`gh pr view '#1513'`・マージ済み/main/detached での `gh pr view --json state` を打った。直した: ⚠a `gh pr view` が失敗したときは `<終点>..HEAD` を打つ（同じ文を直すので N2 の序数参照も名前に替えた）。捨てた: N1（`origin/main` の語、挙動を変えない）。残した: ⚠b（範囲の行が無く尋ねた起点で回したときも終点を進める。前回の終点が無い場面なので進めるのが正しい）
 - R3 `d4e32bd3`: verify:tree green（E・F）。委譲: ⚠a・N2 解消、新規 ⚠c 1 件（gh の一時的な失敗で二度読む。取りこぼしでなく重複に倒れるので残した）。変異注入: 該当なし。実地: main の上・detached HEAD・PR の無いブランチで `gh pr view` の exit と `<終点>..HEAD` の件数を打った
 - 軸の違うレビュー（`/code-review high chore/retrospective-cadence`、立った条件: (1) 委譲の所見 ⚠c を主が退けた (3) 入口で `RETROSPECTIVE.md` を読む規範の前提を反転させた）: 5 件。直した 3 件: PR を読む手順の `origin/main` を範囲へ／範囲の行は終点だけを読み、起点の `〜` を許す／マージ済みの PR の本文へタスクを追記せず issue へ（Step 4）。残した 2 件: ⚠c と同じ所見（重複に倒れる）、スキル表の `/health-check` 行の「サイクル完了後」（health-check は単独でも起動でき、読み手の行動を変えない）
+- R4 `038d1f61`: verify:tree green（E・F）。委譲: Critical〜Low 0 件、⚠️ 3（⚠d Step 7 の文面は Step 4 への参照で条件が効くので残す／⚠b・⚠c は持ち越し）。変異注入: 該当なし。実地: 範囲の行の終点の取り出しを、起点が完全 sha・`〜`・`~` の行で打った
 
 ## PR について
 

@@ -24,7 +24,7 @@
 // - exit 0 の後に、そのブランチのツールの worktree と要約を片づける（#1359。どのスキルを経たかに依らず閉じるため）。
 //   exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discardBranchArtifacts, mainRoot, summaryPathFor } from "./verify-tree.mjs";
@@ -38,6 +38,65 @@ export const USAGE = `使い方: npm run merge:pr -- <PR> --closes <N[,N...]|own
   PowerShell からは -- を引用して npm run merge:pr '--' <PR> ... と打つ（素の -- は npm.ps1 の経路によって消える）`;
 
 export class UsageError extends Error {}
+
+/** 後処理の fetch の上限。認証待ちやネットワーク断で、マージ済みのツールをぶら下げないため */
+export const FETCH_TIMEOUT_MS = 60_000;
+
+/**
+ * 本体のローカル `main` を `origin/main` へ fast-forward する（#1528）。スラッシュコマンド・Skill ツール・hook は
+ * 本体の版を読むので、スキルや hook を変える PR のマージ後に本体が古いと、旧版が動く。`{ ok, notes }` を返し、投げない。
+ *
+ * 判定を `--ff-only` に任せない。`--ff-only` は detached HEAD や `origin/main` の祖先である別ブランチでも成功してそれを
+ * 動かし、先行していても `Already up to date.` で成功し、無視されたファイルを黙って上書きする（どれも #1528 で実測）。
+ * 止めたときは、理由を解消する操作を先に書く——`merge --ff-only` だけを案内すると、人が上の害を再現する
+ */
+export function fastForwardMain(root, mergeCommit, exec = gitExec) {
+  const manual = `git -C "${root}" merge --ff-only origin/main`;
+  const stop = (reason, todo) => ({ ok: false, notes: [`本体の main を進めなかった: ${reason}`, todo] });
+  const retry = `時間を置いて、git -C "${root}" fetch origin main からやり直す`;
+
+  const branch = exec(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  if (branch.status !== 0) return stop("本体が detached HEAD である", `本体の作業を片づけて main へ戻してから、${manual}`);
+  if (branch.stdout.trim() !== "main") return stop(`本体が main に居ない（${branch.stdout.trim()}）`, `本体の作業を片づけて main へ戻してから、${manual}`);
+
+  const dirty = exec(root, ["status", "--porcelain", "--untracked-files=no"]);
+  if (dirty.status !== 0) return stop(`本体の状態を読めない（${dirty.stderr}）`, manual);
+  if (dirty.stdout.trim() !== "") return stop("本体の追跡ファイルに変更がある", `本体の変更をコミットか退避してから、${manual}`);
+
+  const fetched = exec(root, ["fetch", "origin", "main"], { timeout: FETCH_TIMEOUT_MS });
+  if (fetched.status !== 0) return stop(`git fetch origin main が失敗した（${fetched.stderr || "timeout"}）`, retry);
+
+  if (!mergeCommit) return stop("マージ commit が取れなかった", retry);
+  const contains = exec(root, ["merge-base", "--is-ancestor", mergeCommit, "origin/main"]);
+  if (contains.status === 1) return stop("origin/main にまだマージが現れていない", retry);
+  if (contains.status !== 0) return stop(`マージ commit を確かめられない（${contains.stderr}）`, retry);
+
+  const before = exec(root, ["rev-parse", "HEAD"]).stdout.trim();
+  const target = exec(root, ["rev-parse", "origin/main"]).stdout.trim();
+  if (before !== target && exec(root, ["merge-base", "--is-ancestor", "origin/main", "HEAD"]).status === 0) {
+    return stop("本体の main が origin/main より先にある（未 push のコミット）", `先行しているコミットを push するか捨てるかを決めてから、${manual}`);
+  }
+
+  // リネームの移動先も新しく追跡されるので `--no-renames`。非 ASCII のパスを引用させないので `-z`
+  const added = exec(root, ["diff", "--no-renames", "--name-only", "-z", "--diff-filter=A", "HEAD", "origin/main"]);
+  if (added.status !== 0) return stop(`マージで追跡されるパスを列挙できない（${added.stderr}）`, manual);
+  const occupied = added.stdout.split("\0").filter((p) => p !== "" && existsSync(path.join(root, p)));
+  if (occupied.length > 0) {
+    return stop(`マージで追跡されるパスに、追跡していないファイルがある（無視されたものを含む）: ${occupied.join(", ")}`, `名指したファイルを退避してから、${manual}`);
+  }
+
+  const merged = exec(root, ["merge", "--ff-only", "origin/main"]);
+  if (merged.status !== 0) return stop(`git merge --ff-only が失敗した（${merged.stderr}）`, `git の出力に従って直してから、${manual}`);
+  const after = exec(root, ["rev-parse", "HEAD"]).stdout.trim();
+  if (after === before) return { ok: true, notes: ["本体の main は既に最新"] };
+  return { ok: true, notes: [`本体の main を進めた: ${before.slice(0, 8)}..${after.slice(0, 8)}`] };
+}
+
+/** `git -C <root> ...` を shell なしで呼び、終了コードで分岐できる形で返す（投げない） */
+export function gitExec(root, args, { timeout } = {}) {
+  const r = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", shell: false, timeout });
+  return { status: r.error ? null : r.status, stdout: r.stdout ?? "", stderr: `${r.error?.message ?? ""}${r.stderr ?? ""}`.trim() };
+}
 
 /** 事後の検索の上限。これに達したら打ち切りと区別できないので、検算不能として止める */
 export const SEARCH_LIMIT = 200;

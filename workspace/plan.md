@@ -76,7 +76,7 @@ git の呼び出しは exit code を見て分岐する（rc ≠ 0 で例外を�
 
 ## テスト方針と検証コマンド
 
-- `fastForwardMain` の一時リポジトリのテスト（bare の origin と本体の clone を作り、origin を 1 コミット先へ進めて本体を古くする）: (a) main・きれい・origin が先 → 進む (b) 既に最新 → 「既に最新」で HEAD 不変 (c) `origin/main` の祖先である別ブランチ → 止まり、そのブランチも main も不変 (d) detached → 止まる (e) 重ならない追跡ファイルの変更 → 止まり HEAD と作業ツリー不変 (f) ローカル main が分岐 → 判定 7 で ff が拒まれ HEAD 不変、git の stderr が notes に載る (g) origin が無い（fetch 失敗）→ 止まる (h1) `mergeCommit` が null (h2) `origin/main` に含まれない oid (h3) 不正な oid → それぞれ別の理由で止まる (i1) マージで新たに追跡されるパスに無視されたファイルがある (i2) リネームの移動先に無視されたファイルがある → どちらも止まり、そのファイルの内容が不変 (j) ローカル main が origin/main より先 → 「先にある」で止まり、「既に最新」と言わない (k) マージで追跡されるパスに未追跡ファイルがある（無視されていない）→ 判定 7 で git が拒み、本体不変、stderr が notes に載る。どれも理由（notes の文言）まで assert し、止めたときの notes が理由ごとの操作を含むことも assert する（`.claude/rules/safety-nets.md`「テストも条件ごとに書く」）
+- `fastForwardMain` の一時リポジトリのテスト（bare の origin と本体の clone を作り、origin を 1 コミット先へ進めて本体を古くする）: (a) main・きれい・origin が先 → 進む (b) 既に最新 → 「既に最新」で HEAD 不変 (c) `origin/main` の祖先である別ブランチ → 止まり、そのブランチも main も不変 (d) detached → 止まる (e) 重ならない追跡ファイルの変更 → 止まり HEAD と作業ツリー不変 (f) ローカル main が分岐 → 判定 7 で ff が拒まれ HEAD 不変、git の stderr が notes に載る (g) origin が無い（fetch 失敗）→ 止まる (h1) `mergeCommit` が null (h2) `origin/main` に含まれない oid (h3) 不正な oid → それぞれ別の理由で止まる (i1) マージで新たに追跡されるパスに無視されたファイルがある (i2) リネームの移動先に無視されたファイルがある → どちらも止まり、そのファイルの内容が不変 (j) ローカル main が origin/main より先 → 「先にある」で止まり、「既に最新」と言わない (k) マージで追跡されるパスに未追跡ファイルがある（無視されていない）→ 判定 6 が存在を見て止め、本体不変（実装時に変更: 判定 6 は無視されたものに限らず、追跡していないファイルの存在を見るので、git の拒否より手前で止まる。理由の文言も「追跡していないファイルがある（無視されたものを含む）」にした）。どれも理由（notes の文言）まで assert し、止めたときの notes が理由ごとの操作を含むことも assert する（`.claude/rules/safety-nets.md`「テストも条件ごとに書く」）
 - `run` のテスト: 変更表の `run` の describe のとおり。`realDeps.syncMain === fastForwardMain` の 1 本も置く
 - 検証: `docs/build-commands.md` のカテゴリ E・F（`verify:tree` が回す）
 
@@ -89,8 +89,8 @@ git の呼び出しは exit code を見て分岐する（rc ≠ 0 で例外を�
 
 ### Phase 1 — `fastForwardMain`
 
-- [ ] 一時リポジトリのテスト (a)〜(k) を書き、no-op の実装で落ちることを確かめる
-- [ ] `fastForwardMain` を「判定の順序」のとおり実装して通す（理由ごとの notes を含む）
+- [x] 一時リポジトリのテスト (a)〜(k) を書き、no-op の実装で落ちることを確かめる（14 本すべてアサーションで赤）
+- [x] `fastForwardMain` を「判定の順序」のとおり実装して通す（理由ごとの notes を含む。135 本緑）
 
 ### Phase 2 — `run` への配線
 

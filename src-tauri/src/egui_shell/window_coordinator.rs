@@ -75,8 +75,7 @@ pub(crate) fn read_main_visible(
         .unwrap_or(false)
 }
 
-/// 実行中 config から Metrics を導出する(#646)。毎フレーム/毎 show の live-read で
-/// キャッシュしない。
+/// 実行中 config から Metrics を導出する(#646)。呼ぶたびに live-read し、キャッシュしない。
 ///
 /// view は `read_visual` → `visual::visual_snapshot` 経由で同じ
 /// `layout::Metrics::from_config` に到達するため、

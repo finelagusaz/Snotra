@@ -61,6 +61,11 @@
 - [ ] `npm run verify:tree`（と必要なら `npm test`）が緑
 - [x] `npm run governance:check` が緑（手元・13 件 passed）
 - [x] 受け入れ条件 3 の `git grep` 3 本の結果が期待どおり
+- [x] （計画外・レビュー指摘）`read_metrics` の doc 冒頭「毎フレーム/毎 show の live-read」も同じ前提の偽（毎フレーム呼ぶ箇所は #673 以降無く、hide からも呼ぶ）。「呼ぶたびに live-read し、キャッシュしない」へ直す
+
+### ラウンド記録
+
+- R1: sha `91c4e394` / verify:tree green（A・E・F 全 exit 0） / 委譲レビュー High 1（上の計画外項目・採って修正）・Low⚠️ 1（`pre-bash.test.mjs` の「両方で走らせる」が skip-ci 等の例外を書かない。旧文と同じ形で、このファイルを変える PR は例外に当たらない。挙動を変えないので捨てる） / 変異注入: 該当なし（実行できる検知器の述語・入力に触れない。変えた文言を読む検査は無い・`git grep` 確認） / 実地の確かめ: 該当なし（手順を述べない。CI の挙動を述べる 2 文は `ci.yml` と照合、`npx vitest list --filesOnly` に `pre-bash.test.mjs` が出ることを実測）
 
 ## 未確定（実装前に潰す）
 

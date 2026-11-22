@@ -11,9 +11,7 @@
 //
 // 母集団は PR 全体の変更である。`actions/checkout` が PR で取る merge commit（`refs/pull/N/merge`）と、
 // その第 1 親（base の tip）を比べる（`fetch-depth: 2` が要る）。直近の push 分だけを見ると、Rust を変えた PR に
-// 文書のコミットを足した run で省いてしまう。HEAD が merge commit でなければ（第 2 親が無ければ）走らせる。
-// - `--no-renames`: 既定の rename 検出は改名を新しいパス 1 行にまとめ、`.rs` → `.md` の改名元を落とす
-// - `-z`: 既定の `core.quotePath` は非 ASCII のパスを引用符で囲み、末尾が `.md` でなくなる
+// 文書のコミットを足した run で省いてしまう。
 import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import path from "node:path";
@@ -41,8 +39,9 @@ export function decide({ eventName, diff }) {
   const r = diff();
   if (!r.ok) return { rust: true, reason: `差分を取れない（${r.error}）。走らせる側へ倒す`, paths: [] };
   const paths = parseNameOnlyZ(r.stdout);
-  if (paths.length === 0) return { rust: true, reason: "差分が 0 件。走らせる側へ倒す", paths };
-  if (needsRustCheck(paths)) return { rust: true, reason: ".md 以外の変更を含む", paths };
+  if (needsRustCheck(paths)) {
+    return { rust: true, reason: paths.length === 0 ? "差分が 0 件。走らせる側へ倒す" : ".md 以外の変更を含む", paths };
+  }
   return { rust: false, reason: "変更がすべて .md", paths };
 }
 
@@ -52,6 +51,8 @@ function gitDiff(cwd) {
   const merge = spawnSync("git", ["rev-parse", "--verify", "-q", "HEAD^2"], { cwd, encoding: "utf8" });
   if (merge.error) return { ok: false, error: merge.error.message };
   if (merge.status !== 0) return { ok: false, error: "HEAD が merge commit でない（第 2 親が無い）" };
+  // `--no-renames`: 既定の rename 検出は改名を新しいパス 1 行にまとめ、`.rs` → `.md` の改名元を落とす。
+  // `-z`: 既定の `core.quotePath` は非 ASCII のパスを引用符で囲み、末尾が `.md` でなくなる
   const r = spawnSync("git", ["diff", "--name-only", "--no-renames", "-z", "HEAD^1", "HEAD"], { cwd, encoding: "utf8" });
   if (r.error) return { ok: false, error: r.error.message };
   if (r.status !== 0) return { ok: false, error: (r.stderr || `exit ${r.status}`).trim() };

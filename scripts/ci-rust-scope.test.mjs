@@ -203,7 +203,9 @@ describe("CLI — 一時リポジトリの merge commit に当てる", () => {
   });
 
   it("GITHUB_OUTPUT が無ければ非ゼロで終わる（黙って省かない）", { timeout: T }, () => {
-    const dir = mergedRepo((d) => write(d, "docs/x.md", "x\n"));
+    // git を読む前に止まるので、repo は要らない
+    const dir = mkdtempSync(path.join(tmpdir(), "snotra-ci-rust-scope-noout-"));
+    scratchDirs.push(dir);
     const env = { ...process.env, GITHUB_EVENT_NAME: "pull_request" };
     delete env.GITHUB_OUTPUT;
     let error;

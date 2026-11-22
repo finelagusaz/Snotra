@@ -203,7 +203,7 @@ jobs:
       # ubuntu の node-check と相補的に、Windows 固有の hook 実行機構
       # （Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）を検知する。
       # 変更が .md だけの PR では走らない（job の冒頭のコメントの「受容する残余」）。
-      # Node は job の冒頭の "Setup Node.js" が用意する（判定の step が先に使うため・#1508）。ここでは npm キャッシュだけを足す。
+      # npm キャッシュはここでだけ扱う（理由は job の冒頭の "Setup Node.js" のコメント）。
       - name: Setup Node.js (npm cache)
         if: steps.scope.outputs.rust != 'false'
         uses: actions/setup-node@v6

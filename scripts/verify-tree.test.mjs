@@ -678,7 +678,26 @@ describe("verify-tree remove", () => {
     expect(existsSync(wt)).toBe(false);
   });
 
-  it("--delegate-tree はロックされた worktree を消さず、報告も残す", { timeout: T }, () => {
+  // ロックの理由（harness なら `claude agent agent-<id> (pid N)`）を出す。持ち主の推測は出さない——
+  // 委譲先が報告を返したあとも外れない例を実測した（#1533）
+  it("--delegate-tree はロックされた worktree を消さず、報告もブランチも残し、ロックの理由を出す", { timeout: T }, () => {
+    const repo = initRepo();
+    const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
+    git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
+    git(repo, ["worktree", "lock", "--reason", "claude agent agent-abc (pid 1)", wt]);
+    mkdirSync(path.join(wt, ".delegate"));
+    writeFileSync(path.join(wt, ".delegate", "round1.txt"), "report\n");
+
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("ロックされている（claude agent agent-abc (pid 1)）——何も消さない");
+    expect(r.output).not.toContain("まだ動いている");
+    expect(existsSync(path.join(wt, ".delegate", "round1.txt"))).toBe(true);
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toContain("worktree-agent-abc");
+    git(repo, ["worktree", "unlock", wt]);
+  });
+
+  it("--delegate-tree は理由の無いロックでも消さず、括弧なしで拒む", { timeout: T }, () => {
     const repo = initRepo();
     const wt = path.join(repo, ".claude", "worktrees", "agent-abc");
     git(repo, ["worktree", "add", "-q", wt, "-b", "worktree-agent-abc"]);
@@ -686,8 +705,12 @@ describe("verify-tree remove", () => {
     mkdirSync(path.join(wt, ".delegate"));
     writeFileSync(path.join(wt, ".delegate", "round1.txt"), "report\n");
 
-    expect(runScript(repo, ["remove", "--delegate-tree", wt]).status).toBe(1);
+    const r = runScript(repo, ["remove", "--delegate-tree", wt]);
+    expect(r.status, r.output).toBe(1);
+    expect(r.output).toContain("ロックされている——何も消さない");
+    expect(r.output).not.toContain("まだ動いている");
     expect(existsSync(path.join(wt, ".delegate", "round1.txt"))).toBe(true);
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toContain("worktree-agent-abc");
     git(repo, ["worktree", "unlock", wt]);
   });
 

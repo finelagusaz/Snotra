@@ -141,16 +141,21 @@ function changesOutsideDelegate(cwd) {
     .filter((e) => e !== "" && !e.startsWith(`?? ${DELEGATE_DIR}/`));
 }
 
-/** 登録された worktree（`git worktree list --porcelain` の各項目）。path は `canon` 済み */
+/** 登録された worktree（`git worktree list --porcelain` の各項目）。path は `canon` 済み。
+ *  `lockReason` はロックの理由（理由なしのロックなら空文字列、ロックされていなければ null） */
 function worktrees(root) {
   return git(root, ["worktree", "list", "--porcelain"])
     .split(/\n\s*\n/)
     .filter((e) => e.startsWith("worktree "))
-    .map((e) => ({
-      path: canon(e.split("\n")[0].slice("worktree ".length)),
-      branch: /^branch refs\/heads\/(.+)$/m.exec(e)?.[1] ?? null,
-      locked: /^locked\b/m.test(e),
-    }));
+    .map((e) => {
+      const lock = /^locked(?: (.*))?$/m.exec(e);
+      return {
+        path: canon(e.split("\n")[0].slice("worktree ".length)),
+        branch: /^branch refs\/heads\/(.+)$/m.exec(e)?.[1] ?? null,
+        locked: lock !== null,
+        lockReason: lock ? (lock[1] ?? "") : null,
+      };
+    });
 }
 
 function resolveSha(cwd, sha) {
@@ -391,9 +396,11 @@ function cmdRemove(opts) {
       console.error(`${DELEGATE_DIR}/ 以外の変更が残っている——消さない: ${posix(target)}\n${others.join("\n")}`);
       return 1;
     }
-    // ロックされた worktree は `--force` なしの remove が拒む。先に `.delegate/` を消すと、報告だけ失って worktree が残る
+    // ロックされた worktree は `--force` なしの remove が拒む。先に `.delegate/` を消すと、報告だけ失って worktree が残る。
+    // 持ち主を推測せず理由をそのまま出す——委譲先が報告を返したあとも外れない例がある（#1533）
     if (entry.locked) {
-      console.error(`ロックされている（委譲先がまだ動いているか）——何も消さない: ${posix(target)}`);
+      const reason = entry.lockReason ? `（${entry.lockReason}）` : "";
+      console.error(`ロックされている${reason}——何も消さない: ${posix(target)}`);
       return 1;
     }
     // align が detach するので、porcelain にはブランチが載らない。harness の命名（`worktree-<worktree の名前>`）から導く

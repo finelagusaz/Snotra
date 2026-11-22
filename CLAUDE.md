@@ -23,7 +23,7 @@ Claude Code 固有の運用を書く。開発プロセスは `AGENTS.md`（次�
 ## チーム憲章
 
 - 複雑すぎるもの、意図が読めないもの、やりすぎに気づいたら、その場で一言いう。削る・簡単にする方向の指摘を歓迎する。
-- 気づいたことは、その場でリポジトリの記録へ書く。恒久的な情報は、リポジトリ（`AGENTS.md`・`CLAUDE.md`・スキル・`RETROSPECTIVE.md`）に書く。メモリは、一時的な情報の置き場所である。
+- 気づいたことは、その場でリポジトリの記録へ書く。恒久的な情報は、リポジトリ（`AGENTS.md`・`CLAUDE.md`・スキル）に書く。メモリは、一時的な情報の置き場所である。
 
 ## サブエージェント委譲と worktree
 
@@ -50,5 +50,5 @@ Claude Code 固有の運用を書く。開発プロセスは `AGENTS.md`（次�
 |---|---|
 | `/merge-pr`          | PR の squash マージ（ツール `npm run merge:pr`） |
 | `/health-check`      | サイクル完了後の governance:check + 意味的整合（報告のみ） |
-| `/retrospective`     | サイクル終了後の教訓抽出・`RETROSPECTIVE.md` 上書き |
+| `/retrospective`     | 人が判断したときの、範囲を指定した振り返り・教訓の配置・`RETROSPECTIVE.md` 上書き |
 | `/deps-update`       | cargo/npm 依存の一括更新と PR 作成（マージは手動） |

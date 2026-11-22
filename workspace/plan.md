@@ -98,6 +98,7 @@
 
 - [x] ラウンド 1 — sha 80e38964 / ツール green（E・F）/ 指摘: High⚠️ 2・Medium 1・Low 7 / 変異 9 件すべて赤・生存 0（workflow の `if` 式は Actions の実走でしか測れない）/ 実地: 一時リポジトリで改名・非 ASCII・merge commit の差分・`--depth 2`/`1` を確かめ、主張どおり。直したのは挙動を変える 3 件: 判定前の setup-node から `cache: npm` を外し `npm ci` の前に条件付きで足す（キャッシュ miss 時の post step の赤・未実測の推論）、`HEAD^2` が無ければ rust=true（checkout が head を取る形への変化で黙って母集団が縮む）、`ci.yml` の「付け忘れても余分に走るだけ」を直す。言い回しだけの指摘（「倒す」の比喩・全称の精度・写し）は規約どおり直さない
 - [x] ラウンド 2 — sha ca0087aa / ツール green（E・F）/ 指摘: Critical・High・Medium 0、Low 1（`git diff` の非ゼロ分岐が HEAD^2 の確認の後で到達しにくい。到達しても 0 件で rust=true・挙動を変えないので直さない）/ 変異 12 件中 11 件が assert で赤、生存 1（上の到達しない分岐）/ 実地: 2 つ目の setup-node は toolcache から解決し post は走った step だけ（ソースからの推論。Actions の実走は PR で測る）
+- [x] 軸の違うレビュー — 立った条件: (1) 委譲の High⚠️（「倒す」の比喩）を、挙動を変えない指摘として退けた / 対象: chore/rust-check-docs-only（`/code-review high`）/ 5 件・直した 0・残した 5（すべて nit で挙動を変えない: docs の分岐の写し・ci.yml「node-check が毎回」の全称・「rust-cache を保存する唯一の経路」の範囲・`git diff` 非ゼロ分岐のテスト不到達・テストの一時リポジトリが global git config を継ぐ（githooks.test と同じ既存の型））
 
 ## 未確定（実装前に潰す）
 

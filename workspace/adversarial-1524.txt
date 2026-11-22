@@ -1,0 +1,1 @@
+開始: 測定環境 HEAD=4ba639c0 == origin/main(ローカル参照), 未追跡は workspace/ のみ。以降追記。

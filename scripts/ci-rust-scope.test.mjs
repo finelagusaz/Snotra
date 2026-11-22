@@ -194,6 +194,14 @@ describe("CLI — 一時リポジトリの merge commit に当てる", () => {
     expect(r.stdout).toContain("差分を取れない");
   });
 
+  it("HEAD が merge commit でない（PR の head を直接 checkout した形）なら、変更が .md だけでも rust=true", { timeout: T }, () => {
+    const dir = mergedRepo((d) => write(d, "docs/x.md", "x\n"));
+    git(dir, ["switch", "topic"]); // HEAD^1..HEAD は topic の最後のコミットだけ（.md）になる
+    const r = runCli(dir, "pull_request");
+    expect(r.output).toBe("rust=true\n");
+    expect(r.stdout).toContain("merge commit でない");
+  });
+
   it("GITHUB_OUTPUT が無ければ非ゼロで終わる（黙って省かない）", { timeout: T }, () => {
     const dir = mergedRepo((d) => write(d, "docs/x.md", "x\n"));
     const env = { ...process.env, GITHUB_EVENT_NAME: "pull_request" };

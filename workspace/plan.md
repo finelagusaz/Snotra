@@ -94,6 +94,10 @@
 - [x] `docs/build-commands.md` の該当箇所を直す
 - [x] `npm test` と `npm run governance:check` を通す
 
+### 検証ラウンドの記録
+
+- [x] ラウンド 1 — sha 80e38964 / ツール green（E・F）/ 指摘: High⚠️ 2・Medium 1・Low 7 / 変異 9 件すべて赤・生存 0（workflow の `if` 式は Actions の実走でしか測れない）/ 実地: 一時リポジトリで改名・非 ASCII・merge commit の差分・`--depth 2`/`1` を確かめ、主張どおり。直したのは挙動を変える 3 件: 判定前の setup-node から `cache: npm` を外し `npm ci` の前に条件付きで足す（キャッシュ miss 時の post step の赤・未実測の推論）、`HEAD^2` が無ければ rust=true（checkout が head を取る形への変化で黙って母集団が縮む）、`ci.yml` の「付け忘れても余分に走るだけ」を直す。言い回しだけの指摘（「倒す」の比喩・全称の精度・写し）は規約どおり直さない
+
 ## 未確定（実装前に潰す）
 
 - [x] 敵対的調査の所見を反映する — `workspace/adversarial-1508.txt` の B1・B2・W3・W7 を採り、受け入れ条件 1・残余・テストへ反映した。W1・W2・W6・W8 は PR の CI とマージ後の文書だけの PR で測る。採否は `research.md`「敵対的調査の採否」

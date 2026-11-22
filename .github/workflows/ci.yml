@@ -72,7 +72,7 @@ jobs:
   # ——`merge:pr` は mergeStateStatus の CLEAN を要求し、SKIPPED の job をそれが通すかは測っていない。
   # 後続の step には `if: steps.scope.outputs.rust != 'false'` を付ける。`!= 'false'` にしてあるのは、判定が
   # 出力を書かなかったときにも走らせるためである。**step を足すときは同じ `if` を付ける**（付け忘れても
-  # 文書だけの PR で余分に走るだけで、黙って省かれはしない）。
+  # 黙って省かれはしないが、飛ばされた step（toolchain・`npm ci` など）に依存する step なら、文書だけの PR で赤になる）。
   #
   # 受容する残余: 文書だけの PR では、実物の .md を読む vitest（`scripts/verify-tree.test.mjs` など）が
   # windows で走らない（CRLF などの windows 固有の壊れ方は、その PR では見えない）。内容の検査は ubuntu の
@@ -91,12 +91,15 @@ jobs:
         with:
           fetch-depth: 2
 
-      # 判定より前に置く（runner のプリインストールの node へ暗黙に依存しない）。下の npm test も使う。
+      # 判定より前に置く（runner のプリインストールの node へ暗黙に依存しない）。
+      # **ここでは `cache: npm` を付けない**。付けると文書だけの PR でも npm キャッシュの復元と保存が走る。
+      # `npm ci` を飛ばした run でキャッシュが miss すると、post step がキャッシュのフォルダを保存しようとし、
+      # フォルダが無ければ job を赤にしうる（setup-node・@actions/cache のソースからの推論・未実測）。
+      # キャッシュは下の "Setup Node.js (npm cache)" が、npm を使う run でだけ扱う。
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
 
       - name: Decide whether to run Rust checks
         id: scope
@@ -200,7 +203,14 @@ jobs:
       # ubuntu の node-check と相補的に、Windows 固有の hook 実行機構
       # （Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）を検知する。
       # 変更が .md だけの PR では走らない（job の冒頭のコメントの「受容する残余」）。
-      # Node は job の冒頭の "Setup Node.js" が用意する（判定の step が先に使うため、そこへ移した・#1508）。
+      # Node は job の冒頭の "Setup Node.js" が用意する（判定の step が先に使うため・#1508）。ここでは npm キャッシュだけを足す。
+      - name: Setup Node.js (npm cache)
+        if: steps.scope.outputs.rust != 'false'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
       - name: Install dependencies
         if: steps.scope.outputs.rust != 'false'
         run: npm ci

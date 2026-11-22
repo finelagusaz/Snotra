@@ -11,7 +11,7 @@
 //
 // 母集団は PR 全体の変更である。`actions/checkout` が PR で取る merge commit（`refs/pull/N/merge`）と、
 // その第 1 親（base の tip）を比べる（`fetch-depth: 2` が要る）。直近の push 分だけを見ると、Rust を変えた PR に
-// 文書のコミットを足した run で省いてしまう。
+// 文書のコミットを足した run で省いてしまう。HEAD が merge commit でなければ（第 2 親が無ければ）走らせる。
 // - `--no-renames`: 既定の rename 検出は改名を新しいパス 1 行にまとめ、`.rs` → `.md` の改名元を落とす
 // - `-z`: 既定の `core.quotePath` は非 ASCII のパスを引用符で囲み、末尾が `.md` でなくなる
 import { spawnSync } from "node:child_process";
@@ -47,6 +47,11 @@ export function decide({ eventName, diff }) {
 }
 
 function gitDiff(cwd) {
+  // HEAD が merge commit であることを先に確かめる。checkout が PR の head（`ref: …head.sha`）を取る形に
+  // 変わると、`HEAD^1..HEAD` は最後の 1 コミットだけになり、差分は取れたまま黙って母集団が縮む
+  const merge = spawnSync("git", ["rev-parse", "--verify", "-q", "HEAD^2"], { cwd, encoding: "utf8" });
+  if (merge.error) return { ok: false, error: merge.error.message };
+  if (merge.status !== 0) return { ok: false, error: "HEAD が merge commit でない（第 2 親が無い）" };
   const r = spawnSync("git", ["diff", "--name-only", "--no-renames", "-z", "HEAD^1", "HEAD"], { cwd, encoding: "utf8" });
   if (r.error) return { ok: false, error: r.error.message };
   if (r.status !== 0) return { ok: false, error: (r.stderr || `exit ${r.status}`).trim() };

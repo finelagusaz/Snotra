@@ -22,6 +22,7 @@ jobs:
   # 旧 frontend-check の縮退（#532 SU7 PR3・フロント撤去）。残る npm test は
   # セーフティネット（.claude/hooks・.githooks・scripts）の vitest で、ubuntu 側は
   # 実行ビット・POSIX sh 厳密性を rust-check（windows）と相補的に担保する（#509）。
+  # ただし、変更が .md だけの PR では windows 側の npm test は走らない（rust-check の冒頭のコメント・#1508）。
   node-check:
     if: >-
       github.event_name == 'push' ||
@@ -65,6 +66,17 @@ jobs:
       - name: governance check
         run: node scripts/governance-check.mjs
 
+  # #1508: **変更が .md だけの PR では、判定の step より後をすべて飛ばし、job を SUCCESS で早く終える**。
+  # 判定の正本は `scripts/ci-rust-scope.mjs`（許可リスト・fail-closed。push では常に全部走る）。
+  # job の `if` でも workflow の `paths` でもなく step の `if` で飛ばすのは、job の conclusion を SUCCESS に保つためである
+  # ——`merge:pr` は mergeStateStatus の CLEAN を要求し、SKIPPED の job をそれが通すかは測っていない。
+  # 後続の step には `if: steps.scope.outputs.rust != 'false'` を付ける。`!= 'false'` にしてあるのは、判定が
+  # 出力を書かなかったときにも走らせるためである。**step を足すときは同じ `if` を付ける**（付け忘れても
+  # 文書だけの PR で余分に走るだけで、黙って省かれはしない）。
+  #
+  # 受容する残余: 文書だけの PR では、実物の .md を読む vitest（`scripts/verify-tree.test.mjs` など）が
+  # windows で走らない（CRLF などの windows 固有の壊れ方は、その PR では見えない）。内容の検査は ubuntu の
+  # node-check が毎回行い、マージ後の main への push では windows でも走る。
   rust-check:
     if: >-
       github.event_name == 'push' ||
@@ -72,8 +84,23 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # `fetch-depth: 2` は判定のためである。PR では merge commit とその第 1 親（base の tip）を比べ、
+      # PR 全体の変更を母集団にする。
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      # 判定より前に置く（runner のプリインストールの node へ暗黙に依存しない）。下の npm test も使う。
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Decide whether to run Rust checks
+        id: scope
+        run: node scripts/ci-rust-scope.mjs
 
       # **実際に検査が使う版を決めるのはここではなく `rust-toolchain.toml` である**（#1161）。
       # この action は toml を一切参照しない（`toolchain` は required・`rustup toolchain install`
@@ -93,6 +120,7 @@ jobs:
       # **同じ要求は toml 側にもある**——override 後に実際に走る toolchain の component は
       # `rust-toolchain.toml` の `components` が決める（そちらが正本・2026-08-21 実測）。
       - name: Setup Rust toolchain
+        if: steps.scope.outputs.rust != 'false'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -103,6 +131,7 @@ jobs:
       # 2026-02〜04 に習慣が途切れて 460 ハンクまで積み上がった。**人ではなく機構が持つ**
       # ことが本検査の目的であり、マシンが変わっても途切れないのはそのためである。
       - name: cargo fmt
+        if: steps.scope.outputs.rust != 'false'
         run: cargo fmt --all -- --check
 
       # `save-if` で main からしか保存しない。**この job 単体の都合ではなく、Actions キャッシュの
@@ -115,37 +144,46 @@ jobs:
       # エントリからしか復元できない。rust-check は debug ビルドで元々短く（実測 4m18s）、
       # 依存を動かす PR は稀（`/deps-update`）なので、常時かかる 10GB 圧力と釣り合わない。
       - name: Rust cache
+        if: steps.scope.outputs.rust != 'false'
         uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo check
+        if: steps.scope.outputs.rust != 'false'
         run: cargo check --workspace
 
       # 既定ビルドから外れる feature は、ここで通さないと**誰も通さない経路**になる
       # （依存更新や edition 変更で黙って壊れ、次に計測へ使うとき初めて気づく）。
       # 計測コードの意味と撤去条件は `src-tauri/src/heap_trace.rs` の `//!`。
       - name: cargo check (heap-trace feature)
+        if: steps.scope.outputs.rust != 'false'
         run: cargo check -p snotra --features heap-trace
 
       - name: cargo test (snotra-core)
+        if: steps.scope.outputs.rust != 'false'
         run: cargo test -p snotra-core
 
       - name: cargo test (snotra-egui-runtime)
+        if: steps.scope.outputs.rust != 'false'
         run: cargo test -p snotra-egui-runtime
 
       - name: cargo test (snotra)
+        if: steps.scope.outputs.rust != 'false'
         run: cargo test -p snotra
 
       - name: cargo test (snotra-settings)
+        if: steps.scope.outputs.rust != 'false'
         run: cargo test -p snotra-settings
 
       - name: cargo clippy
+        if: steps.scope.outputs.rust != 'false'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       # Pester の統合テストが、共有モジュールで作った seed を実際の製品が parse できることと、
       # Win32/DWM のウィンドウ矩形とキャプチャ寸法が一致することを検査する。
       - name: cargo build (PowerShell integration fixture)
+        if: steps.scope.outputs.rust != 'false'
         run: cargo build -p snotra
 
       # #562: docgen 検出器。doc コメント内の intra-doc link（散文内シンボル参照）の切れを
@@ -154,23 +192,23 @@ jobs:
       # 検査対象にするため必須。src-tauri は windows 専用依存ゆえ ubuntu では build 不能＝
       # この windows ジョブで走らせる。
       - name: cargo doc (intra-doc link check)
+        if: steps.scope.outputs.rust != 'false'
         run: cargo doc --workspace --no-deps --document-private-items
 
       # #509: main 保護 Layer 1（.githooks）と PreToolUse フック
       # （.claude/hooks）の selftest は、実運用が Windows でのみ起きるセーフティネット。
       # ubuntu の node-check と相補的に、Windows 固有の hook 実行機構
       # （Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）を検知する。
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
+      # 変更が .md だけの PR では走らない（job の冒頭のコメントの「受容する残余」）。
+      # Node は job の冒頭の "Setup Node.js" が用意する（判定の step が先に使うため、そこへ移した・#1508）。
       - name: Install dependencies
+        if: steps.scope.outputs.rust != 'false'
         run: npm ci
 
       - name: "Run tests on Windows (vitest: .claude/hooks + .githooks + scripts)"
+        if: steps.scope.outputs.rust != 'false'
         run: npm test
 
       - name: "Run PowerShell tests (Pester)"
+        if: steps.scope.outputs.rust != 'false'
         run: npm run test:powershell

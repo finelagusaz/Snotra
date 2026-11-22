@@ -79,20 +79,20 @@
 
 ### フェーズ 1: 判定スクリプト
 
-- [ ] `scripts/ci-rust-scope.test.mjs` に境界のテストを書き、Red を確かめる
-- [ ] `scripts/ci-rust-scope.mjs` を実装し、Green を確かめる
-- [ ] 一時リポジトリの merge commit に CLI を当てる結合テストを書き、通す
-- [ ] 実リポジトリで CLI を走らせ、`.md` だけ／`.rs` を含む差分で出力が分かれることを確かめる
+- [x] `scripts/ci-rust-scope.test.mjs` に境界のテストを書き、Red を確かめる
+- [x] `scripts/ci-rust-scope.mjs` を実装し、Green を確かめる
+- [x] 一時リポジトリの merge commit に CLI を当てる結合テストを書き、通す
+- [x] 実リポジトリで CLI を走らせ、`.md` だけ／`.rs` を含む差分で出力が分かれることを確かめる
 
 ### フェーズ 2: workflow
 
-- [ ] `ci.yml` の rust-check に `fetch-depth: 2`・Setup Node.js の移動・判定の step・後続の `if` を入れる
-- [ ] 後続の全 step に `if` が付いていることを、step の数と `if` の数の照合で確かめる
+- [x] `ci.yml` の rust-check に `fetch-depth: 2`・Setup Node.js の移動・判定の step・後続の `if` を入れる
+- [x] 後続の全 step に `if` が付いていることを、step の数と `if` の数の照合で確かめる
 
 ### フェーズ 3: 文書
 
-- [ ] `docs/build-commands.md` の該当箇所を直す
-- [ ] `npm test` と `npm run governance:check` を通す
+- [x] `docs/build-commands.md` の該当箇所を直す
+- [x] `npm test` と `npm run governance:check` を通す
 
 ## 未確定（実装前に潰す）
 

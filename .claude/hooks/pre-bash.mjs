@@ -16,7 +16,7 @@
 //     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする。`gh pr create` と `git` の判定は、
 //     元の文字列に加えて、引用符とエスケープ文字を取り除いた見え方（`unquotedView`）の上でもコマンド位置を探す
 //     （`ghPrCreateSites`・`usesNoVerify`・`pullWithoutFfOnly`。#1499・#1523）。前置の値とフラグは、旧い正規表現と
-//     引用値を読む正規表現の両方で読む（`ENV_PREFIX_QUOTED` の doc）
+//     引用符で囲んだ値を読む正規表現の両方で読む（`ENV_PREFIX_QUOTED` の doc）
 //   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
 //     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
 // 後者は、`docs/development-principles.md`「規則を守らせる強さ」の原則 6（判定は構文の位置で決める）から、
@@ -33,7 +33,7 @@
 // 鳴らず、push もしないので pre-push も鳴らない。GitHub ruleset も空 PR を防げない。
 //
 // 引用符とエスケープ文字で語を割る形（`gh pr "create"` / `cr\eate` / `gh pr \` + 改行 + `create`・`git "pull"` /
-// `--no-ver""ify`）と、空白を含む引用値の前置・フラグ（`GH_TOKEN="a b"`・`git -C "my dir"`）は検出する
+// `--no-ver""ify`）と、空白を含む引用符で囲んだ値の前置・フラグ（`GH_TOKEN="a b"`・`git -C "my dir"`）は検出する
 // （#1499・#1523）。hook に止められた委譲先が自然にたどり着いた事故モードである。引用符・エスケープを含むチェーンは
 // 安全なチェーンと認めず、動的判定（upstream と未 push）へ回す（`hasSafeChain` の doc）。
 //
@@ -47,8 +47,11 @@
 //   - 展開・置換で語を組み立てる形（`$'create'` / `$"create"` / `${X}create` / `c$()reate`）
 // コマンド位置には現れるが、受容する未対応リスク（#1523 の独立導出で実測）:
 //   - エスケープした空白の値（`GH_TOKEN=a\ b`・`git -C a\ b pull`）と、引用の内側でエスケープした引用符（`"a\" b"`）。
-//     読めば引用値の読み方を shell の規則へ近づけることになる
+//     読めば引用符で囲んだ値の読み方を shell の規則へ近づけることになる
 //   - cwd の判定が最初の gh としか比べないこと（`gh pr create --help; cd ../o; gh pr create`）
+//   - 旧い FLAG の値（`\S*`）が区切りを越えて食うこと。`; gh -a` の繰り返しで二乗になり（5000 回で約 0.2 秒）、
+//     `git push && gh -x;gh pr create` の 2 つめの gh を最後の gh として見ない。FLAG を変えると今の検出の形も動くので、
+//     ここでは変えない（引用符で囲んだ値を読む FLAG_WORD は区切りを越えない）
 // 検出を shell パーサ相当まで広げると、payload 全体 grep の誤爆（#482 の D2）を作り直すことになる。
 //
 // 詳細と実測の根拠は issue #482。
@@ -87,20 +90,24 @@ const AT_CMD_POS = String.raw`(?:^|[;&|\n\r(){}])\s*`;
 // `--?[^-\s]` はダッシュの直後に非ダッシュを要求するので分割は 1 通りに決まる（`--` 単独は別分岐）。
 const FLAG = String.raw`(?:(?:--?[^-\s]\S*|--)(?:\s+[^-\s]\S*)?\s+)*`;
 
-// `GH_TOKEN=x gh pr create` のような環境変数の前置もコマンド位置と見なす。値は空白と区切り文字を含まない語に限る——
-// `\S*` だと区切りを越えて食い、`; A=x'` の繰り返しで二乗になった（90KB で 6.3 秒・#1523 で実測。hook の timeout は
-// 非ブロッキングなので fail-open になる）。区切りの後ろは AT_CMD_POS が拾い直すので、検出は減らない。
-const ENV_PREFIX = String.raw`(?:[A-Za-z_]\w*=[^\s;&|(){}]*\s+)*`;
+// `GH_TOKEN=x gh pr create` のような環境変数の前置もコマンド位置と見なす。値は区切り文字を越えて食わない——
+// `\S*` だと区切りを越えて食い、`; A=x'` の繰り返しで二乗になった（#1523 の時点で 90KB 6.3 秒。hook の timeout は
+// 非ブロッキングなので fail-open になる）。ただし `${…}` と `$(…)` は、中に区切りの文字を含んでも 1 つの展開として
+// 読む（区切りで切ると `A=${X}y git pull` の検出が消えた。#1523 の委譲レビューで実測）。展開でない `(){}` で語が
+// 切れる形（`A=x{y}z git …`）は検出しない（受容する）。
+const ENV_CHAR = String.raw`[^\s;&|(){}$]|\$(?:\{[^\s;&|(){}]*\}|\([^\s;&|(){}]*\))?`;
+const ENV_PREFIX = String.raw`(?:[A-Za-z_]\w*=(?:${ENV_CHAR})*\s+)*`;
 
-// 引用値を読む版（#1523）。前置の値とフラグを「部品の連接」として読み、`GH_TOKEN="a b"`・`git -C "my dir"`・
+// 引用符で囲んだ値を読む版（#1523）。前置の値とフラグを「部品の連接」として読み、`GH_TOKEN="a b"`・`git -C "my dir"`・
 // `--repo="a b c"` を 1 つの語にする。部品（`"…"` / `'…'` / 1 字）は先頭の文字で互いに排他なので、分割は 1 通りに
-// 決まる（上の FLAG と同じ理由で、排他でない選択肢は指数爆発する。`\S` を逃げ道に足した試作は 22 個で 5 秒）。
+// 決まる（上の FLAG と同じ理由で、排他でない選択肢は指数爆発する）。
 // 旧い版と**どちらかで当たれば検出**として使う。片方へ寄せない——こちらは引用符が対にならない値（`A=it's`）で外れ、
-// 旧い版は空白を含む引用値で外れる。
+// 旧い版は空白を含む引用符で囲んだ値で外れる。
 const QUOTED_PART = String.raw`"[^"]*"|'[^']*'`;
-const ENV_PREFIX_QUOTED = String.raw`(?:[A-Za-z_]\w*=(?:${QUOTED_PART}|[^\s"';&|(){}])*\s+)*`;
-// 先頭は先読みで確かめる。`[^-\s]` で 1 字消費すると、開きの引用符を食って `-C "a b"` を読めない
-const FLAG_WORD = String.raw`(?![-\s])(?:${QUOTED_PART}|[^\s"'])+`;
+const ENV_PREFIX_QUOTED = String.raw`(?:[A-Za-z_]\w*=(?:${QUOTED_PART}|(?!["'])(?:${ENV_CHAR}))*\s+)*`;
+// 先頭は先読みで確かめる。`[^-\s]` で 1 字消費すると、開きの引用符を食って `-C "a b"` を読めない。
+// 引用の外の 1 字は区切りの文字を含まない（含むと区切りを越えて食い、旧い FLAG と同じ二乗をもう 1 本足す）
+const FLAG_WORD = String.raw`(?![-\s])(?:${QUOTED_PART}|[^\s"';&|(){}])+`;
 const FLAG_QUOTED = String.raw`(?:(?:--?${FLAG_WORD}|--)(?:\s+${FLAG_WORD})?\s+)*`;
 
 // AT_CMD_POS は先頭の区切り文字を**消費する**。ゆえにコマンド本体をキャプチャし、
@@ -306,7 +313,7 @@ export function usesBackslashPath(command) {
   return BACKSLASH_PATH.some((re) => re.test(command));
 }
 
-// 旧い前置と引用値を読む前置のどちらかで当たれば対象（`ENV_PREFIX_QUOTED` の doc）
+// 旧い前置と引用符で囲んだ値を読む前置のどちらかで当たれば対象（`ENV_PREFIX_QUOTED` の doc）
 const PYTHON_AT_CMD_FORMS = [ENV_PREFIX, ENV_PREFIX_QUOTED].map((env) => new RegExp(`${AT_CMD_POS}${env}(?:python3?|py)\\b`));
 // 非 ASCII を安全に出す設定。どれか 1 つあれば足りる（`-X utf8` も等価な解である）。
 const PY_UTF8 = /PYTHONIOENCODING\s*=|PYTHONUTF8\s*=|-X\s*utf8/i;
@@ -324,7 +331,7 @@ export function needsPyEncoding(command) {
 
 // `git -C <tree> push` を意図的に外す GIT_PUSH とは違い、こちらは**すべての** git 呼び出しを
 // 拾う。`--no-verify` はどのツリーに対しても人間専用であり、`-C` の有無で変わらない。
-// 旧い前置と引用値を読む前置の両方で探す（`ENV_PREFIX_QUOTED` の doc）
+// 旧い前置と引用符で囲んだ値を読む前置の両方で探す（`ENV_PREFIX_QUOTED` の doc）
 const GIT_AT_CMD_FORMS = [ENV_PREFIX, ENV_PREFIX_QUOTED].map((env) => new RegExp(`${AT_CMD_POS}${env}(git)\\b`, "g"));
 
 /**
@@ -352,7 +359,7 @@ const NO_VERIFY = /(?:^|\s)--no-verify(?:\s|$)/;
 const SHORT_FLAG_N = /(?:^|\s)-[A-Za-z]*n[A-Za-z]*(?:\s|$)/;
 // subcommand の前に来るグローバルフラグは FLAG で読み飛ばす。`(?:-\S+\s+)*` では
 // `git -C /x commit` のスペース区切りの値を飛ばせず取りこぼした（実測 fail-open）。
-// 旧い FLAG と引用値を読む FLAG のどちらかで当たれば、その subcommand とみなす（`ENV_PREFIX_QUOTED` の doc）
+// 旧い FLAG と引用符で囲んだ値を読む FLAG のどちらかで当たれば、その subcommand とみなす（`ENV_PREFIX_QUOTED` の doc）
 const GIT_COMMIT_FORMS = [FLAG, FLAG_QUOTED].map((flag) => new RegExp(`^git\\s+${flag}commit\\b`));
 const GIT_PULL_FORMS = [FLAG, FLAG_QUOTED].map((flag) => new RegExp(`^git\\s+${flag}pull\\b`));
 const FF_ONLY = /(?:^|\s)--ff-only(?:\s|$)/;
@@ -400,7 +407,8 @@ const SHAPE_REMEDY = Object.freeze({
     "`PYTHONIOENCODING=utf-8` を前置してください（`PYTHONUTF8=1` か `python -X utf8` でも同じです）。",
   noVerify:
     "`--no-verify`（commit では `-n` も同義）は `.githooks/` の main 保護を迂回します。**人間専用であり、エージェントは使用してはなりません**。" +
-    "hook が拒んだなら、迂回せずその理由を解消してください。main へ入れたい変更は feature ブランチと PR を経由します。",
+    "hook が拒んだなら、迂回せずその理由を解消してください。main へ入れたい変更は feature ブランチと PR を経由します。" +
+    "（引用符で囲んだ言及も止まります。コミットメッセージで触れるなら `-F <path>` で渡し、文字列を探すなら Grep ツールを使ってください。）",
   pull:
     "非 FF の `git pull` はマージコミットを作り、main では `.githooks/pre-merge-commit` が拒否します。" +
     "`git pull --ff-only` を使ってください（**この判定はブランチを問わず発火します**。FF できないほど発散しているなら、" +

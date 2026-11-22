@@ -86,6 +86,10 @@
 
 - [x] `npm test` と `npm run governance:check` が緑
 
+## 消し込み（Step 3 のラウンド）
+
+- R1 `41f821b6`: verify:tree red（E の `race-boundaries.test.mjs` の 1 本が 7146ms で timeout。委譲との並走による CPU 競合とみる。単独の回し直しは修正の編集が先に入って exit 2 で走らず、次の sha で単独に回す）。委譲: High 2・Medium 4・Low 4・⚠️ 2。変異注入 22 本、生き残り 6（M6・M9 は等価、M19 は宣言済みの冗長、M8・M10・M15b はテストの穴）。実地: 複製の hook に stdin で流し、受け入れ条件 1 の 15 形が exit 2、/implement のレシピが静的 allow のままを確認。直した: High-1 `ENV_PREFIX` の値から `(){}` を外して `A=${X}y git pull` などの検出が消えた → `${…}`・`$(…)` を 1 つの展開として読む `ENV_CHAR`／High-2 造語「引用値」を「引用符で囲んだ値」へ／Medium-1 `FLAG_WORD` の引用の外の 1 字から区切りを外す（新しい FLAG で二乗が倍にならない。旧い FLAG の二乗は受容リスクへ）／Medium-2 noVerify の文言に `-F` と Grep ツールを足す／Medium-3 M8・M10 の 2 形のテスト／Medium-4 エスケープした区切りの 2 形のテスト／Low-1 理由まで確かめるテスト。捨てた: Low-2（テスト名の現在形）・Low-4（冒頭コメントの列挙）は挙動を変えない。残した: Low-3（M6・M9 は等価で構造は変えない）、⚠️-1 `git push && gh -x;gh pr create`（旧い FLAG の既存の穴。受容リスクに記録）、⚠️-2 needsPyEncoding に見え方を通さない（issue の対象外）、展開でない `(){}` で語が切れる前置（`A=x{y}z git …`）は受容リスク
+
 ## 範囲外（PR 本文の「残したもの」へ）
 
 - `echo a || git push && gh pr create` が `hasSafeChain` で true になる（`echo` が成功すると push は走らず gh が走る）。引用と無関係の既存の穴（`false && git push && gh pr create` は gh も走らないので穴ではない。差分レビューで訂正）

@@ -1424,9 +1424,9 @@ describe("settings.json ドリフト検出カナリア", () => {
   });
 });
 
-// ---- #1523: 引用符で語を割る・空白を含む引用値・引用の内側の push / gh ----
+// ---- #1523: 引用符で語を割る・空白を含む引用符で囲んだ値・引用の内側の push / gh ----
 
-describe("引用符で語を割る綴りと、空白を含む引用値を検出する（#1523）", () => {
+describe("引用符で語を割る綴りと、空白を含む引用符で囲んだ値を検出する（#1523）", () => {
   it.each([
     "git commit --no-ver\"\"ify",
     "git \"commit\" -n",
@@ -1455,17 +1455,21 @@ describe("引用符で語を割る綴りと、空白を含む引用値を検出�
     expect(ghPrCreateSites(cmd).length).toBeGreaterThan(0);
   });
 
-  it("needsPyEncoding（win32 の判定）: 空白を含む引用値の前置", () => {
+  it("needsPyEncoding（win32 の判定）: 空白を含む引用符で囲んだ値の前置", () => {
     expect(needsPyEncoding(`A="x y" python -c "あ"`)).toBe(true);
   });
 });
 
-describe("今の検出を減らさない（#1523。引用符が対にならない値・区切りを含む引用値）", () => {
-  it.each(["A=it's git pull", "A=\" git pull"])("pullWithoutFfOnly: %s", (cmd) => {
-    expect(pullWithoutFfOnly(cmd)).toBe(true);
-  });
-  it("usesNoVerify: A=it's git commit --no-verify", () => {
-    expect(usesNoVerify("A=it's git commit --no-verify")).toBe(true);
+describe("今の検出を減らさない（#1523。引用符が対にならない値・区切りを含む引用符で囲んだ値）", () => {
+  // 後ろ 2 つは、見え方では `--ff-only` 付きに見え、元の文字列では引用符が対にならないので、旧い版でしか当たらない
+  it.each(["A=it's git pull", "A=\" git pull", "A=${X}y git pull", "A=it's git pull origin \"x --ff-only\"", "git -c it's pull origin \"x --ff-only\""])(
+    "pullWithoutFfOnly: %s",
+    (cmd) => {
+      expect(pullWithoutFfOnly(cmd)).toBe(true);
+    },
+  );
+  it.each(["A=it's git commit --no-verify", "A=$(x)y git commit --no-verify"])("usesNoVerify: %s", (cmd) => {
+    expect(usesNoVerify(cmd)).toBe(true);
   });
   it("needsPyEncoding: A=it's python -c 'あ'", () => {
     expect(needsPyEncoding("A=it's python -c 'あ'")).toBe(true);
@@ -1488,6 +1492,29 @@ describe("見え方で判定する過剰検出は、意図として固定する�
   it.each(["git log --grep=\"--no-verify\"", "git commit -m \"pull request\"", "echo \"git pull\""])("止めない: %s", (cmd) => {
     expect(usesNoVerify(cmd) || pullWithoutFfOnly(cmd)).toBe(false);
   });
+  it("言及で止めたときの文言は、-F と Grep ツールという復帰の道を示す", () => {
+    const r = judgeCommandShape("git commit -m \"--no-verify\"", "win32");
+    expect(r.reason).toContain("引用符で囲んだ言及も止まります");
+    expect(r.reason).toContain("Grep ツール");
+  });
+});
+
+describe("止めた理由まで確かめる（#1523）", () => {
+  it.each([
+    ["git commit --no-ver\"\"ify", "--no-verify"],
+    ["git -C \"my dir\" commit -n", "--no-verify"],
+    ["git \"pull\"", "--ff-only"],
+    ["git -C \"my dir\" pull", "--ff-only"],
+  ])("judgeCommandShape: %s", (cmd, needle) => {
+    const r = judgeCommandShape(cmd, "linux");
+    expect(r?.action).toBe("block");
+    expect(r.reason).toContain(needle);
+  });
+  it("decide: 空白を含む引用符で囲んだ値の前置の gh pr create を、upstream 未設定の理由で止める", () => {
+    const r = decide(bash(`GH_TOKEN="a b" ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("upstream が未設定");
+  });
 });
 
 describe("hasSafeChain — 引用の内側の push / gh をチェーンと取り違えない（#1523）", () => {
@@ -1499,6 +1526,9 @@ describe("hasSafeChain — 引用の内側の push / gh をチェーンと取り
     `git push && ${ghPrCreate()}; ${ghPrCreate()}`,
     `git push && ${ghPrCreate()} || ${ghPrCreate()}`,
     `git push && ${ghPrCreate()} & ${ghPrCreate()}`,
+    // エスケープした区切りは Bash では「文字の & + 背景実行の &」で、push を待たずに 2 つめが走る
+    `git push && ${ghPrCreate()} \\&& ${ghPrCreate()}`,
+    `git push && ${ghPrCreate()} \`&& ${ghPrCreate()}`,
   ])("false: %s", (cmd) => {
     expect(hasSafeChain(cmd)).toBe(false);
   });
@@ -1527,13 +1557,13 @@ describe("hasSafeChain — 引用の内側の push / gh をチェーンと取り
   });
 });
 
-describe("引用値の病的入力でも時間内に終わる（#1523）", () => {
+describe("引用符で囲んだ値の病的入力でも時間内に終わる（#1523）", () => {
   const within = (fn, ms = 500) => {
     const t0 = process.hrtime.bigint();
     fn();
     expect(Number(process.hrtime.bigint() - t0) / 1e6).toBeLessThan(ms);
   };
-  it("引用値が大量に並ぶ前置とフラグ", () => {
+  it("引用符で囲んだ値が大量に並ぶ前置とフラグ", () => {
     const quoted = Array.from({ length: 2000 }, (_, i) => `A${i}="a b${i}"`).join(" ");
     const flags = Array.from({ length: 2000 }, (_, i) => `--f${i}="a b" -x 'c d'`).join(" ");
     within(() => {
@@ -1549,6 +1579,10 @@ describe("引用値の病的入力でも時間内に終わる（#1523）", () =>
       pullWithoutFfOnly(cmd);
       ghPrCreateSites(cmd);
     });
+  });
+  it("フラグの値が区切りを越えて食う形が、新しい FLAG で倍にならない（旧い FLAG の二乗は受容する）", () => {
+    const cmd = "; gh -a".repeat(3000);
+    within(() => decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }));
   });
   it("前置の値が区切りを越えて食う形で二乗にならない（今は 90KB で 6.3 秒・独立導出で実測）", () => {
     const cmd = `${"; A=x'".repeat(6000)} ${GH} x`;

@@ -71,7 +71,8 @@
 ### Phase 3 — 検証
 
 - [x] `npm test` と `npm run governance:check` を通す（1003 件 passed・13 検査 passed）
-- [ ] `verify:tree run` を回し、委譲先（背景の作業を待つためにターンを終えない）でレビューと変異注入を行う。親が `waiting on its own background work` を一度も受けないことと、Step 4 の remove が通ることを記録する
+- [x] `verify:tree run` を回し、委譲先（背景の作業を待つためにターンを終えない）でレビューと変異注入を行う。親が `waiting on its own background work` を一度も受けないことと、Step 4 の remove が通ることを記録する — 5 ラウンドとも、委譲先はバックグラウンドの作業を 0 回、親が受けた通知は `finished` だけだった。Step 4 の `remove --delegate-tree` は、remove の直前の `git worktree list --porcelain` に `locked` 行が無く、exit 0 でツールの worktree・委譲先の worktree・ブランチ `worktree-agent-abf0c5f8dc37519ef` を消した。ただし変異 1 回が約 2 秒と短く、10 分を超える実行を分けて回すときの裏づけにはならない
+- 手順の誤り（記録）: Step 4 は「否定の知識の回収」を remove の前に置くが、remove を先に打ち、委譲先の `.delegate/` の報告を消した。報告の要旨は 5 ラウンドとも hand-back で主に届いており、却下した案と所見は上の消し込みと `research.md` にあるので、回収で失ったものは無い
 
 ## 消し込み（Step 3 のラウンド）
 

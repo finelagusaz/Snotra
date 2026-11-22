@@ -1458,6 +1458,24 @@ describe("引用符で語を割る綴りと、空白を含む引用符で囲ん�
   it("needsPyEncoding（win32 の判定）: 空白を含む引用符で囲んだ値の前置", () => {
     expect(needsPyEncoding(`A="x y" python -c "あ"`)).toBe(true);
   });
+
+  it.each(["git -C \"my dir\" -c x=$(y) pull", "git -C \"my dir\" -c x=${Y} commit -n"])(
+    "引用符で囲んだ値と展開を並べたフラグ: %s",
+    (cmd) => {
+      expect(usesNoVerify(cmd) || pullWithoutFfOnly(cmd)).toBe(true);
+    },
+  );
+
+  // 展開と引用符で囲んだ値を連接した前置（引用符で囲んだ値を読む版でしか当たらない）
+  it.each(["A=${X}\"a b\" git pull", "A=$(x)\"a b\" git commit --no-verify"])("連接の前置（git）: %s", (cmd) => {
+    expect(usesNoVerify(cmd) || pullWithoutFfOnly(cmd)).toBe(true);
+  });
+  it("連接の前置（gh）", () => {
+    expect(ghPrCreateSites(`A=\${X}"a b" ${ghPrCreate()}`).length).toBeGreaterThan(0);
+  });
+  it("連接の前置（python）", () => {
+    expect(needsPyEncoding("A=${X}\"a b\" python -c 'あ'")).toBe(true);
+  });
 });
 
 describe("今の検出を減らさない（#1523。引用符が対にならない値・区切りを含む引用符で囲んだ値）", () => {
@@ -1471,8 +1489,12 @@ describe("今の検出を減らさない（#1523。引用符が対にならな�
   it.each(["A=it's git commit --no-verify", "A=$(x)y git commit --no-verify"])("usesNoVerify: %s", (cmd) => {
     expect(usesNoVerify(cmd)).toBe(true);
   });
-  it("needsPyEncoding: A=it's python -c 'あ'", () => {
-    expect(needsPyEncoding("A=it's python -c 'あ'")).toBe(true);
+  it.each(["A=it's python -c 'あ'", "A=${X}it's python -c 'あ'"])("needsPyEncoding: %s", (cmd) => {
+    expect(needsPyEncoding(cmd)).toBe(true);
+  });
+  // 展開と対にならない引用符を並べた前置（旧い版でしか当たらない）
+  it("pullWithoutFfOnly: A=${X}it's git pull origin \"x --ff-only\"", () => {
+    expect(pullWithoutFfOnly("A=${X}it's git pull origin \"x --ff-only\"")).toBe(true);
   });
   it.each([`A=it's ${ghPrCreate()}`, `A=a"b;c"d ${ghPrCreate()}`, `A="x;y"z ${ghPrCreate()}`, `A=x;${ghPrCreate()}`])(
     "ghPrCreateSites: %s",
@@ -1529,6 +1551,9 @@ describe("hasSafeChain — 引用の内側の push / gh をチェーンと取り
     // エスケープした区切りは Bash では「文字の & + 背景実行の &」で、push を待たずに 2 つめが走る
     `git push && ${ghPrCreate()} \\&& ${ghPrCreate()}`,
     `git push && ${ghPrCreate()} \`&& ${ghPrCreate()}`,
+    // フラグの値が区切りを越えて食うと、2 つめの gh を最後の gh として見落とす（旧い FLAG の既存の穴を新しい FLAG が塞ぐ）
+    `git push && ${GH} -x;${ghPrCreate()}`,
+    `git push && ${GH} --repo x;${ghPrCreate()}`,
   ])("false: %s", (cmd) => {
     expect(hasSafeChain(cmd)).toBe(false);
   });
@@ -1580,7 +1605,11 @@ describe("引用符で囲んだ値の病的入力でも時間内に終わる（#
       ghPrCreateSites(cmd);
     });
   });
-  it("フラグの値が区切りを越えて食う形が、新しい FLAG で倍にならない（旧い FLAG の二乗は受容する）", () => {
+  it.each(["A=$(x) ", "A=${x} "])("展開を値に持つ前置の並び（%s の繰り返し）で二乗にならない", (unit) => {
+    const cmd = `${unit.repeat(10000)}${GH} x`;
+    within(() => decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }));
+  });
+  it("フラグの値が区切りを越えて食う形が時間内に終わる（旧い FLAG の二乗は受容する）", () => {
     const cmd = "; gh -a".repeat(3000);
     within(() => decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }));
   });

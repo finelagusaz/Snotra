@@ -13,9 +13,10 @@
 //
 // 判定単位は 2 種類ある。
 //   - コマンド位置: `gh pr create` と `git` の各判定。`git` 系はさらに次の区切りまでのセグメントに閉じる
-//     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする。`gh pr create` の判定だけは、
-//     元の文字列に加えて、引用符とエスケープ文字を取り除いた見え方（`ghPrCreateView`）の上でもコマンド位置を探す
-//     （`ghPrCreateSites`）
+//     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする。`gh pr create` と `git` の判定は、
+//     元の文字列に加えて、引用符とエスケープ文字を取り除いた見え方（`unquotedView`）の上でもコマンド位置を探す
+//     （`ghPrCreateSites`・`usesNoVerify`・`pullWithoutFfOnly`。#1499・#1523）。前置の値とフラグは、旧い正規表現と
+//     引用符で囲んだ値を読む正規表現の両方で読む（`ENV_PREFIX_QUOTED` の doc）
 //   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
 //     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
 // 後者は、`docs/development-principles.md`「規則を守らせる強さ」の原則 6（判定は構文の位置で決める）から、
@@ -31,18 +32,26 @@
 // この領域は hook にしか見えない。`gh pr create` はリポジトリを触らないため git hook は
 // 鳴らず、push もしないので pre-push も鳴らない。GitHub ruleset も空 PR を防げない。
 //
-// 引用符とエスケープ文字で語を割る形（`gh pr "create"` / `cr\eate` / `gh pr \` + 改行 + `create`）は検出する
-// （`ghPrCreateSites`）。hook に止められた委譲先が自然にたどり着いた事故モードである（#1499）。この形は安全なチェーンと
-// 認めず、動的判定（upstream と未 push）へ回す（`hasSafeChain` の doc）。
+// 引用符とエスケープ文字で語を割る形（`gh pr "create"` / `cr\eate` / `gh pr \` + 改行 + `create`・`git "pull"` /
+// `--no-ver""ify`）と、空白を含む引用符で囲んだ値の前置・フラグ（`GH_TOKEN="a b"`・`git -C "my dir"`）は検出する
+// （#1499・#1523）。hook に止められた委譲先が自然にたどり着いた事故モードである。引用符・エスケープを含むチェーンは
+// 安全なチェーンと認めず、動的判定（upstream と未 push）へ回す（`hasSafeChain` の doc）。
 //
 // 受容する未対応リスク（いずれも「gh pr create がコマンド位置に現れない」形。意図的迂回であり事故モードではない。
 // `--no-verify` と同格に人間専用として扱う）:
-//   - `sh -c 'gh pr create'` / `eval` / バッククォートの内側（`ghPrCreateView` がバッククォートを消すので、
+//   - `sh -c 'gh pr create'` / `eval` / バッククォートの内側（`unquotedView` がバッククォートを消すので、
 //     バッククォートそのものがコマンド位置にあれば検出する。`$(...)` は `(` が区切り文字なので検出する）
 //   - ラッパ経由（`timeout 5 gh pr create` / `nohup` / `xargs gh pr create`）
 //   - 実行ファイルの名前やパスで呼ぶ形（`gh.exe pr create` / `& '<path>/gh.exe' pr create`）と、
 //     `gh api …/pulls` で PR を作る形（検出は `gh` の直後の空白を要求する・#1299 の敵対的調査で実測）
 //   - 展開・置換で語を組み立てる形（`$'create'` / `$"create"` / `${X}create` / `c$()reate`）
+// コマンド位置には現れるが、受容する未対応リスク（#1523 の独立導出で実測）:
+//   - エスケープした空白の値（`GH_TOKEN=a\ b`・`git -C a\ b pull`）と、引用の内側でエスケープした引用符（`"a\" b"`）。
+//     読めば引用符で囲んだ値の読み方を shell の規則へ近づけることになる
+//   - cwd の判定が最初の gh としか比べないこと（`gh pr create --help; cd ../o; gh pr create`）
+//   - 旧い FLAG の値（`\S*`）が区切りを越えて食うこと。`; gh -a` の繰り返しで二乗になる（5000 回で約 0.2 秒）。
+//     FLAG を変えると今の検出の形も動くので、ここでは変えない（引用符で囲んだ値を読む FLAG_WORD は区切りを越えない）
+//   - 17 個以上の前置を並べた形（前置の繰り返しに上限を置く。`ENV_PREFIX` の doc）
 // 検出を shell パーサ相当まで広げると、payload 全体 grep の誤爆（#482 の D2）を作り直すことになる。
 //
 // 詳細と実測の根拠は issue #482。
@@ -81,8 +90,31 @@ const AT_CMD_POS = String.raw`(?:^|[;&|\n\r(){}])\s*`;
 // `--?[^-\s]` はダッシュの直後に非ダッシュを要求するので分割は 1 通りに決まる（`--` 単独は別分岐）。
 const FLAG = String.raw`(?:(?:--?[^-\s]\S*|--)(?:\s+[^-\s]\S*)?\s+)*`;
 
-// `GH_TOKEN=x gh pr create` のような環境変数の前置もコマンド位置と見なす。
-const ENV_PREFIX = String.raw`(?:[A-Za-z_]\w*=\S*\s+)*`;
+// `GH_TOKEN=x gh pr create` のような環境変数の前置もコマンド位置と見なす。値は区切り文字を越えて食わない——
+// `\S*` だと区切りを越えて食い、`; A=x'` の繰り返しで二乗になった（#1523 の時点で 90KB 6.3 秒。hook の timeout は
+// 非ブロッキングなので fail-open になる）。ただし `${…}` と `$(…)` は、中に区切りの文字を含んでも 1 つの展開として
+// 読む（区切りで切ると `A=${X}y git pull` の検出が消えた。#1523 の委譲レビューで実測）。展開でない `(){}` で語が
+// 切れる形（`A=x{y}z git …`）は検出しない（受容する）。
+// 前置の繰り返しには上限（16 個）を置く。AT_CMD_POS は展開の閉じ `)`・`}` の直後からも探し直すので、上限が無いと
+// `A=$(x) ` の並びを探し直すたびに末尾まで読み、二乗になる（137KB で 32.6 秒・#1523 の委譲レビューで実測）
+const ENV_CHAR = String.raw`[^\s;&|(){}$]|\$(?:\{[^\s;&|(){}]*\}|\([^\s;&|(){}]*\))?`;
+const ENV_PREFIX = String.raw`(?:[A-Za-z_]\w*=(?:${ENV_CHAR})*\s+){0,16}`;
+
+// 引用符で囲んだ値を読む版（#1523）。前置の値とフラグを「部品の連接」として読み、`GH_TOKEN="a b"`・`git -C "my dir"`・
+// `--repo="a b c"` を 1 つの語にする。部品（`"…"` / `'…'` / 1 字）は先頭の文字で互いに排他なので、分割は 1 通りに
+// 決まる（上の FLAG と同じ理由で、排他でない選択肢は指数爆発する）。
+// 旧い版と**どちらかで当たれば検出**として使う。片方へ寄せない——こちらは引用符が対にならない値（`A=it's`）で外れ、
+// 旧い版は空白を含む引用符で囲んだ値で外れる。
+const QUOTED_PART = String.raw`"[^"]*"|'[^']*'`;
+// `(?!["'])` を外さない——ENV_CHAR の 1 字は引用符も読むので、外すと `"…"` を引用としても 1 字ずつとしても読めて
+// 指数爆発する（`""` を 24 個並べて 25 秒・#1523 の委譲レビューの変異で実測。同期の正規表現なのでテストは赤ではなく
+// 終わらなくなる）
+const ENV_PREFIX_QUOTED = String.raw`(?:[A-Za-z_]\w*=(?:${QUOTED_PART}|(?!["'])(?:${ENV_CHAR}))*\s+){0,16}`;
+// 先頭は先読みで確かめる。`[^-\s]` で 1 字消費すると、開きの引用符を食って `-C "a b"` を読めない。
+// 引用の外の 1 字は ENV_CHAR で読む。区切りの文字を越えない（越えると旧い FLAG と同じ二乗をもう 1 本足し、
+// `git push && gh -x;gh pr create` の 2 つめの gh を最後の gh として見落とす）が、`$(…)`・`${…}` は 1 つの展開として読む
+const FLAG_WORD = String.raw`(?![-\s])(?:${QUOTED_PART}|(?!["'])(?:${ENV_CHAR}))+`;
+const FLAG_QUOTED = String.raw`(?:(?:--?${FLAG_WORD}|--)(?:\s+${FLAG_WORD})?\s+)*`;
 
 // AT_CMD_POS は先頭の区切り文字を**消費する**。ゆえにコマンド本体をキャプチャし、
 // tokenStart() で位置を復元する。match.index をそのまま使うと `&&` の片方の `&` しか
@@ -90,6 +122,8 @@ const ENV_PREFIX = String.raw`(?:[A-Za-z_]\w*=\S*\s+)*`;
 export const GH_PR_CREATE = new RegExp(
   `${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}create\\b)`,
 );
+const GH_PR_CREATE_QUOTED = new RegExp(`${AT_CMD_POS}${ENV_PREFIX_QUOTED}(gh\\s+${FLAG_QUOTED}pr\\s+${FLAG_QUOTED}create\\b)`);
+const GH_PR_CREATE_FORMS = [GH_PR_CREATE, GH_PR_CREATE_QUOTED];
 
 const QUOTE_OR_ESCAPE = /["'\\`]/g;
 
@@ -105,12 +139,12 @@ const QUOTE_OR_ESCAPE = /["'\\`]/g;
  * 区切り文字の直後の引用が外れると、言及がコマンド位置に来る（`node -e "console.log('gh pr create')"`）。
  * この過剰検出は fail-closed 方向ゆえ受容し、テストで意図として固定する。
  */
-export function ghPrCreateView(command) {
+export function unquotedView(command) {
   return command.replace(QUOTE_OR_ESCAPE, "");
 }
 
 /**
- * `gh pr create` を検出した見え方と、その中の位置。元の文字列と `ghPrCreateView` の見え方の**どちらか**で当たれば
+ * `gh pr create` を検出した見え方と、その中の位置。元の文字列と `unquotedView` の見え方の**どちらか**で当たれば
  * 検出とする（どちらの見え方にしか現れない検出も落とさない。片方だけでは、もう片方が当てる形を通す）。
  * 位置は見え方ごとに測る。引用符を消すと位置がずれるので、位置の比較は同じ見え方の中でしか行わない。
  * `decide` と `main` の import 判定がこの関数を共有する（ずれると、decide は検出するのに verify-tree を読み込まず、
@@ -118,11 +152,26 @@ export function ghPrCreateView(command) {
  */
 export function ghPrCreateSites(command) {
   const sites = [];
-  for (const text of new Set([command, ghPrCreateView(command)])) {
-    const at = tokenStart(GH_PR_CREATE, text);
+  for (const text of new Set([command, unquotedView(command)])) {
+    const at = firstCommandAt(GH_PR_CREATE_FORMS, text);
     if (at >= 0) sites.push({ text, at });
   }
   return sites;
+}
+
+/** 正規表現の組のうち、最も早く当たったコマンド本体の位置。どれも当たらなければ -1 */
+export function firstCommandAt(res, text) {
+  const ats = res.map((re) => tokenStart(re, text)).filter((at) => at >= 0);
+  return ats.length > 0 ? Math.min(...ats) : -1;
+}
+
+/** 正規表現の組の全一致のうち、最も後ろのコマンド本体の位置。どれも当たらなければ -1 */
+function lastCommandAt(res, text) {
+  let last = -1;
+  for (const re of res) {
+    for (const m of text.matchAll(new RegExp(re.source, "g"))) last = Math.max(last, m.index + m[0].length - m[1].length);
+  }
+  return last;
 }
 
 // `git -C <tree> push` は意図的に一致させない。別ツリーへ push しても
@@ -135,7 +184,9 @@ const DRY_RUN = /(?:^|\s)(?:--dry-run|-n)(?:\s|$)/;
 // チェーンの途中で cwd が変わると、どのリポジトリに PR が作られるか判定できない。
 export const CWD_CHANGE = new RegExp(`${AT_CMD_POS}((?:cd|pushd|popd|chdir|Set-Location)\\b)`, "i");
 
-const REMEDY = "`git push -u origin HEAD` してから PR を作るか、`git push … && gh pr create` と `&&` で繋いでください。";
+const REMEDY =
+  "`git push -u origin HEAD` してから PR を作るか、`git push … && gh pr create` と `&&` で繋いでください。" +
+  "引用符・エスケープを含むチェーンは静的に安全と判定しないので、その場合は `git push -u origin HEAD` を単独で打ってから PR を作ってください。";
 
 // コマンドの区切り文字。終端探索（segmentEnd）と区切り列の列挙（hasSafeChain）で共有する。
 // 同じ文字クラスのリテラルを 3 か所目に作らないため定数へ寄せた（#768 の /dry-check）。
@@ -165,10 +216,18 @@ export function tokenStart(re, command) {
  * 引用符を消した見え方だけで判定してはならない。`'&'&` が `&&` に見え、背景実行の `&` を安全なチェーンと取り違える
  * （#1499 の自動セキュリティレビュー）。`decide` は、元の文字列で検出し、かつ検出したすべての見え方でこの関数が真の
  * ときだけ認める。引用符で語を割った `gh pr create` は元の文字列で検出されないので、動的判定へ回る。
+ *
+ * 区切りは、push の終端から**最後の** `gh pr create` まで見る。最初の gh までしか見ないと、`git push && gh pr create; gh pr create`
+ * の 2 つめが push と無関係に走る（#1523）。さらに、最後の gh より前に引用符・エスケープ文字が 1 つでもあれば認めない。
+ * `AT_CMD_POS` は引用の内側の区切りも区切りとみなすので、`git commit -m "a && git push" && gh pr create` の引用の内側の
+ * `git push` を、チェーンの push と取り違える（#1523）。引用の解釈はせず、保守的に静的 allow を外して動的判定へ回す。
+ * 代償として、push や前置に引用を書いた正当なチェーン（`git push origin "feat/x" && gh pr create`）も動的判定へ回る。
  */
 export function hasSafeChain(command) {
-  const ghAt = tokenStart(GH_PR_CREATE, command);
+  const ghAt = firstCommandAt(GH_PR_CREATE_FORMS, command);
   if (ghAt < 0) return false;
+  const lastGhAt = lastCommandAt(GH_PR_CREATE_FORMS, command);
+  if (HAS_QUOTE_OR_ESCAPE.test(command.slice(0, lastGhAt))) return false;
 
   const pushAt = tokenStart(GIT_PUSH, command);
   if (pushAt < 0) return false;
@@ -185,11 +244,12 @@ export function hasSafeChain(command) {
   // その直前の 1 字から見る）
   if (ESCAPED_SEPARATOR.test(command.slice(Math.max(pushEnd - 1, 0), ghAt))) return false;
 
-  const separators = command.slice(pushEnd, ghAt).match(SEPARATOR_RUN) ?? [];
+  const separators = command.slice(pushEnd, lastGhAt).match(SEPARATOR_RUN) ?? [];
   return separators.length >= 1 && separators.every((s) => s === "&&");
 }
 
 const ESCAPED_SEPARATOR = new RegExp(String.raw`[\\\x60]${SEPARATOR_CLASS}`);
+const HAS_QUOTE_OR_ESCAPE = /["'\\`]/;
 
 const ALLOW = Object.freeze({ action: "allow" });
 const block = (reason) => ({ action: "block", reason });
@@ -259,7 +319,8 @@ export function usesBackslashPath(command) {
   return BACKSLASH_PATH.some((re) => re.test(command));
 }
 
-const PYTHON_AT_CMD = new RegExp(`${AT_CMD_POS}${ENV_PREFIX}(?:python3?|py)\\b`);
+// 旧い前置と引用符で囲んだ値を読む前置のどちらかで当たれば対象（`ENV_PREFIX_QUOTED` の doc）
+const PYTHON_AT_CMD_FORMS = [ENV_PREFIX, ENV_PREFIX_QUOTED].map((env) => new RegExp(`${AT_CMD_POS}${env}(?:python3?|py)\\b`));
 // 非 ASCII を安全に出す設定。どれか 1 つあれば足りる（`-X utf8` も等価な解である）。
 const PY_UTF8 = /PYTHONIOENCODING\s*=|PYTHONUTF8\s*=|-X\s*utf8/i;
 const NON_ASCII = /[^\x00-\x7F]/;
@@ -271,12 +332,13 @@ const NON_ASCII = /[^\x00-\x7F]/;
  * 過小検出として受容する（コマンドの形からは判定材料が無い）。
  */
 export function needsPyEncoding(command) {
-  return PYTHON_AT_CMD.test(command) && NON_ASCII.test(command) && !PY_UTF8.test(command);
+  return PYTHON_AT_CMD_FORMS.some((re) => re.test(command)) && NON_ASCII.test(command) && !PY_UTF8.test(command);
 }
 
 // `git -C <tree> push` を意図的に外す GIT_PUSH とは違い、こちらは**すべての** git 呼び出しを
 // 拾う。`--no-verify` はどのツリーに対しても人間専用であり、`-C` の有無で変わらない。
-const GIT_AT_CMD = new RegExp(`${AT_CMD_POS}${ENV_PREFIX}(git)\\b`, "g");
+// 旧い前置と引用符で囲んだ値を読む前置の両方で探す（`ENV_PREFIX_QUOTED` の doc）
+const GIT_AT_CMD_FORMS = [ENV_PREFIX, ENV_PREFIX_QUOTED].map((env) => new RegExp(`${AT_CMD_POS}${env}(git)\\b`, "g"));
 
 /**
  * コマンド位置の `git` ごとに「`git` から次の区切りまで」を切り出す。
@@ -286,14 +348,15 @@ const GIT_AT_CMD = new RegExp(`${AT_CMD_POS}${ENV_PREFIX}(git)\\b`, "g");
  * 引用内の区切り（`git commit -m "a;b" --no-verify`）と、行継続をまたぐ形（`git commit \` + 改行 +
  * `--no-verify`。PowerShell のバッククォート継続も同型）でセグメントが早く切れる過小検出は、
  * `sh -c` と同格の意図的迂回として受容する（引用・継続の解釈は shell パーサ相当になる）。
+ * 引用符で語を割る形（`git "pull"`）は、呼び出し側が `unquotedView` の見え方でもこの関数を呼んで拾う（#1523）。
+ * 見え方でも、引用内の区切りが早く切る過小検出は変わらない（区切り文字を消さないので）。
  */
 export function gitSegments(command) {
-  const out = [];
-  for (const m of command.matchAll(GIT_AT_CMD)) {
-    const at = m.index + m[0].length - m[1].length;
-    out.push(command.slice(at, segmentEnd(command, at)));
+  const starts = new Set();
+  for (const re of GIT_AT_CMD_FORMS) {
+    for (const m of command.matchAll(re)) starts.add(m.index + m[0].length - m[1].length);
   }
-  return out;
+  return [...starts].sort((a, b) => a - b).map((at) => command.slice(at, segmentEnd(command, at)));
 }
 
 const NO_VERIFY = /(?:^|\s)--no-verify(?:\s|$)/;
@@ -302,20 +365,31 @@ const NO_VERIFY = /(?:^|\s)--no-verify(?:\s|$)/;
 const SHORT_FLAG_N = /(?:^|\s)-[A-Za-z]*n[A-Za-z]*(?:\s|$)/;
 // subcommand の前に来るグローバルフラグは FLAG で読み飛ばす。`(?:-\S+\s+)*` では
 // `git -C /x commit` のスペース区切りの値を飛ばせず取りこぼした（実測 fail-open）。
-const GIT_COMMIT = new RegExp(`^git\\s+${FLAG}commit\\b`);
-const GIT_PULL = new RegExp(`^git\\s+${FLAG}pull\\b`);
+// 旧い FLAG と引用符で囲んだ値を読む FLAG のどちらかで当たれば、その subcommand とみなす（`ENV_PREFIX_QUOTED` の doc）
+const GIT_COMMIT_FORMS = [FLAG, FLAG_QUOTED].map((flag) => new RegExp(`^git\\s+${flag}commit\\b`));
+const GIT_PULL_FORMS = [FLAG, FLAG_QUOTED].map((flag) => new RegExp(`^git\\s+${flag}pull\\b`));
 const FF_ONLY = /(?:^|\s)--ff-only(?:\s|$)/;
+
+/**
+ * 元の文字列と `unquotedView` の見え方の両方の git セグメント（#1523）。`git "pull"`・`--no-ver""ify` は見え方でだけ
+ * 当たる。見え方だけにはしない——見え方では `git pull origin "x --ff-only"` が `--ff-only` 付きに見え、今は止めている
+ * 非 FF の pull を通す。代償として、引用の内側の言及が見え方ではフラグに見えて止まる（`git commit -m "--no-verify"`・
+ * `git commit -m "fix don't use -n"`）。fail-closed の向きゆえ受容し、テストで意図として固定する。
+ */
+function gitSegmentsInBothViews(command) {
+  return [...new Set([command, unquotedView(command)])].flatMap(gitSegments);
+}
 
 /** `.githooks/` を迂回する形を使っているか。 */
 export function usesNoVerify(command) {
-  return gitSegments(command).some(
-    (s) => NO_VERIFY.test(s) || (GIT_COMMIT.test(s) && SHORT_FLAG_N.test(s)),
+  return gitSegmentsInBothViews(command).some(
+    (s) => NO_VERIFY.test(s) || (GIT_COMMIT_FORMS.some((re) => re.test(s)) && SHORT_FLAG_N.test(s)),
   );
 }
 
 /** `--ff-only` の無い `git pull` か。ブランチは見ない（過剰検出を受容する）。 */
 export function pullWithoutFfOnly(command) {
-  return gitSegments(command).some((s) => GIT_PULL.test(s) && !FF_ONLY.test(s));
+  return gitSegmentsInBothViews(command).some((s) => GIT_PULL_FORMS.some((re) => re.test(s)) && !FF_ONLY.test(s));
 }
 
 /**
@@ -339,7 +413,8 @@ const SHAPE_REMEDY = Object.freeze({
     "`PYTHONIOENCODING=utf-8` を前置してください（`PYTHONUTF8=1` か `python -X utf8` でも同じです）。",
   noVerify:
     "`--no-verify`（commit では `-n` も同義）は `.githooks/` の main 保護を迂回します。**人間専用であり、エージェントは使用してはなりません**。" +
-    "hook が拒んだなら、迂回せずその理由を解消してください。main へ入れたい変更は feature ブランチと PR を経由します。",
+    "hook が拒んだなら、迂回せずその理由を解消してください。main へ入れたい変更は feature ブランチと PR を経由します。" +
+    "（引用符で囲んだ言及も止まります。コミットメッセージで触れるなら `-F <path>` で渡し、文字列を探すなら Grep ツールを使ってください。）",
   pull:
     "非 FF の `git pull` はマージコミットを作り、main では `.githooks/pre-merge-commit` が拒否します。" +
     "`git pull --ff-only` を使ってください（**この判定はブランチを問わず発火します**。FF できないほど発散しているなら、" +

@@ -10,7 +10,7 @@ import {
   TARGET_TOOLS,
   tokenStart,
   GH_PR_CREATE,
-  ghPrCreateView,
+  unquotedView,
   ghPrCreateSites,
   GIT_PUSH,
   hasSafeChain,
@@ -180,7 +180,7 @@ describe("GH_PR_CREATE — コマンド位置検出（過剰検出は許容・�
 
 // #1499: hook に止められたエージェントが `gh pr "create"` へ書き換えてゲートを素通りした。
 // 検出は `decide` と `main` と同じく `ghPrCreateSites` を通して測る（生の GH_PR_CREATE を直接測らない）。
-describe("ghPrCreateSites / ghPrCreateView — 引用符・エスケープで語を割った綴り（#1499）", () => {
+describe("ghPrCreateSites / unquotedView — 引用符・エスケープで語を割った綴り（#1499）", () => {
   const detects = (cmd) => ghPrCreateSites(cmd).length > 0;
 
   it.each([
@@ -230,8 +230,8 @@ describe("ghPrCreateSites / ghPrCreateView — 引用符・エスケープで語
 
   // 連結すると、継続でない改行の次の行の gh pr create を検出から外す（委譲レビューで実測した fail-open）
   it("行継続を連結せず、改行（区切り文字）を残す", () => {
-    expect(ghPrCreateView(`a \\\nb`)).toBe("a \nb");
-    expect(ghPrCreateView(`a \`\r\nb`)).toBe("a \r\nb");
+    expect(unquotedView(`a \\\nb`)).toBe("a \nb");
+    expect(unquotedView(`a \`\r\nb`)).toBe("a \r\nb");
   });
 
   // 元の文字列で検出し、正規化した見え方では外れる形も落とさない（どちらかで当たれば検出）
@@ -250,7 +250,7 @@ describe("ghPrCreateSites / ghPrCreateView — 引用符・エスケープで語
   });
 
   it.each([[""], ["\\"], ["`"], ['"'], ["'"], ["\\\n"], ["\u0000\u0007"]])("全域関数である（throw しない）: %j", (cmd) => {
-    expect(typeof ghPrCreateView(cmd)).toBe("string");
+    expect(typeof unquotedView(cmd)).toBe("string");
   });
 });
 
@@ -478,7 +478,7 @@ describe("decide — 分岐表", () => {
     expect(r.reason).toContain("作業ディレクトリを変更しています");
   });
 
-  // 正規化は gh pr create の判定だけに通す。形の判定へ渡すと `\` パスの判定が外れる
+  // `\` パスの判定には見え方を通さない（見え方は `\` を消すので、`\` パスの判定が外れる）
   it("形の判定は元の文字列で行う（`\\` パスを含む gh pr create は形の判定で block）", () => {
     const cmd = `git push -u origin HEAD && ${ghPrCreate()} --body-file "C:${"\\"}Users${"\\"}x${"\\"}y.md"`;
     const r = decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN, platform: "win32" });
@@ -1421,5 +1421,203 @@ describe("settings.json ドリフト検出カナリア", () => {
   it("git 呼び出しの上限の和が hook の timeout に収まる", () => {
     const budgetMs = preToolUse[0].hooks[0].timeout * 1000;
     expect(GIT_TIMEOUT_MS * 2 + VERIFY_GIT_TIMEOUT_MS * 2).toBeLessThan(budgetMs);
+  });
+});
+
+// ---- #1523: 引用符で語を割る・空白を含む引用符で囲んだ値・引用の内側の push / gh ----
+
+describe("引用符で語を割る綴りと、空白を含む引用符で囲んだ値を検出する（#1523）", () => {
+  it.each([
+    "git commit --no-ver\"\"ify",
+    "git \"commit\" -n",
+    "A=\"a b\" git commit --no-verify",
+    "git -C \"my dir\" commit -n",
+  ])("usesNoVerify: %s", (cmd) => {
+    expect(usesNoVerify(cmd)).toBe(true);
+  });
+
+  it.each([
+    "git \"pull\"",
+    "\"git\" pull",
+    "A=\"a b\" git pull",
+    "git -C \"my dir\" pull",
+    "git -c \"a b=c\" pull",
+    "git --git-dir=\"a b c\" pull",
+  ])("pullWithoutFfOnly: %s", (cmd) => {
+    expect(pullWithoutFfOnly(cmd)).toBe(true);
+  });
+
+  it.each([
+    `GH_TOKEN="a b" ${ghPrCreate()}`,
+    `${GH} --repo "a b" ${PR_CREATE}`,
+    `${GH} --repo="a b c" ${PR_CREATE}`,
+  ])("ghPrCreateSites: %s", (cmd) => {
+    expect(ghPrCreateSites(cmd).length).toBeGreaterThan(0);
+  });
+
+  it("needsPyEncoding（win32 の判定）: 空白を含む引用符で囲んだ値の前置", () => {
+    expect(needsPyEncoding(`A="x y" python -c "あ"`)).toBe(true);
+  });
+
+  it.each(["git -C \"my dir\" -c x=$(y) pull", "git -C \"my dir\" -c x=${Y} commit -n"])(
+    "引用符で囲んだ値と展開を並べたフラグ: %s",
+    (cmd) => {
+      expect(usesNoVerify(cmd) || pullWithoutFfOnly(cmd)).toBe(true);
+    },
+  );
+
+  // 展開と引用符で囲んだ値を連接した前置（引用符で囲んだ値を読む版でしか当たらない）
+  it.each(["A=${X}\"a b\" git pull", "A=$(x)\"a b\" git commit --no-verify"])("連接の前置（git）: %s", (cmd) => {
+    expect(usesNoVerify(cmd) || pullWithoutFfOnly(cmd)).toBe(true);
+  });
+  it("連接の前置（gh）", () => {
+    expect(ghPrCreateSites(`A=\${X}"a b" ${ghPrCreate()}`).length).toBeGreaterThan(0);
+  });
+  it("連接の前置（python）", () => {
+    expect(needsPyEncoding("A=${X}\"a b\" python -c 'あ'")).toBe(true);
+  });
+});
+
+describe("今の検出を減らさない（#1523。引用符が対にならない値・区切りを含む引用符で囲んだ値）", () => {
+  // 後ろ 2 つは、見え方では `--ff-only` 付きに見え、元の文字列では引用符が対にならないので、旧い版でしか当たらない
+  it.each(["A=it's git pull", "A=\" git pull", "A=${X}y git pull", "A=it's git pull origin \"x --ff-only\"", "git -c it's pull origin \"x --ff-only\""])(
+    "pullWithoutFfOnly: %s",
+    (cmd) => {
+      expect(pullWithoutFfOnly(cmd)).toBe(true);
+    },
+  );
+  it.each(["A=it's git commit --no-verify", "A=$(x)y git commit --no-verify"])("usesNoVerify: %s", (cmd) => {
+    expect(usesNoVerify(cmd)).toBe(true);
+  });
+  it.each(["A=it's python -c 'あ'", "A=${X}it's python -c 'あ'"])("needsPyEncoding: %s", (cmd) => {
+    expect(needsPyEncoding(cmd)).toBe(true);
+  });
+  // 展開と対にならない引用符を並べた前置（旧い版でしか当たらない）
+  it("pullWithoutFfOnly: A=${X}it's git pull origin \"x --ff-only\"", () => {
+    expect(pullWithoutFfOnly("A=${X}it's git pull origin \"x --ff-only\"")).toBe(true);
+  });
+  it.each([`A=it's ${ghPrCreate()}`, `A=a"b;c"d ${ghPrCreate()}`, `A="x;y"z ${ghPrCreate()}`, `A=x;${ghPrCreate()}`])(
+    "ghPrCreateSites: %s",
+    (cmd) => {
+      expect(ghPrCreateSites(cmd).length).toBeGreaterThan(0);
+    },
+  );
+});
+
+describe("見え方で判定する過剰検出は、意図として固定する（#1523。fail-closed の向き）", () => {
+  it.each(["git commit -m \"--no-verify\"", "git log \"--no-verify\"", "git commit -m \"fix don't use -n\""])(
+    "止める: %s",
+    (cmd) => {
+      expect(usesNoVerify(cmd)).toBe(true);
+    },
+  );
+  it.each(["git log --grep=\"--no-verify\"", "git commit -m \"pull request\"", "echo \"git pull\""])("止めない: %s", (cmd) => {
+    expect(usesNoVerify(cmd) || pullWithoutFfOnly(cmd)).toBe(false);
+  });
+  it("言及で止めたときの文言は、-F と Grep ツールという復帰の道を示す", () => {
+    const r = judgeCommandShape("git commit -m \"--no-verify\"", "win32");
+    expect(r.reason).toContain("引用符で囲んだ言及も止まります");
+    expect(r.reason).toContain("Grep ツール");
+  });
+});
+
+describe("止めた理由まで確かめる（#1523）", () => {
+  it.each([
+    ["git commit --no-ver\"\"ify", "--no-verify"],
+    ["git -C \"my dir\" commit -n", "--no-verify"],
+    ["git \"pull\"", "--ff-only"],
+    ["git -C \"my dir\" pull", "--ff-only"],
+  ])("judgeCommandShape: %s", (cmd, needle) => {
+    const r = judgeCommandShape(cmd, "linux");
+    expect(r?.action).toBe("block");
+    expect(r.reason).toContain(needle);
+  });
+  it("decide: 空白を含む引用符で囲んだ値の前置の gh pr create を、upstream 未設定の理由で止める", () => {
+    const r = decide(bash(`GH_TOKEN="a b" ${ghPrCreate()}`), { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("upstream が未設定");
+  });
+});
+
+describe("hasSafeChain — 引用の内側の push / gh をチェーンと取り違えない（#1523）", () => {
+  it.each([
+    `git commit -m "a && git push" && ${ghPrCreate()}`,
+    `git push && echo "x && ${ghPrCreate()}" ; ${ghPrCreate()}`,
+    `git commit -m "a && git push && ${ghPrCreate()}" ; ${ghPrCreate()}`,
+    `echo "&& git push" && ${ghPrCreate()}`,
+    `git push && ${ghPrCreate()}; ${ghPrCreate()}`,
+    `git push && ${ghPrCreate()} || ${ghPrCreate()}`,
+    `git push && ${ghPrCreate()} & ${ghPrCreate()}`,
+    // エスケープした区切りは Bash では「文字の & + 背景実行の &」で、push を待たずに 2 つめが走る
+    `git push && ${ghPrCreate()} \\&& ${ghPrCreate()}`,
+    `git push && ${ghPrCreate()} \`&& ${ghPrCreate()}`,
+    // フラグの値が区切りを越えて食うと、2 つめの gh を最後の gh として見落とす（旧い FLAG の既存の穴を新しい FLAG が塞ぐ）
+    `git push && ${GH} -x;${ghPrCreate()}`,
+    `git push && ${GH} --repo x;${ghPrCreate()}`,
+  ])("false: %s", (cmd) => {
+    expect(hasSafeChain(cmd)).toBe(false);
+  });
+  it.each([
+    `git push -u origin HEAD && ${ghPrCreate()} --title "t" --body-file x`,
+    `git commit -F f && git push -u origin HEAD && ${ghPrCreate()} --title "t b"`,
+    `git push && ${ghPrCreate()} && ${ghPrCreate()}`,
+  ])("true: %s", (cmd) => {
+    expect(hasSafeChain(cmd)).toBe(true);
+  });
+
+  const readers = { readVerifyState: VERIFIED, readGitState: NO_UPSTREAM, readPlanState: NO_PLAN };
+  it.each([
+    `git push && ${ghPrCreate()} --fill; ${GH} pr "create"`,
+    `git push "--dry-run" && ${ghPrCreate()}`,
+    `git push --dry""-run && ${ghPrCreate()}`,
+  ])("decide は静的に allow せず動的判定へ回す: %s", (cmd) => {
+    expect(decide(bash(cmd), readers).action).toBe("block");
+  });
+
+  it("引用符を含むチェーンを動的判定で止めたとき、push を単独で打つ復帰手順を示す", () => {
+    const r = decide(bash(`git commit -m "x" && git push -u origin HEAD && ${ghPrCreate()}`), readers);
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("引用符・エスケープを含むチェーン");
+    expect(r.reason).toContain("単独で打って");
+  });
+});
+
+describe("引用符で囲んだ値の病的入力でも時間内に終わる（#1523）", () => {
+  const within = (fn, ms = 500) => {
+    const t0 = process.hrtime.bigint();
+    fn();
+    expect(Number(process.hrtime.bigint() - t0) / 1e6).toBeLessThan(ms);
+  };
+  it("引用符で囲んだ値が大量に並ぶ前置とフラグ", () => {
+    const quoted = Array.from({ length: 2000 }, (_, i) => `A${i}="a b${i}"`).join(" ");
+    const flags = Array.from({ length: 2000 }, (_, i) => `--f${i}="a b" -x 'c d'`).join(" ");
+    within(() => {
+      ghPrCreateSites(`${quoted} ${GH} ${flags} x`);
+      usesNoVerify(`${quoted} git ${flags} x`);
+      pullWithoutFfOnly(`${quoted} git ${flags} x`);
+    });
+  });
+  it("対にならない引用符が大量に並ぶ", () => {
+    const cmd = `A=${'"a'.repeat(3000)} git ${"-c 'x ".repeat(3000)} pull`;
+    within(() => {
+      usesNoVerify(cmd);
+      pullWithoutFfOnly(cmd);
+      ghPrCreateSites(cmd);
+    });
+  });
+  it.each(["A=$(x) ", "A=${x} "])("展開を値に持つ前置の並び（%s の繰り返し）で二乗にならない", (unit) => {
+    const cmd = `${unit.repeat(10000)}${GH} x`;
+    within(() => decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }));
+  });
+  it("フラグの値が区切りを越えて食う形が時間内に終わる（旧い FLAG の二乗は受容する）", () => {
+    const cmd = "; gh -a".repeat(3000);
+    within(() => decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }));
+  });
+  it("前置の値が区切りを越えて食う形で二乗にならない（今は 90KB で 6.3 秒・独立導出で実測）", () => {
+    const cmd = `${"; A=x'".repeat(6000)} ${GH} x`;
+    within(() => {
+      ghPrCreateSites(cmd);
+      decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN });
+    });
   });
 });

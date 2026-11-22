@@ -59,18 +59,18 @@
 
 ### Phase 1 — verify-tree のメッセージ
 
-- [ ] `scripts/verify-tree.test.mjs` のロックのテストを、理由あり・理由なしで書き換える（Red を確かめる）
-- [ ] `scripts/verify-tree.mjs` の `worktrees()` と `cmdRemove()` を直す（Green）
+- [x] `scripts/verify-tree.test.mjs` のロックのテストを、理由あり・理由なしで書き換える（Red を確かめる）
+- [x] `scripts/verify-tree.mjs` の `worktrees()` と `cmdRemove()` を直す（Green）
 
 ### Phase 2 — SKILL.md
 
-- [ ] 「3b. 委譲へ渡すもの」に、背景の作業を待つ end_turn をしない項を足す
-- [ ] 「Step 4 — 仕上げ」のロックの文を書き直す
-- [ ] 「出力」のテンプレートに片づけの欄を足す
+- [x] 「3b. 委譲へ渡すもの」に、背景の作業を待つ end_turn をしない項を足す
+- [x] 「Step 4 — 仕上げ」のロックの文を書き直す
+- [x] 「出力」のテンプレートに片づけの欄を足す
 
 ### Phase 3 — 検証
 
-- [ ] `npm test` と `npm run governance:check` を通す
+- [x] `npm test` と `npm run governance:check` を通す（1003 件 passed・13 検査 passed）
 - [ ] `verify:tree run` を回し、委譲先（背景の作業を待つためにターンを終えない）でレビューと変異注入を行う。親が `waiting on its own background work` を一度も受けないことと、Step 4 の remove が通ることを記録する
 
 ## 未確定（実装前に潰す）

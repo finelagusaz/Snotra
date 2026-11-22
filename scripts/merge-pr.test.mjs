@@ -194,7 +194,7 @@ describe("run — マージ後に本体のローカル main を進める（#1528
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
     expect(f.syncs).toHaveLength(0);
     expect(f.text()).toContain("本体の main は進めていない");
-    expect(f.text()).toContain('git -C "/repo" fetch origin main のあと git -C "/repo" merge --ff-only origin/main');
+    expect(f.text()).toContain('git -C "/repo" fetch origin main && git -C "/repo" merge --ff-only origin/main');
   });
   it("マージの成否を確かめられない（exit 3）なら、進めず案内もしない", () => {
     const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "boom" } });
@@ -842,7 +842,7 @@ describe("fastForwardMain — 本体のローカル main を origin/main へ進�
     g(r.root, ["switch", "-q", "-c", "feat/y"]);
     const res = fastForwardMain(r.root, r.merge);
     expect(res.ok).toBe(false);
-    expect(res.notes.join("\n")).toContain(`git -C "${r.root}" fetch origin main のあと git -C "${r.root}" merge --ff-only origin/main`);
+    expect(res.notes.join("\n")).toContain(`git -C "${r.root}" fetch origin main && git -C "${r.root}" merge --ff-only origin/main`);
     g(r.root, ["switch", "-q", "main"]); // 案内の前提（main へ戻る）
     g(r.root, ["fetch", "-q", "origin", "main"]);
     g(r.root, ["merge", "-q", "--ff-only", "origin/main"]);
@@ -874,6 +874,8 @@ describe("fastForwardMain — 本体のローカル main を origin/main へ進�
     });
     const res = fastForwardMain(r.root, r.merge);
     expect(res.notes.join("\n")).not.toContain("追跡していないファイルがある");
+    expect(res.ok, res.notes.join("\n")).toBe(true);
+    expect(r.head()).toBe(r.merge);
   });
 
   it.each([

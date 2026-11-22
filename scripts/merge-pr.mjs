@@ -97,9 +97,12 @@ export function fastForwardMain(root, mergeCommit, exec = gitExec) {
   return { ok: true, notes: [`本体の main を進めた: ${before.slice(0, 8)}..${after.slice(0, 8)}`] };
 }
 
-/** 本体を手で origin/main へ進めるコマンド。fetch から打つ（本体の origin/main はマージ前のままでありうる） */
+/**
+ * 本体を手で origin/main へ進めるコマンド。fetch から打つ（本体の origin/main はマージ前のままでありうる）。
+ * そのまま貼って打てる 1 行にする（`&&` は Git Bash でも PowerShell 7 でも効く）
+ */
 export function manualSyncCommand(root) {
-  return `git -C "${root}" fetch origin main のあと git -C "${root}" merge --ff-only origin/main`;
+  return `git -C "${root}" fetch origin main && git -C "${root}" merge --ff-only origin/main`;
 }
 
 /**

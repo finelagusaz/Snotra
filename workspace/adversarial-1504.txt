@@ -1,0 +1,36 @@
+adversarial-1504 結果（git fetch origin 実行後。origin/main = cfd9a851。測定は git grep（追跡ファイルの作業ツリー）・git log/rev-list）
+
+測定環境の点検
+- origin/main は fetch 済みで cfd9a851 = research.md の値と一致。d2a0b9a4 は origin/main の祖先（merge-base --is-ancestor で確認）。
+- research.md の grep は大小無視の "RETROSPECTIVE\|retrospective\|振り返り" だけ。概念語は見ていない。本検査で追加した: 前回のサイクル|前サイクル|バグのパターン|サイクル完了|サイクル終了|次のサイクル|教訓、および機構側の retrospect|振り返|/health-check|スキル表|利用できるスキル|disable-model-invocation。
+- 除外した docs/superpowers・docs/design・docs/adr のうち RETROSPECTIVE を含むのは docs/adr/ADR-adr-frozen-history.md と docs/superpowers/{plans,specs} の計 13 件。docs/design は 0 件。docs/superpowers/README.md が「歴史資料・governance:check の母集団外」と宣言し、governanceDocs()（scripts/governance/lib.mjs）も docs/superpowers と docs/adr を除く。除外は妥当で、現役の参照は紛れていない。
+
+■ 壊せた項目
+(B1) 争点1 の穴は「概念語で書かれた参照」ではなく「表の書き方」にあった。概念語の参照は implement/SKILL.md 54 行（表に有り）と AGENTS.md 31 行（表に有り）のみで新規発見なし。ただし表に載っていない周辺の語が 2 つある:
+  - .claude/skills/health-check/SKILL.md の description「大きなサイクル完了後や定期メンテナンス時に使用」と CLAUDE.md の表の `/health-check` 行「サイクル完了後の…」。/retrospective を「まとまった範囲を必要時に振り返る道具」へ変えると、health-check が「サイクル」の語に依存したまま残る。表の行 42 は 7d の Step 6 参照しか見ていない。
+  - retrospective/SKILL.md 自身の Step 7（health-check を委譲実行）。health-check 側からは「/retrospective が実施を担う」と読める記述が 7d にあるだけで、逆参照は Step 7 のみ。
+  偽にする手順: git grep -n "サイクル" -- .claude/skills/health-check CLAUDE.md を打ち、research.md の表にその行が無いことを確かめる。
+(B2) 争点3 は「全部に置き場がある」とは言えない。research.md の列挙（積み残し・否定の知識・範囲外作業・規範更新）は置き場が有る（PR テンプレート「残したもの」、implement Step 4 の否定の知識回収と workspace 削除条件、CLAUDE.md チーム憲章）。しかし retrospective の次の役目には /implement・PR テンプレートに置き場が無い:
+  - Step 6 メモリの鮮度チェック: implement/start-issue/merge-pr に「メモリ」「MEMORY」の出現 0 件（grep で確認）。
+  - Step 7 health-check の実行責任: implement に health-check の出現 0 件。CLAUDE.md の表では user 起動専用として単独で存在するので「起動手段」は残るが、「サイクル末に回す」責任の置き場は /retrospective にしか無い。
+  - Step 3「教訓の配置（トリガーに括り付ける）」・Step 2 構造的パターン抽出: implement には対応する手順が無い（チーム憲章の「その場で書く」が一文あるだけ）。
+  偽にする手順: grep -n "メモリ\|MEMORY\|health-check" .claude/skills/implement/SKILL.md が 0 件であることを確認。
+  research.md の「未解決の疑問 4」はこの穴を自覚しているが、「関連する事実」節の「多くは /implement の中にある」は Step 6/7 と教訓の配置を含まない下限の主張として読む必要がある。
+
+■ 壊せなかった項目（偽にする手順つき）
+(K1) 争点1 の表の網羅: 現役の名指しは表の 11 行で尽きる。手順: git grep -n -i "RETROSPECTIVE\|retrospective\|振り返" -- . ':!docs/superpowers' ':!docs/design' ':!docs/adr' ':!workspace' → 該当は AGENTS.md(31,85,87)・CLAUDE.md(26,53)・governance-docs.md(32)・health-check 54・implement 54・retrospective/SKILL.md・start-issue 47・RETROSPECTIVE.md・build.rs 413・path_query_cost.rs 275 のみ。表と一致。tracked の README.md・README.en.md・CONTRIBUTING.md・src-tauri/capabilities/README.md に出現 0 件。.claude/agents・.claude/settings.json にも 0 件。
+   追加: PERFORMANCE.md の「教訓」2 件と pre-bash.test.mjs/githooks.test.mjs の「教訓」は無関係の語（RETROSPECTIVE と結ばない）。
+(K2) 争点2: scripts/・.github/・.githooks/・.claude/hooks/・.claude/settings.json・package.json に retrospective/RETROSPECTIVE の出現 0 件（grep -rn -i）。scripts/governance/checks の 13 検査（G-adr-citations・G-references・G-stale-identifiers ほか）にスキル表・Step 番号を照合するものは無い。governanceDocs() は skills の SKILL.md を母集団に含むので、SKILL.md を書き直せば G-references（`/` を含むパスの実在）と G-stale-identifiers の対象にはなる——これは「依存」ではなく「書き直した文面が検査を通るか」の話。⚠️ G-stale-identifiers が Step 5 の見出し等の文言を拾うかは未実走（governance:check を実行すれば確かめられる）。
+   scripts/governance-check.mjs 7 行の `/health-check` は、health-check に残る意味検査を述べるコメントで、retrospective とは無関係。
+(K3) 争点4: git log -G'^# Retrospective' -- RETROSPECTIVE.md の先頭は d2a0b9a4 (2026-11-03, #1360)。git log -1 -- RETROSPECTIVE.md は 0265463c (#1421) で別物。d2a0b9a4..origin/main は 96（rev-list --count）、件名に `(#N)` を持たない件数は 0（git log --format=%s | grep -vc '(#[0-9]*)'）。-G の履歴は 125 コミットで、2026-09-02 に 5 本。research.md の 8〜9 月の記述も一致。
+(K4) 争点5: Step 番号・見出しを名指す箇所は health-check 54 行の「Step 6」のみ。ただし他の SKILL.md から `/retrospective`+Step の組を grep（"retrospective|Step [0-9]" × health-check|retrospective）で打った結果 1 件。retrospective/SKILL.md 内部の Step 3・4・5・6 の相互参照は自己完結で、番号を保てば壊れない。⚠️ 逆に言えば、番号を保つ制約は health-check 側の書き換えで外せる（制約の源泉は health-check の 1 箇所）。
+(K5) 表の各行の現状記述（AGENTS.md 31 行の 1 文、start-issue 47 行、implement 54 行の項目、CLAUDE.md 26 行の列挙・53 行の表、retrospective の description と Step 1 の `origin/main..HEAD`、governance-docs.md の #1222 事例、build.rs 413 の「RETROSPECTIVE.md が前サイクルの取りこぼしとして記録している」、path_query_cost.rs 275）は、読んで research.md の記述と一致。
+(K6) 技術的な制約: disable-model-invocation: true と allowed-tools（Bash(git *)・Bash(gh *) ほか Read/Edit/Write/Grep/Glob）は retrospective/SKILL.md 先頭で確認。マージ合意ルール・序数禁止は CLAUDE.md・governance-docs.md の記述どおり。
+(K7) 「再利用できる既存のパターン」: 2 点形/3 点形は AGENTS.md「検証の作法」と一致（未精読の `argument-hint: "[PR 番号]"` は merge-pr 側で未再確認 → ⚠️）。
+
+■ ⚠️ 確信が持てない所見
+1. research.md「関連…表」行 41: retrospective の description 以外に、Step 1 の `$ARGUMENTS` 既定（省略時は現在のブランチの差分）も書き直し対象。表では Step 1 の範囲としか書いていないが、argument-hint も同時に変わる。
+2. retrospective SKILL.md の「出力」節（136 行以降）は Step 5 の見出しと Step 7 の結果を前提にした項目 5 まで持つ。範囲指定の再設計で Step 6/7 を切り出すなら、出力側も揃える必要がある（表に無い）。
+3. RETROSPECTIVE.md を「入口で読まない記録」にしても、AGENTS.md 87 行の「次のサイクルへ持ち越すタスクを置かない。上書きする前に」と retrospective Step 5 の「上書き」は、「記録として残す」という新しい裁定と整合させる必要がある（research.md は「真のまま」と判定。上書き運用を続けるなら真、追記運用へ変えるなら偽になる）。
+4. G-stale-identifiers の実走は行っていない（K2 の ⚠️）。
+5. 未解決の疑問 1 の案 B（-G）は、現状 125 コミットの見出しを 1 本として数えられるが、見出し行の語が変わる改稿（#1421 型）で壊れる点は research.md の記述どおりと確認。ただし、案 A の「範囲行」を RETROSPECTIVE.md へ書くと、AGENTS.md「検証の作法」の「写しを増やす」文脈では sha の写しになる（sha は squash で変わらないので問題は少ない）。

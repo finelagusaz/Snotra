@@ -114,6 +114,7 @@ git の呼び出しは exit code を見て分岐する（rc ≠ 0 で例外を�
 - R2 `e0e86b64`: verify:tree green（E・F）。委譲: R1 の High-1・Medium-1・Medium-2・Low-1・Low-2・Low-4 は同じ手段で解消を確認。新規 Low 2・⚠️ 2。変異注入 38 本、落ちた 37・生き残り 1（R-outerr、Low-3 として持ち越し）。実地: 判定 1・2・6 で止めたあと案内の 2 手で HEAD がマージに届く、深い祖先・追跡中のディレクトリ配下・衝突しない無視ディレクトリ配下を確認。直した: Low-5 案内を `&&` で繋ぐ 1 行に（「A のあと B」の文は貼ると rc=129）／Low-6 大文字小文字のリネームのテストに ok と HEAD の到達を足す。残した: ⚠️-3 大文字小文字を区別する FS でリネームの移動先にある無視された別ファイルを見逃す（Windows では同一ファイルで害なし）、⚠️-4 `statSync` の EACCES（run の catch が拾い exit 0 のまま理由が出る）
 - R3 `b7fd9f61`: verify:tree green（E・F）。委譲: Low-5・Low-6 解消、新規 ⚠️-5（Windows PowerShell 5.1 は `&&` を構文エラーにして何も実行しない。壊れない向き）。変異注入 13 本、落ちた 12・生き残り 1（R-outerr）。実地: 案内を Git Bash と PowerShell 7.7・空白あり/なしのパスで 16 通り打ち、すべてマージに届いた。`&&` の短絡も確認
 - 軸の違うレビュー（`/code-review high chore/merge-pr-ff-main`。立った条件: (1) ⚠️ の一部を主が残した (2) 本体を守る判定（安全機構）を足した）: 5 件。直した 3 件: symbolic-ref の rc=128・起動失敗を detached と取り違えない／再試行の案内にも merge を含める（`manualSyncCommand`）／`occupiedPaths` を lstat にしてリンクをたどらない（ジャンクションのテストを足し、`statSync` へ戻す変異で赤を確認）。残した 2 件: PowerShell 5.1 の `&&`（壊れない向きで、コメントは PowerShell 7 と限定済み）、out/err の出力先のテスト（表示先だけ）
+- R4 `f5bf5415`: verify:tree green（E・F）。委譲: Critical〜Medium 0、新規 Low-7（lstat の前のコメントが壊れたリンクの害を言い過ぎ。挙動を変えないので捨てた）・⚠️-6（lstat の EACCES を「無い」として git に委ねる。測っていない）。変異注入 15 本、落ちた 14・生き残り 1（R-outerr）。実地: 追跡中・無視された実ディレクトリ配下・本体のパスがジャンクション経由のときに誤って止めないこと、祖先がジャンクションのとき stat だとリンクの先へ書き込み lstat だと止まることを確認
 
 ## 未確定（実装前に潰す）
 

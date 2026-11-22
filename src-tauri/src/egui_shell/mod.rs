@@ -476,8 +476,7 @@ pub(crate) fn read_config<T>(
 /// 1 フレーム分のテーマ値を **読み 1 回**で読み切る（#673）。導出は純関数
 /// `visual::visual_snapshot` が持ち、この関数は読みと AppState 不在の面倒だけを見る。
 ///
-/// **`read_metrics` は残す**（統合しない）——`show_egui_main` が show 経路で高さだけを要り、
-/// 色 parse を払わせないため。両者とも `Metrics::from_config` を正本とするので導出は 1 つ。
+/// **`read_metrics` は残す**（統合しない）——高さだけを要る経路に色 parse を払わせないため。両者とも `Metrics::from_config` を正本とするので導出は 1 つ。
 ///
 /// **戻り値を `self.` へ保持しないこと**（寿命は 1 フレーム・`visual.rs` の `//!`）。
 pub(crate) fn read_visual(app: &tauri::AppHandle, applied_font_family: &str) -> VisualSnapshot {

@@ -34,7 +34,7 @@ import {
 } from "./pre-bash.mjs";
 import { mainRoot, summaryPathFor } from "../../scripts/verify-tree.mjs";
 
-// CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。どちらでも
+// CI は ubuntu と windows の両方でこのテストを走らせる（#509。job は `.github/workflows/ci.yml`）。どちらでも
 // 落ちないよう、OS 依存のリテラルパスを書かず path.join / tmpdir から組み立てる。
 
 /** upstream 設定済み・未 push なし＝安全な状態 */

@@ -78,11 +78,11 @@ pub(crate) fn read_main_visible(
 /// 実行中 config から Metrics を導出する(#646)。毎フレーム/毎 show の live-read で
 /// キャッシュしない。
 ///
-/// **呼び出し元は `show_egui_main` だけである**（#749 で実測）。view は `read_visual` →
-/// `visual::visual_snapshot` 経由で同じ `layout::Metrics::from_config` に到達するため、
+/// view は `read_visual` → `visual::visual_snapshot` 経由で同じ
+/// `layout::Metrics::from_config` に到達するため、
 /// **導出式とフォールバックの単一点は `Metrics::from_config` であって本関数ではない**
 /// (#646: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離した)。
-/// 本関数が `read_visual` と別に在るのは、show 経路が高さだけを要り色 parse を払わないため
+/// 本関数が `read_visual` と別に在るのは、高さだけを要る経路に色 parse を払わせないため
 /// （`mod.rs` の `read_visual` の doc と対）。
 /// AppState 不在(setup 完了前の理論経路のみ)は `visual::default_visual()` から導出——
 /// 理由は本体のコメントに置く。

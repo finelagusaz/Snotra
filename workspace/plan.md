@@ -49,18 +49,18 @@
 
 ### フェーズ 1: 編集
 
-- [ ] `build.rs` の `new_from_tree` の doc を直す
-- [ ] `window_coordinator.rs` の `read_metrics` の doc を直す
-- [ ] `mod.rs` の `read_visual` の doc を直す
-- [ ] `labels.yml` の `skip-ci` の description を直す
-- [ ] `pre-bash.test.mjs` のコメントを直す
+- [x] `build.rs` の `new_from_tree` の doc を直す
+- [x] `window_coordinator.rs` の `read_metrics` の doc を直す
+- [x] `mod.rs` の `read_visual` の doc を直す
+- [x] `labels.yml` の `skip-ci` の description を直す
+- [x] `pre-bash.test.mjs` のコメントを直す
 
 ### フェーズ 2: 検証
 
-- [ ] 訂正した段落を現物で読み直す
+- [x] 訂正した段落を現物で読み直す
 - [ ] `npm run verify:tree`（と必要なら `npm test`）が緑
-- [ ] `npm run governance:check` が緑
-- [ ] 受け入れ条件 3 の `git grep` 3 本の結果が期待どおり
+- [x] `npm run governance:check` が緑（手元・13 件 passed）
+- [x] 受け入れ条件 3 の `git grep` 3 本の結果が期待どおり
 
 ## 未確定（実装前に潰す）
 

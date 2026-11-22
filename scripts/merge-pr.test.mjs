@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { afterAll, describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
+  fastForwardMain,
   parseArgs,
   UsageError,
   findClosingKeywords,
@@ -8,10 +13,12 @@ import {
   diffClosing,
   isIsoTimestamp,
   run,
+  realDeps,
   SEARCH_LIMIT,
 } from "./merge-pr.mjs";
 
 const HEAD = "a".repeat(40);
+const MERGE = "m".repeat(40);
 const ARGS = ["7", "--closes", "3", "--body-file", "body.md"];
 
 /**
@@ -36,7 +43,7 @@ function fake(over = {}) {
     "cat-file": { status: 0, stdout: "", stderr: "" },
     fetch: { status: 0, stdout: "", stderr: "" },
     "pr merge": { status: 0, stdout: "", stderr: "" },
-    "pr view:post": ok({ state: "MERGED", mergedAt: "2026-10-31T01:02:03Z" }),
+    "pr view:post": ok({ state: "MERGED", mergedAt: "2026-10-31T01:02:03Z", mergeCommit: { oid: MERGE } }),
     "issue view": ok({ state: "CLOSED" }),
     "pr list:merged": ok([{ number: 7 }]),
     "issue list": ok([{ number: 3 }]),
@@ -45,7 +52,8 @@ function fake(over = {}) {
   const keyOf = (cmd, args) => {
     if (cmd === "git") return args[0];
     const k = `${args[0]} ${args[1]}`;
-    if (k === "pr view") return args.includes("state,mergedAt") ? "pr view:post" : "pr view:pre";
+    // 完全一致で見る——`mergeCommit` を `--json` から落とす退行を、post の経路へ誤って振り分けないため
+    if (k === "pr view") return args.includes("state,mergedAt,mergeCommit") ? "pr view:post" : "pr view:pre";
     if (k === "pr list") return args.includes("merged") ? "pr list:merged" : "pr list:open";
     return k;
   };
@@ -63,6 +71,9 @@ function fake(over = {}) {
     mainRoot: () => "/repo",
     verify: over.verify ?? (() => ({ ok: true })),
     cleanup: over.cleanup ?? ((root, branch) => (cleanups.push({ root, branch, after: [...calls] }), { ok: true, notes: ["削除: worktree"] })),
+    syncMain:
+      over.syncMain ??
+      ((root, mergeCommit) => (syncs.push({ root, mergeCommit, afterCleanup: cleanups.length }), { ok: true, notes: ["本体の main を進めた: x..y"] })),
     sleep: (ms) => sleeps.push(ms),
     out: (s) => out.push(s),
     err: (s) => out.push(s),
@@ -70,7 +81,8 @@ function fake(over = {}) {
   const out = [];
   const sleeps = [];
   const cleanups = [];
-  return { deps, calls, out, sleeps, cleanups, text: () => out.join("\n") };
+  const syncs = [];
+  return { deps, calls, out, sleeps, cleanups, syncs, text: () => out.join("\n") };
 }
 const ok = (v) => ({ status: 0, stdout: JSON.stringify(v), stderr: "" });
 const preview = (patch) =>
@@ -147,6 +159,60 @@ describe("run — マージ済みのブランチのツールの worktree と要�
     const f = fake();
     expect(run([...ARGS, "--dry-run"], "/repo", f.deps)).toBe(0);
     expect(f.cleanups).toHaveLength(0);
+  });
+});
+
+describe("run — マージ後に本体のローカル main を進める（#1528）", () => {
+  it("exit 0 のときだけ、片づけの後に、本体のルートとマージ commit を渡して進め、結果を出す", () => {
+    const f = fake();
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.syncs).toEqual([{ root: "/repo", mergeCommit: MERGE, afterCleanup: 1 }]);
+    expect(f.text()).toContain("本体の main を進めた: x..y");
+  });
+  it("マージ commit が取れなければ null を渡す（判定は fastForwardMain が持つ）", () => {
+    const f = fake({ "pr view:post": ok({ state: "MERGED", mergedAt: "2026-10-31T01:02:03Z", mergeCommit: null }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.syncs[0].mergeCommit).toBeNull();
+  });
+  it("進められなくても exit 0 のまま。理由を出す", () => {
+    const f = fake({ syncMain: () => ({ ok: false, notes: ["本体の main を進めなかった: 本体が main に居ない（feat/y）"] }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.text()).toContain("本体が main に居ない（feat/y）");
+  });
+  it("進める処理が投げても exit 0 のまま。理由を出す", () => {
+    const f = fake({
+      syncMain: () => {
+        throw new Error("想定外の失敗");
+      },
+    });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.text()).toContain("本体の main を進めなかった");
+    expect(f.text()).toContain("想定外の失敗");
+  });
+  it("事後検証が赤（マージ済みの exit 3）なら進めず、確かめてから打つコマンドを案内する", () => {
+    const f = fake({ "issue view": ok({ state: "OPEN" }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.syncs).toHaveLength(0);
+    expect(f.text()).toContain("本体の main は進めていない");
+    expect(f.text()).toContain('git -C "/repo" fetch origin main && git -C "/repo" merge --ff-only origin/main');
+  });
+  it("マージの成否を確かめられない（exit 3）なら、進めず案内もしない", () => {
+    const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "boom" } });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.syncs).toHaveLength(0);
+    expect(f.text()).not.toContain("本体の main は進めていない");
+  });
+  it("マージ前に止めた（exit 1）・走らなかった（exit 2）・--dry-run では進めない", () => {
+    const f1 = fake({ "pr view:pre": preview({ state: "CLOSED" }) });
+    expect(run(ARGS, "/repo", f1.deps)).toBe(1);
+    const f2 = fake({ "repo view": { status: 1, stdout: "", stderr: "no gh" } });
+    expect(run(ARGS, "/repo", f2.deps)).toBe(2);
+    const f3 = fake();
+    expect(run([...ARGS, "--dry-run"], "/repo", f3.deps)).toBe(0);
+    expect([f1.syncs, f2.syncs, f3.syncs]).toEqual([[], [], []]);
+  });
+  it("実際の依存は fastForwardMain へ直結している", () => {
+    expect(realDeps.syncMain).toBe(fastForwardMain);
   });
 });
 
@@ -574,4 +640,281 @@ describe("isIsoTimestamp — 検索に渡せる時刻の形", () => {
       expect(isIsoTimestamp(s)).toBe(false);
     },
   );
+});
+
+// ---- fastForwardMain（#1528）: 使い捨ての bare の origin・seed・本体の clone を実 git で作って確かめる ----
+
+const T = 60_000;
+const scratchDirs = [];
+afterAll(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+const g = (cwd, args) =>
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "core.autocrlf=false", ...args], {
+    cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+  }).trim();
+
+/**
+ * origin（bare）・seed（origin へ push する側）・root（本体）を作る。`advance` なら seed が 1 コミット進めて push し、
+ * root を古くする。`files` は最初のコミットの中身。返す `merge` は origin/main の先端（マージ commit の代わり）
+ */
+function ffRepos({ advance = true, files = { "a.txt": "a\n" }, change = (seed) => writeFileSync(path.join(seed, "b.txt"), "b\n") } = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), "merge-pr-ff-"));
+  scratchDirs.push(dir);
+  const origin = path.join(dir, "origin.git");
+  const seed = path.join(dir, "seed");
+  const root = path.join(dir, "root");
+  g(dir, ["init", "-q", "--bare", "-b", "main", origin]);
+  g(dir, ["init", "-q", "-b", "main", seed]);
+  for (const [name, body] of Object.entries(files)) writeFileSync(path.join(seed, name), body);
+  g(seed, ["add", "-A"]);
+  g(seed, ["commit", "-q", "-m", "init"]);
+  g(seed, ["remote", "add", "origin", origin]);
+  g(seed, ["push", "-q", "origin", "main"]);
+  g(dir, ["clone", "-q", origin, root]);
+  if (advance) {
+    change(seed);
+    g(seed, ["add", "-A"]);
+    g(seed, ["commit", "-q", "-m", "next"]);
+    g(seed, ["push", "-q", "origin", "main"]);
+  }
+  return { dir, origin, seed, root, merge: g(seed, ["rev-parse", "HEAD"]), head: () => g(root, ["rev-parse", "HEAD"]) };
+}
+
+describe("fastForwardMain — 本体のローカル main を origin/main へ進める（#1528）", () => {
+  it("main に居てきれいなら、マージ後の origin/main まで進める", { timeout: T }, () => {
+    const r = ffRepos();
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok, res.notes.join("\n")).toBe(true);
+    expect(r.head()).toBe(r.merge);
+    expect(res.notes.join("\n")).toContain(`本体の main を進めた: ${before.slice(0, 8)}..${r.merge.slice(0, 8)}`);
+  });
+
+  it("既に最新なら HEAD を変えず「既に最新」と言う", { timeout: T }, () => {
+    const r = ffRepos();
+    g(r.root, ["pull", "-q", "--ff-only"]);
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok, res.notes.join("\n")).toBe(true);
+    expect(r.head()).toBe(r.merge);
+    expect(res.notes.join("\n")).toContain("本体の main は既に最新");
+  });
+
+  it("origin/main の祖先である別ブランチに居れば、そのブランチも main も動かさない（--ff-only は成功してしまう）", { timeout: T }, () => {
+    const r = ffRepos();
+    const before = r.head();
+    g(r.root, ["switch", "-q", "-c", "feat/y"]);
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("本体が main に居ない（feat/y）");
+    expect(res.notes.join("\n")).toContain("main へ戻してから");
+    expect(g(r.root, ["rev-parse", "feat/y"])).toBe(before);
+    expect(g(r.root, ["rev-parse", "main"])).toBe(before);
+  });
+
+  it("detached HEAD なら動かさない", { timeout: T }, () => {
+    const r = ffRepos();
+    const before = r.head();
+    g(r.root, ["switch", "-q", "--detach"]);
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("本体が detached HEAD である");
+    expect(r.head()).toBe(before);
+  });
+
+  it("追跡ファイルに変更があれば、差分と重ならなくても動かさない", { timeout: T }, () => {
+    const r = ffRepos();
+    const before = r.head();
+    writeFileSync(path.join(r.root, "a.txt"), "作業中\n");
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("本体の追跡ファイルに変更がある");
+    expect(res.notes.join("\n")).toContain("コミットか退避してから");
+    expect(r.head()).toBe(before);
+    expect(readFileSync(path.join(r.root, "a.txt"), "utf8")).toBe("作業中\n");
+  });
+
+  it("ローカルの main が分岐していれば、ff が拒まれて HEAD は変わらない", { timeout: T }, () => {
+    const r = ffRepos();
+    writeFileSync(path.join(r.root, "c.txt"), "c\n");
+    g(r.root, ["add", "c.txt"]);
+    g(r.root, ["commit", "-q", "-m", "local"]);
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("git merge --ff-only が失敗した");
+    expect(r.head()).toBe(before);
+  });
+
+  it("fetch に失敗したら止める", { timeout: T }, () => {
+    const r = ffRepos();
+    const before = r.head();
+    g(r.root, ["remote", "set-url", "origin", path.join(r.dir, "nope.git")]);
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("git fetch origin main が失敗した");
+    expect(res.notes.join("\n")).toContain(`時間を置いて、git -C "${r.root}" fetch origin main && git -C "${r.root}" merge --ff-only origin/main`);
+    expect(r.head()).toBe(before);
+  });
+
+  it("マージ commit が取れなかった（null）なら止める", { timeout: T }, () => {
+    const r = ffRepos();
+    const before = r.head();
+    const res = fastForwardMain(r.root, null);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("マージ commit が取れなかった");
+    expect(r.head()).toBe(before);
+  });
+
+  it("マージ commit が origin/main に含まれなければ止める（「既に最新」と誤報しない）", { timeout: T }, () => {
+    const r = ffRepos();
+    const before = r.head();
+    const stray = g(r.root, ["commit-tree", "HEAD^{tree}", "-m", "stray"]);
+    const res = fastForwardMain(r.root, stray);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("origin/main にまだマージが現れていない");
+    expect(r.head()).toBe(before);
+  });
+
+  it("マージ commit が不正なら、別の理由で止める", { timeout: T }, () => {
+    const r = ffRepos();
+    const res = fastForwardMain(r.root, "f".repeat(40));
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("マージ commit を確かめられない");
+  });
+
+  it("マージで追跡されるパスに無視されたファイルがあれば止め、内容を守る（--ff-only は黙って上書きする）", { timeout: T }, () => {
+    const r = ffRepos({ change: (seed) => writeFileSync(path.join(seed, "new.txt"), "n\n") });
+    appendFileSync(path.join(r.root, ".git", "info", "exclude"), "new.txt\n");
+    writeFileSync(path.join(r.root, "new.txt"), "mine\n");
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("マージで追跡されるパスに、追跡していないファイルがある");
+    expect(res.notes.join("\n")).toContain("new.txt");
+    expect(res.notes.join("\n")).toContain("退避してから");
+    expect(r.head()).toBe(before);
+    expect(readFileSync(path.join(r.root, "new.txt"), "utf8")).toBe("mine\n");
+  });
+
+  it("リネームの移動先に無視されたファイルがあっても止める", { timeout: T }, () => {
+    const r = ffRepos({
+      files: { "a.txt": "a\n", "old.txt": "同じ中身\n" },
+      change: (seed) => g(seed, ["mv", "old.txt", "moved.txt"]),
+    });
+    appendFileSync(path.join(r.root, ".git", "info", "exclude"), "moved.txt\n");
+    writeFileSync(path.join(r.root, "moved.txt"), "mine\n");
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("moved.txt");
+    expect(readFileSync(path.join(r.root, "moved.txt"), "utf8")).toBe("mine\n");
+  });
+
+  it("マージで追跡されるパスに無視されていない未追跡ファイルがあっても止める", { timeout: T }, () => {
+    const r = ffRepos();
+    writeFileSync(path.join(r.root, "b.txt"), "mine\n");
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("b.txt");
+    expect(r.head()).toBe(before);
+    expect(readFileSync(path.join(r.root, "b.txt"), "utf8")).toBe("mine\n");
+  });
+
+  it("ローカルの main が origin/main より先にあれば止め、「既に最新」と言わない（--ff-only は rc=0 を返す）", { timeout: T }, () => {
+    const r = ffRepos({ advance: false });
+    writeFileSync(path.join(r.root, "c.txt"), "c\n");
+    g(r.root, ["add", "c.txt"]);
+    g(r.root, ["commit", "-q", "-m", "local"]);
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("本体の main が origin/main より先にある");
+    expect(res.notes.join("\n")).not.toContain("既に最新");
+    expect(r.head()).toBe(before);
+  });
+
+  it("止めたときの案内は fetch から打たせ、前提を整えて案内どおりに打てばマージまで届く", { timeout: T }, () => {
+    const r = ffRepos();
+    g(r.root, ["switch", "-q", "-c", "feat/y"]);
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain(`git -C "${r.root}" fetch origin main && git -C "${r.root}" merge --ff-only origin/main`);
+    g(r.root, ["switch", "-q", "main"]); // 案内の前提（main へ戻る）
+    g(r.root, ["fetch", "-q", "origin", "main"]);
+    g(r.root, ["merge", "-q", "--ff-only", "origin/main"]);
+    expect(r.head()).toBe(r.merge);
+  });
+
+  it("追加パスの祖先を無視されたファイルが塞いでいれば止め、内容を守る（ff はファイルをディレクトリで置き換える）", { timeout: T }, () => {
+    const r = ffRepos({
+      change: (seed) => {
+        mkdirSync(path.join(seed, "d"));
+        writeFileSync(path.join(seed, "d", "x.txt"), "x\n");
+      },
+    });
+    appendFileSync(path.join(r.root, ".git", "info", "exclude"), "d\n");
+    writeFileSync(path.join(r.root, "d"), "mine\n");
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("追跡していないファイルがある");
+    expect(res.notes.join("\n")).toContain(": d");
+    expect(r.head()).toBe(before);
+    expect(readFileSync(path.join(r.root, "d"), "utf8")).toBe("mine\n");
+  });
+
+  it("追加パスの祖先がディレクトリへのリンクなら止める（たどった先へ書き込ませない）", { timeout: T }, () => {
+    const r = ffRepos({
+      change: (seed) => {
+        mkdirSync(path.join(seed, "d"));
+        writeFileSync(path.join(seed, "d", "x.txt"), "x\n");
+      },
+    });
+    const elsewhere = path.join(r.dir, "elsewhere");
+    mkdirSync(elsewhere);
+    appendFileSync(path.join(r.root, ".git", "info", "exclude"), "d\n");
+    symlinkSync(elsewhere, path.join(r.root, "d"), "junction");
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain(": d");
+    expect(r.head()).toBe(before);
+  });
+
+  it("大文字小文字だけのリネームは、移動先が追跡中のファイルに当たっても止めない", { timeout: T }, () => {
+    const r = ffRepos({
+      files: { "a.txt": "a\n", "foo.txt": "f\n" },
+      change: (seed) => g(seed, ["mv", "foo.txt", "Foo.txt"]),
+    });
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.notes.join("\n")).not.toContain("追跡していないファイルがある");
+    expect(res.ok, res.notes.join("\n")).toBe(true);
+    expect(r.head()).toBe(r.merge);
+  });
+
+  it.each([
+    ["status", "本体の状態を読めない"],
+    ["diff", "マージで追跡されるパスを列挙できない"],
+    ["ls-tree", "本体の追跡ファイルの一覧を読めない"],
+    ["symbolic-ref", "本体のブランチを読めない"], // rc=128 を detached と取り違えない
+  ])("git %s が失敗したら素通りせずに止める", (failing, reason) => {
+    const answers = {
+      "symbolic-ref": "main\n",
+      status: "",
+      fetch: "",
+      "merge-base": "",
+      "rev-parse": "a".repeat(40),
+      diff: "new.txt\0",
+      "ls-tree": "a.txt\0",
+    };
+    // rev-parse は HEAD と origin/main に同じ値を返すので、先行の判定（判定 5）は走らない
+    const exec = (_root, args) => (args[0] === failing ? { status: 128, stdout: "", stderr: "boom" } : { status: 0, stdout: answers[args[0]] ?? "", stderr: "" });
+    const res = fastForwardMain("/nowhere", MERGE, exec);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain(reason);
+  });
 });

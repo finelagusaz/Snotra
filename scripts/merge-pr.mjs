@@ -23,8 +23,10 @@
 //   ので、それも dry-run として拾う——拾わないと本番になる
 // - exit 0 の後に、そのブランチのツールの worktree と要約を片づける（#1359。どのスキルを経たかに依らず閉じるため）。
 //   exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない
+// - exit 0 の後に、本体のローカル main を origin/main へ fast-forward する（#1528。スラッシュコマンド・Skill ツール・hook は
+//   本体の版を読むため）。本体に触ってよいかの判定は `fastForwardMain` が持つ。exit 3 では進めず、マージ済みの判定のときだけ手で打つコマンドを案内する
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discardBranchArtifacts, mainRoot, summaryPathFor } from "./verify-tree.mjs";
@@ -38,6 +40,111 @@ export const USAGE = `使い方: npm run merge:pr -- <PR> --closes <N[,N...]|own
   PowerShell からは -- を引用して npm run merge:pr '--' <PR> ... と打つ（素の -- は npm.ps1 の経路によって消える）`;
 
 export class UsageError extends Error {}
+
+/** 後処理の fetch の上限。認証待ちやネットワーク断で、マージ済みのツールをぶら下げないため */
+export const FETCH_TIMEOUT_MS = 60_000;
+
+/**
+ * 本体のローカル `main` を `origin/main` へ fast-forward する（#1528）。スラッシュコマンド・Skill ツール・hook は
+ * 本体の版を読むので、スキルや hook を変える PR のマージ後に本体が古いと、旧版が動く。`{ ok, notes }` を返し、投げない。
+ *
+ * 判定を `--ff-only` に任せない。`--ff-only` は detached HEAD や `origin/main` の祖先である別ブランチでも成功してそれを
+ * 動かし、先行していても `Already up to date.` で成功し、無視されたファイルを黙って上書きする（どれも #1528 で実測）。
+ * 止めたときは、理由を解消する操作を先に書く——`merge --ff-only` だけを案内すると、人が上の害を再現する
+ */
+export function fastForwardMain(root, mergeCommit, exec = gitExec) {
+  // fetch を含める——判定 1・2 は fetch の手前で止まるので、本体の origin/main はマージ前のままで、
+  // merge だけを打つと `Already up to date.` で終わる（#1528 の委譲レビューで実測）
+  const manual = manualSyncCommand(root);
+  const stop = (reason, todo) => ({ ok: false, notes: [`本体の main を進めなかった: ${reason}`, todo] });
+  const retry = `時間を置いて、${manual}`;
+
+  // symbolic-ref が detached を表すのは rc=1 だけである。128 や起動の失敗（null）は本体を読めないという別の理由
+  const branch = exec(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  if (branch.status === 1) return stop("本体が detached HEAD である", `本体の作業を片づけて main へ戻してから、${manual}`);
+  if (branch.status !== 0) return stop(`本体のブランチを読めない（${branch.stderr}）`, `本体（${root}）が git の作業ツリーとして読めるかを確かめてから、${manual}`);
+  if (branch.stdout.trim() !== "main") return stop(`本体が main に居ない（${branch.stdout.trim()}）`, `本体の作業を片づけて main へ戻してから、${manual}`);
+
+  const dirty = exec(root, ["status", "--porcelain", "--untracked-files=no"]);
+  if (dirty.status !== 0) return stop(`本体の状態を読めない（${dirty.stderr}）`, manual);
+  if (dirty.stdout.trim() !== "") return stop("本体の追跡ファイルに変更がある", `本体の変更をコミットか退避してから、${manual}`);
+
+  const fetched = exec(root, ["fetch", "origin", "main"], { timeout: FETCH_TIMEOUT_MS });
+  if (fetched.status !== 0) return stop(`git fetch origin main が失敗した（${fetched.stderr || "timeout"}）`, retry);
+
+  if (!mergeCommit) return stop("マージ commit が取れなかった", retry);
+  const contains = exec(root, ["merge-base", "--is-ancestor", mergeCommit, "origin/main"]);
+  if (contains.status === 1) return stop("origin/main にまだマージが現れていない", retry);
+  if (contains.status !== 0) return stop(`マージ commit を確かめられない（${contains.stderr}）`, retry);
+
+  const before = exec(root, ["rev-parse", "HEAD"]).stdout.trim();
+  const target = exec(root, ["rev-parse", "origin/main"]).stdout.trim();
+  if (before !== target && exec(root, ["merge-base", "--is-ancestor", "origin/main", "HEAD"]).status === 0) {
+    return stop("本体の main が origin/main より先にある（未 push のコミット）", `先行しているコミットを push するか捨てるかを決めてから、${manual}`);
+  }
+
+  // リネームの移動先も新しく追跡されるので `--no-renames`。非 ASCII のパスを引用させないので `-z`
+  const added = exec(root, ["diff", "--no-renames", "--name-only", "-z", "--diff-filter=A", "HEAD", "origin/main"]);
+  if (added.status !== 0) return stop(`マージで追跡されるパスを列挙できない（${added.stderr}）`, manual);
+  const occupied = occupiedPaths(root, added.stdout.split("\0").filter((p) => p !== ""), exec);
+  if (occupied === null) return stop("本体の追跡ファイルの一覧を読めない", manual);
+  if (occupied.length > 0) {
+    return stop(`マージで追跡されるパスに、追跡していないファイルがある（無視されたものを含む）: ${occupied.join(", ")}`, `名指したファイルを退避してから、${manual}`);
+  }
+
+  const merged = exec(root, ["merge", "--ff-only", "origin/main"]);
+  if (merged.status !== 0) return stop(`git merge --ff-only が失敗した（${merged.stderr}）`, `git の出力に従って直してから、${manual}`);
+  const after = exec(root, ["rev-parse", "HEAD"]).stdout.trim();
+  if (after === before) return { ok: true, notes: ["本体の main は既に最新"] };
+  return { ok: true, notes: [`本体の main を進めた: ${before.slice(0, 8)}..${after.slice(0, 8)}`] };
+}
+
+/**
+ * 本体を手で origin/main へ進めるコマンド。fetch から打つ（本体の origin/main はマージ前のままでありうる）。
+ * そのまま貼って打てる 1 行にする（`&&` は Git Bash でも PowerShell 7 でも効く）
+ */
+export function manualSyncCommand(root) {
+  return `git -C "${root}" fetch origin main && git -C "${root}" merge --ff-only origin/main`;
+}
+
+/**
+ * マージで新たに追跡されるパスのうち、本体で追跡していないものに塞がれているもの。パスそのものに加え、
+ * 祖先がディレクトリでないもの（無視されたファイル `d` に対する `d/x.txt`）も数える——ff はそれを黙って消す。
+ * HEAD で追跡しているものは大文字小文字を区別せずに除く（大文字小文字だけのリネームは、大文字小文字を区別しない
+ * FS では移動先が「在る」と見える）。追跡の一覧を読めなければ null
+ */
+function occupiedPaths(root, added, exec) {
+  const tracked = exec(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]);
+  if (tracked.status !== 0) return null;
+  const trackedLower = new Set(tracked.stdout.split("\0").filter((p) => p !== "").map((p) => p.toLowerCase()));
+  const blocked = new Set();
+  for (const p of added) {
+    const parts = p.split("/");
+    for (let i = 1; i <= parts.length; i++) {
+      const prefix = parts.slice(0, i).join("/");
+      if (trackedLower.has(prefix.toLowerCase())) continue;
+      // lstat で見る——stat はシンボリックリンクをたどるので、壊れたリンクを「無い」、ディレクトリへのリンクを
+      // 「ディレクトリ」と見誤り、ff に黙って上書きさせる
+      let st;
+      try {
+        st = lstatSync(path.join(root, prefix));
+      } catch {
+        break;
+      }
+      if (i === parts.length || !st.isDirectory()) {
+        blocked.add(prefix);
+        break;
+      }
+    }
+  }
+  return [...blocked];
+}
+
+/** `git -C <root> ...` を shell なしで呼び、終了コードで分岐できる形で返す（投げない） */
+export function gitExec(root, args, { timeout } = {}) {
+  const r = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", shell: false, timeout });
+  return { status: r.error ? null : r.status, stdout: r.stdout ?? "", stderr: `${r.error?.message ?? ""}${r.stderr ?? ""}`.trim() };
+}
 
 /** 事後の検索の上限。これに達したら打ち切りと区別できないので、検算不能として止める */
 export const SEARCH_LIMIT = 200;
@@ -118,12 +225,13 @@ const SHA = /^[0-9a-f]{40}$/;
 /** 事後検証の観測が揃うまでの待ち（close の反映と索引の遅延）。間隔はミリ秒。先頭はマージ直後の状態の引き直しにも使う */
 const SEARCH_RETRIES = [5_000, 10_000, 15_000];
 
-const realDeps = {
+export const realDeps = {
   exec: (cmd, args, cwd) => spawnSync(cmd, args, { cwd, encoding: "utf8", shell: false }),
   readFile: (p) => readFileSync(p, "utf8"),
   mainRoot,
   verify: (root, branch, target) => verifiedSummaryState({ root, branch, target, summaryPathFor }),
   cleanup: discardBranchArtifacts,
+  syncMain: fastForwardMain,
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   out: (s) => console.log(s),
   err: (s) => console.error(s),
@@ -251,6 +359,7 @@ export function run(argv, cwd, deps = realDeps) {
 
   // ---- マージ: 確認した head にだけ当てる。ここから先で 2 は返さない ----
   let mergedAt;
+  let mergeCommit = null;
   let mergeStatus;
   let ghNote = "";
   try {
@@ -263,19 +372,20 @@ export function run(argv, cwd, deps = realDeps) {
     // gh の失敗は判定の行のあとへ添える——出力の最初の行は常に判定（マージ済み／していない／確かめられない）にする
     if (merged.status !== 0) ghNote = `\n（gh pr merge は exit ${merged.status} を返した）\n${merged.stderr ?? ""}`.trimEnd();
 
-    let state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
+    let state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt,mergeCommit"], PostError);
     if (state.state !== "MERGED") {
       // gh が成功を返したのに MERGED でないのは反映の遅れでありうる——「マージしていない」と断定しない
       if (mergeStatus === 0) throw new PostError(`gh pr merge は成功を返したが、#${opts.pr} は ${state.state} である`);
       // gh が失敗を返しても反映が遅れているだけかもしれないので、1 度だけ待って引き直してから断定する
       deps.sleep(SEARCH_RETRIES[0]);
-      state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
+      state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt,mergeCommit"], PostError);
     }
     if (state.state !== "MERGED") {
       deps.err(`merge-pr: マージしていない（#${opts.pr} は ${state.state}）。gh の出力を読み、原因を直して再実行する${ghNote}`);
       return 1;
     }
     mergedAt = state.mergedAt;
+    mergeCommit = state.mergeCommit?.oid ?? null;
   } catch (e) {
     deps.err(
       `merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} --json state,mergedAt で状態を見る（/merge-pr の「マージ後に要確認が出たとき（exit 3）」）\n${describe(e)}${ghNote}`,
@@ -351,7 +461,9 @@ export function run(argv, cwd, deps = realDeps) {
   // 観測回数と待ちの合計は、索引の反映の遅れを次の実マージから溜めるために常に出す（#1321）
   const tally = `\n（事後検証: 観測 ${observations} 回・待ち計 ${waited / 1000} 秒）`;
   if (findings.length > 0) {
-    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${tally}${ghNote}`);
+    // 本体の main は進めない（人が調べる場面で本体を動かさない）。ただしマージは済んでいるので、旧版が動く害は残る（#1528）
+    const syncHint = `\n本体の main は進めていない。本体が main に居て追跡ファイルに変更が無いことを確かめてから、${manualSyncCommand(root)} を打つ`;
+    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${tally}${ghNote}${syncHint}`);
     return 3;
   }
   deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）${tally}${ghNote}`);
@@ -364,6 +476,15 @@ export function run(argv, cwd, deps = realDeps) {
     else deps.err(`ツールの worktree と要約を片づけられなかった（マージは済んでいる）:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
   } catch (e) {
     deps.err(`ツールの worktree と要約を片づけられなかった（マージは済んでいる）: ${describe(e)}`);
+  }
+
+  // スラッシュコマンド・Skill ツール・hook は本体の版を読むので、本体のローカル main を進める（#1528）。
+  // 進められなくても終了コードを変えない（マージは済んでいる）
+  try {
+    const synced = deps.syncMain(root, mergeCommit);
+    (synced.ok ? deps.out : deps.err)(synced.notes.join("\n"));
+  } catch (e) {
+    deps.err(`本体の main を進めなかった（マージは済んでいる）: ${describe(e)}`);
   }
   return 0;
 }

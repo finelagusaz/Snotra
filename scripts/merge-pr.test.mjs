@@ -1,6 +1,6 @@
 import { afterAll, describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -756,7 +756,7 @@ describe("fastForwardMain — 本体のローカル main を origin/main へ進�
     const res = fastForwardMain(r.root, r.merge);
     expect(res.ok).toBe(false);
     expect(res.notes.join("\n")).toContain("git fetch origin main が失敗した");
-    expect(res.notes.join("\n")).toContain("時間を置いて");
+    expect(res.notes.join("\n")).toContain(`時間を置いて、git -C "${r.root}" fetch origin main && git -C "${r.root}" merge --ff-only origin/main`);
     expect(r.head()).toBe(before);
   });
 
@@ -867,6 +867,24 @@ describe("fastForwardMain — 本体のローカル main を origin/main へ進�
     expect(readFileSync(path.join(r.root, "d"), "utf8")).toBe("mine\n");
   });
 
+  it("追加パスの祖先がディレクトリへのリンクなら止める（たどった先へ書き込ませない）", { timeout: T }, () => {
+    const r = ffRepos({
+      change: (seed) => {
+        mkdirSync(path.join(seed, "d"));
+        writeFileSync(path.join(seed, "d", "x.txt"), "x\n");
+      },
+    });
+    const elsewhere = path.join(r.dir, "elsewhere");
+    mkdirSync(elsewhere);
+    appendFileSync(path.join(r.root, ".git", "info", "exclude"), "d\n");
+    symlinkSync(elsewhere, path.join(r.root, "d"), "junction");
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain(": d");
+    expect(r.head()).toBe(before);
+  });
+
   it("大文字小文字だけのリネームは、移動先が追跡中のファイルに当たっても止めない", { timeout: T }, () => {
     const r = ffRepos({
       files: { "a.txt": "a\n", "foo.txt": "f\n" },
@@ -882,6 +900,7 @@ describe("fastForwardMain — 本体のローカル main を origin/main へ進�
     ["status", "本体の状態を読めない"],
     ["diff", "マージで追跡されるパスを列挙できない"],
     ["ls-tree", "本体の追跡ファイルの一覧を読めない"],
+    ["symbolic-ref", "本体のブランチを読めない"], // rc=128 を detached と取り違えない
   ])("git %s が失敗したら素通りせずに止める", (failing, reason) => {
     const answers = {
       "symbolic-ref": "main\n",

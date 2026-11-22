@@ -26,7 +26,7 @@
 // - exit 0 の後に、本体のローカル main を origin/main へ fast-forward する（#1528。スラッシュコマンド・Skill ツール・hook は
 //   本体の版を読むため）。本体に触ってよいかの判定は `fastForwardMain` が持つ。exit 3 では進めず、マージ済みの判定のときだけ手で打つコマンドを案内する
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discardBranchArtifacts, mainRoot, summaryPathFor } from "./verify-tree.mjs";
@@ -57,10 +57,12 @@ export function fastForwardMain(root, mergeCommit, exec = gitExec) {
   // merge だけを打つと `Already up to date.` で終わる（#1528 の委譲レビューで実測）
   const manual = manualSyncCommand(root);
   const stop = (reason, todo) => ({ ok: false, notes: [`本体の main を進めなかった: ${reason}`, todo] });
-  const retry = `時間を置いて、git -C "${root}" fetch origin main からやり直す`;
+  const retry = `時間を置いて、${manual}`;
 
+  // symbolic-ref が detached を表すのは rc=1 だけである。128 や起動の失敗（null）は本体を読めないという別の理由
   const branch = exec(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  if (branch.status !== 0) return stop("本体が detached HEAD である", `本体の作業を片づけて main へ戻してから、${manual}`);
+  if (branch.status === 1) return stop("本体が detached HEAD である", `本体の作業を片づけて main へ戻してから、${manual}`);
+  if (branch.status !== 0) return stop(`本体のブランチを読めない（${branch.stderr}）`, `本体（${root}）が git の作業ツリーとして読めるかを確かめてから、${manual}`);
   if (branch.stdout.trim() !== "main") return stop(`本体が main に居ない（${branch.stdout.trim()}）`, `本体の作業を片づけて main へ戻してから、${manual}`);
 
   const dirty = exec(root, ["status", "--porcelain", "--untracked-files=no"]);
@@ -121,9 +123,15 @@ function occupiedPaths(root, added, exec) {
     for (let i = 1; i <= parts.length; i++) {
       const prefix = parts.slice(0, i).join("/");
       if (trackedLower.has(prefix.toLowerCase())) continue;
-      const full = path.join(root, prefix);
-      if (!existsSync(full)) break;
-      if (i === parts.length || !statSync(full).isDirectory()) {
+      // lstat で見る——stat はシンボリックリンクをたどるので、壊れたリンクを「無い」、ディレクトリへのリンクを
+      // 「ディレクトリ」と見誤り、ff に黙って上書きさせる
+      let st;
+      try {
+        st = lstatSync(path.join(root, prefix));
+      } catch {
+        break;
+      }
+      if (i === parts.length || !st.isDirectory()) {
         blocked.add(prefix);
         break;
       }

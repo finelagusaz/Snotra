@@ -708,7 +708,9 @@ describe("verify-tree remove", () => {
     const r = runScript(repo, ["remove", "--delegate-tree", wt]);
     expect(r.status, r.output).toBe(1);
     expect(r.output).toContain("ロックされている——何も消さない");
+    expect(r.output).not.toContain("まだ動いている");
     expect(existsSync(path.join(wt, ".delegate", "round1.txt"))).toBe(true);
+    expect(git(repo, ["branch", "--list", "worktree-agent-abc"])).toContain("worktree-agent-abc");
     git(repo, ["worktree", "unlock", wt]);
   });
 

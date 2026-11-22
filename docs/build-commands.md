@@ -33,7 +33,7 @@ cargo test -p snotra-settings                                                   
 cargo doc --workspace --no-deps --document-private-items                               # 必須: intra-doc link 切れ検査（#562・CI 発火／hook 非発火）
 ```
 
-- **変更した crate のテストは、ローカルで必ず走らせる。** 変更していない crate のテストは、ローカルでは任意である。CI の rust-check が、PR ごとに workspace の全 crate のテストを実行する
+- **変更した crate のテストは、ローカルで必ず走らせる。** 変更していない crate のテストは、ローカルでは任意である。CI の rust-check が、`.md` 以外を変える PR ごとに、workspace の全 crate のテストを実行する（「CI/CD メモ」）
 - **エージェントが確認のために手で打つときは、`-q` を付けてよい**（`cargo test -p snotra -q` 等）
   - 省かれるのは、cargo の進捗行と、成功したテストの逐一の報告だけである。失敗の証拠は一つも落ちない。panic メッセージ・`assert_eq!` の left/right・`failures:` の一覧・`test result: FAILED`・非ゼロの exit は、いずれも残る（2026-08-13 に使い捨ての crate で実測）
   - 出力量は、`cargo test -p snotra` の 276 行 / 22,235 文字に対し、`-q` では 8 行 / 411 文字だった
@@ -364,7 +364,11 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 （注2）`release.yml` での同じスクリプトの実行は、配布前のゲートである。成果物の存在の検証だけでは起動できるかを保証しないので、build 済みの `target/release/snotra.exe`（NSIS インストーラーではない）へ同じ起動スモークを当て、アップロードの前に起動の失敗を検知する（理由の正本は当該ステップのコメント）。表の 2 行が同じコマンドを指すのは、走る局面が別だからである。
 
-- `npm test` は、ubuntu（node-check）と windows（rust-check）の両方で走る（#509）
+- **rust-check は、変更が `.md` だけの PR では、判定の step より後をすべて飛ばし、SUCCESS で早く終わる**（#1508）
+  - 判定の正本は `scripts/ci-rust-scope.mjs` である。判定できない PR と main への push では、全部走る
+  - 表のトリガー列の「PR 自動」の rust-check の行は、この条件つきである（各行に注記はしない）
+  - `src-tauri/**`・`snotra-egui-runtime/**` の下の `.md` だけの PR では、`Smoke` は今までどおり起動する（`smoke.yml` は `.md` を除かない）
+- `npm test` は、ubuntu（node-check）と windows（rust-check）の両方で走る（#509）。ただし、変更が `.md` だけの PR では windows 側が走らない（上の項目）。実物の `.md` を読む vitest（`scripts/verify-tree.test.mjs` など）の windows 固有の壊れ方は、マージ後の main への push で見える
   - `.githooks` / `.claude/hooks` の selftest は、実運用が Windows でだけ起きるセーフティネットである。hook の実行機構（Git-for-Windows の shebang 経由の sh 起動・パスとクォートの境界）が本番と一致する OS で、回帰を検査する
   - ubuntu 側は、実行ビットと POSIX sh の厳密性を、補う形で担保する
   - CRLF 由来の fail-open は、`.gitattributes` の `.githooks/** text eol=lf` で両 OS とも回避済みである。また dash 側の故障の形なので、windows 固有ではない
@@ -373,9 +377,9 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
   - `governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る（#587）。skip-safe と定義された Markdown だけの変更こそが検査対象なので、意図的にガードしない
   - CI は required status check ではない（ruleset `default` に required status checks の規則が無い・実測）ので、スキップしてもマージは通る
   - スキップした node-check / rust-check は、マージ後の main への push では必ず走る。両 job の `if` が `github.event_name == 'push' ||` で始まり、push ではラベルを評価しないためである。そのため、表のトリガー列の「PR 自動」は PR 側の記述であって、push 側を否定しない（列に push を書き足さないのは、6 行が同じ 1 つの事実の写しになるからである）
-  - `governance-check` が push で走る理由は、これとは別である。そもそも `if` を持たないことによるもので、同じ `github.event_name == 'push'` で説明してはならない。ただし、それは job 自体の話である。job の中の `governance manifest delta` step だけは、別に `if: github.event_name == 'pull_request'` を持ち、push ではこの 1 step だけが走らない
+  - `governance-check` が push で走る理由は、これとは別である。そもそも `if` を持たないことによるもので、同じ `github.event_name == 'push'` で説明してはならない
 - **`skip-ci` を貼ってよいのは、skip-safe な変更だけである**
-  - skip-safe なのは、node-check / rust-check がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけである（これらの決定的な検査は、skip されない governance-check が担う・#587）
+  - skip-safe なのは、`.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけである（これらの決定的な検査は、skip されない governance-check が担う・#587）。ただし、貼ると実物の `.md` を読む vitest（`scripts/verify-tree.test.mjs` など）が ubuntu でも走らない。文書だけの PR では rust-check が自動で早く終わる（上）ので、貼って省けるのは node-check の数十秒だけである
   - 貼ってはならないのは、`.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` である。これらは、`npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）
   - 「`.claude` だけの変更だから安全」と一括りにしない。同じ `.claude/` という見た目が、「Claude が読むだけの設定」と「CI が検査するセーフティネット」の 2 つの概念を担っているためである（#500）
 - カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）に相当する変更や、依存の更新を含む PR は、対象の paths（`src-tauri/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に当たるので、`Smoke` workflow が自動起動する。paths の外の変更で手動実行するには、`workflow_dispatch` を使う

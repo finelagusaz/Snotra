@@ -1,29 +1,20 @@
-// ci-rust-scope — CI の rust-check で、後続の step を走らせるかを決める（#1508）。
-// 結果は `$GITHUB_OUTPUT` へ `rust=true|false` の 1 行で書き、`.github/workflows/ci.yml` の rust-check が
-// 後続の各 step の `if: steps.scope.outputs.rust != 'false'` で読む。
-// shebang を置かない — CI の Windows checkout（autocrlf=true）で CRLF 化された shebang 行は
-// vitest の transform を SyntaxError で落とす（`merge-pr.mjs` の冒頭と同じ理由。起動は常に `node scripts/...` 経由）。
+// ci-rust-scope — rust-check の後続 step を走らせるかを決め、`$GITHUB_OUTPUT` へ `rust=true|false` を書く（#1508）。
+// 読み手は `.github/workflows/ci.yml` の rust-check である。
+// shebang を置かない（CRLF 化された shebang 行は vitest の transform を落とす。`merge-pr.mjs` と同じ理由）。
 //
-// **省くのは「pull_request で、変更が 1 件以上あり、すべて `.md`」のときだけである**（許可リスト）。
-// `Cargo.toml`・`build.rs`・`rust-toolchain.toml`・workflow・`scripts/**` などを列挙しないのは、列挙から漏れたものが
-// 黙って省かれる形を作らないためである。push（main）・差分 0 件・差分を取れないときは、すべて走らせる側へ倒す。
-// main の rust-check は rust-cache を保存する唯一の経路でもある（`ci.yml` の "Rust cache" step）。
-//
-// 母集団は PR 全体の変更である。`actions/checkout` が PR で取る merge commit（`refs/pull/N/merge`）と、
-// その第 1 親（base の tip）を比べる（`fetch-depth: 2` が要る）。直近の push 分だけを見ると、Rust を変えた PR に
-// 文書のコミットを足した run で省いてしまう。
+// 省くのは、PR の変更がすべて `.md` のときだけである。判定できない入力は走らせる。
+// 走らせるべきファイル（`Cargo.toml`・`build.rs`・workflow など）を列挙しないのは、列挙から漏れたものが黙って省かれるからである。
 import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 後続の step を走らせるか。省く（false）のは、変更が 1 件以上あり、すべて小文字の `.md` で終わるときだけ */
+/** 後続の step を走らせるか。0 件は走らせる（何も見ていないので、省く根拠が無い） */
 export function needsRustCheck(paths) {
   if (paths.length === 0) return true;
   return !paths.every((p) => p.endsWith(".md"));
 }
 
-/** `git diff --name-only -z` の出力をパスの配列にする */
 export function parseNameOnlyZ(stdout) {
   return stdout.split("\0").filter((p) => p !== "");
 }
@@ -33,21 +24,25 @@ export function parseNameOnlyZ(stdout) {
  * @returns {{ rust: boolean, reason: string, paths: string[] }}
  */
 export function decide({ eventName, diff }) {
+  // main への push は判定しない。rust-check のキャッシュを main へ保存する run であり、マージ後の検査でもある
   if (eventName !== "pull_request") {
-    return { rust: true, reason: `イベントが pull_request でない（${eventName ?? "未設定"}）。push では常に全部走らせる`, paths: [] };
+    return { rust: true, reason: `イベントが pull_request でない（${eventName ?? "未設定"}）`, paths: [] };
   }
   const r = diff();
-  if (!r.ok) return { rust: true, reason: `差分を取れない（${r.error}）。走らせる側へ倒す`, paths: [] };
+  if (!r.ok) return { rust: true, reason: `差分を取れない（${r.error}）`, paths: [] };
   const paths = parseNameOnlyZ(r.stdout);
   if (needsRustCheck(paths)) {
-    return { rust: true, reason: paths.length === 0 ? "差分が 0 件。走らせる側へ倒す" : ".md 以外の変更を含む", paths };
+    return { rust: true, reason: paths.length === 0 ? "差分が 0 件" : ".md 以外の変更を含む", paths };
   }
   return { rust: false, reason: "変更がすべて .md", paths };
 }
 
+/**
+ * PR 全体の変更を返す。PR の checkout は merge commit（`refs/pull/N/merge`）なので、第 1 親（base の tip）と比べる
+ * （`fetch-depth: 2` が要る）。直近の push 分だけを見ると、Rust を変えた PR に文書のコミットを足した run で省いてしまう。
+ */
 function gitDiff(cwd) {
-  // HEAD が merge commit であることを先に確かめる。checkout が PR の head（`ref: …head.sha`）を取る形に
-  // 変わると、`HEAD^1..HEAD` は最後の 1 コミットだけになり、差分は取れたまま黙って母集団が縮む
+  // HEAD が merge commit でなければ、`HEAD^1..HEAD` は最後の 1 コミットに縮む。差分は取れてしまうので、ここで止める
   const merge = spawnSync("git", ["rev-parse", "--verify", "-q", "HEAD^2"], { cwd, encoding: "utf8" });
   if (merge.error) return { ok: false, error: merge.error.message };
   if (merge.status !== 0) return { ok: false, error: "HEAD が merge commit でない（第 2 親が無い）" };
@@ -61,7 +56,7 @@ function gitDiff(cwd) {
 
 export function run(env, cwd) {
   if (!env.GITHUB_OUTPUT) {
-    console.error("ci-rust-scope: GITHUB_OUTPUT が無い。結果を書く先が無いので止める（黙って省かない）");
+    console.error("ci-rust-scope: GITHUB_OUTPUT が無い。結果を書く先が無いので止める");
     return 2;
   }
   const d = decide({ eventName: env.GITHUB_EVENT_NAME, diff: () => gitDiff(cwd) });

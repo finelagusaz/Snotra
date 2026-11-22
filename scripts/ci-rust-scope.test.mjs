@@ -1,7 +1,4 @@
-// scripts/ci-rust-scope.test.mjs
-//
-// rust-check の後続 step を省くかの判定（#1508）。省くのは「変更が 1 件以上あり、すべて .md」の PR だけで、
-// それ以外（push・差分 0 件・差分を取れない・.md 以外を 1 件でも含む）はすべて走らせる側へ倒れることを固定する。
+// ci-rust-scope.mjs の判定（#1508）。省いてよいのは PR の変更がすべて .md のときだけであることを固定する。
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -31,9 +28,9 @@ describe("needsRustCheck — 許可リスト（全部 .md のときだけ省く�
     [["scripts/merge-pr.mjs"]],
     [[".gitattributes"]],
     [["README.MD"]], // 大文字の拡張子は省かない（安全側）
-    [["docs/x.md/inner.rs"]], // .md を含むが末尾でない
+    [["docs/x.md/inner.rs"]],
     [["docs/x.md.rs"]],
-    [["Makefile"]], // 拡張子なし
+    [["Makefile"]],
   ])(".md 以外を含むなら走らせる: %j", (paths) => {
     expect(needsRustCheck(paths)).toBe(true);
   });
@@ -95,8 +92,6 @@ describe("decide — イベントと差分から判定する", () => {
   });
 });
 
-// ---- CLI の結合テスト: 一時リポジトリに PR の merge commit を作り、CLI を当てる ----
-
 const scratchDirs = [];
 afterAll(() => {
   for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
@@ -112,8 +107,8 @@ function write(dir, rel, body) {
   writeFileSync(file, body);
 }
 
-/** base に src/a.rs と README.md を置き、topic で `change(dir)` を当て、base を 1 コミット進めてから
- *  `merge --no-ff` した repo を返す（actions/checkout が PR で取る refs/pull/N/merge と同じ形: 第 1 親 = base の tip）。 */
+/** PR の checkout（`refs/pull/N/merge`）と同じ形の repo を作る。topic で `change` を当て、base を 1 コミット進めてから
+ *  `merge --no-ff` する（第 1 親が base の tip になる）。 */
 function mergedRepo(change) {
   const dir = mkdtempSync(path.join(tmpdir(), "snotra-ci-rust-scope-"));
   scratchDirs.push(dir);
@@ -131,8 +126,7 @@ function mergedRepo(change) {
   git(dir, ["add", "-A"]);
   git(dir, ["commit", "-m", "topic"]);
   git(dir, ["switch", "main"]);
-  // base が先へ進んでも、PR の差分に混ざらないこと。src/ の外へ置く——src/ の唯一のファイルを改名する
-  // テストで、git の directory rename 検出が src/b.rs を巻き込み、merge が止まる
+  // src/ の外へ置く。src/ の唯一のファイルを改名するテストで、directory rename 検出が src/b.rs を巻き込み、merge が止まる
   write(dir, "lib/b.rs", "fn b() {}\n");
   git(dir, ["add", "-A"]);
   git(dir, ["commit", "-m", "base moves"]);

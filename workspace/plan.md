@@ -102,6 +102,10 @@
 - [x] Step 1 のコマンドを `d2a0b9a4` 起点で打ち、祖先判定が真であること、このブランチの未マージのコミット（workspace のコミット）で偽になること、存在しない sha で `cat-file -e` が非 0 になることを確かめる。日付 `2026-11-04` が `rev-list -1 --before` で sha に変わることも確かめる
   - 結果（主ツリー）: governance:check 13 件 passed。`RETROSPECTIVE` の残りは、retrospective/SKILL.md・`AGENTS.md`「RETROSPECTIVE.md の運用」・スキル表・governance-docs.md の #1222（歴史）・build.rs（範囲外）・path_query_cost.rs（真）で、入口で読ませる記述は 0 件。`d2a0b9a4` 祖先=0、workspace のコミット 祖先=1、存在しない sha の `cat-file -e`=128、`2026-11-04`→`48d0f981`。health-check 7d の `/retrospective`「Step 6」は見出し「Step 6 — メモリの鮮度チェック」が残る
 
+## 消し込み（Step 3 のラウンド）
+
+- R1 `2f86bad0`: verify:tree green（E `npm test`・F governance:check、warnings なし）。委譲 Critical 0・High 0・Medium 4・Low 4・⚠️ 5。変異注入: 該当なし（散文だけで、解析する検知器 0 件）。実地: 範囲の行の取り出し・cat-file/is-ancestor（存在しない sha で 128）・日付・`(#N)` を一時環境で打った。直した: M1 終点を Step 1 で控え列挙に使う／M2 日付に `00:00`／M3 埋め戻しの終点を `921c0a97`（#1358）へ（`d2a0b9a4` では #1361〜#1368 の 7 本が落ちる。主も `git log` で確認）／M4 Step 5 の「次のサイクルで効く一点」／L1 マージ済みのブランチでは 3 本目を打たない／L2 PR 番号は `#N`／L4 序数参照／⚠️2 範囲の行は終点の版から読む／⚠️3 日付は実行日／⚠️4 終点を進める判定のコマンド／⚠️5 末尾の `(#N)`。残した: L3 起点の `〜`（読むのは終点だけで、挙動を変えない）・⚠️1 は「振り返り済みの範囲」と定義し見出しに対象の PR を書く形で吸収
+
 ## PR について
 
 - `.claude/skills/**` と規範文書（`AGENTS.md`・ルート `CLAUDE.md`）を触るセーフティネットの変更なので、PR 本文の冒頭に「マージは合意してから」と書く（ルート `CLAUDE.md` 最重要ルール 2）

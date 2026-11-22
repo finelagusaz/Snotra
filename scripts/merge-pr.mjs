@@ -23,6 +23,8 @@
 //   ので、それも dry-run として拾う——拾わないと本番になる
 // - exit 0 の後に、そのブランチのツールの worktree と要約を片づける（#1359。どのスキルを経たかに依らず閉じるため）。
 //   exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない
+// - exit 0 の後に、本体のローカル main を origin/main へ fast-forward する（#1528。スラッシュコマンド・Skill ツール・hook は
+//   本体の版を読むため）。本体に触ってよいかの判定は `fastForwardMain` が持つ。exit 3 では進めず、手で打つコマンドを案内する
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -177,12 +179,13 @@ const SHA = /^[0-9a-f]{40}$/;
 /** 事後検証の観測が揃うまでの待ち（close の反映と索引の遅延）。間隔はミリ秒。先頭はマージ直後の状態の引き直しにも使う */
 const SEARCH_RETRIES = [5_000, 10_000, 15_000];
 
-const realDeps = {
+export const realDeps = {
   exec: (cmd, args, cwd) => spawnSync(cmd, args, { cwd, encoding: "utf8", shell: false }),
   readFile: (p) => readFileSync(p, "utf8"),
   mainRoot,
   verify: (root, branch, target) => verifiedSummaryState({ root, branch, target, summaryPathFor }),
   cleanup: discardBranchArtifacts,
+  syncMain: fastForwardMain,
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   out: (s) => console.log(s),
   err: (s) => console.error(s),
@@ -310,6 +313,7 @@ export function run(argv, cwd, deps = realDeps) {
 
   // ---- マージ: 確認した head にだけ当てる。ここから先で 2 は返さない ----
   let mergedAt;
+  let mergeCommit = null;
   let mergeStatus;
   let ghNote = "";
   try {
@@ -322,19 +326,20 @@ export function run(argv, cwd, deps = realDeps) {
     // gh の失敗は判定の行のあとへ添える——出力の最初の行は常に判定（マージ済み／していない／確かめられない）にする
     if (merged.status !== 0) ghNote = `\n（gh pr merge は exit ${merged.status} を返した）\n${merged.stderr ?? ""}`.trimEnd();
 
-    let state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
+    let state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt,mergeCommit"], PostError);
     if (state.state !== "MERGED") {
       // gh が成功を返したのに MERGED でないのは反映の遅れでありうる——「マージしていない」と断定しない
       if (mergeStatus === 0) throw new PostError(`gh pr merge は成功を返したが、#${opts.pr} は ${state.state} である`);
       // gh が失敗を返しても反映が遅れているだけかもしれないので、1 度だけ待って引き直してから断定する
       deps.sleep(SEARCH_RETRIES[0]);
-      state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt"], PostError);
+      state = json(deps, root, ["pr", "view", opts.pr, "--json", "state,mergedAt,mergeCommit"], PostError);
     }
     if (state.state !== "MERGED") {
       deps.err(`merge-pr: マージしていない（#${opts.pr} は ${state.state}）。gh の出力を読み、原因を直して再実行する${ghNote}`);
       return 1;
     }
     mergedAt = state.mergedAt;
+    mergeCommit = state.mergeCommit?.oid ?? null;
   } catch (e) {
     deps.err(
       `merge-pr: マージの成否を確かめられない（#${opts.pr}）。gh pr view ${opts.pr} --json state,mergedAt で状態を見る（/merge-pr の「マージ後に要確認が出たとき（exit 3）」）\n${describe(e)}${ghNote}`,
@@ -410,7 +415,9 @@ export function run(argv, cwd, deps = realDeps) {
   // 観測回数と待ちの合計は、索引の反映の遅れを次の実マージから溜めるために常に出す（#1321）
   const tally = `\n（事後検証: 観測 ${observations} 回・待ち計 ${waited / 1000} 秒）`;
   if (findings.length > 0) {
-    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${tally}${ghNote}`);
+    // 本体の main は進めない（人が調べる場面で本体を動かさない）。ただしマージは済んでいるので、旧版が動く害は残る（#1528）
+    const syncHint = `\n本体の main は進めていない。本体が main に居て追跡ファイルに変更が無いことを確かめてから、git -C "${root}" merge --ff-only origin/main を打つ`;
+    deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${tally}${ghNote}${syncHint}`);
     return 3;
   }
   deps.out(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。閉じた issue: ${opts.closes.length > 0 ? opts.closes.map((r) => normalizeRef(r, repo)).join(", ") : "なし"}（宣言どおり）${tally}${ghNote}`);
@@ -423,6 +430,15 @@ export function run(argv, cwd, deps = realDeps) {
     else deps.err(`ツールの worktree と要約を片づけられなかった（マージは済んでいる）:\n${cleaned.notes.map((n) => `- ${n}`).join("\n")}`);
   } catch (e) {
     deps.err(`ツールの worktree と要約を片づけられなかった（マージは済んでいる）: ${describe(e)}`);
+  }
+
+  // スラッシュコマンド・Skill ツール・hook は本体の版を読むので、本体のローカル main を進める（#1528）。
+  // 進められなくても終了コードを変えない（マージは済んでいる）
+  try {
+    const synced = deps.syncMain(root, mergeCommit);
+    (synced.ok ? deps.out : deps.err)(synced.notes.join("\n"));
+  } catch (e) {
+    deps.err(`本体の main を進めなかった（マージは済んでいる）: ${describe(e)}`);
   }
   return 0;
 }

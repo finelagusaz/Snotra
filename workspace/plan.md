@@ -94,19 +94,19 @@ git の呼び出しは exit code を見て分岐する（rc ≠ 0 で例外を�
 
 ### Phase 2 — `run` への配線
 
-- [ ] `fake()` の `keyOf` と既定の fixture（`mergeCommit`）を直し、`syncMain` の差し替えを足す。既存のテストが通ることを確かめる
-- [ ] `run` のテスト（変更表の `run` の describe）と `realDeps.syncMain === fastForwardMain` の 1 本を書いて落とす
-- [ ] `realDeps` の export と `syncMain`、`run` の呼び出し（`mergeCommit` の取得を含む）、exit 3（findings あり）の案内を足して通す
+- [x] `fake()` の `keyOf` と既定の fixture（`mergeCommit`）を直し、`syncMain` の差し替えを足す。既存のテストが通ることを確かめる
+- [x] `run` のテスト（変更表の `run` の describe）と `realDeps.syncMain === fastForwardMain` の 1 本を書いて落とす
+- [x] `realDeps` の export と `syncMain`、`run` の呼び出し（`mergeCommit` の取得を含む）、exit 3（findings あり）の案内を足して通す
 
 ### Phase 3 — 文書
 
-- [ ] `merge-pr.mjs` 冒頭のコメントに 1 項足す
-- [ ] `/merge-pr` の exit 0 の行と「マージ後に要確認が出たとき（exit 3）」を直す
-- [ ] `docs/build-commands.md` の `merge:pr` の書き込みの箇条を直す
+- [x] `merge-pr.mjs` 冒頭のコメントに 1 項足す
+- [x] `/merge-pr` の exit 0 の行と「マージ後に要確認が出たとき（exit 3）」を直す
+- [x] `docs/build-commands.md` の `merge:pr` の書き込みの箇条を直す
 
 ### Phase 4 — 検証
 
-- [ ] `npm test` と `npm run governance:check` が緑
+- [x] `npm test` と `npm run governance:check` が緑
 
 ## 未確定（実装前に潰す）
 

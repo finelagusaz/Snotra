@@ -13,10 +13,12 @@ import {
   diffClosing,
   isIsoTimestamp,
   run,
+  realDeps,
   SEARCH_LIMIT,
 } from "./merge-pr.mjs";
 
 const HEAD = "a".repeat(40);
+const MERGE = "m".repeat(40);
 const ARGS = ["7", "--closes", "3", "--body-file", "body.md"];
 
 /**
@@ -41,7 +43,7 @@ function fake(over = {}) {
     "cat-file": { status: 0, stdout: "", stderr: "" },
     fetch: { status: 0, stdout: "", stderr: "" },
     "pr merge": { status: 0, stdout: "", stderr: "" },
-    "pr view:post": ok({ state: "MERGED", mergedAt: "2026-10-31T01:02:03Z" }),
+    "pr view:post": ok({ state: "MERGED", mergedAt: "2026-10-31T01:02:03Z", mergeCommit: { oid: MERGE } }),
     "issue view": ok({ state: "CLOSED" }),
     "pr list:merged": ok([{ number: 7 }]),
     "issue list": ok([{ number: 3 }]),
@@ -50,7 +52,7 @@ function fake(over = {}) {
   const keyOf = (cmd, args) => {
     if (cmd === "git") return args[0];
     const k = `${args[0]} ${args[1]}`;
-    if (k === "pr view") return args.includes("state,mergedAt") ? "pr view:post" : "pr view:pre";
+    if (k === "pr view") return args.some((a) => a.startsWith("state,mergedAt")) ? "pr view:post" : "pr view:pre";
     if (k === "pr list") return args.includes("merged") ? "pr list:merged" : "pr list:open";
     return k;
   };
@@ -68,6 +70,9 @@ function fake(over = {}) {
     mainRoot: () => "/repo",
     verify: over.verify ?? (() => ({ ok: true })),
     cleanup: over.cleanup ?? ((root, branch) => (cleanups.push({ root, branch, after: [...calls] }), { ok: true, notes: ["削除: worktree"] })),
+    syncMain:
+      over.syncMain ??
+      ((root, mergeCommit) => (syncs.push({ root, mergeCommit, afterCleanup: cleanups.length }), { ok: true, notes: ["本体の main を進めた: x..y"] })),
     sleep: (ms) => sleeps.push(ms),
     out: (s) => out.push(s),
     err: (s) => out.push(s),
@@ -75,7 +80,8 @@ function fake(over = {}) {
   const out = [];
   const sleeps = [];
   const cleanups = [];
-  return { deps, calls, out, sleeps, cleanups, text: () => out.join("\n") };
+  const syncs = [];
+  return { deps, calls, out, sleeps, cleanups, syncs, text: () => out.join("\n") };
 }
 const ok = (v) => ({ status: 0, stdout: JSON.stringify(v), stderr: "" });
 const preview = (patch) =>
@@ -152,6 +158,60 @@ describe("run — マージ済みのブランチのツールの worktree と要�
     const f = fake();
     expect(run([...ARGS, "--dry-run"], "/repo", f.deps)).toBe(0);
     expect(f.cleanups).toHaveLength(0);
+  });
+});
+
+describe("run — マージ後に本体のローカル main を進める（#1528）", () => {
+  it("exit 0 のときだけ、片づけの後に、本体のルートとマージ commit を渡して進め、結果を出す", () => {
+    const f = fake();
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.syncs).toEqual([{ root: "/repo", mergeCommit: MERGE, afterCleanup: 1 }]);
+    expect(f.text()).toContain("本体の main を進めた: x..y");
+  });
+  it("マージ commit が取れなければ null を渡す（判定は fastForwardMain が持つ）", () => {
+    const f = fake({ "pr view:post": ok({ state: "MERGED", mergedAt: "2026-10-31T01:02:03Z", mergeCommit: null }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.syncs[0].mergeCommit).toBeNull();
+  });
+  it("進められなくても exit 0 のまま。理由を出す", () => {
+    const f = fake({ syncMain: () => ({ ok: false, notes: ["本体の main を進めなかった: 本体が main に居ない（feat/y）"] }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.text()).toContain("本体が main に居ない（feat/y）");
+  });
+  it("進める処理が投げても exit 0 のまま。理由を出す", () => {
+    const f = fake({
+      syncMain: () => {
+        throw new Error("想定外の失敗");
+      },
+    });
+    expect(run(ARGS, "/repo", f.deps)).toBe(0);
+    expect(f.text()).toContain("本体の main を進めなかった");
+    expect(f.text()).toContain("想定外の失敗");
+  });
+  it("事後検証が赤（マージ済みの exit 3）なら進めず、確かめてから打つコマンドを案内する", () => {
+    const f = fake({ "issue view": ok({ state: "OPEN" }) });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.syncs).toHaveLength(0);
+    expect(f.text()).toContain("本体の main は進めていない");
+    expect(f.text()).toContain('git -C "/repo" merge --ff-only origin/main');
+  });
+  it("マージの成否を確かめられない（exit 3）なら、進めず案内もしない", () => {
+    const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "boom" } });
+    expect(run(ARGS, "/repo", f.deps)).toBe(3);
+    expect(f.syncs).toHaveLength(0);
+    expect(f.text()).not.toContain("本体の main は進めていない");
+  });
+  it("マージ前に止めた（exit 1）・走らなかった（exit 2）・--dry-run では進めない", () => {
+    const f1 = fake({ "pr view:pre": preview({ state: "CLOSED" }) });
+    expect(run(ARGS, "/repo", f1.deps)).toBe(1);
+    const f2 = fake({ "repo view": { status: 1, stdout: "", stderr: "no gh" } });
+    expect(run(ARGS, "/repo", f2.deps)).toBe(2);
+    const f3 = fake();
+    expect(run([...ARGS, "--dry-run"], "/repo", f3.deps)).toBe(0);
+    expect([f1.syncs, f2.syncs, f3.syncs]).toEqual([[], [], []]);
+  });
+  it("実際の依存は fastForwardMain へ直結している", () => {
+    expect(realDeps.syncMain).toBe(fastForwardMain);
   });
 });
 

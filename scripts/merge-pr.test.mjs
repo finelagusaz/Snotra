@@ -1,6 +1,6 @@
 import { afterAll, describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -52,7 +52,8 @@ function fake(over = {}) {
   const keyOf = (cmd, args) => {
     if (cmd === "git") return args[0];
     const k = `${args[0]} ${args[1]}`;
-    if (k === "pr view") return args.some((a) => a.startsWith("state,mergedAt")) ? "pr view:post" : "pr view:pre";
+    // 完全一致で見る——`mergeCommit` を `--json` から落とす退行を、post の経路へ誤って振り分けないため
+    if (k === "pr view") return args.includes("state,mergedAt,mergeCommit") ? "pr view:post" : "pr view:pre";
     if (k === "pr list") return args.includes("merged") ? "pr list:merged" : "pr list:open";
     return k;
   };
@@ -193,7 +194,7 @@ describe("run — マージ後に本体のローカル main を進める（#1528
     expect(run(ARGS, "/repo", f.deps)).toBe(3);
     expect(f.syncs).toHaveLength(0);
     expect(f.text()).toContain("本体の main は進めていない");
-    expect(f.text()).toContain('git -C "/repo" merge --ff-only origin/main');
+    expect(f.text()).toContain('git -C "/repo" fetch origin main のあと git -C "/repo" merge --ff-only origin/main');
   });
   it("マージの成否を確かめられない（exit 3）なら、進めず案内もしない", () => {
     const f = fake({ "pr view:post": { status: 1, stdout: "", stderr: "boom" } });
@@ -834,5 +835,65 @@ describe("fastForwardMain — 本体のローカル main を origin/main へ進�
     expect(res.notes.join("\n")).toContain("本体の main が origin/main より先にある");
     expect(res.notes.join("\n")).not.toContain("既に最新");
     expect(r.head()).toBe(before);
+  });
+
+  it("止めたときの案内は fetch から打たせ、前提を整えて案内どおりに打てばマージまで届く", { timeout: T }, () => {
+    const r = ffRepos();
+    g(r.root, ["switch", "-q", "-c", "feat/y"]);
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain(`git -C "${r.root}" fetch origin main のあと git -C "${r.root}" merge --ff-only origin/main`);
+    g(r.root, ["switch", "-q", "main"]); // 案内の前提（main へ戻る）
+    g(r.root, ["fetch", "-q", "origin", "main"]);
+    g(r.root, ["merge", "-q", "--ff-only", "origin/main"]);
+    expect(r.head()).toBe(r.merge);
+  });
+
+  it("追加パスの祖先を無視されたファイルが塞いでいれば止め、内容を守る（ff はファイルをディレクトリで置き換える）", { timeout: T }, () => {
+    const r = ffRepos({
+      change: (seed) => {
+        mkdirSync(path.join(seed, "d"));
+        writeFileSync(path.join(seed, "d", "x.txt"), "x\n");
+      },
+    });
+    appendFileSync(path.join(r.root, ".git", "info", "exclude"), "d\n");
+    writeFileSync(path.join(r.root, "d"), "mine\n");
+    const before = r.head();
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain("追跡していないファイルがある");
+    expect(res.notes.join("\n")).toContain(": d");
+    expect(r.head()).toBe(before);
+    expect(readFileSync(path.join(r.root, "d"), "utf8")).toBe("mine\n");
+  });
+
+  it("大文字小文字だけのリネームは、移動先が追跡中のファイルに当たっても止めない", { timeout: T }, () => {
+    const r = ffRepos({
+      files: { "a.txt": "a\n", "foo.txt": "f\n" },
+      change: (seed) => g(seed, ["mv", "foo.txt", "Foo.txt"]),
+    });
+    const res = fastForwardMain(r.root, r.merge);
+    expect(res.notes.join("\n")).not.toContain("追跡していないファイルがある");
+  });
+
+  it.each([
+    ["status", "本体の状態を読めない"],
+    ["diff", "マージで追跡されるパスを列挙できない"],
+    ["ls-tree", "本体の追跡ファイルの一覧を読めない"],
+  ])("git %s が失敗したら素通りせずに止める", (failing, reason) => {
+    const answers = {
+      "symbolic-ref": "main\n",
+      status: "",
+      fetch: "",
+      "merge-base": "",
+      "rev-parse": "a".repeat(40),
+      diff: "new.txt\0",
+      "ls-tree": "a.txt\0",
+    };
+    // rev-parse は HEAD と origin/main に同じ値を返すので、先行の判定（判定 5）は走らない
+    const exec = (_root, args) => (args[0] === failing ? { status: 128, stdout: "", stderr: "boom" } : { status: 0, stdout: answers[args[0]] ?? "", stderr: "" });
+    const res = fastForwardMain("/nowhere", MERGE, exec);
+    expect(res.ok).toBe(false);
+    expect(res.notes.join("\n")).toContain(reason);
   });
 });

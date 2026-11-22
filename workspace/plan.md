@@ -108,6 +108,10 @@ git の呼び出しは exit code を見て分岐する（rc ≠ 0 で例外を�
 
 - [x] `npm test` と `npm run governance:check` が緑
 
+## 消し込み（Step 3 のラウンド）
+
+- R1 `67c1f9dc`: verify:tree green（E `npm test`・F governance:check、warnings なし）。委譲: High 1・Medium 2・Low 4・⚠️ 2。変異注入 30 本、落ちた 26・生き残り 4（J2-statusfail・J6-statusfail・R-jsonfield・R-outerr）。実地: 一時リポジトリで正常・各停止と案内のコマンドを打った。直した: High-1 案内に fetch を含める（判定 1・2 と exit 3 では本体の origin/main がマージ前のままで、merge だけだと `Already up to date.` で終わる。`manualSyncCommand` に集約）／Medium-1 追加パスの祖先を塞ぐファイルも数える／Medium-2 `keyOf` を完全一致に（R-jsonfield）／Low-1 大文字小文字だけのリネームを追跡中のファイルとして除く／Low-2 status・diff・ls-tree の失敗のテスト（J2・J6）／Low-4 冒頭コメントの exit 3 の記述。残した: Low-3 出力先 out/err（表示先だけで挙動を変えない）、⚠️-1 `diff.renames=false` 環境での変異の効き（製品は安全側）、⚠️-2 fetch の timeout が孫プロセスを止めない（#1352 と同じ型。timeout は保険で、止まらなくても終了コードは変わらない）
+
 ## 未確定（実装前に潰す）
 
 - [x] （裁定）どう直すか — 問い: 「merge:pr が main を進める／規範に一言書くだけ／merge:pr は案内だけ出す」。回答: 「merge:pr が main を進める (Recommended)」

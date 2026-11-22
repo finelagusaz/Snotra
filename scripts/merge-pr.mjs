@@ -24,9 +24,9 @@
 // - exit 0 の後に、そのブランチのツールの worktree と要約を片づける（#1359。どのスキルを経たかに依らず閉じるため）。
 //   exit 3 では人が調べる材料として残す。片づけの失敗は終了コードを変えない
 // - exit 0 の後に、本体のローカル main を origin/main へ fast-forward する（#1528。スラッシュコマンド・Skill ツール・hook は
-//   本体の版を読むため）。本体に触ってよいかの判定は `fastForwardMain` が持つ。exit 3 では進めず、手で打つコマンドを案内する
+//   本体の版を読むため）。本体に触ってよいかの判定は `fastForwardMain` が持つ。exit 3 では進めず、マージ済みの判定のときだけ手で打つコマンドを案内する
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discardBranchArtifacts, mainRoot, summaryPathFor } from "./verify-tree.mjs";
@@ -53,7 +53,9 @@ export const FETCH_TIMEOUT_MS = 60_000;
  * 止めたときは、理由を解消する操作を先に書く——`merge --ff-only` だけを案内すると、人が上の害を再現する
  */
 export function fastForwardMain(root, mergeCommit, exec = gitExec) {
-  const manual = `git -C "${root}" merge --ff-only origin/main`;
+  // fetch を含める——判定 1・2 は fetch の手前で止まるので、本体の origin/main はマージ前のままで、
+  // merge だけを打つと `Already up to date.` で終わる（#1528 の委譲レビューで実測）
+  const manual = manualSyncCommand(root);
   const stop = (reason, todo) => ({ ok: false, notes: [`本体の main を進めなかった: ${reason}`, todo] });
   const retry = `時間を置いて、git -C "${root}" fetch origin main からやり直す`;
 
@@ -82,7 +84,8 @@ export function fastForwardMain(root, mergeCommit, exec = gitExec) {
   // リネームの移動先も新しく追跡されるので `--no-renames`。非 ASCII のパスを引用させないので `-z`
   const added = exec(root, ["diff", "--no-renames", "--name-only", "-z", "--diff-filter=A", "HEAD", "origin/main"]);
   if (added.status !== 0) return stop(`マージで追跡されるパスを列挙できない（${added.stderr}）`, manual);
-  const occupied = added.stdout.split("\0").filter((p) => p !== "" && existsSync(path.join(root, p)));
+  const occupied = occupiedPaths(root, added.stdout.split("\0").filter((p) => p !== ""), exec);
+  if (occupied === null) return stop("本体の追跡ファイルの一覧を読めない", manual);
   if (occupied.length > 0) {
     return stop(`マージで追跡されるパスに、追跡していないファイルがある（無視されたものを含む）: ${occupied.join(", ")}`, `名指したファイルを退避してから、${manual}`);
   }
@@ -92,6 +95,38 @@ export function fastForwardMain(root, mergeCommit, exec = gitExec) {
   const after = exec(root, ["rev-parse", "HEAD"]).stdout.trim();
   if (after === before) return { ok: true, notes: ["本体の main は既に最新"] };
   return { ok: true, notes: [`本体の main を進めた: ${before.slice(0, 8)}..${after.slice(0, 8)}`] };
+}
+
+/** 本体を手で origin/main へ進めるコマンド。fetch から打つ（本体の origin/main はマージ前のままでありうる） */
+export function manualSyncCommand(root) {
+  return `git -C "${root}" fetch origin main のあと git -C "${root}" merge --ff-only origin/main`;
+}
+
+/**
+ * マージで新たに追跡されるパスのうち、本体で追跡していないものに塞がれているもの。パスそのものに加え、
+ * 祖先がディレクトリでないもの（無視されたファイル `d` に対する `d/x.txt`）も数える——ff はそれを黙って消す。
+ * HEAD で追跡しているものは大文字小文字を区別せずに除く（大文字小文字だけのリネームは、大文字小文字を区別しない
+ * FS では移動先が「在る」と見える）。追跡の一覧を読めなければ null
+ */
+function occupiedPaths(root, added, exec) {
+  const tracked = exec(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]);
+  if (tracked.status !== 0) return null;
+  const trackedLower = new Set(tracked.stdout.split("\0").filter((p) => p !== "").map((p) => p.toLowerCase()));
+  const blocked = new Set();
+  for (const p of added) {
+    const parts = p.split("/");
+    for (let i = 1; i <= parts.length; i++) {
+      const prefix = parts.slice(0, i).join("/");
+      if (trackedLower.has(prefix.toLowerCase())) continue;
+      const full = path.join(root, prefix);
+      if (!existsSync(full)) break;
+      if (i === parts.length || !statSync(full).isDirectory()) {
+        blocked.add(prefix);
+        break;
+      }
+    }
+  }
+  return [...blocked];
 }
 
 /** `git -C <root> ...` を shell なしで呼び、終了コードで分岐できる形で返す（投げない） */
@@ -416,7 +451,7 @@ export function run(argv, cwd, deps = realDeps) {
   const tally = `\n（事後検証: 観測 ${observations} 回・待ち計 ${waited / 1000} 秒）`;
   if (findings.length > 0) {
     // 本体の main は進めない（人が調べる場面で本体を動かさない）。ただしマージは済んでいるので、旧版が動く害は残る（#1528）
-    const syncHint = `\n本体の main は進めていない。本体が main に居て追跡ファイルに変更が無いことを確かめてから、git -C "${root}" merge --ff-only origin/main を打つ`;
+    const syncHint = `\n本体の main は進めていない。本体が main に居て追跡ファイルに変更が無いことを確かめてから、${manualSyncCommand(root)} を打つ`;
     deps.err(`merge-pr: マージ済み（#${opts.pr}・${mergedAt}）。ただし要確認 ${findings.length} 件:\n${findings.map((f) => `- ${f}`).join("\n")}${tally}${ghNote}${syncHint}`);
     return 3;
   }

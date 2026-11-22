@@ -44,7 +44,7 @@ git switch --no-track -c <feat|fix|chore>/<short-name> origin/main
 
 前のサイクルの `workspace/` の成果物は、今回の事実として再利用しない。`workspace/research.md` と `workspace/plan.md` は、今回の issue 用に書き直す。
 
-`RETROSPECTIVE.md`、`SPEC.md`、関連する `CLAUDE.md`、コードを読み、`workspace/research.md` に次だけを書く。
+`SPEC.md`、関連する `CLAUDE.md`、コードを読み、`workspace/research.md` に次だけを書く。
 
 - issue の要約
 - 関連するファイル・モジュール・関数

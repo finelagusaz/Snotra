@@ -1,8 +1,8 @@
 ---
 name: retrospective
-description: "開発サイクル完了時（実装・レビュー・追加修正まで済んだ後）に使用。教訓の抽出・残タスクの振り分け・RETROSPECTIVE.md 更新を行う。"
+description: "まとまった範囲の変更を振り返る必要を、人が感じたときに使用。範囲の PR から教訓を抽出してトリガーへ配置し、残タスクを振り分け、RETROSPECTIVE.md を上書きする。"
 disable-model-invocation: true
-argument-hint: "[対象ブランチ名や作業の概要（省略時は現在のブランチの差分を使用）]"
+argument-hint: "[範囲: PR 番号の一覧・起点の sha・日付のどれか（省略時は前回の振り返りの終点から origin/main まで）]"
 allowed-tools:
   - Bash(git *)
   - Bash(gh *)
@@ -13,23 +13,32 @@ allowed-tools:
   - Glob
 ---
 
-開発サイクルの振り返りを行う。質問せずに自律的に進める。例外はスキル自体の更新である。その採否だけはユーザーに諮る（Step 2）。
+まとまった範囲の変更を振り返る。質問せずに自律的に進める。例外は 2 つある。スキル自体を更新するかどうか（Step 2）と、範囲の起点が決まらないとき（Step 1）は、ユーザーに諮る。
+
+振り返る単位（このスキルでいう「サイクル」）は、前回の振り返りの終点から今までに main へ入った変更と、未マージのこのブランチである。引数で範囲を絞れる。走らせるかどうかは人が決める（手戻りが続いた・新しい型の失敗が出た・まとまった PR を終えた、など）。毎 PR では回さない。当初は `/implement` と対にして毎回回していたが、開発の手順が安定して、頻度が下がった。積み残し・却下した案・範囲外の作業は、いまは `/implement` と PR 本文の「残したもの」が受け持つ。構造的パターンの抽出と配置（Step 2・3）、メモリの鮮度（Step 6）、health-check（Step 7）は、このスキルが受け持つ。
 
 対象: $ARGUMENTS
 
 ## Step 1 — サイクルの全体像を把握
 
-```bash
-git fetch origin
-git log origin/main..HEAD --oneline
-git diff origin/main...HEAD --stat
-```
+1. `git fetch origin` を打ち、範囲を決める
+   - 引数が PR 番号の一覧なら、その PR だけを対象にする（`gh pr view <N> --json title,body,mergeCommit,comments,reviews`）。下の 2・3 は飛ばす
+   - 引数が sha なら、それを起点にする。日付なら、`git rev-list -1 --before=<日付> origin/main` で sha に直して起点にする
+   - 引数が無ければ、`RETROSPECTIVE.md` の範囲の行（Step 5）の終点を起点にする
+2. 起点を確かめる。`git cat-file -e <起点>^{commit}` で存在を、`git merge-base --is-ancestor <起点> origin/main` で `origin/main` の祖先であることを確かめる（存在しない sha では後者が exit 128 で落ちるので、この順に打つ）。範囲の行が無い・起点が存在しない・祖先でない、のどれかなら、起点をユーザーに尋ねる
+3. 列挙する
 
-（`diff` は 3 点形にする。起点と比べ方の理由は `AGENTS.md`「検証の作法（全タスク共通）」にある）
+   ```bash
+   git log --oneline <起点>..origin/main
+   git diff --stat <起点>...origin/main
+   git log --oneline origin/main..HEAD
+   ```
 
-- 変更したファイルとコミット履歴から、サイクルの全体像を把握する
-- `workspace/plan.md` があれば読み、当初の計画と実際の実装を比較する
-- PR のコメントやレビュー指摘があれば、`gh pr view` で確認する
+   （起点と比べ方の理由は `AGENTS.md`「検証の作法（全タスク共通）」にある）
+
+   `git rev-list --count <起点>..origin/main` と `git rev-list --count origin/main..HEAD` がどちらも 0 なら、振り返る対象が無いと報告して止まる
+4. PR を読む。squash マージなので、`origin/main` の各コミットの件名末尾の `(#N)` が PR 番号である（`(#issue) (#PR)` と 2 つ並ぶときは後ろが PR）。PR ごとに、本文（とくに「残したもの」）とレビュー指摘を `gh pr view` で読む
+5. 当初の計画と実際の実装を比べる。マージ済みの PR では、`workspace/plan.md` は main に残らない（squash マージで、撤去の前のコミットも main に入らない）。そのため PR 本文を一次資料にする。`workspace/plan.md` を読むのは、未マージのブランチにあるときだけである
 
 ## Step 2 — 振り返りの分析
 
@@ -90,6 +99,8 @@ Step 3・Step 4 が終わってから、`RETROSPECTIVE.md` を次の 2 セクシ
 ```markdown
 # Retrospective — <サイクルの概要>
 
+範囲: <起点の完全 sha>..<終点の完全 sha>（YYYY-MM-DD）
+
 ## よかったこと
 
 ### <見出し>
@@ -106,6 +117,9 @@ Step 3・Step 4 が終わってから、`RETROSPECTIVE.md` を次の 2 セクシ
 - 各節（`###` 配下）には「次のサイクルで効く一点」だけを書く。`RETROSPECTIVE.md` は次のサイクルで上書きされるので、どれだけ読んだかの証明や経緯の説明は要らない。ただし、節を短く保つことは、Step 3 の教訓の配置を省く理由にならない（上書きで消えるのはここの記述であって、トリガーに括り付けた教訓ではない。節を短くするために教訓の抽出そのものを 1 件へ絞ると、`AGENTS.md`「RETROSPECTIVE.md の運用」の不変条件が防ごうとした失敗に戻る）
 - 前回の内容は上書きする（追記しない）
 - 実行タスク・未完了の項目は書かない（Step 4 で issue / PR へ振り分け済みである）
+- `RETROSPECTIVE.md` は振り返りの記録であり、作業の入口では読まれない。次の作業に効かせたい教訓は、Step 3 でトリガーに紐づく文書へ置く
+- 範囲の行の終点は、Step 1 で取った `git rev-parse origin/main` である。次回の既定の起点になる。終点を進めてよいのは、範囲が前回の終点から `origin/main` まで途切れずに覆ったとき（引数なし、または起点が前回の終点と同じかその祖先）だけである。PR 番号の一覧や、前回の終点より後の起点で回したときは、前回の範囲の行をそのまま写す（対象外の PR を済み扱いにして、次回の既定の範囲から落とさないため）
+- 未マージのブランチの変更（`origin/main..HEAD`）と、この振り返り自身の PR は、記録した終点より後に main へ入るので、次回の範囲に現れる。次回はそれを読み飛ばしてよい
 
 ## Step 6 — メモリの鮮度チェック
 

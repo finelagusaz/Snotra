@@ -81,25 +81,26 @@
 
 ### Phase 1 — `/retrospective` の定義と Step 1・Step 5
 
-- [ ] description と argument-hint を書き直す
-- [ ] 冒頭に単位と契機の定義を置き、質問してよい例外に「範囲の起点が決まらないとき」を足す
-- [ ] Step 1 を「Step 1 の新しい形」の 1〜4（起点の確かめ・空の範囲で止まる・日付の sha への変換を含む）のとおり書き直す（見出しは変えない）
-- [ ] Step 5 のフォーマットに範囲の行を足し、「範囲の行の更新（Step 5）」の 3 項（書く形・終点を進めてよい条件・次回に現れるもの）と、入口では読まれない記録であることを書く
-- [ ] `RETROSPECTIVE.md` の見出し直下に範囲の行を足す（`範囲: 〜..<d2a0b9a4 の完全 sha>（2026-11-03）`）
+- [x] description と argument-hint を書き直す
+- [x] 冒頭に単位と契機の定義を置き、質問してよい例外に「範囲の起点が決まらないとき」を足す
+- [x] Step 1 を「Step 1 の新しい形」の 1〜4（起点の確かめ・空の範囲で止まる・日付の sha への変換を含む）のとおり書き直す（見出しは変えない）
+- [x] Step 5 のフォーマットに範囲の行を足し、「範囲の行の更新（Step 5）」の 3 項（書く形・終点を進めてよい条件・次回に現れるもの）と、入口では読まれない記録であることを書く
+- [x] `RETROSPECTIVE.md` の見出し直下に範囲の行を足す（`範囲: 〜..<d2a0b9a4 の完全 sha>（2026-11-03）`）
 
 ### Phase 2 — 入口と規範文書
 
-- [ ] `AGENTS.md`「開発ワークフロー」冒頭の 1 文を削る
-- [ ] `/start-issue`「3a. 調査を書く」の列挙から `RETROSPECTIVE.md` を外す
-- [ ] `/implement`「1b. 分岐」の調査項目から `RETROSPECTIVE.md` を削る
-- [ ] ルート `CLAUDE.md`「チーム憲章」の列挙から `RETROSPECTIVE.md` を外す
-- [ ] ルート `CLAUDE.md` スキル表の `/retrospective` 行を書き直す
+- [x] `AGENTS.md`「開発ワークフロー」冒頭の 1 文を削る
+- [x] `/start-issue`「3a. 調査を書く」の列挙から `RETROSPECTIVE.md` を外す
+- [x] `/implement`「1b. 分岐」の調査項目から `RETROSPECTIVE.md` を削る
+- [x] ルート `CLAUDE.md`「チーム憲章」の列挙から `RETROSPECTIVE.md` を外す
+- [x] ルート `CLAUDE.md` スキル表の `/retrospective` 行を書き直す
 
 ### Phase 3 — 検証
 
-- [ ] `npm run governance:check` が緑
-- [ ] 凍結記録を除いた `git grep -n "RETROSPECTIVE"` の全件を分類し、入口で読ませる記述が 0 件
-- [ ] Step 1 のコマンドを `d2a0b9a4` 起点で打ち、祖先判定が真であること、このブランチの未マージのコミット（workspace のコミット）で偽になること、存在しない sha で `cat-file -e` が非 0 になることを確かめる。日付 `2026-11-04` が `rev-list -1 --before` で sha に変わることも確かめる
+- [x] `npm run governance:check` が緑
+- [x] 凍結記録を除いた `git grep -n "RETROSPECTIVE"` の全件を分類し、入口で読ませる記述が 0 件
+- [x] Step 1 のコマンドを `d2a0b9a4` 起点で打ち、祖先判定が真であること、このブランチの未マージのコミット（workspace のコミット）で偽になること、存在しない sha で `cat-file -e` が非 0 になることを確かめる。日付 `2026-11-04` が `rev-list -1 --before` で sha に変わることも確かめる
+  - 結果（主ツリー）: governance:check 13 件 passed。`RETROSPECTIVE` の残りは、retrospective/SKILL.md・`AGENTS.md`「RETROSPECTIVE.md の運用」・スキル表・governance-docs.md の #1222（歴史）・build.rs（範囲外）・path_query_cost.rs（真）で、入口で読ませる記述は 0 件。`d2a0b9a4` 祖先=0、workspace のコミット 祖先=1、存在しない sha の `cat-file -e`=128、`2026-11-04`→`48d0f981`。health-check 7d の `/retrospective`「Step 6」は見出し「Step 6 — メモリの鮮度チェック」が残る
 
 ## PR について
 

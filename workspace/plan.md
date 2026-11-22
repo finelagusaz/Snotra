@@ -72,19 +72,19 @@
 
 ### Phase 1 — テスト（Red）
 
-- [ ] 受け入れ条件 1〜5 のテストを書き、今の実装で落ちる・通るの内訳が上のとおりであることを確かめる
+- [x] 受け入れ条件 1〜5 のテストを書き、今の実装で落ちる・通るの内訳が上のとおりであることを確かめる
 
 ### Phase 2 — 実装（Green）
 
-- [ ] `ghPrCreateView` を `unquotedView` へ改名し、テストの import と describe 名を直す
-- [ ] `ENV_PREFIX_QUOTED`・`FLAG_QUOTED` と `*_QUOTED` の正規表現、`firstCommandAt` を足す
-- [ ] `ENV_PREFIX` の値から区切り文字を外す
-- [ ] `ghPrCreateSites`・`hasSafeChain`・`gitSegments`・`usesNoVerify`・`pullWithoutFfOnly`・`needsPyEncoding`・`REMEDY` を変更する
-- [ ] 冒頭のコメントと各 doc を直す
+- [x] `ghPrCreateView` を `unquotedView` へ改名し、テストの import と describe 名を直す
+- [x] `ENV_PREFIX_QUOTED`・`FLAG_QUOTED` と `*_QUOTED` の正規表現、`firstCommandAt` を足す
+- [x] `ENV_PREFIX` の値から区切り文字を外す
+- [x] `ghPrCreateSites`・`hasSafeChain`・`gitSegments`・`usesNoVerify`・`pullWithoutFfOnly`・`needsPyEncoding`・`REMEDY` を変更する
+- [x] 冒頭のコメントと各 doc を直す
 
 ### Phase 3 — 検証
 
-- [ ] `npm test` と `npm run governance:check` が緑
+- [x] `npm test` と `npm run governance:check` が緑
 
 ## 範囲外（PR 本文の「残したもの」へ）
 

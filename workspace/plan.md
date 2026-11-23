@@ -41,12 +41,12 @@
 ## 作業項目
 
 ### フェーズ 1 — テスト（Red）
-- [ ] `scripts/race-boundaries.test.mjs` に read_config 経由の読みの describe を足す（3 形・行とパターンの組で assert）
-- [ ] 赤になることを確かめる
+- [x] `scripts/race-boundaries.test.mjs` に read_config 経由の読みの describe を足す（3 形・行とパターンの組で assert）
+- [x] 赤になることを確かめる（assert で hits が [] ・実測）
 
 ### フェーズ 2 — 実装（Green）
-- [ ] `KINDS` ④ に `read_config\(` を足し、コメントに理由を書く
-- [ ] `npm test` と `npm run governance:check` が通る
+- [x] `KINDS` ④ に `read_config\(` を足し、コメントに理由を書く
+- [x] `npm test` と `npm run governance:check` が通る
 - [ ] 変異（パターンを外す）でテストが assert で赤になることを確かめる
 
 ## 残すもの（PR 本文へ）

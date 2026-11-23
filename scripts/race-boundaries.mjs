@@ -32,10 +32,12 @@ export const KINDS = [
   // 新しく読む変更が当たらない（#1473 の drain 照合 `self.config.read()` が実例）。取得は引数なしの形に限る——
   // `\.read\(` は `io::Read::read(&mut buf)`・`OpenOptions::read(true)`・`snapshot.read(path)` に当たり、
   // 履歴の追加行 119 行のうち真陽性は 14 行だった。引数なしの形は同じ母集団で 14 行すべてが RwLock の取得だった（716b816 で実測）。
+// `read_config(` も置く（#1527）——src-tauri の config の読みは `AppState::read_config` / `egui_shell::read_config` を通し
+// （規則は `AppState::read_config` の doc が正本）、呼び出し行に `.read()` が現れない。定義行 `fn read_config<T>(` には当たらない。
   {
     ord: "④",
     name: "managed state の読み書き",
-    patterns: ["try_state", "Mutex", "Atomic", "\\.lock\\(", "RwLock", "\\.read\\(\\)", "\\.write\\(\\)"],
+    patterns: ["try_state", "Mutex", "Atomic", "\\.lock\\(", "RwLock", "\\.read\\(\\)", "\\.write\\(\\)", "read_config\\("],
   },
   { ord: "⑤", name: "Tauri listener / emit", patterns: ["\\.listen\\(", "\\.emit\\(", "events::"] },
   // ⑥ は定義上 ① の部分集合で、独立した grep を原理的に書けない。

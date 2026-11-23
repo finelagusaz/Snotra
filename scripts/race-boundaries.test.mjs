@@ -228,6 +228,29 @@ describe("④ の RwLock 系（#1040 — #1036 の中核が母集団に現れな
   });
 });
 
+describe("④ の read_config 経由の読み（#1527 — 呼び出し行に .read() が出ない）", () => {
+  // 行は現行ソースから写した: `AppState::read_config` を直接呼ぶ形（commands/icon.rs）と、
+  // `egui_shell::read_config` を呼ぶ 2 形（window_coordinator.rs の `super::`・search_flow.rs の `crate::egui_shell::`）。
+  const diff = [
+    "diff --git a/src-tauri/src/egui_shell/window_coordinator.rs b/src-tauri/src/egui_shell/window_coordinator.rs",
+    "--- a/src-tauri/src/egui_shell/window_coordinator.rs",
+    "+++ b/src-tauri/src/egui_shell/window_coordinator.rs",
+    "@@ -10,0 +11,3 @@",
+    "+        state.read_config(|cfg| (cfg.appearance.show_icons, cfg.icon_cache_cap()));",
+    "+    let hex = super::read_config(",
+    "+        crate::egui_shell::read_config(",
+    "",
+  ].join("\n");
+
+  it("どの呼び出し形も read_config のパターンで ④ に立つ", () => {
+    expect(kindOf(run(parseDiff(diff)), "④").hits.map((h) => [h.text, h.pattern])).toEqual([
+      ["state.read_config(|cfg| (cfg.appearance.show_icons, cfg.icon_cache_cap()));", "read_config\\("],
+      ["let hex = super::read_config(", "read_config\\("],
+      ["crate::egui_shell::read_config(", "read_config\\("],
+    ]);
+  });
+});
+
 describe("formatReport（#800 — 費用が結論に依存しない）", () => {
   const meta = { base: "main", mergeBase: "abcdef1234", changedFiles: 1, untrackedFiles: 0, populationLines: 1, includeRemoved: false };
 

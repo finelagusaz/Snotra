@@ -1,0 +1,55 @@
+敵対的調査 #1527（research.md の反証）
+測定: ls-files の全 .rs/.ts/.tsx/.mjs/.ps1 を行に分解し、scripts/race-boundaries.mjs の selectPopulation（SOURCE_EXT + isCommentLine）と KINDS ④ を import して実行（sign "+" として全行投入）。
+
+【結果の要約】
+壊せなかった: 命題 1（呼び出し行の網羅）・2（誤当たり 1 行のみ）・3（ラベル奪取なし）・5（写しなし）、測定環境（コメント除外の一致）。
+壊せた（弱めた）: 命題 4 の「書き込みの入口を足す必要はない」は全称としては弱い（⚠️）。
+
+■ 測定環境（research.md の grep とスクリプトの一致）
+- 全ソースで `read_config` を含む行は 56 行。selectPopulation を通ると 27 行が残る（29 行はコメント行で除外）。
+- 残った 27 行のうち `read_config\(` に当たる行（コメント外）は 25 行。research.md の「25 行」と一致。内訳は config の読み 24 行 + activation/tests.rs:733 の文字列リテラル 1 行。
+- 残り 2 行は定義行（mod.rs:464 `pub(crate) fn read_config<T>(`、state.rs:143 `pub fn read_config<T>(`）。`<T>` が挟まるので `read_config\(` に当たらない。
+- 除外されたコメント行には、tests.rs:433/676/678 の `///` 行（文中に `read_config(` を含む）が入る。isCommentLine が除外しているので、research の自前除外と結果は一致した。
+  偽にする手順: `///` 以外の形（行末コメント `foo(); // read_config(` など）は isCommentLine が見ない。現行ソースに該当行は 0 件（上の 56 行の列挙で確認）。将来入れば当たる。
+- CRLF の影響は実測せず（行末の \r は `\(` の判定に関与しない）。
+
+■ 命題 1: 呼び出し行はすべて ④ に立つ／行をまたぐ形は無い — 壊せなかった
+- 現行の `read_config\(` 行 25 行は、現行 ④ のパターンでは 0 行が当たる（全て cur④=- ）。つまり今は見えていない。パターンを足せば全て立つ。
+- `read_config` が行末で終わる形、`read_config::<..>(`、`read_config (` は 0 件。`(` が次の行に落ちる形は現行に無い。
+  偽にする手順: 現行ソースに `read_config\s*$` か `read_config\s*::` か `read_config\s+\(` を含む行を 1 つ見つける。探したが 0 件。将来 rustfmt が割る形が入れば偽になる（現時点では偽でない）。
+- 関数値としての受け渡し（`map(read_config)` のように `(` が無い形）も 0 件。コメント外で `read_config` を含む 27 行は全て上の 25 呼び出し + 2 定義だった。
+- 注: 25 行には mod.rs:470 `s.read_config(read)`（AppHandle 版から AppState 版への委譲）と、state.rs:217/242 の内部呼び出しを含む。「呼び出し点」の語は広く取っている。
+
+■ 命題 2: 誤当たりは tests.rs の文字列リテラル 1 行だけ／別名は無い — 壊せなかった
+- `[A-Za-z0-9_]read_config` は全ソースで 0 件（`try_read_config(` のような別名なし）。
+- .ts/.tsx/.mjs/.ps1 に `read_config` は無い（git grep、`*.rs` 以外で当たるのは .md のみ）。scripts/ 側の出現は無い。
+- 誤当たり: activation/tests.rs:733 `for forbidden in ["read_visible_rows(", "read_config("] {` の 1 行。
+  偽にする手順: 母集団の 25 行を 1 行ずつ読む（上の列挙）。24 行が config の読みで、残りは 733 だけ。
+  ⚠️ 差分で 733 行を触る変更は ④ に偽陽性を出す。ただし他の同型（文字列に Mutex を含む行など）と同じ程度で、許容できると見る。
+
+■ 命題 3: ラベル奪取なし — 壊せなかった
+- 25 行は全て現行 ④ のどのパターンにも当たらない。新パターンを末尾に足せば、ラベルは `read_config\(` になる。`\.read\(\)`・`try_state` に奪われる行は 0 件。
+- ⚠️ ただし、将来 `read_config(|c| x.lock())` のような 1 行が入れば先に `.lock\(` が当たる。研究の「奪い合わない」は現行に限った主張である。テストで assert するパターン文字列は、研究が選んだ行（現行ソースの写し）に限れば問題ない。
+
+■ 命題 4: 書き込み側は既存パターンで立つ — 一部壊せた（⚠️）
+- config の書き込みは Engine::update_config（engine.rs:277 `*self.config.write().unwrap() = config;` は `\.write\(\)` で立つ）。
+- src-tauri の呼び出し側は 2 行（config_watcher.rs:152、state.rs:239）。どちらも `state.engine.lock().unwrap().update_config(..)` の 1 行チェーンで、`\.lock\(` で立つ。
+- 壊せた点: 呼び出し行が `.lock(` と同じ行にあることに依存している。`let mut e = state.engine.lock().unwrap();` の次行で `e.update_config(x)` と書く形では、update_config の行は ④ に立たない（`.lock(` の行は立つが、それは差分に載らないこともある）。snotra-core の tests/match_cost.rs:111・path_query_cost.rs:341/461 も `engine.update_config(..)` で、ロックを伴わない（src-tauri 外なので範囲外ではある）。
+  偽にする手順: 差分に `engine.update_config(cfg);` だけの 1 行を投入して classify に通す。④ は 0 件になる（パターンに update_config が無い）。
+  判断: issue の受け入れ条件は「読み」の列挙で、書き込みは範囲外と読める。「足す必要はない」は、「現行の src-tauri の 2 行は立つ」という主張に弱めるのが安全。
+
+■ 命題 5: 種別パターンの写しは他に無い — 壊せなかった
+- `try_state` は scripts/ 外の .claude / docs/check-skill-skeleton-design.md / docs/build-commands.md / SPEC.md / AGENTS.md に出現 0 件。
+- `race-boundaries` に言及するのは SKILL.md:22（「SSOT は scripts/race-boundaries.mjs」・パターンを写さない）、docs/build-commands.md:244（--base の説明のみ）、package.json、docs/adr の 1 件、scripts/prose-sweep.mjs のコメント。④ のパターン列は写していない。
+- パターン列の写しはテスト側にある。race-boundaries.test.mjs の④テスト（189〜228 行）は、パターンをリテラルで assert する。ただし read_config を足しても既存 assert（4 行の組）は変わらない。KINDS の ord/null の assert（34・38 行）も影響を受けない。
+  偽にする手順: `git grep -nE 'try_state|"Atomic"'` を scripts/ 以外で実行 → 0 件（実測）。docs/superpowers 配下は凍結された歴史として除外した。⚠️ 除外した範囲に写しがあってもリポジトリの規範上は問題にならないと判断した（未確認）。
+- さらに: docs/design/2026-05-31-coherence-staleset.md には Mutex・AtomicBool の語があるが、パターン列の写しではなく設計の散文。
+
+■ その他の所見
+- ⚠️ research.md の「25 行中 24 行が config の読み」の読み手は、mod.rs:470・state.rs:217・242 を含む。これらは read_config の内部実装の呼び出しで、フレーム内 live-read の入口というより定義の一部。列挙の件数を主張に使うなら「入口は〜」と書き分けたほうが正確。
+- 研究の「#1040 の比率との比較（119 行中 14 行 vs 25 行中 24 行）」は、母集団の取り方が違う（履歴の追加行 vs 現行ツリー全体）。精度の比較としては参考値にとどめる。
+- 「定義の変更は ④ の RwLock 等や try_state 側で拾われる」: mod.rs:464 の定義行自体は ④ に立たない。try_state は 468 行で立つ（本体）が、シグネチャだけを変える差分では何も立たない。パターンを `read_config\(` から `read_config` に緩めれば定義行も拾えるが、use 文・関数値・doc 外のコメント外の言及も拾う。現行 56 行ではコメント外が 27 行（25 呼び出し + 2 定義）で、緩めても増えるのは定義 2 行だけ。判断の材料として記す。
+
+■ 宣言
+壊せた項目: 命題 4 の「書き込みの入口を足す必要はない」（同一行チェーンに依存。update_config 単独行は立たない）。
+壊せなかった項目: 命題 1・2・3・5、測定環境（isCommentLine / selectPopulation / SOURCE_EXT を通した結果と research.md の数が一致: 25 行 = 24 + 1）。

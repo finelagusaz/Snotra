@@ -47,7 +47,10 @@
 ### フェーズ 2 — 実装（Green）
 - [x] `KINDS` ④ に `read_config\(` を足し、コメントに理由を書く
 - [x] `npm test` と `npm run governance:check` が通る
-- [ ] 変異（パターンを外す）でテストが assert で赤になることを確かめる
+- [x] 変異（パターンを外す）でテストが assert で赤になることを確かめる（委譲先が実測: 外す・⑤へ移す・`\.read_config\(`・`::read_config\(` に狭める の 4 本が assert で赤、④ 内で先頭へ移す 1 本は想定どおり緑）
+
+### ラウンド記録
+- R1: sha 8b6c8afe / verify:tree green（E・F） / 指摘 Low 3（Critical・High・Medium 0） / 生き残った変異 0（緑の 1 本はラベル不変で想定どおり） / 実地: worktree で `icon.rs` に呼び出し行を足し `race-boundaries.mjs --base HEAD` の ④ に `/read_config\(/` で出ること、定義行 2 つがどの種別にも出ないことを確認。Low-1（コメントが全称に読め計画から逸脱）とインデントの Low-2 を直した。Low-3（fixture の hunk のファイル名と 1 行目の出所が違う）は挙動を変えないので捨てた
 
 ## 残すもの（PR 本文へ）
 

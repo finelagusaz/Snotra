@@ -245,7 +245,7 @@ describe("verify-tree run", () => {
   });
 
   describe("sha が解決できなければ exit 2 で、git の stderr を添える（#1529）", () => {
-    /** 実装と同じ引数・同じ cwd で git を打ち、stderr を返す（git の文言は locale で変わりうるので逐語で書かない） */
+    /** 実装と同じ引数・同じ cwd で git を打ち、stderr を返す（git の文言は locale で変わりうるので、期待値を逐語で書かない） */
     function gitStderr(cwd, value) {
       try {
         execFileSync("git", ["rev-parse", "--verify", `${value}^{commit}`], { cwd, encoding: "utf8", stdio: "pipe" });
@@ -267,18 +267,16 @@ describe("verify-tree run", () => {
       expect(r.output).toContain(stderr);
     });
 
-    it("commit でないオブジェクト（tree）の sha——固定文言に無い理由を stderr が持つ", { timeout: T }, () => {
+    it("commit でないオブジェクト（tree）の sha——git の stderr が、固定の文言に無い理由を持つ",{ timeout: T }, () => {
       const repo = initRepo();
       const value = git(repo, ["rev-parse", "HEAD^{tree}"]);
       const stderr = gitStderr(repo, value);
-      const reason = stderr.split("\n").find((l) => l.startsWith("error:"));
-      expect(reason, stderr).toBeDefined();
+      expect(stderr).toMatch(/^error:/m);
 
       const r = runScript(repo, ["run", "--sha", value]);
 
       expect(r.status, r.output).toBe(2);
       expect(r.output).toContain(`sha が解決できない: ${value}`);
-      expect(r.output).toContain(reason);
       expect(r.output).toContain(stderr);
     });
   });

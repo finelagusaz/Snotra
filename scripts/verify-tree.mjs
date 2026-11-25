@@ -163,8 +163,8 @@ function resolveSha(cwd, sha) {
   try {
     return git(cwd, ["rev-parse", "--verify", `${sha}^{commit}`]);
   } catch (e) {
-    // git の stderr で、打ち間違い（`Needed a single revision` だけ）と曖昧な短縮形・commit でない型を見分ける（#1529）。
-    // `||` なのは、timeout や stderr 無しの非 0 終了で `e.stderr` が空文字列になるため
+    // git の stderr を添えると、打ち間違い（`Needed a single revision` だけが出る）と、曖昧な短縮形・commit でない型を見分けられる（#1529）。
+    // `??` でなく `||` にするのは、git が stderr を出さずに非 0 で終わると `e.stderr` が空文字列になるため
     throw new EnvError(`sha が解決できない: ${sha}\n${e.stderr?.trim() || e.message}`);
   }
 }

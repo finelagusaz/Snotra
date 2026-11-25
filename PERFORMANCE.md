@@ -780,7 +780,7 @@ std の `Stderr` はバッファを持たない。そのため 1 行が数十回
 **測定条件**:
 
 - 2026-11-25 / 機体 **HAL9000** / release / 検証用プロファイル（`New-SnotraVerificationProfile` の既定）
-- `SNOTRA_TRACE=1`。stderr は `Start-SnotraProcess -StandardErrorPath`（smoke と同じリダイレクト）で受けた。このリダイレクトは write-through で開くので、書き込みの値にはその単価が乗る（下の「不採用: `Start-SnotraProcess` の起動の形を替えて stderr の write-through を外す（#1543）」）
+- `SNOTRA_TRACE=1`。stderr は `Start-SnotraProcess -StandardErrorPath`（smoke と同じリダイレクト）で受けた。このリダイレクトはファイルを write-through で開くので、書き込みの値には write-through の単価が乗る（下の「不採用: `Start-SnotraProcess` の起動の形を替えて stderr の write-through を外す（#1543）」）
 - 操作: Alt+F12 で表示 → 3 文字打鍵 → Escape で非表示。これを 1 回とし、25 回で 1 巡とする。1 巡あたり 502 行
 - 計装: 両方の版に、「行の組み立て + 書き込み」を計時して次の行へ載せる一時の計装（コミットしていない）を入れた
 - 版: 前（`40470781`）と後（`70a14ce1`）を、別々の worktree と `CARGO_TARGET_DIR` でビルドした。前 → 後 → 前 → 後の順に 2 巡ずつ回した
@@ -801,13 +801,21 @@ std の `Stderr` はバッファを持たない。そのため 1 行が数十回
 ### 不採用: `Start-SnotraProcess` の起動の形を替えて stderr の write-through を外す（#1543）
 
 **`Start-Process -RedirectStandardError` で受けた stderr への書き込みは、1 回ごとに write-through の単価を負う。**
-PowerShell の `Process.cs`（`GetSafeFileHandleForRedirection`）は、リダイレクト先を `File.OpenHandle(..., FileShare.ReadWrite | FileShare.Inheritable, FileOptions.WriteThrough)` で開き、
-`STARTUPINFO.hStdError` に入れて `CreateProcess` で子へ渡す（タグ v7.5.0 / v7.6.0 / v7.7.0 で同じ）。子が受け取るのはディスクのファイルのハンドルで、
-パイプではない。cmd の `2>file` はこのフラグを付けない。
+PowerShell の `Process.cs` の `GetSafeFileHandleForRedirection` は、リダイレクト先を次の形で開く（タグ v7.5.0 / v7.6.0 / v7.7.0 で同じ）。
 
-**測定条件**: 2026-11-25 / 機体 **HAL9000** / pwsh 7.7.0（.NET 11.0.0）。子は、自分の stderr を `GetFileType` と `NtQueryInformationFile(FileModeInformation)` で読み、
-trace 1 行と同じ形（約 150 バイト）を `write_all` 1 回で 100 回書いて 1 回ごとの所要を測る、小さな Rust のコンソールアプリ（release・間隔 20 ms・コミットしていない）。
-A → B → C → D を 2 巡回した。
+```
+File.OpenHandle(..., FileShare.ReadWrite | FileShare.Inheritable, FileOptions.WriteThrough)
+```
+
+開いたハンドルは `STARTUPINFO.hStdError` に入り、`CreateProcess` で子へ渡る。子が受け取るのはディスクのファイルのハンドルで、パイプではない。
+cmd の `2>file` は、このフラグを付けない。
+
+**測定条件**:
+
+- 2026-11-25 / 機体 **HAL9000** / pwsh 7.7.0（.NET 11.0.0）
+- 子は小さな Rust のコンソールアプリである（release・コミットしていない）。自分の stderr を `GetFileType` と `NtQueryInformationFile(FileModeInformation)` で読む。
+  そのあと、trace 1 行と同じ形の行（約 150 バイト）を `write_all` 1 回で 20 ms おきに 100 回書き、1 回ごとの所要を測る
+- A → B → C → D の順に 2 巡回した
 
 | 起動の形 | ハンドル | mode | p50（µs） | p90（µs） |
 |---|---|---|---:|---:|
@@ -816,25 +824,42 @@ A → B → C → D を 2 巡回した。
 | C: `ProcessStartInfo.StandardErrorHandle` に `File.OpenHandle(..., FileOptions.None)` | DISK | 0x20 | 24 / 18 | 30 / 31 |
 | D: C と同じで `FileOptions.WriteThrough` | DISK | 0x22 | 211 / 158 | 316 / 230 |
 
-（1 巡目 / 2 巡目）mode の 0x2 が `FILE_WRITE_THROUGH`、0x20 が `FILE_SYNCHRONOUS_IO_NONALERT` である。起動の経路と子を固定してフラグだけを替えた C と D で、
-単価が約 9 倍往復した。倍率は子と環境で揺れる（pwsh の `Stream.Write` + `Flush` を子にした別の測定では 4〜5 倍、#1539 の測定では約 10 倍）。
-release 本体（windows サブシステム）の子では mode を観測していない。フラグはファイルオブジェクトの性質なので同じとみられ、
-#1539 の後の `egui_frame` の p50（114〜117 µs）は A の規模と合う。
+（1 巡目 / 2 巡目）mode の 0x2 は `FILE_WRITE_THROUGH`、0x20 は `FILE_SYNCHRONOUS_IO_NONALERT` である。
 
-**CI も同じ単価を負う。** `windows-latest` の PowerShell は 7.6.10（.NET 10。runner-images の readme・2026-11-16 のイメージ）で、同じ `WriteThrough` で開く。
-`Start-SnotraProcess` を経ずに `Start-Process -RedirectStandardError` を直接呼ぶ `scripts/manual-smoke.ps1`・`scripts/measure-memory-stages.ps1`・
-`scripts/bench-startup.ps1`（`-UseVerificationProfile` でない分岐）も同じである。
+- **原因はフラグである。** 起動の経路と子を固定し、フラグだけを替えた C と D で、単価が約 9 倍の幅で上下した
+- **倍率は、子と環境で揺れる。** pwsh の `Stream.Write` + `Flush` を子にした別の測定では 4〜5 倍、#1539 の測定では約 10 倍だった
+- **release 本体（windows サブシステム）を子にしたときの mode は観測していない。** フラグはファイルオブジェクトの性質なので、同じとみられる。
+  #1539 の後の `egui_frame` の p50（114〜117 µs）も、A の規模と合う
 
-**直さない理由**: trace を含むフレームの計測は、A/B の差分で読む作法になっている（「計測と受け入れ基準」の trace の所要の項）。両側で trace の行数が同じなら、汚染は両側に等しく乗る（行数を変える A/B では片側にだけ乗るので、行数の差の分を見込む）。
-子へファイルのハンドルを直接渡す形のうち、CI でも効くのは、P/Invoke の `CreateProcess` で自前のハンドルを渡す形である。共有の smoke 配管に C# が入り、Pester の `Start-Process` の Mock も作り直しになる。
-C の形（`StandardErrorHandle`）は .NET 11 からの API で、CI の .NET 10 に無い。これだけで直すと、ローカルと CI で計測の条件が分かれる。
-どちらで直しても、過去の trace を含む値と比べにくくなる。**却下**: `cmd /c` で包む形。戻り値の `Process` が cmd になり、`Wait-SnotraWindow` のオーナー PID の照合・
-`Stop-Process`・`Get-SnotraWorkingSetMB -ProcessId` が本体を指さなくなる。**却下**: `ProcessStartInfo.RedirectStandardError` でパイプにして、親がファイルへ書き写す形
-（.NET 10 でも P/Invoke なしで書ける）。子のハンドルがパイプになって計測の条件そのものが変わり、親が読み続けないと子が詰まる。
-起動時に空のファイルがあること（`smoke-egui.ps1` が前提にしている）も、親の書き写しに依るようになる。
+**CI も同じ単価を負う。** `windows-latest` の PowerShell は 7.6.10（.NET 10。runner-images の readme・2026-11-16 のイメージ）で、同じく `WriteThrough` で開く。
+`Start-SnotraProcess` を経ずに `Start-Process -RedirectStandardError` を直接呼ぶ次のスクリプトも、同じ単価を負う。
 
-**再開の条件**: trace の書き込みの絶対値で合否を決める計測を置くとき。または CI の pwsh が `StandardErrorHandle` を持つ .NET へ上がったとき（そのときも、ローカルと CI の条件が揃うかを先に確かめる）。
-`hotkey:listener_enter` の約 8〜10 ms の峰（上の節）との関係は測っていない。write-through の単価は 0.2 ms 規模で、峰の大きさを説明しない。
+- `scripts/manual-smoke.ps1`
+- `scripts/measure-memory-stages.ps1`
+- `scripts/bench-startup.ps1`（`-UseVerificationProfile` でない分岐）
+
+**直さない理由**:
+
+- trace を含むフレームの計測は、A/B の差分で読む作法になっている（「計測と受け入れ基準」の trace の所要の項）。両側で trace の行数が同じなら、汚染は両側に等しく乗る。
+  行数を変える A/B では片側にだけ乗るので、行数の差の分を見込む
+- 子へファイルのハンドルを直接渡す形のうち、CI でも効くのは、P/Invoke の `CreateProcess` で自前のハンドルを渡す形である。
+  この形では、共有の smoke 配管に C# が入り、Pester の `Start-Process` の Mock も作り直しになる
+- C の形（`StandardErrorHandle`）は .NET 11 からの API で、CI の .NET 10 には無い。C の形だけで直すと、ローカルと CI で計測の条件が分かれる
+- P/Invoke と C の形のどちらで直しても、過去の trace を含む値と比べにくくなる
+
+**却下した形**:
+
+- `cmd /c` で包む形。戻り値の `Process` が cmd になる。そのため、`Wait-SnotraWindow` のオーナー PID の照合・`Stop-Process`・`Get-SnotraWorkingSetMB -ProcessId` が本体を指さなくなる
+- `ProcessStartInfo.RedirectStandardError` でパイプにして、親がファイルへ書き写す形（.NET 10 でも P/Invoke なしで書ける）。
+  子のハンドルがパイプになるので、計測の条件そのものが変わる。親が読み続けないと、子が詰まる。
+  起動時に空のファイルがあること（`smoke-egui.ps1` が前提にしている）も、親の書き写しに依るようになる
+
+**再開の条件**:
+
+- trace の書き込みの絶対値で合否を決める計測を置くとき
+- CI の pwsh が、`StandardErrorHandle` を持つ .NET へ上がったとき（そのときも、ローカルと CI の条件が揃うかを先に確かめる）
+
+`hotkey:listener_enter` の約 8〜10 ms の峰（上の節）との関係は測っていない。write-through の単価は 0.2 ms 規模なので、峰の大きさを説明しない。
 
 ### 採用: `fill_mesh` の内外判定を行ごとの範囲に絞り、白テクセルの標本化を省く（#1451）
 
@@ -3727,8 +3752,8 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 - ランタイムの計測は `SNOTRA_TRACE=1` の構造化トレース（`src-tauri/src/trace.rs`）で行う
 - **フレームループ中の trace は、1 行あたり p50 約 0.11 ms・最大約 1 ms かかる。フレーム時間を trace で測るなら、
   絶対値ではなく A/B の差分で読む**（#1539 の後。2026-11-25・HAL9000・release・`Start-SnotraProcess` のリダイレクト。
-  表と条件は「採用: trace 1 行を 1 回の書き込みにする（#1539）」。この値は `Start-Process` のリダイレクトが課す write-through の単価を含む。
-  同じ形の行を書く小さなプローブでは、cmd の `2>file` のほうが約 10 倍速かった（本体では測っていない）。「不採用: `Start-SnotraProcess` の起動の形を替えて stderr の write-through を外す（#1543）」）。**値が小さくなっても、差分で読む作法は変わらない**——
+  表と条件は「採用: trace 1 行を 1 回の書き込みにする（#1539）」）。この値は、`Start-Process` のリダイレクトが課す write-through の単価を含む。
+  同じ形の行を書く小さなプローブでは、cmd の `2>file` のほうが約 10 倍速かった（本体では測っていない。「不採用: `Start-SnotraProcess` の起動の形を替えて stderr の write-through を外す（#1543）」）。**値が小さくなっても、差分で読む作法は変わらない**——
   `hotkey:listener_enter` の行のように、1 回の書き込みにしても約 8〜10 ms かかる行が残っている（機序は未確認）
   - **#1539 より前の版（以下「前の版」）では、1 行が JSON の字句ごとの書き込みに分かれていた。** 1 行の所要は、
     #1539 の表の「前」では約 2.5 ms、次の #1004 / #1032 の観察では約 10 ms だった（約 10 ms は、#1539 の表の `hotkey:listener_enter` の峰と同じ規模である）。

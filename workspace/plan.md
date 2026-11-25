@@ -69,6 +69,7 @@
 
 - [x] `build.rs` の `compute_wave1` の kana 分岐のコメントを直す
 - [x] `PERFORMANCE.md` に A・B・C の節を足し、#1056 節と #1446 節を直す
+- [x] （計画外・3a の /symmetric-check で発見）`main.rs` の `bring_to_foreground` が区間の中で書いていた `egui_show:foreground` の trace を、結果（`ForegroundOutcome`）を返して `show_egui_main` が `egui_show:done` の後で書く形へ直す。測り直して `PERFORMANCE.md` の B の節を直す
 - [ ] カテゴリ A・C と `npm run governance:check` を通す
 
 ## 用語

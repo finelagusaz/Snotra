@@ -735,12 +735,24 @@ Alt を離すのと同時に打った文字が両方の版で半数ほど消え�
 区間に入っていたのは `ime_control` のほうだった。`listener_enter` の書き込みは約 2 ms と約 10 ms の二峰に分かれ、
 上の「計測と受け入れ基準」の「1 行あたり約 10 ms」は上の峰に当たる。
 
-**直し方**: `t0` を `listener_enter` の trace の後で取る（post の前であることは保つ）。`ime_control` の trace は
-`egui_show:done` の後へ移す（IME の送信の位置は変えない）。**却下**: 書き込みの時間を計って `ms` から控除する形（#1032 の形）は、
-計時のコードが製品に残る。`ime_control` を `done` の payload へ畳む形は、イベント名が消えて過去の trace と読み比べにくくなる。
+区間の中にはもう 1 行あった。前面化（`bring_to_foreground`）が毎回書く `egui_show:foreground` である。
+上の計装はこの行を計時していない（実装中の対称性の検査で見つけた）ので、上の表の「合計」と「`ms` の 25% / 15%」は下限である。
 
-**直した後**（同じ条件・計装なし・各 25 回）: `ms` の p50 は Ctrl 経路で 19.3 → **14.0**（11.9〜20.6）、Alt 経路で 15.6 → **14.7**
-（12.2〜19.2）。`ime_control` は 50 回すべて `egui_show:done` の直後に出た。**この変更より前の `egui_show:done` の値と、後の値を
+**直し方**: `t0` を `listener_enter` の trace の後で取る（post の前であることは保つ）。`ime_control` と `foreground` の trace は
+`egui_show:done` の後で書く（前面化の結果は `ForegroundOutcome` で持ち回す。IME の送信と前面化の位置は変えない）。
+区間の中に残る trace は、早期 return する `egui_show:no_window` だけである。**却下**: 書き込みの時間を計って `ms` から控除する形
+（#1032 の形）は、計時のコードが製品に残る。結果を `done` の payload へ畳む形は、イベント名が消えて過去の trace と読み比べにくくなる。
+
+**直した後**（同じ条件・計装なし・各 25 回）:
+
+| 段階 | Ctrl 経路の `ms` p50（min〜max） | Alt 経路の `ms` p50（min〜max） |
+|---|---:|---:|
+| 直す前（上の表） | 19.3（17.7〜29.9） | 15.6（13.3〜22.1） |
+| `listener_enter`・`ime_control` を外した | 14.0（11.9〜20.6） | 14.7（12.2〜19.2） |
+| **`foreground` も外した** | **14.2**（12.2〜26.2） | **12.5**（10.6〜18.5） |
+
+`foreground` を外した段は、Alt 経路で 2.2 ms 下がり、Ctrl 経路では動かなかった（理由は確かめていない）。`ime_control` と
+`foreground` は、直した後の 50 回すべてで `egui_show:done` の後に出た。**この変更より前の `egui_show:done` の値と、後の値を
 そのまま比べない。** `heap-trace` feature のビルドでは、`egui_show:done` の行のヒープ標本を取る時点も変わる。
 
 ### 採用: `fill_mesh` の内外判定を行ごとの範囲に絞り、白テクセルの標本化を省く（#1451）

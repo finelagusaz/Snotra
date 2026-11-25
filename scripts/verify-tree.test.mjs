@@ -244,6 +244,43 @@ describe("verify-tree run", () => {
     expect(r.output).toContain("の HEAD でない");
   });
 
+  describe("sha が解決できなければ exit 2 で、git の stderr を添える（#1529）", () => {
+    /** 実装と同じ引数・同じ cwd で git を打ち、stderr を返す（git の文言は locale で変わりうるので、期待値を逐語で書かない） */
+    function gitStderr(cwd, value) {
+      try {
+        execFileSync("git", ["rev-parse", "--verify", `${value}^{commit}`], { cwd, encoding: "utf8", stdio: "pipe" });
+      } catch (e) {
+        return e.stderr.trim();
+      }
+      throw new Error(`解決できてしまった: ${value}`);
+    }
+
+    it("実在しない sha", { timeout: T }, () => {
+      const repo = initRepo();
+      const value = "0".repeat(40);
+      const stderr = gitStderr(repo, value);
+
+      const r = runScript(repo, ["run", "--sha", value]);
+
+      expect(r.status, r.output).toBe(2);
+      expect(r.output).toContain(`sha が解決できない: ${value}`);
+      expect(r.output).toContain(stderr);
+    });
+
+    it("commit でないオブジェクト（tree）の sha——git の stderr が、固定の文言に無い理由を持つ",{ timeout: T }, () => {
+      const repo = initRepo();
+      const value = git(repo, ["rev-parse", "HEAD^{tree}"]);
+      const stderr = gitStderr(repo, value);
+      expect(stderr).toMatch(/^error:/m);
+
+      const r = runScript(repo, ["run", "--sha", value]);
+
+      expect(r.status, r.output).toBe(2);
+      expect(r.output).toContain(`sha が解決できない: ${value}`);
+      expect(r.output).toContain(stderr);
+    });
+  });
+
   it("--also test:powershell は、計画に本体のビルドが無ければその直前に足す（ツールの worktree は cold か前の sha の本体を持つ）", { timeout: T }, () => {
     const repo = initRepo();
     writeFileSync(path.join(repo, "package.json"), JSON.stringify({ scripts: { "test:powershell": 'node -e "0"' } }));

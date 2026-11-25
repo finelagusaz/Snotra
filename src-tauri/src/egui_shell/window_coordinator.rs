@@ -508,7 +508,7 @@ pub(crate) fn show_egui_main(
         // `None`（非 windows ビルド）は json では `null` になる。
         serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0, "height": applied_height }),
     );
-    // **`egui_show:done` の後に書く。** 前に書くと、trace 1 行の書き込み（ミリ秒単位）が `ms` の
+    // **`egui_show:done` の後に書く。** 前に書くと、trace 1 行の書き込みが `ms` の
     // 区間に入る（額は `PERFORMANCE.md`「採用: 表示の計測から trace の書き込みを外す」）。
     // **`t0` から `egui_show:done` までに trace を書き足さない**——結果を値で持ち回し、ここで書く。
     #[cfg(windows)]

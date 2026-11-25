@@ -825,11 +825,13 @@ release 本体（windows サブシステム）の子では mode を観測して�
 `Start-SnotraProcess` を経ずに `Start-Process -RedirectStandardError` を直接呼ぶ `scripts/manual-smoke.ps1`・`scripts/measure-memory-stages.ps1`・
 `scripts/bench-startup.ps1`（`-UseVerificationProfile` でない分岐）も同じである。
 
-**直さない理由**: trace を含むフレームの計測は、A/B の差分で読む作法になっている（「計測と受け入れ基準」の trace の所要の項）。汚染は両側に等しく乗る。
-CI でも効く直し方は、P/Invoke の `CreateProcess` で自前のハンドルを渡す形で、共有の smoke 配管に C# が入り、Pester の `Start-Process` の Mock も作り直しになる。
+**直さない理由**: trace を含むフレームの計測は、A/B の差分で読む作法になっている（「計測と受け入れ基準」の trace の所要の項）。両側で trace の行数が同じなら、汚染は両側に等しく乗る（行数を変える A/B では片側にだけ乗るので、行数の差の分を見込む）。
+子へファイルのハンドルを直接渡す形のうち、CI でも効くのは、P/Invoke の `CreateProcess` で自前のハンドルを渡す形である。共有の smoke 配管に C# が入り、Pester の `Start-Process` の Mock も作り直しになる。
 C の形（`StandardErrorHandle`）は .NET 11 からの API で、CI の .NET 10 に無い。これだけで直すと、ローカルと CI で計測の条件が分かれる。
 どちらで直しても、過去の trace を含む値と比べにくくなる。**却下**: `cmd /c` で包む形。戻り値の `Process` が cmd になり、`Wait-SnotraWindow` のオーナー PID の照合・
-`Stop-Process`・`Get-SnotraWorkingSetMB -ProcessId` が本体を指さなくなる。
+`Stop-Process`・`Get-SnotraWorkingSetMB -ProcessId` が本体を指さなくなる。**却下**: `ProcessStartInfo.RedirectStandardError` でパイプにして、親がファイルへ書き写す形
+（.NET 10 でも P/Invoke なしで書ける）。子のハンドルがパイプになって計測の条件そのものが変わり、親が読み続けないと子が詰まる。
+起動時に空のファイルがあること（`smoke-egui.ps1` が前提にしている）も、親の書き写しに依るようになる。
 
 **再開の条件**: trace の書き込みの絶対値で合否を決める計測を置くとき。または CI の pwsh が `StandardErrorHandle` を持つ .NET へ上がったとき（そのときも、ローカルと CI の条件が揃うかを先に確かめる）。
 `hotkey:listener_enter` の約 8〜10 ms の峰（上の節）との関係は測っていない。write-through の単価は 0.2 ms 規模で、峰の大きさを説明しない。
@@ -3725,8 +3727,8 @@ A = `0e97509`・B = この変更。検索結果は変えない。実 `index.bin`
 - ランタイムの計測は `SNOTRA_TRACE=1` の構造化トレース（`src-tauri/src/trace.rs`）で行う
 - **フレームループ中の trace は、1 行あたり p50 約 0.11 ms・最大約 1 ms かかる。フレーム時間を trace で測るなら、
   絶対値ではなく A/B の差分で読む**（#1539 の後。2026-11-25・HAL9000・release・`Start-SnotraProcess` のリダイレクト。
-  表と条件は「採用: trace 1 行を 1 回の書き込みにする（#1539）」。この値は `Start-Process` のリダイレクトが課す write-through の単価を含み、
-  cmd の `2>file` なら 1 桁小さい。「不採用: `Start-SnotraProcess` の起動の形を替えて stderr の write-through を外す（#1543）」）。**値が小さくなっても、差分で読む作法は変わらない**——
+  表と条件は「採用: trace 1 行を 1 回の書き込みにする（#1539）」。この値は `Start-Process` のリダイレクトが課す write-through の単価を含む。
+  同じ形の行を書く小さなプローブでは、cmd の `2>file` のほうが約 10 倍速かった（本体では測っていない）。「不採用: `Start-SnotraProcess` の起動の形を替えて stderr の write-through を外す（#1543）」）。**値が小さくなっても、差分で読む作法は変わらない**——
   `hotkey:listener_enter` の行のように、1 回の書き込みにしても約 8〜10 ms かかる行が残っている（機序は未確認）
   - **#1539 より前の版（以下「前の版」）では、1 行が JSON の字句ごとの書き込みに分かれていた。** 1 行の所要は、
     #1539 の表の「前」では約 2.5 ms、次の #1004 / #1032 の観察では約 10 ms だった（約 10 ms は、#1539 の表の `hotkey:listener_enter` の峰と同じ規模である）。

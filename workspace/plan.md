@@ -54,21 +54,21 @@
 
 ### フェーズ 1: A（`skip_name` を全モードへ）
 
-- [ ] `search/tests/path.rs` の 2 本を全モードへ広げる（改名を含む）
-- [ ] `scoring.rs` の `skip_name` から `mode == SearchMode::Fuzzy` を外し、コメントを正本として直す
-- [ ] `search.rs`・`query.rs`・`query_plan.rs`・`build.rs`・`tests/path_query_cost.rs` の「Fuzzy だけ」「部分列」を前提にした記述を直す（正本を指す形へ）
-- [ ] 実索引の突き合わせ（release・`#[ignore]`）を 3 モードで通す
+- [x] `search/tests/path.rs` の 2 本を全モードへ広げる（改名を含む）
+- [x] `scoring.rs` の `skip_name` から `mode == SearchMode::Fuzzy` を外し、コメントを正本として直す
+- [x] `search.rs`・`query.rs`・`query_plan.rs`・`build.rs`・`tests/path_query_cost.rs` の「Fuzzy だけ」「部分列」を前提にした記述を直す（正本を指す形へ）
+- [x] 実索引の突き合わせ（release・`#[ignore]`）を 3 モードで通す
 
 ### フェーズ 2: B（表示計測から trace の書き込みを外す）
 
-- [ ] `main.rs` の `t0` を `listener_enter` の trace の後へ移し、理由をコメントに書く
-- [ ] `window_coordinator.rs` の `egui_show:ime_control` の trace を `egui_show:done` の後へ移す
-- [ ] 専用プロファイルで 2 経路 × 25 回を測り、`ms` の p50 が下がったことを確かめる
+- [x] `main.rs` の `t0` を `listener_enter` の trace の後へ移し、理由をコメントに書く
+- [x] `window_coordinator.rs` の `egui_show:ime_control` の trace を `egui_show:done` の後へ移す
+- [x] 専用プロファイルで 2 経路 × 25 回を測り、`ms` の p50 が下がったことを確かめる
 
 ### フェーズ 3: C と記録
 
-- [ ] `build.rs` の `compute_wave1` の kana 分岐のコメントを直す
-- [ ] `PERFORMANCE.md` に A・B・C の節を足し、#1056 節と #1446 節を直す
+- [x] `build.rs` の `compute_wave1` の kana 分岐のコメントを直す
+- [x] `PERFORMANCE.md` に A・B・C の節を足し、#1056 節と #1446 節を直す
 - [ ] カテゴリ A・C と `npm run governance:check` を通す
 
 ## 用語

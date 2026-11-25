@@ -156,10 +156,10 @@ pub struct SearchEngine {
     /// （`PathStore::sorted_by_path` と同じ形——`SearchEngine::new` は任意の `AppEntry` を
     /// 受け取れるので、「名前に区切りは入らない」を前提にしない）。
     ///
-    /// **false のとき、区切りを含む needle は名前に部分列として存在しえない**——ゆえに
-    /// パスクエリでは name/file_name の Fuzzy スコアリングを**証明として**飛ばせる（#1057）。
-    /// 実運用点の実測は 0 件 / 312,108 件だが、外れた入力（区切りを含む表示名）は
-    /// 従来どおりスコアリングを通るだけで**結果は変わらない**。
+    /// **false のとき、区切りを含む needle は名前に当たりえない**——ゆえに
+    /// パスクエリでは name/file_name の照合を**証明として**飛ばせる（論証の正本は
+    /// `search/scoring.rs` の `skip_name` のコメント）。外れた入力（区切りを含む表示名）は
+    /// 従来どおり照合を通るだけで**結果は変わらない**。
     ///
     /// 判定述語は [`crate::query::contains_path_sep`] 1 本で、クエリ側
     /// （`QueryPlan::norm_query_has_path_sep`）と**必ず同じ関数を通る**。

@@ -482,7 +482,7 @@ pub(crate) fn show_egui_main(
     // Win32 は PlatformBridge 経由（rule）。
     // TurnOffIme は生 HWND(usize) を取るためウィンドウ型非依存で &Window 一般化は不要。
     #[cfg(windows)]
-    {
+    let ime_sent = {
         let ime_control = super::read_config(
             app,
             |c| c.general.ime_off_on_show,
@@ -497,15 +497,24 @@ pub(crate) fn show_egui_main(
             b.send_command(crate::platform::PlatformCommand::TurnOffIme(
                 hwnd.0 as usize,
             ));
-            crate::trace_main("egui_show:ime_control", serde_json::json!({}));
+            true
+        } else {
+            false
         }
-    }
+    };
+    #[cfg(not(windows))]
+    let ime_sent = false;
     crate::trace_main(
         "egui_show:done",
         // height: show の時点で toast/status 行が予算されたかの肯定的証拠（#904）。
         // `None`（非 windows ビルド）は json では `null` になる。
         serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0, "height": applied_height }),
     );
+    // **`egui_show:done` の後に書く。** 前に書くと、trace 1 行の書き込み（ミリ秒単位）が `ms` の
+    // 区間に入る（額は `PERFORMANCE.md`「採用: 表示の計測から trace の書き込みを外す」）。
+    if ime_sent {
+        crate::trace_main("egui_show:ime_control", serde_json::json!({}));
+    }
 }
 
 /// egui 経路の hide。**main の** hide の唯一の副作用所有点（#532）——位置保存・

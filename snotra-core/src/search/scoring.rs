@@ -478,29 +478,33 @@ impl SearchEngine {
         let v = self.entry_view(i);
         let norm_query_str: &str = plan.norm_query.as_ref();
 
-        // **区切りを含む needle は、区切りを含まない名前に部分列として存在しえない。**
-        // ゆえに Fuzzy の name/file_name スコアリングは**証明として**飛ばせる（#1057）。
-        // 額は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを行わない」が
-        // 正本である（**ここへ写さない**——計測コードを回すたびに古くなる）。
+        // **区切りを含む needle は、区切りを含まない名前に当たりえない**——どのモードでも
+        // needle は `norm_query` で、Fuzzy は部分列、Prefix は接頭辞（`starts_with`）、
+        // Substring は連続一致（`substring_finder` は `norm_query` から作る）を要求する。
+        // どれも needle の各文字が名前に現れることを要求するので、name/file_name の照合は
+        // **証明として**飛ばせる（Fuzzy は #1057、全モードへは #1526）。
+        // **この論証の正本はここである**（`SearchEngine::any_name_has_path_sep` と
+        // `query::contains_path_sep` の doc はここを指す）。
+        // 額は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを行わない」
+        // （Fuzzy）と「採用: パスクエリで name の照合を飛ばす条件を全モードへ広げる」
+        // （Substring/Prefix）が正本である（**ここへ写さない**——計測コードを回すたびに古くなる）。
         //
-        // **3 つの条件はどれも落とせない**:
-        // - `Fuzzy` — Prefix/Substring は `starts_with` / `find` であって部分列ではない。
-        //   `find` は連続一致を要求するので同じ論証が使えるが、安いので飛ばす価値が無いと
-        //   見て入れていない（**測っていない**。同じ見立てはビットマスクでは外れた・#1445）
+        // **2 つの条件はどれも落とせない**:
         // - `norm_query_has_path_sep` — **`has_path_sep`（生クエリ）ではない**。needle は
         //   `norm_query` であり、**正規化が区切りに触る版では両者がずれる**
         //   （条件の正本は `QueryPlan` の当該フィールドの doc。今の nucleo では `¥` は畳まれず
-        //   2 述語は外延的に一致するので、**この条件だけは変異を当てても落ちる検知器を置けない**）
+        //   2 述語は外延的に一致するので、**この条件だけは変異を当てても落ちる検知器を置けない**。
+        //   ずれる版では 3 モードとも同じ影響を受ける）
         // - `!any_name_has_path_sep` — 前提そのもの。**契約ではなく構築時の実測**で、
-        //   外れた入力（区切りを含む表示名）はここを通ってスコアリングを受ける
+        //   表示名・`lower_names`・`lower_file_names` の 3 本を測る（正規化後の 2 本も含む。
+        //   取りこぼさない理由は `search/build.rs` の測る行のコメント）。外れた入力
+        //   （区切りを含む表示名）はここを通って照合を受ける
         //
         // 検知器は `search/tests/path.rs` の
-        // `fuzzy_name_match_survives_when_display_name_contains_path_separator` **だけ**である
-        // ——`has_path_sep` だけで飛ばす変異を当てると既存テストと clippy は全て通り、
-        // これ 1 本だけが落ちる（実測）。
-        let skip_name = mode == SearchMode::Fuzzy
-            && plan.norm_query_has_path_sep
-            && !self.any_name_has_path_sep;
+        // `name_match_survives_when_display_name_contains_path_separator_in_every_mode`
+        // **だけ**である——`has_path_sep` だけで飛ばす変異を当てると既存テストと clippy は
+        // 全て通り、これ 1 本だけが落ちる（#1057 で実測）。
+        let skip_name = plan.norm_query_has_path_sep && !self.any_name_has_path_sep;
 
         let name_score = if skip_name {
             None

@@ -235,8 +235,8 @@ fn measure_path_query_frame_cost() {
 ///   マージするので、`IndexTree::extend_with_roots` がフラグを下ろし、tie-break が
 ///   `PathStore::cmp_paths` の**両辺フルパス組み立て**へ落ちる
 /// - **`normal_mode` が実 config の値とは限らない。** #1057 / #1059 の表は
-///   `SNOTRA_CONFIG_DIR` を temp へ向けて `fuzzy` に差し替えて測っている。`substring` では
-///   `score_one_entry` の `skip_name` が発火しない（あれは Fuzzy を要求する）
+///   `SNOTRA_CONFIG_DIR` を temp へ向けて `fuzzy` に差し替えて測っている。モードで
+///   照合の単価が変わるので、`substring` の額は `fuzzy` の表からは読めない
 ///
 /// **フラグの実効値は出力に添える。** 添えなければ「どちらの経路を測ったか」が分からず、
 /// 数字の帰属ができない（`Engine::sorted_by_path` の doc）。**`include_path_env` が真か**を
@@ -247,7 +247,7 @@ fn measure_path_query_frame_cost() {
 /// # この計測コードが単独で検出する経路
 ///
 /// 2 つあり、**既存のどの計測コードも見ていない**: (1) PATH マージ後の `sorted_by_path = false` での
-/// tie-break、(2) `normal_mode = "substring"` での name スコアリング。
+/// tie-break、(2) `normal_mode = "substring"` でのパスクエリ。
 ///
 /// # この計測コードが見ないもの
 ///

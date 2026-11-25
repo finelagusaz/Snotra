@@ -128,9 +128,11 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
         || {
             // migemo 無効時は kana を構築しない（空のアリーナ）。
             if migemo_enabled {
-                // **ここは逐次のままでよい。** この分岐が通るのは cache-miss（全走査）の
-                // 内側だけで、キャッシュヒット起動が通るのは `new_with_cached_masks` の
-                // `kana_for_cached` である——**あちらは並列を保つ**（そちらの doc が理由を持つ）。
+                // **ここは逐次のままでよい。** キャッシュヒット起動も、走査による cache-miss も
+                // `new_with_cached_masks` の `kana_for_cached` を通る——**あちらは並列を保つ**
+                // （そちらの doc が理由を持つ）。ここへ来るのは保存先が引けない cache-miss と、
+                // 派生文字列を持たない旧版からの昇格の 1 回だけである。並列化の額と却下の理由は
+                // `PERFORMANCE.md`「却下: `compute_wave1` の kana 分岐を並列にする（#1526）」。
                 //
                 // 合計バイト数は見込まない（`with_capacity` の第 2 引数が 0）——先に知るには
                 // 全件を `to_kana` して数えるしかなく、この分岐ではその 1 パスのほうが高くつく。

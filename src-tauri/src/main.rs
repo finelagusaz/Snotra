@@ -536,8 +536,11 @@ fn start_initial_build(app_handle: &AppHandle, initial: InitialIndex) {
 fn setup_hotkey_listener(app_handle: &AppHandle) {
     let handle_for_hotkey = app_handle.clone();
     app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {
-        let t0 = Instant::now();
         trace_main("hotkey:listener_enter", json!({}));
+        // **`t0` は trace の後に取る。** 前に取ると、trace 1 行の書き込み（ミリ秒単位）が
+        // `egui_show:done` の `ms` に入る（額は `PERFORMANCE.md`「採用: 表示の計測から trace の
+        // 書き込みを外す」）。post の前であることは保つ（下の `t0` のコメント）。
+        let t0 = Instant::now();
         // 設定画面の起動中はホットキーを無視する（ユーザーが新しい組み合わせを設定するために
         // 現在の組み合わせを押している可能性がある）。**ウィンドウに触らない読みなのでタスクの外に置く**
         // ——無駄なタスク post を避ける。

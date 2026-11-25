@@ -229,7 +229,7 @@ npm run governance:check    # 必須: ガバナンス文書の決定的検査（
 - 検査の実体は、`scripts/governance-check.mjs`（facade）と、`scripts/governance/checks/` 配下の各ファイルである
   - **検査の一覧は、`checks/` ディレクトリの走査が SSOT である**（`scripts/governance/registry.mjs`）。ファイルを置けばそのまま検査になり、範囲を手で書く面が無い。旧来はファイル冒頭のコメント見出しへ範囲を手で書いていたので、黙って古くなった（「G-module-index〜G-config-reachability」と書いたまま、実際は G-check-skill-enumeration まで増えていた・#812。per-check への分割（#1088）が、範囲の手書きそのものを消した）
   - 関連する判断の在りか: config フィールドの到達性は `docs/development-principles.md`「config の値は、読まれなくても誰も気づかない」
-  - 意味の判断（責務の妥当性・npm ラッパーの等価性・メモリの整合）は、`/health-check` に残る
+  - 意味の判断（責務の妥当性・CI 対応表のトリガーと網羅・メモリの整合）は、`/health-check` に残る
 
 ## Windows/macOS/Linux で実行可能
 
@@ -318,7 +318,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
   - **注入する hotkey**: 起動時の `hotkey:registered` trace から導いた VK 列を、押下順に押し、解放まで含めて注入する（対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`）。`-HotkeyVks` を明示すると、trace より優先される（trace を出さない旧バイナリの検証など）
   - **プロファイル**: 検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す・#804）へ、最小の有効な TOML を常に seed する。実ユーザーの `%APPDATA%\Snotra` は、読みも書きもしない。退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である。seed を置く理由は、`scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile` のコメントが正本である
   - **肯定的な検査**: seed が読めたこと・first-run を踏んでいないこと・env が効いたこと（プロファイルに `*.bin` が生成されたこと）を、3 つとも確かめる。「観測できなかった」を合格と読ませないためである
-  - 実行中の snotra を kill するので、ローカルで実行するときは注意する。網羅は担わず、視覚と操作列は手動の GUI smoke（カテゴリ D）が補う
+  - このリポジトリのビルド成果物から起動した snotra を停止する（普段使いの Snotra は原則落とさないが、管理者権限等で実行ファイルのパスを読めないプロセスは残留とみなして停止する・#1306・`scripts/lib/SnotraSmoke.psm1`）。網羅は担わず、視覚と操作列は手動の GUI smoke（カテゴリ D）が補う
 - `scripts/smoke-egui.ps1` は、results ウィンドウの表示も検査する（#671/#673 サイクル PR A）。`egui_show:done` の後に 1 文字のクエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。#804 以降、skip は無い。検証用プロファイルを常に seed するので、既定のクエリ `"z"` は、seed した索引の 1 件に必ず一致する（`-ResultsQuery <letter>` は残るが、開発機の既存の索引に合わせる用途は無くなった。空文字を渡す用途は次の項）（CONTRIBUTING.md の「results ウィンドウ show/hide の trace 観測」と対応）
 - **results の検査は、無条件に要求される（#686 の `-RequireResults` を #804 が格上げした）**
   - 旧 flag が opt-in だったのは、「ローカルでは索引を制御できないのが普通」という理由の緩和だった。検証用プロファイルを常に seed する以上、その前提は偽になったので、flag ごと撤去し、常に要求する形にした
@@ -353,11 +353,13 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | `npm run test:powershell`（Pester: 共有 smoke 配管 + 実バイナリ統合） | `ci.yml`（rust-check） | PR 自動（`skip-ci` を貼ると job ごとスキップ） |
 | `cargo fmt --all -- --check`（#858・整形ゲート） | `ci.yml`（rust-check） | PR 自動 |
 | `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-egui-runtime` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
+| `cargo build -p snotra`（Pester 実バイナリ統合テスト用の debug 本体） | `ci.yml`（rust-check） | PR 自動 |
 | `cargo check -p snotra --features heap-trace`（ヒープ計装・既定ビルド外の feature） | `ci.yml`（rust-check） | PR 自動 |
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
 | `npm run smoke:startup`（注） | `smoke.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
 | `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰・注） | `smoke.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**・rust-cache の warm が目的）/ 手動 dispatch |
+| `npm run bench:startup`（起動内訳の観測・`continue-on-error: true`・`scripts/bench-startup.ps1` を直接実行） | `smoke.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ main への push（**全マージ**）/ 手動 dispatch |
 | `npm run smoke:startup`（**配布前の起動ゲート**） | `release.yml`（build-and-release job） | `create-release.yml` の手動 dispatch からの `workflow_call` |
 
 （注）CI では、smoke-egui job がビルドした release バイナリを共有する。そのため、`npm run smoke:startup` / `npm run smoke:egui`（既定の ExePath は debug）ではなく、`pwsh -NoProfile -File scripts/<name>.ps1 -ExePath target/release/snotra.exe` を直接実行する（npm を経由しない理由は、`smoke.yml` の smoke-egui job のコメント）。検証する起動経路は同じである（release バイナリが trace を出し、seed 済みの検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動の健全性の検証であり、配布バンドル（`tauri build`）の検証ではない。その帰結として、この job のバイナリだけは、`[profile.release]` の `lto` / `codegen-units` を env で緩めてビルドする（根拠は `smoke.yml` の "Build release binary" ステップのコメント。`Cargo.toml` は変えないので、`release.yml` がビルドする配布物は fat LTO のまま）。`panic = "abort"` と `opt-level` は共有するので、検証対象である起動時の挙動は、配布バンドルと同じ経路を通る。
@@ -385,7 +387,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 - カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）に相当する変更や、依存の更新を含む PR は、対象の paths（`src-tauri/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に当たるので、`Smoke` workflow が自動起動する。paths の外の変更で手動実行するには、`workflow_dispatch` を使う
 - **`Smoke` は main への push でも起動する。そちらは `paths` を持たず、全マージで走る。** 目的は回帰の検出ではなく、rust-cache の warm である
   - Actions のキャッシュは、`pull_request` の実行による書き込みが PR 自身のスコープに閉じる。base ブランチ（main）のスコープだけが、全 PR から読める
-  - `paths` で絞らないのは、キャッシュキーが Cargo.lock だけでなく rustc のバージョンでも変わり、後者を paths で表せないからである（`dtolnay/rust-toolchain@stable` は 6 週ごとに動く。絞ると、更新の週から次の Cargo.lock の変更まで、全 PR が完全なコールドへ戻る）
+  - `paths` で絞らないのは、キャッシュキーが Cargo.lock だけでなく rustc のバージョンでも変わり、後者を paths で表せないからである（`rust-toolchain.toml` の `channel` がパッチ版を追う限り、toml を変えずに rustc が入れ替わりうる。絞ると、更新から次の対象変更まで、全 PR が完全なコールドへ戻る）
   - PUBLIC リポジトリなので、Actions の分数課金は無い
   - main の run だけ `cancel-in-progress` を外してあるのも、同じ目的による（キャンセルされると、キャッシュを保存する Post ステップに到達しない。理由と実測は `smoke.yml` のコメント）
 - 表のコマンドが、対応する workflow のどの `run:` にも現れないドリフトは、`npm run governance:check`（G-ci-table）が検出する（#587）。ただし、トリガー列は照合されない。記述が実際の `on:` / `paths` と食い違っても緑のままで、判定は `/health-check`「Check 10 — docs/build-commands.md ↔ .github/workflows/\*」の意味判断に残る。これは理屈の上だけの穴ではない。2026-08-16 まで、smoke の 2 行が main への push を「依存 manifest の変更時」と限定していたが、実際の `push:` は `paths` を持たない（全マージ）

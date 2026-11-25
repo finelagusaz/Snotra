@@ -139,7 +139,7 @@ Step 3・Step 4 が終わってから、`RETROSPECTIVE.md` を次の 2 セクシ
 
 ## Step 7 — サイクル末の health-check
 
-サイクル末の衛生チェックを行う（実行の責任は `/retrospective` が負う）。`/health-check` は user 起動専用（`disable-model-invocation`）なので、スキルからは起動できない。そこで、その定義 `.claude/skills/health-check/SKILL.md` に従い、同スキルの冒頭が「本スキルで実行するのは」として挙げる項目をすべて、本スキルの責任で行う（一覧の正本はそこであり、ここへ写さない）。つまり `/health-check` は起動しない。実行の方式は、インラインでもサブエージェントへの委譲でもよい。
+サイクル末の衛生チェックを行う（実行の責任は `/retrospective` が負う）。`/health-check` は user 起動専用（`disable-model-invocation`）なので、スキルからは起動できない。そこで、その定義 `.claude/skills/health-check/SKILL.md` に従い、同スキルの冒頭が「このスキルで実行するのは次である。」として挙げる項目をすべて、本スキルの責任で行う（一覧の正本はそこであり、ここへ写さない）。つまり `/health-check` は起動しない。実行の方式は、インラインでもサブエージェントへの委譲でもよい。
 
 サブエージェントへ委譲する場合は、Check 7 のためにメモリ領域の絶対パスをプロンプトへ明示して渡す（サブエージェントは system prompt を継承しないので、渡さなければ `MEMORY.md` を見つけられない）。渡さないなら Check 7 は `[Skipped]` である。`Skipped` が残ったまま「All checks passed」と報告しない（#489）。
 

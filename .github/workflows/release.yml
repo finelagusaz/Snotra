@@ -33,10 +33,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # `workspaces:` を指定しない（既定の `.` ＝ルート）。`smoke.yml` と同じく、
+      # ルートが cargo workspace で `target/` はルート直下に作られるため。
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       - name: Install dependencies
         run: npm ci

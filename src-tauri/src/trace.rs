@@ -16,7 +16,7 @@
 //!
 //! A line is rendered into one `String` and written with a single `write_all`.
 //! `eprintln!` on a `serde_json::Value` splits the line into one write per JSON
-//! token, and `Stderr` is unbuffered, so each token paid the per-write cost of
+//! token or string fragment, and `Stderr` is unbuffered, so each token paid the per-write cost of
 //! the redirected handle (#1539; numbers in `PERFORMANCE.md`「採用: trace 1 行を
 //! 1 回の書き込みにする（#1539）」).
 
@@ -78,9 +78,9 @@ fn render_line(line: &serde_json::Value) -> String {
     format!("[trace] {line}\n")
 }
 
-/// 組んだ 1 行を 1 回の `write_all` で書く。失敗は捨てる——診断用の出口なので、
-/// 書けなくても製品を止めない（`eprintln!` は panic し、release の `panic = "abort"` で
-/// プロセスごと落ちていた）。
+/// 組んだ 1 行を 1 回の `write_all` で書く。失敗は捨てる。診断用の出口なので、
+/// 書けなくても製品を止めない（`eprintln!` は書き込みの失敗で panic し、release では
+/// `panic = "abort"` によりプロセスごと止まる）。
 fn write_line<W: Write>(w: &mut W, line: &str) {
     let _ = w.write_all(line.as_bytes());
 }

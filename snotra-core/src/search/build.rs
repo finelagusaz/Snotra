@@ -130,8 +130,9 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
             if migemo_enabled {
                 // **ここは逐次のままでよい。** キャッシュヒット起動も、走査による cache-miss も
                 // `new_with_cached_masks` の `kana_for_cached` を通る——**あちらは並列を保つ**
-                // （そちらの doc が理由を持つ）。ここへ来るのは保存先が引けない cache-miss と、
-                // 派生文字列を持たない旧版からの昇格の 1 回だけである。並列化の額と却下の理由は
+                // （そちらの doc が理由を持つ）。ここへ来るのは派生データを持たない材料だけである
+                // （どの分岐がそれを返すかの正本は `indexer::save_cache_sorted` の分岐と
+                // `SearchEngine::new_from_tree` の doc）。並列化の額と却下の理由は
                 // `PERFORMANCE.md`「却下: `compute_wave1` の kana 分岐を並列にする（#1526）」。
                 //
                 // 合計バイト数は見込まない（`with_capacity` の第 2 引数が 0）——先に知るには

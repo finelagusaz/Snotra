@@ -70,6 +70,7 @@
 - [x] `build.rs` の `compute_wave1` の kana 分岐のコメントを直す
 - [x] `PERFORMANCE.md` に A・B・C の節を足し、#1056 節と #1446 節を直す
 - [x] （計画外・3a の /symmetric-check で発見）`main.rs` の `bring_to_foreground` が区間の中で書いていた `egui_show:foreground` の trace を、結果（`ForegroundOutcome`）を返して `show_egui_main` が `egui_show:done` の後で書く形へ直す。測り直して `PERFORMANCE.md` の B の節を直す
+- [x] ラウンド 1 — sha 2677d1b0 / verify:tree green（A・C・E・F、14 コマンド exit 0）/ 指摘 6 件（Medium 2・Low 4、Critical/High 0）/ 変異 1・2 は検知、3a は対照も赤で不成立、3b は緑で区切りの組が検知の要と確認、生き残り 0（src-tauri の t0・trace 位置は単体の検知器を置けない: Win32・時間の性質）/ 実地: `#[must_use]` は未使用変数で落ちる（must_use の文言は出ない）/ 直した: M-1（compute_wave1 へ来る経路の数え上げをやめ正本を指す・旧版昇格は誤り）・M-2（#1446 注記は foreground を含んでいた）・L-3・L-4 / 残した: L-1（生データの所在・見出しの p50 の意味）・L-2（no_window だけの射程）— 言い回しで挙動を変えない
 - [ ] カテゴリ A・C と `npm run governance:check` を通す
 
 ## 用語

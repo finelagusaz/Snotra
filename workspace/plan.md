@@ -72,7 +72,8 @@
 - [x] （計画外・3a の /symmetric-check で発見）`main.rs` の `bring_to_foreground` が区間の中で書いていた `egui_show:foreground` の trace を、結果（`ForegroundOutcome`）を返して `show_egui_main` が `egui_show:done` の後で書く形へ直す。測り直して `PERFORMANCE.md` の B の節を直す
 - [x] ラウンド 1 — sha 2677d1b0 / verify:tree green（A・C・E・F、14 コマンド exit 0）/ 指摘 6 件（Medium 2・Low 4、Critical/High 0）/ 変異 1・2 は検知、3a は対照も赤で不成立、3b は緑で区切りの組が検知の要と確認、生き残り 0（src-tauri の t0・trace 位置は単体の検知器を置けない: Win32・時間の性質）/ 実地: `#[must_use]` は未使用変数で落ちる（must_use の文言は出ない）/ 直した: M-1（compute_wave1 へ来る経路の数え上げをやめ正本を指す・旧版昇格は誤り）・M-2（#1446 注記は foreground を含んでいた）・L-3・L-4 / 残した: L-1（生データの所在・見出しの p50 の意味）・L-2（no_window だけの射程）— 言い回しで挙動を変えない
 - [x] ラウンド 2 — sha 4c0a98a2 / verify:tree green（A・E・F）/ 前回 4 件は解消（M-1 は部分的）/ 新しい指摘 3 件（Medium 1・Low 2）/ 変異注入は該当なし（.rs の変更はコメントだけで検知器もその対象も不変）/ 実地は該当なし（見出し参照 3 本の着地を git grep で確認）/ 直した: N-1（「走査による cache-miss はここを通らない」が無条件で new_from_tree の doc の禁止に反する → 保存が派生データを返した cache-miss に限る）・N-2（「上の」→「下の」）/ 残した: N-3（コード側の「材料だけ」にテスト・ハーネスの射程を添える案）— 言い回しで挙動を変えない
-- [ ] カテゴリ A・C と `npm run governance:check` を通す
+- [x] ラウンド 3 — sha 42b75719 / verify:tree green（A・E・F）/ N-1・N-2 は解消 / 新しい指摘 1 件（N-4 Low: 向きが逆の見出し参照 2 か所・ラウンド 1 から在った）/ 変異注入・実地は該当なし（コメントと文書だけ）/ 直した: N-4（向きの語を外して見出し名だけで指す）。直した後、差分で足した「上の / 下の」付きの参照を全件、参照先の見出しの行番号と自分で照合した（4 本とも向きが正しい）/ 残した: N-3・L-1・L-2 — 言い回しで挙動を変えない
+- [x] カテゴリ A・C と `npm run governance:check` を通す
 
 ## 用語
 

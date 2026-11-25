@@ -141,7 +141,7 @@ pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> For
 }
 
 /// 前面化の結果。trace を書くのは [`Self::trace`] で、呼び出し側（`show_egui_main`）が
-/// `egui_show:done` の後に呼ぶ——前面化の中で書くと、trace 1 行の書き込み（ミリ秒単位）が
+/// `egui_show:done` の後に呼ぶ——前面化の中で書くと、trace 1 行の書き込みが
 /// `egui_show:done` の `ms` に入る（額は `PERFORMANCE.md`「採用: 表示の計測から trace の書き込みを外す」）。
 ///
 /// `path` は `already`（既に前面）・`direct`（1 回で通った）・`masked_alt`（注入して再試行した）・
@@ -563,9 +563,9 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
     let handle_for_hotkey = app_handle.clone();
     app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {
         trace_main("hotkey:listener_enter", json!({}));
-        // **`t0` は trace の後に取る。** 前に取ると、trace 1 行の書き込み（ミリ秒単位）が
-        // `egui_show:done` の `ms` に入る（額は
-        // `PERFORMANCE.md`「採用: 表示の計測から trace の書き込みを外す」）。
+        // **`t0` は trace の後に取る。** 前に取ると、trace 1 行の書き込みが
+        // `egui_show:done` の `ms` に入る。この行は 1 回の書き込みにしても数 ms かかる回が残る（額は
+        // `PERFORMANCE.md`「採用: trace 1 行を 1 回の書き込みにする（#1539）」）。
         // post の前であることは保つ（下の `t0` のコメント）。
         let t0 = Instant::now();
         // 設定画面の起動中はホットキーを無視する（ユーザーが新しい組み合わせを設定するために

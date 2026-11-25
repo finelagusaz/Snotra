@@ -11,6 +11,7 @@ allowed-tools:
   - Bash(gh *)
   - Read
   - Edit
+  - Write
   - Grep
   - Glob
 ---

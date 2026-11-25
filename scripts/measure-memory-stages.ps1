@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   起動 → 表示 → 検索 → hide の各段階で Snotra のメモリを実測する（段階別・前景計測）。
 
@@ -26,7 +26,7 @@
     同一プロセス実行でフォーカスを保つため、`true` のままでも段階列は取れる（実測で
     B/C/D とも成立）。ただし外的要因でフォーカスが逸れるとウィンドウが hide して PrivWS が
     trim 後の値へ落ち、段階列が無言で壊れる。長時間の計測や無人実行では false にする
-  - **実行中の snotra を kill する**（`smoke-egui.ps1` と同じくローカル実行時は注意）
+  - **実行中の snotra をすべて kill する**（普段使いの Snotra を含めて `Stop-Process -Name snotra` で止めるため、ローカル実行時は注意）
 
   読み方: PrivWS は hide 経路の `EmptyWorkingSet` で trim された後の値になりうるため、
   確保需要の軸は **PrivComm** を見る（詳細は PERFORMANCE.md「egui 期のメモリ実測」）。

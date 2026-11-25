@@ -24,7 +24,8 @@ on:
       - 'scripts/smoke-egui.ps1'         # "Run egui smoke" ステップ（#532 SU7）
       - 'scripts/bench-startup.ps1'      # "Measure startup timeline" ステップ（#1000）
       - 'scripts/lib/**'                  # 両 smoke の共有モジュール（#843）
-      # 依存 manifest/lockfile（依存更新 PR を smoke 網に載せる）
+      # 依存 manifest/lockfile と toolchain pin（依存・toolchain 更新 PR を smoke 網に載せる）
+      - 'rust-toolchain.toml'
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - 'package.json'
@@ -35,7 +36,8 @@ on:
   # base ブランチ（main）のスコープだけが全 PR から読めるため、main で 1 度作る経路が要る。
   #
   # **`paths` を意図的に持たない**。キャッシュキーは Cargo.lock だけでなく **rustc のバージョンでも
-  # 変わり**（`dtolnay/rust-toolchain@stable` は 6 週ごとに動く）、後者は paths で表現できない。
+  # 変わり**（`rust-toolchain.toml` の `channel` がパッチ版を追う限り、toml を変えずに rustc が入れ替わりうる）、
+  # 後者は paths で表現できない。
   # 絞ると、rustc が更新された週から次に Cargo.lock が動くまで全 PR が完全 cold へ戻る。
   # **「いつ warm すべきか」を条件で言い当てるより、毎マージで warm し直すほうが穴が無い**
   # （回帰検出は副産物）。main への push は squash マージのみ（直 push は GitHub ruleset が拒否）で、

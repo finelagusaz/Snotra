@@ -34,13 +34,15 @@ const ADR_CITATION = /\bADR-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\b/g;
  *  単体呼び出し（テスト等）向けに省略時も同じ関数を呼ぶ（写しではなく同じ関数） */
 export function adrCitationDocs(snapshot, docs, adrDocs = adrFiles(snapshot)) {
   return [
-    ...docs,
-    // 凍結された歴史も**実在の辺だけ**は守る——ADR → ADR の短縮引用は、指す側が凍結でも
-    // 指される側の削除で壊れる。`docs`（governanceDocs）は docs/adr/ を含まないため明示的に足す。
-    // この 1 行が落ちると ADR→ADR の実在検査が黙って消える（母集団カナリアがテストで膜を張る）
-    ...adrDocs,
-    ...skillTreeDocs(snapshot),
-    ...nonDocSources(snapshot),
+    ...new Set([
+      ...docs,
+      // 凍結された歴史も**実在の辺だけ**は守る——ADR → ADR の短縮引用は、指す側が凍結でも
+      // 指される側の削除で壊れる。`docs`（governanceDocs）は docs/adr/ を含まないため明示的に足す。
+      // この 1 行が落ちると ADR→ADR の実在検査が黙って消える（母集団カナリアがテストで膜を張る）
+      ...adrDocs,
+      ...skillTreeDocs(snapshot),
+      ...nonDocSources(snapshot),
+    ]),
   ];
 }
 

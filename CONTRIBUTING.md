@@ -17,17 +17,12 @@
 
 ## リリースフロー
 
-リリースは `main` ブランチのコミットに対して Git タグを打つことでトリガーされる。
+リリースは GitHub Actions の `Create Release` ワークフロー（`.github/workflows/create-release.yml`）を `workflow_dispatch` で手動実行して開始する（タグの手動 push では Release ワークフローは自動起動しない。理由は `docs/build-commands.md`「その他」）。
 
-```bash
-git tag v0.9.1
-git push origin v0.9.1
-```
-
-- タグ名は `v<major>.<minor>.<patch>` 形式（例: `v0.9.0`）
-- タグを push すると GitHub Actions の Release ワークフローが自動実行される
-- ワークフローは `snotra.exe`（`npx tauri build --no-bundle`）と `snotra-settings.exe`（`cargo build --release -p snotra-settings`）を個別にビルドし、両バイナリを ZIP にまとめて GitHub Release を作成する
-- リリースノートは GitHub の自動生成機能を使用する
+- バージョン入力は `<major>.<minor>.<patch>`（または `-<prerelease>` 付き、例: `0.12.0` / `0.12.0-alpha7`）形式
+- `create-release.yml` が `v<version>` タグの作成・push と draft release の作成を行い、続けて `workflow_call` で `.github/workflows/release.yml` を呼び出す
+- `release.yml` は `snotra-settings.exe`（`cargo build --release -p snotra-settings`）と NSIS インストーラー（`npx tauri build --bundles nsis`）をビルドし、`scripts/smoke-startup.ps1` で起動スモークを通したうえで、ポータブル ZIP・NSIS インストーラー・`latest.json` を draft release へアップロードする
+- リリースノートは GitHub の自動生成機能を使用し、署名と成果物を確認したうえで手動 publish する
 
 ## CI
 

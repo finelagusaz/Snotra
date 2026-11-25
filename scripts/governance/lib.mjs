@@ -332,7 +332,8 @@ export function governanceDocs(snapshot) {
       (f.startsWith("docs/") && f.endsWith(".md") && !f.startsWith("docs/superpowers/") && !f.startsWith("docs/adr/")) ||
       /^(snotra-core|snotra-egui-runtime|src-tauri|snotra-settings)\/CLAUDE\.md$/.test(f) ||
       RULE_FILE_RE.test(f) ||
-      /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f),
+      /^\.claude\/agents\/[^/]+\.md$/.test(f) ||
+      /^\.claude\/skills\/.*\.md$/.test(f),
   );
 }
 

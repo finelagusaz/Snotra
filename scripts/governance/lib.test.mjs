@@ -61,6 +61,27 @@ describe("凍結された歴史（ADR-adr-frozen-history）— 精度の辺は�
   });
 });
 
+describe("governanceDocs の .claude 配下カバレッジ", () => {
+  it(".claude/agents/*.md と .claude/skills/**/references/*.md が母集団に入り参照切れを赤にする", () => {
+    const s = snap({
+      ".claude/agents/code-reviewer.md": "`docs/gone-agent-ref.md` を参照\n",
+      ".claude/skills/health-check/references/mechanized-checks.md": "`docs/gone-ref-doc.md` を参照\n",
+    });
+    const docs = governanceDocs(s);
+    expect(docs).toContain(".claude/agents/code-reviewer.md");
+    expect(docs).toContain(".claude/skills/health-check/references/mechanized-checks.md");
+    const f = checkReferences(s, docs);
+    expect(f.some((x) => x.file === ".claude/agents/code-reviewer.md" && x.message.includes("docs/gone-agent-ref.md"))).toBe(true);
+    expect(
+      f.some(
+        (x) =>
+          x.file === ".claude/skills/health-check/references/mechanized-checks.md" &&
+          x.message.includes("docs/gone-ref-doc.md"),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("makeSnapshot の走査除外（#722）", () => {
   // 守りたい対象 = SDD 作業バッファ。実リポジトリではなく一時ディレクトリの複製に当てる
   // （.claude/rules/safety-nets.md「稼働中のガードを弱めない——複製に変異を当てる」）

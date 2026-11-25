@@ -13,7 +13,7 @@
 //   `checks/` 配下の各検査・`registry.mjs` も含む全層が同じ制約を負う
 // - findings ゼロ → exit 0 + 検査の本数を印字
 // - findings あり → exit 1 + `file:line` 付き全件列挙。免除注記の機構は設けない
-// - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（黙って失敗する経路の閉塞）
+// - 空母集団（対象文書 0 件・.claude/** 対象 md 0 件・docs/** 開発ガイド 0 件）は明示 fail（黙って失敗する経路の閉塞）
 // - 検査の登録は `scripts/governance/checks/` の走査から導出される（`registry.mjs`）——ファイルを
 //   置けばそのまま検査になり、忘れうる登録行が無い。ファイル名と export した `id` の食い違いは
 //   `registry.mjs` が throw で拒む（#1088 が問うた「検査が黙って 1 本落ちる」構造の解消）

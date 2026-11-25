@@ -634,36 +634,39 @@ fn assert_key_tail_matches_cursor(entries: Vec<AppEntry>) {
     }
 }
 
-/// **パスクエリでも、表示名への Fuzzy マッチは失われない。**
+/// **パスクエリでも、表示名へのマッチはどのモードでも失われない。**
 ///
-/// `score_one_entry` はパスクエリのとき name の Fuzzy スコアリングを飛ばすが、それが許される
-/// のは「区切りを含む needle は名前に部分列として存在しえない」ときだけである（#1057）。
-/// **表示名が区切りを含むエントリではその前提が崩れる**ので、飛ばす条件は
-/// `SearchEngine::any_name_has_path_sep` が測った実測値で閉じている。
+/// `score_one_entry` はパスクエリのとき name の照合を飛ばすが、それが許されるのは、
+/// 区切りを含まない名前に区切りを含む needle が当たりえないときだけである（論証の正本は
+/// `search/scoring.rs` の `skip_name` のコメント）。**表示名が区切りを含むエントリではその前提が
+/// 崩れる**ので、飛ばす条件は `SearchEngine::any_name_has_path_sep` が測った実測値で閉じている。
 ///
-/// このテストは**その閉じ方が効いていることの唯一の検知器**である——実装当時、素朴に
+/// このテストは**その閉じ方が効いていることの唯一の検知器**である——#1057 の実装当時、素朴に
 /// `has_path_sep` だけで飛ばす変異を当てると既存テストと clippy は全て通り、これだけが落ちた
-/// （実測）。パスにはわざと当たらないクエリを使うので、**name の Fuzzy が唯一のマッチ経路**である。
+/// （実測）。パスにはわざと当たらないクエリを使うので、**name の照合が唯一のマッチ経路**である。
+/// 3 モードを回すのは、飛ばす条件がモードを問わないからである（#1526）。
 #[test]
-fn fuzzy_name_match_survives_when_display_name_contains_path_separator() {
+fn name_match_survives_when_display_name_contains_path_separator_in_every_mode() {
     // 表示名が `\` を含む。target_path は別ドライブにしてパスマッチを成立させない。
     let entries = vec![make_entry("c:\\tool", "D:\\other\\app.exe")];
     let mut engine = SearchEngine::new(entries);
 
-    let results = engine.search("c:\\tool", 8, &empty_history(), SearchMode::Fuzzy);
+    for mode in [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy] {
+        let results = engine.search("c:\\tool", 8, &empty_history(), mode);
 
-    assert_eq!(
-        results.len(),
-        1,
-        "表示名への Fuzzy マッチが失われた（パスは当たらないので唯一の経路である）"
-    );
-    assert_eq!(results[0].name, "c:\\tool");
+        assert_eq!(
+            results.len(),
+            1,
+            "{mode:?}: 表示名へのマッチが失われた（パスは当たらないので唯一の経路である）"
+        );
+        assert_eq!(results[0].name, "c:\\tool", "{mode:?}");
+    }
 }
 
 /// **PATH 併合が積むような形のエントリで、フラグが静かに立たない。**
 ///
 /// 上のテストはフラグが**落ちる**向き（結果が壊れる）を守る。こちらは**立つ**向きを守る——フラグが
-/// 立つと `score_one_entry` は全件で name の Fuzzy スコアリングを通し、**削減だけが全損する**。
+/// 立つと `score_one_entry` はパスクエリでも全件で name を照合し、**削減だけが全損する**。
 /// 結果は正しいままなので、既存の挙動テストは 1 本も落ちない（#1057 のレビュー M-3）。
 ///
 /// **併合の経路そのものを通す。** PATH 併合は `IndexTree::extend_with_roots` が表示名をファイル名、
@@ -691,7 +694,7 @@ fn path_env_merge_does_not_raise_any_name_has_path_sep() {
 
     assert!(
         !engine.any_name_has_path_sep,
-        "PATH 併合でフラグが立った。name の Fuzzy スコアリングが全件で走り #1057 の削減が\
+        "PATH 併合でフラグが立った。パスクエリで name の照合が全件で走り #1057 の削減が\
          全損する（**結果は正しいままなので他のテストは 1 本も落ちない**）"
     );
 }
@@ -774,9 +777,14 @@ fn sorted_prefix_fast_path_changes_nothing_over_real_index() {
 /// **実 index 全件で、name スコアリングを飛ばしても結果が集合・順序とも変わらない。**
 ///
 /// 比較相手は「フラグを強制的に立てて最適化を無効にした同じエンジン」である（#1057）。合成 fixture では
-/// なく実運用点の 31 万件で突き合わせるのが要点で、**件数の一致では足りない**——パスマッチは
+/// なく実運用点の全件で突き合わせるのが要点で、**件数の一致では足りない**——パスマッチは
 /// 同点が出やすく、tie-break の経路が変われば順序だけが動く。ゆえに `(name, path)` の列を
-/// 順序ごと比べる。
+/// 順序ごと比べる。飛ばす条件はモードを問わないので、3 モードを回す（#1526）。
+///
+/// **このテストが見るのは、実運用点で前提（区切りを含む表示名が 0 件）が成り立つことと、
+/// その下で結果が変わらないことだけである。** 前提が成り立つ入力では飛ばしても結果は同じに
+/// なるので、飛ばす条件の誤り（前提を外す変異など）は落とせない。それを落とすのは合成 fixture の
+/// [`name_match_survives_when_display_name_contains_path_separator_in_every_mode`] である。
 ///
 /// **撤去条件**: パスクエリで name のスコアリングを飛ばす最適化を製品から消す変更と同じ PR で消す。それまでは恒久の検知器である。
 #[test]
@@ -808,22 +816,29 @@ fn skipping_name_scoring_changes_nothing_over_real_index() {
         "notepad.exe",
         "c:\\notepad.exe",
     ];
-    for q in queries {
-        let want: Vec<(String, String)> = baseline
-            .search(q, 200, &history, SearchMode::Fuzzy)
-            .into_iter()
-            .map(|r| (r.name, r.path))
-            .collect();
-        let got: Vec<(String, String)> = optimized
-            .search(q, 200, &history, SearchMode::Fuzzy)
-            .into_iter()
-            .map(|r| (r.name, r.path))
-            .collect();
-        assert_eq!(want, got, "クエリ {q:?} で結果または順序が変わった");
-        println!("  {q:?}: {} 件が集合・順序とも一致", want.len());
+    let modes = [SearchMode::Prefix, SearchMode::Substring, SearchMode::Fuzzy];
+    for mode in modes {
+        for q in queries {
+            let want: Vec<(String, String)> = baseline
+                .search(q, 200, &history, mode)
+                .into_iter()
+                .map(|r| (r.name, r.path))
+                .collect();
+            let got: Vec<(String, String)> = optimized
+                .search(q, 200, &history, mode)
+                .into_iter()
+                .map(|r| (r.name, r.path))
+                .collect();
+            assert_eq!(
+                want, got,
+                "{mode:?}: クエリ {q:?} で結果または順序が変わった"
+            );
+            println!("  {mode:?} {q:?}: {} 件が集合・順序とも一致", want.len());
+        }
     }
     println!(
-        "{n} 件の実インデックスで、全 {} クエリが一致しました。",
+        "{n} 件の実インデックスで、{} モード × {} クエリが一致しました。",
+        modes.len(),
         queries.len()
     );
 }

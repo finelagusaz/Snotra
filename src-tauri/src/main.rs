@@ -111,26 +111,19 @@ const VK_MASK: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY =
 /// 同期に走る `send_alt_key_up` より前に前面化を済ませる必要がある。channel 越しの非同期では、
 /// この順序を保てない。
 ///
-/// 結果は trace `egui_show:foreground` に残す。`path` は `already`（既に前面）・`direct`
-/// （1 回で通った）・`masked_alt`（注入して再試行した）。`sent` は注入した回だけ値を持ち、
-/// `SendInput` が全件を受け付けたかを表す（UIPI に阻まれたときに偽になるかは未実測）。
+/// 結果は [`ForegroundOutcome`] で返し、呼び出し側が trace `egui_show:foreground` に残す。
 #[cfg(windows)]
-pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) {
+pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) -> ForegroundOutcome {
     use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, SendInput, VK_MENU};
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
-    let trace = |path: &str, ok: bool, sent: Option<bool>| {
-        trace_main(
-            "egui_show:foreground",
-            json!({ "path": path, "ok": ok, "sent": sent }),
-        );
-    };
+    let outcome = |path, ok, sent| ForegroundOutcome { path, ok, sent };
     unsafe {
         if GetForegroundWindow() == hwnd {
-            return trace("already", true, None);
+            return outcome("already", true, None);
         }
         if SetForegroundWindow(hwnd).as_bool() {
-            return trace("direct", true, None);
+            return outcome("direct", true, None);
         }
         let inputs = [
             make_key_input(VK_MENU, false),
@@ -139,10 +132,43 @@ pub(crate) fn bring_to_foreground(hwnd: windows::Win32::Foundation::HWND) {
             make_key_input(VK_MENU, true),
         ];
         let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len();
-        trace(
+        outcome(
             "masked_alt",
             SetForegroundWindow(hwnd).as_bool(),
             Some(sent),
+        )
+    }
+}
+
+/// 前面化の結果。trace を書くのは [`Self::trace`] で、呼び出し側（`show_egui_main`）が
+/// `egui_show:done` の後に呼ぶ——前面化の中で書くと、trace 1 行の書き込み（ミリ秒単位）が
+/// `egui_show:done` の `ms` に入る（額は `PERFORMANCE.md`「採用: 表示の計測から trace の書き込みを外す」）。
+///
+/// `path` は `already`（既に前面）・`direct`（1 回で通った）・`masked_alt`（注入して再試行した）・
+/// `no_hwnd`（HWND が取れず前面化を呼ばなかった）。`sent` は注入した回だけ値を持ち、
+/// `SendInput` が全件を受け付けたかを表す（UIPI に阻まれたときに偽になるかは未実測）。
+#[cfg(windows)]
+#[must_use = "落とすと trace `egui_show:foreground` が出ない"]
+pub(crate) struct ForegroundOutcome {
+    path: &'static str,
+    ok: bool,
+    sent: Option<bool>,
+}
+
+#[cfg(windows)]
+impl ForegroundOutcome {
+    pub(crate) fn no_hwnd() -> Self {
+        Self {
+            path: "no_hwnd",
+            ok: false,
+            sent: None,
+        }
+    }
+
+    pub(crate) fn trace(&self) {
+        trace_main(
+            "egui_show:foreground",
+            json!({ "path": self.path, "ok": self.ok, "sent": self.sent }),
         );
     }
 }
@@ -536,8 +562,12 @@ fn start_initial_build(app_handle: &AppHandle, initial: InitialIndex) {
 fn setup_hotkey_listener(app_handle: &AppHandle) {
     let handle_for_hotkey = app_handle.clone();
     app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {
-        let t0 = Instant::now();
         trace_main("hotkey:listener_enter", json!({}));
+        // **`t0` は trace の後に取る。** 前に取ると、trace 1 行の書き込み（ミリ秒単位）が
+        // `egui_show:done` の `ms` に入る（額は
+        // `PERFORMANCE.md`「採用: 表示の計測から trace の書き込みを外す」）。
+        // post の前であることは保つ（下の `t0` のコメント）。
+        let t0 = Instant::now();
         // 設定画面の起動中はホットキーを無視する（ユーザーが新しい組み合わせを設定するために
         // 現在の組み合わせを押している可能性がある）。**ウィンドウに触らない読みなのでタスクの外に置く**
         // ——無駄なタスク post を避ける。

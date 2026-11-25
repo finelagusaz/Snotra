@@ -431,14 +431,12 @@ pub(crate) fn show_egui_main(
     let _ = window.show();
     // tao の `set_focus` は使わない。前面化を拒まれるとマスクなしの Alt を注入し、前面だった
     // アプリのメニューを起動する（#1470）。
+    // 結果の trace は `egui_show:done` の後に書く（`ForegroundOutcome` の doc）。
     #[cfg(windows)]
-    match window.hwnd() {
+    let foreground = match window.hwnd() {
         Ok(hwnd) => crate::bring_to_foreground(hwnd),
-        Err(_) => crate::trace_main(
-            "egui_show:foreground",
-            serde_json::json!({ "path": "no_hwnd", "ok": false, "sent": null }),
-        ),
-    }
+        Err(_) => crate::ForegroundOutcome::no_hwnd(),
+    };
     #[cfg(not(windows))]
     let _ = window.set_focus();
     // **ここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちを置かない。
@@ -482,7 +480,7 @@ pub(crate) fn show_egui_main(
     // Win32 は PlatformBridge 経由（rule）。
     // TurnOffIme は生 HWND(usize) を取るためウィンドウ型非依存で &Window 一般化は不要。
     #[cfg(windows)]
-    {
+    let ime_sent = {
         let ime_control = super::read_config(
             app,
             |c| c.general.ime_off_on_show,
@@ -497,15 +495,27 @@ pub(crate) fn show_egui_main(
             b.send_command(crate::platform::PlatformCommand::TurnOffIme(
                 hwnd.0 as usize,
             ));
-            crate::trace_main("egui_show:ime_control", serde_json::json!({}));
+            true
+        } else {
+            false
         }
-    }
+    };
+    #[cfg(not(windows))]
+    let ime_sent = false;
     crate::trace_main(
         "egui_show:done",
         // height: show の時点で toast/status 行が予算されたかの肯定的証拠（#904）。
         // `None`（非 windows ビルド）は json では `null` になる。
         serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0, "height": applied_height }),
     );
+    // **`egui_show:done` の後に書く。** 前に書くと、trace 1 行の書き込み（ミリ秒単位）が `ms` の
+    // 区間に入る（額は `PERFORMANCE.md`「採用: 表示の計測から trace の書き込みを外す」）。
+    // **`t0` から `egui_show:done` までに trace を書き足さない**——結果を値で持ち回し、ここで書く。
+    #[cfg(windows)]
+    foreground.trace();
+    if ime_sent {
+        crate::trace_main("egui_show:ime_control", serde_json::json!({}));
+    }
 }
 
 /// egui 経路の hide。**main の** hide の唯一の副作用所有点（#532）——位置保存・

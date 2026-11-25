@@ -37,7 +37,7 @@ pub(super) struct QueryPlan<'a> {
     pub(super) has_path_sep: bool,
     /// **`norm_query` が**パス区切りを含むか（[`Self::has_path_sep`] は**生クエリ**を見る）。
     ///
-    /// **2 つを取り違えてはならない。** name の Fuzzy マッチが使う needle は `norm_query` で
+    /// **2 つを取り違えてはならない。** name の照合（3 モードとも）が使う needle は `norm_query` で
     /// あり、`normalize_for_match` はアクセントを畳む。`¥`(U+00A5) が畳まれる版では生クエリに
     /// 区切りが在っても needle には無く、`has_path_sep` を条件に name スコアリングを飛ばすと
     /// **`¥` 入りクエリで name マッチだけが静かに消える**（#1057）。

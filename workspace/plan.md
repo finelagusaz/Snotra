@@ -105,9 +105,11 @@
 
 ### Phase 2 — 実装
 
-- [ ] `trace.rs` に `format_line`・`write_line` とテスト 2 本を書き、旧形の `write_line` でテスト 1 が落ちることを確かめる（Red）
-- [ ] `trace()` を `format_line` + `write_line(&mut std::io::stderr(), ..)` へ書き換え、テストを通す（Green）
-- [ ] `trace.rs` の `//!` に 1 回で書く理由と `PERFORMANCE.md` の節名を足す
+- [x] `trace.rs` に `format_line`・`write_line` とテスト 2 本を書き、旧形の `write_line` でテスト 1 が落ちることを確かめる（Red）
+- [x] `trace()` を `format_line` + `write_line(&mut std::io::stderr(), ..)` へ書き換え、テストを通す（Green）
+- [x] `trace.rs` の `//!` に 1 回で書く理由と `PERFORMANCE.md` の節名を足す
+  - 実装記録: 組み立ての純関数は `render_line(&Value) -> String` とした（`Value` は従来どおり `trace()` が組み、`heap` 欄の snapshot の位置も変えない）。
+    Red は `render_line` が空文字・`write_line` が no-op のスタブで 2 本とも落ちることで確かめた（旧形を当てる変異は委譲先が行う）
 
 ### Phase 3 — 後の測定と記録
 

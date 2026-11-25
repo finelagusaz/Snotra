@@ -128,8 +128,8 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
         || {
             // migemo 無効時は kana を構築しない（空のアリーナ）。
             if migemo_enabled {
-                // **ここは逐次のままでよい。** キャッシュヒット起動も、走査による cache-miss も
-                // `new_with_cached_masks` の `kana_for_cached` を通る——**あちらは並列を保つ**
+                // **ここは逐次のままでよい。** キャッシュヒット起動と、保存が派生データを返した
+                // cache-miss は `new_with_cached_masks` の `kana_for_cached` を通る——**あちらは並列を保つ**
                 // （そちらの doc が理由を持つ）。ここへ来るのは派生データを持たない材料だけである
                 // （どの分岐がそれを返すかの正本は `indexer::save_cache_sorted` の分岐と
                 // `SearchEngine::new_from_tree` の doc）。並列化の額と却下の理由は

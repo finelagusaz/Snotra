@@ -105,7 +105,7 @@ allowed-tools:
 まずツールを回す: `npm run verify:tree '--' run --sha <sha> --categories <該当カテゴリ>`。各カテゴリのコマンドは、ツールが `docs/build-commands.md`「変更後の検証チェックリスト」のフェンスから読む（コマンド文字列はこの SKILL に書かない）。
 
 - カテゴリ C・D の該当は、ファイルの種類（拡張子）ではなく、変更が触れるコードパスの意味（何をするか）で決まる（C は `.claude/rules/src-tauri.md`・#558、D は `docs/build-commands.md`「D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）」）。拡張子で対応づけると、一度も該当しない。C に当たる変更では、smoke を CI に任せず、ここでローカルに回す。修正のたびに、結果をその場で見るためである（修正のループを持たない `/deps-update` は、CI に任せる）。E と F はツールが常に回すので、渡さなくてよい。散文に条件が書かれた単発のコマンド（E の `scripts/lib/**` → `test:powershell` 等）は、`--also <npm script>` で足す
-- 完走まで分単位で掛かる。バックグラウンドで回し、完了の通知を待つ。C を要求するラウンドでは、ツールの完走を待ってから委譲を起動する。カテゴリ C の検査（`smoke-*` は同リポジトリのビルド成果物の Snotra を停止し、`test:powershell` 統合テストは起動中なら throw する・`scripts/lib/SnotraSmoke.psm1`）はホットキーやフォアグラウンド入力注入も競合するため、worktree を分けても並走できない。それ以外のラウンドは並走してよい
+- 完走まで分単位で掛かる。バックグラウンドで回し、完了の通知を待つ。C を要求するラウンドと、`--also test:powershell` で統合テストを足すラウンドでは、ツールの完走を待ってから委譲を起動する（`smoke-*` か `test:powershell` を回すラウンドどうしは並走させない。`smoke-*` は同リポジトリのビルド成果物の Snotra を停止し、`test:powershell` 統合テストは起動中なら throw する・`scripts/lib/SnotraSmoke.psm1`。加えてホットキーやフォアグラウンド入力注入も競合するため、worktree を分けても並走できない）。それ以外のラウンドは並走してよい
 - exit 2 は「検査が走らなかった」であり、赤ではない（未コミットの変更・sha ≠ HEAD・コマンド 0 件・worktree の失敗）。メッセージに従って前提を直し、回し直す
 
 次に、`git fetch origin` を打ってから、`Agent` を `isolation: "worktree"` で 1 体起動する（委譲先の worktree は refs を本体と共有するので、委譲先が差分の起点にする `origin/main` がこれで新しくなる。起点の選び方は `AGENTS.md`「検証の作法（全タスク共通）」）。`name` を付ける（3c の `SendMessage` による再開が、それを宛先にする）。次をすべて渡す。

@@ -17,7 +17,7 @@
 
 ## リリースフロー
 
-リリースは GitHub Actions の `Create Release` ワークフロー（`.github/workflows/create-release.yml`）を `workflow_dispatch` で手動実行して開始する（タグの手動 push では Release ワークフローは自動起動しない。理由は `docs/build-commands.md`「その他」）。
+リリースは GitHub Actions の `Create Release` ワークフロー（`.github/workflows/create-release.yml`）を `workflow_dispatch` で手動実行して開始する（タグの手動 push では Release ワークフローは自動起動しない。`.github/workflows/release.yml` の `on:` が `workflow_call` だけを持つため）。
 
 - バージョン入力は `<major>.<minor>.<patch>`（または `-<prerelease>` 付き、例: `0.12.0` / `0.12.0-alpha7`）形式
 - `create-release.yml` が `v<version>` タグの作成・push と draft release の作成を行い、続けて `workflow_call` で `.github/workflows/release.yml` を呼び出す

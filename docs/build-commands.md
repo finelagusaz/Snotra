@@ -318,7 +318,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
   - **注入する hotkey**: 起動時の `hotkey:registered` trace から導いた VK 列を、押下順に押し、解放まで含めて注入する（対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`）。`-HotkeyVks` を明示すると、trace より優先される（trace を出さない旧バイナリの検証など）
   - **プロファイル**: 検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す・#804）へ、最小の有効な TOML を常に seed する。実ユーザーの `%APPDATA%\Snotra` は、読みも書きもしない。退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である。seed を置く理由は、`scripts/lib/SnotraSmoke.psm1` の `New-SnotraVerificationProfile` のコメントが正本である
   - **肯定的な検査**: seed が読めたこと・first-run を踏んでいないこと・env が効いたこと（プロファイルに `*.bin` が生成されたこと）を、3 つとも確かめる。「観測できなかった」を合格と読ませないためである
-  - このリポジトリのビルド成果物から起動した snotra だけを停止する（普段使いの Snotra は落とさない・#1306）。網羅は担わず、視覚と操作列は手動の GUI smoke（カテゴリ D）が補う
+  - このリポジトリのビルド成果物から起動した snotra を停止する（普段使いの Snotra は原則落とさないが、管理者権限等で実行ファイルのパスを読めないプロセスは残留とみなして停止する・#1306・`scripts/lib/SnotraSmoke.psm1`）。網羅は担わず、視覚と操作列は手動の GUI smoke（カテゴリ D）が補う
 - `scripts/smoke-egui.ps1` は、results ウィンドウの表示も検査する（#671/#673 サイクル PR A）。`egui_show:done` の後に 1 文字のクエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。#804 以降、skip は無い。検証用プロファイルを常に seed するので、既定のクエリ `"z"` は、seed した索引の 1 件に必ず一致する（`-ResultsQuery <letter>` は残るが、開発機の既存の索引に合わせる用途は無くなった。空文字を渡す用途は次の項）（CONTRIBUTING.md の「results ウィンドウ show/hide の trace 観測」と対応）
 - **results の検査は、無条件に要求される（#686 の `-RequireResults` を #804 が格上げした）**
   - 旧 flag が opt-in だったのは、「ローカルでは索引を制御できないのが普通」という理由の緩和だった。検証用プロファイルを常に seed する以上、その前提は偽になったので、flag ごと撤去し、常に要求する形にした

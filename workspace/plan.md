@@ -88,3 +88,4 @@
 ## 検証の記録
 
 - ラウンド 1: sha 27996371 / verify:tree green（E・F） / 指摘 6 件（Medium 2・Low 4。挙動を変える M1・M2・L1 を直し、言い回しと精度だけの L2〜L4 は捨てた） / 変異注入 該当なし（文書だけで検知器にかかわらない） / 実地の確かめ: プローブで Start-Process は write_through=true、cmd 2>file は false
+- ラウンド 2: sha 23d7b147 / verify:tree green（E・F） / M1・M2・L1 解消、新しい指摘 2 件（Low・挙動を変えない N1 括弧の参照先・N2 字面の全称）は捨てた / 変異注入 該当なし / 実地の確かめ 該当なし（挙動の主張が増えていない）

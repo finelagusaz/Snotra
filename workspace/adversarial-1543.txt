@@ -1,0 +1,55 @@
+反証レポート: workspace/research.md (issue #1543)
+測定環境: ローカル pwsh 7.7.0 / .NET 11.0.0 / Windows 11 10.0.26300。子 = pwsh（コンソール・サブシステム）。snotra 本体・実 config には触れていない。
+プローブは scratchpad の child.ps1 / child2.ps1 / parent*.ps1（GetFileType と NtQueryInformationFile(FileModeInformation=16) を子の中で呼ぶ）。
+
+== 一次観測（子の stderr ハンドル）==
+A  Start-Process -RedirectStandardError -WindowStyle Hidden（Start-SnotraProcess と同じ引数）: type=1(DISK) mode=0x22  FILE_WRITE_THROUGH=True（0x20 は SYNCHRONOUS_IO_NONALERT）
+A2 Start-Process -RedirectStandardError -NoNewWindow                                         : 同上 mode=0x22
+B  cmd /c "pwsh ... 2>file"                                                                   : type=1 mode=0x20 WRITE_THROUGH=False
+C  ProcessStartInfo.StandardErrorHandle に自前ハンドル(FileOptions.None)                      : type=1 mode=0x20 WRITE_THROUGH=False
+→ 子へ渡るのはディスクファイルのハンドル（パイプではない）。フラグ差は Start-Process だけが WRITE_THROUGH を付ける。
+
+== 単価（child2: 同形の 1 行を 100 回、20ms 間隔、Stream.Write+Flush、3 ラウンド）==
+A  Start-Process(WT)    p50 0.156–0.206 ms
+B  cmd 2>file           p50 0.043–0.045 ms
+C  自前ハンドル None    p50 0.039–0.049 ms   ← B と同じ
+C' 自前ハンドル WriteThrough p50 0.186–0.210 ms ← A と同じ
+→ フラグだけを変えて（同じ launcher・同じ子で）単価が A 相当⇔B 相当に往復した。因果は確定。ただし比は約 4–5 倍で、issue の約 10 倍（Rust: 0.12 vs 0.014）より小さい（子が .NET の Stream で床が高いため。⚠️ 下記）。
+
+== 争点ごとの結論 ==
+1. 【壊せなかった】ソース（Process77.cs 2342 行 File.OpenHandle(..., FileOptions.WriteThrough)、SetStartupInfo の hStdError + STARTF_USESTDHANDLES 0x100、v7.5.0/7.6.0/7.7.0 で同じ）と、A の実測（mode に WRITE_THROUGH、type=DISK）が一致。UseShellExecute 経路ではない: RedirectStandardError の setter が _isDefaultSetParameterSpecified を立て（1721 行）UseShellExecute=false になる（1949 行）。-WindowStyle Hidden でも -NoNewWindow でも同じ結果。
+   偽にする手順: A の子で mode & 2 が 0 になる、または GetFileType が PIPE(3) を返す。→ 0x22 / DISK で偽にならず。
+2. 【壊せなかった】上の C/C' の往復が偽にする試み。cmd 側が付けないことも B で実測（research は「未確認」としていたが確認できた）。偽にする手順: C' が B 並みに速い、または C が A 並みに遅い。→ どちらも起きず。
+   ただし「単価 10 倍」という数値自体は私の環境で再現していない（4–5 倍）。⚠️ 機序は確定、倍率は未再現（Rust 小プログラムをコミットしていないため）。
+3. 【前半は壊せず、後半は「可能性」でなく「ほぼ確実」へ強まった】ローカル 7.7.0/.NET 11 では StandardErrorHandle が実際に通る（C で子の stderr が自前ハンドルになったことを観測、WaitForExit まで正常）。一方 CI: runner-images の Windows2025-Readme は PowerShell 7.6.10（PowerShell 7.6 は .NET 10 系・global.json の sdk 10.0.201）。手元の .NET 10.0.15 の System.Diagnostics.Process.dll に "StandardErrorHandle" の文字列が無い（"RedirectStandardError" はある）。よって runner では使えない見込みが高い。偽にする手順: runner 上で `[System.Diagnostics.ProcessStartInfo].GetProperty('StandardErrorHandle')` が非 null。→ 未実行(⚠️)。windows-latest が将来 7.7+ に進むと変わる。research の「CI の版は未確認」は、runner-images で 7.6.10 まで確認できる。
+4. 【壊せなかった】cmd で包む形は契約を壊す。呼び出し側の使い方（全件）:
+   - smoke-egui.ps1: $proc.HasExited / .ExitCode / .WaitForExit($ms) / .Id（Stop-Process -Id）/ Wait-SnotraWindow -Process $proc、toastProc も同様
+   - smoke-startup.ps1: -AbortIfExited $proc, $proc.HasExited, Stop-Process -Id $proc.Id
+   - bench-startup.ps1: Get-SnotraWorkingSetMB -ProcessId $proc.Id（メモリ計測が cmd の値になる）、Stop-SnotraProcessAndWait
+   - visual-check-colors / visual-input-metrics: $proc.Id、Stop-Process -Id、Wait-SnotraWindow -Process
+   - Wait-SnotraWindow は GetWindowThreadProcessId のオーナー PID と $Process.Id を比較する（psm1 1036–1039 行）。cmd の PID では永久に一致しない。Stop-Process -Id は cmd だけを殺し、本体が孤児で残る。
+   偽にする手順: cmd 包みで Wait-SnotraWindow が通る、または Stop-Process で本体が止まる。→ 構造的に成り立たない。
+   追加所見【research の見落とし】: `Start-Process -RedirectStandardError` の直接使用は manual-smoke.ps1 / measure-memory-stages.ps1 のほかに scripts/bench-startup.ps1:137（-UseVerificationProfile でない側の分岐）がある。直すなら 3 か所目。
+5. 【壊せなかった（実測）】自前ハンドル・FileOptions.None・FileShare.ReadWrite で子を起動し、子の実行中（HasExited=False）に Get-Content で読むと書いた行が読めた。OpenHandle(Create) の直後に空ファイルが存在し len=0。write-through を外してもキャッシュ経由で別ハンドルから見える。
+   偽にする手順: 子が書いた直後に別ハンドルから読むと空。→ 読めた（1 件・2.5 秒後。⚠️ 書いた直後のタイミングは未測、Windows の統一ファイルキャッシュの性質上は即時見える見込み）。
+   なお C の方式は FileShare.ReadWrite を明示して開けば読み手と衝突しない。FileShare を既定(Read)で開くと Get-Content が共有違反になる点は、設計時の落とし穴。
+
+== research.md の主張の母集団ごとの判定 ==
+壊せたもの:
+- 「呼び出し元」「直接使うもの」の列挙: bench-startup.ps1:137 の直接 Start-Process が漏れている（母集団の数え漏れ）。
+- 「cmd の 2>file がこのフラグを付けるとは考えにくい（未確認）」「ハンドルの種類を観測していない」「CI の版は未確認」: 未解決ではなく、今回の観測で解決（上記）。
+- 「差は FILE_FLAG_WRITE_THROUGH による」の定量: 倍率は「10 倍」ではなく私の環境で 4–5 倍。「10 倍が説明できた」とまでは言えない。
+壊せなかったもの:
+- ソース上の経路（CreateProcess 直・hStdError・WriteThrough・STARTF_USESTDHANDLES・CREATE_NEW_CONSOLE と Hidden の関係）。
+- ConsoleWindow/#872 の制約（-WindowStyle Hidden と -NoNewWindow の排他）は psm1 のコメント・テストと整合（Process77.cs 1972 行でも CreateNoWindow は NoNewWindow 由来）。
+- smoke が実行中に Get-Content で読む前提、空ファイル作成の前提（実測で保たれる）。
+- Start-SnotraProcess の戻り値の契約。
+- StandardErrorHandle の存在（ローカル 7.7.0 で観測）。
+
+== ⚠️ 確信が持てない所見（返り値にも含める）==
+⚠️ A. 測定環境の分岐差: 私の子は pwsh（コンソール・サブシステム）、issue は Rust。「windows サブシステムの release 本体で同じか」は未観測。ただしフラグは「ファイルオブジェクトのモード」で、子のサブシステムに依存しない（A と A2 の WindowStyle 差でも不変）ので、機序は共通と見る。倍率は子の実装に依存。
+⚠️ B. issue の測定が -WindowStyle Hidden 付きだったかは不明。issue は「Start-SnotraProcess と同じ」と書くので Hidden のはずだが、A/A2 で mode が同一なので、単価には影響しない見込み。
+⚠️ C. runner の pwsh 7.6.10 が .NET 10 で StandardErrorHandle を持たない点は、バイナリの文字列検索と readme からの推論。runner 上での直接確認ではない。
+⚠️ D. 10 倍の再現: 私の測定は pwsh の Stream.Write+Flush（約 0.04 ms の床）。Rust の write_all を直で呼ぶ版は作っていない。
+⚠️ E. 子の実行中の読み取り（争点 5）は 1 例のみ。#1539 の「1 行ずつ増える」ポーリング（Wait-SnotraTraceEvent の 100ms 刻み）を write-through なしで回した検証はしていない。
+⚠️ F. 実際に Start-SnotraProcess を直すかどうかの判断材料: write-through を外すと「子が強制終了されたときの最後の数行」がディスクに届く保証は、プロセス死亡後もカーネルのキャッシュに残るため通常は失われない（OS クラッシュ時を除く）。ここは推論で未実測。

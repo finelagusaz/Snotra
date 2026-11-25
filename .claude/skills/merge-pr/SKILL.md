@@ -27,7 +27,7 @@ PR を squash マージする。
 
 打つ（Git Bash）: `npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>`
 
-`--dry-run` を足すと、マージ前の検査をすべて行う。通れば、マージする内容（PR・head の sha・閉じる issue・squash 本文の先頭）を出して exit 0 で止まる（`gh pr merge` を呼ばない）。止める理由があれば、本番と同じく exit 1 になる。`--dry-run` は `--` の後ろに置く。前に置くと、npm が自分の設定として受け取ってしまう（ツールは `npm_config_dry_run` を見て、その場合も dry-run として扱う）。
+`--dry-run` を足すと、マージ前の検査をすべて行う。通れば、マージする内容（PR・head の sha・閉じる issue・squash 本文の先頭）を出して exit 0 で止まる（`gh pr merge` を呼ばない）。止める理由があれば、本番と同じく exit 1 になる。閉じる issue や本文の先頭を事前に見たいときに選ぶもので、既定の手順にはしない（#1529）。`--dry-run` は `--` の後ろに置く。前に置くと、npm が自分の設定として受け取ってしまう（ツールは `npm_config_dry_run` を見て、その場合も dry-run として扱う）。
 
 PowerShell からは、`--` を引用して `npm run merge:pr '--' <PR> --closes ... --body-file ...` と打つ。素の `--` は npm.ps1 の経路で消え、`--closes` などが npm に取られる（#1296）。`'--'` は、文として打ってもパイプ入力で渡しても、`--dry-run` まで届く（2026-11-03 に実測）。
 

@@ -162,8 +162,10 @@ function resolveSha(cwd, sha) {
   if (!sha) throw new EnvError("--sha が要る");
   try {
     return git(cwd, ["rev-parse", "--verify", `${sha}^{commit}`]);
-  } catch {
-    throw new EnvError(`sha が解決できない: ${sha}`);
+  } catch (e) {
+    // git の stderr で、打ち間違い（`Needed a single revision` だけ）と曖昧な短縮形・commit でない型を見分ける（#1529）。
+    // `||` なのは、timeout や stderr 無しの非 0 終了で `e.stderr` が空文字列になるため
+    throw new EnvError(`sha が解決できない: ${sha}\n${e.stderr?.trim() || e.message}`);
   }
 }
 

@@ -53,12 +53,12 @@
 ## 作業項目
 
 ### フェーズ 1: verify:tree の stderr
-- [ ] テスト 2 件を足し Red を確かめる
-- [ ] `resolveSha` を直し Green を確かめる
+- [x] テスト 2 件を足し Red を確かめる（2 件とも assert で赤: 出力に stderr が無い）
+- [x] `resolveSha` を直し Green を確かめる（verify-tree.test.mjs 55 件 green）
 
 ### フェーズ 2: dry-run の決定
-- [ ] SKILL.md に既定にしない理由を 1 文足す
-- [ ] issue #1529 に理由をコメントする
+- [x] SKILL.md に既定にしない理由を 1 文足す
+- [x] issue #1529 に理由をコメントする（issuecomment-7154167704）
 
 ## 未確定（実装前に潰す）
 

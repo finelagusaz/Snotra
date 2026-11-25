@@ -60,6 +60,9 @@
 - [x] SKILL.md に既定にしない理由を 1 文足す
 - [x] issue #1529 に理由をコメントする（issuecomment-7154167704）
 
+### 検証ラウンド
+- [x] ラウンド 1 — sha 028cf900 / verify:tree green（E・F exit 0・warnings なし） / 委譲レビュー: Critical・High・Medium 0、Low 2（コメントの「timeout」はこの呼び出しには当たらない・「曖昧な短縮形は決定的に作れない」は fast-import で反証された）——どちらも挙動を変えないので直さない / 変異 M1・M2 とも assert で赤・生存 0（`||`→`??` は計画どおり未検出の残余） / 実地: 一時リポジトリで実在しない sha・tree・曖昧な短縮形（`89c5`）に `run --sha` を打ち、3 形とも stderr が添えられて見分けられた
+
 ## 未確定（実装前に潰す）
 
 - [x] （裁定）dry-run を `/merge-pr` の既定の 1 手目にするか — AskUserQuestion で「既定にしますか？」と問い、回答「既定にしない (Recommended)」（理由を issue に残し、SKILL.md に一言添える）

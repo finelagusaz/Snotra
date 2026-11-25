@@ -1,0 +1,89 @@
+adversarial-1539: research.md の反証（結論: 争点 1〜4前半・6 は壊せず。5 は「網羅的」を壊せた（漏れ 3 件）。4 後半は帰結の記述が不足）
+
+== 争点 1: eprintln!("[trace] {line}") は 1 行 = 複数回の書き込み / String に組めば 1 回 → 壊せなかった
+根拠: core/src/io/write.rs:381 default_write_fmt は fmt の断片ごとに Adapter::write_str → inner.write_all。
+  std/io/stdio.rs:1068 StderrLock は write_fmt を上書きせず（1042/1068 は lock を取って委譲）、default を通る。
+  std/sys/stdio/windows.rs:455 Stderr::write → write()（ファイル/パイプなら is_console 偽 → Handle::write → NtWriteFile 1 回、
+  sys/pal/windows/handle.rs:304 synchronous_write は len を u32::MAX で切るだけ。8 KiB 上限（windows.rs:61）はコンソール経路だけ）。
+  実測（scratchpad の toy、serde_json =1.0.154、rustc 1.99.1）: Write 実装で数えると 1 行 153 byte で write 呼び出し 81 回。
+  1 回の write_all なら 1 回。
+偽にする手順: 行が 4 GiB 超（非現実的）／stderr がコンソールで非 UTF-8 コードページ（日本語 Windows の cp932 既定）だと
+  write_console_utf16 が 4096 バイト（MAX_BUFFER_SIZE/2、windows.rs:168）で切るので、4 KiB 超の行は write_all の中で複数回になる。
+  research の「受け入れ条件 1 は Write への呼び出し 1 回で検査」は、この点を既に避けている。
+補足（軽微な不正確）: research の「1 字句 = 1 write_str」は誤差。文字列は引用符・本体・エスケープ断片が別々に書かれる。結論には影響しない。
+
+== 争点 2: format!("{line}") は現行 eprintln! と同一バイト列 → 壊せなかった
+根拠: serde_json value/mod.rs:197-250 の Display は非 alternate で ser::to_writer（compact）。toy で write!(counting, "[trace] {line}\n") の
+  バイト列と format!("[trace] {line}\n") を比較して一致（bytes_equal=true）。NaN は json! が null にするので差なし。
+  eprintln! が末尾に足すのは "\n" だけ。format! 側に "\n" を含め忘れると壊れる（実装時の注意）。
+消費者: scripts/lib/SnotraSmoke.psm1:731 付近は「[trace] で始まる行」を parse。接頭辞・compact JSON・LF が同じなら不変。
+偽にする手順: format! に "\n" を入れ忘れる／Display ではなく {:#}（pretty）を使う。
+
+== 争点 3: 実 stderr へ書く [trace] の出口は trace.rs:66 の 1 か所 → 壊せなかった
+根拠: git grep -F '[trace]' を .rs で全数 → 出力は trace.rs:66 のみ（他は doc コメントと Pester）。非 .rs（ts/js/ps1/yml）でも出力側は 0。
+  heap_trace.rs に eprint/stderr は無い（snapshot/heap_fields のみ）。main.rs に SetStdHandle/AttachConsole/FreeConsole/freopen も無い
+  （git grep -E 'SetStdHandle|AttachConsole|FreeConsole|AllocConsole|dup2|freopen' が 0 件）。
+  ただし「[trace] 以外の stderr 行」は他にある（egui-runtime の *_TRACE 系・[index-load] など）。research も別 issue 扱いにしており矛盾なし。
+偽にする手順: format!("[{}] ", "trace") のように接頭辞を組み立てる箇所が増える／動的に接頭辞を作る経路。現状 0 件。
+
+== 争点 4: 原子性は弱まらない / panic を捨てて失う検知は無い
+(a) 原子性: 壊せなかった。Stderr::write_all は self.lock() を取って委譲（stdio.rs:1062 付近）。eprintln! も 1 回 lock を持つ。
+    どちらも ReentrantLock 1 回の間に行が書かれる。新形は OS 書き込みも 1 回なので、プロセス外（同じハンドルを継承した別プロセス）との
+    混在はむしろ減る。
+(b) 検知の喪失: ⚠️ research の記述は不足。「通常は差が出ない」は正しいが、Cargo.toml:44 は release が panic = "abort"。
+    eprintln! は書き込み失敗（EPIPE・ディスクフル等。ebadf は std が握りつぶす）で panic → release では**プロセスが即 abort**。
+    `let _ =` はそれを「診断が黙って欠ける」に変える。失う検知: リダイレクト先が壊れたときのクラッシュ（望ましい挙動かは別）。
+    リポジトリで "failed printing" を待つ検査・スクリプトは 0 件（git grep -i 'failed printing'）。よって「検知が壊れる」ことは無いが、
+    「挙動が abort から黙殺へ変わる」と PR 本文に書くべき。診断出口なので黙殺が妥当という research の判断自体は反証できず。
+偽にする手順: stderr をファイルでなく壊れたパイプにして SNOTRA_TRACE=1 で release を起動 → 旧: abort（panic = abort）、新: 続行。
+
+== 争点 5: 「trace の所要を前提にした記述」の一覧は網羅的 → 壊せた（漏れ 3 件。直す義務の有無は件ごとに異なる）
+research が挙げたのは PERFORMANCE.md「計測と受け入れ基準」の箇条（3662）・「採用: …(#1526)」(720-)・555・619・main.rs/window_coordinator.rs の
+「ミリ秒単位」。git grep を複数の語（ミリ秒単位 / 10 ?ms / trace の書き込み / 所要 / 費用 / 控除 / stderr）で回して見つけた漏れ:
+ a. PERFORMANCE.md:3746 の注記「後の実測（#1454）で、この区間の中身は RegisterHotKey ではなく、その後の trace の書き込みだと分かった」
+    ——歴史的記録（見出しは当時の読みのまま残す旨）。直す必要は薄いが、一覧には無い。
+ b. PERFORMANCE.md:3880- 「runner でも、区間の中身は trace の書き込みだった（2026-11-16）」——日付つき実測。直す対象ではない（歴史）。
+ c. PERFORMANCE.md:585（#1032「trace() の書き込み時間を各区間から控除する」）・715（「区間の中で書く trace … を含んでいた」）——日付つきの歴史。
+ d. src-tauri/src/startup.rs:577-580 `finish_at` の doc「入れると区間が stderr の受け手の速さで動く」——現在形。1 回書きにしても受け手の速さに依存する点は
+    変わらない（偽にならない）が、「どの値で偽になるか」を確かめた形跡が research に無い。
+ e. 本文 3731 付近「計測と受け入れ基準が記す 1 行あたりの費用との突き合わせは未調停」——research は「未調停の反例」として触れているので既出（漏れではない）。
+ f. 3691「SNOTRA_EGUI_INPUT_TRACE … stderr 1 行が 17〜56ms」——egui-runtime の独自 eprintln!。trace() の変更では動かない（research の範囲外判断は妥当）。
+現在形で偽になりうるのは 3662 の箇条と、main.rs/window_coordinator.rs の「ミリ秒単位」。後者は新形で本当にミリ秒でなくなるかを前後計測で確かめてから直す
+（理由: 二峰の上の峰＝約 10 ms が 1 回書きで消えるかは未測。PERFORMANCE.md:735 の Alt 経路 p50 9.7 ms は toy の 0.12 ms と別現象の可能性）。
+偽にする手順: git grep -n -E 'ミリ秒単位|trace の書き込み|約 10 ?ms' で上の a〜d が出る。
+
+== 争点 6: libtest は eprintln! を捕捉し io::stderr().write_all は捕捉しない → 壊せなかった
+根拠: std/io/stdio.rs の print_to（eprintln! の経路）は print_to_buffer_if_capture_used → OUTPUT_CAPTURE を先に見る。
+  Stderr::write_all（stdio.rs:1062 付近）は OUTPUT_CAPTURE を見ず StderrRaw へ直行。
+ただし research の「漏れる」は条件つき: trace_enabled()（OnceLock・SNOTRA_TRACE）が偽なら trace() は即 return するので、
+  環境変数を立てない通常の cargo test では何も書かれない。src 側テストで SNOTRA_TRACE を立てる箇所も git grep で 0 件。
+  漏れるのは開発者が SNOTRA_TRACE=1 で cargo test を回したときだけ。→ 「テストは W: Write 差し替え」の方針自体は妥当。
+
+== 測定環境への疑い（名指し）
+- smoke ハーネスが stderr をファイルへリダイレクトしているか: 壊せなかった。scripts/lib/SnotraSmoke.psm1:369 は StandardErrorPath があるときだけ
+  RedirectStandardError を付ける。smoke-egui.ps1:212-213 / smoke-startup.ps1:73-74 / bench-startup.ps1:133-138 は実際に渡している。
+  manual-smoke.ps1:242 / measure-memory-stages.ps1:135 は Start-Process 直（-Start-SnotraProcess を経由しない）が同じリダイレクト。
+  ただし StandardErrorPath を渡さない呼び出し（SnotraSmoke.Tests.ps1:1013 の procC、smoke-egui.ps1:862 は渡す）では stderr は継承されるので、
+  「Start-SnotraProcess を使う＝リダイレクト」ではない。前後計測は必ず -StandardErrorPath 付きの呼び出しで行うこと。
+- release の windows_subsystem="windows"（main.rs:8）: release でもリダイレクト指定時は stderr ハンドルが有効（smoke が trace を読めている）。
+  リダイレクト無しの release は null ハンドル → std は handle_ebadf で成功扱い（stdio.rs:203）。新形でも同じ。差は出ない。
+  debug は console サブシステム（SnotraSmoke.psm1:371 の #872 コメント）でも、stderr はリダイレクトされファイルなので is_console 偽 → 同じ経路。
+  ⚠️ ローカルの既定プロファイルは debug（#1292）、PERFORMANCE.md の測定は release。前後計測は同一プロファイルで揃えること。
+- heap-trace feature: trace.rs:62-64 で heap 欄が足されるだけ。形式は「欄が増える」のみで、1 回書きの可否は不変。
+  ⚠️ 副作用: 計数 allocator は feature 有効時だけ。snapshot は line 構築より前なので、新形の String 確保（1 行 ~150 B+）は heap 欄の値の後に起きる＝
+  次の行の heap に 1 行分の確保が乗る（1 行あたり確保が増える）。heap 計装の結果を比べる計測で前後差に混ざりうる。要注記。
+- コンソール直書き: 争点 1 の cp932/4 KiB 分割。research の記述と整合。
+- 「計測コードが測る分岐と、変更が触る分岐が違う」形: ⚠️ toy（20 ms 間隔・100 行・アイドル）の p50 0.12 ms は、アプリ内の
+  listener_enter p50 2.7 ms（Ctrl 経路）/ 9.7 ms（Alt 経路・区間の外）と別の分岐を測っている可能性がある。toy で再現した 2.5 ms は ime_control の
+  2.2 ms とは合うが、9.7 ms（二峰の上）は toy に現れない。1 回書きで上の峰が消えるかは、実アプリで測るまで言えない（research の未解決の疑問 3 と一致）。
+  受け入れ条件 2 の前後は、実アプリ・同一リダイレクト・同一プロファイルで測ること。
+
+== 壊せなかった項目（列挙）
+- trace.rs:66 が eprintln! 1 行（唯一の [trace] 出口）／trace_main・trace_command の委譲（trace.rs の //!）
+- serde_json の Display が compact・字句ごとの write_str（value/mod.rs:197-250）
+- Stderr がバッファ無し・ReentrantLock<RefCell<StderrRaw>>（stdio.rs:896/972）
+- 消費者が接頭辞・JSON・LF だけに依存（psm1:731）
+- #1526 の記録（PERFORMANCE.md:720-768）と research の引用の一致（約 2 ms / 約 10 ms の二峰・p50 値）
+- main.rs:144/566・window_coordinator.rs:511 の「ミリ秒単位」コメントの所在
+- SNOTRA_TRACE 無効時の早期 return（trace.rs:41）
+- 争点 1・2・3・4(a)・6、リダイレクト条件、release/debug のハンドル扱い（上記）

@@ -123,13 +123,16 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 
 ### Phase 6 — 検証
 
-- [ ] カテゴリ A（`cargo fmt --check`・`cargo clippy --workspace --all-targets -- -D warnings`・`cargo test`・`cargo doc`）
-- [ ] カテゴリ C（`npm run test:powershell`・`npm run smoke:startup`・`npm run smoke:egui`）
-- [ ] カテゴリ F（`npm run governance:check`）
+- [x] カテゴリ A（`cargo fmt --check`・`cargo clippy --workspace --all-targets -- -D warnings`・`cargo test`・`cargo doc`）
+- [x] カテゴリ C（`npm run test:powershell`・`npm run smoke:startup`・`npm run smoke:egui`）
+- [x] カテゴリ F（`npm run governance:check`）
 
 ### 検証ラウンドの記録
 
 - ラウンド 1: アンカー `076051a8` / ツール green（A・C・E・F） / 委譲 `review-1542`: Critical・High 0、Low 7（⚠️ を含む） / 変異注入: 狙った 4 件（`eprintln!` 戻し・`chunks(8)`・改行落とし・`eprint!`）はすべて赤（lint 診断または assert）。射程外の 2 件は緑で生き残り: `writeln!(stderr())`・`dbg!`（lint の射程外。lib.rs のコメントに明記した）と、`emit` の宛先を `sink()` へ替える変異（宛先を見る検知器が無い。設計上テストしない） / 実地: `[lints] workspace = true` の下での deny を本物の crate で確認・word-diff 手順・run ログの失効（HTTP 410） / 直したもの: Low 1（lib.rs のコメントに lint の射程を書いた）・Low 7（runner の観察の版に、`[trace]` 行も断片ごとに書いていた留保を足した）。直さなかったもの: Low 2（標本数の 1 件差）・Low 3（約 5 分の 1 → 実比 4.6）・Low 4（plan の「2 巡ずつ」）・Low 6（テストの doc の「13」）は精度・言い回しだけ。Low 5 は検知器の所在の記録
+
+- ラウンド 2: アンカー `698f4808` / ツール green（A・E・F） / 委譲 `review-1542`: Low 1・Low 7 の解消を確認、新しい指摘 0 / 変異注入: 散文だけの変更なので新しい変異なし。lib.rs の新しい文の根拠（変異 4a: `writeln!(stderr())`・`dbg!` は緑、対照の `eprintln!` は赤）を 698f4808 で回し直して一致 / 実地: 上の clippy 2 回
+- 軸の違うレビュー: 立った条件 (2)（`#![deny(clippy::print_stderr)]` という見張りを足した） / 対象 `perf/egui-trace-single-write` / `/code-review high` 5 件（すべて nit） / 直した 1 件: 「唯一の出口」の全称（crate の `CLAUDE.md` と `stderr_line.rs` の `//!`）を、lint の射程を添えた形へ弱めた / 残した 4 件: 表の標本数の 1 件差・「約 5 分の 1」（実比 4.6）・テスト doc の「13」・plan の「2 巡ずつ」——精度と言い回しだけで、読み手の行動を変えない
 
 ## 未確定（実装前に潰す）
 

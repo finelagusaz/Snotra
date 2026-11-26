@@ -1,4 +1,4 @@
-//! この crate が stderr へ書く行の、唯一の出口（`trace_line!`）。
+//! この crate が stderr へ書く行の出口（`trace_line!`）。
 //!
 //! 1 行を `String` へ組んでから、`write_all` 1 回で書く。std の `Stderr` はバッファを持たず、
 //! `eprintln!` は書式の断片ごとに書くので、1 行が引数の数に応じた回数の書き込みに分かれる。
@@ -11,7 +11,8 @@
 //! 向きにしか無い。共有すると、描画ランタイムの公開面に診断の出口を足すことになる。
 //!
 //! 有効判定（`crate::env::trace_hatch_enabled` など）は呼び出し側に置く。ここでは env を読まない。
-//! `eprintln!` が戻らないことは `lib.rs` の `#![deny(clippy::print_stderr)]` が見張る。
+//! `eprint!` / `eprintln!` が戻らないことは `lib.rs` の `#![deny(clippy::print_stderr)]` が見張る。
+//! `writeln!(std::io::stderr(), ..)` などで stderr へ直接書く形は、この lint の射程の外である。
 
 use std::fmt;
 use std::io::Write;

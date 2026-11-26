@@ -73,25 +73,25 @@
 
 ### Phase 1 — 足場と条件
 
-- [ ] 計装版の worktree を作り、計時とリングバッファと書き出しの経路を入れてビルドする
-- [ ] 計測スクリプトを scratchpad に書き、(a)〜(d) の起動の形とアイドルの長さを切り替えられるようにする
-- [ ] 測定条件を記録する
-- [ ] `QueryThreadCycleTime` の陽性対照を取る
+- [x] 計装版の worktree を作り、計時とリングバッファと書き出しの経路を入れてビルドする — `C:/workspace/snotra-probe-1541-wt`（基 `8533e4e1`・`CARGO_TARGET_DIR=C:/workspace/snotra-probe-1541-target`）。書き出しは名前付きイベント `Local\SnotraProbe1541Dump` で 1 回だけ。**計画からの逸脱**: (a) も `Start-SnotraProcess` ではなく (b)〜(d) と同じ `ProcessStartInfo.StandardErrorHandle` に `FileOptions.WriteThrough` で渡す（#1543 の D の形）。4 条件の差をハンドルの性質だけにするため。本体が読んだ mode は 0x22 で、`Start-SnotraProcess` の A と同じ
+- [x] 計測スクリプトを scratchpad に書き、(a)〜(d) の起動の形とアイドルの長さを切り替えられるようにする — `measure1541.ps1` / `batch1541.ps1` / `analyze1541.py`
+- [x] 測定条件を記録する — 2026-11-27・HAL9000（Ryzen 7 9700X）・バランス・AC・Primary NVMe Idle Timeout AC 200 ms（DC 100）・Primary の許容遷移遅延 AC 15 ms・Secondary NVMe Idle Timeout AC 2000 ms・Defender のリアルタイム保護は有効・`fltmc` と除外の一覧は管理者権限が無く読めない。C: は NVMe（SOLIDIGM SSDPFKKW020X7）、D: は USB の SSD
+- [x] `QueryThreadCycleTime` の陽性対照を取る — 試走で spin 1 ms は 3,800 cyc/µs、`Sleep(10)` は 4 cyc/µs。待ちと計算を分けられる
 
 ### Phase 2 — 測定
 
-- [ ] M0（基準の再現）を測り、停止条件を判定する
-- [ ] M1〜M3（(a)〜(d) を各 4 起動以上・交互）を測る
-- [ ] M4（アイドルの長さ・可視アイドルの `egui_frame`）を測る
+- [x] M0（基準の再現）を測り、停止条件を判定する — 試走（wt_c・5 回）で `listener_enter` 3/6 が 4 ms 超。M1 の wt_c 4 起動でも 14〜22/26。停止条件は立たない
+- [x] M1〜M3（(a)〜(d) を各 4 起動以上・交互）を測る — 16 起動・失敗 0。峰は wt_c だけ（plain_c・nul・wt_d は 0〜1/26）。遅い行は `write_all` が 99.9%・サイクル約 157/µs。ロック約 1 µs・`NUL` 1 バイト約 2 µs・`WM_HOTKEY`→listener 13〜16 µs・`try_lock` の迂回 0/104
+- [x] M4（アイドルの長さ・可視アイドルの `egui_frame`）を測る — 5 起動・失敗 0。閾値は 180〜220 ms（180 ms 未満 0/6,418、220〜400 ms 15/24）。操作の都合で `listener_enter` の空白は 235 ms 未満にできない。可視アイドルの後の最初の行は `egui_frame` ではなく `SNOTRA_EGUI_INPUT take`（同じイベントループのスレッド）で、M1 の wt_c で起動ごとに 23〜24 件が 4 ms 超。`push_key` down は空白 p50 48〜145 ms で再現せず（0〜1/113）
 
 ### Phase 3 — 記録
 
-- [ ] 「変更するファイル」の表を、母集団の grep の全ヒットで埋め直す
-- [ ] `PERFORMANCE.md` に新しい節を足す
-- [ ] 表の各記述を直す
-- [ ] 「計測と受け入れ基準」に読み方を書き、額の写しを参照へ置き換える
-- [ ] `main.rs` の `t0` のコメントを要否に応じて直す
-- [ ] `npm run governance:check` を通す
+- [x] 「変更するファイル」の表を、母集団の grep の全ヒットで埋め直す — 703・717・729〜752・793・874・883 は数表と無関係の記述、3787（#1004 の約 10 ms）は歴史の記録として触らない。`hotkey:registered` の項は判断できないので触らない（起動直後の最初の書き込みで、空白の定義が当たらない）
+- [x] `PERFORMANCE.md` に新しい節を足す — 「不採用: アイドルの後の trace 1 行が write-through で待つ分を直す（#1541）」
+- [x] 表の各記述を直す — #1526・#1539・#1543（mode と末尾）・#1542（機序と 30〜80 ms の出所）
+- [x] 「計測と受け入れ基準」に読み方を書き、額の写しを参照へ置き換える — trace の所要の項（「本体では測っていない」も直した）と `SNOTRA_EGUI_INPUT_TRACE` の項
+- [x] `main.rs` の `t0` のコメントを要否に応じて直す — 機序と新しい節を指す形にした
+- [x] `npm run governance:check` を通す — 全検査 passed（13 件）
 - [ ] 一時の worktree と `CARGO_TARGET_DIR` を撤去する
 
 ## 未確定（実装前に潰す）

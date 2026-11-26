@@ -5,6 +5,7 @@ use tauri_runtime_wry::tao::dpi::PhysicalSize;
 use crate::{
     RuntimeError, is_renderable_extent,
     raster::{self, CpuTexture},
+    stderr_line::trace_line,
 };
 
 /// view が色を決める前（起動直後の 1 枚目）と `set_clear_color` 呼び忘れのフォールバック。
@@ -179,7 +180,7 @@ impl EguiRenderer {
             let residency = raster::texture_residency(&self.textures);
             let atlas = context.fonts(|f| f.font_image_size());
             let kib = |bytes: usize| bytes / 1024;
-            eprintln!(
+            trace_line!(
                 "SNOTRA_EGUI_PAINT win={} tess_ms={:.2} raster_ms={:.2} total_ms={:.2} meshes={} px={} \
                  surface_kib={} atlas={}x{} atlas_kib={} tex_font_kib={} tex_other_kib={} tex_other_n={}",
                 self.label,

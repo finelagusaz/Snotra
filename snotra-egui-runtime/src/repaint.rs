@@ -16,6 +16,8 @@ use std::{
 use tauri_runtime::{UserEvent, window::WindowId};
 use tauri_runtime_wry::{Message, WindowMessage, tao::event_loop::EventLoopProxy};
 
+use crate::stderr_line::trace_line;
+
 enum SchedulerMessage {
     Request { deadline: Instant },
     Stop,
@@ -195,7 +197,7 @@ impl RepaintScheduler {
                             // すれば request_redraw() へ渡すだけで、hidden でも非破棄なら
                             // 特定は成功する——ゆえに実体は tao/OS 層）。
                             if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
-                                eprintln!("SNOTRA_EGUI_WAKE_SEND window_id={window_id:?}");
+                                trace_line!("SNOTRA_EGUI_WAKE_SEND window_id={window_id:?}");
                             }
                             if proxy
                                 .send_event(Message::Window(

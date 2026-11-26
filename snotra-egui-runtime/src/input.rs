@@ -6,6 +6,8 @@ use tauri_runtime_wry::tao::{
     keyboard::ModifiersState,
 };
 
+use crate::stderr_line::trace_line;
+
 pub(crate) struct InputState {
     raw: egui::RawInput,
     native_pixels_per_point: f32,
@@ -19,9 +21,9 @@ pub(crate) struct InputState {
     modifiers: egui::Modifiers,
     /// `take()` を通った回数＝egui へフレームを渡した回数（診断のみ・#872/#936）。
     frame_count: u64,
-    /// 直近で `take` 行を出した時刻。**心拍を間引くためだけに持つ**——runner では
-    /// stderr 1 行が 17〜56ms かかると実測されており（run 30963445957）、全フレームに
-    /// 出すと計測コードが系を乱す側へ回る。
+    /// 直近で `take` 行を出した時刻。**心拍を間引くためだけに持つ**——stderr の 1 行には
+    /// 所要がかかり（観測値は `PERFORMANCE.md`「計測と受け入れ基準」の `SNOTRA_EGUI_INPUT_TRACE`
+    /// の項）、全フレームに出すと計測コードが系を乱す側へ回る。
     last_take_trace: Option<Instant>,
 }
 
@@ -65,7 +67,7 @@ pub(crate) fn input_trace(kind: &str, detail: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    eprintln!("SNOTRA_EGUI_INPUT {kind} ts_ms={ts_ms} {detail}");
+    trace_line!("SNOTRA_EGUI_INPUT {kind} ts_ms={ts_ms} {detail}");
 }
 
 impl InputState {
@@ -95,8 +97,9 @@ impl InputState {
         // 「フレームが 1 枚も走っていない」と「走ったが TextEdit が受け取らない」が
         // 同じ無出力へ潰れている。**この 1 行だけが両者を分ける。**
         //
-        // **全フレームには出さない**——runner では stderr 1 行が 17〜56ms かかると実測した
-        // （run 30963445957・隣接する 2 行の間隔）。全フレームに出すと計測コードが系を乱す側へ回る。
+        // **全フレームには出さない**——stderr の 1 行には所要がかかる（観測値は `PERFORMANCE.md`
+        // 「計測と受け入れ基準」の `SNOTRA_EGUI_INPUT_TRACE` の項）。全フレームに出すと計測コードが
+        // 系を乱す側へ回る。
         // 入力を積んだフレームは必ず出し、それ以外は 100ms ごとの心拍に間引く：
         // 「走っていない」は**行の不在**ではなく**心拍の途切れ**として見えるので、間引いても
         // 判定は壊れない。

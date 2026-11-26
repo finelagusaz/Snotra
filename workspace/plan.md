@@ -92,21 +92,21 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 
 ### Phase 1 — 出口
 
-- [ ] `snotra-egui-runtime/src/stderr_line.rs` を書く（`//!`・`render_line`・`write_line`・`emit_to`・`emit`・`trace_line!`）
-- [ ] テスト（AC1 と対照）を書き、Red → Green を確かめる
-- [ ] `lib.rs` に `mod stderr_line;` と `#![deny(clippy::print_stderr)]` を置く
+- [x] `snotra-egui-runtime/src/stderr_line.rs` を書く（`//!`・`render_line`・`write_line`・`emit_to`・`emit`・`trace_line!`）
+- [x] テスト（AC1 と対照）を書き、Red → Green を確かめる
+- [x] `lib.rs` に `mod stderr_line;` と `#![deny(clippy::print_stderr)]` を置く
 
 ### Phase 2 — 呼び出し点の移行
 
-- [ ] 11 件をマクロ名だけ替えて移し、使う側の 5 ファイルに `use crate::stderr_line::trace_line;` を足す
-- [ ] `git diff -w --word-diff=plain`（「不変条件と異常系」の形）で、変わった語がマクロ名と `use` 行とコメントだけであることを確かめる
-- [ ] `git grep -n "eprintln!\|eprint!" -- snotra-egui-runtime` がコメント以外 0 件であることを確かめる
+- [x] 11 件をマクロ名だけ替えて移し、使う側の 5 ファイルに `use crate::stderr_line::trace_line;` を足す
+- [x] `git diff -w --word-diff=plain`（「不変条件と異常系」の形）で、変わった語がマクロ名と `use` 行とコメントだけであることを確かめる
+- [x] `git grep -n "eprintln!\|eprint!" -- snotra-egui-runtime` がコメント以外 0 件であることを確かめる
 
 ### Phase 3 — 文書
 
-- [ ] `snotra-egui-runtime/CLAUDE.md` のモジュール構成へ `stderr_line.rs` を足す
-- [ ] `src-tauri/src/trace.rs` の `write_line` の doc に双子の 1 文を足す
-- [ ] `input.rs` の 2 か所の「17〜56ms」を `PERFORMANCE.md` の項を指す形にする
+- [x] `snotra-egui-runtime/CLAUDE.md` のモジュール構成へ `stderr_line.rs` を足す
+- [x] `src-tauri/src/trace.rs` の `write_line` の doc に双子の 1 文を足す
+- [x] `input.rs` の 2 か所の「17〜56ms」を `PERFORMANCE.md` の項を指す形にする
 
 ### Phase 4 — 測定
 

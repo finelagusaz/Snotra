@@ -1,0 +1,182 @@
+# adversarial-1541 — research.md の反証（読み取りと powercfg の read-only のみ。コードは変更していない）
+
+凡例: (a) 壊せた / 壊せなかった / ⚠️確信なし、(b) 根拠、(c) 偽にする手順
+
+====================================================================
+A. 争点 1〜5
+====================================================================
+
+[1] listener_enter は Win32 プラットフォームスレッドで書かれる
+ (a) 壊せなかった（確認済み。research.md の「要確認」は解消できる）
+ (b) tauri 2.12.5（Cargo.lock の version = "2.12.5"。~/.cargo/registry に 2.12.5 あり）
+     src/event/listener.rs の emit_filter は、handlers を try_lock して for ループ内で `(callback)(Event::new(..))` を直接呼ぶ。
+     スレッドを渡す処理は無い。src-tauri/CLAUDE.md「`app.listen` のコールバックは emit 元のスレッドで同期実行される」も同旨。
+     platform/mod.rs の WM_HOTKEY arm が `app_handle.emit(HOTKEY_PRESSED, ())` を呼ぶ（GetMessageW ループのスレッド）。
+     main.rs setup_hotkey_listener の listen の先頭が trace_main("hotkey:listener_enter") である。
+ 例外（⚠️）: emit_filter は handlers.try_lock() が失敗すると insert_pending に積み、callback はその場で走らない。
+     後で flush_pending する側のスレッドが走らせる。listen / unlisten と emit が競合したときだけ。計測 25 回 × 2 巡でこれが
+     起きたかは測っていない。起きたら listener_enter は別スレッドで書かれうる。通常経路の主張は崩れない。
+ (c) 偽にする手順: listener_enter の行に GetCurrentThreadId を載せ、platform の thread_id（platform/mod.rs の thread_id_tx）と突き合わせる。
+
+[2] push_key は egui のイベントループのスレッド（ウィンドウ subclass）で書かれ、listener_enter とは別スレッド
+ (a) 壊せなかった（ただし「egui のイベントループのスレッド」は「ウィンドウを作ったスレッド」と読むこと）
+ (b) windows_ime.rs の ime_subclass_proc → trace_keyboard_event → input_trace → trace_line!。
+     SetWindowSubclass は呼んだスレッドのウィンドウにしか付けられない。プラットフォームの窓は別の窓（"Snotra Platform"）と別スレッドで
+     GetMessageW している。
+ (c) 偽にする手順: 両方の行にスレッド ID を載せる。platform/mod.rs の spawn 位置と egui ウィンドウ生成のスレッドが同じなら偽。
+
+[3] 共通するのは「書き込みの空白の後の最初の 1 行」で、down は待ちの直後、up は down の直後
+ (a) 壊せた（半分）。「共通の説明」としては弱く、up が速い理由の説明に使えない。
+ (b)
+   - Send-SnotraKey（scripts/lib/SnotraSmoke.psm1:911-941）自身は sleep しない。待ちは呼び出し側が決める。
+     Send-KeyTap（smoke-egui.ps1:155-163）の HoldMs 既定は 50 ms、Send-SnotraKeyChord（psm1:1000-1016）の InterKeyDelayMs 既定は 50 ms。
+     どちらの既定でも、down の後に up までの待ちが 30〜50 ms 以上ある。
+     PERFORMANCE.md 890 行の「打鍵の間の待ち（30〜80 ms）」は、リポジトリ内のどの既定にも一致しない。
+     visual-input-metrics.ps1:191-197 は 30 ms 固定。#1542 の測定に使った呼び出し側のスクリプトはリポジトリに無い。
+     したがって「up は down の直後」は、記録からは裏付けられない。
+     「down と up の間に待ちがあったか」への答えは、既定の呼び方ならあった（50 ms）。
+   - よって「待ちの直後の行が遅い」なら up も遅くなるはずだが、up は 1 巡に 0〜1 件（PERFORMANCE.md 888 行）。
+     up を救うには「待ちの間にも他の行が書かれていた」が要る。
+     push_key down と up の間には rx_key / push_text / take / egui_frame が egui 側で書かれる（入力の処理、フレーム）。
+     そうだとすると down の前の待ち（前の up の後）にも、検索結果の反映フレームの egui_frame が入りうる。
+     egui_frame は毎フレーム書かれる（view.rs:1323 の trace）。
+     つまり「書き込みの空白」は、どの行についても測っていない。測っていないものを共通点として書いている。
+   - 「空白」が成り立たない可能性（書き込みスレッドを問わない全体の空白）: 他スレッドの行（egui_frame・キャレット点滅の再描画・
+     SNOTRA_EGUI_INPUT take の 100 ms ハートビート input.rs:32/107-114）が入る。
+     push_key down の 1 巡あたり 25 回 × 4 down（文字 3 + Escape）で、遅い down は 35〜40 件/100 件 = 約 1.4〜1.6 件/回。
+     これは「1 回につき 1 つの特定の down（たとえば表示直後の最初の打鍵）だけ」でも「Escape だけ」でもない
+     （それなら最大 25 件/100 件）。down の位置別の内訳が記録に無い。分けて数えれば「空白」説の検定になる。
+   - 逆に、遅い down の間隔を 1 行目の ts_ms 差で見ても、PERFORMANCE.md 890 行が書くとおり、この間隔は待ちを含み書き込みの所要を表さない。
+     「空白の長さ」と「所要」の関係は、手元の記録から一度も取り出されていない。
+ (c) 偽にする手順: 計測 25 回 × 2 巡の stderr から、遅い push_key down の直前の行（スレッドを問わず）との ts_ms 差を取る。
+     遅い down の直前 10 ms 以内に別の行が有れば「空白」説は偽。
+
+[4] write-through の単価は 0.2 ms で峰を単独では説明しない。H1（装置の省電力復帰）なら説明しうる。H1〜H4 は区別可能
+ (a) 壊せた（H1 の見立てと、区別可能性の 2 点）
+ (b)
+   (i) 0.2 ms の測定は、20 ms おきの書き込み（PERFORMANCE.md 817 行）である。空白は 20 ms で、570 ms（listener_enter）とは別条件。
+       probe A の 100 回で p90 が 492 µs・327 µs（822 行）。8〜10 ms の峰が 35%（push_key down の率）出ていれば p90 は 8 ms 台になる。
+       つまり「20 ms の空白 + write-through」では峰は出ていない。最大値は表に無い。
+   (ii) powercfg /q（この機体 HAL9000・バランス・AC、read-only）:
+        Primary NVMe Idle Timeout AC = 0xC8 = 200 ms（DC 100 ms）、Secondary NVMe Idle Timeout AC = 0x7D0 = 2000 ms、
+        Primary NVMe Power State Transition Latency Tolerance AC = 0x0F = 15 ms、DISKIDLE AC = 1200 s。
+        NVMe は SOLIDIGM SSDPFKKW020X7（C: は NVMe、D: が USB の JMicron。作業ツリーは C:\workspace）。
+        H1 が正しければ、装置の idle が 200 ms を超えたときに低電力へ入る。listener_enter の空白（約 570 ms）は 200 ms を超える。
+        だが push_key down の空白（30〜80 ms または 50 ms）は 200 ms 未満で、primary の idle にはならない。
+        装置への他プロセスの I/O（system 全体の idle）の有無にもよるので、反証ではなく「同じ機序の 2 つの峰」という見立てへの圧力。
+        15 ms の遷移許容と 8〜10 ms の峰は同じ桁で、H1 には追い風。
+        したがって: H1 は listener_enter にだけ当てはまり、push_key down の峰は別機序（H2 や、別の何か）の可能性が高い。
+        research.md の「共通原因」仮定は、記録からは立たない。
+        ⚠️ 計測日の電源プランが現在と同じかは確認できない（powercfg は現在値）。
+   (iii) 区別できない組:
+        - H2（スレッドの起床・C-state）と、リストに無い H5（ミニフィルタ・ウイルス対策の最初の書き込みの検査、NTFS のファイル拡張）。
+          H1 の判定に使う「write-through を外すと峰が消える」は、H5 の一部（検査が書き込み経路にあるだけ）も消す／消さないが、
+          QueryThreadCycleTime が小さく壁時計だけ長いという H2 の予言は、H5 でも同じ（待ちは同様に壁時計）。
+          区別するには ETW（WPA の CPU Precise / File I/O）か、同じプローブをファイルの置き先（C: と D:、RAM ディスク）で替える。
+        - H3（ロック）と H4（入力）の間は、H3 の「別スレッドの直前の行」で区別できるが、
+          egui_frame を同じだけ空けた直後に書く実験は、egui スレッドの別の状態（前面ウィンドウの入力待ちからの復帰など）も揃えてしまう。
+          H4 の予言「空白を同じにしても入力のない書き込みでは峰が出ない」は、H2 でも同じ予言になりうる
+          （入力がなければスレッドの起床パターンも違う）。入力と起床は交絡している。
+   (iv) 観察者効果（⚠️）: 計測の stderr ファイルを、Wait-SnotraTraceCondition（psm1:805 付近、PollMs 既定 100 ms）が読みに来る。
+        読みのたびにファイルを開く。ウイルス対策などのミニフィルタが、別プロセスの open/close のたびに書き込みを挟む可能性がある。
+        その場合、peak の位相は PollMs と相関する。計測の手順書き込みの記録では、ポーリング有無が揃っていない。
+ (c) 偽にする手順:
+     - (i): 同じ probe を 20 ms→200 ms→600 ms の空白で回し、p99 / 最大を記録する。8〜10 ms が 200 ms 超でだけ出れば (ii) と整合、
+       20 ms でも出れば H1 は偽。
+     - (ii): push_key down を 400 ms 以上空けて撃ったとき、peak 率が変わるかを見る（変われば空白依存）。
+
+[5] 「直す」候補が write-through を外すことなら、#1543 が却下した変更で、再開条件は満たされていない
+ (a) 壊せた（半分。文言の事実は正しく、前提の読みが弱い）
+ (b) PERFORMANCE.md 841-860 行。却下の理由は 0.2 ms 規模の単価に対する、CI の .NET 10 に API が無い・smoke 配管へ C# が入る・過去値と比べにくい、である。
+     再開条件の 2 つ（trace の書き込みの絶対値で合否を決める計測を置く／CI の pwsh が .NET 11 へ上がる）は、いまも成立していない。ここは事実。
+     ただし 862 行が「峰との関係は測っていない」と明記している。H1 が当たれば、却下の理由が前提にした「0.2 ms 規模」が、
+     8〜10 ms の峰（単価の 40 倍）に変わる。却下の根拠の一部が崩れる。再開条件が「単価が 0.2 ms 規模である」前提に縛られていて、
+     峰が write-through 由来だと分かった場合の再開条件がどこにも無い。
+     research.md の書き方は「却下済みで進めない」と読めるが、正しくは「却下の前提を測り直す価値がある」。
+     別の選択肢（write-through を外さずに済む形）: listener_enter の 1 行を、ホットキーの処理の後で書く（#1526 で t0 を trace の後に動かしたのと同じ形）。
+     これは却下の対象外。
+ (c) 偽にする手順: cmd /c "...2>file"（write-through なし、PERFORMANCE.md 811 行）で同じ本体を回し、peak が消えれば再開条件を足す根拠になる。
+
+====================================================================
+B. 測定環境そのもの
+====================================================================
+
+[B1] 「計測コードが測る分岐と、変更が触る分岐が違う」
+ (a) ⚠️確信なし（反例を 3 つ挙げる。確定はできない）
+ (b)
+   1. #1539 の計装は「行の組み立て + 書き込み」を計り、次の行へ載せる（PERFORMANCE.md 785 行）。
+      「次の行」を書くのが別スレッドなら、所要は別スレッドの行に載る。載せる先が共有の静的変数なら、同時に 2 スレッドが書くと帰属がずれる。
+      listener_enter（platform）と egui_frame（egui）は別スレッドで、直前の行（egui_frame）は約 570 ms 前なので衝突しにくいが、
+      #1542 側の push_key と take/rx_key は同じスレッドで、衝突は無い。
+      一時計装の差分（コミットされていない）は読めない。計装が共有の静的か、スレッド局所かは記録に無い。
+   2. 計装の区間は、trace() 全体（json! → heap snapshot → render_line → write_line）か、write_all だけかが記録の文言から読み取れない
+      （「行の組み立て + 書き込み」）。issue 本文も同じ。H1〜H4 の切り分けには、組み立て（CPU）と WriteFile（I/O）を分ける必要がある。
+      組み立てには SystemTime::now と json! の確保が入る。これは CPU 費用で、数 ms にはならない（0.1 ms 規模）。
+   3. #1542 では「所要は次の行に載るので、最後の行の所要は測れない」（886 行）。表の push_key の標本は、「次の行」が push_key の
+      とき、ではなく input_trace の次の呼び出しの行である。push_key の所要が次の rx_key / take の行に載ると、種別ごとの表の帰属がずれる。
+      記録からは、どの種別へ載せたか読めない（⚠️）。
+ (c) 偽にする手順: 計装を計時専用の静的ログ（スレッド局所の Vec に (event, µs) を貯めて終了時に書く）に替え、同じ巡で再測定して、
+     峰の率・種別が変わるかを見る。
+
+[B2] Start-SnotraProcess が実際に -RedirectStandardError を渡しているか
+ (a) 壊せなかった（条件つき）
+ (b) psm1:369 `if ($PSBoundParameters.ContainsKey('StandardErrorPath')) { $startParameters.RedirectStandardError = ... }`。
+     つまり -StandardErrorPath を渡した呼び出しだけ。PERFORMANCE.md は「-StandardErrorPath」と書いている。標準出力はリダイレクトしない
+     （-StandardOutputPath を渡さない限り）。PowerShell の Process.cs の挙動は #1543 の節が v7.5〜7.7 を読んで確認済み（本調査では再確認していない）。
+ (c) 偽にする手順: 計測の起動行（呼び出し側）を見て -StandardErrorPath が無ければ、計測値は write-through なしの別条件。
+     呼び出し側のスクリプトがリポジトリに無いので、記録（PERFORMANCE.md 783・872 行）だけが根拠。
+
+[B3] release と debug の stderr ハンドルの性質（コンソールサブシステム）
+ (a) ⚠️確信なし
+ (b) main.rs:8 `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`。release は GUI サブシステム、debug はコンソール。
+     PERFORMANCE.md 782・871 行は release。#1543 の probe の子は「小さな Rust のコンソールアプリ（release）」（816 行）で、サブシステムは本体と違う。
+     829〜832 行が「release 本体（windows サブシステム）を子にしたときの mode は観測していない」と自認している。
+     つまり probe の 0.2 ms は本体のハンドルの性質を測っていない。本体で mode（FILE_WRITE_THROUGH）を読む計装は無い。
+     debug は psm1:371-384 のコメントのとおり、ConsoleWindowClass が前面を奪う別の経路がある（-NoNewWindow で隠れない）。
+     debug で測った記録があるなら、release と合算できない。#1539/#1542 は release と明記しているので、混在は無い。
+ (c) 偽にする手順: 本体（release）に起動直後 1 回だけ NtQueryInformationFile(FileModeInformation) を stderr に対して呼ぶ一時計装を入れる。
+     0x22 以外なら write-through の議論は前提から崩れる。
+
+[B4] SNOTRA_TRACE / SNOTRA_EGUI_INPUT_TRACE の受理値の違いで計装が黙って無効になる経路
+ (a) 壊せた（非対称が実在する。ただし今回の計測では無効にならない）
+ (b)
+   - SNOTRA_TRACE: src-tauri/src/trace.rs:32-40 env_flag は trim + 小文字化のうえ "1"/"true"/"yes"/"on" だけ。"0"・"false"・"" ・"2"・"enabled" は無効。
+   - SNOTRA_EGUI_INPUT_TRACE: snotra-egui-runtime/src/env.rs:24-31 is_enabled は「空でなければ有効」。"0"・"false" でも有効。
+   - 逆向き（有効のつもりで無効）: SNOTRA_TRACE=2 や "enabled" は黙って無効。SNOTRA_EGUI_INPUT_TRACE は空文字だけが無効（#872 の実バグはこれ）。
+   - 今回の計測: Start-SnotraProcess -Trace は SNOTRA_TRACE='1'（psm1:361）。SNOTRA_EGUI_INPUT_TRACE は -ExtraVariables で渡すが値は記録に無い
+     （PERFORMANCE.md 872 行は =1）。いずれも有効値。呼び出し側が env を渡し損ねた場合は、listener_enter か push_key のどちらかだけが出る。
+     出ていたので有効だったのは確か。
+   - input_trace_enabled は OnceLock にキャッシュ（input.rs:46）。trace_enabled も OnceLock（trace.rs:43）。プロセス起動後の変更は効かない。
+   - Send-SnotraKey の `if ($env:SNOTRA_EGUI_INPUT_TRACE)` は呼び出し側 env を読む（psm1:936）。真なら Write-Host で down の直後に 1 行出す。
+     psm1:934-935 のコメントどおり、子の env だけ立てる -ExtraVariables では呼び出し側は立たない。立つ回では down と up の間に
+     Write-Host の費用（数 ms）が入るので、down の後の待ちの長さが変わる。#1542 でどちらだったか記録に無い（⚠️）。
+ (c) 偽にする手順: 計測の stderr に SNOTRA_SMOKE_INJECT の行があるかを見る。あれば呼び出し側の env が立っていた。
+
+[B5] Alt+F12 の注入そのものが入力の配送を伴う（H4 の交絡）
+ (a) ⚠️確信なし
+ (b) listener_enter も push_key down も、注入した入力（SendInput / keybd_event）に直結した行。
+     push_key up も注入だが、up は入力経路の後ろ半分。up が速い事実は H4（入力の配送が重い）に不利、H2（空白）に有利。
+     ただし up の前に down の処理と描画が挟まる（上の [3]）ので、H4 を捨てるには up の直前の空白を測り直す必要がある。
+ (c) 偽にする手順: PostMessage(WM_KEYDOWN) など入力キューを経ない注入で同じ本体を叩き、push_key down の峰が消えるか。
+
+====================================================================
+C. research.md の全主張の宣言
+====================================================================
+壊せた:
+ - [3] 共通点は「空白の後の最初の 1 行」（up / 待ちの扱い。待ちの長さと所要の関係が一度も取り出されていない）
+ - [4] の H1「2 つの峰を同じ機序で説明しうる」（NVMe 200 ms idle は 30〜80 ms の空白に当たらない。20 ms probe で峰が出ていない）
+ - [4] の「H1〜H4 は区別可能」（H2 と、リスト外の H5=ミニフィルタ/検査は同じ予言。H2 と H4 は交絡）
+ - [5] の読み（却下の前提は 0.2 ms 規模の単価。峰が由来なら前提が変わる。listener_enter の trace を処理の後ろへ動かす別案を落としている）
+ - 関連する事実 16 行目の「待ちは 30〜80 ms」「up は down の直後」（リポジトリ内に裏付けが無い。既定は 50 ms）
+壊せなかった:
+ - 事実: trace.rs の経路・stderr_line.rs の経路・setup_hotkey_listener / WM_HOTKEY の位置・ReentrantMutex（std の Stderr は
+   ReentrantLock<RefCell<StderrRaw>> で無バッファ）。[1][2]。Start-SnotraProcess が RedirectStandardError を渡すこと [B2]。
+ - 事実: 開発機 HAL9000 のディスク構成（NVMe SOLIDIGM と USB JMicron）。作業ツリーと TEMP は C:（NVMe）。計測ファイルの置き場所は不明のまま
+   （記録に無い。research.md が「記録に無い」と書いたのは正しい）。
+ - 関連ファイル/シンボル、再利用できる既存パターン（Start-SnotraProcess / Send-SnotraKey / probe の形）、技術的な制約
+   （一時の足場をコミットしない・製品挙動を変えない・PERFORMANCE.md の規約）。
+ - 未解決の疑問 1（listen の同期呼び出し）は、本調査で解消できる（[1]）。疑問 2・3 は、本調査でも解消できない。
+research.md に足りないもの:
+ - 実機の電源設定（Primary NVMe idle 200 ms、tolerance 15 ms）を「記録に残す条件」に入れる、という制約は research.md にあるが、
+   現在値を載せていない。上記の値を載せられる。
+ - 調べる順序: 先に「遅い行の直前の行との間隔（スレッドを問わず）」と「down の位置別の遅い率」を既存の stderr から出す。測らずにわかる。

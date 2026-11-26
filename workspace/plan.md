@@ -92,11 +92,13 @@
 - [x] 「計測と受け入れ基準」に読み方を書き、額の写しを参照へ置き換える — trace の所要の項（「本体では測っていない」も直した）と `SNOTRA_EGUI_INPUT_TRACE` の項
 - [x] `main.rs` の `t0` のコメントを要否に応じて直す — 機序と新しい節を指す形にした
 - [x] `npm run governance:check` を通す — 全検査 passed（13 件）
-- [ ] 一時の worktree と `CARGO_TARGET_DIR` を撤去する
+- [x] 一時の worktree と `CARGO_TARGET_DIR` を撤去する — `git worktree remove --force` で計装の worktree を消した（`git worktree list` に残り 0）。ファイルの削除（`C:/workspace/snotra-probe-1541-target`・作り直す前の `C:/workspace/snotra-probe-1541`・空の `C:/c/workspace`・`D:/snotra-probe-1541`・`D:/snotra_probe_write_test.tmp`）は Claude Code の安全確認が拒んだので、利用者へ頼む（PR 本文の「残したもの」）。リポジトリの中には何も残らない
 
 ### 検証の記録
 
 - ラウンド 1: sha `7e074823` / verify:tree green（A・E・F の 10 コマンド exit 0・警告 0）/ 委譲の指摘 High 2・Medium 3・Low 5・⚠️ 4 / 変異注入は該当なし（検知器に触れない）/ 実地の確かめは生データを独自に集計し直して照合。挙動を変える 8 件を直した（High 1: 遅い `take` は可視アイドルの行・High 2: 閾値は約 155〜233 ms・Medium 3: 残る影響を「少なくとも」2 つへ・Medium 4: 30〜80 ms の裏付け・Medium 5: 別の 4〜8 ms の行・Low 10 と ⚠️: 待つ「ことがある」と条件の範囲・⚠️: 動かす案の却下の理由）。挙動を変えない Low 6〜9 と用語の提案は捨てた
+- ラウンド 2: sha `10ba413b` / verify:tree green（10 コマンド exit 0・警告 0）/ 委譲の指摘 Critical・High・Medium 0・Low 3・⚠️ 1（どれも言い回しと精度で、挙動を変えないので捨てた）/ 前のラウンドの指摘はすべて解消 / 変異注入は該当なし / 実地の確かめは直した文の数値を生データで再集計して一致
+- 軸の違うレビュー: 該当なし — (1) 委譲の所見を独自に裁定して退けていない（捨てたのは規則どおり挙動を変えないもの）(2) 安全機構・回復機構を足していない (3) #1543 の「直さない」の判断と再開の条件は変えていない（前提の記述に事実を足しただけ）
 
 ## 未確定（実装前に潰す）
 

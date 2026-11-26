@@ -133,6 +133,8 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 
 - ラウンド 2: アンカー `698f4808` / ツール green（A・E・F） / 委譲 `review-1542`: Low 1・Low 7 の解消を確認、新しい指摘 0 / 変異注入: 散文だけの変更なので新しい変異なし。lib.rs の新しい文の根拠（変異 4a: `writeln!(stderr())`・`dbg!` は緑、対照の `eprintln!` は赤）を 698f4808 で回し直して一致 / 実地: 上の clippy 2 回
 - 軸の違うレビュー: 立った条件 (2)（`#![deny(clippy::print_stderr)]` という見張りを足した） / 対象 `perf/egui-trace-single-write` / `/code-review high` 5 件（すべて nit） / 直した 1 件: 「唯一の出口」の全称（crate の `CLAUDE.md` と `stderr_line.rs` の `//!`）を、lint の射程を添えた形へ弱めた / 残した 4 件: 表の標本数の 1 件差・「約 5 分の 1」（実比 4.6）・テスト doc の「13」・plan の「2 巡ずつ」——精度と言い回しだけで、読み手の行動を変えない
+- ラウンド 3: アンカー `acdcefac` / ツール green（A・E・F） / 委譲 `review-1542`: 新しい文は lint の挙動（変異 1・4a・4b）と一致、Low 1（lint の射程が `lib.rs` と `stderr_line.rs` の 2 か所にある・言い回し）は捨てた / 変異注入: `//!` の 3 行だけの変更なので該当なし / 実地: 該当なし
+- 否定の知識（ADR にしない。却下の理由は設計の推論で、実測から得たものではない。PR 本文の「残したもの」へ）: 出口の crate 間共有・`#[allow]` で診断行を lint の例外にする形・`#[macro_use]` と mod 順・`clippy.toml` の `disallowed_macros`・runner での測り直し
 
 ## 未確定（実装前に潰す）
 

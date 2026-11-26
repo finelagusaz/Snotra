@@ -110,16 +110,16 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 
 ### Phase 4 — 測定
 
-- [ ] 前後の版を別々の worktree・`CARGO_TARGET_DIR` で release ビルドし、一時の計装を入れる
-- [ ] 前の版を 1 回だけ回し、1 操作あたりの `SNOTRA_EGUI_INPUT` の行数を `kind` ごとに数える
-- [ ] 前 → 後 → 前 → 後で 2 巡ずつ回し、集計する
-- [ ] 測定用の worktree を撤去し、`git worktree list` で残りが無いことを確かめる
+- [x] 前後の版を別々の worktree・`CARGO_TARGET_DIR` で release ビルドし、一時の計装を入れる（前 `bfbc0385`・後 `9c7b3f94`。scratchpad の `m-before` / `m-after`）
+- [x] 前の版を 1 回だけ回し、1 操作あたりの `SNOTRA_EGUI_INPUT` の行数を `kind` ごとに数える（35 行: `take` 11・`rx_key` 13・`push_key` 8・`push_text` 3。起動直後の `take` を含む）
+- [x] 前 → 後 → 前 → 後で回し、集計する（各 1 巡 25 回・約 924 行。全行 p50: 前 536 / 515 µs → 後 115 / 113 µs。`push_key` の down の 30〜40 / 100 件が前後とも約 8〜10 ms。表は `PERFORMANCE.md` の #1542 の節）
+- [x] 測定用の worktree を撤去し、`git worktree list` で残りが無いことを確かめる（scratchpad の行 0 件）
 
 ### Phase 5 — `PERFORMANCE.md`
 
-- [ ] 「採用: egui の計装の 1 行を 1 回の書き込みにする（#1542）」の節を、#1539 の節の後ろに足す（測定条件・表・読み方）
-- [ ] 「計測と受け入れ基準」の `SNOTRA_EGUI_INPUT_TRACE` の項を直す
-- [ ] 同じ節の trace の所要の項にある「CI runner での実測は同節の `SNOTRA_EGUI_INPUT_TRACE` の項にある」という所在の文を、直した項の文言と合わせる
+- [x] 「採用: egui の計装の 1 行を 1 回の書き込みにする（#1542）」の節を、#1543 の節の後ろに足す（測定条件・表・読み方。#1543 の write-through を前提に読むので、#1539 の直後ではなくその後ろに置いた）
+- [x] 「計測と受け入れ基準」の `SNOTRA_EGUI_INPUT_TRACE` の項を直す
+- [x] 同じ節の trace の所要の項にある「CI runner での実測は同節の `SNOTRA_EGUI_INPUT_TRACE` の項にある」という所在の文を、直した項の文言と合わせる
 
 ### Phase 6 — 検証
 

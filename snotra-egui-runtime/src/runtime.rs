@@ -17,6 +17,7 @@ use crate::{
     input::InputState,
     renderer::EguiRenderer,
     repaint::{RepaintScheduler, WakeReceiver, WindowWaker, wake_channel},
+    stderr_line::trace_line,
 };
 
 pub trait EguiView: Send + 'static {
@@ -280,7 +281,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                 // ウィンドウ特定の前に置く——特定の失敗で握りつぶされる経路も観測対象。
                 // runtime_id は送信側の window_id と同じ ID 空間ゆえ、ウィンドウの帰属を直接照合できる。
                 if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
-                    eprintln!(
+                    trace_line!(
                         "SNOTRA_EGUI_WAKE_RECV window_id={window_id:?} runtime_id={:?}",
                         context.window_id_map.get(window_id)
                     );
@@ -292,7 +293,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                     && let Err(error) = active.window.render()
                 {
                     log::error!("egui render failed: {error}");
-                    eprintln!("SNOTRA_EGUI_RENDER_ERROR={error}");
+                    trace_line!("SNOTRA_EGUI_RENDER_ERROR={error}");
                 }
             }
             _ => {}
@@ -331,7 +332,7 @@ impl<T: UserEvent> RuntimePlugin<T> {
                 Ok(renderer) => window.renderer = Some(renderer),
                 Err(error) => {
                     log::error!("egui softbuffer surface init failed: {error}");
-                    eprintln!("SNOTRA_EGUI_RENDER_ERROR={error}");
+                    trace_line!("SNOTRA_EGUI_RENDER_ERROR={error}");
                     // この window はスキップ（attach の同期エラー契約は狭まる）。wake_rx も
                     // ここで落ちるため、以降このウィンドウ宛の `WindowWaker::wake()` は no-op になる。
                     continue;
@@ -407,7 +408,7 @@ impl EguiWindow {
             scale_factor, ..
         } = event
         {
-            eprintln!("SNOTRA_EGUI_DPI_CHANGED scale_factor={scale_factor:.3}");
+            trace_line!("SNOTRA_EGUI_DPI_CHANGED scale_factor={scale_factor:.3}");
         }
         if let tauri_runtime_wry::tao::event::WindowEvent::Focused(true) = event {
             // #532 SU1: main.rs の Alt+Q は RuntimeFrame 経由でなく tauri::Window を直接
@@ -468,7 +469,7 @@ impl EguiWindow {
                 .replace(now)
                 .map(|prev| (now - prev).as_secs_f64() * 1000.0)
                 .unwrap_or(f64::NAN);
-            eprintln!(
+            trace_line!(
                 "SNOTRA_EGUI_REPAINT window={} focused={} since_prev_ms={since:.1} causes={}",
                 self.window.label(),
                 self.context.input(|i| i.focused),

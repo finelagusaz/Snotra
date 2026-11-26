@@ -1,5 +1,9 @@
 //! Tauri/Taoとegui/softbufferを接続するSnotra専用ランタイム。
 
+// `eprint!` / `eprintln!` を禁じる。stderr へ書く行は `stderr_line::trace_line!` を通す（1 行を 1 回の
+// 書き込みにする・#1542）。`writeln!(std::io::stderr(), ..)` や `dbg!` は、この lint の射程の外である。
+#![deny(clippy::print_stderr)]
+
 mod env;
 mod ime;
 mod input;
@@ -10,6 +14,7 @@ mod raster;
 mod renderer;
 mod repaint;
 mod runtime;
+mod stderr_line;
 mod surface;
 
 pub use input::modifiers_from_tao;

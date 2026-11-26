@@ -16,6 +16,7 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 - `proof.rs`: イベントループスレッド上にいることの証人型`EventLoopProof`と、フレームの外から**その証人を得る**唯一の口`on_event_loop`（イベントループスレッドへ入る手段自体は`AppHandle::run_on_main_thread`にもある——`on_event_loop`はその薄いラッパーで、唯一なのは証人が付くことのほう。責務詳細は`//!`）
 - `repaint.rs`: 即時／遅延repaintをTauriイベントループへ配送（配送規律は「不変条件」を参照）。ウィンドウを外部（別スレッド・別ウィンドウ・Tauriイベントリスナー）から起こす公開ハンドル`WindowWaker`（`EguiRuntime::attach`の戻り値）もここが所有する
 - `runtime.rs`: Tauri wry pluginとWindowごとの状態管理（visibleガード・描画失敗リトライを含む）
+- `stderr_line.rs`: この crate が stderr へ書く行の出口`trace_line!`（1 行を 1 回の書き込みにする・#1542。lint が見張る範囲は`lib.rs`のコメント）
 - `surface.rs`: `is_renderable_extent`（0×0 Surfaceの描画/configureを防ぐガード。renderer.rsが消費）
 
 ## 不変条件

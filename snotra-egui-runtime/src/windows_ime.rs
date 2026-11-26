@@ -31,6 +31,7 @@ use windows::Win32::{
 use super::{active_range_chars, logical_ime_rect_to_physical};
 use crate::RuntimeError;
 use crate::keyboard::{self, KeyboardTranslator, NativeInput, PhysicalScan, Translation};
+use crate::stderr_line::trace_line;
 
 const IME_SUBCLASS_ID: usize = 0x534E_4F54_5241_494D;
 
@@ -116,9 +117,14 @@ impl PlatformIme {
         if crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE")
             && self.last_candidate_rect.replace(Some((spot, area))) != Some((spot, area))
         {
-            eprintln!(
+            trace_line!(
                 "SNOTRA_EGUI_IME_RECT scale_factor={scale_factor:.3} spot={},{} area={},{},{},{}",
-                spot[0], spot[1], area[0], area[1], area[2], area[3]
+                spot[0],
+                spot[1],
+                area[0],
+                area[1],
+                area[2],
+                area[3]
             );
         }
         let rect = RECT {
@@ -310,12 +316,12 @@ unsafe extern "system" fn ime_subclass_proc(
 fn trace_ime_event(event: &egui::ImeEvent) {
     match event {
         egui::ImeEvent::Commit(text) => {
-            eprintln!("SNOTRA_EGUI_IME_COMMIT chars={}", text.chars().count());
+            trace_line!("SNOTRA_EGUI_IME_COMMIT chars={}", text.chars().count());
         }
         egui::ImeEvent::Preedit {
             text,
             active_range_chars,
-        } => eprintln!(
+        } => trace_line!(
             "SNOTRA_EGUI_IME_PREEDIT chars={} active={active_range_chars:?}",
             text.chars().count()
         ),

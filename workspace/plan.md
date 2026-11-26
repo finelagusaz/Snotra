@@ -127,6 +127,10 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 - [ ] カテゴリ C（`npm run test:powershell`・`npm run smoke:startup`・`npm run smoke:egui`）
 - [ ] カテゴリ F（`npm run governance:check`）
 
+### 検証ラウンドの記録
+
+- ラウンド 1: アンカー `076051a8` / ツール green（A・C・E・F） / 委譲 `review-1542`: Critical・High 0、Low 7（⚠️ を含む） / 変異注入: 狙った 4 件（`eprintln!` 戻し・`chunks(8)`・改行落とし・`eprint!`）はすべて赤（lint 診断または assert）。射程外の 2 件は緑で生き残り: `writeln!(stderr())`・`dbg!`（lint の射程外。lib.rs のコメントに明記した）と、`emit` の宛先を `sink()` へ替える変異（宛先を見る検知器が無い。設計上テストしない） / 実地: `[lints] workspace = true` の下での deny を本物の crate で確認・word-diff 手順・run ログの失効（HTTP 410） / 直したもの: Low 1（lib.rs のコメントに lint の射程を書いた）・Low 7（runner の観察の版に、`[trace]` 行も断片ごとに書いていた留保を足した）。直さなかったもの: Low 2（標本数の 1 件差）・Low 3（約 5 分の 1 → 実比 4.6）・Low 4（plan の「2 巡ずつ」）・Low 6（テストの doc の「13」）は精度・言い回しだけ。Low 5 は検知器の所在の記録
+
 ## 未確定（実装前に潰す）
 
 - [x] 敵対的調査（`workspace/adversarial-1542.txt`）の所見を反映する — 採否は `research.md`「敵対的調査（3b）の採否」。計画へは B（AC4 の「17〜56ms」の扱い）・D（測定の駆動スクリプトと env）・⚠️（release に揃える・テストは `emit_to` を測る）を入れた

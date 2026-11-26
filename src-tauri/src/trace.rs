@@ -80,8 +80,7 @@ fn render_line(line: &serde_json::Value) -> String {
 
 /// 組んだ 1 行を 1 回の `write_all` で書く。失敗は捨てる。診断用の出口なので、
 /// 書けなくても製品を止めない（`eprintln!` は書き込みの失敗で panic し、release では
-/// `panic = "abort"` によりプロセスごと止まる）。同じ形が `snotra-egui-runtime/src/stderr_line.rs` にも
-/// あり、共有しない理由はそちらの `//!` にある。
+/// `panic = "abort"` によりプロセスごと止まる）。
 fn write_line<W: Write>(w: &mut W, line: &str) {
     let _ = w.write_all(line.as_bytes());
 }

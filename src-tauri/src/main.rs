@@ -565,7 +565,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
         trace_main("hotkey:listener_enter", json!({}));
         // **`t0` は trace の後に取る。** 前に取ると、trace 1 行の書き込みが
         // `egui_show:done` の `ms` に入る。この行は非表示のアイドルの後に最初に書く行で、stderr が
-        // write-through のファイルだと `WriteFile` の中で装置を待つ（額と条件は `PERFORMANCE.md`
+        // write-through のファイルだと `WriteFile` の中で装置を待つことがある（額と条件は `PERFORMANCE.md`
         // 「不採用: アイドルの後の trace 1 行が write-through で待つ分を直す（#1541）」）。
         // post の前であることは保つ（下の `t0` のコメント）。
         let t0 = Instant::now();

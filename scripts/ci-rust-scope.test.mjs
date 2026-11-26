@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { decide, needsRustCheck, parseNameOnlyZ } from "./ci-rust-scope.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./ci-rust-scope.mjs", import.meta.url));
-const T = 20_000; // git を数回起動するため既定 5s では足りない
+const T = 20_000; // git を数回起動するため vitest の既定（5s）では足りない（vitest.config.ts の testTimeout も同じ値）
 
 describe("needsRustCheck — 許可リスト（全部 .md のときだけ省く）", () => {
   it.each([

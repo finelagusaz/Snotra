@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const HOOKS_DIR = path.dirname(fileURLToPath(import.meta.url));
 // git config の値に \ を入れない（PowerShell/msys の境界で壊れる）
 const HOOKS_DIR_POSIX = HOOKS_DIR.split(path.sep).join("/");
-const T = 20_000; // git を数回起動するため既定 5s では足りない
+const T = 20_000; // git を数回起動するため vitest の既定（5s）では足りない（vitest.config.ts の testTimeout も同じ値）
 
 // 作った使い捨てディレクトリはここに集め、最後にまとめて消す。
 // scratchDir を通す限り自動で片付く。

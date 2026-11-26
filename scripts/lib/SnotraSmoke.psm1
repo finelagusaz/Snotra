@@ -921,6 +921,9 @@ function Send-SnotraKey {
     # `bScan` を 0 で撃つので、注入した矢印キーは tao の `rx_key` に `physical=Numpad2` と出る
     # （#999 で 400/400 実測・NumLock OFF）。egui へ届く物理キーは subclass が VK から導くので
     # 欠陥ではない。直さない。
+    # `keybd_event` はキーリピートを生まない（リピートは物理キーボードの側が作る）。そのため、
+    # 「1 押下で起きたのか、2 発目が届いたのか」の切り分けに使える。KEYDOWN を 1 回だけ撃って
+    # 再現するかを見る。リピート相当が要るなら、`-Up` を挟まずに KEYDOWN を連投する。
     [SnotraSmokeInterop.Native]::keybd_event($VirtualKey, 0, $flags, [UIntPtr]::Zero)
     # **注入の時刻を残す**（`SNOTRA_EGUI_INPUT_TRACE` を立てた実行だけ・#872/#936）。
     # `keybd_event` は void を返すので、残せるのは「呼んだ」ことだけである。本体側の

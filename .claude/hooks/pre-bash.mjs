@@ -557,6 +557,8 @@ function findUp(startDir, relTarget) {
  * cwd がサブディレクトリ（例: src-tauri/）でもゲートが黙って外れないようにする（I2）。
  * `.git` が見つからなければ cwd 自身を root とみなす（リポジトリ外での誤爆を作らない）。
  * plan.md が無ければ管轄外、存在するのに読めなければ判定不能。
+ * 見るのは `workspace/plan.md` だけで、これは射程の欠落ではなく設計である。`docs/superpowers/plans/` は
+ * 別系統のスキル（brainstorming → writing-plans）の産物で、チェックボックスの管理対象ではない（2026-08-09 に利用者が明示）。
  */
 export function readPlanState(cwd) {
   const root = findUp(cwd, ".git") ?? cwd;

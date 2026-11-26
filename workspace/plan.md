@@ -26,6 +26,7 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 
 - `stderr_line.rs` に `render_line(args: fmt::Arguments<'_>) -> String`（`format!("{args}\n")`）と `write_line<W: Write>(w, line: &str)`（`write_all` 1 回・失敗は捨てる）を置く。`trace.rs` と同じ分け方である
 - 呼び出し点は `trace_line!(...)` と書く。マクロは `$crate::stderr_line::emit(format_args!($($arg)*))` に展開する。`format_args!` の一時値は同じ文の中で使い切る
+- マクロはパスで引く: `stderr_line.rs` で `macro_rules! trace_line` の直後に `pub(crate) use trace_line;` を置き、使う側のファイルは `use crate::stderr_line::trace_line;` で取り込む。`#[macro_use]` と `mod` の宣言順には頼らない（rustfmt は `mod` 宣言を名前順に並べ替えるので、順に頼る形は保てない）。scratchpad の最小 workspace（toolchain 1.99.1）で、使う側の `mod` を `stderr_line` より前に宣言した形が `cargo fmt` 後の clippy（`-D warnings`）を exit 0 で通ることを測った
 - 有効判定（`trace_hatch_enabled` / `input_trace_enabled`）は呼び出し側に残す。未設定なら計装の費用が 0 であること（`PERFORMANCE.md`「計測と受け入れ基準」の egui の計装の項）を変えない
 - 行の原子性: `Stderr::write_all` は 1 呼び出しの間ロックを持ち、部分書き込みのループもロックの内側にある（`eprintln!` も 1 行の間持っていた。敵対的調査が std の `stdio.rs` を読んで確かめた）。repaint worker スレッド（`WAKE_SEND`）とイベントループの行が互いに割り込まないことは変わらない
 - テストは本物の stderr へ書く `emit` ではなく、`W: Write` を受ける `emit_to` を測る（`stderr().write_all` は libtest の出力の捕捉に乗らないので、`emit` をテストから呼ぶとテストの出力に生の行が混ざる）
@@ -33,7 +34,7 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 ## 変更するファイル
 
 - `snotra-egui-runtime/src/stderr_line.rs`（新設）: `//!`・`render_line`・`write_line`・`emit`・`trace_line!`・テスト（`CountingWriter`）
-- `snotra-egui-runtime/src/lib.rs`: `mod stderr_line;`（マクロを他のモジュールより先に宣言する）と `#![deny(clippy::print_stderr)]`（理由の 1 行コメント）
+- `snotra-egui-runtime/src/lib.rs`: `mod stderr_line;`（宣言の位置は問わない。マクロはパスで引く）と `#![deny(clippy::print_stderr)]`（理由の 1 行コメント）
 - `snotra-egui-runtime/src/input.rs`: `input_trace` の `eprintln!` → `trace_line!`。`last_take_trace` の doc と `take` のコメントにある「17〜56ms」を、数を写さず `PERFORMANCE.md`「計測と受け入れ基準」の `SNOTRA_EGUI_INPUT_TRACE` の項を指す形にする（間引く理由そのものは残す）
 - `snotra-egui-runtime/src/renderer.rs`: `SNOTRA_EGUI_PAINT`
 - `snotra-egui-runtime/src/repaint.rs`: `SNOTRA_EGUI_WAKE_SEND`
@@ -54,7 +55,7 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 
 ## 不変条件と異常系
 
-- 行のバイト列が変わらない: 書式文字列リテラルと引数を変えない。`render_line` のテストは `format!` + `"\n"` と一致することを見る。差分を目で見て、各呼び出し点の変更がマクロ名だけであることを確かめる（`git diff -U0 -- snotra-egui-runtime/src | grep '^[-+]' | grep -v 'trace_line!\|eprintln!'` で、マクロ名の行以外の差分を数える）
+- 行のバイト列が変わらない: 書式文字列リテラルと引数を変えない。`render_line` のテストは `format!` + `"\n"` と一致することを見る。各呼び出し点の変更がマクロ名だけであることを、Phase 2 の時点で `git diff -w --word-diff=plain -- snotra-egui-runtime/src/renderer.rs snotra-egui-runtime/src/repaint.rs snotra-egui-runtime/src/runtime.rs snotra-egui-runtime/src/windows_ime.rs snotra-egui-runtime/src/input.rs` で確かめる。`-w` は rustfmt の折り返し（マクロ名が 2 文字長くなる）を無視するためである。変わった語が `eprintln!` → `trace_line!` と、`use crate::stderr_line::trace_line;` の行と、`input.rs` のコメントの直しだけであることを読む（新設の `stderr_line.rs` と `lib.rs` はこの確認の対象外）
 - 未設定のハッチの費用 0: 判定を呼び出し側に残す。`trace_line!` の中で env を読まない
 - 書き込みの失敗: 捨てる（panic しない）。`trace.rs` と同じ
 - 行が他のスレッドの行と混ざらない: `write_all` 1 回で、`Stderr` のロックの下で書く
@@ -97,8 +98,8 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 
 ### Phase 2 — 呼び出し点の移行
 
-- [ ] 11 件をマクロ名だけ替えて移す
-- [ ] マクロ名以外の差分が 0 行であることを確かめる
+- [ ] 11 件をマクロ名だけ替えて移し、使う側の 5 ファイルに `use crate::stderr_line::trace_line;` を足す
+- [ ] `git diff -w --word-diff=plain`（「不変条件と異常系」の形）で、変わった語がマクロ名と `use` 行とコメントだけであることを確かめる
 - [ ] `git grep -n "eprintln!\|eprint!" -- snotra-egui-runtime` がコメント以外 0 件であることを確かめる
 
 ### Phase 3 — 文書
@@ -142,7 +143,7 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 - リスク: 高（`PERFORMANCE.md` の変更と、呼び出し点の全件移行という網羅性）
 - plan-review: 独立レビュー1体（Step 2b の独立導出）
 - エージェント数: 1（3b の敵対的調査を含めると 2）
-- 要対処: 1 件 — 導出 ∖ 計画に、`PERFORMANCE.md` の trace の所要の項にある所在の文（`SNOTRA_EGUI_INPUT_TRACE` の項を指す行）があった。Phase 5 に作業項目を足した
+- 要対処: 3 件 — (1) 導出 ∖ 計画に、`PERFORMANCE.md` の trace の所要の項にある所在の文があった。Phase 5 に作業項目を足した (2) マクロをパスで引く形に決めた (3) 呼び出し点の差分の確かめ方を `git diff -w --word-diff=plain` に直した（詳細は「plan-review 結果」）
 - 突き合わせ:
   - 導出 ∖ 計画（採らなかったもの）: 「行頭が `[trace]` でないこと」のテスト（出口は接頭辞を足さず、呼び出し点の書式文字列を変えないので、マクロ名以外の差分 0 行の確認で足りる）、変更前の各接頭辞の実際の 1 行の記録（同じ理由）
   - 計画 ∖ 導出: `src-tauri/src/trace.rs` の doc に双子の 1 文を足す項目。導出は「共通にしない限り不要」とした。issue が「書かないと `/dry-check` で重複として指摘される」と求めているので残す
@@ -152,4 +153,24 @@ issue は診断用のエラー行を対象外とする見込みと書いた。�
 - 未検証: lint の発火は scratchpad の最小 workspace で測っただけで、本物の crate では Phase 2 の変異注入で測る
 - 失敗時の挙動の変更（EBADF 以外の書き込みの失敗で panic しなくなる）は、PR 本文に書く事項である
 - check スキル: なし（`/race-check` は計画段階では起動しない。新しい対称ペア・永続形式・UI モードは無い。`/dry-check` の観点は置き場の理由で先に答えた）
-- 散文の全件列挙: 実行していない（`/plan-review` の Step 1 を通さず Step 2b だけを走らせたため）。代わりに「17〜56」の全出現を `git grep` で数えた（`PERFORMANCE.md` 1 件・`input.rs` 2 件。導出も同じ 3 件）
+- 散文の全件列挙: 語 4 / 総件数 68 行 / ★未掲載 19（計画へ足した 0） / ☆行未掲載 0（計画へ足した 0）。語は `eprintln`・`17〜56`・`SNOTRA_EGUI_INPUT_TRACE`・`write_line`。★19 件の判定: `src-tauri`（`trace.rs` を除く）・`snotra-core`・`snotra-settings` の `eprintln!` とその説明のコメント、`scripts/` の `[config]` の `eprintln` を説明するコメント（`smoke-egui.ps1`・`smoke-startup.ps1`・`visual-check-colors.ps1`）、`SnotraSmoke.psm1` の呼び出し側 env の分岐——どれもこの crate の外の出力か呼び出し側の env を述べており、変更後も真である。生きた文書の `PERFORMANCE.md` 6 行のうち、#1539 の節（776・778）と #1004/#1032 の段落（3765）・WebView2 期の項（3722）は歴史を述べて真のまま、3778 と 3788 は計画に載っている。`src-tauri/src/trace.rs` の 18・82 行（`eprintln!` が分割する・失敗で panic する）は変更後も真
+
+## plan-review 結果
+
+- リスク: 高
+- レビュー方式: 独立導出1体
+- エージェント数: 1
+
+### 要対処
+- `PERFORMANCE.md` の trace の所要の項にある所在の文 — 計画の修正（Phase 5 に作業項目を足した） — `prose:sweep` の 3778 行で再照合した
+- マクロの見せ方が rustfmt の `mod` 並べ替えに耐えるか — 計画の修正（パスで引く形に決めた） — scratchpad の最小 workspace で clippy exit 0 を測った
+- 呼び出し点の差分の確かめ方 — 計画の修正（`git diff -w --word-diff=plain` で、Phase 2 の時点で読む） — 元の `grep -v` の形は `+++`/`---` 行・`use` 行・コメントを必ず拾い、0 行にならないため
+
+### 軽微
+- 導出 ∖ 計画の「行頭が `[trace]` でない」テスト・変更前の実行行の記録は採らない（セルフレビューの突き合わせ）
+
+### 未検証
+- lint の本物の crate での発火（Phase 2 の変異注入で測る）
+
+### 判断
+- 実装着手: 可

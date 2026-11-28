@@ -71,29 +71,29 @@
 
 ## フェーズ 1 — 形の判定（B・C）
 
-- [ ] `discardsUncommitted` と、その正規表現の組を足す
-- [ ] `mergesPrByHand` と `GH_PR_MERGE` の 2 形を足す
-- [ ] `judgeCommandShape` に B・C を足し、`SHAPE_REMEDY` に文言を足す
-- [ ] B・C のテスト（当たる・当たらない・理由の文言）を足す
-- [ ] 全域性と病的入力の describe（`PREDICATES`・`PATHOLOGICAL`・時間の検査）に B・C を足し、件数を写した describe 名と、件数を写したコメント（「規範 5 件」）を件数なしへ直す
-- [ ] `PLATFORM_FREE` の表に B・C を足し、win32・darwin・platform 省略のどれでも block することを固定する
-- [ ] `ALL_REASONS` に新しい文言を足し、「拒否文言は代わりの手段を含む」「`\` パスを含まない」の検査を新しい文言にも当てる。「無害なコマンドは null」に、通すべき形（`git checkout main`・`git checkout -b f origin/main`・`git checkout -`・`git restore --staged a`・`git restore -S a`・`git rm --cached x`・`git rm -r src/x`・`npm run merge:pr -- 1 …`・`npm run merge:pr '--' …`・`grep -n "gh pr merge" x`・`gh pr view 1`）を足す
-- [ ] 拒否文言が勧める手（`git restore --staged`・`git reset`・WIP コミット・`npm run merge:pr`）が、どの判定にも止められないことをテストで固定する
+- [x] `discardsUncommitted` と、その正規表現の組を足す
+- [x] `mergesPrByHand` と `GH_PR_MERGE` の 2 形を足す
+- [x] `judgeCommandShape` に B・C を足し、`SHAPE_REMEDY` に文言を足す
+- [x] B・C のテスト（当たる・当たらない・理由の文言）を足す
+- [x] 全域性と病的入力の describe（`PREDICATES`・`PATHOLOGICAL`・時間の検査）に B・C を足し、件数を写した describe 名と、件数を写したコメント（「規範 5 件」）を件数なしへ直す
+- [x] `PLATFORM_FREE` の表に B・C を足し、win32・darwin・platform 省略のどれでも block することを固定する
+- [x] `ALL_REASONS` に新しい文言を足し、「拒否文言は代わりの手段を含む」「`\` パスを含まない」の検査を新しい文言にも当てる。「無害なコマンドは null」に、通すべき形（`git checkout main`・`git checkout -b f origin/main`・`git checkout -`・`git restore --staged a`・`git restore -S a`・`git rm --cached x`・`git rm -r src/x`・`npm run merge:pr -- 1 …`・`npm run merge:pr '--' …`・`grep -n "gh pr merge" x`・`gh pr view 1`）を足す
+- [x] 拒否文言が勧める手（`git restore --staged`・`git reset`・WIP コミット・`npm run merge:pr`）が、どの判定にも止められないことをテストで固定する
 
 ## フェーズ 2 — workspace の削除（A）
 
-- [ ] `removesWorkspace` を足す
-- [ ] `decide` に A の分岐を足す（reader の確認を含む）
-- [ ] A のテスト（未チェックあり・なし・plan.md なし・読めない・reader 欠け・`workspace` 以外の `git rm`・`workspaceX`・`--` の後のパス・`--cached`）を足す
-- [ ] 配線のテストを足す: `git rm` で `workspace` を消すコマンド以外では、`gh pr create` を含まない限り `plan.md` を読まない（`vi.fn` で確かめる）。既存の「gh pr create を検出しなければ plan.md を読まない」は、名前が偽になるので、この新しいテストへ置き換える
-- [ ] A の process 級 e2e を足す（`payload.cwd` に fixture のリポジトリを渡す）
+- [x] `removesWorkspace` を足す
+- [x] `decide` に A の分岐を足す（reader の確認を含む）
+- [x] A のテスト（未チェックあり・なし・plan.md なし・読めない・reader 欠け・`workspace` 以外の `git rm`・`workspaceX`・`--` の後のパス・`--cached`）を足す
+- [x] 配線のテストを足す: `git rm` で `workspace` を消すコマンド以外では、`gh pr create` を含まない限り `plan.md` を読まない（`vi.fn` で確かめる）。既存の「gh pr create を検出しなければ plan.md を読まない」は、名前が偽になるので、この新しいテストへ置き換える
+- [x] A の process 級 e2e を足す（`payload.cwd` に fixture のリポジトリを渡す）
 
 ## フェーズ 3 — 文書
 
-- [ ] `pre-bash.mjs` 冒頭の責務の記述（「(1)(2)(4) は `gh pr create` 検出後のみ」を含む）・「判定単位」の段落・「受容する未対応リスク」（`gh pr merge` にも当たる `sh -c`・ラッパ・`gh.exe`・`gh api` の残余を足す）と、`judgeCommandShape`・`decide` の doc（「管轄外」の説明を含む）を、件数を書かずに直す
-- [ ] `implement/SKILL.md`「守ること」の 3 行を、未確定欄の裁定のとおりに直す
-- [ ] `implement/SKILL.md` Step 4 の削除の項の末尾と、`git rm` が止まったときの箇条を、hook が止めることに合わせて直す
-- [ ] `merge-pr/SKILL.md`「ツールが守らないもの」を直す
+- [x] `pre-bash.mjs` 冒頭の責務の記述（「(1)(2)(4) は `gh pr create` 検出後のみ」を含む）・「判定単位」の段落・「受容する未対応リスク」（`gh pr merge` にも当たる `sh -c`・ラッパ・`gh.exe`・`gh api` の残余を足す）と、`judgeCommandShape`・`decide` の doc（「管轄外」の説明を含む）を、件数を書かずに直す
+- [x] `implement/SKILL.md`「守ること」の 3 行を、未確定欄の裁定のとおりに直す
+- [x] `implement/SKILL.md` Step 4 の削除の項の末尾と、`git rm` が止まったときの箇条を、hook が止めることに合わせて直す
+- [x] `merge-pr/SKILL.md`「ツールが守らないもの」を直す
 
 ## 未確定（実装前に潰す）
 

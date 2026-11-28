@@ -62,5 +62,5 @@ PowerShell からは、`--` を引用して `npm run merge:pr '--' <PR> --closes
 
 ## ツールが守らないもの
 
-- ツールを経ないマージ（Web UI・手打ちの `gh pr merge`）は、`--no-verify` と同じく人間専用の迂回である。hook は `gh pr merge` を見ない
+- ツールを経ないマージ（Web UI・手打ちの `gh pr merge`）は、`--no-verify` と同じく人間専用の迂回である。hook（`.claude/hooks/pre-bash.mjs`）は、Bash / PowerShell ツールのコマンド位置に現れる `gh pr merge` を止める。人が端末で打つものと、Web UI は止めない
 - 確認からマージまでの間の PR 本文の変化: head は `--match-head-commit` で固定される。しかし本文を凍結する機構は無い。ツールを走らせているあいだに本文を編集しない

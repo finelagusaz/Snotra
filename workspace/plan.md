@@ -72,16 +72,16 @@
 
 ## フェーズ 1 — スクリプト
 
-- [ ] `judgePlan` のシグネチャを置き、テストを書いて Red を確かめる
-- [ ] `judgePlan` と CLI を実装して Green にする
-- [ ] `package.json` に `plan:check` を足す
+- [x] `judgePlan` のシグネチャを置き、テストを書いて Red を確かめる
+- [x] `judgePlan` と CLI を実装して Green にする
+- [x] `package.json` に `plan:check` を足す
 
 ## フェーズ 2 — 文書
 
-- [ ] `docs/build-commands.md` にツールの行と注意の箇条を足す
-- [ ] `implement/SKILL.md` の「1a」「1b」「1c-B」「1c-C」「出力」の入口欄を直す
-- [ ] `implement/SKILL.md`「守ること」を、未確定欄の裁定のとおりに直す
-- [ ] `start-issue/SKILL.md` の「5c」・Step 6・引き渡し契約・`allowed-tools` を直す
+- [x] `docs/build-commands.md` にツールの行と注意の箇条を足す
+- [x] `implement/SKILL.md` の「1a」「1b」「1c-B」「1c-C」「出力」の入口欄を直す
+- [x] `implement/SKILL.md`「守ること」を、未確定欄の裁定のとおりに直す
+- [x] `start-issue/SKILL.md` の「5c」・Step 6・引き渡し契約・`allowed-tools` を直す
 
 ## 未確定（実装前に潰す）
 

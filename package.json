@@ -13,6 +13,7 @@
     "race:boundaries": "node scripts/race-boundaries.mjs",
     "prose:sweep": "node scripts/prose-sweep.mjs",
     "merge:pr": "node scripts/merge-pr.mjs",
+    "plan:check": "node scripts/plan-check.mjs",
     "smoke:startup": "pwsh -NoProfile -File scripts/smoke-startup.ps1",
     "smoke:egui": "pwsh -NoProfile -File scripts/smoke-egui.ps1",
     "smoke:manual": "pwsh -NoProfile -File scripts/manual-smoke.ps1",

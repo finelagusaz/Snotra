@@ -239,11 +239,13 @@ npm run clean:worktrees          # Agent 委譲で残った worktree/ブラン�
 npm run race:boundaries -- --base <分岐元ブランチ>   # /race-check の母集団を列挙（廃止・移行の検査には --include-removed を足す）
 npm run prose:sweep -- --plan workspace/plan.md <語>...  # /plan-review の「変更で偽になる散文」を切り詰めずに全件列挙
 npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>  # /merge-pr の squash マージ（閉じる issue をマージの前後で照合）
+npm run plan:check               # /implement の入口と /start-issue の承認の記録の後に、workspace/plan.md の未確定ゼロと承認の形を判定
 ```
 
 - **`race:boundaries` の `--base` は省略できない。** 分岐元が `main` なら、`git fetch` を済ませてから `origin/main` を渡す（起点の選び方は `AGENTS.md`「検証の作法（全タスク共通）」）。別の feature ブランチから切ったブランチでは、その分岐元を渡す。差分と未追跡のファイルがともに空なら、非ゼロで止まる。未コミット分が落ちる素の `git diff` を許さないためである（`..` / `...` の 2 点形が作業ツリーを見ない罠は、「検証の作法」の一般則と同根・#922）。出力の仕様（種別の定義・検出パターン・0 件の明示）は `scripts/race-boundaries.mjs` が SSOT で、候補の読み方と 0 件の意味は `/race-check` が持つ
 - **`prose:sweep` は、失敗を 0 件として印字しない**（`git grep` の失敗は exit 1、引数の誤りは exit 2）。出力の仕様（面の分類・語ごとの 0 件・★未掲載・☆行未掲載）は `scripts/prose-sweep.mjs` が SSOT で、★・☆ の裁き方は `/plan-review` が持つ。PowerShell から打つときは、「PowerShell で npm run へ引数を渡すとき」に従う（#1300 では `--plan` が npm に吸われて黙って消えた）。見出し行に `--plan なし` と出るので、落ちたことは出力で分かる
 - **`merge:pr` は書き込み（マージと、exit 0 の後の本体のローカル `main` の fast-forward）を伴う。** ただし `--dry-run` を付けたときは、マージ前の検査だけを行い、マージせずに止まる（#1318）。人が `/merge-pr` で起動するもので、終了コードの意味と次の一手は `/merge-pr` が、使い方と構造は `scripts/merge-pr.mjs` が持つ
+- **`plan:check` の不成立は exit 3 で、exit 1 ではない。** 0 と 3 以外はすべて「判定できない」と読む（node がロードの前に落ちると 1 になるので、1 を不成立に使うと区別できない）。判定の述語の正本は `scripts/plan-check.mjs` で、結果をどう読むかは `/implement`「1a」と `/start-issue`「5c. 承認」が持つ
 
 ## Windows のみ実行可能（`windows` クレートや Win32 API・実行バイナリに依存）
 

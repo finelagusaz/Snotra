@@ -5,6 +5,7 @@ argument-hint: "<issue-number>"
 allowed-tools:
   - Bash(git *)
   - Bash(gh *)
+  - Bash(npm run plan:check *)
   - Read
   - Write
   - Grep
@@ -180,7 +181,7 @@ git switch --no-track -c <feat|fix|chore>/<short-name> origin/main
 - [x] 自己承認 — <YYYY-MM-DD> / 仕様変更: なし — <根拠> / 戻せない変更: なし — <根拠> / 人の裁定: なし
 ```
 
-`/implement`「1a. workspace/plan.md の由来を確かめる」は、この記録が計画の他の記録と矛盾しないことを機械で確かめる（照合する記録の正本は 1a である）。確かめるのは矛盾までで、3 基準の判定そのものは確かめない。記録したあとに計画が変わったら、3 基準を当て直して書き直す。
+記録したら、`npm run plan:check` を打つ。この記録が計画の他の記録と矛盾しないこと（未確定ゼロ・承認の行の形・自己承認の追加条件）を判定する。判定の述語の正本は `scripts/plan-check.mjs` で、`/implement`「1a. workspace/plan.md の由来を確かめる」も入口で同じものを打つ。exit 0 でなければ、出力の理由に従って記録や計画を直し、打ち直す（exit 3 は不成立、それ以外は判定できなかった）。確かめるのは矛盾までで、3 基準の判定そのものは確かめない。記録したあとに計画が変わったら、3 基準を当て直して書き直す。
 
 #### 承認のあと
 
@@ -188,7 +189,7 @@ git switch --no-track -c <feat|fix|chore>/<short-name> origin/main
 
 ## Step 6 — workspace をコミット & プッシュ
 
-未確定欄に `- [ ]` がなく、`## 承認` の節に承認（人間または自己）が記録されていることを確かめてから実行する。
+`npm run plan:check` が exit 0 であることを確かめてから実行する（未確定欄に未チェックが無く、`## 承認` の節に承認が記録されていることを判定する）。
 
 ```bash
 git add workspace/
@@ -208,4 +209,4 @@ git push -u origin HEAD
 6. 承認の記録（人間か自己か）
 7. 次のアクション: 続けて `/implement` を呼ぶこと、または `/implement` で実装できること
 
-引き渡し契約: `workspace/plan.md` は、未確定欄が空で、`## 承認` の節に「5c. 承認」の形の承認（人間または自己）が 1 件ある。高リスクの計画で、独立レビューの後に実装を変える差分が入った場合は、その差分だけ追加のレビューを済ませている。
+引き渡し契約: `workspace/plan.md` は、`npm run plan:check` が成立（exit 0）する。つまり、未確定欄が空で、`## 承認` の節に「5c. 承認」の形の承認（人間または自己）が 1 件ある。高リスクの計画で、独立レビューの後に実装を変える差分が入った場合は、その差分だけ追加のレビューを済ませている。

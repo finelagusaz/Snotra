@@ -5,7 +5,7 @@ argument-hint: "<issue-number>"
 allowed-tools:
   - Bash(git *)
   - Bash(gh *)
-  - Bash(npm run plan:check *)
+  - Bash(npm run plan:check*)
   - Read
   - Write
   - Grep

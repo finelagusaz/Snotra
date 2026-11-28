@@ -660,7 +660,6 @@ export function countUnchecked(text) {
 
 /**
  * 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。
- * `scripts/plan-check.mjs` も、同じ plan.md を読むためにこの関数でルートを決める（#1552）。
  */
 export function findUp(startDir, relTarget) {
   let dir = path.resolve(startDir);

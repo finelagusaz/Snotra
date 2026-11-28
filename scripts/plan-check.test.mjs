@@ -1,15 +1,26 @@
 // plan-check.mjs の判定を、理由ごとに「その理由だけに当たる計画」で確かめる（.claude/rules/safety-nets.md
 // 「検出器のカバー範囲は、欠落のパターンごとに検算する」）。fixture の形は、git の履歴にある実際の plan.md の形に倣う
 // （#1552 の敵対的調査が 831 版を測った）。
-import { describe, it, expect } from "vitest";
+import { afterAll, describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync as mkdtempRaw, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgePlan, parseArgs, UsageError, findRoot } from "./plan-check.mjs";
 
 const FENCE = "```";
+
+// 作った一時ディレクトリは、最後にまとめて消す
+const TMP = [];
+const mkdtempSync = (prefix) => {
+  const dir = mkdtempRaw(prefix);
+  TMP.push(dir);
+  return dir;
+};
+afterAll(() => {
+  for (const dir of TMP) rmSync(dir, { recursive: true, force: true });
+});
 
 const HUMAN = '- [x] 承認済み — 2026-11-28 / 問い: "計画を承認しますか？" / 回答: "承認"';
 const SELF = "- [x] 自己承認 — 2026-11-28 / 仕様変更: なし — SPEC.md を変えない / 戻せない変更: なし — 永続形式に触れない / 人の裁定: なし";
@@ -66,6 +77,25 @@ describe("judgePlan — 成立する計画", () => {
   });
 });
 
+describe("judgePlan — 節の境界とフェンス（#1552 の変異注入で穴が見つかった形）", () => {
+  it("未確定欄の後ろの節の `- [ ]` は数えない（節は次のレベル 1・2 の見出しで終わる）", () => {
+    const text = plan().replace("## セルフレビュー", "## 後ろの節\n\n- [ ] 着手前の作業項目\n\n## セルフレビュー");
+    expect(judgePlan(text).ok).toBe(true);
+  });
+  it("フェンスの中の `## x` で節を切らない（その後ろの未チェックも未確定欄として数える）", () => {
+    fails(plan({ unresolved: `- [x] a — b\n${FENCE}\n## x\n${FENCE}\n- [ ] c — d` }), "未確定欄に未チェック");
+  });
+  it("`~~~` のフェンスの中の承認の行は数えない", () => {
+    fails(plan({ approval: `~~~\n${SELF}\n~~~` }), "承認の行が無い");
+  });
+  it("複数行の HTML コメントの中の承認の行は数えない", () => {
+    fails(plan({ approval: `<!--\n${SELF}\n-->` }), "承認の行が無い");
+  });
+  it("レベル 1 の `# 承認` は承認欄でない", () => {
+    fails(plan({ omit: ["approval"], extra: `# 承認\n\n${SELF}` }), "承認欄の見出し");
+  });
+});
+
 describe("judgePlan — 未確定ゼロ", () => {
   it("未確定欄の見出しが無ければ不成立（#821 の fail-open の再現）", () => {
     fails(plan({ omit: ["unresolved"] }), "未確定欄の見出し");
@@ -103,15 +133,26 @@ describe("judgePlan — 承認", () => {
   it("フェンスの中の承認の行は数えない", () => {
     fails(plan({ approval: `${FENCE}markdown\n${SELF}\n${FENCE}` }), "承認の行が無い");
   });
-  it("大文字の `[X]` は承認の行として読まない（成立の証拠は狭く取る）", () => {
-    fails(plan({ approval: SELF.replace("[x]", "[X]") }), "承認の行が無い");
+  it.each([
+    ["自己承認", SELF],
+    ["人間承認", HUMAN],
+  ])("大文字の `[X]` は承認の行として読まない（成立の証拠は狭く取る・%s）", (_label, line) => {
+    fails(plan({ approval: line.replace("[x]", "[X]") }), "承認の行が無い");
   });
-  it("ダッシュが U+2014 でない行は承認の行として読まない", () => {
-    fails(plan({ approval: SELF.replace("自己承認 —", "自己承認 -") }), "承認の行が無い");
+  it.each([
+    ["自己承認", SELF.replace("自己承認 —", "自己承認 -")],
+    ["人間承認", HUMAN.replace("承認済み —", "承認済み -")],
+  ])("ダッシュが U+2014 でない行は承認の行として読まない（%s）", (_label, line) => {
+    fails(plan({ approval: line }), "承認の行が無い");
+  });
+  it("人間承認と自己承認の両方の行があれば、人間承認として読む（自己承認の追加条件は見ない）", () => {
+    const r = judgePlan(plan({ approval: `${HUMAN}\n${SELF}`, files: "- `SPEC.md` — 直す" }));
+    expect(r).toEqual({ ok: true, kind: "human", reasons: [] });
   });
   it.each([
     ["問いが空", HUMAN.replace('"計画を承認しますか？"', '""')],
     ["回答が空", HUMAN.replace('"承認"', '""')],
+    ["問いが空白だけ", HUMAN.replace('"計画を承認しますか？"', '" "')],
   ])("人間承認の%sなら不成立", (_label, line) => {
     fails(plan({ approval: line }), "承認の行が無い");
   });
@@ -140,12 +181,20 @@ describe("judgePlan — 自己承認の追加条件", () => {
   it.each([
     ["- の箇条", "- `SPEC.md` — §7 を直す"],
     ["番号つきの箇条", "1. `SPEC.md` — §7 を直す"],
+    ["コードスパンの無い項目", "- SPEC.md — §7 を直す"],
+    ["太字", "- **SPEC.md** — §7 を直す"],
+    ["リンク", "- [SPEC.md](SPEC.md) — §7 を直す"],
+    ["節番号つき", "- `SPEC.md §7` — 直す"],
+    ["`./` つき", "- `./SPEC.md` — 直す"],
   ])("変更するファイルに SPEC.md の項目（%s）があれば不成立", (_label, line) => {
     fails(plan({ files: `- \`scripts/x.mjs\` — 新規\n${line}` }), "SPEC.md");
   });
-  it("`.claude/rules/spec.md` は SPEC.md でない（大文字小文字を区別する）", () => {
-    expect(judgePlan(plan({ files: "- `.claude/rules/spec.md` — 直す" })).ok).toBe(true);
-  });
+  it.each(["- `.claude/rules/spec.md` — 直す", "- `spec.md` — 直す", "- `SPEC.md.bak` — 直す"])(
+    "SPEC.md でないものは数えない（大文字小文字を区別する）: %s",
+    (line) => {
+      expect(judgePlan(plan({ files: line })).ok).toBe(true);
+    },
+  );
   it("セルフレビューの節が無ければ不成立", () => {
     fails(plan({ omit: ["selfReview"] }), "check スキル");
   });

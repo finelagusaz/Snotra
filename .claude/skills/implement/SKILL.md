@@ -55,7 +55,7 @@ allowed-tools:
 | ツールの最後の実行の後に、`workspace/` の外を動かさない（Step 4） | PR 前ゲート |
 | main へ直接コミット・push しない | `.githooks/` と ruleset |
 | `git rm` が止まったら、`-f` も checkout 系（`checkout` / `checkout-index` / `restore`）も使わない（Step 4） | `.claude/hooks/pre-bash.mjs` の形の判定。止める形と止めない形の正本は `discardsUncommitted` の doc |
-| 入口の「未確定ゼロ」と「承認の形」が立たなければ、実装を始めない（Step 1） | `npm run plan:check`（入口で呼ぶのは散文の指示）。未確定ゼロは、PR 前ゲートも PR を作るときに数える |
+| 入口の「未確定ゼロ」と「承認の形」が立たなければ、実装を始めない（Step 1） | `npm run plan:check`（入口で呼ぶのは散文の指示） |
 
 ### 散文のみ
 

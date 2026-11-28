@@ -5,7 +5,7 @@
 // vitest の transform を SyntaxError で落とす（PR #592 で実測。起動は常に `node scripts/...` 経由）。
 //
 // 契約:
-// - 依存は Node 標準と、未チェック項目の数え方を共有する `.claude/hooks/pre-bash.mjs` の `countUnchecked` だけ。
+// - 依存は Node 標準と、PR 前ゲートと同じ plan.md を同じ数え方で見るために共有する `.claude/hooks/pre-bash.mjs` の関数だけ。
 //   判定はファイルの中身だけで決まる（git・時刻・ネットワークに依らない）
 // - 終了コード: 0 = 成立 / 3 = 不成立（理由を全件、直し方つきで出す） / 2 = 判定できない（使用法の誤り・
 //   ファイルが無い・読めない）。**0 と 3 以外はすべて「判定できない」と読む**——node がロードの前に落ちると 1 になるので、
@@ -13,7 +13,7 @@
 // - fail-closed: 確かめられなければ成立にしない。見出しが無い・節が空・行の形が違う・引用が空は、どれも不成立
 // - コードフェンスは非対称に扱う。成立の証拠（見出し・承認の行・check スキルの行）はフェンスの外だけで数え、
 //   不成立の証拠（未チェック項目・（裁定）・`SPEC.md` の項目・`/persistence-check`）はフェンスの中でも数える。
-//   雛形を引用した計画を通さないため
+//   雛形を引用した計画を通さないため。複数行の HTML コメント（`<!--` 〜 `-->`）の中も、フェンスと同じに扱う
 import fs from "node:fs";
 import path from "node:path";
 import { countUnchecked, findUp } from "../.claude/hooks/pre-bash.mjs";
@@ -79,7 +79,7 @@ export function judgePlan(text) {
 
 // 成立の証拠（承認の行）は狭く取る: 小文字の `[x]` と U+2014 のダッシュだけ（#1552 の調査で、実例の人間承認 61 件・
 // 自己承認 49 件はすべてこの形だった）。引用は空を許さない
-const HUMAN_LINE = /^- \[x\] 承認済み — \S+ \/ 問い: ".+" \/ 回答: ".+"\s*$/;
+const HUMAN_LINE = /^- \[x\] 承認済み — \S+ \/ 問い: ".*\S.*" \/ 回答: ".*\S.*"\s*$/;
 const SELF_LINE = /^- \[x\] 自己承認 — \S+ \/ 仕様変更: なし — .+ \/ 戻せない変更: なし — .+ \/ 人の裁定: なし\s*$/;
 // 不成立の証拠は広く取る: 半角の `(裁定)` も印として数える。印はチェックボックスの直後に置く（`/start-issue`「Step 4」）
 const RULING_MARK = /^\s*[-*]\s+\[[ xX]\]\s*[（(]裁定[）)]/;
@@ -114,24 +114,40 @@ function selfApprovalReasons(lines, unresolved) {
   return reasons;
 }
 
-/** リスト項目で、最初のコードスパン（無ければ項目の先頭の語）が `SPEC.md` か。散文の行（「`SPEC.md` は変えない。」）は数えない */
+/**
+ * リスト項目で、最初のコードスパン（無ければ項目の本文）が `SPEC.md` で始まるか。太字・リンク・`./`・節番号つき
+ * （`**SPEC.md**`・`[SPEC.md](SPEC.md)`・`./SPEC.md`・`SPEC.md §7`）も数える。散文の行（「`SPEC.md` は変えない。」）は数えない。
+ * 大文字小文字は区別する（`.claude/rules/spec.md` を拾わない）
+ */
 function listsSpec(line) {
   const m = LIST_ITEM.exec(line);
   if (!m) return false;
   const code = /`([^`]*)`/.exec(m[1]);
-  const first = code ? code[1] : m[1].split(/\s/)[0];
-  return first === "SPEC.md";
+  return SPEC_HEAD.test(code ? code[1] : m[1]);
 }
+const SPEC_HEAD = /^(?:\*\*|\[)?(?:\.\/)?SPEC\.md(?![\w.])/;
 
 const FENCE_LINE = /^\s*(?:```|~~~)/;
 const HEADING = /^(#{1,2})\s+(.*?)\s*$/;
 
-/** 各行に、コードフェンスの中かどうかを添える（フェンスの開き・閉じの行も中として扱う） */
+/**
+ * 各行に、コードフェンスか複数行の HTML コメントの中かどうかを添える（開き・閉じの行も中として扱う）。
+ * 成立の証拠はこの外だけで数える
+ */
 function withFences(text) {
   let inFence = false;
+  let inComment = false;
   return text.split(/\r?\n/).map((line) => {
-    if (FENCE_LINE.test(line)) {
+    if (!inComment && FENCE_LINE.test(line)) {
       inFence = !inFence;
+      return { text: line, inFence: true };
+    }
+    if (!inFence && !inComment && line.includes("<!--") && !line.includes("-->")) {
+      inComment = true;
+      return { text: line, inFence: true };
+    }
+    if (inComment) {
+      if (line.includes("-->")) inComment = false;
       return { text: line, inFence: true };
     }
     return { text: line, inFence };

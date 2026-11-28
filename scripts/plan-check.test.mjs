@@ -91,8 +91,33 @@ describe("judgePlan — 節の境界とフェンス（#1552 の変異注入で�
   it("複数行の HTML コメントの中の承認の行は数えない", () => {
     fails(plan({ approval: `<!--\n${SELF}\n-->` }), "承認の行が無い");
   });
+  it.each([
+    ["1 行で閉じるコメント", `<!-- メモ -->\n${SELF}`],
+    ["閉じた複数行のコメントの後ろ", `<!--\nメモ\n-->\n${SELF}`],
+  ])("%sの承認の行は数える", (_label, approval) => {
+    expect(judgePlan(plan({ approval })).ok).toBe(true);
+  });
+  it("文中で `<!--` に触れても、残りをコメントとみなさない", () => {
+    const text = plan({ extra: "- 雛形は `<!--` で始まるコメントを使わない" });
+    expect(judgePlan(text).ok).toBe(true);
+  });
   it("レベル 1 の `# 承認` は承認欄でない", () => {
     fails(plan({ omit: ["approval"], extra: `# 承認\n\n${SELF}` }), "承認欄の見出し");
+  });
+});
+
+describe("judgePlan — 見出しの重複（#1552 のラウンド 2 で、この計画自身で起きた fail-open）", () => {
+  it("未確定欄が 2 つあれば不成立（後ろの節の未チェックを見落とさない）", () => {
+    fails(plan({ extra: "## 未確定（実装前に潰す）\n\n- [x] 先の欄" }), "見出しが 2 個");
+  });
+  it("承認欄が 2 つあれば不成立", () => {
+    fails(plan({ extra: `## 承認\n\n${SELF}` }), "「承認」の見出しが 2 個");
+  });
+  it("自己承認で、変更するファイルの節が 2 つあれば不成立", () => {
+    fails(plan({ extra: "## 変更するファイル（続き）\n\n- `SPEC.md` — 直す" }), "「変更するファイル」の見出しが 2 個");
+  });
+  it("自己承認で、セルフレビューの節が 2 つあれば不成立", () => {
+    fails(plan({ extra: "## セルフレビュー（追記）\n\n- check スキル: /persistence-check" }), "「セルフレビュー」の見出しが 2 個");
   });
 });
 
@@ -153,6 +178,7 @@ describe("judgePlan — 承認", () => {
     ["問いが空", HUMAN.replace('"計画を承認しますか？"', '""')],
     ["回答が空", HUMAN.replace('"承認"', '""')],
     ["問いが空白だけ", HUMAN.replace('"計画を承認しますか？"', '" "')],
+    ["回答が空白だけ", HUMAN.replace('"承認"', '" "')],
   ])("人間承認の%sなら不成立", (_label, line) => {
     fails(plan({ approval: line }), "承認の行が無い");
   });
@@ -189,7 +215,7 @@ describe("judgePlan — 自己承認の追加条件", () => {
   ])("変更するファイルに SPEC.md の項目（%s）があれば不成立", (_label, line) => {
     fails(plan({ files: `- \`scripts/x.mjs\` — 新規\n${line}` }), "SPEC.md");
   });
-  it.each(["- `.claude/rules/spec.md` — 直す", "- `spec.md` — 直す", "- `SPEC.md.bak` — 直す"])(
+  it.each(["- `.claude/rules/spec.md` — 直す", "- `spec.md` — 直す", "- `SPEC.md.bak` — 直す", "- `docs/SPEC.md` — 直す"])(
     "SPEC.md でないものは数えない（大文字小文字を区別する）: %s",
     (line) => {
       expect(judgePlan(plan({ files: line })).ok).toBe(true);

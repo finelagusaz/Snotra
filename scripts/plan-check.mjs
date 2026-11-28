@@ -46,7 +46,11 @@ export function judgePlan(text) {
   const lines = withFences(text);
   const reasons = [];
 
-  const unresolved = section(lines, (t) => t.startsWith("未確定（実装前に潰す）"));
+  const dup = (name, n) =>
+    reasons.push(`「${name}」の見出しが ${n} 個ある。判定は 1 つの節だけを読むので、後ろの節を見落とす。見出しを 1 つにまとめる`);
+
+  const [unresolved, nUnresolved] = sectionOf(lines, (t) => t.startsWith("未確定（実装前に潰す）"));
+  if (nUnresolved > 1) dup("未確定（実装前に潰す）", nUnresolved);
   if (unresolved === null) {
     reasons.push(
       "未確定欄の見出し（`## 未確定（実装前に潰す）`）が無い。見出しの無い計画は件数ゼロとして通ってしまう（#821）。" +
@@ -57,7 +61,8 @@ export function judgePlan(text) {
     if (n > 0) reasons.push(`未確定欄に未チェックの項目が ${n} 件残っている。\`/start-issue\`「5a」へ戻って潰す`);
   }
 
-  const approval = section(lines, (t) => t === "承認");
+  const [approval, nApproval] = sectionOf(lines, (t) => t === "承認");
+  if (nApproval > 1) dup("承認", nApproval);
   let kind = null;
   if (approval === null) {
     reasons.push("承認欄の見出し（`## 承認`）が無い。`/start-issue`「5c. 承認」の形で記録する");
@@ -73,7 +78,7 @@ export function judgePlan(text) {
     }
   }
 
-  if (kind === "self") reasons.push(...selfApprovalReasons(lines, unresolved));
+  if (kind === "self") reasons.push(...selfApprovalReasons(lines, unresolved, dup));
   return { ok: reasons.length === 0, kind, reasons };
 }
 
@@ -86,14 +91,15 @@ const RULING_MARK = /^\s*[-*]\s+\[[ xX]\]\s*[（(]裁定[）)]/;
 const LIST_ITEM = /^\s*(?:[-*]|\d+\.)\s+(.*)$/;
 const CHECK_SKILL_LINE = /^\s*[-*]\s+check スキル/;
 
-function selfApprovalReasons(lines, unresolved) {
+function selfApprovalReasons(lines, unresolved, dup) {
   const reasons = [];
   if (unresolved !== null && unresolved.some((l) => RULING_MARK.test(l.text))) {
     reasons.push(
       "自己承認なのに、未確定欄に「（裁定）」の印の付いた項目がある。人の裁定を含む計画は人間承認にする（`/start-issue`「5c. 承認」）",
     );
   }
-  const files = section(lines, (t) => t.startsWith("変更するファイル"));
+  const [files, nFiles] = sectionOf(lines, (t) => t.startsWith("変更するファイル"));
+  if (nFiles > 1) dup("変更するファイル", nFiles);
   if (files === null) {
     reasons.push("自己承認なのに「変更するファイル」の節（`## 変更するファイル`）が無い。`/start-issue`「Step 4」の形で置く");
   } else if (files.some((l) => listsSpec(l.text))) {
@@ -102,7 +108,8 @@ function selfApprovalReasons(lines, unresolved) {
         "変えないなら、節に書かない（`/start-issue`「Step 4」）",
     );
   }
-  const review = section(lines, (t) => t.startsWith("セルフレビュー"));
+  const [review, nReview] = sectionOf(lines, (t) => t.startsWith("セルフレビュー"));
+  if (nReview > 1) dup("セルフレビュー", nReview);
   if (review === null || !review.some((l) => !l.inFence && CHECK_SKILL_LINE.test(l.text))) {
     reasons.push("自己承認なのに、セルフレビューの節（`## セルフレビュー`）に「check スキル」の行が無い（`/start-issue`「5b」）");
   }
@@ -128,6 +135,7 @@ function listsSpec(line) {
 const SPEC_HEAD = /^(?:\*\*|\[)?(?:\.\/)?SPEC\.md(?![\w.])/;
 
 const FENCE_LINE = /^\s*(?:```|~~~)/;
+const COMMENT_OPEN = /^\s*<!--/;
 const HEADING = /^(#{1,2})\s+(.*?)\s*$/;
 
 /**
@@ -142,7 +150,7 @@ function withFences(text) {
       inFence = !inFence;
       return { text: line, inFence: true };
     }
-    if (!inFence && !inComment && line.includes("<!--") && !line.includes("-->")) {
+    if (!inFence && !inComment && COMMENT_OPEN.test(line) && !line.includes("-->")) {
       inComment = true;
       return { text: line, inFence: true };
     }
@@ -155,22 +163,25 @@ function withFences(text) {
 }
 
 /**
- * フェンスの外のレベル 2 の見出しのうち、見出しの文字列が `match` に当たる最初のものの節（次のレベル 1・2 の見出しの前まで）。
- * 当たる見出しが無ければ null
+ * フェンスの外のレベル 2 の見出しのうち、見出しの文字列が `match` に当たる最初のものの節（次のレベル 1・2 の見出しの前まで）と、
+ * 当たる見出しの数。当たる見出しが無ければ節は null。2 つ以上あれば、呼び出し側が不成立にする（最初の節だけを読むと、
+ * 後ろの節の不成立の証拠を見落とす）
  */
-function section(lines, match) {
-  const start = lines.findIndex((l) => {
+function sectionOf(lines, match) {
+  const isMatch = (l) => {
     if (l.inFence) return false;
     const h = HEADING.exec(l.text);
     return h !== null && h[1].length === 2 && match(h[2]);
-  });
-  if (start < 0) return null;
+  };
+  const count = lines.filter(isMatch).length;
+  const start = lines.findIndex(isMatch);
+  if (start < 0) return [null, 0];
   const out = [];
   for (const l of lines.slice(start + 1)) {
     if (!l.inFence && HEADING.test(l.text)) break;
     out.push(l);
   }
-  return out;
+  return [out, count];
 }
 
 const joined = (sectionLines) => sectionLines.map((l) => l.text).join("\n");

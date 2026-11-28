@@ -122,11 +122,14 @@ const FLAG_QUOTED = String.raw`(?:(?:--?${FLAG_WORD}|--)(?:\s+${FLAG_WORD})?\s+)
 // AT_CMD_POS は先頭の区切り文字を**消費する**。ゆえにコマンド本体をキャプチャし、
 // tokenStart() で位置を復元する。match.index をそのまま使うと `&&` の片方の `&` しか
 // 「push と gh の間」に入らず、`git push … && gh pr create` を誤って block する。
-export const GH_PR_CREATE = new RegExp(
-  `${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}create\\b)`,
-);
-const GH_PR_CREATE_QUOTED = new RegExp(`${AT_CMD_POS}${ENV_PREFIX_QUOTED}(gh\\s+${FLAG_QUOTED}pr\\s+${FLAG_QUOTED}create\\b)`);
-const GH_PR_CREATE_FORMS = [GH_PR_CREATE, GH_PR_CREATE_QUOTED];
+// `gh pr <sub>` の 2 形（旧い前置・FLAG と、引用符で囲んだ値を読む前置・FLAG）。`create` と `merge` が共有する
+const ghPrForms = (sub) => [
+  new RegExp(`${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}${sub}\\b)`),
+  new RegExp(`${AT_CMD_POS}${ENV_PREFIX_QUOTED}(gh\\s+${FLAG_QUOTED}pr\\s+${FLAG_QUOTED}${sub}\\b)`),
+];
+const GH_PR_CREATE_FORMS = ghPrForms("create");
+export const GH_PR_CREATE = GH_PR_CREATE_FORMS[0];
+const GH_PR_MERGE_FORMS = ghPrForms("merge");
 
 const QUOTE_OR_ESCAPE = /["'\\`]/g;
 
@@ -154,9 +157,14 @@ export function unquotedView(command) {
  * 偽の理由で止まる）。
  */
 export function ghPrCreateSites(command) {
+  return commandSites(GH_PR_CREATE_FORMS, command);
+}
+
+/** 正規表現の組が、元の文字列と `unquotedView` の見え方のどちらかで当たった見え方と位置（`ghPrCreateSites` の doc） */
+function commandSites(forms, command) {
   const sites = [];
   for (const text of new Set([command, unquotedView(command)])) {
-    const at = firstCommandAt(GH_PR_CREATE_FORMS, text);
+    const at = firstCommandAt(forms, text);
     if (at >= 0) sites.push({ text, at });
   }
   return sites;
@@ -450,18 +458,12 @@ export function removesWorkspace(command) {
   });
 }
 
-// `gh pr create` と同じ形で探す（`GH_PR_CREATE` の doc）
-const GH_PR_MERGE_FORMS = [
-  new RegExp(`${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}merge\\b)`),
-  new RegExp(`${AT_CMD_POS}${ENV_PREFIX_QUOTED}(gh\\s+${FLAG_QUOTED}pr\\s+${FLAG_QUOTED}merge\\b)`),
-];
-
 /**
  * コマンド位置の `gh pr merge` か（#1551）。元の文字列と `unquotedView` の見え方の両方で探す（`ghPrCreateSites` と同じ）。
  * `merge:pr` は gh を Bash/PowerShell ツールの外で呼ぶので、この判定に当たらない。
  */
 export function mergesPrByHand(command) {
-  return [...new Set([command, unquotedView(command)])].some((text) => firstCommandAt(GH_PR_MERGE_FORMS, text) >= 0);
+  return commandSites(GH_PR_MERGE_FORMS, command).length > 0;
 }
 
 /**

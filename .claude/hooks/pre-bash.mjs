@@ -421,8 +421,8 @@ const RESTORE_WORKTREE = /(?:^|\s)(?:--worktree|-[A-Za-z]*W[A-Za-z]*)(?=\s|$)/;
 // `workspace` で始まるパス語（`./` の前置も可。区切りの `\` と大文字小文字の違いも拾う）。`workspaceX` には当てない。
 // 捕捉 1 は `workspace` の後ろの残り
 const WORKSPACE_WORD = /(?:^|\s)(?:\.[\\/])?workspace(?=[\\/\s]|$)(\S*)/gi;
-// `workspace/` の下の、plan.md でない具体的なファイル名（glob の文字・区切り・`.`・`..` を含まない）
-const CONCRETE_NAME = /^[^*?[\]\\/]+$/;
+// `workspace/` の下の、plan.md でない具体的なファイル名（glob の文字・展開の文字 `{}$`・区切り・`.`・`..` を含まない）
+const CONCRETE_NAME = /^[^*?[\]{}$\\/]+$/;
 
 /**
  * パス語が `workspace/plan.md` を消しうるか。fail-closed に倒し、plan.md でない具体的なファイル（`workspace/research.md`）

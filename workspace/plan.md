@@ -100,6 +100,8 @@
 - ラウンド 1 — anchor 1ce51f7b / verify:tree green（E・F） / 指摘 Critical 0・High 0・Medium 3・Low 10 / 変異 26 件中生存 2（M10: subcommandForms の境界は今の判定結果を変えない・指摘しない。M26: A と B の並びを固定するテストが無い → 直した） / 収集時に落ちて assert でない赤が 5 件（ALL_REASONS の .reason → 直した） / 実地: merge-pr.mjs のロードと、hook のプロセスへの payload で止める形・通す形を確認。直したもの: gh pr merge の文言（頼まれていなければマージしない）、workspace の判定を workspace/ と plan.md に絞る、捨てる形の文言に意図どおりの戻し方、「守ること」の分岐の列挙をやめる、冒頭の全称 2 つと造語 1 つ。捨てたもの（挙動を変えない、または受容した残余）: DOT_PATH の .. 、PowerShell の .workspace、cd して git rm、implement の「git rm で消すとき」の全称、M6 の赤が throw であること
 - ラウンド 2 — anchor 38ca7697 / verify:tree green（E・F） / 前ラウンドの指摘はすべて解消（委譲先が測り直し） / 新しい指摘 Medium 2・Low 1 / 変異 11 件中生存 0 / 実地: hook のプロセスで research.md は通し plan.md は止めることを確認。直したもの: workspace の判定を、plan.md でない具体的なファイルだけを対象外にする形へ（glob・.・入れ子・ 区切り・大文字小文字を拾う。commit のセキュリティレビューも同じ指摘）、捨てる形の文言の戻し方を「委譲先の worktree で自分が入れた変異を戻すときだけ」に狭め、それ以外はユーザーへ確かめる
 - ラウンド 3 — anchor fe59e667 / verify:tree green（E・F） / R2 の指摘はすべて解消（委譲先が hook のプロセスで測り直し） / 新しい指摘 Low 2 / 変異 13 件中生存 4（P1 は判定結果を変えない。P3・P6・P7 は固定するテストが無い → 足した） / 直したもの: 展開で組み立てる名前（{}・$）も plan.md を含みうるとして当てる、..・ 区切りの入れ子・大文字の PLAN.md のテスト
+- ラウンド 4 — anchor 507d2891 / verify:tree green（E・F） / R3 の指摘はすべて解消 / 新しい指摘 0（⚠️ を含む） / 変異 7 件中生存 1（P1。判定結果を変えない）
+- 軸の違うレビュー — 立った条件: (2) 安全機構を足した / 対象 chore/pre-bash-discard-merge / /code-review high で nit 4 件 / 直した 3 件（implement の「git rm で消すときは止める」の全称を主な形へ弱めた、removesWorkspace の doc に絶対パス・親を経るパスの残余を足した、discardsUncommitted の doc に git checkout -p の残余を足した） / 残した 1 件（RM_FORCE が -- の後の -f を含むファイル名でも止める。fail-closed の向きの過剰検出として受容する）
 
 ## 未確定（実装前に潰す）
 

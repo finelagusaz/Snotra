@@ -445,7 +445,8 @@ function argsAfter(forms, segment) {
 
 /**
  * 未コミットの変更を捨てる形か（#1551）。捨てた変更は戻せない。
- * `git checkout <path>`（`--` も `.` も無い形）はブランチ名と区別できないので見ない（受容する過小検出）。
+ * `git checkout <path>`（`--` も `.` も無い形）はブランチ名と区別できないので見ない。`git checkout -p` も見ない
+ * （#1551 の範囲外。足りないと分かったときに足す）。いずれも受容する過小検出である。
  */
 export function discardsUncommitted(command) {
   return gitSegmentsInBothViews(command).some((s) => {
@@ -461,8 +462,9 @@ export function discardsUncommitted(command) {
 
 /**
  * `git rm` で `workspace/` を消す形か（#1551）。I/O を持たない。計画の状態は `decide` が読む。
- * `--cached` は作業ツリーの `plan.md` を残すので対象外。`workspace` を名指さない形（`git rm -r .`）と、
- * `git -C <dir> rm`（`readPlanState` が読むリポジトリと違いうる）は見ない（受容する過小検出）。
+ * `--cached` は作業ツリーの `plan.md` を残すので対象外。`workspace` を名指さない形（`git rm -r .`）、
+ * `git -C <dir> rm`（`readPlanState` が読むリポジトリと違いうる）、`workspace` の前に別の成分が付くパス
+ * （絶対パス・`../repo/workspace`）は見ない（受容する過小検出）。
  */
 export function removesWorkspace(command) {
   return gitSegmentsInBothViews(command).some((s) => {

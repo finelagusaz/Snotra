@@ -16,7 +16,7 @@
 //   雛形を引用した計画を通さないため
 import fs from "node:fs";
 import path from "node:path";
-import { countUnchecked } from "../.claude/hooks/pre-bash.mjs";
+import { countUnchecked, findUp } from "../.claude/hooks/pre-bash.mjs";
 
 export const USAGE = `使い方: npm run plan:check -- [--plan <plan.md>]
   --plan  判定する計画（既定: cwd から最も近い .git へ遡ったルートの workspace/plan.md）
@@ -159,15 +159,12 @@ function section(lines, match) {
 
 const joined = (sectionLines) => sectionLines.map((l) => l.text).join("\n");
 
-/** cwd から最も近い `.git`（ディレクトリでもファイルでもよい）へ遡ったルート。見つからなければ cwd */
+/**
+ * cwd から最も近い `.git`（ディレクトリでもファイルでもよい）へ遡ったルート。見つからなければ cwd。
+ * PR 前ゲート（`readPlanState`）と同じ決め方にして、2 つが同じ plan.md を読むようにする
+ */
 export function findRoot(cwd) {
-  let dir = path.resolve(cwd);
-  for (;;) {
-    if (fs.existsSync(path.join(dir, ".git"))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return path.resolve(cwd);
-    dir = parent;
-  }
+  return findUp(cwd, ".git") ?? path.resolve(cwd);
 }
 
 function main() {

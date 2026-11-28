@@ -143,7 +143,9 @@ const HEADING = /^(#{1,2})\s+(.*?)\s*$/;
  * 成立の証拠はこの外だけで数える
  */
 function withFences(text) {
-  let fence = null; // 開いたフェンスの記号の並び。閉じるのは、同じ記号で同じ長さ以上の行だけ（CommonMark と同じ）
+  // 開いたフェンスの記号の並び。閉じるのは、同じ記号で同じ長さ以上の行だけ。CommonMark と違い、情報文字列の付いた行
+  // （```js）でも閉じる（受容する残余: フェンスの中に ```js を挟んだ雛形の後ろの行を、フェンスの外として読む）
+  let fence = null;
   let inComment = false;
   return text.split(/\r?\n/).map((line) => {
     const f = inComment ? null : FENCE_LINE.exec(line);

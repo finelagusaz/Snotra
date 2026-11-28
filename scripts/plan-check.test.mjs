@@ -88,6 +88,12 @@ describe("judgePlan — 節の境界とフェンス（#1552 の変異注入で�
   it("``` で開いたフェンスは ~~~ の行で閉じない（中の承認の行を数えない）", () => {
     fails(plan({ approval: `${FENCE}markdown\n~~~\n${SELF}\n${FENCE}` }), "承認の行が無い");
   });
+  it.each([
+    ["``` を ```` で閉じる", `${FENCE}\nメモ\n\`\`\`\`\n${SELF}`],
+    ["``` の中に ~~~ を挟んでから ``` で閉じる", `${FENCE}\n~~~\n${FENCE}\n${SELF}`],
+  ])("%s と、後ろの承認の行は数える", (_label, approval) => {
+    expect(judgePlan(plan({ approval })).ok).toBe(true);
+  });
   it("4 つの ` で開いたフェンスは 3 つの ` の行で閉じない", () => {
     fails(plan({ approval: `\`\`\`\`\n${FENCE}\n${SELF}\n\`\`\`\`` }), "承認の行が無い");
   });

@@ -2,8 +2,11 @@
 // (2) workspace/plan.md に未チェックの作業項目を残したまま PR になるのを防ぎ（#749）、
 // (4) ツール（`npm run verify:tree`）が最後に green を返した sha のあとに `workspace/` の外の変更が
 // 載ったまま PR になるのを防ぐ（#1299。`readVerifyState`）。
-// さらに (3) コマンドの形だけで判定できる規範 5 件を判定する（#768。`judgeCommandShape`)。
-// (3) は常時ロード規範から降ろしたもので、**全コマンドで走る**（(1)(2)(4) は `gh pr create` 検出後のみ）。
+// さらに (3) コマンドの形だけで判定できる規範を判定する（#768・#1551。`judgeCommandShape`)。
+// (3) の多くは常時ロード規範から降ろしたもので、**全コマンドで走る**（(1)(2)(4) は `gh pr create` 検出後のみ）。
+// (5) `git rm` が `workspace/` を消すとき、workspace/plan.md に未チェックの項目が残っていれば止める（#1551。
+// `removesWorkspace`）。`/implement` は `workspace/` を消してから PR を作るので、(2) は正しい手順では plan.md を
+// 見られない。消す瞬間に見る。(5) が plan.md を読むのは、この形を検出したときだけである。
 //
 // 設計: payload 全体を grep するのではなく tool_input.command **だけ**を読み、
 // 「コマンド位置」に現れる `gh pr create` を検出して、それが走る瞬間にコミットが
@@ -12,10 +15,10 @@
 //   2. 動的 — upstream が設定済みで、未 push コミットが無い
 //
 // 判定単位は 2 種類ある。
-//   - コマンド位置: `gh pr create` と `git` の各判定。`git` 系はさらに次の区切りまでのセグメントに閉じる
-//     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする。`gh pr create` と `git` の判定は、
+//   - コマンド位置: `gh` と `git` の各判定。`git` 系はさらに次の区切りまでのセグメントに閉じる
+//     （`gitSegments`）。`python` を見る判定もコマンド位置の `python` を起点にする。`gh` と `git` の判定は、
 //     元の文字列に加えて、引用符とエスケープ文字を取り除いた見え方（`unquotedView`）の上でもコマンド位置を探す
-//     （`ghPrCreateSites`・`usesNoVerify`・`pullWithoutFfOnly`。#1499・#1523）。前置の値とフラグは、旧い正規表現と
+//     （#1499・#1523）。前置の値とフラグは、旧い正規表現と
 //     引用符で囲んだ値を読む正規表現の両方で読む（`ENV_PREFIX_QUOTED` の doc）
 //   - コマンド全体: heredoc 演算子と `\` パス、および `python` の判定のうち非 ASCII を探す部分。
 //     この失敗様態（シェルが `\` を食う・cp932 が非 ASCII で落ちる）には、言及と実行を分ける構文的位置が無い
@@ -38,7 +41,7 @@
 // 安全なチェーンと認めず、動的判定（upstream と未 push）へ回す（`hasSafeChain` の doc）。
 //
 // 受容する未対応リスク（いずれも「gh pr create がコマンド位置に現れない」形。意図的迂回であり事故モードではない。
-// `--no-verify` と同格に人間専用として扱う）:
+// `--no-verify` と同格に人間専用として扱う。`gh pr merge` の判定にも同じ形が当たる）:
 //   - `sh -c 'gh pr create'` / `eval` / バッククォートの内側（`unquotedView` がバッククォートを消すので、
 //     バッククォートそのものがコマンド位置にあれば検出する。`$(...)` は `(` が区切り文字なので検出する）
 //   - ラッパ経由（`timeout 5 gh pr create` / `nohup` / `xargs gh pr create`）
@@ -119,11 +122,14 @@ const FLAG_QUOTED = String.raw`(?:(?:--?${FLAG_WORD}|--)(?:\s+${FLAG_WORD})?\s+)
 // AT_CMD_POS は先頭の区切り文字を**消費する**。ゆえにコマンド本体をキャプチャし、
 // tokenStart() で位置を復元する。match.index をそのまま使うと `&&` の片方の `&` しか
 // 「push と gh の間」に入らず、`git push … && gh pr create` を誤って block する。
-export const GH_PR_CREATE = new RegExp(
-  `${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}create\\b)`,
-);
-const GH_PR_CREATE_QUOTED = new RegExp(`${AT_CMD_POS}${ENV_PREFIX_QUOTED}(gh\\s+${FLAG_QUOTED}pr\\s+${FLAG_QUOTED}create\\b)`);
-const GH_PR_CREATE_FORMS = [GH_PR_CREATE, GH_PR_CREATE_QUOTED];
+// `gh pr <sub>` の 2 形（旧い前置・FLAG と、引用符で囲んだ値を読む前置・FLAG）。`create` と `merge` が共有する
+const ghPrForms = (sub) => [
+  new RegExp(`${AT_CMD_POS}${ENV_PREFIX}(gh\\s+${FLAG}pr\\s+${FLAG}${sub}\\b)`),
+  new RegExp(`${AT_CMD_POS}${ENV_PREFIX_QUOTED}(gh\\s+${FLAG_QUOTED}pr\\s+${FLAG_QUOTED}${sub}\\b)`),
+];
+const GH_PR_CREATE_FORMS = ghPrForms("create");
+export const GH_PR_CREATE = GH_PR_CREATE_FORMS[0];
+const GH_PR_MERGE_FORMS = ghPrForms("merge");
 
 const QUOTE_OR_ESCAPE = /["'\\`]/g;
 
@@ -151,9 +157,14 @@ export function unquotedView(command) {
  * 偽の理由で止まる）。
  */
 export function ghPrCreateSites(command) {
+  return commandSites(GH_PR_CREATE_FORMS, command);
+}
+
+/** 正規表現の組が、元の文字列と `unquotedView` の見え方のどちらかで当たった見え方と位置（`ghPrCreateSites` の doc） */
+function commandSites(forms, command) {
   const sites = [];
   for (const text of new Set([command, unquotedView(command)])) {
-    const at = firstCommandAt(GH_PR_CREATE_FORMS, text);
+    const at = firstCommandAt(forms, text);
     if (at >= 0) sites.push({ text, at });
   }
   return sites;
@@ -392,6 +403,84 @@ export function pullWithoutFfOnly(command) {
   return gitSegmentsInBothViews(command).some((s) => GIT_PULL_FORMS.some((re) => re.test(s)) && !FF_ONLY.test(s));
 }
 
+// 未コミットの変更を捨てる形（#1551）。サブコマンドより後ろの引数だけを見る——前に来るグローバルフラグの値
+// （`git -C . checkout main` の `.`）をパスと取り違えないため。
+// `checkout` は `checkout-index` と分ける（`(?![\w-])`）。
+const subcommandForms = (sub) => [FLAG, FLAG_QUOTED].map((flag) => new RegExp(`^git\\s+${flag}${sub}(?![\\w-])`));
+const GIT_RM_FORMS = subcommandForms("rm");
+const GIT_CHECKOUT_FORMS = subcommandForms("checkout");
+const GIT_CHECKOUT_INDEX_FORMS = subcommandForms("checkout-index");
+const GIT_RESTORE_FORMS = subcommandForms("restore");
+// 短縮形はまとめて書ける（`-rf`・`-SW`）。大文字小文字を区別する（restore の `-s` は `--source`）
+const RM_FORCE = /(?:^|\s)(?:--force|-[A-Za-z]*f[A-Za-z]*)(?=\s|$)/;
+const RM_CACHED = /(?:^|\s)--cached(?=\s|$)/;
+const PATHSPEC_AFTER_DASHDASH = /(?:^|\s)--\s+\S/;
+const DOT_PATH = /(?:^|\s)\.(?:\/\S*)?(?=\s|$)/;
+const RESTORE_STAGED = /(?:^|\s)(?:--staged|-[A-Za-z]*S[A-Za-z]*)(?=\s|$)/;
+const RESTORE_WORKTREE = /(?:^|\s)(?:--worktree|-[A-Za-z]*W[A-Za-z]*)(?=\s|$)/;
+// `workspace` で始まるパス語（`./` の前置も可。区切りの `\` と大文字小文字の違いも拾う）。`workspaceX` には当てない。
+// 捕捉 1 は `workspace` の後ろの残り
+const WORKSPACE_WORD = /(?:^|\s)(?:\.[\\/])?workspace(?=[\\/\s]|$)(\S*)/gi;
+// `workspace/` の下の、plan.md でない具体的なファイル名（glob の文字・展開の文字 `{}$`・区切り・`.`・`..` を含まない）
+const CONCRETE_NAME = /^[^*?[\]{}$\\/]+$/;
+
+/**
+ * パス語が `workspace/plan.md` を消しうるか。fail-closed に倒し、plan.md でない具体的なファイル（`workspace/research.md`）
+ * だけを対象外にする。`workspace`・`workspace/`・`workspace/*`・`workspace/.`・入れ子のパスは、plan.md を含みうるので当てる
+ */
+function coversPlan(rest) {
+  const name = rest.slice(1);
+  if (name === "" || name === "." || name === ".." || !CONCRETE_NAME.test(name)) return true;
+  return name.toLowerCase() === "plan.md";
+}
+
+/** サブコマンドが forms に当たれば、その後ろの引数の文字列。当たらなければ null */
+function argsAfter(forms, segment) {
+  for (const re of forms) {
+    const m = re.exec(segment);
+    if (m) return segment.slice(m[0].length);
+  }
+  return null;
+}
+
+/**
+ * 未コミットの変更を捨てる形か（#1551）。捨てた変更は戻せない。
+ * `git checkout <path>`（`--` も `.` も無い形）はブランチ名と区別できないので見ない。`git checkout -p` も見ない
+ * （#1551 の範囲外。足りないと分かったときに足す）。いずれも受容する過小検出である。
+ */
+export function discardsUncommitted(command) {
+  return gitSegmentsInBothViews(command).some((s) => {
+    const rm = argsAfter(GIT_RM_FORMS, s);
+    if (rm !== null && RM_FORCE.test(rm)) return true;
+    const checkout = argsAfter(GIT_CHECKOUT_FORMS, s);
+    if (checkout !== null && (PATHSPEC_AFTER_DASHDASH.test(checkout) || DOT_PATH.test(checkout))) return true;
+    if (argsAfter(GIT_CHECKOUT_INDEX_FORMS, s) !== null) return true;
+    const restore = argsAfter(GIT_RESTORE_FORMS, s);
+    return restore !== null && (!RESTORE_STAGED.test(restore) || RESTORE_WORKTREE.test(restore));
+  });
+}
+
+/**
+ * `git rm` で `workspace/` を消す形か（#1551）。I/O を持たない。計画の状態は `decide` が読む。
+ * `--cached` は作業ツリーの `plan.md` を残すので対象外。`workspace` を名指さない形（`git rm -r .`）、
+ * `git -C <dir> rm`（`readPlanState` が読むリポジトリと違いうる）、`workspace` の前に別の成分が付くパス
+ * （絶対パス・`../repo/workspace`）は見ない（受容する過小検出）。
+ */
+export function removesWorkspace(command) {
+  return gitSegmentsInBothViews(command).some((s) => {
+    const rm = argsAfter(GIT_RM_FORMS, s);
+    return rm !== null && !RM_CACHED.test(rm) && [...rm.matchAll(WORKSPACE_WORD)].some((m) => coversPlan(m[1]));
+  });
+}
+
+/**
+ * コマンド位置の `gh pr merge` か（#1551）。元の文字列と `unquotedView` の見え方の両方で探す（`ghPrCreateSites` と同じ）。
+ * `merge:pr` は gh を Bash/PowerShell ツールの外で呼ぶので、この判定に当たらない。
+ */
+export function mergesPrByHand(command) {
+  return commandSites(GH_PR_MERGE_FORMS, command).length > 0;
+}
+
 /**
  * 拒否文言。**「なぜ止めたか」と「代わりに何をするか」を必ず持つ**（#768）。
  *
@@ -420,7 +509,24 @@ const SHAPE_REMEDY = Object.freeze({
     "`git pull --ff-only` を使ってください（**この判定はブランチを問わず発火します**。FF できないほど発散しているなら、" +
     "feature ブランチでは `git fetch` してから `git merge` を明示的に打ち（rebase は force-push が要るので使いません）、" +
     "main では `.githooks/` が rebase も非 FF merge も拒むので、想定外のコミットが local main に入っていないかを先に確認してください）。",
+  discard:
+    "未コミットの変更を捨てる形です（`git rm -f`・`git checkout -- <path>`・`git checkout .`・`git checkout-index`・" +
+    "`--staged` だけでない `git restore`）。捨てた変更は戻せません。まず `git status` で何が未コミットかを確かめ、" +
+    "残すなら WIP コミットにしてください。ステージだけ外すなら `git restore --staged <path>` か `git reset` を使ってください" +
+    "（どちらも作業ツリーには触りません）。委譲先の worktree で、自分が入れた変異を戻すときだけは、" +
+    "`git show HEAD:<path>` の内容を Write ツールで書き戻してください。それ以外で変更を捨てたいときは、捨てずにユーザーへ確かめてください。",
+  ghPrMerge:
+    "手打ちの `gh pr merge` は止めています。閉じる issue の照合とマージ後の検証を通すため、`/merge-pr` から" +
+    "`npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>` を使ってください（PowerShell からは `--` を `'--'` と引用する）。" +
+    "ツールを経ないマージ（Web UI・手打ち）は人間だけが行います。" +
+    "マージするのは、ユーザーが `/merge-pr` でマージを頼んだときだけです。頼まれていなければ、マージせずにユーザーへ確かめてください。",
 });
+
+/** `git rm` で `workspace/` を消そうとしたのに、`plan.md` に未チェックが残っているときの文言（#1551） */
+const workspaceRemoveRemedy = (unchecked) =>
+  `workspace/plan.md に未チェックの項目が ${unchecked} 件残ったまま、workspace/ を消そうとしています。` +
+  "消すと、PR 前ゲートが計画を見られなくなります。項目を完了させて [x] にするか、やらないと決めた項目は計画から外し、" +
+  "理由を ADR か issue へ記録してから消してください。";
 
 /**
  * コマンドの形だけで決まる判定（#768）。I/O を要さないので git / plan.md を読む前に走る。
@@ -438,6 +544,8 @@ const SHAPE_REMEDY = Object.freeze({
 export function judgeCommandShape(command, platform) {
   if (usesNoVerify(command)) return block(SHAPE_REMEDY.noVerify);
   if (pullWithoutFfOnly(command)) return block(SHAPE_REMEDY.pull);
+  if (discardsUncommitted(command)) return block(SHAPE_REMEDY.discard);
+  if (mergesPrByHand(command)) return block(SHAPE_REMEDY.ghPrMerge);
 
   // 以下は Windows 固有の失敗様態（cp932 コンソール・`\` を食う shell）にのみ当たる。
   if (platform !== "win32") return null;
@@ -452,9 +560,10 @@ export function judgeCommandShape(command, platform) {
  * 分岐表全体が git 無しでテストできる。引数は options オブジェクトである（#1299。位置引数のまま
  * 5 本目を足すと、省略可能な `platform` の後ろに穴が開く）。
  *
- * 「管轄外」と「判定不能」を混同しない。前者は allow（対象ツール以外・`gh pr create` 以外）、
- * 後者は block（見えないものは通さない）。**reader は 3 つとも必須で、`gh pr create` の経路で
- * 渡されていなければ block する**（配線忘れを allow にしない）。
+ * 「管轄外」と「判定不能」を混同しない。前者は allow（対象ツール以外・形の判定に当たらず、`workspace/` の
+ * `git rm` でも `gh pr create` でもないもの）、後者は block（見えないものは通さない）。**reader は 3 つとも必須で、
+ * `gh pr create` の経路で渡されていなければ block する**。`workspace/` の `git rm` の経路では `readPlanState` を
+ * 同じく必須とする（配線忘れを allow にしない）。
  *
  * `platform` は `judgeCommandShape` へそのまま渡る（省略時の意味はそちらの注釈が SSOT）。
  */
@@ -471,8 +580,18 @@ export function decide(payload, { readGitState, readPlanState, readVerifyState, 
   const shape = judgeCommandShape(command, platform);
   if (shape) return shape;
 
+  // `workspace/` を `git rm` で消すときの計画の状態（#1551）。`/implement` は `workspace/` を消してから PR を作るので、
+  // 下の PR 作成時の plan.md の照合は、正しい手順では plan.md を見られない。消す瞬間に見る。
+  // 当たらなければ、または未チェックが無ければ、ALLOW で打ち切らずに後ろへ進む（同じチェーンの `gh pr create` を見るため）
+  if (removesWorkspace(command)) {
+    if (typeof readPlanState !== "function") return block("readPlanState が渡されていません（hook の配線の欠陥）。判定できません。");
+    const plan = readPlanState();
+    if (!plan.ok) return block(`${plan.reason}。計画の完了状態を判定できません。`);
+    if (plan.exists && plan.unchecked > 0) return block(workspaceRemoveRemedy(plan.unchecked));
+  }
+
   const sites = ghPrCreateSites(command);
-  if (sites.length === 0) return ALLOW; // 管轄外
+  if (sites.length === 0) return ALLOW; // ここから先の PR 作成の判定の管轄外
 
   // cwd 変更は、検出した見え方それぞれの中で位置を比べる（#1499）
   for (const { text, at } of sites) {

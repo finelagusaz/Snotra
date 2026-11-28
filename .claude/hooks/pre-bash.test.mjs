@@ -28,6 +28,9 @@ import {
   needsPyEncoding,
   usesNoVerify,
   pullWithoutFfOnly,
+  discardsUncommitted,
+  removesWorkspace,
+  mergesPrByHand,
   judgeCommandShape,
   GIT_TIMEOUT_MS,
   VERIFY_GIT_TIMEOUT_MS,
@@ -519,11 +522,6 @@ describe("decide — plan.md ゲート", () => {
   it("plan.md が存在するのに読めなければ block（fail-closed）", () => {
     expect(decide(bash(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_UNREADABLE }).action).toBe("block");
   });
-  it("gh pr create を検出しなければ plan.md を読まない", () => {
-    const spy = vi.fn(NO_PLAN);
-    expect(decide(bash("echo hi"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: spy }).action).toBe("allow");
-    expect(spy).not.toHaveBeenCalled();
-  });
   it("PowerShell tool でも未チェック項目で block する", () => {
     expect(decide(pwsh(ghPrCreate()), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_OPEN() }).action).toBe("block");
   });
@@ -919,6 +917,26 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.stderr).toContain("plan.md");
   });
 
+  // payload.cwd を fixture にする。渡さないと、本体の workspace/plan.md を読んで環境に依存する（#1551）
+  it("未チェックの plan.md がある repo で workspace/ を git rm すると exit 2 で件数を出す", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-e2e-rm-"));
+    mkdirSync(path.join(dir, ".git"));
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "plan.md"), "- [ ] a\n- [ ] b\n- [x] c\n", "utf8");
+    const res = runHook({ tool_name: "Bash", tool_input: { command: "git rm -r workspace/" }, cwd: dir }, dir);
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("2 件");
+  });
+
+  it("全項目チェック済みの plan.md なら workspace/ の git rm は exit 0", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-e2e-rm-"));
+    mkdirSync(path.join(dir, ".git"));
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "plan.md"), "- [x] c\n", "utf8");
+    const res = runHook({ tool_name: "Bash", tool_input: { command: "git rm -r workspace/" }, cwd: dir }, dir);
+    expect(res.status).toBe(0);
+  });
+
   it("全項目チェック済みの plan.md なら安全なチェーンは exit 0（要約が HEAD を示す repo で）", () => {
     const dir = verifiedRepo();
     mkdirSync(path.join(dir, "workspace"));
@@ -1003,7 +1021,7 @@ describe("fail-closed の骨格カナリア", () => {
 });
 
 // ---------------------------------------------------------------------------
-// #768 コマンドの形で判定する規範 5 件。
+// #768 コマンドの形で判定する規範。
 // ---------------------------------------------------------------------------
 
 describe("segmentEnd / gitSegments — 区切りまでの切り出し", () => {
@@ -1208,6 +1226,204 @@ describe("pullWithoutFfOnly", () => {
   });
 });
 
+// テストソース自身がコマンド位置に該当語を書かないよう、組み立てて記述する（`ghPrCreate` と同じ理由）
+const PR_MERGE = "pr merge";
+const ghPrMerge = (rest = "") => `${GH} ${PR_MERGE}${rest}`;
+
+describe("discardsUncommitted — 未コミットの変更を捨てる形（#1551）", () => {
+  it.each([
+    "git rm -f x",
+    "git rm --force x",
+    "git rm -rf src/x",
+    "git rm -fr src/x",
+    "git rm --cached -f x",
+    "git -C repo rm -f x",
+    "git checkout -- a.rs",
+    "git checkout HEAD -- a.rs",
+    "git checkout .",
+    "git checkout ./src",
+    "git checkout-index -a -f",
+    "git checkout-index a.rs",
+    "git restore a.rs",
+    "git restore .",
+    "git restore --worktree a.rs",
+    "git restore --staged --worktree a.rs",
+    "git restore -SW a.rs",
+    'git "restore" a.rs',
+    "echo ok && git restore a.rs",
+  ])("block 対象: %s", (cmd) => {
+    expect(discardsUncommitted(cmd)).toBe(true);
+  });
+
+  it.each([
+    "git rm x",
+    "git rm -r src/x",
+    "git rm --cached x",
+    "git checkout main",
+    "git checkout -b f origin/main",
+    "git checkout -",
+    "git checkout --orphan x",
+    "git -C . checkout main",
+    "git switch main",
+    "git restore --staged a.rs",
+    "git restore --staged -- .",
+    "git restore -S a.rs",
+    "git reset",
+    "git reset HEAD a.rs",
+    "git status",
+    'git commit -m "restore later"',
+  ])("対象外: %s", (cmd) => {
+    expect(discardsUncommitted(cmd)).toBe(false);
+  });
+});
+
+describe("removesWorkspace — git rm で workspace/ を消す形（#1551）", () => {
+  it.each([
+    "git rm -r workspace/",
+    "git rm -r workspace",
+    "git rm workspace/plan.md",
+    "git rm ./workspace/plan.md",
+    "git rm -r workspace/*",
+    "git rm -r workspace/**",
+    "git rm -r workspace/.",
+    "git rm -r workspace//",
+    "git rm -r workspace/sub/x",
+    "git rm Workspace/plan.md",
+    "git rm workspace\\plan.md",
+    "git rm -r .\\workspace",
+    "git rm -r workspace\\sub\\x",
+    "git rm -r workspace/..",
+    "git rm workspace/PLAN.md",
+    "git rm workspace/{plan,research}.md",
+    "git rm workspace/$F",
+    "git rm -r ./workspace",
+    "git rm -r -- workspace",
+    "git rm -q -r workspace/ src/x",
+    "git add -A && git rm -r workspace/",
+  ])("当たる: %s", (cmd) => {
+    expect(removesWorkspace(cmd)).toBe(true);
+  });
+
+  it.each([
+    "git rm -r src/x",
+    "git rm -r workspaceX",
+    "git rm workspace/research.md",
+    "git rm workspace/adversarial-1551.txt",
+    "git rm -r my-workspace",
+    "git rm --cached -r workspace/",
+    "git -C workspace rm x",
+    "git add workspace/",
+    "rm -r workspace",
+    "ls workspace",
+  ])("当たらない: %s", (cmd) => {
+    expect(removesWorkspace(cmd)).toBe(false);
+  });
+});
+
+describe("mergesPrByHand — コマンド位置の gh pr merge（#1551）", () => {
+  it.each([
+    ghPrMerge(" 1 --squash"),
+    `GH_TOKEN=x ${ghPrMerge(" 1")}`,
+    `GH_TOKEN="a b" ${ghPrMerge(" 1")}`,
+    `${GH} --repo o/r ${PR_MERGE} 1`,
+    `${GH} pr "merge" 1`,
+    `git push && ${ghPrMerge()}`,
+  ])("当たる: %s", (cmd) => {
+    expect(mergesPrByHand(cmd)).toBe(true);
+  });
+
+  it.each([
+    "npm run merge:pr -- 1 --closes none --body-file /tmp/b.txt",
+    "npm run merge:pr '--' 1 --closes none --body-file /tmp/b.txt",
+    `grep -n "${ghPrMerge()}" x`,
+    `${GH} pr view 1`,
+    ghPrCreate(),
+    `${GH} pr merges`,
+  ])("当たらない: %s", (cmd) => {
+    expect(mergesPrByHand(cmd)).toBe(false);
+  });
+
+  // `gh pr create` と同じく見え方でも探すので、区切りを含む引用の内側の言及で止まる。fail-closed の向きゆえ受容する
+  it("区切りを含む引用の内側の言及は、意図として止める", () => {
+    expect(mergesPrByHand(`git commit -m "x; ${ghPrMerge()}"`)).toBe(true);
+  });
+});
+
+describe("judgeCommandShape — 捨てる形と gh pr merge の理由（#1551）", () => {
+  it.each([
+    ["git rm -f x", "WIP コミット"],
+    ["git checkout -- a.rs", "git restore --staged"],
+    ["git restore a.rs", "git reset"],
+    ["git checkout -- a.rs", "git show HEAD:<path>"],
+    ["git checkout -- a.rs", "ユーザーへ確かめて"],
+    [ghPrMerge(" 1"), "npm run merge:pr"],
+    [ghPrMerge(" 1"), "頼まれていなければ"],
+  ])("%s は理由つきで block", (cmd, needle) => {
+    for (const platform of ["win32", "darwin", undefined]) {
+      const r = judgeCommandShape(cmd, platform);
+      expect(r?.action, `${cmd} / ${platform}`).toBe("block");
+      expect(r.reason).toContain(needle);
+    }
+  });
+
+  // 拒否文言が勧める手が、別の判定に止められないこと（`.claude/rules/safety-nets.md`「拒否する機構の誤爆は一様でない」）
+  it.each([
+    "git restore --staged a.rs",
+    "git reset",
+    'git add -A && git commit -m "wip"',
+    "npm run merge:pr -- 1 --closes none --body-file C:/Users/x/b.txt",
+    "npm run merge:pr '--' 1 --closes none --body-file C:/Users/x/b.txt",
+  ])("拒否文言が勧める手は止めない: %s", (cmd) => {
+    expect(judgeCommandShape(cmd, "win32")).toBeNull();
+  });
+});
+
+describe("decide — git rm で workspace/ を消すときの plan.md（#1551）", () => {
+  const RM = "git rm -r workspace/";
+  it("未チェックが残っていれば、件数と次の一手つきで block", () => {
+    const r = decide(bash(RM), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_OPEN(3) });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("3 件");
+    expect(r.reason).toContain("ADR か issue");
+  });
+  it("PowerShell tool でも同じく block", () => {
+    expect(decide(pwsh(RM), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_OPEN() }).action).toBe("block");
+  });
+  it("全項目チェック済みなら allow", () => {
+    expect(decide(bash(RM), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_DONE }).action).toBe("allow");
+  });
+  it("plan.md が無ければ allow", () => {
+    expect(decide(bash(RM), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: NO_PLAN }).action).toBe("allow");
+  });
+  it("plan.md が読めなければ block（fail-closed）", () => {
+    const r = decide(bash(RM), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_UNREADABLE });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("EACCES");
+  });
+  it("readPlanState が渡されなければ、配線の欠陥として block", () => {
+    const r = decide(bash(RM), { readVerifyState: VERIFIED, readGitState: CLEAN });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("readPlanState が渡されていません");
+  });
+  it.each([["全項目チェック済み", PLAN_DONE], ["未チェックあり", PLAN_OPEN(2)]])("-f を伴う形は、捨てる形の理由で先に止める（%s）", (_label, plan) => {
+    const r = decide(bash("git rm -rf workspace/"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: plan });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("WIP コミット");
+  });
+  it("未チェックが 0 件でも ALLOW で打ち切らず、後ろの gh pr create の判定へ進む", () => {
+    const r = decide(bash(`${RM} && ${ghPrCreate()}`), { readVerifyState: NOT_VERIFIED, readGitState: CLEAN, readPlanState: PLAN_DONE });
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("workspace/ の外の変更");
+  });
+  it("workspace を消さないコマンドでは plan.md を読まない", () => {
+    const spy = vi.fn(PLAN_OPEN());
+    for (const cmd of ["echo hi", "git rm -r src/x", "git status"]) {
+      expect(decide(bash(cmd), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: spy }).action).toBe("allow");
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
 describe("judgeCommandShape — platform ゲート", () => {
   const WIN_ONLY = [
     ["heredoc", "cat <<EOF"],
@@ -1236,6 +1452,8 @@ describe("judgeCommandShape — platform ゲート", () => {
   const PLATFORM_FREE = [
     ["--no-verify", "git commit --no-verify -m x"],
     ["pull", "git pull origin main"],
+    ["捨てる形", "git restore a.rs"],
+    ["gh pr merge", ghPrMerge(" 1")],
   ];
 
   it.each(PLATFORM_FREE)("%s は platform を問わず block（win32）", (_label, cmd) => {
@@ -1268,6 +1486,9 @@ describe("judgeCommandShape — platform ゲート", () => {
   it("無害なコマンドは null（管轄外）", () => {
     expect(judgeCommandShape("npm test 2>&1 | tail -30", "win32")).toBeNull();
     expect(judgeCommandShape("git push -u origin HEAD", "win32")).toBeNull();
+    expect(judgeCommandShape("git checkout main", "win32")).toBeNull();
+    expect(judgeCommandShape("git rm -r workspace/", "win32")).toBeNull(); // 計画の状態は decide が読む
+    expect(judgeCommandShape(`${GH} pr view 1`, "win32")).toBeNull();
   });
 
   // #768 の norm-review 1 回目が暴いた欠陥の機構化（当該スキルは 2026-08-07 に廃止・欠陥と機構は残る）。
@@ -1280,7 +1501,9 @@ describe("judgeCommandShape — platform ゲート", () => {
     'python -c "日本語"',
     "git commit --no-verify",
     "git pull",
-  ].map((cmd) => judgeCommandShape(cmd, "win32").reason);
+    "git restore a.rs",
+    ghPrMerge(" 1"),
+  ].map((cmd) => judgeCommandShape(cmd, "win32")?.reason ?? `(止めなかった: ${cmd})`);
 
   // `\b` が要る: `\w+` は貪欲でもバックトラックするので、これが無いと `$env:TEM` で
   // 一致してから「次は `/` でない（`P`）」が成立し、正しい文言でも赤になる（この形で一度踏んだ）。
@@ -1344,13 +1567,16 @@ describe("decide — options の platform の配線", () => {
   });
 });
 
-describe("5 述語は全域関数である（I2・no-throw）", () => {
+describe("形の判定の述語は全域関数である（I2・no-throw）", () => {
   const PREDICATES = [
     usesHeredoc,
     usesBackslashPath,
     needsPyEncoding,
     usesNoVerify,
     pullWithoutFfOnly,
+    discardsUncommitted,
+    removesWorkspace,
+    mergesPrByHand,
   ];
   const PATHOLOGICAL = [
     "", "<", "<<", "<<<", "<<-", "<<'", '<<"', "$env:", "%", "C:", ":\\", "git", "git ", "python",
@@ -1379,6 +1605,9 @@ describe("5 述語は全域関数である（I2・no-throw）", () => {
     const t0 = process.hrtime.bigint();
     expect(usesNoVerify(cmd)).toBe(false);
     expect(pullWithoutFfOnly(cmd)).toBe(false);
+    expect(discardsUncommitted(cmd)).toBe(false);
+    expect(removesWorkspace(cmd)).toBe(false);
+    expect(mergesPrByHand(`${GH} ${flags} x`)).toBe(false);
     expect(Number(process.hrtime.bigint() - t0) / 1e6).toBeLessThan(500);
   });
 
@@ -1593,8 +1822,11 @@ describe("引用符で囲んだ値の病的入力でも時間内に終わる（#
     const flags = Array.from({ length: 2000 }, (_, i) => `--f${i}="a b" -x 'c d'`).join(" ");
     within(() => {
       ghPrCreateSites(`${quoted} ${GH} ${flags} x`);
+      mergesPrByHand(`${quoted} ${GH} ${flags} x`);
       usesNoVerify(`${quoted} git ${flags} x`);
       pullWithoutFfOnly(`${quoted} git ${flags} x`);
+      discardsUncommitted(`${quoted} git ${flags} x`);
+      removesWorkspace(`${quoted} git ${flags} x`);
     });
   });
   it("対にならない引用符が大量に並ぶ", () => {
@@ -1602,7 +1834,10 @@ describe("引用符で囲んだ値の病的入力でも時間内に終わる（#
     within(() => {
       usesNoVerify(cmd);
       pullWithoutFfOnly(cmd);
+      discardsUncommitted(cmd);
+      removesWorkspace(cmd);
       ghPrCreateSites(cmd);
+      mergesPrByHand(cmd);
     });
   });
   it.each(["A=$(x) ", "A=${x} "])("展開を値に持つ前置の並び（%s の繰り返し）で二乗にならない", (unit) => {

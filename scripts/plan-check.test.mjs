@@ -97,6 +97,12 @@ describe("judgePlan — 節の境界とフェンス（#1552 の変異注入で�
   ])("%sの承認の行は数える", (_label, approval) => {
     expect(judgePlan(plan({ approval })).ok).toBe(true);
   });
+  it("字下げした複数行の HTML コメントの中の承認の行は数えない", () => {
+    fails(plan({ approval: `  <!--\n${SELF}\n  -->` }), "承認の行が無い");
+  });
+  it("フェンスの中の `<!--` はコメントを開かない（フェンスの後ろの承認の行は数える）", () => {
+    expect(judgePlan(plan({ approval: `${FENCE}\n<!--\n${FENCE}\n${SELF}` })).ok).toBe(true);
+  });
   it("文中で `<!--` に触れても、残りをコメントとみなさない", () => {
     const text = plan({ extra: "- 雛形は `<!--` で始まるコメントを使わない" });
     expect(judgePlan(text).ok).toBe(true);
@@ -115,6 +121,13 @@ describe("judgePlan — 見出しの重複（#1552 のラウンド 2 で、こ�
   });
   it("自己承認で、変更するファイルの節が 2 つあれば不成立", () => {
     fails(plan({ extra: "## 変更するファイル（続き）\n\n- `SPEC.md` — 直す" }), "「変更するファイル」の見出しが 2 個");
+  });
+  it("フェンスの中に引用した雛形の見出しは、重複に数えない", () => {
+    const extra = `${FENCE}markdown\n## 未確定（実装前に潰す）\n\n- [x] 雛形\n\n## 承認\n\n${SELF}\n${FENCE}`;
+    expect(judgePlan(plan({ extra })).ok).toBe(true);
+  });
+  it("節の中の `###` の小見出しは、重複に数えない", () => {
+    expect(judgePlan(plan({ approval: `${SELF}\n\n### 承認（補足）\n\n- 補足` })).ok).toBe(true);
   });
   it("自己承認で、セルフレビューの節が 2 つあれば不成立", () => {
     fails(plan({ extra: "## セルフレビュー（追記）\n\n- check スキル: /persistence-check" }), "「セルフレビュー」の見出しが 2 個");

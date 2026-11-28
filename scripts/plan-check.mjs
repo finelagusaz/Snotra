@@ -134,7 +134,7 @@ function listsSpec(line) {
 }
 const SPEC_HEAD = /^(?:\*\*|\[)?(?:\.\/)?SPEC\.md(?![\w.])/;
 
-const FENCE_LINE = /^\s*(?:```|~~~)/;
+const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
 const COMMENT_OPEN = /^\s*<!--/;
 const HEADING = /^(#{1,2})\s+(.*?)\s*$/;
 
@@ -143,13 +143,19 @@ const HEADING = /^(#{1,2})\s+(.*?)\s*$/;
  * 成立の証拠はこの外だけで数える
  */
 function withFences(text) {
-  let inFence = false;
+  let fence = null; // 開いたフェンスの記号の並び。閉じるのは、同じ記号で同じ長さ以上の行だけ（CommonMark と同じ）
   let inComment = false;
   return text.split(/\r?\n/).map((line) => {
-    if (!inComment && FENCE_LINE.test(line)) {
-      inFence = !inFence;
+    const f = inComment ? null : FENCE_LINE.exec(line);
+    if (f && fence === null) {
+      fence = f[1];
       return { text: line, inFence: true };
     }
+    if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
+      fence = null;
+      return { text: line, inFence: true };
+    }
+    const inFence = fence !== null;
     if (!inFence && !inComment && COMMENT_OPEN.test(line) && !line.includes("-->")) {
       inComment = true;
       return { text: line, inFence: true };

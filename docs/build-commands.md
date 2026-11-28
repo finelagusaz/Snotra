@@ -239,7 +239,7 @@ npm run clean:worktrees          # Agent 委譲で残った worktree/ブラン�
 npm run race:boundaries -- --base <分岐元ブランチ>   # /race-check の母集団を列挙（廃止・移行の検査には --include-removed を足す）
 npm run prose:sweep -- --plan workspace/plan.md <語>...  # /plan-review の「変更で偽になる散文」を切り詰めずに全件列挙
 npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>  # /merge-pr の squash マージ（閉じる issue をマージの前後で照合）
-npm run plan:check               # /implement の入口と /start-issue の承認の記録の後に、workspace/plan.md の未確定ゼロと承認の形を判定
+npm run plan:check               # /implement の入口と /start-issue の承認の記録の後に、workspace/plan.md の入口判定を行う
 ```
 
 - **`race:boundaries` の `--base` は省略できない。** 分岐元が `main` なら、`git fetch` を済ませてから `origin/main` を渡す（起点の選び方は `AGENTS.md`「検証の作法（全タスク共通）」）。別の feature ブランチから切ったブランチでは、その分岐元を渡す。差分と未追跡のファイルがともに空なら、非ゼロで止まる。未コミット分が落ちる素の `git diff` を許さないためである（`..` / `...` の 2 点形が作業ツリーを見ない罠は、「検証の作法」の一般則と同根・#922）。出力の仕様（種別の定義・検出パターン・0 件の明示）は `scripts/race-boundaries.mjs` が SSOT で、候補の読み方と 0 件の意味は `/race-check` が持つ

@@ -102,6 +102,7 @@
 - ラウンド 3 — anchor fe59e667 / verify:tree green（E・F） / R2 の指摘はすべて解消（委譲先が hook のプロセスで測り直し） / 新しい指摘 Low 2 / 変異 13 件中生存 4（P1 は判定結果を変えない。P3・P6・P7 は固定するテストが無い → 足した） / 直したもの: 展開で組み立てる名前（{}・$）も plan.md を含みうるとして当てる、..・ 区切りの入れ子・大文字の PLAN.md のテスト
 - ラウンド 4 — anchor 507d2891 / verify:tree green（E・F） / R3 の指摘はすべて解消 / 新しい指摘 0（⚠️ を含む） / 変異 7 件中生存 1（P1。判定結果を変えない）
 - 軸の違うレビュー — 立った条件: (2) 安全機構を足した / 対象 chore/pre-bash-discard-merge / /code-review high で nit 4 件 / 直した 3 件（implement の「git rm で消すときは止める」の全称を主な形へ弱めた、removesWorkspace の doc に絶対パス・親を経るパスの残余を足した、discardsUncommitted の doc に git checkout -p の残余を足した） / 残した 1 件（RM_FORCE が -- の後の -f を含むファイル名でも止める。fail-closed の向きの過剰検出として受容する）
+- ラウンド 5 — anchor 52762e25 / verify:tree green（E・F） / 差分は doc と implement の文言だけ / 指摘 Low 1（git checkout -p の残余の doc が文面ほど広くない。-p -- a.rs と -p . は止まる。止めすぎる向きで、挙動を変えない言い回しの指摘なので直さない） / 変異注入は該当なし（判定のコードを変えていない） / 実地: doc の「拾わない形」（絶対パス・../repo/workspace・git checkout -p）を hook のプロセスで確認し、doc のとおりだった
 
 ## 未確定（実装前に潰す）
 

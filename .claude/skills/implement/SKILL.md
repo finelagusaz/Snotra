@@ -55,7 +55,7 @@ allowed-tools:
 | 検証は、コミットした sha に対して行う（3a） | `verify-tree run` が、未コミットの変更と sha ≠ HEAD を exit 2 で拒む。委譲先は `align` が HEAD を照合する |
 | ツールの最後の実行の後に、`workspace/` の外を動かさない（Step 4） | PR 前ゲート |
 | main へ直接コミット・push しない | `.githooks/` と ruleset |
-| `git rm` が止まったら、`-f` も checkout 系（`checkout -- <path>` / `checkout .` / `checkout-index` / `--staged` だけでない `restore`）も使わない（Step 4） | `.claude/hooks/pre-bash.mjs`（形の判定）。`--` も `.` も無い `git checkout <path>` はブランチ名と区別できないので止めない |
+| `git rm` が止まったら、`-f` も checkout 系（`checkout` / `checkout-index` / `restore`）も使わない（Step 4） | `.claude/hooks/pre-bash.mjs` の形の判定。止める形と止めない形の正本は `discardsUncommitted` の doc |
 
 ### 散文のみ
 

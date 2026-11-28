@@ -95,6 +95,10 @@
 - [x] `implement/SKILL.md` Step 4 の削除の項の末尾と、`git rm` が止まったときの箇条を、hook が止めることに合わせて直す
 - [x] `merge-pr/SKILL.md`「ツールが守らないもの」を直す
 
+## 検証ラウンド
+
+- ラウンド 1 — anchor 1ce51f7b / verify:tree green（E・F） / 指摘 Critical 0・High 0・Medium 3・Low 10 / 変異 26 件中生存 2（M10: subcommandForms の境界は今の判定結果を変えない・指摘しない。M26: A と B の並びを固定するテストが無い → 直した） / 収集時に落ちて assert でない赤が 5 件（ALL_REASONS の .reason → 直した） / 実地: merge-pr.mjs のロードと、hook のプロセスへの payload で止める形・通す形を確認。直したもの: gh pr merge の文言（頼まれていなければマージしない）、workspace の判定を workspace/ と plan.md に絞る、捨てる形の文言に意図どおりの戻し方、「守ること」の分岐の列挙をやめる、冒頭の全称 2 つと造語 1 つ。捨てたもの（挙動を変えない、または受容した残余）: DOT_PATH の .. 、PowerShell の .workspace、cd して git rm、implement の「git rm で消すとき」の全称、M6 の赤が throw であること
+
 ## 未確定（実装前に潰す）
 
 - [x] （裁定）候補 2 の対象の範囲 — 2026-11-28 の会話で「候補2の対象は今のままで、足りないと分かったときに追加しよう」。`git reset --hard`・`git clean -f`・`git checkout -f`・`git switch --discard-changes` は範囲外

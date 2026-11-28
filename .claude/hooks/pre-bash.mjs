@@ -3,10 +3,10 @@
 // (4) ツール（`npm run verify:tree`）が最後に green を返した sha のあとに `workspace/` の外の変更が
 // 載ったまま PR になるのを防ぐ（#1299。`readVerifyState`）。
 // さらに (3) コマンドの形だけで判定できる規範を判定する（#768・#1551。`judgeCommandShape`)。
-// (3) は常時ロード規範から降ろしたもので、**全コマンドで走る**（(1)(2)(4) は `gh pr create` 検出後のみ）。
+// (3) の多くは常時ロード規範から降ろしたもので、**全コマンドで走る**（(1)(2)(4) は `gh pr create` 検出後のみ）。
 // (5) `git rm` が `workspace/` を消すとき、workspace/plan.md に未チェックの項目が残っていれば止める（#1551。
 // `removesWorkspace`）。`/implement` は `workspace/` を消してから PR を作るので、(2) は正しい手順では plan.md を
-// 見られない。消す瞬間に見る。plan.md を読むのは、この形を検出したときだけである。
+// 見られない。消す瞬間に見る。(5) が plan.md を読むのは、この形を検出したときだけである。
 //
 // 設計: payload 全体を grep するのではなく tool_input.command **だけ**を読み、
 // 「コマンド位置」に現れる `gh pr create` を検出して、それが走る瞬間にコミットが
@@ -411,15 +411,16 @@ const GIT_RM_FORMS = subcommandForms("rm");
 const GIT_CHECKOUT_FORMS = subcommandForms("checkout");
 const GIT_CHECKOUT_INDEX_FORMS = subcommandForms("checkout-index");
 const GIT_RESTORE_FORMS = subcommandForms("restore");
-// 短縮形は束ねうる（`-rf`・`-SW`）。大文字小文字を区別する（restore の `-s` は `--source`）
+// 短縮形はまとめて書ける（`-rf`・`-SW`）。大文字小文字を区別する（restore の `-s` は `--source`）
 const RM_FORCE = /(?:^|\s)(?:--force|-[A-Za-z]*f[A-Za-z]*)(?=\s|$)/;
 const RM_CACHED = /(?:^|\s)--cached(?=\s|$)/;
 const PATHSPEC_AFTER_DASHDASH = /(?:^|\s)--\s+\S/;
 const DOT_PATH = /(?:^|\s)\.(?:\/\S*)?(?=\s|$)/;
 const RESTORE_STAGED = /(?:^|\s)(?:--staged|-[A-Za-z]*S[A-Za-z]*)(?=\s|$)/;
 const RESTORE_WORKTREE = /(?:^|\s)(?:--worktree|-[A-Za-z]*W[A-Za-z]*)(?=\s|$)/;
-// `workspace` で始まるパス語（`workspace`・`workspace/…`・`./workspace…`）。`workspaceX`・`my-workspace` には当てない
-const WORKSPACE_PATH = /(?:^|\s)(?:\.\/)?workspace(?:\/\S*)?(?=\s|$)/;
+// `workspace/` そのものか `workspace/plan.md` を指すパス語（`./` の前置も可）。どちらを消しても PR 前ゲートは計画を
+// 見られなくなる。ほかの個別のファイル（`workspace/research.md`）は計画を消さないので当てない。`workspaceX` にも当てない
+const WORKSPACE_PATH = /(?:^|\s)(?:\.\/)?workspace(?:\/|\/plan\.md)?(?=\s|$)/;
 
 /** サブコマンドが forms に当たれば、その後ろの引数の文字列。当たらなければ null */
 function argsAfter(forms, segment) {
@@ -498,11 +499,13 @@ const SHAPE_REMEDY = Object.freeze({
     "未コミットの変更を捨てる形です（`git rm -f`・`git checkout -- <path>`・`git checkout .`・`git checkout-index`・" +
     "`--staged` だけでない `git restore`）。捨てた変更は戻せません。まず `git status` で何が未コミットかを確かめ、" +
     "残すなら WIP コミットにしてください。ステージだけ外すなら `git restore --staged <path>` か `git reset` を使ってください" +
-    "（どちらも作業ツリーには触りません）。",
+    "（どちらも作業ツリーには触りません）。変異の巻き戻しのように、捨てるのが意図どおりなら、" +
+    "`git show HEAD:<path>` の内容を Write ツールで書き戻してください。",
   ghPrMerge:
     "手打ちの `gh pr merge` は止めています。閉じる issue の照合とマージ後の検証を通すため、`/merge-pr` から" +
     "`npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>` を使ってください（PowerShell からは `--` を `'--'` と引用する）。" +
-    "ツールを経ないマージ（Web UI・手打ち）は人間だけが行います。",
+    "ツールを経ないマージ（Web UI・手打ち）は人間だけが行います。" +
+    "マージするのは、ユーザーが `/merge-pr` でマージを頼んだときだけです。頼まれていなければ、マージせずにユーザーへ確かめてください。",
 });
 
 /** `git rm` で `workspace/` を消そうとしたのに、`plan.md` に未チェックが残っているときの文言（#1551） */

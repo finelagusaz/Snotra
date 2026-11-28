@@ -1282,6 +1282,7 @@ describe("removesWorkspace — git rm で workspace/ を消す形（#1551）", (
     "git rm -r workspace/",
     "git rm -r workspace",
     "git rm workspace/plan.md",
+    "git rm ./workspace/plan.md",
     "git rm -r ./workspace",
     "git rm -r -- workspace",
     "git rm -q -r workspace/ src/x",
@@ -1293,6 +1294,8 @@ describe("removesWorkspace — git rm で workspace/ を消す形（#1551）", (
   it.each([
     "git rm -r src/x",
     "git rm -r workspaceX",
+    "git rm workspace/research.md",
+    "git rm workspace/adversarial-1551.txt",
     "git rm -r my-workspace",
     "git rm --cached -r workspace/",
     "git -C workspace rm x",
@@ -1338,7 +1341,9 @@ describe("judgeCommandShape — 捨てる形と gh pr merge の理由（#1551）
     ["git rm -f x", "WIP コミット"],
     ["git checkout -- a.rs", "git restore --staged"],
     ["git restore a.rs", "git reset"],
+    ["git checkout -- a.rs", "git show HEAD:<path>"],
     [ghPrMerge(" 1"), "npm run merge:pr"],
+    [ghPrMerge(" 1"), "頼まれていなければ"],
   ])("%s は理由つきで block", (cmd, needle) => {
     for (const platform of ["win32", "darwin", undefined]) {
       const r = judgeCommandShape(cmd, platform);
@@ -1386,8 +1391,8 @@ describe("decide — git rm で workspace/ を消すときの plan.md（#1551）
     expect(r.action).toBe("block");
     expect(r.reason).toContain("readPlanState が渡されていません");
   });
-  it("-f を伴う形は、捨てる形の理由で先に止める", () => {
-    const r = decide(bash("git rm -rf workspace/"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: PLAN_DONE });
+  it.each([["全項目チェック済み", PLAN_DONE], ["未チェックあり", PLAN_OPEN(2)]])("-f を伴う形は、捨てる形の理由で先に止める（%s）", (_label, plan) => {
+    const r = decide(bash("git rm -rf workspace/"), { readVerifyState: VERIFIED, readGitState: CLEAN, readPlanState: plan });
     expect(r.action).toBe("block");
     expect(r.reason).toContain("WIP コミット");
   });
@@ -1484,7 +1489,7 @@ describe("judgeCommandShape — platform ゲート", () => {
     "git pull",
     "git restore a.rs",
     ghPrMerge(" 1"),
-  ].map((cmd) => judgeCommandShape(cmd, "win32").reason);
+  ].map((cmd) => judgeCommandShape(cmd, "win32")?.reason ?? `(止めなかった: ${cmd})`);
 
   // `\b` が要る: `\w+` は貪欲でもバックトラックするので、これが無いと `$env:TEM` で
   // 一致してから「次は `/` でない（`P`）」が成立し、正しい文言でも赤になる（この形で一度踏んだ）。

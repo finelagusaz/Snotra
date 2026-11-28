@@ -480,7 +480,9 @@ export function removesWorkspace(command) {
 export function mergesPrByHand(command) {
   // 正規表現の走査の前の安い前判定。`merge` の語が無ければ当たりようがない。旧い FLAG の二乗（受容した残余）を、
   // 全コマンドで走るこの判定へもう 1 本足さないため（#1552 の CI で、病的入力の時間の検査が上限を越えた）
-  if (!command.includes("merge")) return false;
+  // 前判定は `unquotedView` の見え方で行う。元の文字列だけで見ると `gh pr mer"ge"` を弾いてしまう（見え方は文字を消すだけ
+  // なので、どちらかの見え方に `merge` があれば、見え方にも必ずある）
+  if (!unquotedView(command).includes("merge")) return false;
   return commandSites(GH_PR_MERGE_FORMS, command).length > 0;
 }
 

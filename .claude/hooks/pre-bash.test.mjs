@@ -1327,6 +1327,9 @@ describe("mergesPrByHand — コマンド位置の gh pr merge（#1551）", () =
     `GH_TOKEN="a b" ${ghPrMerge(" 1")}`,
     `${GH} --repo o/r ${PR_MERGE} 1`,
     `${GH} pr "merge" 1`,
+    `${GH} pr mer"ge" 1`,
+    `${GH} pr mer\\ge 1`,
+    `${GH} pr m'erge' 1`,
     `git push && ${ghPrMerge()}`,
   ])("当たる: %s", (cmd) => {
     expect(mergesPrByHand(cmd)).toBe(true);

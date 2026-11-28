@@ -418,9 +418,21 @@ const PATHSPEC_AFTER_DASHDASH = /(?:^|\s)--\s+\S/;
 const DOT_PATH = /(?:^|\s)\.(?:\/\S*)?(?=\s|$)/;
 const RESTORE_STAGED = /(?:^|\s)(?:--staged|-[A-Za-z]*S[A-Za-z]*)(?=\s|$)/;
 const RESTORE_WORKTREE = /(?:^|\s)(?:--worktree|-[A-Za-z]*W[A-Za-z]*)(?=\s|$)/;
-// `workspace/` そのものか `workspace/plan.md` を指すパス語（`./` の前置も可）。どちらを消しても PR 前ゲートは計画を
-// 見られなくなる。ほかの個別のファイル（`workspace/research.md`）は計画を消さないので当てない。`workspaceX` にも当てない
-const WORKSPACE_PATH = /(?:^|\s)(?:\.\/)?workspace(?:\/|\/plan\.md)?(?=\s|$)/;
+// `workspace` で始まるパス語（`./` の前置も可。区切りの `\` と大文字小文字の違いも拾う）。`workspaceX` には当てない。
+// 捕捉 1 は `workspace` の後ろの残り
+const WORKSPACE_WORD = /(?:^|\s)(?:\.[\\/])?workspace(?=[\\/\s]|$)(\S*)/gi;
+// `workspace/` の下の、plan.md でない具体的なファイル名（glob の文字・区切り・`.`・`..` を含まない）
+const CONCRETE_NAME = /^[^*?[\]\\/]+$/;
+
+/**
+ * パス語が `workspace/plan.md` を消しうるか。fail-closed に倒し、plan.md でない具体的なファイル（`workspace/research.md`）
+ * だけを対象外にする。`workspace`・`workspace/`・`workspace/*`・`workspace/.`・入れ子のパスは、plan.md を含みうるので当てる
+ */
+function coversPlan(rest) {
+  const name = rest.slice(1);
+  if (name === "" || name === "." || name === ".." || !CONCRETE_NAME.test(name)) return true;
+  return name.toLowerCase() === "plan.md";
+}
 
 /** サブコマンドが forms に当たれば、その後ろの引数の文字列。当たらなければ null */
 function argsAfter(forms, segment) {
@@ -455,7 +467,7 @@ export function discardsUncommitted(command) {
 export function removesWorkspace(command) {
   return gitSegmentsInBothViews(command).some((s) => {
     const rm = argsAfter(GIT_RM_FORMS, s);
-    return rm !== null && !RM_CACHED.test(rm) && WORKSPACE_PATH.test(rm);
+    return rm !== null && !RM_CACHED.test(rm) && [...rm.matchAll(WORKSPACE_WORD)].some((m) => coversPlan(m[1]));
   });
 }
 
@@ -499,8 +511,8 @@ const SHAPE_REMEDY = Object.freeze({
     "未コミットの変更を捨てる形です（`git rm -f`・`git checkout -- <path>`・`git checkout .`・`git checkout-index`・" +
     "`--staged` だけでない `git restore`）。捨てた変更は戻せません。まず `git status` で何が未コミットかを確かめ、" +
     "残すなら WIP コミットにしてください。ステージだけ外すなら `git restore --staged <path>` か `git reset` を使ってください" +
-    "（どちらも作業ツリーには触りません）。変異の巻き戻しのように、捨てるのが意図どおりなら、" +
-    "`git show HEAD:<path>` の内容を Write ツールで書き戻してください。",
+    "（どちらも作業ツリーには触りません）。委譲先の worktree で、自分が入れた変異を戻すときだけは、" +
+    "`git show HEAD:<path>` の内容を Write ツールで書き戻してください。それ以外で変更を捨てたいときは、捨てずにユーザーへ確かめてください。",
   ghPrMerge:
     "手打ちの `gh pr merge` は止めています。閉じる issue の照合とマージ後の検証を通すため、`/merge-pr` から" +
     "`npm run merge:pr -- <PR> --closes <N,...|none> --body-file <path>` を使ってください（PowerShell からは `--` を `'--'` と引用する）。" +
